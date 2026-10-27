@@ -56,14 +56,15 @@ export function useIssueFix(issue) {
      improvement with `improver` set: today is measured and the scenarios
      frozen, but the agent writes the candidates and we only judge them
      (RSI PRD, Bring your own improver). */
-  const start = useCallback(({ env, drafts, regressionEnvIds, budget, minutes, textSearch, targetMember, rootCause, diagnosis = null, lineage, improver = null }) => {
+  const start = useCallback(({ env, drafts, regressionEnvIds, budget, minutes, limits: given = null, textSearch, targetMember, rootCause, diagnosis = null, lineage, improver = null }) => {
     const es = state.byEnv[env.id];
     const reread = rereadFor(agent, state);
     if (reread?.changed && reread.versionRecord && agentKey) {
       commit({ type: "recordAgentVersion", key: agentKey, version: reread.versionRecord, activateEnvId: env.id });
     }
     /* The time budget the sheet set caps the search the same way dollars do. */
-    const limits = limitsOf(state, agentKey);
+    /* The fix page's own constraints (the agent's, with its inline edits), else the agent's. */
+    const limits = given || limitsOf(state, agentKey);
     /* Measure today: the environment's scenarios on the production version,
        recorded as a run of it — the baseline and must-pass set come from it. */
     /* After an outside change, today is measured on the re-read version, so

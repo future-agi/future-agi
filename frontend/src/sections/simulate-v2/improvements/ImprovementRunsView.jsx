@@ -44,6 +44,7 @@ import {
   improvementSpendParts,
 } from "../_mock/optimizationRuns";
 import CostPartsTable from "./CostPartsTable";
+import RaiseLimitBar from "./RaiseLimitBar";
 import { creditsLabel } from "../_mock/metering";
 import { RATE_PLAN } from "../_mock/rates";
 import RunsOverview from "../run/RunsOverview";
@@ -601,6 +602,16 @@ export default function ImprovementRunsView({
           outcome={outcome}
           result={result}
           targetNow={kept?.score ?? null}
+        />
+      )}
+
+      {/* Stopped partway at its budget or time cap: raise it here and continue. */}
+      {!running && record.stoppedAtBudget?.trials > 0 && (
+        <RaiseLimitBar
+          record={record}
+          env={env}
+          envState={envState}
+          patch={patch}
         />
       )}
 

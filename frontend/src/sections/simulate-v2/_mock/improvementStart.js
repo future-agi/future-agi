@@ -792,6 +792,8 @@ export const buildImprovement = ({
               by,
               minutes: limits?.budget?.minutes,
             },
+            /* The whole search — what a raised budget continues into. */
+            continueResult: full,
           }
         : {}),
     /* Held back when the run stops before searching — kept for "Continue anyway". */

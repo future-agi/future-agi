@@ -54,6 +54,10 @@ import {
 import { creditsForUsd, creditsLabel } from "../_mock/metering";
 import useCreditBalance from "../usage/useCreditBalance";
 import CostPartsTable from "../improvements/CostPartsTable";
+import ImprovementConstraints, {
+  ConstraintPicker,
+} from "../improvements/ImprovementConstraints";
+import { withEdits } from "../improvements/constraintEdits";
 import { RATE_PLAN } from "../_mock/rates";
 import { useSimStore, useConnectedAgents } from "../store";
 import { LiveConsentCard } from "../agents/AgentLiveConsent";
@@ -220,6 +224,8 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
   const [titles, setTitles] = useState({});
   const [budget, setBudget] = useState(null);
   const [minutes, setMinutes] = useState(null);
+  /* This fix's own constraints, on top of the agent's. */
+  const [edits, setEdits] = useState({});
   /* The issue's project — the agent below is the one it was set up with. */
   const projectName = projectLinkOf(project, state, agents).name;
 
@@ -229,6 +235,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
     setTitles({});
     setBudget(null);
     setMinutes(null);
+    setEdits({});
     setAlsoIn([]);
     setAcrossLineage(false);
   }, [open, drafts, main]);
@@ -248,7 +255,29 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
     .map((d) => ({ ...d, title: titles[d.id]?.trim() || d.title }));
   /* The search this fix will run, worked out now — so the range is real. */
   /* The agent's constraints decide what the search may try and what it may spend. */
-  const limits = useMemo(() => limitsOf(state, agent?.key), [state, agent]);
+  const agentLimits = useMemo(
+    () => limitsOf(state, agent?.key),
+    [state, agent],
+  );
+  /* Up to the agent's run budget and time cap by default; more is this fix's own. */
+  const budgets = budgetsWithin(agentLimits.budget.dollars);
+  const spend = budget ?? budgets[budgets.length - 1];
+  const minuteChoices = minutesWithin(
+    agentLimits.budget?.minutes || DEFAULT_LIMITS.budget.minutes,
+  );
+  const spendMinutes = minutes ?? minuteChoices[minuteChoices.length - 1];
+  /* What the fix is held to: the agent's constraints with this fix's own edits. */
+  const limits = useMemo(
+    () =>
+      withEdits(agentLimits, {
+        ...edits,
+        ...(spend > agentLimits.budget.dollars && { dollars: spend }),
+        ...(spendMinutes > agentLimits.budget.minutes && {
+          minutes: spendMinutes,
+        }),
+      }),
+    [agentLimits, edits, spend, spendMinutes],
+  );
   /* Planned with the other environments ticked, so the estimate prices them the way the run will. */
   const preview = useMemo(
     () =>
@@ -272,19 +301,11 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
     regressionCount,
     surface: main?.surface,
   });
-  /* Up to the agent's run budget — never more. */
-  const budgets = budgetsWithin(limits.budget.dollars);
-  const spend = budget ?? budgets[budgets.length - 1];
   const overBudget = estimate.likely > spend;
   /* The same monthly balance runs and builds draw on: a fix whose ceiling is
      more than what's left is held, never started on credit it can't use. */
   const creditBalance = useCreditBalance();
   const overBalance = creditsForUsd(spend) > creditBalance.left;
-  /* Minutes cap it the same way — the agent's time budget is the ceiling. */
-  const minuteChoices = minutesWithin(
-    limits.budget?.minutes || DEFAULT_LIMITS.budget.minutes,
-  );
-  const spendMinutes = minutes ?? minuteChoices[minuteChoices.length - 1];
   const overTime = estimate.minutes > spendMinutes;
 
   /* What's in production: the latest release, else the version the issue's
@@ -332,6 +353,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
       regressionEnvIds: [main.id, ...alsoIn],
       budget: spend,
       minutes: spendMinutes,
+      limits,
       lineage: acrossLineage ? lineageVersions : undefined,
       textSearch: inText,
       targetMember: target || undefined,
@@ -1082,63 +1104,20 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
 
                 <Section
                   n={lead + 4}
-                  title="What it may change"
-                  meta="From the agent — a change that breaks any of these is rejected"
-                  action={
-                    <Button
-                      size="small"
-                      onClick={() =>
-                        navigate(
-                          `${paths.dashboard.agents}/connected/${agent.id}?tab=constraints`,
-                        )
-                      }
-                      sx={{ color: "text.secondary", minWidth: 0 }}
-                    >
-                      Change
-                    </Button>
-                  }
+                  title="The agent's rules"
+                  meta="A change that breaks one is rejected"
                 >
-                  <Box
-                    sx={{
-                      display: "grid",
-                      gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
-                      "& > *": {
-                        borderColor: "divider",
-                        borderStyle: "solid",
-                        borderWidth: 0,
-                        borderTopWidth: 1,
-                      },
-                      "& > *:nth-of-type(-n+2)": {
-                        borderTopWidth: { xs: 0, md: 0 },
-                      },
-                      "& > *:nth-of-type(2)": {
-                        borderTopWidth: { xs: 1, md: 0 },
-                      },
-                      "& > *:nth-of-type(even)": { borderLeftWidth: { md: 1 } },
-                    }}
-                  >
-                    {constraints.map((c) => (
-                      <Stack
-                        key={c.id}
-                        direction="row"
-                        spacing={1.5}
-                        sx={{ px: 2, py: 1, minWidth: 0 }}
-                      >
-                        <Typography
-                          sx={{
-                            typography: "s2",
-                            color: "text.subtitle",
-                            width: 150,
-                            flexShrink: 0,
-                          }}
-                        >
-                          {c.label}
-                        </Typography>
-                        <Typography sx={{ typography: "s2", minWidth: 0 }}>
-                          {c.value}
-                        </Typography>
-                      </Stack>
-                    ))}
+                  <Box sx={{ px: 2, py: 1.5 }}>
+                    <ImprovementConstraints
+                      agent={agent}
+                      env={main}
+                      envState={mainState}
+                      limits={agentLimits}
+                      edits={edits}
+                      onChange={setEdits}
+                      model={model}
+                      showTime={false}
+                    />
                   </Box>
                 </Section>
               </Stack>
@@ -1230,39 +1209,27 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                   <SumRow k="Budget">
                     {ready ? (
                       <>
-                        <Stack direction="row" spacing={1}>
-                          <Select
-                            size="small"
+                        {/* The agent's run budget and time cap are the defaults;
+                            past either, it asks in place whether the agent's
+                            own limit should move too. */}
+                        <Stack spacing={1}>
+                          <ConstraintPicker
+                            agent={agent}
+                            limits={agentLimits}
+                            field="dollars"
                             value={spend}
-                            onChange={(e) => setBudget(e.target.value)}
-                            sx={{ flex: 1, minWidth: 0, typography: "s2" }}
-                            inputProps={{ "aria-label": "Credit budget" }}
-                          >
-                            {budgets.map((b) => (
-                              <MenuItem
-                                key={b}
-                                value={b}
-                                sx={{ typography: "s2" }}
-                              >
-                                {creditsLabel(b)}
-                              </MenuItem>
-                            ))}
-                          </Select>
-                          <Select
-                            size="small"
+                            onChange={setBudget}
+                            fullWidth
+                          />
+                          <ConstraintPicker
+                            agent={agent}
+                            limits={agentLimits}
+                            field="minutes"
                             value={spendMinutes}
-                            onChange={(e) => setMinutes(e.target.value)}
-                            sx={{ width: 104, typography: "s2" }}
-                            inputProps={{ "aria-label": "Time budget" }}
-                          >
-                            {minuteChoices.map((m) => (
-                              <MenuItem
-                                key={m}
-                                value={m}
-                                sx={{ typography: "s2" }}
-                              >{`${m} min`}</MenuItem>
-                            ))}
-                          </Select>
+                            onChange={setMinutes}
+                            steps={MINUTES}
+                            fullWidth
+                          />
                         </Stack>
                         <Typography
                           sx={{

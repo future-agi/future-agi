@@ -13,8 +13,6 @@ import {
   Dialog,
   Checkbox,
   TextField,
-  Select,
-  MenuItem,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import StatusBadge from "src/components/status-badge/StatusBadge";
@@ -53,7 +51,6 @@ import {
   statusOf,
   settlePending,
   reproduceStepsOf,
-  reproduceMsOf,
   improvementSpendParts,
 } from "../../_mock/optimizationRuns";
 import CostPartsTable from "../../improvements/CostPartsTable";
@@ -68,7 +65,8 @@ import {
   addImprovementScenariosPatch,
 } from "../../_mock/improvementScenarios";
 import { currentEnvVersion } from "../../_mock/versions";
-import { useConnectedAgents, useSimStore } from "../../store";
+import { useSimStore } from "../../store";
+import RaiseLimitBar from "../../improvements/RaiseLimitBar";
 import {
   FinalistsTable,
   MustPassNote,
@@ -95,11 +93,7 @@ import {
 import {
   agentDefinitionOf,
   agentSourceOf,
-  envAgentKey,
 } from "../../_mock/agentRegistry";
-import { budgetsWithin } from "../../_mock/improvementStart";
-import { limitsOf } from "../../agents/agentLimits";
-import { connectedAgentPath } from "../../improvements/improvementNav";
 import { useNavigate } from "react-router-dom";
 import { paths } from "src/routes/paths";
 import { changeFileFor } from "../../_mock/optimize";
@@ -1660,67 +1654,11 @@ SuggestionBody.propTypes = {
 /*
   Stopped at budget before searching: checking the finalists alone would
   have cost more than the budget, so no change was tried. The way on is a
-  bigger budget — picked here, within the agent's run budget, and the same
+  bigger budget (or time cap), picked right here — past the agent's own
+  limit too, asking in place whether that limit should move — and the same
   improvement searches again (Reproduce already ran, so it isn't repeated).
-  Past the agent's run budget, or over the time cap, it's a change on the
-  agent's Constraints tab.
 */
-function OverBudgetBody({ record, outcome, env, envState, patch, onClose }) {
-  const navigate = useNavigate();
-  const { agents, state } = useConnectedAgents();
-  const key = envAgentKey(envState?.agent, env?.id);
-  const agent = agents.find((a) => a.key === key) || null;
-  const s = record.stoppedAtBudget || {};
-  const plan = record.pendingResult || null;
-  /* The whole search, plus what measuring today already spent. */
-  const needed = plan
-    ? Math.ceil(searchSpend(plan, env?.surface) + (record.spentFirst || 0))
-    : null;
-  const ceiling = limitsOf(state, key)?.budget?.dollars || record.budget || 0;
-  const timeOk = !(
-    record.minutes > (record.limits?.budget?.minutes || Infinity)
-  );
-  const choices =
-    s.by !== "time" && timeOk && needed != null
-      ? budgetsWithin(ceiling).filter(
-          (b) => b > (record.budget || 0) && b >= needed,
-        )
-      : [];
-  const [pick, setPick] = useState(null);
-  const budget = pick ?? choices[0] ?? null;
-  const openConstraints = agent
-    ? () => {
-        navigate(connectedAgentPath(agent.id, "constraints"));
-        onClose?.();
-      }
-    : null;
-  const restart = () =>
-    patch?.({
-      optimizations: (envState?.optimizations || []).map((o) =>
-        o.id === record.id
-          ? {
-              ...o,
-              status: OPT_STATUS.RUNNING,
-              budget,
-              /* Reproduce already ran — the search picks up after it. */
-              startedAt: new Date(Date.now() - reproduceMsOf(o)).toISOString(),
-              result: o.pendingResult,
-              pendingResult: undefined,
-              pendingEnding: undefined,
-              stoppedAtBudget: undefined,
-              completedAt: undefined,
-            }
-          : o,
-      ),
-    });
-  const why =
-    s.by === "time"
-      ? `Raise the time cap on the agent's Constraints tab, or improve towards a narrower goal.`
-      : !timeOk
-        ? "A bigger budget isn't enough — the search would also run past the time cap. Raise both on the agent's Constraints tab."
-        : choices.length
-          ? `The whole search needs about ${creditsLabel(needed)}. Pick a bigger budget and the same improvement searches again.`
-          : `The whole search needs about ${creditsLabel(needed || 0)}, more than this agent's run budget of ${creditsLabel(ceiling)}. Raise it on the agent's Constraints tab, or improve towards a narrower goal.`;
+function OverBudgetBody({ record, outcome, env, envState, patch }) {
   return (
     <Box sx={{ flex: 1, overflowY: "auto", px: 2.5, py: 2.5 }}>
       <Typography sx={{ typography: "s1", fontWeight: 600 }}>
@@ -1731,62 +1669,21 @@ function OverBudgetBody({ record, outcome, env, envState, patch, onClose }) {
           typography: "s2",
           color: "text.secondary",
           mt: 0.5,
+          mb: 1,
           maxWidth: 640,
         }}
       >
-        {`${outcome.headline} Nothing ran past the budget and no change was found. ${why}`}
+        {`${outcome.headline} Nothing ran past the budget and no change was found.`}
       </Typography>
-      <Stack direction="row" alignItems="center" spacing={1} sx={{ mt: 2 }}>
-        {choices.length > 0 && (
-          <>
-            <Select
-              size="small"
-              value={budget}
-              onChange={(e) => setPick(e.target.value)}
-              inputProps={{ "aria-label": "New budget" }}
-              sx={{
-                height: 32,
-                width: 160,
-                typography: "s2",
-                "& .MuiSelect-select": { typography: "s2", py: 0.75 },
-              }}
-            >
-              {choices.map((b) => (
-                <MenuItem key={b} value={b} sx={{ typography: "s2" }}>
-                  {creditsLabel(b)}
-                </MenuItem>
-              ))}
-            </Select>
-            <Button
-              size="small"
-              variant="contained"
-              color="primary"
-              onClick={restart}
-              disabled={!patch}
-              startIcon={<Iconify icon="solar:play-bold" width={14} />}
-            >
-              Raise the budget and try again
-            </Button>
-          </>
-        )}
-        {openConstraints && (
-          <Button
-            size="small"
-            variant={choices.length ? "text" : "outlined"}
-            onClick={openConstraints}
-            sx={{
-              color: choices.length ? "text.secondary" : "text.primary",
-              ...(!choices.length && { borderColor: "divider" }),
-            }}
-          >
-            {s.by === "time" || !timeOk
-              ? "Raise the time cap"
-              : choices.length
-                ? "Change the agent's run budget"
-                : "Raise the agent's run budget"}
-          </Button>
-        )}
-      </Stack>
+      <Box sx={{ maxWidth: 640 }}>
+        <RaiseLimitBar
+          record={record}
+          env={env}
+          envState={envState}
+          patch={patch}
+          framed={false}
+        />
+      </Box>
     </Box>
   );
 }

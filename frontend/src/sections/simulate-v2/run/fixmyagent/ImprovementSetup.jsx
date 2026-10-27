@@ -1,12 +1,10 @@
 import PropTypes from "prop-types";
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import {
   Checkbox,
   Box,
   Button,
   ButtonBase,
-  Chip,
   Dialog,
   IconButton,
   ListSubheader,
@@ -15,12 +13,10 @@ import {
   Stack,
   Switch,
   TextField,
-  Tooltip,
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { clickable, focusRing } from "../../components/clickable";
-import { connectedAgentPath } from "../../improvements/improvementNav";
 import AgentPicker from "../../improvements/AgentPicker";
 import {
   agentPickerChoice,
@@ -45,17 +41,11 @@ import {
   productionAgentVersion,
 } from "../../_mock/versions";
 import {
-  improverModelsText,
   limitRows,
   optimizationId,
   OPTIMIZER_MODELS,
-  SAME_AS_PLANNER,
 } from "../../_mock/optimizationRuns";
-import {
-  OPTIMIZERS,
-  goalWords,
-  improvementRunName,
-} from "../../_mock/optimizer";
+import { goalWords, improvementRunName } from "../../_mock/optimizer";
 import {
   baseRunOf,
   budgetsWithin,
@@ -73,14 +63,16 @@ import { envVersionNameOf } from "../../_mock/codeRefs";
 import { measureTodayRun, measuredSummaryOf } from "../../_mock/measureToday";
 import { agentStatusOf } from "../../_mock/agentLifecycle";
 import { runIdentityOf } from "../../_mock/runIdentity";
-import { DEFAULT_METHOD, methodLabelOf } from "./improvementView";
+import { DEFAULT_METHOD } from "./improvementView";
+import ImprovementConstraints, {
+  ConstraintPicker,
+} from "../../improvements/ImprovementConstraints";
+import { changedKeysOf, withEdits } from "../../improvements/constraintEdits";
 import { limitsOf } from "../../agents/agentLimits";
 import { rereadFor, textSearchDefault } from "../../_mock/improvementPolicy";
 import { recordOutsideChange } from "../../_mock/nudgeEffects";
 import { creditsLabel } from "../../_mock/metering";
 
-/* Selected reads in white, as the product's other choices do — purple is for actions, not state. */
-const selectedBg = (t) => t.palette.action.selected;
 /* "Raise the pass rate", "Raise booking success rate", "Raise Policy adherence". */
 const goalText = (g) =>
   g.id === "pass-rate"
@@ -96,95 +88,15 @@ const selectSx = {
 /**
  * New improvement (from Improvements) or Run self improvement (from a run's
  * Debug failures) — the step between a run's Fix my agent diagnosis and
- * the search. The same smallest set of decisions it always asked for (a name,
- * an optimizer, the model doing the improving), plus the two the search can't
- * guess: the goal and what it may spend. The agent's constraints come along
- * as they are — summarised, changed on the agent.
+ * the search. A name, plus the two things the search can't guess: the goal
+ * and what it may spend. The search method and the improving models are the
+ * defaults, never asked. The agent's constraints come along under Advanced,
+ * editable for this improvement in place — past one of the agent's limits,
+ * it asks there whether the agent's own limit should move too.
  *
  * The caller (Fix my agent) has already decided the agent and environment
  * (`preset`) and starts the run itself (`onStart`).
  */
-/*
-  One of the improver's two models, as chips. The writer also offers "Same
-  as planner", its default. Neither is the model the agent runs on.
-*/
-function ModelPicker({ title, hint, value, onChange, same = null }) {
-  const options = [
-    ...(same
-      ? [
-          {
-            id: SAME_AS_PLANNER,
-            label: `Same as planner (${same})`,
-            note: "One model plans and writes",
-          },
-        ]
-      : []),
-    ...OPTIMIZER_MODELS,
-  ];
-  return (
-    <Box>
-      <Stack
-        direction="row"
-        alignItems="center"
-        spacing={0.75}
-        sx={{ mb: 0.25 }}
-      >
-        <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-          {title}
-        </Typography>
-        <Tooltip
-          arrow
-          title="The model doing the improving, not the model your agent runs on."
-        >
-          <Box component="span" sx={{ display: "flex" }}>
-            <Iconify
-              icon="solar:info-circle-linear"
-              width={14}
-              sx={{ color: "text.disabled" }}
-            />
-          </Box>
-        </Tooltip>
-      </Stack>
-      <Typography sx={{ typography: "s3", color: "text.tertiary", mb: 0.875 }}>
-        {hint}
-      </Typography>
-      <Stack
-        direction="row"
-        spacing={0.875}
-        flexWrap="wrap"
-        rowGap={0.875}
-        useFlexGap
-      >
-        {options.map((m) => {
-          const active = m.id === value;
-          return (
-            <Tooltip key={m.id} arrow title={m.note}>
-              <Chip
-                label={m.label}
-                onClick={() => onChange(m.id)}
-                sx={{
-                  border: "1px solid",
-                  borderColor: active ? "text.primary" : "divider",
-                  bgcolor: (t) => (active ? selectedBg(t) : "transparent"),
-                  color: active ? "text.primary" : "text.secondary",
-                  "&:hover": { bgcolor: selectedBg },
-                }}
-              />
-            </Tooltip>
-          );
-        })}
-      </Stack>
-    </Box>
-  );
-}
-ModelPicker.propTypes = {
-  title: PropTypes.string,
-  hint: PropTypes.string,
-  value: PropTypes.string,
-  onChange: PropTypes.func,
-  same: PropTypes.string,
-};
-
 export default function ImprovementSetup({
   open,
   onClose,
@@ -196,7 +108,6 @@ export default function ImprovementSetup({
   onBack = null,
   agentField = null,
 }) {
-  const navigate = useNavigate();
   const { state, commit } = useSimStore();
   const { agents } = useConnectedAgents();
 
@@ -246,9 +157,11 @@ export default function ImprovementSetup({
     preset.agentKey !== envKey;
 
   const [name, setName] = useState("");
-  const [optimizerId, setOptimizerId] = useState(DEFAULT_METHOD);
-  const [model, setModel] = useState(OPTIMIZER_MODELS[0].id);
-  const [writer, setWriter] = useState(SAME_AS_PLANNER);
+  /* The search method and the improving model are always the defaults. */
+  const optimizerId = DEFAULT_METHOD;
+  const model = OPTIMIZER_MODELS[0].id;
+  /* This improvement's own constraints, on top of the agent's. */
+  const [edits, setEdits] = useState({});
   const [goal, setGoal] = useState("pass-rate");
   const [budget, setBudget] = useState(null);
   /* The agent's other environments can add their must-pass sets (RSI PRD:
@@ -256,8 +169,8 @@ export default function ImprovementSetup({
      sets"), and the search can try earlier versions' changes again. */
   const [alsoIn, setAlsoIn] = useState([]);
   const [acrossLineage, setAcrossLineage] = useState(false);
-  /* The search method and the improving model sit in an advanced panel,
-     with defaults applied — most people never open it. */
+  /* The constraints sit in an advanced panel, the agent's applied — most
+     people never open it. */
   const [advanced, setAdvanced] = useState(false);
   /* Stamped when the setup opens: the seed is never reused, even after an
      improvement is deleted, and stays the same until Start. */
@@ -270,9 +183,7 @@ export default function ImprovementSetup({
     setAlsoIn([]);
     setAcrossLineage(false);
     setName(improvementRunName(es, null));
-    setOptimizerId(DEFAULT_METHOD);
-    setModel(OPTIMIZER_MODELS[0].id);
-    setWriter(SAME_AS_PLANNER);
+    setEdits({});
     setGoal("pass-rate");
     setBudget(null);
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -285,12 +196,30 @@ export default function ImprovementSetup({
     setAlsoIn([]);
     setAcrossLineage(false);
     setBudget(null);
+    setEdits({});
   }, [preset?.agentKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const limits = useMemo(
+  const agentLimits = useMemo(
     () => limitsOf(state, preset?.agentKey),
     [state, preset?.agentKey],
   );
+  /* Up to the agent's run budget by default; more is this improvement's own. */
+  const budgets = budgetsWithin(agentLimits.budget.dollars);
+  const spend = budget ?? budgets[budgets.length - 1];
+  /* What the search is held to: the agent's constraints with this
+     improvement's own edits, the budget picked beside the goal included. */
+  const limits = useMemo(
+    () =>
+      withEdits(agentLimits, {
+        ...edits,
+        ...(spend > agentLimits.budget.dollars && { dollars: spend }),
+      }),
+    [agentLimits, edits, spend],
+  );
+  const edited = changedKeysOf(agentLimits, {
+    ...edits,
+    ...(spend > agentLimits.budget.dollars && { dollars: spend }),
+  }).length;
   /* A voice agent searches in text; its finalists are confirmed as real calls. */
   const inText = main?.surface === "voice" && textSearchDefault(main?.surface);
 
@@ -474,8 +403,6 @@ export default function ImprovementSetup({
     surface: main?.surface,
     firstConversations: todayConversations(today),
   });
-  const budgets = budgetsWithin(limits.budget.dollars);
-  const spend = budget ?? budgets[budgets.length - 1];
   const overBudget = estimate.likely > spend;
 
   const agentModel = useMemo(() => {
@@ -546,8 +473,6 @@ export default function ImprovementSetup({
       name: name.trim(),
       model,
       optimizerId,
-      ...(writer !== SAME_AS_PLANNER &&
-        writer !== model && { writerModel: writer }),
       agent,
       env: main,
       envIds,
@@ -675,133 +600,6 @@ export default function ImprovementSetup({
                 onChange={(e) => setName(e.target.value)}
                 sx={{ "& .MuiInputBase-input": { typography: "s2" } }}
               />
-            </Box>
-
-            {/* Optimiser names sit in an advanced panel; the defaults apply until someone opens it. */}
-            <Box>
-              <Stack
-                direction="row"
-                alignItems="center"
-                spacing={0.75}
-                {...clickable(() => setAdvanced((v) => !v), {
-                  expanded: advanced,
-                })}
-                sx={{ ...focusRing, cursor: "pointer", width: "fit-content" }}
-              >
-                <Iconify
-                  icon={
-                    advanced
-                      ? "solar:alt-arrow-down-linear"
-                      : "solar:alt-arrow-right-linear"
-                  }
-                  width={14}
-                  sx={{ color: "text.tertiary" }}
-                />
-                <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                  Advanced
-                </Typography>
-                <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                  {`${methodLabelOf(optimizerId)} search (${OPTIMIZERS.find((o) => o.id === optimizerId)?.label || optimizerId}) · changes ${improverModelsText(model, writer)}${optimizerId === DEFAULT_METHOD && model === OPTIMIZER_MODELS[0].id && writer === SAME_AS_PLANNER ? " — the defaults" : ""}`}
-                </Typography>
-              </Stack>
-              {advanced && (
-                <Stack spacing={2.5} sx={{ mt: 1.5 }}>
-                  <Box>
-                    <Typography sx={fieldLabel}>Search method</Typography>
-                    <Stack
-                      direction="row"
-                      spacing={1}
-                      flexWrap="wrap"
-                      rowGap={1}
-                      useFlexGap
-                      role="radiogroup"
-                      aria-label="Search method"
-                    >
-                      {OPTIMIZERS.map((o) => {
-                        const active = o.id === optimizerId;
-                        return (
-                          <Tooltip key={o.id} arrow title={o.fit}>
-                            <Box
-                              {...clickable(() => setOptimizerId(o.id), {
-                                role: "radio",
-                                checked: active,
-                              })}
-                              sx={{
-                                ...focusRing,
-                                px: 1.5,
-                                py: 1.125,
-                                borderRadius: 1,
-                                cursor: "pointer",
-                                flex: "1 1 46%",
-                                minWidth: 190,
-                                border: "1px solid",
-                                borderColor: active
-                                  ? "text.primary"
-                                  : "divider",
-                                bgcolor: (t) =>
-                                  active ? selectedBg(t) : "transparent",
-                                "&:hover": {
-                                  borderColor: active
-                                    ? "text.primary"
-                                    : "text.disabled",
-                                },
-                              }}
-                            >
-                              <Stack
-                                direction="row"
-                                alignItems="center"
-                                spacing={0.75}
-                              >
-                                <Iconify
-                                  icon={
-                                    active
-                                      ? "solar:check-circle-bold"
-                                      : "solar:circle-linear"
-                                  }
-                                  width={14}
-                                  sx={{
-                                    color: active
-                                      ? "text.primary"
-                                      : "text.disabled",
-                                  }}
-                                />
-                                {/* How many runs it tries is in Cost below — set by the budget, not the card. */}
-                                {/* One name for the method everywhere: plain words, the optimiser's in brackets. */}
-                                <Typography
-                                  sx={{ typography: "s2", fontWeight: 600 }}
-                                >{`${methodLabelOf(o.id)} search (${o.label})`}</Typography>
-                              </Stack>
-                              <Typography
-                                sx={{
-                                  typography: "s3",
-                                  color: "text.tertiary",
-                                  mt: 0.25,
-                                }}
-                              >
-                                {o.desc}
-                              </Typography>
-                            </Box>
-                          </Tooltip>
-                        );
-                      })}
-                    </Stack>
-                  </Box>
-
-                  <ModelPicker
-                    title="Planner"
-                    hint="Reads the failures and decides what to change. It decides the outcome — use the strongest model you can."
-                    value={model}
-                    onChange={setModel}
-                  />
-                  <ModelPicker
-                    title="Writer"
-                    hint="Turns each plan into the exact edit — the prompt line, the tool description. A cheaper model is usually enough."
-                    value={writer}
-                    onChange={setWriter}
-                    same={OPTIMIZER_MODELS.find((m) => m.id === model)?.label}
-                  />
-                </Stack>
-              )}
             </Box>
           </>
         )}
@@ -939,21 +737,17 @@ export default function ImprovementSetup({
                   })}
                 </Select>
               </Box>
-              <Box sx={{ width: 180, flexShrink: 0 }}>
+              <Box sx={{ width: 220, flexShrink: 0 }}>
                 <Typography sx={fieldLabel}>Budget</Typography>
-                <Select
-                  size="small"
-                  fullWidth
+                <ConstraintPicker
+                  agent={agent}
+                  limits={agentLimits}
+                  field="dollars"
                   value={spend}
-                  onChange={(e) => setBudget(e.target.value)}
+                  onChange={setBudget}
+                  fullWidth
                   sx={selectSx}
-                >
-                  {budgets.map((b) => (
-                    <MenuItem key={b} value={b} sx={{ typography: "s2" }}>
-                      {creditsLabel(b)}
-                    </MenuItem>
-                  ))}
-                </Select>
+                />
               </Box>
             </Stack>
             {/* An evaluation as the goal is only as good as its agreement with people. */}
@@ -1087,6 +881,52 @@ export default function ImprovementSetup({
           </Stack>
         )}
 
+        {/* Advanced: the constraints it's held to — the agent's, editable for this improvement. */}
+        {main && (
+          <Box>
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={0.75}
+              {...clickable(() => setAdvanced((v) => !v), {
+                expanded: advanced,
+              })}
+              sx={{ ...focusRing, cursor: "pointer", width: "fit-content" }}
+            >
+              <Iconify
+                icon={
+                  advanced
+                    ? "solar:alt-arrow-down-linear"
+                    : "solar:alt-arrow-right-linear"
+                }
+                width={14}
+                sx={{ color: "text.tertiary" }}
+              />
+              <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                Advanced
+              </Typography>
+              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                {edited
+                  ? `Constraints · ${edited} set for this improvement`
+                  : `Constraints from ${agent?.name || "the agent"}`}
+              </Typography>
+            </Stack>
+            {advanced && (
+              <Box sx={{ mt: 1.5 }}>
+                <ImprovementConstraints
+                  agent={agent}
+                  env={main}
+                  envState={es}
+                  limits={agentLimits}
+                  edits={edits}
+                  onChange={setEdits}
+                  model={agentModel}
+                />
+              </Box>
+            )}
+          </Box>
+        )}
+
         {/* What the search starts from, what it's never allowed to see, and what it costs. */}
         {main && (
           <Box
@@ -1126,19 +966,17 @@ export default function ImprovementSetup({
                 note={`Up to ${trials} runs × ${train} target scenarios, then the finalists on held-back and must-pass. ${stopEarlyNote()} ${inText ? "Runs as text conversations; only the finalists are confirmed as real calls." : "A run is a full pass through the real tools, not a dataset lookup."}`}
               />
               <Row
-                label="Limits"
-                value="From the agent"
+                label="Constraints"
+                value={
+                  edited
+                    ? `From ${agent?.name || "the agent"} · ${edited} set for this improvement`
+                    : `From ${agent?.name || "the agent"}`
+                }
                 note={constraints}
                 action={
-                  agent?.id && !agent.deleted?.at
-                    ? {
-                        label: "Change",
-                        onClick: () => {
-                          onClose();
-                          navigate(connectedAgentPath(agent.id, "constraints"));
-                        },
-                      }
-                    : null
+                  advanced
+                    ? null
+                    : { label: "Edit", onClick: () => setAdvanced(true) }
                 }
               />
             </Stack>

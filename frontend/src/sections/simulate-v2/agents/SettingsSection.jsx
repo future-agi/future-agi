@@ -1,16 +1,21 @@
 import PropTypes from "prop-types";
+import { useContext } from "react";
 import { Box, Stack, Typography } from "@mui/material";
+import { SettingsLayoutContext } from "./settingsLayout";
 
 /**
  * A settings section on the agent page (Constraints, Connections): its name
  * and one short line on the left, its cards on the right.
  */
 export default function SettingsSection({ title, sub, children }) {
+  const stacked = useContext(SettingsLayoutContext) === "stacked";
   return (
     <Box
       sx={{
         display: "grid",
-        gridTemplateColumns: { xs: "1fr", lg: "220px minmax(0, 1fr)" },
+        gridTemplateColumns: stacked
+          ? "1fr"
+          : { xs: "1fr", lg: "220px minmax(0, 1fr)" },
         columnGap: 4,
         rowGap: 1.25,
         py: 2.5,

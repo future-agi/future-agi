@@ -51,6 +51,7 @@ import { MONO, plural } from "./agentViewUtils";
 import ProtectedPartsPicker from "./ProtectedPartsPicker";
 import AgentConfigAreasCard from "./AgentConfigAreasCard";
 import SettingsSection from "./SettingsSection";
+import { SettingsLayoutContext } from "./settingsLayout";
 import { areaStatesOf, configAreasFor } from "./configAreas";
 import { HintLine } from "./connect/replicationBits";
 import { QuietTag } from "./AgentBits";
@@ -93,6 +94,7 @@ export default function AgentConstraintsTab({
   mustPass,
   speech,
   onBuildEnv,
+  embedded = false,
 }) {
   const { state } = useSimStore();
   const { limits, set, reset, custom } = useAgentLimits(agent.key);
@@ -116,325 +118,349 @@ export default function AgentConstraintsTab({
   }, [agent, limits, can]);
 
   return (
-    <Stack spacing={0}>
-      <Stack direction="row" alignItems="center" spacing={2} sx={{ pb: 2 }}>
-        <Typography sx={{ typography: "s2", color: "text.secondary", flex: 1 }}>
-          <HintLine hint="A proposed change that breaks one is rejected, however much it helps — from the Error Feed, Debug failures or a goal.">
-            Every improvement is held to these. Nothing ships without approval.
-          </HintLine>
-        </Typography>
-        <Typography
-          sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0 }}
-        >
-          Saved as you change them
-        </Typography>
-        {custom && (
-          <Button
-            size="small"
-            onClick={reset}
-            sx={{ color: "text.secondary", flexShrink: 0 }}
+    <SettingsLayoutContext.Provider value={embedded ? "stacked" : "split"}>
+      <Stack spacing={0}>
+        <Stack direction="row" alignItems="center" spacing={2} sx={{ pb: 2 }}>
+          <Typography
+            sx={{ typography: "s2", color: "text.secondary", flex: 1 }}
           >
-            Reset to safe defaults
-          </Button>
-        )}
-      </Stack>
-
-      <SettingsSection
-        title="What it may change"
-        sub={`${areaCount} on · switch an area off to keep it as it is.`}
-      >
-        <AgentConfigAreasCard
-          agent={agent}
-          limits={limits}
-          can={can}
-          onChange={set}
-          speech={speech}
-        >
-          <Box
-            sx={{
-              px: 2,
-              py: 1.125,
-              borderTop: "1px solid",
-              borderColor: "divider",
-            }}
+            <HintLine hint="A proposed change that breaks one is rejected, however much it helps — from the Error Feed, Debug failures or a goal.">
+              {embedded
+                ? `${agent.name || "This agent"}'s rules — every improvement for it is held to these. A change here applies to all of them.`
+                : "Every improvement is held to these. Nothing ships without approval."}
+            </HintLine>
+          </Typography>
+          <Typography
+            sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0 }}
           >
-            <Stack direction="row" alignItems="center" spacing={2}>
-              <Box sx={{ width: { xs: "auto", md: 190 }, flexShrink: 0 }}>
-                <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                  Never edited
-                </Typography>
-              </Box>
-              <Typography
-                noWrap
-                sx={{
-                  typography: "s3",
-                  color: "text.secondary",
-                  flex: 1,
-                  minWidth: 0,
-                  display: { xs: "none", md: "block" },
-                }}
-              >
-                Files, tools or prompt sections no proposed change may touch
-              </Typography>
-            </Stack>
-            <Box sx={{ mt: 0.75 }}>
-              <ProtectedPartsPicker
-                value={limits.protected}
-                parts={parts}
-                onChange={(next) => set({ protected: next })}
-              />
-            </Box>
-          </Box>
-          <ProtectedMembers
-            agent={agent}
-            value={limits.protectedMembers || []}
-            onChange={(next) => set({ protectedMembers: next })}
-          />
-        </AgentConfigAreasCard>
-      </SettingsSection>
-
-      <SettingsSection
-        title="Guardrails"
-        sub="A proposed change that breaks one is rejected."
-      >
-        <Card>
-          <Row
-            title="Model"
-            body={
-              limits.model.mode === "approved"
-                ? "May switch to an approved model"
-                : `Stays ${model || "as it is"}`
-            }
-            hint={
-              limits.model.mode === "approved"
-                ? "Held to the same cost and latency limits as any change. Never to a model off this list."
-                : "A fix never switches the model."
-            }
-          >
-            <ToggleButtonGroup
+            {embedded
+              ? `Saved to ${agent.name || "the agent"} as you change them`
+              : "Saved as you change them"}
+          </Typography>
+          {custom && !embedded && (
+            <Button
               size="small"
-              exclusive
-              value={limits.model.mode}
-              onChange={(_, v) =>
-                v && set({ model: { ...limits.model, mode: v } })
-              }
-              sx={toggleSx}
+              onClick={reset}
+              sx={{ color: "text.secondary", flexShrink: 0 }}
             >
-              <ToggleButton value="locked">Locked</ToggleButton>
-              <ToggleButton value="approved">Approved list</ToggleButton>
-            </ToggleButtonGroup>
-          </Row>
-          {limits.model.mode === "approved" && (
-            <Stack
-              direction="row"
-              flexWrap="wrap"
-              gap={0.75}
-              sx={{ px: 2, pb: 1.25, mt: -0.5 }}
-            >
-              {MODELS.map((m) => {
-                const on = m === model || limits.model.approved.includes(m);
-                return (
-                  <Chip
-                    key={m}
-                    size="small"
-                    label={m}
-                    clickable={m !== model}
-                    onClick={
-                      m === model
-                        ? undefined
-                        : () =>
-                            set({
-                              model: {
-                                ...limits.model,
-                                approved: on
-                                  ? limits.model.approved.filter((x) => x !== m)
-                                  : [...limits.model.approved, m],
-                              },
-                            })
-                    }
-                    icon={
-                      on ? (
-                        <Iconify icon="solar:check-linear" width={14} />
-                      ) : undefined
-                    }
-                    sx={{
-                      fontFamily: MONO,
-                      color: "text.primary",
-                      "& .MuiChip-icon": { color: "text.primary" },
-                      bgcolor: "transparent",
-                      border: "1px solid",
-                      borderColor: on ? "text.primary" : "divider",
-                    }}
-                  />
-                );
-              })}
-            </Stack>
+              Reset to safe defaults
+            </Button>
           )}
-          <Row
-            title="Cost per conversation"
-            body={
-              costMode === "abs"
-                ? measured != null
-                  ? `Today ≈ ${dollarsLabel(measured)}`
-                  : "A fixed ceiling"
-                : "Compared with today's agent"
-            }
-            hint={
-              costMode === "abs"
-                ? "Measured on every proposed change — none may cost more than this, whatever today's agent costs."
-                : "Measured on every proposed change against today's agent."
-            }
+        </Stack>
+
+        <SettingsSection
+          title="What it may change"
+          sub={`${areaCount} on · switch an area off to keep it as it is.`}
+        >
+          <AgentConfigAreasCard
+            agent={agent}
+            limits={limits}
+            can={can}
+            onChange={set}
+            speech={speech}
           >
-            <Stack direction="row" alignItems="center" spacing={1}>
+            <Box
+              sx={{
+                px: 2,
+                py: 1.125,
+                borderTop: "1px solid",
+                borderColor: "divider",
+              }}
+            >
+              <Stack direction="row" alignItems="center" spacing={2}>
+                <Box sx={{ width: { xs: "auto", md: 190 }, flexShrink: 0 }}>
+                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                    Never edited
+                  </Typography>
+                </Box>
+                <Typography
+                  noWrap
+                  sx={{
+                    typography: "s3",
+                    color: "text.secondary",
+                    flex: 1,
+                    minWidth: 0,
+                    display: { xs: "none", md: "block" },
+                  }}
+                >
+                  Files, tools or prompt sections no proposed change may touch
+                </Typography>
+              </Stack>
+              <Box sx={{ mt: 0.75 }}>
+                <ProtectedPartsPicker
+                  value={limits.protected}
+                  parts={parts}
+                  onChange={(next) => set({ protected: next })}
+                />
+              </Box>
+            </Box>
+            <ProtectedMembers
+              agent={agent}
+              value={limits.protectedMembers || []}
+              onChange={(next) => set({ protectedMembers: next })}
+            />
+          </AgentConfigAreasCard>
+        </SettingsSection>
+
+        <SettingsSection
+          title="Guardrails"
+          sub="A proposed change that breaks one is rejected."
+        >
+          <Card>
+            <Row
+              title="Model"
+              body={
+                limits.model.mode === "approved"
+                  ? "May switch to an approved model"
+                  : `Stays ${model || "as it is"}`
+              }
+              hint={
+                limits.model.mode === "approved"
+                  ? "Held to the same cost and latency limits as any change. Never to a model off this list."
+                  : "A fix never switches the model."
+              }
+            >
               <ToggleButtonGroup
                 size="small"
                 exclusive
-                value={costMode}
+                value={limits.model.mode}
                 onChange={(_, v) =>
-                  v &&
-                  set(
-                    v === "abs"
-                      ? { costMode: v, costCeilingAbs: costAbs }
-                      : { costMode: v },
-                  )
+                  v && set({ model: { ...limits.model, mode: v } })
                 }
                 sx={toggleSx}
               >
-                <ToggleButton value="pct" aria-label="Percentage above today">
-                  %
-                </ToggleButton>
-                <ToggleButton value="abs" aria-label="Amount per conversation">
-                  $
-                </ToggleButton>
+                <ToggleButton value="locked">Locked</ToggleButton>
+                <ToggleButton value="approved">Approved list</ToggleButton>
               </ToggleButtonGroup>
-              {costMode === "abs" ? (
-                <Select
-                  size="small"
-                  value={costAbs}
-                  onChange={(e) => set({ costCeilingAbs: e.target.value })}
-                  sx={{ ...selectSx, fontVariantNumeric: "tabular-nums" }}
-                >
-                  {absSteps.map((n) => (
-                    <MenuItem
-                      key={n}
-                      value={n}
+            </Row>
+            {limits.model.mode === "approved" && (
+              <Stack
+                direction="row"
+                flexWrap="wrap"
+                gap={0.75}
+                sx={{ px: 2, pb: 1.25, mt: -0.5 }}
+              >
+                {MODELS.map((m) => {
+                  const on = m === model || limits.model.approved.includes(m);
+                  return (
+                    <Chip
+                      key={m}
+                      size="small"
+                      label={m}
+                      clickable={m !== model}
+                      onClick={
+                        m === model
+                          ? undefined
+                          : () =>
+                              set({
+                                model: {
+                                  ...limits.model,
+                                  approved: on
+                                    ? limits.model.approved.filter(
+                                        (x) => x !== m,
+                                      )
+                                    : [...limits.model.approved, m],
+                                },
+                              })
+                      }
+                      icon={
+                        on ? (
+                          <Iconify icon="solar:check-linear" width={14} />
+                        ) : undefined
+                      }
                       sx={{
-                        typography: "s2",
-                        fontVariantNumeric: "tabular-nums",
+                        fontFamily: MONO,
+                        color: "text.primary",
+                        "& .MuiChip-icon": { color: "text.primary" },
+                        bgcolor: "transparent",
+                        border: "1px solid",
+                        borderColor: on ? "text.primary" : "divider",
                       }}
-                    >{`At most ${dollarsLabel(n)}`}</MenuItem>
-                  ))}
-                </Select>
-              ) : (
-                <Select
+                    />
+                  );
+                })}
+              </Stack>
+            )}
+            <Row
+              title="Cost per conversation"
+              body={
+                costMode === "abs"
+                  ? measured != null
+                    ? `Today ≈ ${dollarsLabel(measured)}`
+                    : "A fixed ceiling"
+                  : "Compared with today's agent"
+              }
+              hint={
+                costMode === "abs"
+                  ? "Measured on every proposed change — none may cost more than this, whatever today's agent costs."
+                  : "Measured on every proposed change against today's agent."
+              }
+            >
+              <Stack direction="row" alignItems="center" spacing={1}>
+                <ToggleButtonGroup
                   size="small"
-                  value={limits.costCeiling}
-                  onChange={(e) => set({ costCeiling: e.target.value })}
-                  sx={selectSx}
-                >
-                  {COST_STEPS.map((n) => (
-                    <MenuItem key={n} value={n} sx={{ typography: "s2" }}>
-                      {ceilingLabel(n)}
-                    </MenuItem>
-                  ))}
-                </Select>
-              )}
-            </Stack>
-          </Row>
-          <Row title="Latency" body="Response time can't get worse than this">
-            <Select
-              size="small"
-              value={limits.latencyCeiling}
-              onChange={(e) => set({ latencyCeiling: e.target.value })}
-              sx={selectSx}
-            >
-              {LATENCY_STEPS.map((n) => (
-                <MenuItem key={n} value={n} sx={{ typography: "s2" }}>
-                  {ceilingLabel(n)}
-                </MenuItem>
-              ))}
-            </Select>
-          </Row>
-          <MustPass mustPass={mustPass} />
-        </Card>
-      </SettingsSection>
-
-      <SettingsSection
-        title="Run budget"
-        sub="The most one improvement run may use."
-      >
-        <Card>
-          <Row
-            title="Most it may spend"
-            body="Stops here with the best it found"
-          >
-            <Select
-              size="small"
-              value={limits.budget.dollars}
-              onChange={(e) =>
-                set({ budget: { ...limits.budget, dollars: e.target.value } })
-              }
-              sx={selectSx}
-            >
-              {BUDGET_STEPS.map((n) => (
-                <MenuItem key={n} value={n} sx={{ typography: "s2" }}>
-                  {creditsLabel(n)}
-                </MenuItem>
-              ))}
-            </Select>
-          </Row>
-          <Row
-            title="Longest it may take"
-            body="Stops early at this cap"
-            hint="Voice runs take longer — the same cap stops them early."
-          >
-            <Select
-              size="small"
-              value={limits.budget.minutes}
-              onChange={(e) =>
-                set({ budget: { ...limits.budget, minutes: e.target.value } })
-              }
-              sx={selectSx}
-            >
-              {MINUTE_STEPS.map((n) => (
-                <MenuItem key={n} value={n} sx={{ typography: "s2" }}>
-                  {n < 60
-                    ? `${n} minutes`
-                    : `${n / 60} hour${n === 60 ? "" : "s"}`}
-                </MenuItem>
-              ))}
-            </Select>
-          </Row>
-        </Card>
-      </SettingsSection>
-
-      <SettingsSection
-        title="Automatic improvements"
-        sub="When one starts without anyone starting it."
-      >
-        <AutomaticCard
-          agent={agent}
-          schedule={limits.schedule}
-          onBuildEnv={onBuildEnv}
-          onChange={(patch) => {
-            const next = { ...limits.schedule, ...patch };
-            /* A new day, time or mode books the next slot from now. */
-            const timing = "mode" in patch || "day" in patch || "time" in patch;
-            set({
-              schedule: timing
-                ? {
-                    ...next,
-                    nextAt:
-                      next.mode === "weekly"
-                        ? nextScheduledAt(next).toISOString()
-                        : undefined,
+                  exclusive
+                  value={costMode}
+                  onChange={(_, v) =>
+                    v &&
+                    set(
+                      v === "abs"
+                        ? { costMode: v, costCeilingAbs: costAbs }
+                        : { costMode: v },
+                    )
                   }
-                : next,
-            });
-          }}
-        />
-      </SettingsSection>
-    </Stack>
+                  sx={toggleSx}
+                >
+                  <ToggleButton value="pct" aria-label="Percentage above today">
+                    %
+                  </ToggleButton>
+                  <ToggleButton
+                    value="abs"
+                    aria-label="Amount per conversation"
+                  >
+                    $
+                  </ToggleButton>
+                </ToggleButtonGroup>
+                {costMode === "abs" ? (
+                  <Select
+                    size="small"
+                    value={costAbs}
+                    onChange={(e) => set({ costCeilingAbs: e.target.value })}
+                    sx={{ ...selectSx, fontVariantNumeric: "tabular-nums" }}
+                  >
+                    {absSteps.map((n) => (
+                      <MenuItem
+                        key={n}
+                        value={n}
+                        sx={{
+                          typography: "s2",
+                          fontVariantNumeric: "tabular-nums",
+                        }}
+                      >{`At most ${dollarsLabel(n)}`}</MenuItem>
+                    ))}
+                  </Select>
+                ) : (
+                  <Select
+                    size="small"
+                    value={limits.costCeiling}
+                    onChange={(e) => set({ costCeiling: e.target.value })}
+                    sx={selectSx}
+                  >
+                    {COST_STEPS.map((n) => (
+                      <MenuItem key={n} value={n} sx={{ typography: "s2" }}>
+                        {ceilingLabel(n)}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                )}
+              </Stack>
+            </Row>
+            <Row title="Latency" body="Response time can't get worse than this">
+              <Select
+                size="small"
+                value={limits.latencyCeiling}
+                onChange={(e) => set({ latencyCeiling: e.target.value })}
+                sx={selectSx}
+              >
+                {LATENCY_STEPS.map((n) => (
+                  <MenuItem key={n} value={n} sx={{ typography: "s2" }}>
+                    {ceilingLabel(n)}
+                  </MenuItem>
+                ))}
+              </Select>
+            </Row>
+            <MustPass mustPass={mustPass} />
+          </Card>
+        </SettingsSection>
+
+        {/* Embedded in an improvement's setup: the budget and time are that
+          improvement's own, and the schedule isn't a limit on one run. */}
+        {!embedded && (
+          <>
+            <SettingsSection
+              title="Run budget"
+              sub="The most one improvement run may use."
+            >
+              <Card>
+                <Row
+                  title="Most it may spend"
+                  body="Stops here with the best it found"
+                >
+                  <Select
+                    size="small"
+                    value={limits.budget.dollars}
+                    onChange={(e) =>
+                      set({
+                        budget: { ...limits.budget, dollars: e.target.value },
+                      })
+                    }
+                    sx={selectSx}
+                  >
+                    {BUDGET_STEPS.map((n) => (
+                      <MenuItem key={n} value={n} sx={{ typography: "s2" }}>
+                        {creditsLabel(n)}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </Row>
+                <Row
+                  title="Longest it may take"
+                  body="Stops early at this cap"
+                  hint="Voice runs take longer — the same cap stops them early."
+                >
+                  <Select
+                    size="small"
+                    value={limits.budget.minutes}
+                    onChange={(e) =>
+                      set({
+                        budget: { ...limits.budget, minutes: e.target.value },
+                      })
+                    }
+                    sx={selectSx}
+                  >
+                    {MINUTE_STEPS.map((n) => (
+                      <MenuItem key={n} value={n} sx={{ typography: "s2" }}>
+                        {n < 60
+                          ? `${n} minutes`
+                          : `${n / 60} hour${n === 60 ? "" : "s"}`}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </Row>
+              </Card>
+            </SettingsSection>
+
+            <SettingsSection
+              title="Automatic improvements"
+              sub="When one starts without anyone starting it."
+            >
+              <AutomaticCard
+                agent={agent}
+                schedule={limits.schedule}
+                onBuildEnv={onBuildEnv}
+                onChange={(patch) => {
+                  const next = { ...limits.schedule, ...patch };
+                  /* A new day, time or mode books the next slot from now. */
+                  const timing =
+                    "mode" in patch || "day" in patch || "time" in patch;
+                  set({
+                    schedule: timing
+                      ? {
+                          ...next,
+                          nextAt:
+                            next.mode === "weekly"
+                              ? nextScheduledAt(next).toISOString()
+                              : undefined,
+                        }
+                      : next,
+                  });
+                }}
+              />
+            </SettingsSection>
+          </>
+        )}
+      </Stack>
+    </SettingsLayoutContext.Provider>
   );
 }
 
@@ -444,6 +470,7 @@ AgentConstraintsTab.propTypes = {
   model: PropTypes.string,
   mustPass: PropTypes.object,
   speech: PropTypes.object,
+  embedded: PropTypes.bool,
   onBuildEnv: PropTypes.func,
 };
 
