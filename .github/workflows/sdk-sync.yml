@@ -1,0 +1,150 @@
+name: sdk-sync
+
+# Carries every backend release into futureagi-sdk. When release-images has
+# published the images of a vX.Y.Z tag, this checks out the SDK repository,
+# refreshes its contract slice from this tag's api_contracts/openapi/swagger.json,
+# regenerates the Python and TypeScript clients and the MCP tool list, pins the
+# release in sdkgen/contracts/BACKEND_VERSION, and opens a pull request on the
+# SDK's dev branch that merges itself once the SDK's CI and E2E (against this
+# very release image) pass. From there the SDK's promote and release-please
+# workflows take it to main, PyPI and npm.
+#
+# The commit is `feat(contract): ...` when generated code changed (a minor SDK
+# release) and `chore(contract): ...` when only the pin moved (no release).
+#
+# Needs the release bot app installed on futureagi-sdk (RELEASE_BOT_APP_ID /
+# RELEASE_BOT_PRIVATE_KEY, the secrets release-please.yml uses).
+
+on:
+  workflow_run:
+    workflows: [release-images]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Backend release tag to sync (vX.Y.Z); its images must be published
+        required: true
+        type: string
+      sdk-base:
+        description: futureagi-sdk branch to open the pull request against
+        default: dev
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sdk-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    # workflow_run fires for every release-images run; only a successful run
+    # of a bare vX.Y.Z tag counts.
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || (github.event.workflow_run.conclusion == 'success'
+          && startsWith(github.event.workflow_run.head_branch, 'v'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Resolve the release
+        id: release
+        env:
+          DISPATCHED: ${{ inputs.version }}
+          RUN_REF: ${{ github.event.workflow_run.head_branch }}
+          SDK_BASE: ${{ inputs.sdk-base || 'dev' }}
+        run: |
+          version="${DISPATCHED:-$RUN_REF}"
+          if ! echo "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "not a release tag: $version"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "sdk-base=$SDK_BASE" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the contract at the release
+        if: steps.release.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.release.outputs.version }}
+          sparse-checkout: api_contracts/openapi
+          fetch-depth: 1
+
+      - uses: actions/create-github-app-token@v2
+        if: steps.release.outputs.skip != 'true'
+        id: app-token
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: future-agi
+          repositories: futureagi-sdk
+
+      - name: Check out futureagi-sdk
+        if: steps.release.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: future-agi/futureagi-sdk
+          ref: ${{ steps.release.outputs.sdk-base }}
+          path: futureagi-sdk
+          token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        if: steps.release.outputs.skip != 'true'
+        with:
+          python-version: "3.12"
+
+      - name: Refresh the contract slice and regenerate
+        if: steps.release.outputs.skip != 'true'
+        id: regen
+        working-directory: futureagi-sdk
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          python -m pip install --quiet pyyaml
+          python sdkgen/sync_contract.py "$GITHUB_WORKSPACE/api_contracts/openapi/swagger.json" --backend-version "$VERSION"
+          python sdkgen/generate.py
+          if git diff --quiet -- . ':!sdkgen/contracts/BACKEND_VERSION'; then
+            echo "type=chore" >> "$GITHUB_OUTPUT"
+            echo "no API change for the SDK in $VERSION; pinning the release only"
+          else
+            echo "type=feat" >> "$GITHUB_OUTPUT"
+          fi
+          git diff --stat | tee "$RUNNER_TEMP/diffstat.txt"
+
+      - name: Open the pull request
+        if: steps.release.outputs.skip != 'true'
+        working-directory: futureagi-sdk
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: future-agi/futureagi-sdk
+          VERSION: ${{ steps.release.outputs.version }}
+          BASE: ${{ steps.release.outputs.sdk-base }}
+          TYPE: ${{ steps.regen.outputs.type }}
+          SOURCE_RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          branch="chore/sync-backend-$VERSION"
+          title="$TYPE(contract): sync with backend $VERSION"
+          git config user.name "futureagi-release-bot[bot]"
+          git config user.email "futureagi-release-bot[bot]@users.noreply.github.com"
+          git checkout -B "$branch"
+          git add -A
+          git commit -q -m "$title" -m "Contract slice, generated clients and MCP tool list regenerated from future-agi $VERSION (api_contracts/openapi/swagger.json). Pinned in sdkgen/contracts/BACKEND_VERSION; the E2E workflow tests against futureagi/standalone:$VERSION."
+          git push -f origin "$branch"
+          fence='```'
+          body=$(printf '%s\n\n%s\n%s\n%s\n\n%s\n' \
+            "Backend release **$VERSION** synced into the SDK: contract slice, generated Python and TypeScript clients, MCP tool list, and sdkgen/contracts/BACKEND_VERSION. The E2E workflow on this PR runs against futureagi/standalone:$VERSION. Merges itself when CI and E2E pass." \
+            "$fence" "$(cat "$RUNNER_TEMP/diffstat.txt")" "$fence" \
+            "Opened by future-agi's sdk-sync workflow: $SOURCE_RUN")
+          number=$(gh pr list --head "$branch" --base "$BASE" --state open --json number --jq '.[0].number // empty')
+          if [ -z "$number" ]; then
+            gh pr create --base "$BASE" --head "$branch" --title "$title" --body "$body"
+            number=$(gh pr list --head "$branch" --base "$BASE" --state open --json number --jq '.[0].number')
+          else
+            gh pr edit "$number" --title "$title" --body "$body" >/dev/null
+          fi
+          echo "futureagi-sdk#$number"
+          gh pr merge --auto --squash "$number" \
+            || echo "::warning::auto-merge is not enabled on futureagi-sdk; merge #$number by hand"
