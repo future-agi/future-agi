@@ -125,8 +125,9 @@ describe("EnvironmentsHome", () => {
       screen.getByRole("tab", { name: "Build environment" }),
     ).toHaveAttribute("aria-selected", "true");
     expect(screen.getByText("Source repository")).toBeInTheDocument();
-    // 2 hero + 5 option cards; tabs are role="tab", not button.
-    expect(screen.getAllByRole("button")).toHaveLength(7);
+    // The header's Build environment + 2 hero + 5 option cards; tabs are
+    // role="tab", not button.
+    expect(screen.getAllByRole("button")).toHaveLength(8);
     // "Customer Support Line" doubles as a Prebuilt hero chip, so assert a
     // table-only harness-job name to prove the My Environments list is absent.
     expect(screen.queryByText("Billing Chat Agent")).toBeNull();
@@ -148,6 +149,18 @@ describe("EnvironmentsHome", () => {
     expect(lastSearch).toContain("tab=build");
     expect(screen.getByText("Source repository")).toBeInTheDocument();
   });
+
+  it.each(["build", "my-environments", "personas"])(
+    "opens the Build environment drawer from the header on ?tab=%s",
+    async (tab) => {
+      const user = userEvent.setup();
+      renderHome(`/dashboard/simulate/environments?tab=${tab}`);
+
+      await user.click(screen.getByRole("button", { name: "Build environment" }));
+      expect(await screen.findByText("Connect your agent")).toBeInTheDocument();
+      expect(lastSearch).toBe(`?tab=${tab}`);
+    },
+  );
 
   it("renders the three tabs in order", () => {
     renderHome("/dashboard/simulate/environments");

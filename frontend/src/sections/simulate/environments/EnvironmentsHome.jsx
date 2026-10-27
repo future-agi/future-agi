@@ -1,5 +1,6 @@
-import { useEffect } from "react";
-import { Box, Stack, Tab, Tabs, Typography } from "@mui/material";
+import { useEffect, useState } from "react";
+import { Box, Button, Stack, Tab, Tabs, Typography } from "@mui/material";
+import Iconify from "src/components/iconify";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import useEnvironmentsTab from "./hooks/useEnvironmentsTab";
 import { resetEnvironmentsEntryState } from "./store/useEnvironmentsStore";
@@ -8,6 +9,7 @@ import MyEnvironmentsTab from "./MyEnvironmentsTab";
 import { useMyEnvironments } from "src/api/simulate-environments/environments";
 import { DEFAULT_PAGE_SIZE } from "./myEnvironments.constants";
 import PersonasTab from "./PersonasTab";
+import BuildEnvironmentDrawer from "./buildDrawer/BuildEnvironmentDrawer";
 import { ENTRY_TAB, ENVIRONMENTS_HEADER, ENV_TABS_SX } from "./environmentOptions";
 
 const TAB_PANELS = {
@@ -38,6 +40,7 @@ function MyEnvironmentsLabel() {
 export default function EnvironmentsHome() {
   const { tab, setTab } = useEnvironmentsTab();
   const TabPanel = TAB_PANELS[tab];
+  const [buildOpen, setBuildOpen] = useState(false);
 
   const onTabChange = (next) => {
     // Keeps the event the old Personas menu item fired.
@@ -75,6 +78,16 @@ export default function EnvironmentsHome() {
             </Typography>
           </Box>
         </Stack>
+        <Button
+          size="small"
+          variant="contained"
+          color="primary"
+          startIcon={<Iconify icon="solar:add-circle-linear" width={14} />}
+          onClick={() => setBuildOpen(true)}
+          sx={{ flexShrink: 0 }}
+        >
+          Build environment
+        </Button>
       </Stack>
 
       {/* Tab rail — matches the product's other tab bars (HarnessDetail): tabs
@@ -88,6 +101,7 @@ export default function EnvironmentsHome() {
       </Box>
 
       <TabPanel />
+      <BuildEnvironmentDrawer open={buildOpen} onClose={() => setBuildOpen(false)} />
     </Box>
   );
 }
