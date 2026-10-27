@@ -75,7 +75,11 @@ jobs:
       # cancel path; widen this once that is fixed.
       - name: Run gateway tests under the race detector
         working-directory: agentcc-gateway
-        run: go test -race -count=1 ./internal/pipeline/... ./internal/plugins/... ./internal/models/... ./internal/otel/... ./internal/audit/...
+        run: go test -race -count=1 ./internal/pipeline/... ./internal/plugins/... ./internal/models/... ./internal/otel/... ./internal/audit/... ./internal/guardrails/... ./internal/reflexion/...
+
+      - name: Run response repair handlers under the race detector
+        working-directory: agentcc-gateway
+        run: go test -race -count=1 -run '^TestReflexion' ./internal/server
 
       - uses: docker/setup-buildx-action@v3
 

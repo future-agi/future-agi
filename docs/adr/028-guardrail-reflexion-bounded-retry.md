@@ -1,79 +1,70 @@
-# ADR 028: Guardrail reflexion — bounded post-stage retry with feedback injection
+# ADR 028: Bounded guardrail response repair
 
 ## Status
 
-Accepted
+Proposed in PR #334 for issue #70. Supersedes the PR's original non-streaming,
+gateway-wide retry design.
 
 ## Context
 
-Issue #70: "Guardrails are binary (block/pass) — add response reflexion at the gateway."
+An optional repair step can turn a blocked model answer into an acceptable answer
+without teaching every client a retry protocol. It must not weaken block
+semantics, leak intermediate output, lose provider spend or reset the retry cap
+when different checks fail.
 
-When a post-stage guardrail check blocks the model's response (e.g., a PII leak, policy violation, or content-moderation hit), the gateway currently returns a 403 to the client. The model had no opportunity to correct itself — it generated an output it couldn't know would fail.
-
-**Reflexion** is the pattern of injecting the failure reason back into the conversation (as a user-turn message) and re-calling the model, bounded by a maximum retry count. The model can revise its response given explicit feedback about why its previous output was rejected.
+The original implementation depended on a missing response as the signal to
+retry. That is not a sufficient contract: an explicit response-validation veto
+is needed, independently of whether repair is enabled. Local baseline handler
+probes showed static and tenant post-block paths producing inconsistent HTTP
+outcomes; this is not evidence about a deployed production configuration.
 
 ## Decision
 
-### Architecture: handler-level reflexion loop
-
-The reflexion loop lives in `handleNonStream` (and future: `handleStream`), not inside the guardrail plugin or the pipeline engine. Rationale:
-
-- The guardrail plugin's `ProcessResponse` must remain a pure post-plugin: it checks, sets state, returns an error. It does not own retry logic.
-- The handler already owns the `providerCall` closure and the response-write path — it is the natural coordination point.
-- The engine's `Process` method re-runs pre-plugins on each reflexion attempt (auth, rate-limit, guardrail pre-check). This is a V1 tradeoff documented below.
-
-### Detection of post-stage guardrail blocks
-
-A post-stage guardrail block is detected in `handleNonStream` by:
-
-```
-engine.Process() returned nil  (pre-stage passed)
-AND rc.Response == nil         (guardrail nulled the response)
-AND rc.Flags.GuardrailTriggered
-```
-
-Pre-stage guardrail blocks return a non-nil error from `engine.Process` and are NOT reflexion candidates — they reject the *input*, not the output.
-
-### Feedback injection
-
-The block reason (`rc.GuardrailResults[0].Message`) is formatted into a user-turn message appended to the conversation:
-
-> "Your previous response was blocked by a content policy guardrail. Please revise your response to comply. Reason: {reason}"
-
-The template is configurable via `guardrails.reflexion.feedback_template` in `config.yaml`.
-
-### Configuration
-
-```yaml
-guardrails:
-  reflexion:
-    enabled: true
-    max_attempts: 3        # hard cap at 5
-    feedback_template: ""  # use default if empty
-```
-
-Disabled by default. `MaxAttempts` is hard-capped at 5 to prevent runaway loops even if misconfigured.
+- Initialize managed guardrails whenever the gateway has a control-plane URL,
+  even when global `guardrails.enabled` is false; the global flag gates only
+  operator-defined static rules. Without static rules or a control-plane URL,
+  the plugin remains off.
+- Use per-rule `config.on_block`, `config.reflect_max_attempts` and
+  `config.reflect_debug`, with reject as the default and at most five additional
+  generations. Keep the existing extensible wire `config` map.
+- Separate attempt admission/accounting, synchronous response validation and
+  final-only observers. Propagate a validation veto, but do not turn ordinary
+  logging/observer errors into client failures.
+- Repair only synchronous post-response content failures. Reject wins when rules
+  disagree; the retry limit only tightens across the whole request.
+- Build private feedback requests containing the original conversation, rejected
+  assistant text and failure feedback. Restore the original request for checks
+  and logging. Unsupported blocked tool/reasoning/multi-choice answers reject.
+- Scope the initial adapter to `/v1/chat/completions`. Fail closed before the
+  provider on other text-generation routes when a reflection rule applies,
+  instead of silently falling back to an unbuffered protocol adapter.
+- Buffer opted-in streams until the entire candidate passes. Bound retained
+  chunks, honor cancellation and send no failed candidate to the client.
+- Settle actual observed usage before a rejected response is cleared. Recheck
+  limits before additional repair work, preserve ordinary non-reflection
+  failover admission behavior and record missing usage honestly.
+- Keep final cache/telemetry execution single-shot and rejected content out of
+  asynchronous observers and debug history.
 
 ## Consequences
 
-### Accepted V1 tradeoffs
+Repair increases provider usage and response latency. Buffered streaming trades
+immediacy for the ability to validate before exposure. Limits are checked, not
+reserved, so the existing concurrent-spend semantics are not strengthened by
+this feature. Blocked-call accounting is corrected rather than advertised as
+unchanged billing.
 
-1. **Pre-plugins re-run on each attempt**: auth, rate-limit, and budget checks all fire again. For rate-limiting, each reflexion attempt consumes a rate-limit slot. Operators should set `MaxAttempts` conservatively. A future version can add a dedicated `engine.ProcessRetry` that skips pre-plugins.
+Legacy top-level UI stages are not blindly forwarded: absent explicit nested
+stage settings, checks retain native behavior. Provider-owned `config.mode` is
+not repurposed as an execution mode. No schema migration is required.
 
-2. **Blocked provider calls are not billed to the client**: the cost plugin only records cost when `rc.Response != nil`. Reflexion attempts that are blocked (model still violates policy) incur provider cost that is not passed through. This is conservative from the client's perspective.
+## Validation
 
-3. **Streaming reflexion not yet implemented**: `handleStream` continues to return the guardrail block error immediately. Streaming reflexion requires buffering the full stream before checking, which is a larger change tracked separately.
+Use tests against production handlers, guardrails, accounting plugins and the
+control-plane/UI boundaries. The separate copied formal models and their CI
+workflow are removed; they did not prove the implementation. Existing gateway
+CI runs the production suite, with focused race coverage for the changed path.
+Actual passing runs and real-user verification remain release requirements.
 
-4. **No exponential back-off**: retries are immediate. Provider errors during reflexion abort immediately (not retried within the reflexion loop).
-
-### Benefits
-
-- Response quality: model gets explicit feedback to correct its output rather than an opaque block.
-- Client transparency: successful reflexion is indicated by `x-agentcc-reflexion-attempt` header.
-- Operator control: disabled by default, configurable per-gateway.
-
-## Formal verification
-
-- `docs/tla/GuardrailReflexion.tla` — TLA+ spec proving: loop terminates, attempt count is bounded, success is recorded on first passing response.
-- `agentcc-gateway/formal_tests/test_reflexion_z3.py` — Z3 proofs: bounded termination impossibility of infinite loop, monotonic attempt counter.
-- `agentcc-gateway/formal_tests/test_reflexion_hypothesis.py` — Hypothesis property tests: max-attempts invariant, feedback accumulation, success on first non-blocked response.
+See [the behavior specification](../specs/guardrail_reflexion.md) for controls,
+limits, compatibility and test locations.
