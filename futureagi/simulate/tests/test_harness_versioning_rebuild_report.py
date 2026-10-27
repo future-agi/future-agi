@@ -162,8 +162,26 @@ def _shrinking_pad(length):
             [POSTGRES, "Hx83jdPq20sLm"],
             lambda: _shrinking_pad(ALK_CUT - 40) + POSTGRES,
         ),
+        (
+            # The cut value starts inside a whole earlier one.
+            [POSTGRES[:-3] + "appdb", "appdb_secret_KJH23k4j5h6g7f8d9s0a"],
+            lambda: _shrinking_pad(ALK_CUT - 70)
+            + POSTGRES[:-3]
+            + "appdb_secret_KJH23k4j5h6g7f8d9s0a",
+        ),
+        (
+            # A whole value ends with the cut one's start.
+            ["prod-db-Zq9wX7vT3kLm5678", "5678XYZ-other-secret"],
+            lambda: _shrinking_pad(ALK_CUT - 30) + "prod-db-Zq9wX7vT3kLm5678XYZ-oth",
+        ),
     ],
-    ids=["assignment-inside", "query-token-inside", "nested-value"],
+    ids=[
+        "assignment-inside",
+        "query-token-inside",
+        "nested-value",
+        "inside-a-whole-value",
+        "after-a-whole-value",
+    ],
 )
 def test_a_cut_value_partly_masked_inside_is_still_masked(values, secret_text):
     cut = secret_text()[:ALK_CUT]
@@ -181,7 +199,7 @@ def test_a_cut_value_partly_masked_inside_is_still_masked(values, secret_text):
         )
 
     message = report["problems"][0]["message"]
-    for leaked in ("AKIAIOSF", "svcadmin", "prod-db", "Hx83jdPq"):
+    for leaked in ("AKIAIOSF", "svcadmin", "prod-db", "Hx83jdPq", "Zq9wX7vT"):
         assert leaked not in message
 
 
