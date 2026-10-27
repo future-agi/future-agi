@@ -572,7 +572,7 @@ func (h *Handlers) handleAnthropicNonStreamViaCanonical(
 	var canonicalResp *models.ChatCompletionResponse
 	err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
 		var callErr error
-		canonicalResp, callErr = provider.ChatCompletion(ctx, canonicalReq)
+		canonicalResp, callErr = translatedChatCompletion(ctx, provider, canonicalReq)
 		if callErr != nil {
 			return callErr
 		}
@@ -697,7 +697,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 		// produced a chunk. Vertex can terminate before its first chunk (for
 		// example, an unexpected EOF), which must remain a retryable HTTP error.
 		for attempt := 0; attempt < 2; attempt++ {
-			rawChunkCh, errCh = provider.StreamChatCompletion(streamCtx, canonicalReq)
+			rawChunkCh, errCh = translatedStreamChatCompletion(streamCtx, provider, canonicalReq)
 			if rawChunkCh == nil {
 				return models.ErrUpstreamProvider(http.StatusBadGateway, "upstream provider returned no stream")
 			}
@@ -875,6 +875,24 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 }
 
 // writeAnthropicErrorFromError converts an error to Anthropic error format.
+// translatedChatCompletion calls provider with a request translated from
+// another dialect: over the Responses API when the model refuses the request on
+// chat completions, as gpt-5.6 refuses function tools while it reasons.
+func translatedChatCompletion(ctx context.Context, provider providers.Provider, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+	if rp, ok := provider.(providers.ChatViaResponsesProvider); ok && rp.ChatNeedsResponses(req) {
+		return rp.ChatCompletionViaResponses(ctx, req)
+	}
+	return provider.ChatCompletion(ctx, req)
+}
+
+// translatedStreamChatCompletion is translatedChatCompletion for a stream.
+func translatedStreamChatCompletion(ctx context.Context, provider providers.Provider, req *models.ChatCompletionRequest) (<-chan models.StreamChunk, <-chan error) {
+	if rp, ok := provider.(providers.ChatViaResponsesProvider); ok && rp.ChatNeedsResponses(req) {
+		return rp.StreamChatCompletionViaResponses(ctx, req)
+	}
+	return provider.StreamChatCompletion(ctx, req)
+}
+
 func writeAnthropicErrorFromError(w http.ResponseWriter, err error) {
 	var apiErr *models.APIError
 	if errors.As(err, &apiErr) {
