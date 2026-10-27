@@ -1231,6 +1231,7 @@ import type {
   TOTPDisableResponseApi,
   TOTPSetupResponseApi,
   TTSVoiceApi,
+  TeamCreateErrorResponseApi,
   TeamCreateRequestApi,
   TeamCreateResponseApi,
   TeamRemoveResponseApi,
@@ -6873,7 +6874,7 @@ export type accountsTeamUsersCreateResponse201 = {
 };
 
 export type accountsTeamUsersCreateResponse400 = {
-  data: AccountsErrorResponseApi;
+  data: TeamCreateErrorResponseApi;
   status: 400;
 };
 
