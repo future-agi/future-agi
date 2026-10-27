@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/reflexion"
 )
 
 // Stage indicates when a guardrail runs.
@@ -30,18 +31,20 @@ const (
 
 // CheckInput is the input to a guardrail check.
 type CheckInput struct {
-	Request  *models.ChatCompletionRequest
-	Response *models.ChatCompletionResponse // nil for pre-stage
-	Metadata map[string]string
+	Request    *models.ChatCompletionRequest
+	Response   *models.ChatCompletionResponse // nil for pre-stage
+	Metadata   map[string]string
+	DeferAsync bool // asynchronous observers see only the final accepted candidate
 }
 
 // CheckResult is the output of a guardrail check.
 type CheckResult struct {
-	Pass    bool                   // true = safe, false = triggered
-	Score   float64                // 0.0 = safe, 1.0 = max violation
-	Action  Action                 // what action to take if triggered
-	Message string                 // human-readable explanation
-	Details map[string]interface{} // guardrail-specific metadata
+	Pass             bool                   // true = safe, false = triggered
+	Score            float64                // 0.0 = safe, 1.0 = max violation
+	Action           Action                 // what action to take if triggered
+	Message          string                 // human-readable explanation
+	Details          map[string]interface{} // guardrail-specific metadata
+	OperationalError bool                   // timeouts/panics are not repairable content failures
 }
 
 // Guardrail is the interface that all guardrail implementations must satisfy.
@@ -56,11 +59,12 @@ type Guardrail interface {
 
 // TriggeredGuardrail records a guardrail that was triggered during execution.
 type TriggeredGuardrail struct {
-	Name      string  `json:"name"`
-	Score     float64 `json:"score"`
-	Threshold float64 `json:"threshold"`
-	Action    Action  `json:"action"`
-	Message   string  `json:"message"`
+	Name       string           `json:"name"`
+	Score      float64          `json:"score"`
+	Threshold  float64          `json:"threshold"`
+	Action     Action           `json:"action"`
+	Message    string           `json:"message"`
+	Reflection reflexion.Policy `json:"-"`
 }
 
 // PipelineResult is the aggregate result of running all guardrails in a stage.
@@ -75,6 +79,9 @@ type PipelineResult struct {
 func shouldTrigger(result *CheckResult, threshold float64) bool {
 	if result == nil {
 		return false
+	}
+	if result.OperationalError {
+		return true
 	}
 	if result.Score > threshold {
 		return true

@@ -8,15 +8,18 @@ import (
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/guardrails/policy"
+	"github.com/futureagi/agentcc-gateway/internal/reflexion"
 )
 
 // resolvedRule is a guardrail bound to its config-driven parameters.
 type resolvedRule struct {
-	guardrail Guardrail
-	mode      string // "sync" or "async"
-	action    Action
-	threshold float64
-	timeout   time.Duration
+	guardrail  Guardrail
+	mode       string // "sync" or "async"
+	action     Action
+	threshold  float64
+	timeout    time.Duration
+	reflection reflexion.Policy
+	configErr  error
 }
 
 // maxAsyncGuardrails limits the number of concurrent async guardrail goroutines.
@@ -56,12 +59,18 @@ func NewEngine(cfg config.GuardrailsConfig, registry map[string]Guardrail) *Engi
 			timeout = e.defaultTimeout
 		}
 
+		reflection, configErr := reflexion.Parse(rule.Config)
+		if rule.Stage != "post" || rule.Mode == "async" || rule.Action != "block" {
+			reflection.Enabled = false
+		}
 		resolved := resolvedRule{
-			guardrail: g,
-			mode:      rule.Mode,
-			action:    parseAction(rule.Action),
-			threshold: rule.Threshold,
-			timeout:   timeout,
+			reflection: reflection,
+			configErr:  configErr,
+			guardrail:  g,
+			mode:       rule.Mode,
+			action:     parseAction(rule.Action),
+			threshold:  rule.Threshold,
+			timeout:    timeout,
 		}
 
 		switch rule.Stage {
@@ -143,7 +152,9 @@ func (e *Engine) run(ctx context.Context, rules []resolvedRule, input *CheckInpu
 		}
 
 		if rule.mode == "async" {
-			e.runAsync(rule, input)
+			if !input.DeferAsync {
+				e.runAsync(rule, input)
+			}
 			continue
 		}
 
@@ -166,12 +177,19 @@ func (e *Engine) run(ctx context.Context, rules []resolvedRule, input *CheckInpu
 			Action:    effectiveAction,
 			Message:   checkResult.Message,
 		}
+		if !checkResult.OperationalError && effectiveAction == ActionBlock {
+			tg.Reflection = rule.reflection
+		}
 		result.Triggered = append(result.Triggered, tg)
 
 		switch effectiveAction {
 		case ActionBlock:
 			result.Blocked = true
-			return result // Short-circuit on block.
+			// Post checks all run so a reject rule cannot be bypassed by an
+			// earlier reflect rule. Pre-stage blocks still short-circuit.
+			if input.Response == nil {
+				return result
+			}
 		case ActionWarn:
 			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %s", rule.guardrail.Name(), checkResult.Message))
 		case ActionLog:
@@ -188,6 +206,11 @@ func (e *Engine) run(ctx context.Context, rules []resolvedRule, input *CheckInpu
 }
 
 func (e *Engine) runSync(ctx context.Context, rule resolvedRule, input *CheckInput) *CheckResult {
+	owned, err := snapshotInput(input)
+	if err != nil {
+		return &CheckResult{Pass: false, Score: 1, Message: "invalid guardrail input", OperationalError: true}
+	}
+	input = owned
 	checkCtx, cancel := context.WithTimeout(ctx, rule.timeout)
 	defer cancel()
 
@@ -214,6 +237,9 @@ func (e *Engine) runSync(ctx context.Context, rule resolvedRule, input *CheckInp
 
 	select {
 	case res := <-ch:
+		if checkCtx.Err() != nil {
+			return e.handleError(rule, checkCtx.Err())
+		}
 		if res.err != nil {
 			return e.handleError(rule, res.err)
 		}
@@ -228,15 +254,21 @@ func (e *Engine) runSync(ctx context.Context, rule resolvedRule, input *CheckInp
 			return nil // pass
 		}
 		return &CheckResult{
-			Pass:    false,
-			Score:   1.0,
-			Action:  rule.action,
-			Message: fmt.Sprintf("guardrail %q timed out", rule.guardrail.Name()),
+			Pass:             false,
+			Score:            1.0,
+			Action:           rule.action,
+			Message:          fmt.Sprintf("guardrail %q timed out", rule.guardrail.Name()),
+			OperationalError: true,
 		}
 	}
 }
 
 func (e *Engine) runAsync(rule resolvedRule, input *CheckInput) {
+	owned, err := snapshotInput(input)
+	if err != nil {
+		return
+	}
+	input = owned
 	// Acquire semaphore slot to bound concurrency. Drop if full.
 	select {
 	case e.asyncSem <- struct{}{}:
@@ -283,10 +315,11 @@ func (e *Engine) handleError(rule resolvedRule, err error) *CheckResult {
 		return nil
 	}
 	return &CheckResult{
-		Pass:    false,
-		Score:   1.0,
-		Action:  rule.action,
-		Message: fmt.Sprintf("guardrail %q error: %v", rule.guardrail.Name(), err),
+		Pass:             false,
+		Score:            1.0,
+		Action:           rule.action,
+		Message:          fmt.Sprintf("guardrail %q error: %v", rule.guardrail.Name(), err),
+		OperationalError: true,
 	}
 }
 

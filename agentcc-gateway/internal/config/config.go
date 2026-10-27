@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/futureagi/agentcc-gateway/internal/reflexion"
 	"gopkg.in/yaml.v3"
 )
 
@@ -536,16 +537,6 @@ type GuardrailsConfig struct {
 	DefaultTimeout time.Duration            `yaml:"default_timeout" json:"default_timeout"`
 	Rules          []GuardrailRuleConfig    `yaml:"rules" json:"rules"`
 	Streaming      StreamingGuardrailConfig `yaml:"streaming" json:"streaming"`
-	Reflexion      ReflexionConfig          `yaml:"reflexion" json:"reflexion"`
-}
-
-// ReflexionConfig enables guardrail reflexion: when a post-stage guardrail blocks
-// the model's response, the block reason is injected back into the conversation and
-// the model is re-called (bounded by MaxAttempts). Disabled by default.
-type ReflexionConfig struct {
-	Enabled          bool   `yaml:"enabled" json:"enabled"`
-	MaxAttempts      int    `yaml:"max_attempts" json:"max_attempts"` // default 3; hard cap 5
-	FeedbackTemplate string `yaml:"feedback_template" json:"feedback_template"`
 }
 
 // StreamingGuardrailConfig controls guardrails on streaming responses.
@@ -1027,14 +1018,6 @@ func DefaultConfig() *Config {
 			Enabled:        false, // opt-in: set guardrails.enabled: true in YAML to activate
 			FailOpen:       true,
 			DefaultTimeout: 5 * time.Second,
-			Reflexion: ReflexionConfig{
-				// Enabled intentionally defaults to false — reflexion is an opt-in feature.
-				// Operators enable it by setting guardrails.reflexion.enabled: true in YAML.
-				// MaxAttempts is left at zero here so that DefaultConfig() is unambiguously
-				// inert: Enabled=false AND MaxAttempts=0 means reflexion is fully off.
-				// When an operator sets enabled:true in YAML without an explicit max_attempts,
-				// the handler falls back to 3 at runtime (see runReflexion in handlers.go).
-			},
 		},
 		Logging: LoggingConfig{
 			Level:  "info",
@@ -1330,6 +1313,12 @@ func (c *Config) Validate() error {
 		}
 		if p.APIFormat == "" {
 			return fmt.Errorf("provider %q: api_format is required", name)
+		}
+	}
+
+	for _, rule := range c.Guardrails.Rules {
+		if _, err := reflexion.Parse(rule.Config); err != nil {
+			return fmt.Errorf("guardrail %q: %w", rule.Name, err)
 		}
 	}
 

@@ -58,6 +58,11 @@ type RequestContext struct {
 	Flags         RequestFlags
 	Timings       map[string]time.Duration
 	Errors        []error
+	// Attempts exists only while a fully buffered candidate is being processed.
+	Attempts         *AttemptLedger
+	AttemptHooks     bool   // provider adapter explicitly brackets each transport call
+	BufferedResponse bool   // selected after pre-plugins, before any provider bytes
+	AccountedUsage   *Usage // body-free totals survive rejected candidates
 
 	// mu serializes writes to Timings and Metadata between the goroutines that
 	// legitimately write them — handlers, pre-plugins, sequential post-plugins,
@@ -180,6 +185,11 @@ func (rc *RequestContext) Release() {
 	rc.OCRResponse = nil
 	rc.OrgModelMap = nil
 	rc.OrgModelFallbacks = nil
+	rc.Attempts = nil
+	rc.AttemptHooks = false
+	rc.BufferedResponse = false
+	rc.AccountedUsage = nil
+	clear(rc.GuardrailResults)
 	rc.GuardrailResults = rc.GuardrailResults[:0]
 	rc.RequestHeaders = nil
 	rc.CustomMetadataKeys = rc.CustomMetadataKeys[:0]

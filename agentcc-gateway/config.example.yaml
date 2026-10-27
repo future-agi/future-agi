@@ -410,8 +410,12 @@ logging:
 #     - name: "content-moderation"
 #       stage: "post"
 #       mode: "sync"
-#       action: "warn"
+#       action: "block"
 #       threshold: 0.7
+#       config:
+#         on_block: "reflect"           # Optional post-stage repair; default "reject"
+#         reflect_max_attempts: 1        # Additional generations; integer 1..5
+#         reflect_debug: false           # Count-only debug headers; no rejected text
 #     - name: "usage-logger"
 #       stage: "pre"
 #       mode: "async"                   # Async guardrails don't block the pipeline

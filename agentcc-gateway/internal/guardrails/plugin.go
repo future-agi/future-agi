@@ -3,7 +3,9 @@ package guardrails
 import (
 	"context"
 	"fmt"
+	"github.com/futureagi/agentcc-gateway/internal/reflexion"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -59,6 +61,9 @@ func (p *GuardrailPlugin) Priority() int { return 50 } // After auth (20), RBAC 
 
 // ProcessRequest runs pre-stage guardrails.
 func (p *GuardrailPlugin) ProcessRequest(ctx context.Context, rc *models.RequestContext) pipeline.PluginResult {
+	if err := p.validateReflectionConfig(rc); err != nil {
+		return pipeline.ResultError(err)
+	}
 	// 1. Run static engine rules (self-hosted / config.yaml rules).
 	if p.engine != nil && p.engine.PreCount() > 0 {
 		keyPolicy, reqPolicy, err := p.resolvePolicy(rc)
@@ -83,42 +88,46 @@ func (p *GuardrailPlugin) ProcessRequest(ctx context.Context, rc *models.Request
 }
 
 // ProcessResponse runs post-stage guardrails.
-func (p *GuardrailPlugin) ProcessResponse(ctx context.Context, rc *models.RequestContext) pipeline.PluginResult {
-	// 1. Run static engine rules.
+func (p *GuardrailPlugin) ProcessResponse(ctx context.Context, rc *models.RequestContext) (result pipeline.PluginResult) {
+	defer func() {
+		if result.Error != nil {
+			rc.Response = nil
+			rc.Metadata["guardrail_action"] = "blocked"
+		}
+	}()
+	if rc.Response == nil {
+		return pipeline.ResultContinue()
+	}
+	result = pipeline.ResultContinue()
 	if p.engine != nil && p.engine.PostCount() > 0 {
 		keyPolicy, reqPolicy, err := p.resolvePolicy(rc)
 		if err != nil {
 			return pipeline.ResultError(err)
 		}
-
-		input := &CheckInput{
-			Request:  rc.Request,
-			Response: rc.Response,
-			Metadata: rc.Metadata,
+		input := &CheckInput{Request: rc.Request, Response: rc.Response, Metadata: rc.Metadata, DeferAsync: true}
+		checks := p.engine.RunPost(ctx, input, keyPolicy, reqPolicy)
+		if checks.Blocked {
+			result = p.postBlock(rc, checks)
+		} else {
+			p.applyMetadata(rc, checks)
 		}
-
-		result := p.engine.RunPost(ctx, input, keyPolicy, reqPolicy)
-
-		if result.Blocked {
-			rc.Response = nil
-			rc.Flags.GuardrailTriggered = true
-			if len(result.Triggered) > 0 {
-				tg := result.Triggered[0]
-				rc.Metadata["guardrail_name"] = tg.Name
-				rc.Metadata["guardrail_action"] = "blocked"
-			}
-			storeGuardrailResults(rc, result)
-			return pipeline.ResultError(models.ErrGuardrailBlocked(
-				"content_blocked",
-				p.buildBlockMessage(result),
-			))
-		}
-
-		p.applyMetadata(rc, result)
 	}
-
-	// 2. Run dynamic guardrails from org config (managed mode).
-	return p.runOrgGuardrails(ctx, rc, StagePost)
+	// Do not return early: any reject-only rule vetoes repair of this candidate.
+	dynamic := p.runOrgGuardrails(ctx, rc, StagePost)
+	if dynamic.Error == nil {
+		return result
+	}
+	if result.Error == nil {
+		return dynamic
+	}
+	if dynamic.Reflection == nil {
+		result.Reflection = nil
+	} else if result.Reflection != nil {
+		result.Reflection.MaxAttempts = min(result.Reflection.MaxAttempts, dynamic.Reflection.MaxAttempts)
+		result.Reflection.Reason += "\n" + dynamic.Reflection.Reason
+		result.Reflection.Debug = result.Reflection.Debug || dynamic.Reflection.Debug
+	}
+	return result
 }
 
 // runOrgGuardrails runs guardrails defined in the org's tenant config.
@@ -141,8 +150,14 @@ func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.Reque
 
 	result := &PipelineResult{}
 
-	for name, check := range orgCfg.Guardrails.Checks {
-		if !check.Enabled {
+	names := make([]string, 0, len(orgCfg.Guardrails.Checks))
+	for name := range orgCfg.Guardrails.Checks {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		check := orgCfg.Guardrails.Checks[name]
+		if check == nil || !check.Enabled {
 			continue
 		}
 
@@ -162,7 +177,7 @@ func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.Reque
 		}
 
 		// Check stage matches.
-		if g.Stage() != stage {
+		if configuredStage(check.Config, g.Stage()) != stage {
 			continue
 		}
 
@@ -203,19 +218,17 @@ func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.Reque
 			Action:    action,
 			Message:   cr.Message,
 		}
+		if stage == StagePost && action == ActionBlock && check.Config["mode"] != "async" && !cr.OperationalError {
+			tg.Reflection, _ = reflexion.Parse(check.Config)
+		}
 		result.Triggered = append(result.Triggered, tg)
 
 		switch action {
 		case ActionBlock:
 			result.Blocked = true
-			storeGuardrailResults(rc, result)
-			rc.Flags.GuardrailTriggered = true
-			rc.Metadata["guardrail_name"] = name
-			rc.Metadata["guardrail_action"] = "blocked"
-			return pipeline.ResultError(models.ErrGuardrailBlocked(
-				"content_blocked",
-				p.buildBlockMessage(result),
-			))
+			if stage == StagePre {
+				return p.processResult(rc, result)
+			}
 		case ActionWarn:
 			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %s", name, cr.Message))
 		case ActionLog:
@@ -227,6 +240,10 @@ func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.Reque
 				"message", cr.Message,
 			)
 		}
+	}
+
+	if result.Blocked {
+		return p.postBlock(rc, result)
 	}
 
 	// Apply metadata for non-blocking triggers.
@@ -319,6 +336,11 @@ func (p *GuardrailPlugin) createDynamicGuardrail(orgID, name string, cfg map[str
 
 // runGuardrailSafe runs a guardrail check with timeout and panic recovery.
 func (p *GuardrailPlugin) runGuardrailSafe(ctx context.Context, g Guardrail, input *CheckInput, timeout time.Duration) *CheckResult {
+	owned, err := snapshotInput(input)
+	if err != nil {
+		return &CheckResult{Pass: false, Score: 1, Message: "invalid guardrail input", OperationalError: true}
+	}
+	input = owned
 	checkCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -344,6 +366,9 @@ func (p *GuardrailPlugin) runGuardrailSafe(ctx context.Context, g Guardrail, inp
 
 	select {
 	case res := <-ch:
+		if checkCtx.Err() != nil {
+			res.err = checkCtx.Err()
+		}
 		if res.err != nil {
 			slog.Error("dynamic guardrail error",
 				"guardrail", g.Name(),
@@ -354,9 +379,10 @@ func (p *GuardrailPlugin) runGuardrailSafe(ctx context.Context, g Guardrail, inp
 				return nil
 			}
 			return &CheckResult{
-				Pass:    false,
-				Score:   1.0,
-				Message: fmt.Sprintf("guardrail %q error: %v", g.Name(), res.err),
+				Pass:             false,
+				Score:            1.0,
+				Message:          fmt.Sprintf("guardrail %q error: %v", g.Name(), res.err),
+				OperationalError: true,
 			}
 		}
 		return res.cr
@@ -370,9 +396,10 @@ func (p *GuardrailPlugin) runGuardrailSafe(ctx context.Context, g Guardrail, inp
 			return nil
 		}
 		return &CheckResult{
-			Pass:    false,
-			Score:   1.0,
-			Message: fmt.Sprintf("guardrail %q timed out", g.Name()),
+			Pass:             false,
+			Score:            1.0,
+			Message:          fmt.Sprintf("guardrail %q timed out", g.Name()),
+			OperationalError: true,
 		}
 	}
 }

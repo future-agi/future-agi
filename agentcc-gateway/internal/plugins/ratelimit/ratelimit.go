@@ -36,8 +36,10 @@ func New(cfg config.RateLimitConfig, keyStore *auth.KeyStore, limiter Limiter) *
 	}
 }
 
-func (p *Plugin) Name() string  { return "ratelimit" }
-func (p *Plugin) Priority() int { return 80 } // After validation (70), before cache (200).
+func (p *Plugin) IsAttemptAccounting() bool { return true }
+func (p *Plugin) IsRetryAdmission() bool    { return true }
+func (p *Plugin) Name() string              { return "ratelimit" }
+func (p *Plugin) Priority() int             { return 80 } // After validation (70), before cache (200).
 
 // ProcessRequest checks rate limits and rejects excess requests.
 func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pipeline.PluginResult {

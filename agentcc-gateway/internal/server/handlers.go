@@ -1375,6 +1375,7 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 }
 
 func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, provider providers.Provider, orgCfg *tenant.OrgConfig) {
+	rc.AttemptHooks = true
 	// Determine effective failover: org routing config takes priority over global.
 	effectiveFailover := h.effectiveFailover(orgCfg)
 
@@ -1396,8 +1397,9 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 	servingProvider := provider
 
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
-		resp, err := provider.ChatCompletion(ctx, rc.Request)
+		resp, err := h.chatAttempt(ctx, rc, provider)
 		if err == nil {
+			servingProvider = provider
 			rc.Response = resp
 			rc.ResolvedModel = resp.Model
 			return nil
@@ -1416,7 +1418,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 			rc.Provider = fbProviderID
 			rc.Request.Model = resolvedModel
 
-			fbResp, fbCallErr := fbProvider.ChatCompletion(ctx, rc.Request)
+			fbResp, fbCallErr := h.chatAttempt(ctx, rc, fbProvider)
 			if fbCallErr == nil {
 				servingProvider = fbProvider
 				rc.Response = fbResp
@@ -1432,6 +1434,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 	}
 
 	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+		h.setReflexionHeaders(w, rc)
 		models.WriteErrorFromError(w, err)
 		return
 	}
@@ -1448,6 +1451,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 }
 
 func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, fo *routing.Failover, orgCfg *tenant.OrgConfig) {
+	rc.AttemptHooks = true
 	originalModel := rc.Request.Model
 	orgID := rc.Metadata["org_id"]
 	var servingProvider providers.Provider
@@ -1475,7 +1479,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 				rc.Request.Model = originalModel
 			}
 
-			resp, err := p.ChatCompletion(ctx, rc.Request)
+			resp, err := h.chatAttempt(ctx, rc, p)
 			if err != nil {
 				return err
 			}
@@ -1509,7 +1513,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 				rc.Provider = fbProviderID
 				rc.Request.Model = resolvedModel
 
-				fbResp, fbCallErr := fbProvider.ChatCompletion(ctx, rc.Request)
+				fbResp, fbCallErr := h.chatAttempt(ctx, rc, fbProvider)
 				if fbCallErr == nil {
 					servingProvider = fbProvider
 					rc.Response = fbResp
@@ -1537,6 +1541,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 	}
 
 	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+		h.setReflexionHeaders(w, rc)
 		models.WriteErrorFromError(w, err)
 		return
 	}
@@ -1553,6 +1558,9 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 }
 
 func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, provider providers.Provider, orgCfg *tenant.OrgConfig) {
+	rc.IsStream = true
+	rc.AttemptHooks = true
+	var candidate *bufferedCandidate
 	sseWriter := streaming.NewSSEWriter(w)
 	if sseWriter == nil {
 		models.WriteError(w, models.ErrInternal("streaming not supported by server"))
@@ -1575,15 +1583,23 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	// lives on the request context: failover cancels callCtx as soon as the
 	// attempt returns, which would otherwise end the stream after one chunk.
 	openStream := func(callCtx context.Context, callProvider providers.Provider) error {
+		if rc.BufferedResponse {
+			rc.Provider = callProvider.ID()
+			if err := h.engine.BeginProviderAttempt(callCtx, rc); err != nil {
+				return err
+			}
+		}
 		attemptCtx, attemptCancel := context.WithCancel(ctx)
 		candidateChunks, candidateErrCh := callProvider.StreamChatCompletion(attemptCtx, rc.Request)
 		if candidateChunks == nil {
+			h.engine.EndProviderAttempt(callCtx, rc)
 			attemptCancel()
 			return models.ErrUpstreamProvider(http.StatusBadGateway, "upstream provider returned no stream")
 		}
 
 		chunk, err := waitForFirstStreamChunk(callCtx, candidateChunks, candidateErrCh)
 		if err != nil {
+			h.engine.EndProviderAttempt(callCtx, rc)
 			cancelAndDrainStream(attemptCancel, candidateChunks)
 			return err
 		}
@@ -1683,8 +1699,33 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 		return nil
 	}
 
-	// Run pre-plugins before opening the upstream stream.
-	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+	// Preserve the existing opener/failover path. Only opted-in requests read a
+	// whole candidate here; all other streams retain their incremental path.
+	candidateCall := func(ctx context.Context, rc *models.RequestContext) error {
+		candidate = nil
+		if err := providerCall(ctx, rc); err != nil {
+			return err
+		}
+		if !rc.BufferedResponse {
+			return nil
+		}
+		var err error
+		candidate, err = collectCandidate(ctx, chunks, errCh, firstChunk)
+		firstChunk = nil
+		if candidate != nil {
+			rc.Response = candidate.response()
+			rc.ResolvedModel = rc.Response.Model
+		}
+		h.engine.EndProviderAttempt(ctx, rc)
+		if err != nil {
+			cancelAndDrainStream(upstreamStreamCancel, chunks)
+		}
+		return err
+	}
+
+	// The pipeline selects buffering after authentication and tenant pre-plugins.
+	if err := h.engine.ProcessBuffered(ctx, rc, candidateCall); err != nil {
+		h.setReflexionHeaders(w, rc)
 		models.WriteErrorFromError(w, err)
 		return
 	}
@@ -1694,6 +1735,11 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(rc.Response)
+		return
+	}
+
+	if rc.BufferedResponse {
+		h.replayCandidate(ctx, w, rc, servingProvider, candidate)
 		return
 	}
 
@@ -1966,6 +2012,7 @@ func (h *Handlers) setAgentccHeaders(w http.ResponseWriter, rc *models.RequestCo
 // Chat retries can switch between base and org instances with the same ID.
 // Pass the successful instance rather than reconstructing it from routing metadata.
 func (h *Handlers) setAgentccHeadersForProvider(w http.ResponseWriter, rc *models.RequestContext, provider providers.Provider) {
+	h.setReflexionHeaders(w, rc)
 	w.Header().Set("x-agentcc-provider", rc.Provider)
 	if rc.ResolvedModel != "" {
 		w.Header().Set("x-agentcc-model-used", rc.ResolvedModel)

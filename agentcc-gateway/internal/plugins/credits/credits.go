@@ -41,8 +41,10 @@ func (p *Plugin) SetRedisCredit(rc RedisCreditBackend) {
 	p.redisCredit = rc
 }
 
-func (p *Plugin) Name() string           { return "credits" }
-func (p *Plugin) Priority() int          { return 510 } // After auth (100) and cost (500).
+func (p *Plugin) IsAttemptAccounting() bool  { return true }
+func (p *Plugin) IsRetryAdmission() bool     { return true }
+func (p *Plugin) Name() string               { return "credits" }
+func (p *Plugin) Priority() int              { return 510 }  // After auth (100) and cost (500).
 func (p *Plugin) ShouldSkipOnCacheHit() bool { return true } // No credits deducted on cache hits.
 
 // ProcessRequest checks credit balance for managed keys.

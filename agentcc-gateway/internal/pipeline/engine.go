@@ -71,6 +71,16 @@ func NewEngine(plugins ...Plugin) *Engine {
 
 // Process executes the plugin pipeline: pre-plugins → provider call → post-plugins.
 func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, providerCall ProviderFunc) error {
+	return e.process(ctx, rc, providerCall, false)
+}
+
+// ProcessBuffered processes a streaming candidate whose provider closure reads
+// the entire stream. No response bytes may be written inside that closure.
+func (e *Engine) ProcessBuffered(ctx context.Context, rc *models.RequestContext, providerCall ProviderFunc) error {
+	return e.process(ctx, rc, providerCall, true)
+}
+
+func (e *Engine) process(ctx context.Context, rc *models.RequestContext, providerCall ProviderFunc, buffered bool) error {
 	// Pre-plugins (always sequential — order matters for security gates).
 	for _, p := range e.plugins {
 		start := time.Now()
@@ -100,9 +110,14 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 			if result.Response != nil {
 				rc.Response = result.Response
 			}
-			e.RunPostPlugins(ctx, rc)
-			return nil
+			return e.RunPostPlugins(ctx, rc)
 		}
+	}
+
+	rc.BufferedResponse = rc.IsStream && buffered && e.BufferResponse(rc)
+	chat := rc.Request != nil && (rc.EndpointType == "chat" || rc.EndpointType == "")
+	if (!rc.IsStream && chat) || rc.BufferedResponse {
+		return e.processCandidates(ctx, rc, providerCall)
 	}
 
 	// Provider call
@@ -132,7 +147,7 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 	// Post-plugins — skip for streaming requests; the stream handler
 	// will call RunPostPlugins after the stream completes with final usage.
 	if !rc.IsStream {
-		e.RunPostPlugins(ctx, rc)
+		return e.RunPostPlugins(ctx, rc)
 	}
 	return nil
 }
@@ -144,11 +159,37 @@ func (e *Engine) Process(ctx context.Context, rc *models.RequestContext, provide
 //
 // Exported so that streaming handlers can call it after the stream completes,
 // when rc.Response and usage data are populated.
-func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) {
+func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) error {
+	e.accountAttempt(ctx, rc)
+	if rc.Response != nil {
+		rc.AccountedUsage = rc.Response.Usage
+	}
+	result := e.validateResponse(ctx, rc)
+	if result.Error != nil {
+		rc.Response = nil
+		rc.AddError(result.Error)
+	}
+	e.runFinalPlugins(ctx, rc)
+	if result.Error != nil {
+		return result.Error
+	}
+	return nil
+}
+
+func (e *Engine) runFinalPlugins(ctx context.Context, rc *models.RequestContext) {
 	isCacheHit := rc.Flags.ShortCircuited && rc.Metadata["cache_status"] == "hit_exact"
 
 	// Phase 1: Sequential post-plugins (e.g., cost → credits dependency chain).
 	for _, p := range e.postSequential {
+		if a, ok := p.(AttemptAccounting); ok && a.IsAttemptAccounting() {
+			continue
+		}
+		if v, ok := p.(ResponseValidator); ok {
+			if rc.Response != nil && len(rc.Errors) == 0 {
+				v.ObserveResponse(ctx, rc)
+			}
+			continue
+		}
 		if isCacheHit {
 			if skipper, ok := p.(SkipOnCacheHit); ok && skipper.ShouldSkipOnCacheHit() {
 				continue
