@@ -47,6 +47,7 @@ import TemplateLockBanner from "./TemplateLockBanner";
 import WorkspacePanels from "./WorkspacePanels";
 import useWorkspaceTab from "./helpers/useWorkspaceTab";
 import useUiSample from "../hooks/useUiSample";
+import useEnvViewAs from "./versions/useEnvViewAs";
 import { gapsByTab, counts } from "./helpers/workspaceGaps";
 import { forkEnvironment as buildFork } from "./helpers/forkEnvironment";
 import { WORKSPACE_COPY } from "./workspace.constants";
@@ -108,6 +109,10 @@ export default function EnvironmentWorkspace() {
   // The setup gaps are sample data, so their tab badges show only with
   // ?uiSample=gaps, like the Needs input count.
   const sampleGaps = useUiSample("gaps");
+  // Viewing an older environment version (sample only today) is read-only.
+  const sampleVersions = useUiSample("versions");
+  const { viewAs } = useEnvViewAs();
+  const viewingOlder = sampleVersions && !!viewAs;
   const {
     exhaustionError,
     handleError: handleCreditError,
@@ -428,11 +433,13 @@ export default function EnvironmentWorkspace() {
   const detailLoading = backed && !backedDetail && !detailFailed;
   // Run needs the details too: without them the page can't show what a run
   // would test against, so it waits for them like the tabs do.
-  const detailBlock = detailFailed
-    ? WORKSPACE_COPY.runBlocked.detailFailed
-    : detailLoading
-      ? WORKSPACE_COPY.runBlocked.detailLoading
-      : null;
+  const detailBlock = viewingOlder
+    ? WORKSPACE_COPY.runBlocked.viewingOlder
+    : detailFailed
+      ? WORKSPACE_COPY.runBlocked.detailFailed
+      : detailLoading
+        ? WORKSPACE_COPY.runBlocked.detailLoading
+        : null;
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
@@ -500,7 +507,7 @@ export default function EnvironmentWorkspace() {
             patch={patch}
             tab={activeTab}
             onTabChange={onTabChange}
-            locked={locked}
+            locked={locked || viewingOlder}
             backed={source === "harness"}
             onFork={onFork}
             gapsByTab={sampleGaps ? gapsByTab(env, serverEnvState) : undefined}
@@ -509,8 +516,12 @@ export default function EnvironmentWorkspace() {
             overviewWorld={overviewWorld}
             graphData={graphData}
             onStartRun={startRun}
-            canRun={runnable && !runMutation.isPending}
-            runBlockedReason={blockedReason(envState, env, backed, runMutation.isPending)}
+            canRun={runnable && !runMutation.isPending && !viewingOlder}
+            runBlockedReason={
+              viewingOlder
+                ? WORKSPACE_COPY.runBlocked.viewingOlder
+                : blockedReason(envState, env, backed, runMutation.isPending)
+            }
           />
           )}
         </ChatSplitPane>

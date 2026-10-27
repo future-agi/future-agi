@@ -21,10 +21,6 @@ import SurfaceIcon from "../components/SurfaceIcon";
 import LivePill from "./LivePill";
 import RenameEnvironmentDialog from "./RenameEnvironmentDialog";
 import TrialsPicker from "./scenarios/TrialsPicker";
-// EnvVersionPin renders a mock "env v3" version from a fixture fallback
-// (_fixtures/versions.js) — there is no real version field in the environments
-// contract yet. Hidden in the header until the contract exposes one.
-// import EnvVersionPin from "./EnvVersionPin";
 import ForkMenu from "./ForkMenu";
 import NeedsInputButton from "./gaps/NeedsInputButton";
 import RunButton from "./run/RunButton";
@@ -32,7 +28,7 @@ import useRunRepeats from "./run/useRunRepeats";
 import { RUN_MODE_CHIP, WORKSPACE_COPY } from "./workspace.constants";
 
 // The environment workspace header: back to the list, the channel icon, the
-// name + Live pill + env-version pin, the primary "Run simulation" action, and
+// name + Live pill, the primary "Run simulation" action, and
 // (for a regular, unlocked env) the Fork overflow. Run simulation is the
 // product's own navigation — a built env opens its execution detail, otherwise
 // the product's run entry. `locked` = template-seeded until forked: the pin is
@@ -138,8 +134,6 @@ export default function WorkspaceHeader({
               </IconButton>
             </CustomTooltip>
           )}
-          {/* Mock version pin hidden until the contract exposes a real version:
-              <EnvVersionPin env={env} envState={envState} patch={patch} readOnly={locked} /> */}
         </Stack>
       </Box>
 

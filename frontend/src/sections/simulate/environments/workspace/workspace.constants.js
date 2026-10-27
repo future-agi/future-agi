@@ -132,6 +132,7 @@ export const WORKSPACE_COPY = {
     reload: "Reload",
   },
   runBlocked: {
+    viewingOlder: "Back to current to run",
     agent: "No agent is connected to this environment yet",
     scenarios: "Add scenarios on the Scenarios tab",
     generic: "Setup incomplete",

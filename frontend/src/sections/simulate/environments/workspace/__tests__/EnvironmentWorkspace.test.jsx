@@ -215,6 +215,17 @@ describe("EnvironmentWorkspace route shell", () => {
     });
   });
 
+  it("is read-only while viewing an older version (?uiSample=versions&viewAs=)", async () => {
+    seedClientEnv(TEMPLATE, {
+      ...emptyEnvState(),
+      agent: { name: "Support agent" },
+      scenarios: [{ id: "s1" }],
+    });
+    renderWorkspace("/dashboard/simulate/environments/env-1?uiSample=versions&viewAs=v2");
+    expect(await screen.findByText("Back to current")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run simulation" })).toBeDisabled();
+  });
+
   it("renders a seeded client env: name, Live pill and its tabs, Runs included before a run", async () => {
     seedClientEnv(TEMPLATE, {
       ...emptyEnvState(),

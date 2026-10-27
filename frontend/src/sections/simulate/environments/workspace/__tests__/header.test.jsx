@@ -1,13 +1,12 @@
-import { useRef, useState } from "react";
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
+import { SnackbarProvider } from "notistack";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import WorkspaceHeader from "../WorkspaceHeader";
 import LivePill from "../LivePill";
-import EnvVersionPin from "../EnvVersionPin";
 import SystemBanners from "../SystemBanners";
 import VersionBar from "../VersionBar";
 
@@ -63,66 +62,16 @@ describe("LivePill", () => {
   });
 });
 
-describe("EnvVersionPin", () => {
-  it("is read-only for a seeded template — no chevron, clicking opens nothing", async () => {
-    const user = userEvent.setup();
-    const patch = vi.fn();
-    render(
-      <EnvVersionPin env={ENV} envState={{ scenarios: [1, 2, 3] }} patch={patch} readOnly />
-    );
-
-    expect(screen.queryByTestId("env-version-chevron")).toBeNull();
-    expect(screen.queryByRole("button", { name: /env v3/i })).toBeNull();
-
-    await user.click(screen.getByText(/env v3/i));
-    expect(screen.queryByText("Environment versions")).toBeNull();
-    expect(patch).not.toHaveBeenCalled();
-  });
-
-  it("opens a menu of every version and switches on pick", async () => {
-    const user = userEvent.setup();
-    const patch = vi.fn();
-    render(<EnvVersionPin env={ENV} envState={{ scenarios: [1, 2, 3] }} patch={patch} />);
-
-    await user.click(screen.getByRole("button", { name: /env v3/i }));
-
-    expect(screen.getByText("Environment versions")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^v3/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^v2/ })).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: /^v1/ }));
-    expect(patch).toHaveBeenCalledWith({ activeEnvVersion: "v1" });
-  });
-});
-
 describe("off-latest flow", () => {
-  it("shows the switch-back banner once an older version is pinned", async () => {
-    const user = userEvent.setup();
-
-    function Harness() {
-      const [envState, setEnvState] = useState({ scenarios: [1, 2, 3] });
-      const patchRef = useRef(null);
-      if (!patchRef.current) {
-        patchRef.current = vi.fn((p) => setEnvState((s) => ({ ...s, ...p })));
-      }
-      const patch = patchRef.current;
-      Harness.patch = patch;
-      return (
-        <>
-          <EnvVersionPin env={ENV} envState={envState} patch={patch} />
-          <SystemBanners env={ENV} envState={envState} patch={patch} />
-        </>
-      );
-    }
-
-    render(<Harness />);
-    expect(screen.queryByText(/Switch to v3/)).toBeNull();
-
-    await user.click(screen.getByRole("button", { name: /env v3/i }));
-    await user.click(screen.getByRole("button", { name: /^v1/ }));
-
-    expect(Harness.patch).toHaveBeenCalledWith({ activeEnvVersion: "v1" });
-    expect(await screen.findByText(/Switch to v3/)).toBeInTheDocument();
+  it("shows the switch-back banner while an older version is pinned", () => {
+    render(
+      <SystemBanners
+        env={ENV}
+        envState={{ scenarios: [1, 2, 3], activeEnvVersion: "v1" }}
+        patch={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/Switch to v3/)).toBeInTheDocument();
     expect(screen.getByText(/Editing off v1/)).toBeInTheDocument();
   });
 });
@@ -131,18 +80,28 @@ describe("SystemBanners", () => {
   it("renders the building banner from the env build status", () => {
     render(
       <SystemBanners
-        env={{ ...ENV, buildStatus: "building", buildProgress: { done: 5, total: 7 } }}
+        env={{
+          ...ENV,
+          buildStatus: "building",
+          buildProgress: { done: 5, total: 7 },
+        }}
         envState={{ scenarios: [1, 2, 3] }}
         patch={vi.fn()}
-      />
+      />,
     );
-    expect(screen.getByText("Environment is still being built")).toBeInTheDocument();
+    expect(
+      screen.getByText("Environment is still being built"),
+    ).toBeInTheDocument();
     expect(screen.getByText(/5 of 7 steps done/)).toBeInTheDocument();
   });
 
   it("renders nothing on a latest, ready environment", () => {
     const { container } = render(
-      <SystemBanners env={ENV} envState={{ scenarios: [1, 2, 3] }} patch={vi.fn()} />
+      <SystemBanners
+        env={ENV}
+        envState={{ scenarios: [1, 2, 3] }}
+        patch={vi.fn()}
+      />,
     );
     expect(container).toBeEmptyDOMElement();
   });
@@ -163,12 +122,21 @@ describe("WorkspaceHeader", () => {
     render(withRouter(<WorkspaceHeader {...baseProps} />));
     expect(screen.queryByText("Handles refund conversations")).toBeNull();
     await user.hover(screen.getByText("Refund Copilot"));
-    expect(await screen.findByText("Handles refund conversations")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Handles refund conversations"),
+    ).toBeInTheDocument();
   });
 
   it("reads Runs: Live for an agent connected where it runs (connect_only)", async () => {
     const user = userEvent.setup();
-    render(withRouter(<WorkspaceHeader {...baseProps} env={{ ...ENV, agentMode: "connect_only" }} />));
+    render(
+      withRouter(
+        <WorkspaceHeader
+          {...baseProps}
+          env={{ ...ENV, agentMode: "connect_only" }}
+        />,
+      ),
+    );
     const chip = screen.getByText("Live");
     expect(screen.getByText("Runs:")).toBeInTheDocument();
     await user.hover(chip);
@@ -177,7 +145,11 @@ describe("WorkspaceHeader", () => {
   });
 
   it("shows no run mode chip for an agent built from code", () => {
-    render(withRouter(<WorkspaceHeader {...baseProps} env={{ ...ENV, agentMode: null }} />));
+    render(
+      withRouter(
+        <WorkspaceHeader {...baseProps} env={{ ...ENV, agentMode: null }} />,
+      ),
+    );
     expect(screen.queryByText("Runs:")).toBeNull();
   });
 
@@ -192,10 +164,17 @@ describe("WorkspaceHeader", () => {
 
     render(
       withRouter(
-        <WorkspaceHeader {...baseProps} env={{ ...ENV, buildStatus: "building" }} canRun={false} locked />,
+        <WorkspaceHeader
+          {...baseProps}
+          env={{ ...ENV, buildStatus: "building" }}
+          canRun={false}
+          locked
+        />,
       ),
     );
-    expect(screen.getByRole("button", { name: /Cancel build/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Cancel build/ }),
+    ).toBeInTheDocument();
   });
 
   it("hides Cancel build once a cancel is in flight", () => {
@@ -229,12 +208,16 @@ describe("WorkspaceHeader", () => {
 
   it("hides the rename pencil for a non-backed env (no §8 row to PATCH)", () => {
     render(withRouter(<WorkspaceHeader {...baseProps} />));
-    expect(screen.queryByRole("button", { name: "Rename environment" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Rename environment" }),
+    ).toBeNull();
   });
 
   it("hides the rename pencil when locked", () => {
     render(withRouter(<WorkspaceHeader {...baseProps} backed locked />));
-    expect(screen.queryByRole("button", { name: "Rename environment" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Rename environment" }),
+    ).toBeNull();
   });
 
   it("offers Delete in the overflow for a backend-backed env and opens the confirm", async () => {
@@ -242,7 +225,9 @@ describe("WorkspaceHeader", () => {
     render(withRouter(<WorkspaceHeader {...baseProps} backed />));
 
     await user.click(screen.getByRole("button", { name: "More actions" }));
-    await user.click(screen.getByRole("menuitem", { name: /Delete environment/ }));
+    await user.click(
+      screen.getByRole("menuitem", { name: /Delete environment/ }),
+    );
     expect(screen.getByText("Delete environment?")).toBeInTheDocument();
   });
 
@@ -257,17 +242,27 @@ describe("WorkspaceHeader", () => {
   it.skip("forks from the overflow menu when unlocked", async () => {
     const user = userEvent.setup();
     const onFork = vi.fn();
-    render(withRouter(<WorkspaceHeader {...baseProps} onFork={onFork} locked={false} />));
+    render(
+      withRouter(
+        <WorkspaceHeader {...baseProps} onFork={onFork} locked={false} />,
+      ),
+    );
 
     await user.click(screen.getByRole("button", { name: "More actions" }));
-    await user.click(screen.getByRole("menuitem", { name: /Fork environment/ }));
+    await user.click(
+      screen.getByRole("menuitem", { name: /Fork environment/ }),
+    );
     expect(onFork).toHaveBeenCalledTimes(1);
   });
 
   it("starts a run-all (no ids) directly on Run, with no config dialog", async () => {
     const user = userEvent.setup();
     const onStartRun = vi.fn();
-    render(withRouter(<WorkspaceHeader {...baseProps} canRun onStartRun={onStartRun} />));
+    render(
+      withRouter(
+        <WorkspaceHeader {...baseProps} canRun onStartRun={onStartRun} />,
+      ),
+    );
 
     await user.click(screen.getByRole("button", { name: "Run simulation" }));
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -303,7 +298,9 @@ describe("WorkspaceHeader", () => {
   });
 
   it("hides the header Run + Repeats while a scenario selection is active", () => {
-    render(withRouter(<WorkspaceHeader {...baseProps} canRun selectionActive />));
+    render(
+      withRouter(<WorkspaceHeader {...baseProps} canRun selectionActive />),
+    );
     expect(screen.queryByRole("button", { name: "Run simulation" })).toBeNull();
     expect(screen.queryByRole("button", { name: /^Repeats:/ })).toBeNull();
   });
@@ -313,8 +310,12 @@ describe("WorkspaceHeader", () => {
     const reason = "Add scenarios on the Scenarios tab";
     render(
       withRouter(
-        <WorkspaceHeader {...baseProps} canRun={false} runBlockedReason={reason} />
-      )
+        <WorkspaceHeader
+          {...baseProps}
+          canRun={false}
+          runBlockedReason={reason}
+        />,
+      ),
     );
 
     const btn = screen.getByRole("button", { name: "Run simulation" });
@@ -323,6 +324,12 @@ describe("WorkspaceHeader", () => {
     expect(await screen.findByText(reason)).toBeInTheDocument();
   });
 });
+
+const inRouter = (ui) => (
+  <SnackbarProvider>
+    <MemoryRouter>{ui}</MemoryRouter>
+  </SnackbarProvider>
+);
 
 describe("VersionBar", () => {
   const SUBJECT = {
@@ -333,44 +340,57 @@ describe("VersionBar", () => {
     active_version: "v1",
   };
 
-  it("names the agent under test and its active version from the API", () => {
+  it("names the agent's active version from the API", () => {
     render(
-      <VersionBar
-        env={{ ...ENV, testSubject: SUBJECT, counts: { scenarios: 3 } }}
-        envState={{ scenarios: [1] }}
-      />,
+      inRouter(
+        <VersionBar
+          env={{ ...ENV, testSubject: SUBJECT, counts: { scenarios: 3 } }}
+          envState={{ scenarios: [1] }}
+        />,
+      ),
     );
-    expect(screen.getByText("Single Prompt Agent")).toBeInTheDocument();
     expect(screen.getByText("v1")).toBeInTheDocument();
     expect(screen.queryByText(/^env$/)).toBeNull();
   });
 
-  it("calls an agent with no name on record \"Agent\", as the Overview card does", () => {
+  it("falls back to the agent's name when it has no version on record", () => {
     render(
-      <VersionBar
-        env={{ ...ENV, testSubject: { ...SUBJECT, name: null }, counts: { scenarios: 3 } }}
-        envState={{ scenarios: [1] }}
-      />,
+      inRouter(
+        <VersionBar
+          env={{
+            ...ENV,
+            testSubject: { ...SUBJECT, active_version: null },
+            counts: { scenarios: 3 },
+          }}
+          envState={{ scenarios: [1] }}
+        />,
+      ),
     );
-    expect(screen.getByText("Agent")).toBeInTheDocument();
-    expect(screen.getByText("v1")).toBeInTheDocument();
+    expect(screen.getByText("Single Prompt Agent")).toBeInTheDocument();
   });
 
   it("counts every scenario the environment has, not just the loaded page", () => {
     render(
-      <VersionBar
-        env={{ ...ENV, testSubject: SUBJECT, counts: { scenarios: 42 } }}
-        envState={{ scenarios: [1, 2, 3, 4] }}
-      />,
+      inRouter(
+        <VersionBar
+          env={{ ...ENV, testSubject: SUBJECT, counts: { scenarios: 42 } }}
+          envState={{ scenarios: [1, 2, 3, 4] }}
+        />,
+      ),
     );
-    expect(screen.getByText("42 scenarios, shared across agent versions")).toBeInTheDocument();
+    expect(screen.getByText(/· 42 scenarios/)).toBeInTheDocument();
   });
 
   it("leaves the agent out when no agent is connected yet", () => {
     render(
-      <VersionBar env={{ ...ENV, testSubject: null, counts: { scenarios: 0 } }} envState={{}} />,
+      inRouter(
+        <VersionBar
+          env={{ ...ENV, testSubject: null, counts: { scenarios: 0 } }}
+          envState={{}}
+        />,
+      ),
     );
-    expect(screen.queryByText("Test subject")).toBeNull();
-    expect(screen.getByText("0 scenarios, shared across agent versions")).toBeInTheDocument();
+    expect(screen.getByText(/No agent yet/)).toBeInTheDocument();
+    expect(screen.getByText(/· 0 scenarios/)).toBeInTheDocument();
   });
 });
