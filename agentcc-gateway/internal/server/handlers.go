@@ -1705,6 +1705,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	// Track the last usage from stream chunks so we can populate rc.Response
 	// after the stream completes (providers send usage in the final chunk).
 	var lastUsage *models.Usage
+	var streamed streamedChars
 	var streamID string
 	var streamCreated int64
 	capture := newStreamCapture(h.captureStreamContent)
@@ -1714,12 +1715,16 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	// before every return from the streaming loop. When detach is true, uses
 	// a background context so post-plugins run even after client disconnect.
 	finalizeStream := func(detach bool) *models.StreamChunk {
+		usage := lastUsage
+		if usage == nil && streamed > 0 {
+			usage = estimatedStreamUsage(rc, chatPromptTokens(rc.Request), streamed)
+		}
 		rc.Response = &models.ChatCompletionResponse{
 			ID:      streamID,
 			Object:  "chat.completion",
 			Created: streamCreated,
 			Model:   rc.ResolvedModel,
-			Usage:   lastUsage, // nil is OK — means provider didn't send usage
+			Usage:   usage, // nil only when nothing was relayed
 		}
 		capture.applyTo(rc.Response)
 		pluginCtx := ctx
@@ -1769,6 +1774,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 				lastUsage = chunk.Usage
 			}
 			capture.observe(chunk)
+			streamed.addChunk(chunk)
 
 			if streamChecker != nil {
 				if res := streamChecker.ProcessChunk(streamCtx, chunk); res.Blocked {
@@ -1840,6 +1846,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 				lastUsage = chunk.Usage
 			}
 			capture.observe(chunk)
+			streamed.addChunk(chunk)
 
 			// Run streaming guardrail check.
 			if streamChecker != nil {
@@ -2230,7 +2237,7 @@ func isBlockedMetadataKey(key string) bool {
 	// to cover them also swallows cost_center and cost_code — ordinary business
 	// dimensions. A new internal cost_* key must be added here by hand.
 	switch lower {
-	case "authorization", "client_ip", "timeout_ms", "cost", "cost_source":
+	case "authorization", "client_ip", "timeout_ms", "cost", "cost_source", usageEstimatedKey:
 		return true
 	}
 	return false

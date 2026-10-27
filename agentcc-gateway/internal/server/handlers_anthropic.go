@@ -456,8 +456,9 @@ func (h *Handlers) handleAnthropicStream(ctx context.Context, w http.ResponseWri
 
 	// Without this the stream would be priced at zero and logged as such.
 	var usage anthropicfmt.StreamUsageScanner
+	var streamed streamedChars
 	finalize := func(detach bool) {
-		applyAnthropicStreamUsage(rc, &usage)
+		applyAnthropicStreamUsage(rc, &usage, streamed)
 		pluginCtx := ctx
 		if detach {
 			pluginCtx = context.Background()
@@ -508,6 +509,9 @@ func (h *Handlers) handleAnthropicStream(ctx context.Context, w http.ResponseWri
 	for {
 		ev, readErr := events.Next()
 		usage.Write(ev.Raw)
+		if ev.Name == "content_block_delta" {
+			streamed.addEvent(ev.Data())
+		}
 		if readErr != nil && readErr != io.EOF {
 			// The event the error cut off is not forwarded: run into the error
 			// event, it would hide that event from the client's parser.
@@ -551,12 +555,18 @@ func writeAnthropicStreamError(w http.ResponseWriter, flusher http.Flusher, rc *
 	}
 }
 
-// applyAnthropicStreamUsage moves collected counts onto rc.
-func applyAnthropicStreamUsage(rc *models.RequestContext, usage *anthropicfmt.StreamUsageScanner) {
+// applyAnthropicStreamUsage moves collected counts onto rc. A stream cut
+// before message_delta has only message_start's placeholder output_tokens, so
+// its output is estimated from what was relayed.
+func applyAnthropicStreamUsage(rc *models.RequestContext, usage *anthropicfmt.StreamUsageScanner, streamed streamedChars) {
 	if model := usage.Model(); model != "" {
 		rc.ResolvedModel = model
 	}
 	inputTokens, outputTokens, ok := usage.Usage()
+	if streamed > 0 && !usage.Finished() {
+		outputTokens = estimatedStreamUsage(rc, inputTokens, streamed).CompletionTokens
+		ok = true
+	}
 	if !ok {
 		// Leave rc.Response nil so the cost plugin skips it — a gap is honest
 		// where a zero is not.
@@ -958,10 +968,12 @@ func takeToolNameMapping(req *models.ChatCompletionRequest) map[string]string {
 	return m
 }
 
-// streamUsage is what a finished stream reported about itself.
+// streamUsage is what a finished stream reported about itself, and how much
+// output it carried.
 type streamUsage struct {
 	usage *models.Usage
 	model string
+	chars streamedChars
 }
 
 // teeStreamUsage passes chunks through untouched, keeping the last usage and
@@ -972,6 +984,7 @@ func teeStreamUsage(ctx context.Context, in <-chan models.StreamChunk) (<-chan m
 	done := make(chan streamUsage, 1)
 
 	record := func(seen *streamUsage, chunk models.StreamChunk) {
+		seen.chars.addChunk(chunk)
 		if chunk.Usage != nil {
 			seen.usage = chunk.Usage
 		}
@@ -1027,12 +1040,16 @@ func rewriteStreamModel(ctx context.Context, in <-chan models.StreamChunk, model
 	return out
 }
 
-// applyCanonicalStreamUsage moves a finished stream's usage onto rc. Left nil
-// when the provider sent none, so the cost plugin skips rather than bills zero.
+// applyCanonicalStreamUsage moves a finished stream's usage onto rc. A stream
+// that relayed output without usage is estimated; one that relayed nothing is
+// left nil, so the cost plugin skips rather than bills zero.
 func applyCanonicalStreamUsage(rc *models.RequestContext, usageCh <-chan streamUsage) {
 	seen := <-usageCh
 	if seen.model != "" {
 		rc.ResolvedModel = seen.model
+	}
+	if seen.usage == nil && seen.chars > 0 {
+		seen.usage = estimatedStreamUsage(rc, chatPromptTokens(rc.Request), seen.chars)
 	}
 	if seen.usage == nil {
 		return

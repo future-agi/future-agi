@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
@@ -270,11 +271,15 @@ func (h *Handlers) handleResponseStream(ctx context.Context, w http.ResponseWrit
 	flusher.Flush()
 
 	// Post-plugins (cost, logging, etc.) run when the stream ends. Without a
-	// terminal event there is no usage, and the request goes unpriced rather
-	// than priced at zero.
+	// terminal event there is no usage: the output relayed is estimated, and a
+	// stream that relayed none goes unpriced rather than priced at zero.
+	var streamed streamedChars
 	finalize := func(detach bool) {
 		if rc.Response == nil {
 			rc.Response = &models.ChatCompletionResponse{Model: rc.ResolvedModel}
+		}
+		if rc.Response.Usage == nil && streamed > 0 {
+			rc.Response.Usage = estimatedStreamUsage(rc, responsesPromptTokens(reqBody), streamed)
 		}
 		pluginCtx := ctx
 		if detach {
@@ -312,6 +317,9 @@ func (h *Handlers) handleResponseStream(ctx context.Context, w http.ResponseWrit
 			return
 		}
 		eventType := responsesEventType(ev)
+		if strings.HasSuffix(eventType, ".delta") {
+			streamed.addEvent(ev.Data())
+		}
 		if responsesTerminalEvents[eventType] {
 			if data := ev.Data(); readErr == nil || json.Valid(data) {
 				var terminal struct {

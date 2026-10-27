@@ -14,6 +14,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 	"github.com/futureagi/agentcc-gateway/internal/streaming"
+	"github.com/futureagi/agentcc-gateway/internal/tokenizer"
 )
 
 // streamEndError is the error to report in a stream that stopped before its
@@ -230,4 +231,123 @@ func (h *lastEventHolder) flush(meta *models.AgentccStreamMetadata) []byte {
 		return h.after
 	}
 	return append(withStreamMetadata(*h.held, meta), h.after...)
+}
+
+// streamedChars counts the output a stream relayed, in characters: text,
+// reasoning and tool-call arguments. An upstream reports usage only in its
+// last event, so a stream cut before it, at its deadline, by the upstream or
+// by a client that left, has none. The provider bills that output anyway, so
+// the count is what such a stream is priced from.
+type streamedChars int
+
+// addChunk counts the deltas of a chat completion chunk.
+func (n *streamedChars) addChunk(chunk models.StreamChunk) {
+	for _, choice := range chunk.Choices {
+		if choice.Delta.Content != nil {
+			*n += streamedChars(len(*choice.Delta.Content))
+		}
+		if choice.Delta.ReasoningContent != nil {
+			*n += streamedChars(len(*choice.Delta.ReasoningContent))
+		}
+		for _, tc := range choice.Delta.ToolCalls {
+			if tc.Function != nil {
+				*n += streamedChars(len(tc.Function.Arguments))
+			}
+		}
+	}
+}
+
+// addEvent counts the delta of a relayed native event: a string on Responses
+// delta events, an object on Anthropic's content_block_delta.
+func (n *streamedChars) addEvent(data []byte) {
+	var ev struct {
+		Delta json.RawMessage `json:"delta"`
+	}
+	if json.Unmarshal(data, &ev) != nil || len(ev.Delta) == 0 {
+		return
+	}
+	var text string
+	if json.Unmarshal(ev.Delta, &text) == nil {
+		*n += streamedChars(len(text))
+		return
+	}
+	var block struct {
+		Text        string `json:"text"`
+		PartialJSON string `json:"partial_json"`
+		Thinking    string `json:"thinking"`
+	}
+	if json.Unmarshal(ev.Delta, &block) == nil {
+		*n += streamedChars(len(block.Text) + len(block.PartialJSON) + len(block.Thinking))
+	}
+}
+
+// estimatedTokens converts characters to tokens at about 4 characters a
+// token, the rule the gateway's token counter uses.
+func estimatedTokens(chars int) int {
+	return (chars + 3) / 4
+}
+
+// estimatedStreamUsage is the usage of a stream that relayed output but got
+// none from its upstream: the prompt, counted or estimated, and the output
+// relayed. The request log row is marked usage_estimated.
+func estimatedStreamUsage(rc *models.RequestContext, promptTokens int, out streamedChars) *models.Usage {
+	completion := estimatedTokens(int(out))
+	rc.Metadata[usageEstimatedKey] = "true"
+	return &models.Usage{
+		PromptTokens:     promptTokens,
+		CompletionTokens: completion,
+		TotalTokens:      promptTokens + completion,
+	}
+}
+
+// usageEstimatedKey marks a request whose token counts the gateway estimated.
+const usageEstimatedKey = "usage_estimated"
+
+// chatPromptTokens estimates a chat request's prompt.
+func chatPromptTokens(req *models.ChatCompletionRequest) int {
+	if req == nil {
+		return 0
+	}
+	return tokenizer.EstimateTokens(req.Messages)
+}
+
+// responsesPromptTokens estimates a Responses request's prompt from the text
+// of its input and instructions.
+func responsesPromptTokens(body []byte) int {
+	var req struct {
+		Input        json.RawMessage `json:"input"`
+		Instructions string          `json:"instructions"`
+	}
+	if json.Unmarshal(body, &req) != nil {
+		return 0
+	}
+	var input any
+	_ = json.Unmarshal(req.Input, &input)
+	return estimatedTokens(textChars(input) + len(req.Instructions))
+}
+
+// textChars sums the lengths of the strings in a decoded JSON value, leaving
+// out the fields that name or label an item rather than carry its text.
+func textChars(v any) int {
+	switch t := v.(type) {
+	case string:
+		return len(t)
+	case []any:
+		n := 0
+		for _, item := range t {
+			n += textChars(item)
+		}
+		return n
+	case map[string]any:
+		n := 0
+		for key, value := range t {
+			switch key {
+			case "type", "role", "id", "call_id", "status", "detail":
+				continue
+			}
+			n += textChars(value)
+		}
+		return n
+	}
+	return 0
 }

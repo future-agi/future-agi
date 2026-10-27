@@ -38,8 +38,9 @@ const chatUsageChunk = "data: {\"id\":\"c1\",\"object\":\"chat.completion.chunk\
 var upstreamStreams = map[string]upstreamStream{
 	"/messages": {
 		head: "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"claude-sonnet-5-5\",\"content\":[],\"usage\":{\"input_tokens\":5,\"output_tokens\":1}}}\n\n" +
-			"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
-		tail: "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n" +
+			"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
+			"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hello there\"}}\n\n",
+		tail: "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"!\"}}\n\n" +
 			"event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n" +
 			"event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\n" +
 			"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
@@ -349,9 +350,10 @@ func assertNotFinished(t *testing.T, body string) {
 // capturePlugin records what the post-plugins were given: the usage the cost
 // plugin prices, and the status the request log records.
 type capturePlugin struct {
-	usage  atomic.Pointer[models.Usage]
-	status atomic.Int32
-	runs   atomic.Int32
+	usage     atomic.Pointer[models.Usage]
+	status    atomic.Int32
+	runs      atomic.Int32
+	estimated atomic.Bool
 }
 
 func (p *capturePlugin) Name() string  { return "capture" }
@@ -361,6 +363,7 @@ func (p *capturePlugin) ProcessRequest(context.Context, *models.RequestContext) 
 }
 func (p *capturePlugin) ProcessResponse(_ context.Context, rc *models.RequestContext) pipeline.PluginResult {
 	p.runs.Add(1)
+	p.estimated.Store(rc.Metadata[usageEstimatedKey] == "true")
 	if rc.Response != nil && rc.Response.Usage != nil {
 		usage := *rc.Response.Usage
 		p.usage.Store(&usage)
@@ -860,5 +863,79 @@ func TestUpstreamStreamError(t *testing.T) {
 		if got := upstreamStreamError([]byte(payload)); got.Status != http.StatusBadGateway || got.Message != want {
 			t.Errorf("%s: got %d %q, want 502 %q", payload, got.Status, got.Message, want)
 		}
+	}
+}
+
+// A stream cut before its usage arrives has still spent tokens, which the
+// provider bills. It used to be logged with none on chat and Responses, and
+// with input only on /v1/messages; it is now priced from its prompt and the
+// output relayed, and marked as an estimate.
+func TestStreamCutShortIsPricedFromItsOutput(t *testing.T) {
+	hiPrompt := chatPromptTokens(&models.ChatCompletionRequest{
+		Messages: []models.Message{{Role: "user", Content: json.RawMessage(`"hi"`)}},
+	})
+	cut := map[string]models.Usage{
+		chatRoute.name:       {PromptTokens: hiPrompt, CompletionTokens: 1}, // "hi"
+		translatedRoute.name: {PromptTokens: hiPrompt, CompletionTokens: 1},
+		nativeRoute.name:     {PromptTokens: 5, CompletionTokens: 3}, // input from message_start, "hello there"
+		responsesRoute.name:  {PromptTokens: 1, CompletionTokens: 1}, // input "hi"
+	}
+	finished := map[string]models.Usage{
+		chatRoute.name:       {PromptTokens: 5, CompletionTokens: 2},
+		translatedRoute.name: {PromptTokens: 5, CompletionTokens: 2},
+		nativeRoute.name:     {PromptTokens: 5, CompletionTokens: 2},
+		responsesRoute.name:  {PromptTokens: 11, CompletionTokens: 7},
+	}
+	for _, route := range []streamRoute{chatRoute, translatedRoute, nativeRoute, responsesRoute} {
+		for _, tc := range []struct {
+			end       upstreamEnd
+			want      models.Usage
+			estimated bool
+		}{
+			{upstreamStalls, cut[route.name], true},
+			{upstreamFinishes, finished[route.name], false},
+		} {
+			name := route.name + " finished"
+			if tc.estimated {
+				name = route.name + " cut at its deadline"
+			}
+			t.Run(name, func(t *testing.T) {
+				capture := &capturePlugin{}
+				upstream, _ := streamingUpstream(t, tc.end)
+				gateway := streamingGateway(t, upstream.URL, capture)
+
+				postStream(t, gateway, route, map[string]string{"x-agentcc-timeout": "300ms"})
+
+				got := capture.usage.Load()
+				if got == nil {
+					t.Fatal("no usage recorded, want the request priced")
+				}
+				if got.PromptTokens != tc.want.PromptTokens || got.CompletionTokens != tc.want.CompletionTokens {
+					t.Errorf("usage = %d in / %d out, want %d / %d",
+						got.PromptTokens, got.CompletionTokens, tc.want.PromptTokens, tc.want.CompletionTokens)
+				}
+				if capture.estimated.Load() != tc.estimated {
+					t.Errorf("usage_estimated = %v, want %v", capture.estimated.Load(), tc.estimated)
+				}
+			})
+		}
+	}
+}
+
+func TestStreamedCharsCountsEachDialectsDeltas(t *testing.T) {
+	var n streamedChars
+	n.addEvent([]byte(`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"abc"}}`))
+	n.addEvent([]byte(`{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"a\":1}"}}`))
+	n.addEvent([]byte(`{"type":"content_block_delta","index":2,"delta":{"type":"thinking_delta","thinking":"hm"}}`))
+	n.addEvent([]byte(`{"type":"response.output_text.delta","delta":"four"}`))
+	n.addEvent([]byte(`{"type":"response.function_call_arguments.delta","delta":"{}"}`))
+	text, reasoning := "xy", "z"
+	n.addChunk(models.StreamChunk{Choices: []models.StreamChoice{{Delta: models.Delta{
+		Content:          &text,
+		ReasoningContent: &reasoning,
+		ToolCalls:        []models.ToolCallDelta{{Function: &models.FunctionCall{Arguments: "[1]"}}},
+	}}}})
+	if want := 3 + 7 + 2 + 4 + 2 + 2 + 1 + 3; int(n) != want {
+		t.Errorf("streamedChars = %d, want %d", n, want)
 	}
 }
