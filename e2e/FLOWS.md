@@ -1814,6 +1814,27 @@
 - Custom links and views send and keep their stored range verbatim and list no span
 - opening the views writes nothing back: every tracer_saved_view row in PG still holds its stored range
 
+### OBS-E2E-052 — OpenRouter-shaped traces keep coherent usage through filters, sorting and details
+
+**Goal:** A developer inspects OpenRouter-shaped traces and trusts content, identities and usage through filtering, sorting and trace/session details  
+**Spec:** `flows/observe/openrouter-usage.spec.ts:43`  
+**Tags:** —
+
+**User steps:**
+
+1. ingest empty-root generation/attempt trees, tiny/zero costs, nested summaries, parent-only and independent-call controls
+2. select Total Tokens greater than 20 in the real Filter panel and cross a real page boundary
+3. scroll to Tokens and Total Cost, sort each ascending and descending, and compare complete UI/API pages with the independent oracle
+4. inspect tiny-cost and usage-control trace details
+5. inspect first-generation session messages and exact Users identities
+
+**Backend state verified:**
+
+- A: exact latest source hierarchy, usage, project type and user linkage retain the scoped fixture identities
+- B: actual filter/sort requests and two complete pages equal the canonical usage oracle with exact total, stable ties and no duplicates
+- C: trace/span/session API precision and UI displays retain positive subprecision costs, nested 18, equal independent calls and parent-only usage
+- D: session first-generation messages and Users UI/API identities equal the scoped storage facts
+
 ## prompts
 
 ### PROMPT-E2E-001 — a mock-run prompt exposes its current evaluation configuration lifecycle

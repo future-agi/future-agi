@@ -67,6 +67,7 @@ func StampResourceAttrs(ctx context.Context, a *Authenticator, cacheKey string, 
 
 		attrs.PutStr("fi.project_id", projectID)
 		attrs.PutStr("fi.org_id", result.OrgID)
+		stampObserveProjectType(attrs, result, projectID)
 	}
 
 	if len(unresolvable) == 0 {
@@ -83,6 +84,29 @@ func StampResourceAttrs(ctx context.Context, a *Authenticator, cacheKey string, 
 	})
 
 	return before - rss.Len(), nil
+}
+
+// resourceProjectTypeKey is the resource attribute the fi_instrumentation SDK
+// sets to the project's type; the converter links user.id to an end user only
+// when it reads "observe" there.
+const resourceProjectTypeKey = "project_type"
+
+// stampObserveProjectType writes project_type "observe" onto a resource that
+// sends none (absent or an empty string) when its stamped project is known to
+// be an Observe project. Exporters that cannot set resource attributes, such
+// as OpenRouter Broadcast naming its project with X-Project-Name, send no
+// project_type, yet their project is an Observe one, and Django links user.id
+// on the project's own type. A project_type the sender set is never changed,
+// and a project of another or unknown type gets none.
+func stampObserveProjectType(attrs pcommon.Map, result *ResolveResult, projectID string) {
+	if v, ok := attrs.Get(resourceProjectTypeKey); ok &&
+		(v.Type() != pcommon.ValueTypeStr || v.Str() != "") {
+		return
+	}
+	if result.ProjectTypeInWorkspace(result.WorkspaceID, projectID) != ProjectTypeObserve {
+		return
+	}
+	attrs.PutStr(resourceProjectTypeKey, ProjectTypeObserve)
 }
 
 // getStrAttr returns the string value of key from attrs, or "" if absent/wrong type.

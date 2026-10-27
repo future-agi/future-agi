@@ -20,6 +20,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, TypedDict
 
+from tracer.services.clickhouse.query_builders.trace_usage import (
+    is_repeated_usage_summary,
+)
+
 if TYPE_CHECKING:
     from rest_framework.request import Request
 
@@ -55,7 +59,17 @@ def compute_trace_summary_and_graph(
         for entry in entries:
             span = entry.get("observation_span") or entry.get("observationSpan") or {}
             span_id = span.get("id", "")
-            all_spans.append({"span": span, "parent_id": parent_id})
+            child_spans = [
+                child.get("observation_span") or child.get("observationSpan") or {}
+                for child in entry.get("children", [])
+            ]
+            all_spans.append(
+                {
+                    "span": span,
+                    "parent_id": parent_id,
+                    "usage_summary": is_repeated_usage_summary(span, child_spans),
+                }
+            )
             graph_nodes.append(
                 {
                     "id": span_id,
@@ -84,10 +98,11 @@ def compute_trace_summary_and_graph(
 
     for item in all_spans:
         sp = item["span"]
-        total_tokens += sp.get("total_tokens") or 0
-        total_prompt += sp.get("prompt_tokens") or 0
-        total_completion += sp.get("completion_tokens") or 0
-        total_cost += sp.get("cost") or 0.0
+        if not item["usage_summary"]:
+            total_tokens += sp.get("total_tokens") or 0
+            total_prompt += sp.get("prompt_tokens") or 0
+            total_completion += sp.get("completion_tokens") or 0
+            total_cost += sp.get("cost") or 0.0
         if sp.get("status") == "ERROR":
             error_count += 1
         t = sp.get("observation_type", "unknown")
@@ -101,7 +116,7 @@ def compute_trace_summary_and_graph(
         "total_tokens": total_tokens,
         "total_prompt_tokens": total_prompt,
         "total_completion_tokens": total_completion,
-        "total_cost": round(total_cost, 6),
+        "total_cost": total_cost,
         "error_count": error_count,
         "span_type_counts": type_counts,
     }
