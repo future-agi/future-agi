@@ -206,10 +206,22 @@ func priceKey(db *modeldb.ModelDB, model, provider string) string {
 	if _, ok := db.Get(model); ok || provider == "" || model == "" {
 		return model
 	}
-	if prefixed := provider + "/" + model; hasModel(db, prefixed) {
-		return prefixed
+	for _, name := range []string{provider, tableProviderNames[provider]} {
+		if name == "" {
+			continue
+		}
+		if prefixed := name + "/" + model; hasModel(db, prefixed) {
+			return prefixed
+		}
 	}
 	return model
+}
+
+// tableProviderNames spells a provider the way the price table keys it, where
+// that differs from the gateway's name: "fireworks_ai/accounts/fireworks/models/glm-5p3".
+var tableProviderNames = map[string]string{
+	"fireworks": "fireworks_ai",
+	"together":  "together_ai",
 }
 
 func hasModel(db *modeldb.ModelDB, id string) bool {

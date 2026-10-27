@@ -20,8 +20,9 @@ func endpointDB() *modeldb.ModelDB {
 		"rerank-v3.5":                {ID: "rerank-v3.5", Mode: modeldb.ModeRerank, Pricing: modeldb.PricingInfo{InputPerQuery: 0.002}},
 		"mistral/mistral-ocr-latest": {ID: "mistral/mistral-ocr-latest", Mode: modeldb.ModeOCR, Pricing: modeldb.PricingInfo{PerPage: 0.001}},
 		"perplexity/sonar":           {ID: "perplexity/sonar", Pricing: modeldb.PricingInfo{InputPerToken: 1e-6, OutputPerToken: 1e-6}},
-		"text-embedding-gecko":       {ID: "text-embedding-gecko", Mode: modeldb.ModeEmbedding, Pricing: modeldb.PricingInfo{InputPerCharacter: 2.5e-8}},
-		"gemini-embedding-001":       {ID: "gemini-embedding-001", Mode: modeldb.ModeEmbedding, Pricing: modeldb.PricingInfo{InputPerToken: 1.5e-7}},
+		"fireworks_ai/accounts/fireworks/models/glm-5p3": {ID: "fireworks_ai/accounts/fireworks/models/glm-5p3", Pricing: modeldb.PricingInfo{InputPerToken: 1.4e-6, OutputPerToken: 4.4e-6}},
+		"text-embedding-gecko":                           {ID: "text-embedding-gecko", Mode: modeldb.ModeEmbedding, Pricing: modeldb.PricingInfo{InputPerCharacter: 2.5e-8}},
+		"gemini-embedding-001":                           {ID: "gemini-embedding-001", Mode: modeldb.ModeEmbedding, Pricing: modeldb.PricingInfo{InputPerToken: 1.5e-7}},
 	}, nil)
 }
 
@@ -116,6 +117,15 @@ func TestChatCostUnderTheProviderKey(t *testing.T) {
 	rc.Provider = "perplexity"
 	rc.Response = &models.ChatCompletionResponse{Usage: &models.Usage{PromptTokens: 100, CompletionTokens: 50}}
 	priced(t, rc, 150*1e-6)
+}
+
+// The table spells some providers its own way: a Fireworks model is keyed
+// under fireworks_ai, and was priced at zero under the gateway's "fireworks".
+func TestChatCostUnderTheTablesProviderName(t *testing.T) {
+	rc := endpointRC("chat", "accounts/fireworks/models/glm-5p3")
+	rc.Provider = "fireworks"
+	rc.Response = &models.ChatCompletionResponse{Usage: &models.Usage{PromptTokens: 1000, CompletionTokens: 100}}
+	priced(t, rc, 1000*1.4e-6+100*4.4e-6)
 }
 
 // embedContent reports no usage. A model priced per character is priced; one
