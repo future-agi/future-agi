@@ -372,14 +372,18 @@ def sealed_from(files: Mapping[str, bytes]) -> str:
     )
 
 
-def _stamped(split: archives.SplitArchive) -> bool:
-    """Whether the bundle says it was sealed from this tree's reseal inputs."""
+def _sealed_metadata(split: archives.SplitArchive) -> dict[str, Any]:
     try:
         manifest = json.loads(split.sealed[SEALED_MANIFEST])
     except ValueError:
-        return False
+        return {}
     metadata = manifest.get("metadata") if isinstance(manifest, dict) else None
-    stamp = metadata.get("sealed_from") if isinstance(metadata, dict) else None
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _stamped(split: archives.SplitArchive) -> bool:
+    """Whether the bundle says it was sealed from this tree's reseal inputs."""
+    stamp = _sealed_metadata(split).get("sealed_from")
     return isinstance(stamp, str) and stamp == sealed_from(
         {**split.environment, **split.suite}
     )
@@ -423,13 +427,20 @@ def _resealed(
     except (S3Error, HostedHarnessError, ValueError):
         return False
     # A reseal refreshes its inputs; every other file the bundle holds stays as built.
-    # TODO: what a build derives from contract.json (compiled tool handlers, processes)
-    # is not refreshed either; a contract edit should not replay a resealed bundle.
     if any(
         split.environment.get(path) != default.environment.get(path)
         for path in split.environment.keys() | default.environment.keys()
         if path not in RESEAL_INPUTS | UNBUNDLED
         and not hashing.is_environment_unhashed(path)
+    ):
+        return False
+    # An edited contract counts only when the reseal compiled what a build derives from
+    # it (tool handlers, traced tools); an older reseal copied the file alone.
+    contract = split.environment.get("contract.json")
+    if contract != default.environment.get("contract.json") and (
+        contract is None
+        or _sealed_metadata(split).get("contract_compiled")
+        != archives.sha256_hex(contract)
     ):
         return False
     held = default.sealed.get(SEALED_MANIFEST)

@@ -80,7 +80,10 @@ def _scenario(name, **fields):
 
 def _resealed_manifest(tree, **fields):
     """A bundle manifest stamped for ``tree`` as ALK's reseal stamps it."""
-    return json.dumps({**fields, "metadata": {"sealed_from": drafts.sealed_from(tree)}})
+    metadata = {"sealed_from": drafts.sealed_from(tree)}
+    if "contract.json" in tree:
+        metadata["contract_compiled"] = archives.sha256_hex(tree["contract.json"])
+    return json.dumps({**fields, "metadata": metadata})
 
 
 def _authoring(names=NAMES[:2], *, contract=None, proofs=None, sealed=True, **extra):

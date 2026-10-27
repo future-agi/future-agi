@@ -19,8 +19,9 @@ BUILT = {
 }
 
 
-def _manifest(sealed_from=None, digest="chat"):
-    metadata = {} if sealed_from is None else {"sealed_from": sealed_from}
+def _manifest(sealed_from=None, digest="chat", **metadata):
+    if sealed_from is not None:
+        metadata["sealed_from"] = sealed_from
     return json.dumps({"digest": digest, "metadata": metadata}).encode()
 
 
@@ -101,6 +102,27 @@ def test_files_outside_the_environment_identity_do_not_count_against_a_reseal(
     split = _split(tree, _manifest(drafts.sealed_from(tree)))
 
     assert drafts._resealed(head, split, HASHES) is True
+
+
+@pytest.mark.parametrize(
+    ("compiled_for", "expected"),
+    [(None, False), (b'{"tools": []}', False), (b'{"tools": ["refund"]}', True)],
+)
+def test_a_contract_edit_counts_only_when_the_reseal_compiled_it(
+    head, compiled_for, expected
+):
+    # An older ALK copied an edited contract.json into the bundle without the refund
+    # tool's handler; only a reseal that compiled this contract says so.
+    tree = {**BUILT, "contract.json": b'{"tools": ["refund"]}'}
+    compiled = (
+        {}
+        if compiled_for is None
+        else {"contract_compiled": archives.sha256_hex(compiled_for)}
+    )
+
+    split = _split(tree, _manifest(drafts.sealed_from(tree), **compiled))
+
+    assert drafts._resealed(head, split, HASHES) is expected
 
 
 def test_an_unreadable_draft_bundle_may_be_this_very_one(head, monkeypatch):
