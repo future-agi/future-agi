@@ -44,6 +44,7 @@ from simulate.services.run_results_v3_queries import (
     GROUP_FIELDS,
     apply_run_call_query,
     build_run_analytics,
+    build_run_reliability,
     run_call_facets,
     run_call_rows_queryset,
     run_calls_queryset,
@@ -411,8 +412,8 @@ class ReliabilityIntervalSerializer(serializers.Serializer):
     low = serializers.FloatField()
     high = serializers.FloatField()
     effective_n = serializers.FloatField()
+    scenarios = serializers.IntegerField()
     evaluated = serializers.IntegerField()
-    clusters = serializers.IntegerField()
 
 
 class ReliabilityRowSerializer(OutcomeCountsSerializer):
@@ -424,6 +425,7 @@ class ReliabilityRowSerializer(OutcomeCountsSerializer):
     verdict = serializers.ChoiceField(
         choices=["passed", "failed", "flaky", "not_evaluated"]
     )
+    call_ids = serializers.ListField(child=serializers.CharField())
 
 
 class ReliabilitySerializer(serializers.Serializer):
@@ -434,6 +436,15 @@ class ReliabilitySerializer(serializers.Serializer):
     repeated = serializers.IntegerField()
     flaky = serializers.IntegerField()
     flip_rate = serializers.FloatField(allow_null=True)
+    k = serializers.IntegerField(allow_null=True)
+    inconclusive = serializers.IntegerField()
+    pass_hat_1 = serializers.FloatField(allow_null=True)
+    pass_hat_k = serializers.FloatField(allow_null=True)
+    pass_hat_k_scenarios = serializers.IntegerField()
+    pass_hat_k_passed = serializers.IntegerField()
+    pass_hat_k_excluded = serializers.IntegerField()
+    trials_passed = serializers.IntegerField()
+    trials_evaluated = serializers.IntegerField()
     pass_rate_interval = ReliabilityIntervalSerializer(allow_null=True)
     rows = ReliabilityRowSerializer(many=True)
 
@@ -852,6 +863,20 @@ class RunAnalyticsV3View(APIView):
     def get(self, request, test_execution_id, *args, **kwargs):
         execution = _execution_for_request(request, test_execution_id)
         return Response(build_run_analytics(execution))
+
+
+class RunReliabilityV3View(APIView):
+    """The reliability block alone, for the run header."""
+
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        responses={200: ReliabilitySerializer},
+        operation_id="simulate_v3_test_execution_reliability",
+    )
+    def get(self, request, test_execution_id, *args, **kwargs):
+        execution = _execution_for_request(request, test_execution_id)
+        return Response(build_run_reliability(execution))
 
 
 class _CsvEcho:

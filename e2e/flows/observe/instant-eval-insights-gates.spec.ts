@@ -103,10 +103,10 @@ async function expectRefused(call: Promise<unknown>, feature: string, testInfo: 
   } });
 }
 
-test('OBS-E2E-052: without a licence, Ask a question opens the Instant eval upgrade page and its API answers 402', {
+test('OBS-E2E-053: without a licence, Ask a question opens the Instant eval upgrade page and its API answers 402', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'OBS-E2E-052', area: 'observe',
+    id: 'OBS-E2E-053', area: 'observe',
     userGoal: 'Try Instant eval on a self-hosted install with no Enterprise licence and be shown its upgrade page instead of the feature (nothing stubbed)',
     steps: ['create an Observe project through the API', 'open the project\'s Traces view and its Evaluate menu',
       'choose Ask a question', 'open the Ask page from a bookmarked link',
@@ -165,10 +165,10 @@ test('OBS-E2E-052: without a licence, Ask a question opens the Instant eval upgr
   });
 });
 
-test('OBS-E2E-053: without a licence, Find patterns opens the Insights upgrade page and its API answers 402', {
+test('OBS-E2E-054: without a licence, Find patterns opens the Insights upgrade page and its API answers 402', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'OBS-E2E-053', area: 'observe',
+    id: 'OBS-E2E-054', area: 'observe',
     userGoal: 'Try Insights on a self-hosted install with no Enterprise licence and be shown its upgrade page instead of the feature (nothing stubbed)',
     steps: ['create an Observe project through the API', 'open the project\'s Traces view and its Evaluate menu',
       'choose Find patterns', 'open the Insights page from a bookmarked link',

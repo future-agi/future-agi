@@ -12,6 +12,7 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useGetTraceDetail } from "src/api/project/trace-detail";
+import { useSharedIssueTrace } from "src/api/shared-links";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { modelCatalogQuery } from "src/api/model/model";
@@ -138,6 +139,7 @@ const TraceDetailDrawerV2 = ({
   initialEvalFocus = false,
   refreshParentGrid,
   readOnly = false,
+  sharedToken = null,
 }) => {
   const navigate = useNavigate();
 
@@ -476,9 +478,12 @@ const TraceDetailDrawerV2 = ({
             setIsSavingView(false);
           },
           onError: (err) => {
-            enqueueSnackbar(getRequestErrorMessage(err, "Failed to create view"), {
-              variant: "error",
-            });
+            enqueueSnackbar(
+              getRequestErrorMessage(err, "Failed to create view"),
+              {
+                variant: "error",
+              },
+            );
             setIsSavingView(false);
           },
         },
@@ -513,10 +518,16 @@ const TraceDetailDrawerV2 = ({
   }, []);
 
   const queryClient = useQueryClient();
-  const { data, isLoading } = useGetTraceDetail(open ? traceId : null, {
+  // A shared issue's viewer may be signed out: read through the share token.
+  const ownTrace = useGetTraceDetail(open && !sharedToken ? traceId : null, {
     projectId,
     testExecutionId,
   });
+  const sharedTrace = useSharedIssueTrace(
+    sharedToken,
+    open && sharedToken ? traceId : null,
+  );
+  const { data, isLoading } = sharedToken ? sharedTrace : ownTrace;
 
   const handleRefresh = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["trace-detail", traceId] });
@@ -1582,6 +1593,7 @@ TraceDetailDrawerV2.propTypes = {
   initialEvalFocus: PropTypes.bool,
   refreshParentGrid: PropTypes.func,
   readOnly: PropTypes.bool,
+  sharedToken: PropTypes.string,
 };
 
 export default React.memo(TraceDetailDrawerV2);

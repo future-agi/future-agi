@@ -28,6 +28,10 @@ type ResolveResult struct {
 	columnsMissing bool
 	mu             sync.RWMutex
 	Projects       map[string]string // project_name → project_id
+	// projectTypes maps a project_id to its trace_type ("observe",
+	// "experiment") for the projects whose type resolution learned. A
+	// project missing here has an unknown type.
+	projectTypes map[string]string
 	// finding is why routing refused this key's agent. It is kept under mu
 	// for as long as this result is cached, so a refused agent costs no
 	// database statement per request; a new result starts without one.
@@ -90,6 +94,38 @@ func (r *ResolveResult) SetProjectsInWorkspace(workspaceID string, projects map[
 		r.Projects[name] = id
 	}
 	return true
+}
+
+// SetProjectTypesInWorkspace records trace_types by project id, under the
+// same workspace-scope proof as SetProjectsInWorkspace. Empty types are
+// skipped.
+func (r *ResolveResult) SetProjectTypesInWorkspace(workspaceID string, types map[string]string) bool {
+	if r == nil || workspaceID == "" || workspaceID != r.WorkspaceID {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for id, traceType := range types {
+		if id == "" || traceType == "" {
+			continue
+		}
+		if r.projectTypes == nil {
+			r.projectTypes = make(map[string]string, len(types))
+		}
+		r.projectTypes[id] = traceType
+	}
+	return true
+}
+
+// ProjectTypeInWorkspace returns the recorded trace_type of projectID, or ""
+// when it is unknown or the workspace is not this result's.
+func (r *ResolveResult) ProjectTypeInWorkspace(workspaceID, projectID string) string {
+	if r == nil || workspaceID == "" || workspaceID != r.WorkspaceID {
+		return ""
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.projectTypes[projectID]
 }
 
 // MissingProjectsInWorkspace prevents a cached name from one workspace from
@@ -155,6 +191,7 @@ func (r *ResolveResult) DeleteProjectByID(projectID string) bool {
 			removed = true
 		}
 	}
+	delete(r.projectTypes, projectID)
 	return removed
 }
 
@@ -305,9 +342,16 @@ func (r *PGResolver) validateKey(ctx context.Context, apiKey, secretKey string, 
 }
 
 const resolveProjectsQuery = `
-		SELECT id, name FROM tracer_project
+		SELECT id, name, trace_type FROM tracer_project
 		WHERE organization_id = $1 AND workspace_id = $2
 		  AND name = ANY($3) AND deleted = false`
+
+// ResolvedProject is the project a name resolved to and its trace_type
+// ("observe", "experiment").
+type ResolvedProject struct {
+	ID        string
+	TraceType string
+}
 
 // ResolveProjects batch-resolves project names to IDs for one exact
 // organization/workspace. A workspace-less lookup is always refused.
@@ -315,6 +359,22 @@ const resolveProjectsQuery = `
 func (r *PGResolver) ResolveProjects(
 	ctx context.Context, orgID, workspaceID string, names []string,
 ) (map[string]string, error) {
+	typed, err := r.ResolveProjectsWithTypes(ctx, orgID, workspaceID, names)
+	if err != nil || typed == nil {
+		return nil, err
+	}
+	result := make(map[string]string, len(typed))
+	for name, p := range typed {
+		result[name] = p.ID
+	}
+	return result, nil
+}
+
+// ResolveProjectsWithTypes is ResolveProjects plus each project's
+// trace_type, read in the same statement.
+func (r *PGResolver) ResolveProjectsWithTypes(
+	ctx context.Context, orgID, workspaceID string, names []string,
+) (map[string]ResolvedProject, error) {
 	if len(names) == 0 {
 		return nil, nil
 	}
@@ -328,13 +388,13 @@ func (r *PGResolver) ResolveProjects(
 	}
 	defer rows.Close()
 
-	result := make(map[string]string, len(names))
+	result := make(map[string]ResolvedProject, len(names))
 	for rows.Next() {
-		var id, name string
-		if err := rows.Scan(&id, &name); err != nil {
+		var id, name, traceType string
+		if err := rows.Scan(&id, &name, &traceType); err != nil {
 			return nil, fmt.Errorf("scan project: %w", err)
 		}
-		result[name] = id
+		result[name] = ResolvedProject{ID: id, TraceType: traceType}
 	}
 	return result, rows.Err()
 }
@@ -377,7 +437,7 @@ func requireExactlyOneDefaultWorkspace(orgID string, ids []string) (string, erro
 // tracer/utils/otel.py — same defaults, same unique constraint.
 func (r *PGResolver) GetOrCreateProject(ctx context.Context, orgID, workspaceID, name, traceType string) (string, error) {
 	if traceType == "" {
-		traceType = "observe"
+		traceType = ProjectTypeObserve
 	}
 
 	// Legacy null-workspace callers resolve the one unambiguous active default

@@ -1,0 +1,113 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          { "key": "service.name", "value": { "stringValue": "openrouter" } },
+          { "key": "service.version", "value": { "stringValue": "1.0.0" } },
+          { "key": "openrouter.trace.id", "value": { "stringValue": "gen-1792900000-AbCdEfGhIjKlMnOp" } }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {},
+          "spans": [
+            {
+              "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+              "spanId": "00f067aa0ba902b7",
+              "name": "Chat Handler",
+              "kind": 1,
+              "startTimeUnixNano": "1792900000000000000",
+              "endTimeUnixNano": "1792900001450000000",
+              "attributes": [
+                { "key": "user.id", "value": { "stringValue": "user_12345" } },
+                { "key": "session.id", "value": { "stringValue": "session_abc" } },
+                { "key": "trace.metadata.environment", "value": { "stringValue": "staging" } },
+                { "key": "trace.metadata.deployment", "value": { "stringValue": "us-east-1" } },
+                { "key": "trace.metadata.openrouter.api_key_name", "value": { "stringValue": "prod-key" } },
+                { "key": "trace.metadata.openrouter.provider_slug", "value": { "stringValue": "openai" } },
+                { "key": "trace.metadata.openrouter_generation.usage", "value": { "doubleValue": 0.0001275 } },
+                { "key": "trace.metadata.openrouter_generation.usage_is_estimated", "value": { "boolValue": false } },
+                { "key": "trace.metadata.openrouter_cost_allocation.cost_status", "value": { "stringValue": "reconciled" } },
+                { "key": "trace.metadata.openrouter_cost_allocation.output_cost", "value": { "stringValue": "0.00009" } }
+              ],
+              "status": { "code": 1 }
+            },
+            {
+              "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+              "spanId": "53995c3f42cd8ad8",
+              "parentSpanId": "00f067aa0ba902b7",
+              "name": "Generate Response",
+              "kind": 3,
+              "startTimeUnixNano": "1792900000020000000",
+              "endTimeUnixNano": "1792900001440000000",
+              "attributes": [
+                { "key": "gen_ai.operation.name", "value": { "stringValue": "chat" } },
+                { "key": "gen_ai.system", "value": { "stringValue": "openai" } },
+                { "key": "gen_ai.provider.name", "value": { "stringValue": "OpenAI" } },
+                { "key": "gen_ai.request.model", "value": { "stringValue": "openai/gpt-4o" } },
+                { "key": "gen_ai.response.model", "value": { "stringValue": "openai/gpt-4o-2024-08-06" } },
+                { "key": "gen_ai.response.id", "value": { "stringValue": "gen-1792900000-AbCdEfGhIjKlMnOp" } },
+                { "key": "gen_ai.response.finish_reason", "value": { "stringValue": "stop" } },
+                { "key": "gen_ai.usage.input_tokens", "value": { "intValue": "12" } },
+                { "key": "gen_ai.usage.output_tokens", "value": { "intValue": "9" } },
+                { "key": "gen_ai.usage.total_tokens", "value": { "intValue": "21" } },
+                { "key": "gen_ai.usage.input_tokens.cache_write", "value": { "intValue": "0" } },
+                { "key": "gen_ai.usage.input_cost", "value": { "doubleValue": 0.00003 } },
+                { "key": "gen_ai.usage.output_cost", "value": { "doubleValue": 0.00009 } },
+                { "key": "gen_ai.usage.total_cost", "value": { "doubleValue": 0.0001275 } },
+                { "key": "span.input", "value": { "stringValue": "[{\"role\":\"user\",\"content\":\"Hello!\"}]" } },
+                { "key": "span.output", "value": { "stringValue": "{\"role\":\"assistant\",\"content\":\"Hi! How can I help you today?\"}" } },
+                { "key": "gen_ai.prompt", "value": { "stringValue": "[{\"role\":\"user\",\"content\":\"Hello!\"}]" } },
+                { "key": "gen_ai.completion", "value": { "stringValue": "{\"role\":\"assistant\",\"content\":\"Hi! How can I help you today?\"}" } },
+                { "key": "user.id", "value": { "stringValue": "user_12345" } },
+                { "key": "session.id", "value": { "stringValue": "session_abc" } },
+                { "key": "trace.metadata.environment", "value": { "stringValue": "staging" } },
+                { "key": "span.metadata.openrouter_generation.cache_write_tokens", "value": { "intValue": "0" } },
+                { "key": "span.metadata.openrouter_generation.usage_is_estimated", "value": { "boolValue": false } },
+                { "key": "span.metadata.openrouter_generation.upstream_raw_response_usage", "value": { "stringValue": "{\"prompt_tokens\":12,\"completion_tokens\":9,\"total_tokens\":21}" } },
+                { "key": "span.metadata.openrouter_cost_allocation.cost_status", "value": { "stringValue": "reconciled" } },
+                { "key": "span.metadata.openrouter_cost_allocation.output_cost", "value": { "stringValue": "0.00009" } }
+              ],
+              "status": { "code": 1 }
+            },
+            {
+              "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+              "spanId": "1a2b3c4d5e6f7081",
+              "parentSpanId": "53995c3f42cd8ad8",
+              "name": "Provider Attempt",
+              "kind": 3,
+              "startTimeUnixNano": "1792900000030000000",
+              "endTimeUnixNano": "1792900000230000000",
+              "attributes": [
+                { "key": "gen_ai.provider.name", "value": { "stringValue": "Azure" } },
+                { "key": "span.metadata.upstream_id.value", "value": { "stringValue": "req_azure_429" } },
+                { "key": "span.metadata.upstream_id.source", "value": { "stringValue": "http_request_id" } },
+                { "key": "span.metadata.gateway_request_id", "value": { "stringValue": "gw-1" } },
+                { "key": "span.metadata.endpoint_region", "value": { "stringValue": "eastus2" } }
+              ],
+              "status": { "code": 2, "message": "429 Too Many Requests" }
+            },
+            {
+              "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+              "spanId": "2b3c4d5e6f708192",
+              "parentSpanId": "53995c3f42cd8ad8",
+              "name": "Provider Attempt",
+              "kind": 3,
+              "startTimeUnixNano": "1792900000240000000",
+              "endTimeUnixNano": "1792900001430000000",
+              "attributes": [
+                { "key": "gen_ai.provider.name", "value": { "stringValue": "OpenAI" } },
+                { "key": "span.metadata.upstream_id.value", "value": { "stringValue": "chatcmpl-AbC123" } },
+                { "key": "span.metadata.upstream_id.source", "value": { "stringValue": "response_body_id" } },
+                { "key": "span.metadata.gateway_request_id", "value": { "stringValue": "gw-2" } },
+                { "key": "span.metadata.endpoint_region", "value": { "stringValue": "us-east-1" } }
+              ],
+              "status": { "code": 1 }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

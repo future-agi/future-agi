@@ -79,3 +79,38 @@ func TestTokenCost_CustomNotFound(t *testing.T) {
 		t.Fatal("want ok=false when neither table nor custom knows the model")
 	}
 }
+
+// The prefix fallback runs only after the exact table and the org's custom
+// price both miss, and an org's custom price for the exact name wins.
+func TestTokenCost_ProviderPrefixedFallback(t *testing.T) {
+	// No custom pricing: openai/gpt-4o prices as gpt-4o.
+	p := newTestPricer(t, nil)
+	c, ok := p.TokenCost(context.Background(), "org", "openai/gpt-4o", 1000, 500)
+	if !ok || c < 0.00749 || c > 0.00751 {
+		t.Fatalf("fallback price expected: %v ok=%v", c, ok)
+	}
+
+	// Custom pricing knows the exact name: it wins over the fallback.
+	db := &fakeDB{row: fakeRow{in: 100, out: 100}}
+	p = newTestPricer(t, db)
+	c, ok = p.TokenCost(context.Background(), "org", "openai/gpt-4o", 1000, 0)
+	if !ok || c != 1000*(100.0/1000) {
+		t.Fatalf("custom price expected: %v ok=%v", c, ok)
+	}
+
+	// Custom pricing misses: the fallback still prices, after one lookup.
+	db = &fakeDB{row: fakeRow{err: pgx.ErrNoRows}}
+	p = newTestPricer(t, db)
+	c, ok = p.TokenCost(context.Background(), "org", "openai/gpt-4o", 1000, 500)
+	if !ok || c < 0.00749 || c > 0.00751 {
+		t.Fatalf("fallback after custom miss expected: %v ok=%v", c, ok)
+	}
+	if db.calls != 1 {
+		t.Fatalf("custom lookups = %d, want 1 (for the exact name only)", db.calls)
+	}
+
+	// A prefix that isn't the entry's provider stays unpriced.
+	if c, ok := p.TokenCost(context.Background(), "org", "my-proxy/gpt-4o", 1000, 500); ok {
+		t.Fatalf("my-proxy/gpt-4o must not price, got %v", c)
+	}
+}

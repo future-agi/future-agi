@@ -257,6 +257,9 @@ export default function SelectionBar({
           <Typography sx={{ typography: "s3", color: "text.subtitle", fontSize: 11.5, mt: 0.25 }}>
             {count} {count === 1 ? "scenario" : "scenarios"} × {k} {k === 1 ? "repeat" : "repeats"} = {totalRuns} runs
           </Typography>
+          <Typography sx={{ typography: "s3", color: k < 3 ? "warning.main" : "text.subtitle", fontSize: 11.5, mt: 0.25 }}>
+            Use 3 or more for a result you&apos;d base a decision on.
+          </Typography>
         </Box>
         {TRIAL_PRESETS.map((v) => {
           const active = v === k;

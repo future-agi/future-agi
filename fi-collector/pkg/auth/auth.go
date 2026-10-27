@@ -56,6 +56,17 @@ type projectResolver interface {
 	GetOrCreateProject(context.Context, string, string, string, string) (string, error)
 }
 
+// typedProjectResolver is a projectResolver that also reads each project's
+// trace_type (PGResolver does). With a resolver that does not, the types of
+// looked-up projects stay unknown.
+type typedProjectResolver interface {
+	ResolveProjectsWithTypes(context.Context, string, string, []string) (map[string]ResolvedProject, error)
+}
+
+// ProjectTypeObserve is tracer_project.trace_type for an Observe project, the
+// type the collector auto-creates projects with.
+const ProjectTypeObserve = "observe"
+
 // New creates an Authenticator. If cfg.Enabled is false, returns nil
 // (all interceptor/middleware checks become no-ops).
 // rdb is optional — when non-nil, WatchRevocations can be called to enable
@@ -215,7 +226,7 @@ func (a *Authenticator) ResolveProjectsForKey(ctx context.Context, cacheKey stri
 	}
 
 	// Batch resolve from PG read pool
-	resolved, err := resolver.ResolveProjects(ctx, result.OrgID, result.WorkspaceID, missing)
+	resolved, types, err := resolveProjectsTyped(ctx, resolver, result.OrgID, result.WorkspaceID, missing)
 	if err != nil {
 		return fmt.Errorf("resolve projects: %w", err)
 	}
@@ -224,6 +235,7 @@ func (a *Authenticator) ResolveProjectsForKey(ctx context.Context, cacheKey stri
 		!a.cache.addProjectsScoped(cacheKey, result.OrgID, result.WorkspaceID, resolved) {
 		return errors.New("resolve projects authentication cache scope changed during lookup")
 	}
+	a.recordProjectTypes(cacheKey, result, types)
 
 	// Auto-create any still-missing projects via write pool
 	for _, name := range missing {
@@ -237,10 +249,10 @@ func (a *Authenticator) ResolveProjectsForKey(ctx context.Context, cacheKey stri
 			continue
 		}
 		sfKey := strings.Join(
-			[]string{cacheKey, result.OrgID, result.WorkspaceID, name, "observe"}, "\x00",
+			[]string{cacheKey, result.OrgID, result.WorkspaceID, name, ProjectTypeObserve}, "\x00",
 		)
 		val, err, _ := a.sfProj.Do(sfKey, func() (any, error) {
-			return resolver.GetOrCreateProject(ctx, result.OrgID, result.WorkspaceID, name, "observe")
+			return resolver.GetOrCreateProject(ctx, result.OrgID, result.WorkspaceID, name, ProjectTypeObserve)
 		})
 		if err != nil {
 			a.log.Warn("project auto-create failed", "name", name, "org", result.OrgID, "err", err)
@@ -252,9 +264,48 @@ func (a *Authenticator) ResolveProjectsForKey(ctx context.Context, cacheKey stri
 			!a.cache.addProjectsScoped(cacheKey, result.OrgID, result.WorkspaceID, created) {
 			return errors.New("created project cache scope changed during lookup")
 		}
+		// GetOrCreateProject returns the Observe project of that name, new
+		// or existing.
+		a.recordProjectTypes(cacheKey, result, map[string]string{id: ProjectTypeObserve})
 	}
 
 	return nil
+}
+
+// resolveProjectsTyped looks names up through resolver, reading their
+// trace_types too when the resolver can. types maps project id → trace_type
+// and is nil when the resolver cannot read them.
+func resolveProjectsTyped(
+	ctx context.Context, resolver projectResolver, orgID, workspaceID string, names []string,
+) (ids, types map[string]string, err error) {
+	typed, ok := resolver.(typedProjectResolver)
+	if !ok {
+		ids, err = resolver.ResolveProjects(ctx, orgID, workspaceID, names)
+		return ids, nil, err
+	}
+	found, err := typed.ResolveProjectsWithTypes(ctx, orgID, workspaceID, names)
+	if err != nil {
+		return nil, nil, err
+	}
+	ids = make(map[string]string, len(found))
+	types = make(map[string]string, len(found))
+	for name, p := range found {
+		ids[name] = p.ID
+		types[p.ID] = p.TraceType
+	}
+	return ids, types, nil
+}
+
+// recordProjectTypes keeps the trace_types of resolved projects on the
+// request's result and its cache entry. A type is a hint for the resource
+// stamp (StampResourceAttrs), so failing to keep one only leaves that
+// project's type unknown; it never fails the request.
+func (a *Authenticator) recordProjectTypes(cacheKey string, result *ResolveResult, types map[string]string) {
+	if len(types) == 0 {
+		return
+	}
+	result.SetProjectTypesInWorkspace(result.WorkspaceID, types)
+	a.cache.addProjectTypesScoped(cacheKey, result.OrgID, result.WorkspaceID, types)
 }
 
 // refreshKey re-validates a key in the background (warm stale refresh).
