@@ -79,7 +79,9 @@ class DummyLoggerWorkflow:
     "with a 3 s handler exceeds Temporal's 2 s deadlock threshold.",
     strict=False,
 )
-async def test_workflow_logger_safe_even_with_slow_root_handler():
+async def test_workflow_logger_safe_even_with_slow_root_handler(
+    temporal_test_server_options,
+):
     """
     Verify that workflow.logger remains safe even when a slow handler is on the root logger.
 
@@ -97,7 +99,9 @@ async def test_workflow_logger_safe_even_with_slow_root_handler():
     temporalio_logger.propagate = True
 
     try:
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with await WorkflowEnvironment.start_time_skipping(
+            **temporal_test_server_options
+        ) as env:
             async with Worker(
                 env.client,
                 task_queue="test-deadlock",
@@ -119,7 +123,9 @@ async def test_workflow_logger_safe_even_with_slow_root_handler():
 
 
 @pytest.mark.asyncio
-async def test_workflow_logger_no_deadlock_with_console_only():
+async def test_workflow_logger_no_deadlock_with_console_only(
+    temporal_test_server_options,
+):
     """
     Verify that the fix works: routing temporalio logger to console-only
     prevents deadlock even when root logger has a slow handler.
@@ -139,7 +145,9 @@ async def test_workflow_logger_no_deadlock_with_console_only():
     temporalio_logger.propagate = False
 
     try:
-        async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with await WorkflowEnvironment.start_time_skipping(
+            **temporal_test_server_options
+        ) as env:
             async with Worker(
                 env.client,
                 task_queue="test-no-deadlock",
