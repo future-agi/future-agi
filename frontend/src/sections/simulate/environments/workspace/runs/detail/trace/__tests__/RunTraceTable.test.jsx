@@ -427,6 +427,18 @@ describe("RunTraceTable", () => {
     );
   });
 
+  it("forwards sub-actor filters to the server", () => {
+    renderTable({
+      initialFilters: { subActor: ["friend"], subActor_not: ["none"] },
+    });
+    expect(useRunCalls).toHaveBeenLastCalledWith(
+      "ex1",
+      expect.objectContaining({
+        filters: { sub_actor: ["friend"], sub_actor_not: ["none"] },
+      }),
+    );
+  });
+
   it("follows the drawer: switches page, expands the call's group, highlights its row", () => {
     const onQueryChange = vi.fn();
     const { rerender } = renderTable({ onQueryChange });

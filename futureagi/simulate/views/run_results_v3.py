@@ -118,6 +118,8 @@ class RunCallFiltersSerializer(serializers.Serializer):
             "goal_not",
             "sub_goal",
             "sub_goal_not",
+            "sub_actor",
+            "sub_actor_not",
             "status",
             "status_not",
             "goal_outcome",
@@ -324,9 +326,14 @@ class FacetValueSerializer(serializers.Serializer):
     count = serializers.IntegerField()
 
 
+class LabelledFacetValueSerializer(FacetValueSerializer):
+    label = serializers.CharField()
+
+
 class RunFacetsSerializer(serializers.Serializer):
     goal = FacetValueSerializer(many=True)
     sub_goal = FacetValueSerializer(many=True)
+    sub_actor = LabelledFacetValueSerializer(many=True, required=False)
     status = FacetValueSerializer(many=True)
 
 

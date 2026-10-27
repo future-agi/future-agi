@@ -101806,6 +101806,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/FacetValue",
           },
         },
+        sub_actor: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/LabelledFacetValue",
+          },
+        },
         status: {
           type: "array",
           items: {
@@ -115770,6 +115776,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
         count: {
           title: "Count",
           type: "integer",
+        },
+      },
+    },
+    LabelledFacetValue: {
+      required: ["value", "count", "label"],
+      type: "object",
+      properties: {
+        value: {
+          title: "Value",
+          type: "string",
+          minLength: 1,
+        },
+        count: {
+          title: "Count",
+          type: "integer",
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
         },
       },
     },

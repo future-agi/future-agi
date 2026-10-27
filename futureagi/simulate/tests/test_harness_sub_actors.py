@@ -17,6 +17,7 @@ from simulate.services.harness_scenarios import (
     field_catalogue,
     index_scenarios,
     scenario_row,
+    sub_actor_choice_labels,
 )
 from simulate.services.hosted_harness import create_hosted_job, register_attempt
 from simulate.services.hosted_harness_ingestion import _ingest_hosted_transcript
@@ -88,6 +89,20 @@ def test_a_suite_indexes_each_scenarios_sub_actors_and_filters_by_them(
     assert filtered("sub_actors_not=friend") == ["alone"]
     field = next(one for one in field_catalogue(rows) if one["value"] == "sub_actors")
     assert field["counts"] == {"friend": 1, "none": 1}
+    # The panel names each choice: the sub-actor by name, and none as the simulated user alone.
+    named = next(
+        one
+        for one in field_catalogue(
+            rows, sub_actor_labels=sub_actor_choice_labels(_LIST)
+        )
+        if one["value"] == "sub_actors"
+    )
+    assert named["choice_labels"] == {
+        "none": "Simulated user only",
+        "friend": "Rowan",
+        "partner": "Sam",
+    }
+    assert field["choice_labels"] == {"none": "Simulated user only"}
 
 
 @pytest.mark.django_db
@@ -354,3 +369,66 @@ def test_a_transcript_written_without_a_speaker_name_is_stored_with_none(
             [call_execution.id],
         )
     assert CallTranscript.objects.get(call_execution=call_execution).speaker_name == ""
+
+
+@pytest.mark.django_db
+def test_run_results_filter_and_count_calls_by_the_sub_actor_that_entered_them(
+    organization, workspace
+):
+    from simulate.services.run_results_v3_queries import (
+        _sub_actor_facet,
+        apply_run_call_query,
+    )
+
+    seen = {
+        "entered": [
+            {"sub_actor": "friend", "name": "Rowan", "triggered": True, "delivered": 1}
+        ],
+        # Included but never came in: the call is not one the friend entered.
+        "absent": [
+            {"sub_actor": "friend", "name": "Rowan", "triggered": False, "delivered": 0}
+        ],
+        "plain": None,
+    }
+    ids = {}
+    for key, summary in seen.items():
+        call = _ingest(
+            organization,
+            workspace,
+            f"results-{key}",
+            CallExecution.SimulationCallType.TEXT,
+            {"messages": []},
+            {},
+        )
+        if summary is not None:
+            call.call_metadata = {
+                **(call.call_metadata or {}),
+                "harness_sub_actors": {"summary": summary},
+            }
+            call.save(update_fields=["call_metadata"])
+        ids[call.id] = key
+    calls = CallExecution.objects.filter(id__in=ids)
+
+    def filtered(**filters):
+        return sorted(
+            ids[one]
+            for one in apply_run_call_query(calls, {"filters": filters}).values_list(
+                "id", flat=True
+            )
+        )
+
+    assert filtered(sub_actor=["friend"]) == ["entered"]
+    assert filtered(sub_actor=["none"]) == ["absent", "plain"]
+    assert filtered(sub_actor_not=["friend"]) == ["absent", "plain"]
+    assert filtered(sub_actor=["friend", "none"]) == ["absent", "entered", "plain"]
+    assert _sub_actor_facet(calls) == [
+        {"value": "none", "count": 2, "label": "Simulated user only"},
+        {"value": "friend", "count": 1, "label": "Rowan"},
+    ]
+    # A run where no sub-actor entered any call offers no sub-actor filter.
+    assert (
+        _sub_actor_facet(
+            calls.exclude(id__in=[k for k, v in ids.items() if v == "entered"])
+        )
+        == []
+    )

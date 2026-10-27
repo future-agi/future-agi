@@ -48691,6 +48691,15 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         count: zod.number(),
       }),
     ),
+    sub_actor: zod
+      .array(
+        zod.object({
+          value: zod.string().min(1),
+          count: zod.number(),
+          label: zod.string().min(1),
+        }),
+      )
+      .optional(),
     status: zod.array(
       zod.object({
         value: zod.string().min(1),

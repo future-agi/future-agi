@@ -394,6 +394,7 @@ def _orm_path(field: str) -> str:
 
 # The filter's value for a scenario that includes no sub-actor.
 NO_SUB_ACTOR = "none"
+SIMULATED_USER_ONLY = "Simulated user only"
 
 
 def sub_actor_entries(raw: Any) -> list[dict[str, Any]] | None:
@@ -408,6 +409,15 @@ def sub_actor_entries(raw: Any) -> list[dict[str, Any]] | None:
         if isinstance(one, dict) and one.get("id")
     ]
     return entries or None
+
+
+def sub_actor_choice_labels(listing: Any) -> dict[str, str]:
+    """How the filter names each sub-actor, and scenarios with none of them."""
+    labels = {NO_SUB_ACTOR: SIMULATED_USER_ONLY}
+    for one in (listing.get("sub_actors") if isinstance(listing, dict) else None) or []:
+        if isinstance(one, dict) and one.get("id"):
+            labels[str(one["id"])] = str(one.get("name") or one["id"])
+    return labels
 
 
 def _sub_actor_match(value: str) -> Q:
@@ -648,7 +658,11 @@ def apply_search(queryset: QuerySet, term: str) -> QuerySet:
     return queryset.filter(matches)
 
 
-def field_catalogue(queryset: QuerySet, spoken: bool = True) -> list[dict[str, Any]]:
+def field_catalogue(
+    queryset: QuerySet,
+    spoken: bool = True,
+    sub_actor_labels: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
     """The panel's `fields`, with each enum's values and counts over the whole filtered suite."""
     enums = [field for field in FIELDS if field["type"] == "enum"]
     paths = {field["value"]: _orm_path(field["value"]) for field in enums}
@@ -683,6 +697,8 @@ def field_catalogue(queryset: QuerySet, spoken: bool = True) -> list[dict[str, A
             for name, _ in sorted(counts.items(), key=lambda pair: (-pair[1], pair[0]))
         ]
         entry["counts"] = counts
+        if field["value"] == "sub_actors":
+            entry["choice_labels"] = sub_actor_labels or sub_actor_choice_labels(None)
         catalogue.append(entry)
     return catalogue
 

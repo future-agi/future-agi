@@ -23865,9 +23865,18 @@ export interface FacetValueApi {
   count: number;
 }
 
+export interface LabelledFacetValueApi {
+  /** @minLength 1 */
+  value: string;
+  count: number;
+  /** @minLength 1 */
+  label: string;
+}
+
 export interface RunFacetsApi {
   goal: FacetValueApi[];
   sub_goal: FacetValueApi[];
+  sub_actor?: LabelledFacetValueApi[];
   status: FacetValueApi[];
 }
 
