@@ -73,8 +73,9 @@ from update_e2e import harness as e2e  # noqa: E402
 V51, V52 = "v1.51.0", "v1.52.0"
 # A Distributed release whose serving image is re-pushed after it was signed (only test_23 uses its tags).
 MISMATCH = "v1.52.1"
-# The production matrix's release (its own tags, so other tests never remove or pull them).
-PROD = "v1.52.3"
+# Each production matrix owns different tags. Stage prepare() removes its
+# targets; sharing them with the concurrent finish matrix corrupts both traces.
+PROD_STAGE, PROD_FINISH = "v1.52.3", "v1.52.4"
 VERSION_KEY = "FUTURE_AGI_VERSION"
 JOURNAL_NOTE = "an interrupted bin/update run will be recovered by the next apply or rollback"
 DAEMON_HINT = "Docker is not running or not reachable (check DOCKER_HOST and docker context ls)"
@@ -104,12 +105,12 @@ def setUpModule() -> None:
         return
     harness = dist.DistributedHarness(prefix=faults.faults_prefix())
     try:
-        harness.start(releases=[(V52, "default", "trusted")], extra_images={MISMATCH: "ok", PROD: "ok"},
+        harness.start(releases=[(V52, "default", "trusted")], extra_images={MISMATCH: "ok", PROD_STAGE: "ok", PROD_FINISH: "ok"},
                       dist_releases=[(V52, "trusted")])
-        for version in (MISMATCH, PROD):
+        for version in (MISMATCH, PROD_STAGE, PROD_FINISH):
             for component in dist.COMPONENTS:
                 harness.push_component(component, version, "ok")
-        for version in (MISMATCH, PROD):
+        for version in (MISMATCH, PROD_STAGE, PROD_FINISH):
             harness.dist_release(version)
     except BaseException:
         harness.stop()
@@ -719,12 +720,12 @@ class FaultE2EBase(unittest.TestCase):
         self.addCleanup(registry.remove)
         return registry
 
-    def faults(self, name: str) -> faults.FaultDocker:
+    def faults(self, name: str, *, stable_environment: bool = False) -> faults.FaultDocker:
         assert H is not None
         directory = H.hook_dir(f"faults-{name}")
         if directory.exists():
             shutil.rmtree(directory)
-        injector = faults.FaultDocker(directory)
+        injector = faults.FaultDocker(directory, stable_environment=stable_environment)
         self.addCleanup(injector.release_all)
         return injector
 
@@ -876,6 +877,8 @@ class FaultE2EBase(unittest.TestCase):
         result = self.spawn_run(spec.co, [*spec.flags, *spec.command], fd.env())
         self.assertExit(result, 0)
         calls = fd.calls()
+        (spec.co.harness.logs_dir / (spec.name + '-recorded.json')).write_text(
+            json.dumps([call.__dict__ for call in calls], indent=2) + '\n', encoding='utf-8')
         faults.validate_transactions(calls, spec.kind)
         e2e.log(f"{spec.name}: {len(calls)} Docker calls:\n" + "\n".join(f"    {c}" for c in calls))
         self.assertTrue(calls and all(c.action == "run" for c in calls))
@@ -914,6 +917,16 @@ class FaultE2EBase(unittest.TestCase):
         words = spec.recorded[point.index - 1].words
         result = self.spawn_run(co, [*spec.flags, *spec.command], fd.point_env(point, words))
         calls = fd.calls()
+        # Keep the selected event and exact prefix even when its assertion fails;
+        # the next point resets the injector, not this diagnostic evidence.
+        (co.harness.logs_dir / f'{spec.name}-{point.index}-{point.action}.json').write_text(
+            json.dumps({'point': point.__dict__, 'exit': result.code,
+                        'calls': [call.__dict__ for call in calls],
+                        'env_before_sha256': hashlib.sha256(before['env']).hexdigest(),
+                        'env_after_sha256': hashlib.sha256(co.env_bytes()).hexdigest(),
+                        'containers_before': before['containers'], 'containers_after': self.started(co),
+                        'receipts_before': before['receipts'],
+                        'receipts_after': [p.name for p in co.receipt_paths()]}, indent=2) + '\n', encoding='utf-8')
         faults.validate_transactions(calls, spec.kind)
         phase, faulted = faults.phase_of(calls)
         restart = faults.restart_position(spec.recorded)
@@ -1275,17 +1288,21 @@ class DistributedMatrixE2E(FaultE2EBase):
         calls = self.record(spec, fd)
         self.run_matrix(spec, fd, faults.state_matrix(calls))
 
-    def production_spec(self, name: str) -> Tuple[Spec, Spec, Callable[[], None]]:
-        """A production install at v1.51.0, its `--production apply --stage` of PROD and the `--production
-        apply` that finishes it; and what stages it (stage, then the release's initialization job)."""
+    def production_spec(self, name: str, version: str, *, finish_recorder=None) -> Tuple[Spec, Spec, Callable[[], None]]:
+        """One test's release: stage, separately approved initialization, then finish.
+
+        A recorded finish must use the SAME shell environment as its stage;
+        fault selection is out-of-band, not a changed installation fingerprint.
+        """
 
         assert H is not None
         co = self.dist_checkout(name, production=True)
         co.install()
         flags = ["--production"]
-        manifest = ["--manifest", str(H.dist_release(PROD).manifest)]
+        manifest = ["--manifest", str(H.dist_release(version).manifest)]
         stage = ["apply", "--stage", *manifest, "--allow-no-backup"]
         finish = ["apply", *manifest, "--allow-no-backup"]
+        approved_finish = [*finish, "--acknowledge-stale-stage"]
         rollback_yes = ["rollback", "--yes"]
         original = co.env_bytes()
 
@@ -1303,45 +1320,54 @@ class DistributedMatrixE2E(FaultE2EBase):
             self.assertSettled(co)
 
         def staged_and_initialized() -> None:
-            self.assertExit(co.bin_update(*flags, *stage, timeout=1200), 0, f"Staged {PROD}")
+            if finish_recorder is None:
+                result = co.bin_update(*flags, *stage, timeout=1200)
+                environment = None
+            else:
+                result = self.spawn_run(co, [*flags, *stage], finish_recorder.env())
+                environment = dict(finish_recorder.env(), FAGI_FAULT_JOURNAL=str(co.state_dir / "journal.json"))
+            self.assertExit(result, 0, f"Staged {version}")
             co.initialize()
-            self.assertEqual(co.bootstrap_history()[-1:], [f"bootstrap {PROD} backend migrate --noinput"])
+            self.assertEqual(co.bootstrap_history()[-1:], [f"bootstrap {version} backend migrate --noinput"])
+            e2e.assert_stage_acknowledgment_required(self, co, *flags, *finish, env=environment)
 
-        def stage_converged(version: str) -> None:
-            if version == PROD:
-                self.staged(co, PROD, V51)
+        def stage_converged(target: str) -> None:
+            if target == version:
+                self.staged(co, version, V51)
             else:
                 self.dist_converged(co, V51)
 
-        stage_spec = Spec(name=f"{name}-stage", co=co, flags=flags, command=stage, kind="apply", target=PROD,
+        stage_spec = Spec(name=f"{name}-stage", co=co, flags=flags, command=stage, kind="apply", target=version,
                           source=V51, stage_only=True, env_before=original,
-                          prepare=lambda: self.remove_images(PROD), converged=stage_converged, reset=back_to_v51)
+                          prepare=lambda: self.remove_images(version), converged=stage_converged, reset=back_to_v51)
 
         def finish_reset() -> None:
-            if running() == PROD or co.env_bytes() == original:
+            if running() == version or co.env_bytes() == original:
                 back_to_v51()
                 staged_and_initialized()
             self.assertEqual(co.env_bytes(), finish_spec.env_before)
-            self.staged(co, PROD, V51)
+            self.staged(co, version, V51)
             self.assertSettled(co)
 
-        def finish_converged(version: str) -> None:
-            self.dist_converged(co, version)
-            if version == PROD:
+        def finish_converged(target: str) -> None:
+            self.dist_converged(co, target)
+            if target == version:
                 bootstrap = co.inspect(co.service(dist.BOOTSTRAP).id)
                 self.assertIn("--check", [*(bootstrap["Config"].get("Entrypoint") or []),
                                           *(bootstrap["Config"].get("Cmd") or [])])
 
-        finish_spec = Spec(name=f"{name}-finish", co=co, flags=flags, command=finish, kind="apply", target=PROD,
+        finish_spec = Spec(name=f"{name}-finish", co=co, flags=flags, command=approved_finish, kind="apply", target=version,
                            source=V51, converged=finish_converged, reset=finish_reset,
-                           forward=(finish, PROD, f"Updated to {PROD}. Receipt: "),
+                           # Recovery after rollout resumes an interrupted apply,
+                           # NOT a staged one; acknowledgment must not be added.
+                           forward=(finish, version, f"Updated to {version}. Receipt: "),
                            back=(rollback_yes, V51, f"Rolled back to {V51}. Receipt: "))
         return stage_spec, finish_spec, staged_and_initialized
 
     @e2e.slow
     def test_21_production_stage_faults_and_a_failing_backup_hook(self):
         assert H is not None
-        stage_spec, _, _ = self.production_spec("prod-stage")
+        stage_spec, _, _ = self.production_spec("prod-stage", PROD_STAGE)
         co = stage_spec.co
         before = self.snapshot(co)
 
@@ -1376,10 +1402,10 @@ class DistributedMatrixE2E(FaultE2EBase):
 
     @e2e.slow
     def test_22_production_finish_faults_from_the_staged_update(self):
-        _, finish_spec, staged_and_initialized = self.production_spec("prod-finish")
+        fd = self.faults("prod-finish", stable_environment=True)
+        _, finish_spec, staged_and_initialized = self.production_spec("prod-finish", PROD_FINISH, finish_recorder=fd)
         staged_and_initialized()
         finish_spec.env_before = finish_spec.co.env_bytes()
-        fd = self.faults("prod-finish")
         calls = self.record(finish_spec, fd)
         self.run_matrix(finish_spec, fd, faults.state_matrix(calls))
 

@@ -659,8 +659,11 @@ class DistributedUpdateE2E(unittest.TestCase):
             self.assertEqual(co.snapshot()["containers"], stack)
 
         # ---------------------------------------------- step 2: finish --
-        result = co.bin_update("--production", "apply", *manifest(V52), "--backup-command", str(hook), env=shell,
-                               timeout=1200)
+        e2e.assert_stage_acknowledgment_required(self, co, "--production", "apply", *manifest(V52),
+                                               "--backup-command", str(hook), env=shell)
+        self.assertEqual(backups(), [V52])
+        result = co.bin_update("--production", "apply", *manifest(V52), "--backup-command", str(hook),
+                               "--acknowledge-stale-stage", env=shell, timeout=1200)
         self.assertExit(result, 0, f"Skipping the backup: it ran when the update to {V52} was staged "
                                    f"({staged['_path']}).", f"Updated to {V52}. Receipt:")
         with self.subTest("no second backup"):
@@ -1158,8 +1161,12 @@ class DistributedUpdateE2E(unittest.TestCase):
             self.assertEqual(co.bootstrap_history()[-1:], [bootstrap_line(V52, "migrate", "--noinput")])
             self.assertEqual(co.snapshot()["containers"], containers)
 
-        # ------------------------------------ step 2: the printed apply --
-        result = co.paste(finish.group(1))
+        # The printed guidance is unchanged; missing automatic backup proof
+        # requires a separate explicit host acknowledgment, not stage creation.
+        e2e.assert_stage_acknowledgment_required(self, co, *flags, "apply",
+                                               invoke=lambda: co.paste(finish.group(1)))
+        # ------------------------------------ step 2: explicitly approved apply --
+        result = co.paste(finish.group(1) + " --acknowledge-stale-stage")
         self.assertExit(result, 0, f"Updated to {V52}. Receipt:")
         stack = co.stack()
         self.assertComponents(co, V52, DEFAULT_SERVICES, stack)

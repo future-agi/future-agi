@@ -1259,8 +1259,28 @@ class StandaloneRoundTwoE2E(StandaloneE2EHelpers, unittest.TestCase):
                          ("update_available", True, finish))
         self.assertUnchanged(co, before)
 
-        # The finishing apply: no second backup, no env change, then the restart and readiness.
-        result = co.bin_update("apply", *self.manifest_args(r52))
+        # An ordinary backup hook has no automatic proof: explicit host approval
+        # is required, and refusing it must not run a backup or rewrite the stage.
+        e2e.assert_stage_acknowledgment_required(self, co, "apply", *self.manifest_args(r52),
+                                               backup_paths=[hook["log"]])
+        # Approval cannot excuse changed operator config or env bytes. Restore
+        # each deliberate edit exactly before testing the valid finish.
+        for path, extra in ((co.root / "update.conf", b"\n# changed operator configuration\n"),
+                            (co.env_path, b"\nE2E_OPERATOR_EDIT=must-not-be-overwritten\n")):
+            with self.subTest(changed=path.name):
+                saved = path.read_bytes()
+                try:
+                    path.write_bytes(saved + extra)
+                    refused_before = co.snapshot()
+                    result = co.bin_update("apply", *self.manifest_args(r52), "--acknowledge-stale-stage")
+                    self.assertExit(result, 3, "bin/update: immutable_release_changed")
+                    self.assertUnchanged(co, refused_before)
+                    self.assertEqual(path.read_bytes(), saved + extra)
+                    self.assertEqual(len(parse_hook_log(hook["log"])), 1)
+                finally:
+                    path.write_bytes(saved)
+        # The intentionally approved finish: no second backup or env change.
+        result = co.bin_update("apply", *self.manifest_args(r52), "--acknowledge-stale-stage")
         self.assertExit(result, 0, f"Skipping the backup: it ran when the update to {V52} was staged "
                                    f"({staged['_path']}).", "Restarting the stack on the new images",
                         f"Updated to {V52}. Receipt: ")
@@ -1527,7 +1547,8 @@ class StandaloneRoundThreeE2E(StandaloneE2EHelpers, unittest.TestCase):
         self.assertUnchanged(co, before)
 
         # The run that finishes it shows the same plan and records what ran before it, not the staged tag.
-        result = co.bin_update("apply", *self.manifest_args(r52), "--allow-no-backup")
+        e2e.assert_stage_acknowledgment_required(self, co, "apply", *self.manifest_args(r52), "--allow-no-backup")
+        result = co.bin_update("apply", *self.manifest_args(r52), "--allow-no-backup", "--acknowledge-stale-stage")
         self.assertExit(result, 0, f"  Installed     {V51} running, {V52} staged\n", f"Updated to {V52}. Receipt: ")
         self.assertRuns(co, V52, image=H.image_ref(V52))
         self.assertEqual(co.env_text(), with_version(original, V52))
@@ -1636,17 +1657,37 @@ class StandaloneRoundThreeE2E(StandaloneE2EHelpers, unittest.TestCase):
         co.install()
         original = co.env_bytes()
         started = self.containers_as_started(co)
-        self.assertExit(co.bin_update("apply", "--stage", *self.manifest_args(r52), "--allow-no-backup"), 0,
-                        f"Staged {V52}")
+        hook = self.recording_hook("restage-backup")
+        self.assertExit(co.bin_update("apply", "--stage", *self.manifest_args(r52),
+                                     "--backup-command", str(hook["hook"])), 0, f"Staged {V52}")
         first = co.receipts()[-1]
+        private = co.state_dir / ("stage-" + first["run_id"] + ".json")
+        binding = json.loads(private.read_text())
+        self.assertEqual(binding["backup_proof_state"], "legacy_absent")
+        self.assertNotIn("backup_completed_at", binding)
 
-        # Staging the same release again pulls and verifies it again; the first stage's backup still covers it.
-        result = co.bin_update("apply", "--stage", *self.manifest_args(r52), "--allow-no-backup")
-        self.assertExit(result, 0, f"Skipping the backup: the update to {V52} was staged ({first['_path']}).",
+        def witnesses():
+            paths = [Path(first["_path"]), private, hook["log"], hook["pid"], hook["started"]]
+            return {str(p): (p.read_bytes(), p.stat().st_ino, p.stat().st_mode,
+                             p.stat().st_mtime_ns, p.stat().st_ctime_ns) for p in paths}
+
+        original_witnesses = witnesses()
+        # Reverify/cache the same release without authorizing rollout. The first
+        # stage's backup, creation time and absent proof still cover this chain.
+        result = co.bin_update("apply", "--stage", *self.manifest_args(r52), "--backup-command", str(hook["hook"]))
+        self.assertExit(result, 0, f"Skipping the backup: it ran when the update to {V52} was staged ({first['_path']}).",
                         f"Staged {V52}")
         second = co.receipts()[-1]
         self.assertEqual({k: second[k] for k in ("status", "resumes", "env_changes", "previous_values")}, {
             "status": "staged", "resumes": first["_path"], "env_changes": {}, "previous_values": {VERSION_KEY: V51}})
+        self.assertEqual(second["backup"], {"ran": False, "staged": first["_path"]})
+        self.assertEqual(json.loads((co.state_dir / ("stage-" + second["run_id"] + ".json")).read_text()), binding)
+        self.assertEqual(witnesses(), original_witnesses)
+        self.assertEqual(hook["log"].read_text().count("--- run"), 1)
+        self.assertEqual(self.containers_as_started(co), started)
+        e2e.assert_stage_acknowledgment_required(self, co, "apply", *self.manifest_args(r52),
+                                               backup_paths=(hook["log"], hook["pid"], hook["started"]))
+        self.assertEqual(witnesses(), original_witnesses)
         self.assertEqual(self.containers_as_started(co), started)
 
         # The first stage's receipt points at the second, which nothing finished: it was only staged again.
@@ -1777,6 +1818,7 @@ class StandaloneRoundFourE2E(StandaloneE2EHelpers, unittest.TestCase):
         self.assertEqual((staged.get("status"), staged.get("target_image_ids")),
                          ("staged", {"app": co.image_info(image52)["id"]}))
 
+        e2e.assert_stage_acknowledgment_required(self, co, "apply", *self.manifest_args(r52), "--allow-no-backup")
         with self.subTest("still verified: a local image without the signed digest is pulled, which fails"):
             # Keep the verified image under a second tag, and point the release's tag at another image.
             keep = H.image_ref(f"keep-{os.urandom(4).hex()}", registry=registry.host)
@@ -1785,7 +1827,8 @@ class StandaloneRoundFourE2E(StandaloneE2EHelpers, unittest.TestCase):
             self.addCleanup(e2e.run, ["docker", "rmi", keep], check=False)
             e2e.run(["docker", "tag", e2e.BASE_IMAGE, image52])
             try:
-                result = co.bin_update("apply", *self.manifest_args(r52), "--allow-no-backup")
+                result = co.bin_update("apply", *self.manifest_args(r52), "--allow-no-backup",
+                                       "--acknowledge-stale-stage")
             finally:
                 e2e.run(["docker", "tag", keep, image52])
             self.assertExit(result, 4, "apply stopped before restarting anything: ", "pull app` failed",
@@ -1796,7 +1839,8 @@ class StandaloneRoundFourE2E(StandaloneE2EHelpers, unittest.TestCase):
             self.assertEqual(co.receipts()[-1]["status"], "failed_before_rollout")
         self.assertIn(f"{registry.host}/{e2e.REPOSITORY}@{r52.digest}", co.image_info(image52)["repo_digests"])
 
-        result = co.bin_update("apply", *self.manifest_args(r52), "--allow-no-backup")
+        e2e.assert_stage_acknowledgment_required(self, co, "apply", *self.manifest_args(r52), "--allow-no-backup")
+        result = co.bin_update("apply", *self.manifest_args(r52), "--allow-no-backup", "--acknowledge-stale-stage")
         self.assertExit(result, 0, f"{not_pulled}{image52}", "Restarting the stack on the new images",
                         f"Updated to {V52}. Receipt: ")
         self.assertNotIn("Pulling", result.stderr)

@@ -1553,24 +1553,28 @@ class Updater:
                      f"update instead, run `{self._rollback_command(path)}`. Receipt: {path}")
         return " ".join(steps)
 
-    def _check_stage_binding(self, staged, binding, acknowledge):
-        """Opt-in exact-byte manual stage adapter; never adopted by automation.
+    def _check_stage_binding(self, staged, binding, acknowledge, *, stage_only=False):
+        """Validate identity on every resume; authorize freshness only for finish.
 
         New host/CLI adapters pass release_binding for both stage and finish.
         The legacy operator entry point (no binding argument) keeps its existing
         behavior. Acknowledgement excuses age/absent proof only, never identity.
+        Restaging requires a complete stored identity, but neither uses nor
+        refreshes backup freshness/proof: it cannot restart or authorize rollout.
         """
         from datetime import datetime, timezone
         from .orchestrator import GuardRefused
         saved = self.state.read_private('stage', staged['run_id']) if staged.get('run_id') else None
         if saved is None:
-            if not acknowledge:
+            if stage_only or not acknowledge:
                 raise GuardRefused(ReasonCode.STALE_STAGE)
             return
         keys = ('manifest_hash', 'manifest_sha256', 'bundle_sha256', 'installation_fingerprint',
                 'config_fingerprint', 'profile_fingerprint', 'trust_fingerprint')
         if any(not saved.get(key) or saved[key] != binding.get(key) for key in keys):
             raise GuardRefused(ReasonCode.IMMUTABLE_RELEASE_CHANGED)
+        if stage_only:
+            return
         try:
             created = datetime.strptime(saved['created_at'], '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)
             age = (datetime.now(timezone.utc) - created).total_seconds()
@@ -1627,7 +1631,7 @@ class Updater:
                 from .orchestrator import GuardRefused
                 raise GuardRefused(ReasonCode.IMMUTABLE_RELEASE_CHANGED)
             if staged and release_binding is not None:
-                self._check_stage_binding(staged, release_binding, acknowledge_stale_stage)
+                self._check_stage_binding(staged, release_binding, acknowledge_stale_stage, stage_only=stage)
             # Every refusal that needs no backup is decided before the plan is printed.
             refusal = self._refusal(plan, manifest, resumed, staged, stage=stage, dry_run=dry_run,
                                     backup_command=backup_command, allow_no_backup=allow_no_backup)

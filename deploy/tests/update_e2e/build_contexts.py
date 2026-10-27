@@ -1,8 +1,8 @@
 """Minimal FROM scratch context probes, not production image builds/publication.
 
 Exercise the repository's effective ignore policies with Docker itself and
-inspect every exported image layer. No daemon mounts, image loads or tags are
-needed. Synthetic native-retained env files are created on the test host
+inspect every saved image layer. A unique test tag is loaded, saved and removed;
+no daemon settings or builder defaults change. Synthetic retained env files are created on the test host
 (APFS/ext4, never an overlay/virtiofs commit target).
 """
 from __future__ import annotations
@@ -17,6 +17,46 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import uuid
+
+
+def export_probe_image(buildx, builder, dockerfile, context, archive, log):
+    """Portable across classic Docker and containerd stores, without a new builder.
+
+    The docker driver's tar exporter is not universal. Loading a uniquely owned
+    tag and saving that exact image works with both stores. Never remove an ID
+    (which might have other tags), use force, or prune the daemon/builder cache.
+    """
+    tag = 'fagi-upd-e2e-context-' + uuid.uuid4().hex + ':probe'
+    command = [*buildx, 'build', *builder, '--network=none', '--no-cache', '--provenance=false',
+               '--progress=plain', '--file', str(dockerfile), '--load', '--tag', tag,
+               '--label', 'com.futureagi.update-e2e.context=' + tag, str(context)]
+    save = ['docker', 'save', '--output', str(archive), tag]
+    cleanup = ['docker', 'image', 'rm', tag]
+    log.write_text(json.dumps({'build': command, 'save': save, 'cleanup': cleanup}) + '\n')
+    built = None
+    def run(words, timeout):
+        result = subprocess.run(words, capture_output=True, text=True, timeout=timeout)
+        with log.open('a') as handle:
+            handle.write(f'\n{words!r}\nexit {result.returncode}\n{result.stdout}{result.stderr}\n')
+        return result
+    try:
+        built = run(command, 120)
+        if built.returncode:
+            raise AssertionError(built.stdout + built.stderr)
+        saved = run(save, 120)
+        if saved.returncode:
+            raise AssertionError(saved.stdout + saved.stderr)
+        if not archive.is_file() or not archive.stat().st_size:
+            raise AssertionError('docker save produced no image archive')
+        return {'command': command, 'save_command': save, 'cleanup_command': cleanup,
+                'image_tag': tag, 'exit': built.returncode}
+    finally:
+        removed = run(cleanup, 30)
+        # An unsuccessful build might never create its tag. After a successful
+        # load, cleanup failure is itself a failed test, never a leaked success.
+        if built is not None and built.returncode == 0 and removed.returncode:
+            raise AssertionError('test image cleanup failed: ' + removed.stdout + removed.stderr)
 
 
 def assert_private_contexts_excluded(case, source: Path, scratch: Path):
@@ -25,7 +65,7 @@ def assert_private_contexts_excluded(case, source: Path, scratch: Path):
     scratch.mkdir(parents=True, exist_ok=True)
     rows = []
     # Prefer the plugin; some developer hosts install the standalone binary.
-    plugin = subprocess.run(['docker', 'buildx', 'version'], capture_output=True)
+    plugin = subprocess.run(['docker', 'buildx', 'version'], capture_output=True, timeout=30)
     buildx = ['docker', 'buildx'] if plugin.returncode == 0 else [shutil.which('docker-buildx') or 'docker-buildx']
     builder = ['--builder', os.environ['DOCKER_CONTEXT']] if os.environ.get('DOCKER_CONTEXT') else []
     with tempfile.TemporaryDirectory(prefix='private-context-', dir=str(scratch)) as temporary:
@@ -76,12 +116,8 @@ def assert_private_contexts_excluded(case, source: Path, scratch: Path):
                     shutil.copy2(specific, root / (relative + '.dockerignore'))
                 label = ('symlink-' if symlink else 'custom-') + name
                 archive = base / (label + '.tar')
-                command = [*buildx, 'build', *builder, '--network=none', '--no-cache', '--provenance=false',
-                           '--progress=plain', '--file', str(dockerfile), '--output',
-                           'type=docker,dest=' + str(archive), str(context)]
-                built = subprocess.run(command, capture_output=True, text=True, timeout=120)
-                (scratch / (label + '.build.log')).write_text(built.stdout + built.stderr)
-                case.assertEqual(built.returncode, 0, built.stdout + built.stderr)
+                exported = export_probe_image(buildx, builder, dockerfile, context, archive,
+                                              scratch / (label + '.build.log'))
                 hits, private_names, controls, layer_files = [], [], [], []
                 with tarfile.open(archive) as image:
                     manifest = json.load(image.extractfile('manifest.json'))
@@ -97,7 +133,7 @@ def assert_private_contexts_excluded(case, source: Path, scratch: Path):
                                         hits.append(member.name)
                                     if b'public-source-control-9fed71' in data:
                                         controls.append(member.name)
-                row = {'layout': label, 'command': command, 'exit': built.returncode,
+                row = {'layout': label, **exported,
                        'archive_sha256': hashlib.sha256(archive.read_bytes()).hexdigest(),
                        'retained_before_and_after': True, 'secret_hits': hits, 'private_paths': private_names,
                        'public_controls': controls, 'layer_paths': layer_files}
@@ -109,5 +145,5 @@ def assert_private_contexts_excluded(case, source: Path, scratch: Path):
                     case.assertTrue(controls, 'COPY must still include public application source')
                     case.assertFalse(hits, 'synthetic retained env secret reached an image layer')
                     case.assertFalse(private_names, 'private updater state reached an image layer')
-    # No loaded images/containers/volumes: temporary contexts and archives are
-    # removed by TemporaryDirectory; logs contain only synthetic test evidence.
+    # Each loaded tag was removed after save, even on failure. Temporary contexts
+    # and archives are removed here; logs contain only synthetic test evidence.

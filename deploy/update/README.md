@@ -501,14 +501,24 @@ Option values named after commands are still values, not command selectors.
 
 **Production scheduled runs notify and download only.** They never stage,
 initialize or apply. Production still requires explicit stage, then the
-release's explicit initialization jobs, then apply. A manual stage older than
-24 hours, a backup older than one hour, or a legacy stage lacking the new
+release's explicit initialization jobs, then apply. Finishing a manual stage
+older than 24 hours, with a backup older than one hour, or lacking the new
 freshness/proof fields requires explicit --acknowledge-stale-stage. Current
-legacy backup hooks do not generate those proof fields; their stages require
-acknowledgment even when recently created. This is not a new backup or restore
-guarantee. Changed raw manifest/bundle, trust, installation or config bindings
-remain refusals even with acknowledgment. Restore the verified original
-configuration before finishing; a changed update.conf is also binding drift.
+legacy backup hooks do not generate those proof fields; finishing their stages
+requires acknowledgment even when recently created. This is not a new backup
+or restore guarantee. Changed canonical/raw manifest, bundle, trust,
+installation, config or profile bindings remain refusals even with
+acknowledgment. Restore the verified original configuration before finishing;
+a changed update.conf is also binding drift.
+
+Repeating apply --stage without restarting is allowed only with a complete,
+matching stored identity. It reuses the stage's backup and receipt chain,
+retaining the original creation time and backup/proof timestamps and status.
+Restaging may cache/verify images, but takes no second backup, creates no fresh
+proof, restarts nothing and grants no automatic-apply eligibility. Missing or
+unverifiable stored identity cannot be adopted by restaging. Finishing still
+requires the acknowledgment above for stale or absent proof; acknowledgment
+remains invalid together with --stage or --dry-run, and for scheduled run.
 
 ### Qualified host facts and daemon image capacity
 

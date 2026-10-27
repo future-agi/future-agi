@@ -636,9 +636,22 @@ class RunnerControlPublicationTests(runners.RunnerCase):
 class ShortLockTests(CliCase):
     def setUp(self):
         super().setUp()
-        patcher = mock.patch('time.sleep')
-        self.sleep = patcher.start()
+        from functools import partial
+        self.sleep = mock.Mock()
+        self.retry_clock = mock.Mock(return_value=0)
+        # Exercise the attempt bound independently of filesystem latency. The
+        # deadline path has its own advancing-clock test below; production's
+        # 200ms/five-attempt budget is unchanged.
+        patcher = mock.patch.object(cli, '_retry_busy', partial(cli._retry_busy,
+                                    monotonic=self.retry_clock, sleep=self.sleep))
+        patcher.start()
         self.addCleanup(patcher.stop)
+
+    def call(self, *words):
+        # Each CLI call owns its observations, even when a preceding subtest
+        # assertion failed before reaching assert_busy's end.
+        self.sleep.reset_mock()
+        return super().call(*words)
 
     def assert_busy(self, result):
         code, out, err = result
@@ -646,8 +659,7 @@ class ShortLockTests(CliCase):
         self.assertIn('busy', err)
         self.assertIn('nothing recorded', err)
         self.assertNotIn('Traceback', out + err)
-        self.assertEqual(self.sleep.call_count, 4)
-        self.sleep.reset_mock()
+        self.assertEqual(self.sleep.call_args_list, [mock.call(0.05)] * 4)
 
     def test_control_lock_never_silently_loses_an_operator_command(self):
         before = self.store.read_control()
@@ -690,11 +702,34 @@ class ShortLockTests(CliCase):
                 mock.patch('shutil.which', return_value='/usr/bin/docker'):
             for name in ('state.lock', 'control.lock'):
                 with self.subTest(name=name), self.store._lock(name):
+                    installation.reset_mock()
                     self.assert_busy(self.call('schedule', 'init', '--docker-context', binding.docker_context))
-            self.assertEqual(installation.call_count, 2)
+                    installation.assert_called_once()
         self.assertEqual(self.store.read_registration().binding, binding)
         self.assertIsNone(self.store.read_control().enabled_override)
         self.assertEqual(settings.automation_policy.mode, 'manual')
+
+    def test_schedule_lock_deadline_stops_before_five_attempts_without_reprobing_docker(self):
+        binding = self.store.read_registration().binding
+        before = self.store.read_registration(), self.store.read_control()
+        # Three failed acquisitions use the real locks; the injected clock
+        # models slow I/O and caps the final sleep to the remaining 10ms.
+        self.retry_clock.side_effect = [0, 0.10, 0.19, 0.20]
+        with self.store._lock('state.lock'), \
+                mock.patch.object(cli, 'Installation') as installation, \
+                mock.patch.object(cli, 'installation_binding', return_value=binding), \
+                mock.patch('deploy.update.install.resolve_compose_command', return_value=['docker', 'compose']), \
+                mock.patch('shutil.which', return_value='/usr/bin/docker'):
+            code, out, err = self.call('schedule', 'init', '--docker-context', binding.docker_context)
+        self.assertEqual((code, out), (3, ''))
+        self.assertIn('busy; nothing recorded', err)
+        self.assertNotIn('Traceback', err)
+        installation.assert_called_once()
+        self.assertEqual(self.retry_clock.call_count, 4)  # start, then three busy attempts
+        self.assertEqual(self.sleep.call_count, 2)
+        self.assertAlmostEqual(self.sleep.call_args_list[0].args[0], 0.05)
+        self.assertAlmostEqual(self.sleep.call_args_list[1].args[0], 0.01)
+        self.assertEqual((self.store.read_registration(), self.store.read_control()), before)
 
     def test_transient_control_lock_retries_once_and_records_once(self):
         lock = self.store._lock('control.lock')

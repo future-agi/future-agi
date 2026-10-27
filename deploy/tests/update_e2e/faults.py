@@ -139,6 +139,10 @@ real=@REAL@
 name=@NAME@
 [ -n "${FAGI_FAULT_DIR:-}" ] || exec "$real" "$@"
 dir=$FAGI_FAULT_DIR
+# Opt-in stable environment for staged finishes. The CLI binds its complete
+# shell environment at stage time; fault choices live in this private test file
+# so changing the selected call does not change the installation identity.
+if [ -f "$dir/settings" ]; then . "$dir/settings"; fi
 if [ "$name" = docker-compose ]; then words="compose $*"; else words="$*"; fi
 
 # One call at a time: the index and the match count are read and written under this lock.
@@ -841,7 +845,8 @@ class FaultDocker:
     """The docker / docker-compose wrappers of one test (see the module docstring)."""
 
     def __init__(self, directory: Path, *, docker: Optional[str] = None, compose: Optional[str] = None,
-                 shell: str = "/bin/sh") -> None:
+                 shell: str = "/bin/sh", stable_environment: bool = False) -> None:
+        self.stable_environment = stable_environment
         self.directory = directory
         self.shell = shell  # the wrappers' interpreter (Ubuntu's /bin/sh is dash, macOS's bash)
         self.bin = directory / "bin"
@@ -890,7 +895,10 @@ class FaultDocker:
 
         Exactly one of `index` or `at` chooses the fault; neither records calls
         without acting. It resets the record first: one FaultDocker records
-        one run at a time.
+        one run at a time. With stable_environment=True the returned environment
+        is identical for every selection; the private settings file carries the
+        controls instead. Use that same environment for stage creation too, so
+        a recorded finish tests faults rather than a changed stage identity.
         """
 
         if action not in ACTIONS:
@@ -917,6 +925,14 @@ class FaultDocker:
                 env["FAGI_FAULT_STDOUT"] = stdout
             if stderr:
                 env["FAGI_FAULT_STDERR"] = stderr
+        if self.stable_environment:
+            controls = {key: value for key, value in env.items()
+                        if key not in ('PATH', 'FAGI_FAULT_DIR', 'FAGI_FAULT_PROTECT')}
+            settings = self.state / 'settings'
+            settings.write_text(''.join(f'{key}={shlex.quote(value)}\n' for key, value in controls.items()),
+                                encoding='utf-8')
+            settings.chmod(0o600)
+            env = {key: value for key, value in env.items() if key not in controls}
         return env
 
     def point_env(self, point: FaultPoint, words: Sequence[str] = ()) -> Dict[str, str]:

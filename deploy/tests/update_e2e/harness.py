@@ -1629,6 +1629,31 @@ class Checkout:
         }
 
 
+def assert_stage_acknowledgment_required(case, co: Checkout, *args: str,
+                                        env=None, backup_paths=(), invoke=None) -> None:
+    """Prove refusal is read-only BEFORE an explicit operator-approved finish.
+
+    This helper never supplies acknowledgment. The individual test must choose
+    the intentional finish command, after checking its stage/initialization.
+    """
+    def fingerprints():
+        paths = [co.env_path, *backup_paths]
+        paths += [p for p in co.state_dir.rglob('*') if p.is_file() and p.name != 'update.lock'
+                  and not any(part.startswith('verify-') for part in p.relative_to(co.state_dir).parts)]
+        return {str(p): ((p.stat().st_ino, p.stat().st_mode, p.stat().st_mtime_ns,
+                         hashlib.sha256(p.read_bytes()).hexdigest()) if p.exists() else None) for p in paths}
+
+    case.assertNotIn('--acknowledge-stale-stage', args)
+    before, files = co.snapshot(), fingerprints()
+    # The shell environment is part of the stage binding. Do not insert a new
+    # PATH/fault wrapper just for this refusal: that tests changed identity.
+    result = invoke() if invoke is not None else co.bin_update(*args, env=env, timeout=600)
+    case.assertEqual(result.code, 3, result.describe())
+    case.assertEqual(result.stderr, 'bin/update: stale_stage\n', result.describe())
+    case.assertEqual(co.snapshot(), before, result.describe())
+    case.assertEqual(fingerprints(), files, 'refusal rewrote state/env or ran the backup')
+
+
 # --------------------------------------------------------------- parallel --
 
 class _Recorder(unittest.TestResult):

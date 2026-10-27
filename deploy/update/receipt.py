@@ -278,7 +278,23 @@ class StateDir:
             if automation:
                 with self.private_directory() as directory:
                     return self._probe_lock(LOCK, directory=directory, private=True)
-            return self._probe_lock(str(self.lock_path))
+            try:
+                return self._probe_lock(str(self.lock_path))
+            except NotADirectoryError:
+                # Ordinary status historically tolerates an owned regular file
+                # in place of the state directory: no child lock can exist.
+                # ENOTDIR alone is insufficient (a FIFO or symlink does that
+                # too). Qualify the actual descriptor without following links
+                # or blocking, and never extend this exception to automation.
+                fd = os.open(str(self.path), os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC)
+                try:
+                    info = os.fstat(fd)
+                    if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_nlink != 1
+                            or stat.S_IMODE(info.st_mode) & 0o7022):
+                        raise StateError('cannot safely probe update lock')
+                    return None
+                finally:
+                    os.close(fd)
         except FileNotFoundError:
             return None
         except (OSError, ImportError) as exc:
