@@ -11,7 +11,7 @@ import (
 // already holds. The final pdata check remains a safety fence, not the usual
 // allocation path for auth/header fields.
 type resourceStampBudget struct {
-	values [5]valueInfo
+	values [6]valueInfo
 	routed bool
 }
 
@@ -20,9 +20,10 @@ const (
 	stampProject    = 2
 	stampOrg        = 3
 	stampSimulation = 4
+	stampType       = 5
 )
 
-var stampKeys = [5]string{"", "project_name", "fi.project_id", "fi.org_id", "fi.simulation.origin"}
+var stampKeys = [6]string{"", "project_name", "fi.project_id", "fi.org_id", "fi.simulation.origin", "project_type"}
 
 func resourceStampKey(key []byte) int {
 	switch string(key) {
@@ -34,6 +35,8 @@ func resourceStampKey(key []byte) int {
 		return stampOrg
 	case "fi.simulation.origin":
 		return stampSimulation
+	case "project_type":
+		return stampType
 	}
 	return 0
 }
@@ -50,6 +53,9 @@ func resourceStamps(ctx context.Context, headers auth.ProjectNameValues) resourc
 	}
 	if result := auth.FromContext(ctx); result != nil {
 		out.values[stampOrg] = stampString(result.OrgID)
+		// A newly resolved/created Observe project may add this hint. Reserve
+		// it before resolving names; the final scan still checks the exact shape.
+		out.values[stampType] = stampString(auth.ProjectTypeObserve)
 		// PostgreSQL tracer_project.id is a UUID, serialized as 36 ASCII bytes.
 		// A nonstandard resolver or a later generation is still checked exactly
 		// before conversion; it cannot bypass the final reservation/size fence.
@@ -66,13 +72,16 @@ func resourceStamps(ctx context.Context, headers auth.ProjectNameValues) resourc
 }
 
 func (s *otlpShape) reserveResourceStamps(rs *rsAccum) {
-	for k := stampName; k <= stampSimulation; k++ {
+	for k := stampName; k <= stampType; k++ {
 		next := s.stamps.values[k]
 		if next.json == 0 {
 			continue
 		}
 		before, seen := rs.stampValues[k], rs.stampSeen[k]
 		if k == stampName && !s.stamps.routed && seen && before.lastStringJSON > 2 {
+			continue
+		}
+		if k == stampType && seen && (!before.isString || before.lastStringJSON > 2) {
 			continue
 		}
 		if k == stampSimulation && seen {

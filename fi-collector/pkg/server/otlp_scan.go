@@ -285,8 +285,8 @@ const numberJSON = 24
 // rsAccum gathers one ResourceSpans. Its resource attributes are written into
 // every one of its spans' rows, and they may come before or after the spans.
 type rsAccum struct {
-	stampSeen     [5]bool
-	stampValues   [5]valueInfo
+	stampSeen     [6]bool
+	stampValues   [6]valueInfo
 	resourceJSON  int64 // resource_attrs plus the columns taken from it
 	resourceBytes int64 // payload bytes, for maxResourceAttrBytes
 	spans         int64

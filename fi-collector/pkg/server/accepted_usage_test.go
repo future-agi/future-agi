@@ -57,6 +57,7 @@ func TestAuthenticatedAcceptedUsageTransportParity(t *testing.T) {
 	attrs := expected.ResourceSpans().At(0).Resource().Attributes()
 	attrs.PutStr("fi.org_id", calOrg)
 	attrs.PutStr("fi.project_id", calProject)
+	attrs.PutStr("project_type", auth.ProjectTypeObserve)
 	canonical, err := (&ptrace.ProtoMarshaler{}).MarshalTraces(expected)
 	if err != nil {
 		t.Fatal(err)

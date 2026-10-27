@@ -415,8 +415,7 @@ func (a *Authenticator) recordProjectTypes(cacheKey string, result *ResolveResul
 	if len(types) == 0 {
 		return
 	}
-	result.SetProjectTypesInWorkspace(result.WorkspaceID, types)
-	a.cache.addProjectTypesScoped(cacheKey, result.OrgID, result.WorkspaceID, types)
+	a.cache.addProjectTypesScoped(cacheKey, result, types)
 }
 
 // refreshKey re-validates a key in the background (warm stale refresh).

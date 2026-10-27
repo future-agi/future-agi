@@ -231,6 +231,10 @@ func (p *leaseProbe) TokenCost(context.Context, string, string, int32, int32) (f
 	return 0, false
 }
 
+func (p *leaseProbe) OpenRouterTokenCost(ctx context.Context, orgID, model string, prompt, completion int32) (float64, bool) {
+	return p.TokenCost(ctx, orgID, model, prompt, completion)
+}
+
 // While a request is converted it holds its body (wire) and its price (work).
 // When the handler returns the body and the decoded request are given back,
 // and the rows' share stays with the pending batch until the drain that
