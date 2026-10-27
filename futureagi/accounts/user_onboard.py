@@ -1,10 +1,11 @@
 import json
 import os
 import uuid
+from functools import partial
 
 import structlog
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from accounts.base_data import (
@@ -1375,7 +1376,6 @@ def create_demo_traces_and_spans(organization_id, user_id=None):
             trace = Trace.objects.create(**trace_kwargs)
 
             create_observation_spans(project, trace, organization, project_version)
-
 
     except Exception as e:
         logger.exception(f"Error creating demo traces and spans: {str(e)}")
@@ -4527,10 +4527,69 @@ def create_observation_spans(project, trace, organization, project_version):
         span_input, output = get_input_output_span(obs_span_kwarg, decoder)
         obs_span_kwarg.update({"input": span_input, "output": output})
 
-    # CH25-TODO: KEEP-PG. Onboarding-seed write path — bulk_create()
-    # is the dual-write source of truth (D-027). CH receives the rows
-    # via PeerDB CDC; there is no direct CH-write API.
     ObservationSpan.objects.bulk_create(
         ObservationSpan(**obs_span_kwarg) for obs_span_kwarg in spans_to_create
     )
     EvalLogger.objects.bulk_create(eval_loggers)
+    transaction.on_commit(partial(_enqueue_demo_trace_publication, str(trace.id)))
+
+
+def _enqueue_demo_trace_publication(trace_id):
+    # Retry publication independently: repeating signup would duplicate demo data.
+    import tfc.temporal.background_tasks.activities  # noqa: F401
+    from tfc.temporal.drop_in import start_activity
+    from tracer.services.clickhouse.v2.trace_writer import dual_write_enabled
+
+    if dual_write_enabled():
+        start_activity(
+            "publish_demo_trace_activity",
+            args=(trace_id,),
+            queue="default",
+            task_id=f"publish-demo-trace-{trace_id}",
+        )
+
+
+def _write_demo_trace_to_clickhouse(trace, spans):
+    """Publish demo telemetry after commit when the legacy span CDC is disabled."""
+    from clickhouse_connect import get_client
+
+    from tracer.services.clickhouse.v2 import get_v2_config
+    from tracer.services.clickhouse.v2.adapter import (
+        CH_INSERT_COLUMNS,
+        adapt,
+        row_to_tuple,
+    )
+    from tracer.services.clickhouse.v2.curated_writer import (
+        _TRACE_SESSION_COLUMNS,
+        trace_session_to_row,
+    )
+    from tracer.services.clickhouse.v2.trace_writer import (
+        _TRACE_COLUMNS,
+        _trace_to_row,
+        dual_write_enabled,
+    )
+
+    if not dual_write_enabled():
+        return
+
+    rows = [
+        row_to_tuple(adapt({**span.__dict__, "trace_session_id": trace.session_id}))
+        for span in spans
+    ]
+    config = get_v2_config()
+    with get_client(
+        host=config["host"],
+        port=config["http_port"],
+        username=config["user"],
+        password=config["password"] or "",
+        database=config["database"],
+    ) as client:
+        client.insert(
+            "traces", [_trace_to_row(trace)], column_names=list(_TRACE_COLUMNS)
+        )
+        client.insert(
+            "trace_sessions",
+            [trace_session_to_row(trace.session)],
+            column_names=list(_TRACE_SESSION_COLUMNS),
+        )
+        client.insert("spans", rows, column_names=list(CH_INSERT_COLUMNS))

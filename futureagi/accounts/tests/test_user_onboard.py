@@ -96,6 +96,56 @@ def user_with_workspace(db, org_with_workspace):
 class TestCreateDemoTracesAndSpans:
     """Tests for create_demo_traces_and_spans function."""
 
+    def test_clickhouse_publish_waits_for_commit(
+        self, user_with_workspace, django_capture_on_commit_callbacks
+    ):
+        with patch("accounts.user_onboard._enqueue_demo_trace_publication") as publish:
+            with django_capture_on_commit_callbacks(execute=True) as callbacks:
+                result = create_demo_traces_and_spans(
+                    user_with_workspace.organization_id, user_with_workspace.id
+                )
+                assert result is None
+                publish.assert_not_called()
+            assert len(callbacks) == 2
+            assert publish.call_count == 2
+            for call in publish.call_args_list:
+                (trace_id,) = call.args
+                assert ObservationSpan.objects.filter(trace_id=trace_id).count() == 35
+
+    @pytest.mark.django_db(transaction=True)
+    def test_publication_retry_reuses_saved_data(
+        self, user_with_workspace, django_capture_on_commit_callbacks, monkeypatch
+    ):
+        from tfc.temporal.background_tasks.activities import publish_demo_trace_activity
+
+        monkeypatch.setenv("CH25_TRACE_DUAL_WRITE", "true")
+        with patch("tfc.temporal.drop_in.start_activity") as start:
+            with django_capture_on_commit_callbacks(execute=True):
+                assert (
+                    create_demo_traces_and_spans(
+                        user_with_workspace.organization_id, user_with_workspace.id
+                    )
+                    is None
+                )
+        assert start.call_count == 2
+        trace_ids = [call.kwargs["args"][0] for call in start.call_args_list]
+        with patch(
+            "accounts.user_onboard._write_demo_trace_to_clickhouse",
+            side_effect=[RuntimeError("CH unavailable"), None, None],
+        ) as publish:
+            with pytest.raises(RuntimeError, match="CH unavailable"):
+                publish_demo_trace_activity(trace_ids[0])
+            publish_demo_trace_activity(trace_ids[0])
+            publish_demo_trace_activity(trace_ids[1])
+        first, retry, second = publish.call_args_list
+        assert first.args[0].id == retry.args[0].id
+        assert {s.id for s in first.args[1]} == {s.id for s in retry.args[1]}
+        assert len(second.args[1]) == 35
+        projects = Project.objects.filter(organization=user_with_workspace.organization)
+        assert projects.count() == 2
+        assert Trace.objects.filter(project__in=projects).count() == 2
+        assert ObservationSpan.objects.filter(project__in=projects).count() == 70
+
     def test_creates_demo_projects_with_existing_workspace(self, user_with_workspace):
         """Demo projects are created with the existing default workspace."""
         org = user_with_workspace.organization

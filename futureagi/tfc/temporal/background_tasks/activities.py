@@ -22,6 +22,18 @@ def run_post_registration_activity(user_id: str, generated_password: str):
     return _run_post_registration(user_id, generated_password)
 
 
+@temporal_activity(time_limit=120, queue="default")
+def publish_demo_trace_activity(trace_id: str):
+    """Retry CH publication using saved IDs without creating another demo project."""
+    from accounts.user_onboard import _write_demo_trace_to_clickhouse
+    from tracer.models.observation_span import ObservationSpan
+    from tracer.models.trace import Trace
+
+    trace = Trace.objects.select_related("session").get(id=trace_id)
+    spans = list(ObservationSpan.objects.filter(trace=trace))
+    _write_demo_trace_to_clickhouse(trace, spans)
+
+
 @temporal_activity(time_limit=3600, queue="tasks_l")
 def process_huggingface_dataset_activity(
     dataset_id: str,
