@@ -26,7 +26,7 @@ import TrialsPicker from "./scenarios/TrialsPicker";
 // contract yet. Hidden in the header until the contract exposes one.
 // import EnvVersionPin from "./EnvVersionPin";
 import ForkMenu from "./ForkMenu";
-import { WORKSPACE_COPY } from "./workspace.constants";
+import { RUN_MODE_CHIP, WORKSPACE_COPY } from "./workspace.constants";
 
 // The environment workspace header: back to the list, the channel icon, the
 // name + Live pill + env-version pin, the primary "Run simulation" action, and
@@ -82,7 +82,7 @@ export default function WorkspaceHeader({
       direction="row"
       alignItems="center"
       spacing={2}
-      sx={{ px: 3, py: 2, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+      sx={{ px: 3, py: 1.25, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
     >
       <CustomTooltip show title={WORKSPACE_COPY.back} size="small" arrow>
         <Button
@@ -96,14 +96,33 @@ export default function WorkspaceHeader({
         </Button>
       </CustomTooltip>
 
-      <SurfaceIcon surface={env.surface} size={36} />
+      <SurfaceIcon surface={env.surface} size={28} />
 
       <Box minWidth={0} flex={1}>
-        <Stack direction="row" alignItems="center" spacing={1}>
-          <Typography noWrap sx={{ typography: "s1_2", fontWeight: "fontWeightBold" }}>
-            {env.name}
-          </Typography>
+        <Stack direction="row" alignItems="center" spacing={1} sx={{ minWidth: 0 }}>
+          {/* The tagline lives in the name's tooltip, as in Vel's header. */}
+          <CustomTooltip
+            show={!!env.tagline}
+            size="small"
+            arrow
+            title={
+              <>
+                <Box component="span" sx={{ display: "block", fontWeight: 600 }}>
+                  {env.name}
+                </Box>
+                {env.tagline}
+              </>
+            }
+          >
+            <Typography
+              noWrap
+              sx={{ fontSize: 16, lineHeight: "24px", fontWeight: 600, minWidth: 72, flexShrink: 1 }}
+            >
+              {env.name}
+            </Typography>
+          </CustomTooltip>
           <LivePill env={env} />
+          <RunModeChip mode={env.agentMode} />
           {canRename && (
             <CustomTooltip show title="Rename environment" size="small" arrow>
               <IconButton
@@ -119,9 +138,6 @@ export default function WorkspaceHeader({
           {/* Mock version pin hidden until the contract exposes a real version:
               <EnvVersionPin env={env} envState={envState} patch={patch} readOnly={locked} /> */}
         </Stack>
-        <Typography noWrap sx={{ typography: "s2", color: "text.subtitle" }}>
-          {env.tagline}
-        </Typography>
       </Box>
 
       {/* Run controls yield to the in-table selection bar: while a scenario
@@ -210,11 +226,48 @@ export default function WorkspaceHeader({
   );
 }
 
+// Says how a run reaches the agent, prefixed "Runs:" so it doesn't read as a
+// second status beside Ready.
+function RunModeChip({ mode }) {
+  const chip = RUN_MODE_CHIP[mode];
+  if (!chip) return null;
+  return (
+    <CustomTooltip show size="small" arrow title={chip.tip}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={0.5}
+        sx={{
+          px: 0.75,
+          height: 22,
+          borderRadius: "4px",
+          cursor: "default",
+          border: "1px solid",
+          borderColor: "divider",
+          color: "text.secondary",
+          flexShrink: 0,
+          whiteSpace: "nowrap",
+        }}
+      >
+        <Iconify icon={chip.icon} width={12} />
+        <Typography sx={{ typography: "s3", fontWeight: 600 }}>
+          <Box component="span" sx={{ fontWeight: 400, color: "text.subtitle", mr: 0.5 }}>
+            Runs:
+          </Box>
+          {chip.label}
+        </Typography>
+      </Stack>
+    </CustomTooltip>
+  );
+}
+RunModeChip.propTypes = { mode: PropTypes.string };
+
 WorkspaceHeader.propTypes = {
   env: PropTypes.shape({
     id: PropTypes.string,
     name: PropTypes.string,
     tagline: PropTypes.string,
+    agentMode: PropTypes.string,
     surface: PropTypes.string,
     status: PropTypes.string,
     buildStatus: PropTypes.string,

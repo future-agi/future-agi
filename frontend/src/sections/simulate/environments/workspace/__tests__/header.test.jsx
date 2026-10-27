@@ -158,6 +158,29 @@ describe("WorkspaceHeader", () => {
     onFork: vi.fn(),
   };
 
+  it("shows the tagline in the name's tooltip, not as a second line", async () => {
+    const user = userEvent.setup();
+    render(withRouter(<WorkspaceHeader {...baseProps} />));
+    expect(screen.queryByText("Handles refund conversations")).toBeNull();
+    await user.hover(screen.getByText("Refund Copilot"));
+    expect(await screen.findByText("Handles refund conversations")).toBeInTheDocument();
+  });
+
+  it("reads Runs: Live for an agent connected where it runs (connect_only)", async () => {
+    const user = userEvent.setup();
+    render(withRouter(<WorkspaceHeader {...baseProps} env={{ ...ENV, agentMode: "connect_only" }} />));
+    const chip = screen.getByText("Live");
+    expect(screen.getByText("Runs:")).toBeInTheDocument();
+    await user.hover(chip);
+    const tip = await screen.findByText(/its tools reach your real systems/);
+    expect(tip.textContent).not.toMatch(/\u2014/);
+  });
+
+  it("shows no run mode chip for an agent built from code", () => {
+    render(withRouter(<WorkspaceHeader {...baseProps} env={{ ...ENV, agentMode: null }} />));
+    expect(screen.queryByText("Runs:")).toBeNull();
+  });
+
   it("hides the overflow menu when locked", () => {
     render(withRouter(<WorkspaceHeader {...baseProps} locked />));
     expect(screen.queryByRole("button", { name: "More actions" })).toBeNull();

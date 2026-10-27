@@ -64,6 +64,18 @@ export const GAP_AREA_TO_TAB = {
   Grading: "evals",
 };
 
+// The header chip that says how a run reaches the agent. Only Live earns a
+// chip (Vel's rule): an agent connected where it runs (a hosted platform or a
+// phone number) is called in your account and its tools reach your real
+// systems. An agent built from code runs sealed in our sandbox, with no chip.
+export const RUN_MODE_CHIP = {
+  connect_only: {
+    label: "Live",
+    icon: "solar:plug-circle-linear",
+    tip: "Live. The agent runs in your account and its tools reach your real systems. Only the starting state is checked, and a model judges sub-goals from the conversation.",
+  },
+};
+
 // The Runs tab before the first run.
 export const RUNS_EMPTY_COPY = {
   title: "No runs yet",
