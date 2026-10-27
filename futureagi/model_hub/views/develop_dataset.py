@@ -5472,6 +5472,26 @@ class AddDataRowsView(APIView):
 
             dataset = get_object_or_404(Dataset, id=dataset_id)
 
+            columns = list(
+                Column.objects.filter(dataset=dataset, deleted=False).exclude(
+                    source__in=[
+                        SourceChoices.EXPERIMENT.value,
+                        SourceChoices.EXPERIMENT_EVALUATION.value,
+                        SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
+                    ]
+                )
+            )
+            writable_names = {column.name for column in columns}
+            for index, row_data in enumerate(rows):
+                unknown = sorted(
+                    {cell["column_name"] for cell in row_data["cells"]} - writable_names
+                )
+                if unknown:
+                    return self._gm.bad_request(
+                        f"Row {index + 1}: unknown or non-writable columns: "
+                        f"{', '.join(unknown)}. Create the columns before adding rows."
+                    )
+
             # Validate row limit
             organization = (
                 getattr(request, "organization", None) or request.user.organization
@@ -5504,98 +5524,96 @@ class AddDataRowsView(APIView):
                 max_order = last_row.order
             else:
                 max_order = -1
-            columns = Column.objects.filter(dataset=dataset, deleted=False).exclude(
-                source__in=[
-                    SourceChoices.EXPERIMENT.value,
-                    SourceChoices.EXPERIMENT_EVALUATION.value,
-                    SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
-                ]
-            )
-
-            # Create rows and cells
-            for index, row_data in enumerate(rows):
-                new_row = Row.objects.create(
-                    id=row_data.get("id", str(uuid.uuid4())),
-                    dataset=dataset,
-                    order=max_order + 1 + index,
-                )
-
-                provided_columns = {
-                    cell["column_name"] for cell in row_data.get("cells", [])
-                }
-
-                # Process columns in a consistent order to ensure proper row alignment
-                cells_to_create = []
-
-                for column in columns:
-                    cell_value = ""
-                    cell_value_infos = None
-                    column_metadata = {}
-
-                    if column.name in provided_columns:
-                        cell_data = next(
-                            cell
-                            for cell in row_data["cells"]
-                            if cell["column_name"] == column.name
-                        )
-                        cell_value = cell_data.get("value", "")
-
-                        try:
-                            if (
-                                column.data_type == DataTypeChoices.IMAGE.value
-                                and cell_value
-                            ):
-                                cell_value = upload_image_to_s3(
-                                    cell_data.get("value", ""),
-                                    bucket_name="fi-customer-data-dev",
-                                    object_key=f"images/{dataset_id}/{uuid.uuid4()}",
-                                )
-
-                            if (
-                                column.data_type == DataTypeChoices.AUDIO.value
-                                and cell_value
-                            ):
-                                cell_value, duration = upload_audio_to_s3_duration(
-                                    cell_data.get("value", ""),
-                                    bucket_name="fi-customer-data-dev",
-                                    object_key=f"audio/{dataset_id}/{uuid.uuid4()}",
-                                )
-                                value_infos: dict[str, Any] = {}
-                                column_metadata = {"audio_duration_seconds": duration}
-                                cell_value_infos = json.dumps(value_infos)
-                            elif (
-                                column.data_type == DataTypeChoices.DOCUMENT.value
-                                and cell_value
-                            ):
-                                # Handle document processing similar to image/audio
-                                doc_key = f"documents/{dataset_id}/{uuid.uuid4()}"
-                                name = cell_value
-                                cell_value = upload_document_to_s3(
-                                    cell_value,
-                                    bucket_name="fi-customer-data-dev",
-                                    object_key=doc_key,
-                                )
-                                cell_value_infos = json.dumps({"document_name": name})
-                        except Exception as e:
-                            logger.error(
-                                f"Error processing {column.data_type} for column {column.name}: {str(e)}"
-                            )
-                            cell_value = ""  # Set to empty if upload fails
-
-                    cells_to_create.append(
-                        Cell(
-                            id=uuid.uuid4(),
-                            dataset=dataset,
-                            column=column,
-                            row=new_row,
-                            value=cell_value,
-                            value_infos=cell_value_infos,
-                            column_metadata=column_metadata,
-                        )
+            # A failed batch must not leave earlier rows behind for a retry.
+            with transaction.atomic():
+                # Create rows and cells
+                for index, row_data in enumerate(rows):
+                    new_row = Row.objects.create(
+                        id=row_data.get("id", str(uuid.uuid4())),
+                        dataset=dataset,
+                        order=max_order + 1 + index,
                     )
 
-                # Bulk create all cells for this row at once to maintain consistency
-                Cell.objects.bulk_create(cells_to_create)
+                    provided_columns = {
+                        cell["column_name"] for cell in row_data.get("cells", [])
+                    }
+
+                    # Process columns in a consistent order to ensure proper row alignment
+                    cells_to_create = []
+
+                    for column in columns:
+                        cell_value = ""
+                        cell_value_infos = None
+                        column_metadata = {}
+
+                        if column.name in provided_columns:
+                            cell_data = next(
+                                cell
+                                for cell in row_data["cells"]
+                                if cell["column_name"] == column.name
+                            )
+                            cell_value = cell_data.get("value", "")
+
+                            try:
+                                if (
+                                    column.data_type == DataTypeChoices.IMAGE.value
+                                    and cell_value
+                                ):
+                                    cell_value = upload_image_to_s3(
+                                        cell_data.get("value", ""),
+                                        bucket_name="fi-customer-data-dev",
+                                        object_key=f"images/{dataset_id}/{uuid.uuid4()}",
+                                    )
+
+                                if (
+                                    column.data_type == DataTypeChoices.AUDIO.value
+                                    and cell_value
+                                ):
+                                    cell_value, duration = upload_audio_to_s3_duration(
+                                        cell_data.get("value", ""),
+                                        bucket_name="fi-customer-data-dev",
+                                        object_key=f"audio/{dataset_id}/{uuid.uuid4()}",
+                                    )
+                                    value_infos: dict[str, Any] = {}
+                                    column_metadata = {
+                                        "audio_duration_seconds": duration
+                                    }
+                                    cell_value_infos = json.dumps(value_infos)
+                                elif (
+                                    column.data_type == DataTypeChoices.DOCUMENT.value
+                                    and cell_value
+                                ):
+                                    # Handle document processing similar to image/audio
+                                    doc_key = f"documents/{dataset_id}/{uuid.uuid4()}"
+                                    name = cell_value
+                                    cell_value = upload_document_to_s3(
+                                        cell_value,
+                                        bucket_name="fi-customer-data-dev",
+                                        object_key=doc_key,
+                                    )
+                                    cell_value_infos = json.dumps(
+                                        {"document_name": name}
+                                    )
+                            except Exception as e:
+                                logger.error(
+                                    f"Error processing {column.data_type} for column {column.name}: {str(e)}"
+                                )
+                                cell_value = ""  # Set to empty if upload fails
+
+                        cells_to_create.append(
+                            Cell(
+                                id=uuid.uuid4(),
+                                dataset=dataset,
+                                column=column,
+                                row=new_row,
+                                value=cell_value,
+                                value_infos=cell_value_infos,
+                                column_metadata=column_metadata,
+                            )
+                        )
+
+                    # Bulk create all cells for this row at once to maintain consistency
+                    Cell.objects.bulk_create(cells_to_create)
 
             return self._gm.success_response(f"Successfully added {len(rows)} row(s)")
 
