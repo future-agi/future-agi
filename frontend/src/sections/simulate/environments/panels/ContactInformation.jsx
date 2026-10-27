@@ -16,7 +16,8 @@ const toContactDigits = (value) => value.replace(/\D/g, "").slice(0, MAX_CONTACT
   Voice contact details — how the test call reaches the agent. `mode` is web
   (WebRTC, no telephony provider) or phone (PSTN, needs a country code + number).
   `phoneOnly` (Others) has no in-browser WebRTC target, so it collapses to phone
-  and hides the mode header. `inboundCalls` mirrors the old call-direction binary
+  and hides the mode header. `webOnly` (LiveKit) is the reverse: no phone path,
+  so it stays on web and hides the header too. `inboundCalls` mirrors the old call-direction binary
   (on = agent takes inbound); `agentSpeaksFirst` tells the simulator to wait for
   the agent's greeting before replying.
 
@@ -36,8 +37,9 @@ export default function ContactInformation({
   agentSpeaksFirst,
   onAgentSpeaksFirst,
   phoneOnly = false,
+  webOnly = false,
 }) {
-  const effectiveMode = phoneOnly ? "phone" : mode;
+  const effectiveMode = phoneOnly ? "phone" : webOnly ? "web" : mode;
   const [contactTouched, setContactTouched] = useState(false);
   const contactError = contactTouched
     ? phoneNumberError(COUNTRY_BY_ISO[countryIso]?.dial, contactNumber)
@@ -55,7 +57,7 @@ export default function ContactInformation({
 
   return (
     <Stack spacing={1}>
-      {!phoneOnly && (
+      {!phoneOnly && !webOnly && (
         <Stack
           direction="row"
           alignItems="center"
@@ -135,6 +137,7 @@ ContactInformation.propTypes = {
   agentSpeaksFirst: PropTypes.bool,
   onAgentSpeaksFirst: PropTypes.func,
   phoneOnly: PropTypes.bool,
+  webOnly: PropTypes.bool,
 };
 
 // Two-value segmented control; the active pill reuses the tinted selected

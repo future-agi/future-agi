@@ -14,8 +14,9 @@ criteria: "You are evaluating whether the factual claims in the output are accur
   \ factual errors. Score 0.5 if mostly accurate but with some errors or imprecisions. Score 1.0 if every claim is accurate\
   \ and verifiable from the context.\n\n## Inputs\n\n<input>{{input}}</input>\n\n<output>{{output}}</output>\n\n<context>{{context}}</context>"
 eval_tags:
-- Hallucination
-- NLP Metrics
+- Accuracy
+- RAG
+offered_in_environments: true
 visible_ui: false
 permissions:
   allow_edit: false

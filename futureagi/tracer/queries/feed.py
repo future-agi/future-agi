@@ -8,6 +8,7 @@ Pure data-access layer: no HTTP, no business logic. Service layer composes.
 import json
 import re
 import statistics
+import uuid
 from collections import Counter
 from datetime import UTC, datetime, timedelta
 
@@ -15,6 +16,7 @@ import numpy as np
 import structlog
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.db import transaction
 from django.db.models import (
     Avg,
     Case,
@@ -776,20 +778,30 @@ def update_cluster(
     if not cluster:
         return None
 
-    if is_grouping_issue(cluster.pk):
-        try:
-            edit_grouping_issue(
-                cluster.pk,
-                lambda current: _set_cluster_update_fields(
-                    current, payload, changed_only=True
-                ),
-            )
-        except GroupingHumanEditUnavailable:
-            return None
-    else:
-        update_fields = _set_cluster_update_fields(cluster, payload)
-        if update_fields:
-            cluster.save(update_fields=[*update_fields, "updated_at"])
+    from tracer.services.feed_alerts.events import issue_snapshot, record_issue_event
+
+    with transaction.atomic():
+        alert_before = issue_snapshot(cluster)
+        if is_grouping_issue(cluster.pk):
+            try:
+                edit_grouping_issue(
+                    cluster.pk,
+                    lambda current: _set_cluster_update_fields(
+                        current, payload, changed_only=True
+                    ),
+                )
+            except GroupingHumanEditUnavailable:
+                return None
+            cluster.refresh_from_db()
+        else:
+            update_fields = _set_cluster_update_fields(cluster, payload)
+            if update_fields:
+                cluster.save(update_fields=[*update_fields, "updated_at"])
+        record_issue_event(
+            cluster=cluster,
+            before=alert_before,
+            source_key=f"feed-patch:{uuid.uuid4()}",
+        )
 
     return get_cluster_detail(cluster_id, project_ids)
 

@@ -79,6 +79,7 @@ import type {
   AgentDefinitionCreateRequestApi,
   AgentDefinitionCreateResponseApi,
   AgentDefinitionDeleteResponseApi,
+  AgentDefinitionDetailResponseApi,
   AgentDefinitionEditRequestApi,
   AgentDefinitionEditResponseApi,
   AgentDefinitionListResponseApi,
@@ -102,6 +103,7 @@ import type {
   AgentPromptOptimiserTrialEvaluationsResponseApi,
   AgentPromptOptimiserTrialPromptResponseApi,
   AgentPromptOptimiserTrialScenariosResponseApi,
+  AgentRunsResponseApi,
   AgentVersionActivateResponseApi,
   AgentVersionCreateRequestApi,
   AgentVersionCreateResponseApi,
@@ -191,6 +193,13 @@ import type {
   AgentccWebhookEventsListParams,
   AgentccWebhooksList200,
   AgentccWebhooksListParams,
+  AlertDeletedResponseApi,
+  AlertItemResponseApi,
+  AlertListResponseApi,
+  AlertOptionsResponseApi,
+  AlertTestRequestApi,
+  AlertTestResponseApi,
+  AlertWriteRequestApi,
   AllActiveTestsApi,
   AnnotationActionMessageResponseApi,
   AnnotationLabelCreateResponseApi,
@@ -288,6 +297,8 @@ import type {
   ConditionalColumnRequestApi,
   ConversationCreateRequestApi,
   ConversationDetailResponseApi,
+  ConversationEvidenceRequestApi,
+  ConversationEvidenceResponseApi,
   ConversationListResponseApi,
   ConversationUpdateRequestApi,
   CreateDatasetFromExperimentRequestApi,
@@ -347,6 +358,7 @@ import type {
   DatasetCopyResponseApi,
   DatasetCreateStartedResponseApi,
   DatasetCreationProgressResponseApi,
+  DatasetDeleteApi,
   DatasetDerivedVariablesResponseApi,
   DatasetEvalStatsResponseApi,
   DatasetExplanationSummaryResponseApi,
@@ -507,6 +519,7 @@ import type {
   FalconMemoryListResponseApi,
   FeedDetailApiResponseApi,
   FeedListApiResponseApi,
+  FeedRedirectApiResponseApi,
   FeedSidebarApiResponseApi,
   FeedStatsApiResponseApi,
   FeedUpdateBodyApi,
@@ -577,9 +590,15 @@ import type {
   HarnessConversationEventAckApi,
   HarnessConversationEventBatchApi,
   HarnessConversationMessageCreateApi,
+  HarnessConversationOverviewApi,
+  HarnessConversationOverviewQueryApi,
+  HarnessConversationPublishApi,
   HarnessConversationReadApi,
   HarnessConversationRerunApi,
+  HarnessConversationRunStartApi,
   HarnessConversationRunStatusApi,
+  HarnessConversationRunsQueryApi,
+  HarnessConversationScenarioQueryApi,
   HarnessConversationTranscriptAppendApi,
   HarnessConversationTranscriptAppendResponseApi,
   HarnessConversationWorkspaceResponseApi,
@@ -639,6 +658,7 @@ import type {
   IntegrationMessageResponseApi,
   IntegrationValidationResponseApi,
   IntegrationsConnectionsListParams,
+  IntegrationsConnectionsSlackChannelsListParams,
   IntegrationsSyncLogsListParams,
   InvestigationControlErrorApi,
   InviteCancelApi,
@@ -1001,6 +1021,7 @@ import type {
   RecoveryCodesRegenerateResponseApi,
   RecoveryCodesRemainingResponseApi,
   RedisKeyRequestApi,
+  ReliabilityApi,
   RenewGroupingFeatureApi,
   ReplaySessionApi,
   ReplaySessionListApi,
@@ -1039,6 +1060,7 @@ import type {
   RunTestNameResponseApi,
   RunTestResponseApi,
   RunTestScenarioItemResponseApi,
+  RunTracesV3ResponseApi,
   SAMLErrorResponseApi,
   SAMLIDPUploadDetailResponseApi,
   SAMLIDPUploadListResponseApi,
@@ -1063,6 +1085,7 @@ import type {
   Saml2AuthAcsCreateBodyTwo,
   Saml2AuthAuthCallbackListParams,
   Saml2AuthAuthReadParams,
+  Saml2AuthCompleteListParams,
   Saml2AuthGithubCallbackListParams,
   Saml2AuthGithubReadParams,
   Saml2AuthIdpLoginListParams,
@@ -1120,6 +1143,7 @@ import type {
   SignupRequestApi,
   SignupResponseApi,
   SimulateAgentDefinitionsListParams,
+  SimulateAgentDefinitionsRunsListParams,
   SimulateApiAgentDefinitionOperationsList200,
   SimulateApiAgentDefinitionOperationsListParams,
   SimulateApiAgentPromptOptimiserList200,
@@ -1154,6 +1178,7 @@ import type {
   SimulateTestExecutionsPreviewCallsListParams,
   SimulateTestExecutionsReadParams,
   SimulateV3TestExecutionCallsParams,
+  SimulateV3TestExecutionTracesParams,
   SimulationEvidenceRequestApi,
   SimulationPreviewErrorApi,
   SimulationPreviewPageApi,
@@ -1167,6 +1192,9 @@ import type {
   SkillDetailResponseApi,
   SkillListResponseApi,
   SkillUpdateRequestApi,
+  SlackChannelsResponseApi,
+  SlackInstallApi,
+  SlackInstallResponseApi,
   SpanAttributeDetailResponseApi,
   SpanAttributeKeysResponseApi,
   SpanAttributeValuesResponseApi,
@@ -1179,6 +1207,7 @@ import type {
   SpendSummaryResponseApi,
   StartEvalsProcessRequestApi,
   StopUserEvalRequestApi,
+  StoredAgentResponseApi,
   StreamStatusResponseApi,
   StripeWebhookRequestApi,
   StripeWebhookResponseApi,
@@ -1203,6 +1232,7 @@ import type {
   TOTPDisableResponseApi,
   TOTPSetupResponseApi,
   TTSVoiceApi,
+  TeamCreateErrorResponseApi,
   TeamCreateRequestApi,
   TeamCreateResponseApi,
   TeamRemoveResponseApi,
@@ -1258,6 +1288,8 @@ import type {
   TraceVoiceCallDetailResponseApi,
   TraceVoiceCallListQueryApi,
   TraceVoiceCallListResponseApi,
+  TracerAlertsListParams,
+  TracerAlertsOptionsListParams,
   TracerChartsFetchGraphParams,
   TracerCustomEvalConfigList200,
   TracerCustomEvalConfigListCustomEvalConfigs200,
@@ -1286,6 +1318,7 @@ import type {
   TracerFeedIssuesListParams,
   TracerFeedIssuesOverviewListParams,
   TracerFeedIssuesReadParams,
+  TracerFeedIssuesRedirectListParams,
   TracerFeedIssuesRootCauseListParams,
   TracerFeedIssuesSidebarListParams,
   TracerFeedIssuesStatsListParams,
@@ -1335,6 +1368,7 @@ import type {
   TracerSavedViewsListParams,
   TracerSharedLinksList200,
   TracerSharedLinksListParams,
+  TracerSharedSidebarListParams,
   TracerTraceAgentGraphParams,
   TracerTraceAnnotationGetAnnotationValuesParams,
   TracerTraceGetEvalNames200,
@@ -1362,7 +1396,6 @@ import type {
   TracerUserAlertLogsListAllParams,
   TracerUserAlertLogsListParams,
   TracerUserAlertsList200,
-  TracerUserAlertsListMonitors200,
   TracerUserAlertsListMonitorsParams,
   TracerUserAlertsListParams,
   TracerUserAlertsMetricOptionsParams,
@@ -1432,6 +1465,7 @@ import type {
   UserAlertMonitorDuplicateApi,
   UserAlertMonitorDuplicateResponseApi,
   UserAlertMonitorGraphResponseApi,
+  UserAlertMonitorListResponseApi,
   UserAlertMonitorLogApi,
   UserAlertMonitorLogResolveRequestApi,
   UserAlertMonitorLogResolveResponseApi,
@@ -6842,7 +6876,7 @@ export type accountsTeamUsersCreateResponse201 = {
 };
 
 export type accountsTeamUsersCreateResponse400 = {
-  data: AccountsErrorResponseApi;
+  data: TeamCreateErrorResponseApi;
   status: 400;
 };
 
@@ -15735,7 +15769,8 @@ export const getAgentccOrgConfigsBulkListUrl = () => {
 
 /**
  * Bulk endpoint for gateway startup sync.
-Returns all active org configs keyed by org ID.
+Returns all active org configs keyed by org ID, plus the ids of orgs whose
+payload could not be built, so the gateway keeps their last good config.
 Authenticated by admin token (not user JWT).
  */
 export const agentccOrgConfigsBulkList = async (
@@ -21326,6 +21361,66 @@ export const integrationsConnectionsValidateCredentials = async (
   );
 };
 
+export type integrationsConnectionsSlackChannelsListResponse200 = {
+  data: SlackChannelsResponseApi;
+  status: 200;
+};
+
+export type integrationsConnectionsSlackChannelsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type integrationsConnectionsSlackChannelsListResponseSuccess =
+  integrationsConnectionsSlackChannelsListResponse200 & {
+    headers: Headers;
+  };
+export type integrationsConnectionsSlackChannelsListResponseError =
+  integrationsConnectionsSlackChannelsListResponseDefault & {
+    headers: Headers;
+  };
+
+export type integrationsConnectionsSlackChannelsListResponse =
+  | integrationsConnectionsSlackChannelsListResponseSuccess
+  | integrationsConnectionsSlackChannelsListResponseError;
+
+export const getIntegrationsConnectionsSlackChannelsListUrl = (
+  connectionId: string,
+  params?: IntegrationsConnectionsSlackChannelsListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/integrations/connections/${connectionId}/slack/channels/?${stringifiedParams}`
+    : `/integrations/connections/${connectionId}/slack/channels/`;
+};
+
+export const integrationsConnectionsSlackChannelsList = async (
+  connectionId: string,
+  params?: IntegrationsConnectionsSlackChannelsListParams,
+  options?: RequestInit,
+): Promise<integrationsConnectionsSlackChannelsListResponse> => {
+  return apiMutator<integrationsConnectionsSlackChannelsListResponse>(
+    getIntegrationsConnectionsSlackChannelsListUrl(connectionId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type integrationsConnectionsReadResponse200 = {
   data: IntegrationConnectionDetailApi;
   status: 200;
@@ -21777,6 +21872,48 @@ export const integrationsConnectionsSyncNow = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(integrationEmptyRequestApi),
+    },
+  );
+};
+
+export type integrationsSlackInstallCreateResponse200 = {
+  data: SlackInstallResponseApi;
+  status: 200;
+};
+
+export type integrationsSlackInstallCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type integrationsSlackInstallCreateResponseSuccess =
+  integrationsSlackInstallCreateResponse200 & {
+    headers: Headers;
+  };
+export type integrationsSlackInstallCreateResponseError =
+  integrationsSlackInstallCreateResponseDefault & {
+    headers: Headers;
+  };
+
+export type integrationsSlackInstallCreateResponse =
+  | integrationsSlackInstallCreateResponseSuccess
+  | integrationsSlackInstallCreateResponseError;
+
+export const getIntegrationsSlackInstallCreateUrl = () => {
+  return `/integrations/slack/install/`;
+};
+
+export const integrationsSlackInstallCreate = async (
+  slackInstallApi: SlackInstallApi,
+  options?: RequestInit,
+): Promise<integrationsSlackInstallCreateResponse> => {
+  return apiMutator<integrationsSlackInstallCreateResponse>(
+    getIntegrationsSlackInstallCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(slackInstallApi),
     },
   );
 };
@@ -22691,9 +22828,14 @@ export type mcpOauthTokenCreateResponse401 = {
   status: 401;
 };
 
+export type mcpOauthTokenCreateResponse429 = {
+  data: MCPOAuthTokenErrorResponseApi;
+  status: 429;
+};
+
 export type mcpOauthTokenCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 401>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 429>;
 };
 
 export type mcpOauthTokenCreateResponseSuccess =
@@ -22703,6 +22845,7 @@ export type mcpOauthTokenCreateResponseSuccess =
 export type mcpOauthTokenCreateResponseError = (
   | mcpOauthTokenCreateResponse400
   | mcpOauthTokenCreateResponse401
+  | mcpOauthTokenCreateResponse429
   | mcpOauthTokenCreateResponseDefault
 ) & {
   headers: Headers;
@@ -33894,24 +34037,55 @@ export const modelHubDevelopsDatasetCreationProgressRead = async (
   );
 };
 
-export type modelHubDevelopsDeleteDatasetDeleteResponse204 = {
-  data: void;
-  status: 204;
+export type modelHubDevelopsDeleteDatasetDeleteResponse200 = {
+  data: DevelopDatasetMessageResponseApi;
+  status: 200;
+};
+
+export type modelHubDevelopsDeleteDatasetDeleteResponse400 = {
+  data: ModelHubErrorResponseApi;
+  status: 400;
+};
+
+export type modelHubDevelopsDeleteDatasetDeleteResponse403 = {
+  data: ModelHubErrorResponseApi;
+  status: 403;
+};
+
+export type modelHubDevelopsDeleteDatasetDeleteResponse404 = {
+  data: ModelHubErrorResponseApi;
+  status: 404;
+};
+
+export type modelHubDevelopsDeleteDatasetDeleteResponse409 = {
+  data: ModelHubErrorResponseApi;
+  status: 409;
+};
+
+export type modelHubDevelopsDeleteDatasetDeleteResponse500 = {
+  data: ModelHubErrorResponseApi;
+  status: 500;
 };
 
 export type modelHubDevelopsDeleteDatasetDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 204>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
 };
 
 export type modelHubDevelopsDeleteDatasetDeleteResponseSuccess =
-  modelHubDevelopsDeleteDatasetDeleteResponse204 & {
+  modelHubDevelopsDeleteDatasetDeleteResponse200 & {
     headers: Headers;
   };
-export type modelHubDevelopsDeleteDatasetDeleteResponseError =
-  modelHubDevelopsDeleteDatasetDeleteResponseDefault & {
-    headers: Headers;
-  };
+export type modelHubDevelopsDeleteDatasetDeleteResponseError = (
+  | modelHubDevelopsDeleteDatasetDeleteResponse400
+  | modelHubDevelopsDeleteDatasetDeleteResponse403
+  | modelHubDevelopsDeleteDatasetDeleteResponse404
+  | modelHubDevelopsDeleteDatasetDeleteResponse409
+  | modelHubDevelopsDeleteDatasetDeleteResponse500
+  | modelHubDevelopsDeleteDatasetDeleteResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type modelHubDevelopsDeleteDatasetDeleteResponse =
   | modelHubDevelopsDeleteDatasetDeleteResponseSuccess
@@ -33922,6 +34096,7 @@ export const getModelHubDevelopsDeleteDatasetDeleteUrl = () => {
 };
 
 export const modelHubDevelopsDeleteDatasetDelete = async (
+  datasetDeleteApi: DatasetDeleteApi,
   options?: RequestInit,
 ): Promise<modelHubDevelopsDeleteDatasetDeleteResponse> => {
   return apiMutator<modelHubDevelopsDeleteDatasetDeleteResponse>(
@@ -33929,6 +34104,8 @@ export const modelHubDevelopsDeleteDatasetDelete = async (
     {
       ...options,
       method: "DELETE",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(datasetDeleteApi),
     },
   );
 };
@@ -54425,6 +54602,65 @@ export const saml2AuthAuthRead = async (
   );
 };
 
+export type saml2AuthCompleteListResponse302 = {
+  data: void;
+  status: 302;
+};
+
+export type saml2AuthCompleteListResponse400 = {
+  data: SAMLErrorResponseApi;
+  status: 400;
+};
+
+export type saml2AuthCompleteListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 302 | 400>;
+};
+export type saml2AuthCompleteListResponseError = (
+  | saml2AuthCompleteListResponse302
+  | saml2AuthCompleteListResponse400
+  | saml2AuthCompleteListResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type saml2AuthCompleteListResponse = saml2AuthCompleteListResponseError;
+
+export const getSaml2AuthCompleteListUrl = (
+  params: Saml2AuthCompleteListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/saml2_auth/complete/?${stringifiedParams}`
+    : `/saml2_auth/complete/`;
+};
+
+export const saml2AuthCompleteList = async (
+  params: Saml2AuthCompleteListParams,
+  options?: RequestInit,
+): Promise<saml2AuthCompleteListResponse> => {
+  return apiMutator<saml2AuthCompleteListResponse>(
+    getSaml2AuthCompleteListUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type saml2AuthGithubCallbackListResponse302 = {
   data: void;
   status: 302;
@@ -56053,7 +56289,7 @@ export const simulateAgentDefinitionsCreateCreate = async (
 };
 
 export type simulateAgentDefinitionsReadResponse200 = {
-  data: AgentDefinitionResponseApi;
+  data: AgentDefinitionDetailResponseApi;
   status: 200;
 };
 
@@ -56225,6 +56461,73 @@ export const simulateAgentDefinitionsEditUpdate = async (
       method: "PUT",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(agentDefinitionEditRequestApi),
+    },
+  );
+};
+
+export type simulateAgentDefinitionsRunsListResponse200 = {
+  data: AgentRunsResponseApi;
+  status: 200;
+};
+
+export type simulateAgentDefinitionsRunsListResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateAgentDefinitionsRunsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 404>;
+};
+
+export type simulateAgentDefinitionsRunsListResponseSuccess =
+  simulateAgentDefinitionsRunsListResponse200 & {
+    headers: Headers;
+  };
+export type simulateAgentDefinitionsRunsListResponseError = (
+  | simulateAgentDefinitionsRunsListResponse404
+  | simulateAgentDefinitionsRunsListResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateAgentDefinitionsRunsListResponse =
+  | simulateAgentDefinitionsRunsListResponseSuccess
+  | simulateAgentDefinitionsRunsListResponseError;
+
+export const getSimulateAgentDefinitionsRunsListUrl = (
+  agentId: string,
+  params?: SimulateAgentDefinitionsRunsListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/agent-definitions/${agentId}/runs/?${stringifiedParams}`
+    : `/simulate/agent-definitions/${agentId}/runs/`;
+};
+
+export const simulateAgentDefinitionsRunsList = async (
+  agentId: string,
+  params?: SimulateAgentDefinitionsRunsListParams,
+  options?: RequestInit,
+): Promise<simulateAgentDefinitionsRunsListResponse> => {
+  return apiMutator<simulateAgentDefinitionsRunsListResponse>(
+    getSimulateAgentDefinitionsRunsListUrl(agentId, params),
+    {
+      ...options,
+      method: "GET",
     },
   );
 };
@@ -56471,6 +56774,63 @@ export const simulateAgentDefinitionsVersionsActivateCreate = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(emptyRequestApi),
+    },
+  );
+};
+
+export type simulateAgentDefinitionsVersionsAgentListResponse200 = {
+  data: StoredAgentResponseApi;
+  status: 200;
+};
+
+export type simulateAgentDefinitionsVersionsAgentListResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateAgentDefinitionsVersionsAgentListResponse500 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 500;
+};
+
+export type simulateAgentDefinitionsVersionsAgentListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 404 | 500>;
+};
+
+export type simulateAgentDefinitionsVersionsAgentListResponseSuccess =
+  simulateAgentDefinitionsVersionsAgentListResponse200 & {
+    headers: Headers;
+  };
+export type simulateAgentDefinitionsVersionsAgentListResponseError = (
+  | simulateAgentDefinitionsVersionsAgentListResponse404
+  | simulateAgentDefinitionsVersionsAgentListResponse500
+  | simulateAgentDefinitionsVersionsAgentListResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateAgentDefinitionsVersionsAgentListResponse =
+  | simulateAgentDefinitionsVersionsAgentListResponseSuccess
+  | simulateAgentDefinitionsVersionsAgentListResponseError;
+
+export const getSimulateAgentDefinitionsVersionsAgentListUrl = (
+  agentId: string,
+  versionId: string,
+) => {
+  return `/simulate/agent-definitions/${agentId}/versions/${versionId}/agent/`;
+};
+
+export const simulateAgentDefinitionsVersionsAgentList = async (
+  agentId: string,
+  versionId: string,
+  options?: RequestInit,
+): Promise<simulateAgentDefinitionsVersionsAgentListResponse> => {
+  return apiMutator<simulateAgentDefinitionsVersionsAgentListResponse>(
+    getSimulateAgentDefinitionsVersionsAgentListUrl(agentId, versionId),
+    {
+      ...options,
+      method: "GET",
     },
   );
 };
@@ -60303,6 +60663,92 @@ export const simulateApiHarnessConversationsEvents = async (
   );
 };
 
+export type simulateApiHarnessConversationsOverviewResponse200 = {
+  data: HarnessConversationOverviewApi;
+  status: 200;
+};
+
+export type simulateApiHarnessConversationsOverviewResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessConversationsOverviewResponseSuccess =
+  simulateApiHarnessConversationsOverviewResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessConversationsOverviewResponseError =
+  simulateApiHarnessConversationsOverviewResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessConversationsOverviewResponse =
+  | simulateApiHarnessConversationsOverviewResponseSuccess
+  | simulateApiHarnessConversationsOverviewResponseError;
+
+export const getSimulateApiHarnessConversationsOverviewUrl = (id: string) => {
+  return `/simulate/api/harness/conversations/${id}/overview/`;
+};
+
+export const simulateApiHarnessConversationsOverview = async (
+  id: string,
+  harnessConversationOverviewQueryApi: HarnessConversationOverviewQueryApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessConversationsOverviewResponse> => {
+  return apiMutator<simulateApiHarnessConversationsOverviewResponse>(
+    getSimulateApiHarnessConversationsOverviewUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessConversationOverviewQueryApi),
+    },
+  );
+};
+
+export type simulateApiHarnessConversationsPublishResponse201 = {
+  data: HarnessConversationPublishApi;
+  status: 201;
+};
+
+export type simulateApiHarnessConversationsPublishResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiHarnessConversationsPublishResponseSuccess =
+  simulateApiHarnessConversationsPublishResponse201 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessConversationsPublishResponseError =
+  simulateApiHarnessConversationsPublishResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessConversationsPublishResponse =
+  | simulateApiHarnessConversationsPublishResponseSuccess
+  | simulateApiHarnessConversationsPublishResponseError;
+
+export const getSimulateApiHarnessConversationsPublishUrl = (id: string) => {
+  return `/simulate/api/harness/conversations/${id}/publish/`;
+};
+
+export const simulateApiHarnessConversationsPublish = async (
+  id: string,
+  harnessConversationPublishApi: HarnessConversationPublishApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessConversationsPublishResponse> => {
+  return apiMutator<simulateApiHarnessConversationsPublishResponse>(
+    getSimulateApiHarnessConversationsPublishUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessConversationPublishApi),
+    },
+  );
+};
+
 export type simulateApiHarnessConversationsRerunResponse202 = {
   data: HarnessConversationRunStatusApi;
   status: 202;
@@ -60382,6 +60828,137 @@ export const simulateApiHarnessConversationsRunStatus = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessConversationsRunsResponse201 = {
+  data: HarnessConversationRunsQueryApi;
+  status: 201;
+};
+
+export type simulateApiHarnessConversationsRunsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiHarnessConversationsRunsResponseSuccess =
+  simulateApiHarnessConversationsRunsResponse201 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessConversationsRunsResponseError =
+  simulateApiHarnessConversationsRunsResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessConversationsRunsResponse =
+  | simulateApiHarnessConversationsRunsResponseSuccess
+  | simulateApiHarnessConversationsRunsResponseError;
+
+export const getSimulateApiHarnessConversationsRunsUrl = (id: string) => {
+  return `/simulate/api/harness/conversations/${id}/runs/`;
+};
+
+export const simulateApiHarnessConversationsRuns = async (
+  id: string,
+  harnessConversationRunsQueryApi: HarnessConversationRunsQueryApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessConversationsRunsResponse> => {
+  return apiMutator<simulateApiHarnessConversationsRunsResponse>(
+    getSimulateApiHarnessConversationsRunsUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessConversationRunsQueryApi),
+    },
+  );
+};
+
+export type simulateApiHarnessConversationsRunsStartRunResponse201 = {
+  data: HarnessConversationRunStartApi;
+  status: 201;
+};
+
+export type simulateApiHarnessConversationsRunsStartRunResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiHarnessConversationsRunsStartRunResponseSuccess =
+  simulateApiHarnessConversationsRunsStartRunResponse201 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessConversationsRunsStartRunResponseError =
+  simulateApiHarnessConversationsRunsStartRunResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessConversationsRunsStartRunResponse =
+  | simulateApiHarnessConversationsRunsStartRunResponseSuccess
+  | simulateApiHarnessConversationsRunsStartRunResponseError;
+
+export const getSimulateApiHarnessConversationsRunsStartRunUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness/conversations/${id}/runs/start/`;
+};
+
+export const simulateApiHarnessConversationsRunsStartRun = async (
+  id: string,
+  harnessConversationRunStartApi: HarnessConversationRunStartApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessConversationsRunsStartRunResponse> => {
+  return apiMutator<simulateApiHarnessConversationsRunsStartRunResponse>(
+    getSimulateApiHarnessConversationsRunsStartRunUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessConversationRunStartApi),
+    },
+  );
+};
+
+export type simulateApiHarnessConversationsScenariosResponse201 = {
+  data: HarnessConversationScenarioQueryApi;
+  status: 201;
+};
+
+export type simulateApiHarnessConversationsScenariosResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiHarnessConversationsScenariosResponseSuccess =
+  simulateApiHarnessConversationsScenariosResponse201 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessConversationsScenariosResponseError =
+  simulateApiHarnessConversationsScenariosResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessConversationsScenariosResponse =
+  | simulateApiHarnessConversationsScenariosResponseSuccess
+  | simulateApiHarnessConversationsScenariosResponseError;
+
+export const getSimulateApiHarnessConversationsScenariosUrl = (id: string) => {
+  return `/simulate/api/harness/conversations/${id}/scenarios/`;
+};
+
+export const simulateApiHarnessConversationsScenarios = async (
+  id: string,
+  harnessConversationScenarioQueryApi: HarnessConversationScenarioQueryApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessConversationsScenariosResponse> => {
+  return apiMutator<simulateApiHarnessConversationsScenariosResponse>(
+    getSimulateApiHarnessConversationsScenariosUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessConversationScenarioQueryApi),
     },
   );
 };
@@ -66986,14 +67563,24 @@ export type simulateTestExecutionsRerunCallsCreateResponse404 = {
   status: 404;
 };
 
+export type simulateTestExecutionsRerunCallsCreateResponse409 = {
+  data: ErrorResponseApi;
+  status: 409;
+};
+
 export type simulateTestExecutionsRerunCallsCreateResponse500 = {
   data: ErrorResponseApi;
   status: 500;
 };
 
+export type simulateTestExecutionsRerunCallsCreateResponse503 = {
+  data: ErrorResponseApi;
+  status: 503;
+};
+
 export type simulateTestExecutionsRerunCallsCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 202 | 400 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 202 | 400 | 404 | 409 | 500 | 503>;
 };
 
 export type simulateTestExecutionsRerunCallsCreateResponseSuccess = (
@@ -67005,7 +67592,9 @@ export type simulateTestExecutionsRerunCallsCreateResponseSuccess = (
 export type simulateTestExecutionsRerunCallsCreateResponseError = (
   | simulateTestExecutionsRerunCallsCreateResponse400
   | simulateTestExecutionsRerunCallsCreateResponse404
+  | simulateTestExecutionsRerunCallsCreateResponse409
   | simulateTestExecutionsRerunCallsCreateResponse500
+  | simulateTestExecutionsRerunCallsCreateResponse503
   | simulateTestExecutionsRerunCallsCreateResponseDefault
 ) & {
   headers: Headers;
@@ -67287,6 +67876,118 @@ export const simulateV3TestExecutionExport = async (
   );
 };
 
+export type simulateV3TestExecutionReliabilityResponse200 = {
+  data: ReliabilityApi;
+  status: 200;
+};
+
+export type simulateV3TestExecutionReliabilityResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateV3TestExecutionReliabilityResponseSuccess =
+  simulateV3TestExecutionReliabilityResponse200 & {
+    headers: Headers;
+  };
+export type simulateV3TestExecutionReliabilityResponseError =
+  simulateV3TestExecutionReliabilityResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateV3TestExecutionReliabilityResponse =
+  | simulateV3TestExecutionReliabilityResponseSuccess
+  | simulateV3TestExecutionReliabilityResponseError;
+
+export const getSimulateV3TestExecutionReliabilityUrl = (
+  testExecutionId: string,
+) => {
+  return `/simulate/v3/test-executions/${testExecutionId}/reliability/`;
+};
+
+/**
+ * The reliability block alone, for the run header.
+ */
+export const simulateV3TestExecutionReliability = async (
+  testExecutionId: string,
+  options?: RequestInit,
+): Promise<simulateV3TestExecutionReliabilityResponse> => {
+  return apiMutator<simulateV3TestExecutionReliabilityResponse>(
+    getSimulateV3TestExecutionReliabilityUrl(testExecutionId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateV3TestExecutionTracesResponse200 = {
+  data: RunTracesV3ResponseApi;
+  status: 200;
+};
+
+export type simulateV3TestExecutionTracesResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type simulateV3TestExecutionTracesResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 503>;
+};
+
+export type simulateV3TestExecutionTracesResponseSuccess =
+  simulateV3TestExecutionTracesResponse200 & {
+    headers: Headers;
+  };
+export type simulateV3TestExecutionTracesResponseError = (
+  | simulateV3TestExecutionTracesResponse503
+  | simulateV3TestExecutionTracesResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateV3TestExecutionTracesResponse =
+  | simulateV3TestExecutionTracesResponseSuccess
+  | simulateV3TestExecutionTracesResponseError;
+
+export const getSimulateV3TestExecutionTracesUrl = (
+  testExecutionId: string,
+  params: SimulateV3TestExecutionTracesParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/v3/test-executions/${testExecutionId}/traces/?${stringifiedParams}`
+    : `/simulate/v3/test-executions/${testExecutionId}/traces/`;
+};
+
+export const simulateV3TestExecutionTraces = async (
+  testExecutionId: string,
+  params: SimulateV3TestExecutionTracesParams,
+  options?: RequestInit,
+): Promise<simulateV3TestExecutionTracesResponse> => {
+  return apiMutator<simulateV3TestExecutionTracesResponse>(
+    getSimulateV3TestExecutionTracesUrl(testExecutionId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type telemetryHeartbeatCreateResponse200 = {
   data: DeploymentHeartbeatResponseApi;
   status: 200;
@@ -67367,6 +68068,324 @@ export const telemetryRegisterCreate = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(deploymentRegistrationApi),
+    },
+  );
+};
+
+export type tracerAlertsListResponse200 = {
+  data: AlertListResponseApi;
+  status: 200;
+};
+
+export type tracerAlertsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerAlertsListResponseSuccess = tracerAlertsListResponse200 & {
+  headers: Headers;
+};
+export type tracerAlertsListResponseError = tracerAlertsListResponseDefault & {
+  headers: Headers;
+};
+
+export type tracerAlertsListResponse =
+  | tracerAlertsListResponseSuccess
+  | tracerAlertsListResponseError;
+
+export const getTracerAlertsListUrl = (params?: TracerAlertsListParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/alerts/?${stringifiedParams}`
+    : `/tracer/alerts/`;
+};
+
+export const tracerAlertsList = async (
+  params?: TracerAlertsListParams,
+  options?: RequestInit,
+): Promise<tracerAlertsListResponse> => {
+  return apiMutator<tracerAlertsListResponse>(getTracerAlertsListUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export type tracerAlertsCreateResponse201 = {
+  data: AlertItemResponseApi;
+  status: 201;
+};
+
+export type tracerAlertsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type tracerAlertsCreateResponseSuccess =
+  tracerAlertsCreateResponse201 & {
+    headers: Headers;
+  };
+export type tracerAlertsCreateResponseError =
+  tracerAlertsCreateResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerAlertsCreateResponse =
+  | tracerAlertsCreateResponseSuccess
+  | tracerAlertsCreateResponseError;
+
+export const getTracerAlertsCreateUrl = () => {
+  return `/tracer/alerts/`;
+};
+
+export const tracerAlertsCreate = async (
+  alertWriteRequestApi: AlertWriteRequestApi,
+  options?: RequestInit,
+): Promise<tracerAlertsCreateResponse> => {
+  return apiMutator<tracerAlertsCreateResponse>(getTracerAlertsCreateUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(alertWriteRequestApi),
+  });
+};
+
+export type tracerAlertsErrorFeedTestCreateResponse200 = {
+  data: AlertTestResponseApi;
+  status: 200;
+};
+
+export type tracerAlertsErrorFeedTestCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerAlertsErrorFeedTestCreateResponseSuccess =
+  tracerAlertsErrorFeedTestCreateResponse200 & {
+    headers: Headers;
+  };
+export type tracerAlertsErrorFeedTestCreateResponseError =
+  tracerAlertsErrorFeedTestCreateResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerAlertsErrorFeedTestCreateResponse =
+  | tracerAlertsErrorFeedTestCreateResponseSuccess
+  | tracerAlertsErrorFeedTestCreateResponseError;
+
+export const getTracerAlertsErrorFeedTestCreateUrl = (alertId: string) => {
+  return `/tracer/alerts/error_feed/${alertId}/test/`;
+};
+
+export const tracerAlertsErrorFeedTestCreate = async (
+  alertId: string,
+  alertTestRequestApi: AlertTestRequestApi,
+  options?: RequestInit,
+): Promise<tracerAlertsErrorFeedTestCreateResponse> => {
+  return apiMutator<tracerAlertsErrorFeedTestCreateResponse>(
+    getTracerAlertsErrorFeedTestCreateUrl(alertId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(alertTestRequestApi),
+    },
+  );
+};
+
+export type tracerAlertsOptionsListResponse200 = {
+  data: AlertOptionsResponseApi;
+  status: 200;
+};
+
+export type tracerAlertsOptionsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerAlertsOptionsListResponseSuccess =
+  tracerAlertsOptionsListResponse200 & {
+    headers: Headers;
+  };
+export type tracerAlertsOptionsListResponseError =
+  tracerAlertsOptionsListResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerAlertsOptionsListResponse =
+  | tracerAlertsOptionsListResponseSuccess
+  | tracerAlertsOptionsListResponseError;
+
+export const getTracerAlertsOptionsListUrl = (
+  params?: TracerAlertsOptionsListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/alerts/options/?${stringifiedParams}`
+    : `/tracer/alerts/options/`;
+};
+
+export const tracerAlertsOptionsList = async (
+  params?: TracerAlertsOptionsListParams,
+  options?: RequestInit,
+): Promise<tracerAlertsOptionsListResponse> => {
+  return apiMutator<tracerAlertsOptionsListResponse>(
+    getTracerAlertsOptionsListUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerAlertsReadResponse200 = {
+  data: AlertItemResponseApi;
+  status: 200;
+};
+
+export type tracerAlertsReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerAlertsReadResponseSuccess = tracerAlertsReadResponse200 & {
+  headers: Headers;
+};
+export type tracerAlertsReadResponseError = tracerAlertsReadResponseDefault & {
+  headers: Headers;
+};
+
+export type tracerAlertsReadResponse =
+  | tracerAlertsReadResponseSuccess
+  | tracerAlertsReadResponseError;
+
+export const getTracerAlertsReadUrl = (kind: string, alertId: string) => {
+  return `/tracer/alerts/${kind}/${alertId}/`;
+};
+
+export const tracerAlertsRead = async (
+  kind: string,
+  alertId: string,
+  options?: RequestInit,
+): Promise<tracerAlertsReadResponse> => {
+  return apiMutator<tracerAlertsReadResponse>(
+    getTracerAlertsReadUrl(kind, alertId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerAlertsPartialUpdateResponse200 = {
+  data: AlertItemResponseApi;
+  status: 200;
+};
+
+export type tracerAlertsPartialUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerAlertsPartialUpdateResponseSuccess =
+  tracerAlertsPartialUpdateResponse200 & {
+    headers: Headers;
+  };
+export type tracerAlertsPartialUpdateResponseError =
+  tracerAlertsPartialUpdateResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerAlertsPartialUpdateResponse =
+  | tracerAlertsPartialUpdateResponseSuccess
+  | tracerAlertsPartialUpdateResponseError;
+
+export const getTracerAlertsPartialUpdateUrl = (
+  kind: string,
+  alertId: string,
+) => {
+  return `/tracer/alerts/${kind}/${alertId}/`;
+};
+
+export const tracerAlertsPartialUpdate = async (
+  kind: string,
+  alertId: string,
+  alertWriteRequestApi: AlertWriteRequestApi,
+  options?: RequestInit,
+): Promise<tracerAlertsPartialUpdateResponse> => {
+  return apiMutator<tracerAlertsPartialUpdateResponse>(
+    getTracerAlertsPartialUpdateUrl(kind, alertId),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(alertWriteRequestApi),
+    },
+  );
+};
+
+export type tracerAlertsDeleteResponse200 = {
+  data: AlertDeletedResponseApi;
+  status: 200;
+};
+
+export type tracerAlertsDeleteResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerAlertsDeleteResponseSuccess =
+  tracerAlertsDeleteResponse200 & {
+    headers: Headers;
+  };
+export type tracerAlertsDeleteResponseError =
+  tracerAlertsDeleteResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerAlertsDeleteResponse =
+  | tracerAlertsDeleteResponseSuccess
+  | tracerAlertsDeleteResponseError;
+
+export const getTracerAlertsDeleteUrl = (kind: string, alertId: string) => {
+  return `/tracer/alerts/${kind}/${alertId}/`;
+};
+
+export const tracerAlertsDelete = async (
+  kind: string,
+  alertId: string,
+  options?: RequestInit,
+): Promise<tracerAlertsDeleteResponse> => {
+  return apiMutator<tracerAlertsDeleteResponse>(
+    getTracerAlertsDeleteUrl(kind, alertId),
+    {
+      ...options,
+      method: "DELETE",
     },
   );
 };
@@ -71190,6 +72209,94 @@ export const tracerFeedIssuesOverviewList = async (
   );
 };
 
+export type tracerFeedIssuesRedirectListResponse200 = {
+  data: FeedRedirectApiResponseApi;
+  status: 200;
+};
+
+export type tracerFeedIssuesRedirectListResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerFeedIssuesRedirectListResponse403 = {
+  data: ApiErrorResponseApi;
+  status: 403;
+};
+
+export type tracerFeedIssuesRedirectListResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerFeedIssuesRedirectListResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerFeedIssuesRedirectListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 500>;
+};
+
+export type tracerFeedIssuesRedirectListResponseSuccess =
+  tracerFeedIssuesRedirectListResponse200 & {
+    headers: Headers;
+  };
+export type tracerFeedIssuesRedirectListResponseError = (
+  | tracerFeedIssuesRedirectListResponse400
+  | tracerFeedIssuesRedirectListResponse403
+  | tracerFeedIssuesRedirectListResponse404
+  | tracerFeedIssuesRedirectListResponse500
+  | tracerFeedIssuesRedirectListResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerFeedIssuesRedirectListResponse =
+  | tracerFeedIssuesRedirectListResponseSuccess
+  | tracerFeedIssuesRedirectListResponseError;
+
+export const getTracerFeedIssuesRedirectListUrl = (
+  clusterId: string,
+  params?: TracerFeedIssuesRedirectListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/feed/issues/${clusterId}/redirect/?${stringifiedParams}`
+    : `/tracer/feed/issues/${clusterId}/redirect/`;
+};
+
+/**
+ * Resolve an old issue ID to its active redirect target.
+ */
+export const tracerFeedIssuesRedirectList = async (
+  clusterId: string,
+  params?: TracerFeedIssuesRedirectListParams,
+  options?: RequestInit,
+): Promise<tracerFeedIssuesRedirectListResponse> => {
+  return apiMutator<tracerFeedIssuesRedirectListResponse>(
+    getTracerFeedIssuesRedirectListUrl(clusterId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type tracerFeedIssuesRootCauseListResponse200 = {
   data: DeepAnalysisApiResponseApi;
   status: 200;
@@ -71840,6 +72947,65 @@ export const tracerInternalErrorFeedV2AttemptsPartialUpdate = async (
     },
   );
 };
+
+export type tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponse200 =
+  {
+    data: ConversationEvidenceResponseApi;
+    status: 200;
+  };
+
+export type tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponse409 =
+  {
+    data: InvestigationControlErrorApi;
+    status: 409;
+  };
+
+export type tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200 | 409>;
+  };
+
+export type tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponseSuccess =
+  tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponse200 & {
+    headers: Headers;
+  };
+export type tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponseError =
+  (
+    | tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponse409
+    | tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponseDefault
+  ) & {
+    headers: Headers;
+  };
+
+export type tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponse =
+
+    | tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponseSuccess
+    | tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponseError;
+
+export const getTracerInternalErrorFeedV2AttemptsConversationEvidenceCreateUrl =
+  (attemptId: string) => {
+    return `/tracer/internal/error-feed-v2/attempts/${attemptId}/conversation-evidence/`;
+  };
+
+export const tracerInternalErrorFeedV2AttemptsConversationEvidenceCreate =
+  async (
+    attemptId: string,
+    conversationEvidenceRequestApi: ConversationEvidenceRequestApi,
+    options?: RequestInit,
+  ): Promise<tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponse> => {
+    return apiMutator<tracerInternalErrorFeedV2AttemptsConversationEvidenceCreateResponse>(
+      getTracerInternalErrorFeedV2AttemptsConversationEvidenceCreateUrl(
+        attemptId,
+      ),
+      {
+        ...options,
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...options?.headers },
+        body: JSON.stringify(conversationEvidenceRequestApi),
+      },
+    );
+  };
 
 export type tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponse201 =
   {
@@ -77930,6 +79096,169 @@ export const tracerSharedRead = async (
   });
 };
 
+export type tracerSharedSidebarListResponse200 = {
+  data: FeedSidebarApiResponseApi;
+  status: 200;
+};
+
+export type tracerSharedSidebarListResponse401 = {
+  data: SharedLinkResolveErrorApi;
+  status: 401;
+};
+
+export type tracerSharedSidebarListResponse403 = {
+  data: SharedLinkResolveErrorApi;
+  status: 403;
+};
+
+export type tracerSharedSidebarListResponse404 = {
+  data: SharedLinkResolveErrorApi;
+  status: 404;
+};
+
+export type tracerSharedSidebarListResponse410 = {
+  data: SharedLinkResolveErrorApi;
+  status: 410;
+};
+
+export type tracerSharedSidebarListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 401 | 403 | 404 | 410>;
+};
+
+export type tracerSharedSidebarListResponseSuccess =
+  tracerSharedSidebarListResponse200 & {
+    headers: Headers;
+  };
+export type tracerSharedSidebarListResponseError = (
+  | tracerSharedSidebarListResponse401
+  | tracerSharedSidebarListResponse403
+  | tracerSharedSidebarListResponse404
+  | tracerSharedSidebarListResponse410
+  | tracerSharedSidebarListResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerSharedSidebarListResponse =
+  | tracerSharedSidebarListResponseSuccess
+  | tracerSharedSidebarListResponseError;
+
+export const getTracerSharedSidebarListUrl = (
+  token: string,
+  params?: TracerSharedSidebarListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/shared/${token}/sidebar/?${stringifiedParams}`
+    : `/tracer/shared/${token}/sidebar/`;
+};
+
+/**
+ * Mirrors the issue page: AI metadata and evaluations follow the trace
+picked in Traces affected (``?trace_id=``).
+ * @summary A shared Error Feed issue's sidebar, scoped to one of its traces.
+ */
+export const tracerSharedSidebarList = async (
+  token: string,
+  params?: TracerSharedSidebarListParams,
+  options?: RequestInit,
+): Promise<tracerSharedSidebarListResponse> => {
+  return apiMutator<tracerSharedSidebarListResponse>(
+    getTracerSharedSidebarListUrl(token, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerSharedTracesReadResponse200 = {
+  data: TraceDetailResponseApi;
+  status: 200;
+};
+
+export type tracerSharedTracesReadResponse401 = {
+  data: SharedLinkResolveErrorApi;
+  status: 401;
+};
+
+export type tracerSharedTracesReadResponse403 = {
+  data: SharedLinkResolveErrorApi;
+  status: 403;
+};
+
+export type tracerSharedTracesReadResponse404 = {
+  data: SharedLinkResolveErrorApi;
+  status: 404;
+};
+
+export type tracerSharedTracesReadResponse410 = {
+  data: SharedLinkResolveErrorApi;
+  status: 410;
+};
+
+export type tracerSharedTracesReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 401 | 403 | 404 | 410>;
+};
+
+export type tracerSharedTracesReadResponseSuccess =
+  tracerSharedTracesReadResponse200 & {
+    headers: Headers;
+  };
+export type tracerSharedTracesReadResponseError = (
+  | tracerSharedTracesReadResponse401
+  | tracerSharedTracesReadResponse403
+  | tracerSharedTracesReadResponse404
+  | tracerSharedTracesReadResponse410
+  | tracerSharedTracesReadResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerSharedTracesReadResponse =
+  | tracerSharedTracesReadResponseSuccess
+  | tracerSharedTracesReadResponseError;
+
+export const getTracerSharedTracesReadUrl = (
+  token: string,
+  traceId: string,
+) => {
+  return `/tracer/shared/${token}/traces/${traceId}/`;
+};
+
+/**
+ * Only traces linked to the shared issue are readable through its token.
+ * @summary One trace of a shared Error Feed issue, under the issue link's rules.
+ */
+export const tracerSharedTracesRead = async (
+  token: string,
+  traceId: string,
+  options?: RequestInit,
+): Promise<tracerSharedTracesReadResponse> => {
+  return apiMutator<tracerSharedTracesReadResponse>(
+    getTracerSharedTracesReadUrl(token, traceId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type tracerTraceAnnotationGetAnnotationValuesResponse200 = {
   data: GetTraceAnnotationValuesResponseApi;
   status: 200;
@@ -80457,6 +81786,9 @@ export const getTracerTraceVoiceCallDetailUrl = (
  * Query params:
 - trace_id or legacy traceId (required) — UUID of the voice call trace.
 - project_id (optional) — the project the call was opened from.
+- test_execution_id or call_execution_id (optional) — a run the caller
+  can read; the hidden simulation project of that run's agent is read
+  in place of the caller's projects.
  * @summary Return the heavy / detail-only fields for a single voice call.
  */
 export const tracerTraceVoiceCallDetail = async (
@@ -80539,6 +81871,9 @@ export const getTracerTraceReadUrl = (
 /**
  * Query params:
 - project_id (optional) — the project the trace was opened from.
+- test_execution_id or call_execution_id (optional) — a run the caller
+  can read; the hidden simulation project of that run's agent is read
+  in place of the caller's projects.
  * @summary Retrieve a trace by its ID.
  */
 export const tracerTraceRead = async (
@@ -81382,23 +82717,30 @@ export const tracerUserAlertsDuplicate = async (
 };
 
 export type tracerUserAlertsListMonitorsResponse200 = {
-  data: TracerUserAlertsListMonitors200;
+  data: UserAlertMonitorListResponseApi;
   status: 200;
+};
+
+export type tracerUserAlertsListMonitorsResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
 };
 
 export type tracerUserAlertsListMonitorsResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 400>;
 };
 
 export type tracerUserAlertsListMonitorsResponseSuccess =
   tracerUserAlertsListMonitorsResponse200 & {
     headers: Headers;
   };
-export type tracerUserAlertsListMonitorsResponseError =
-  tracerUserAlertsListMonitorsResponseDefault & {
-    headers: Headers;
-  };
+export type tracerUserAlertsListMonitorsResponseError = (
+  | tracerUserAlertsListMonitorsResponse400
+  | tracerUserAlertsListMonitorsResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type tracerUserAlertsListMonitorsResponse =
   | tracerUserAlertsListMonitorsResponseSuccess

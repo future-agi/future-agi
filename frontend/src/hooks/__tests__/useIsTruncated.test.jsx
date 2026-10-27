@@ -6,6 +6,7 @@ import useIsTruncated from "src/hooks/useIsTruncated";
 // Widths jsdom cannot produce on its own; every element reports these.
 let widths = { scroll: 0, client: 0 };
 let observers = [];
+const originalFonts = Object.getOwnPropertyDescriptor(document, "fonts");
 
 class RecordingResizeObserver {
   constructor(callback) {
@@ -65,6 +66,8 @@ describe("useIsTruncated", () => {
   });
 
   afterEach(() => {
+    if (originalFonts) Object.defineProperty(document, "fonts", originalFonts);
+    else delete document.fonts;
     vi.unstubAllGlobals();
     ["scrollWidth", "clientWidth"].forEach((prop) => {
       delete HTMLElement.prototype[prop];
@@ -101,6 +104,55 @@ describe("useIsTruncated", () => {
 
     expect(observers.length).toBeGreaterThan(1);
     expect(observers[0].disconnected).toBe(true);
+  });
+
+  it("remeasures when initial fonts finish loading without a box resize", async () => {
+    let ready;
+    const fonts = new EventTarget();
+    fonts.ready = new Promise((resolve) => {
+      ready = resolve;
+    });
+    Object.defineProperty(document, "fonts", {
+      configurable: true,
+      value: fonts,
+    });
+    render(<Harness text="WWWWWWWW" />);
+    expect(screen.queryByTestId("wrapper")).toBeNull();
+    overflow();
+    await act(async () => {
+      ready();
+      await fonts.ready;
+    });
+    expect(screen.getByTestId("wrapper")).toBeInTheDocument();
+  });
+
+  it("tracks later font loads and removes the listener when unmounted", async () => {
+    const fonts = new EventTarget();
+    fonts.ready = Promise.resolve();
+    const remove = vi.spyOn(fonts, "removeEventListener");
+    Object.defineProperty(document, "fonts", {
+      configurable: true,
+      value: fonts,
+    });
+    const { unmount } = render(<Harness text="WWWWWWWW" />);
+    await act(async () => {
+      await fonts.ready;
+    });
+    expect(screen.queryByTestId("wrapper")).toBeNull();
+    overflow();
+    await act(async () => {
+      fonts.dispatchEvent(new Event("loadingdone"));
+    });
+    expect(screen.getByTestId("wrapper")).toBeInTheDocument();
+    fits();
+    act(() => {
+      fonts.dispatchEvent(new Event("loadingdone"));
+    });
+    expect(screen.queryByTestId("wrapper")).toBeNull();
+    remove.mockClear();
+    unmount();
+    expect(remove).toHaveBeenCalledWith("loadingdone", expect.any(Function));
+    remove.mockRestore();
   });
 
   // The point of re-observing: resizing the card wider must clear the tooltip.

@@ -134,7 +134,7 @@ func (h *Handlers) TextCompletion(w http.ResponseWriter, r *http.Request) {
 	h.applyOrgModelMapOverrides(orgCfg, rc)
 
 	// Resolve provider.
-	provider, err := h.resolveProvider(ctx, rc, req.Model)
+	provider, upstreamModel, err := h.resolveProvider(ctx, rc, req.Model)
 	if err != nil {
 		// If global registry doesn't know this model, try org provider model lists.
 		if orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
@@ -149,8 +149,12 @@ func (h *Handlers) TextCompletion(w http.ResponseWriter, r *http.Request) {
 			models.WriteErrorFromError(w, err)
 			return
 		}
-	} else if shouldApplyOrgProviderOverride(rc) {
-		provider = h.applyOrgProviderOverride(orgID, orgCfg, rc.Provider, provider)
+	} else {
+		req.Model = upstreamModel
+		chatReq.Model = upstreamModel
+		if shouldApplyOrgProviderOverride(rc) {
+			provider = h.applyOrgProviderOverride(orgID, orgCfg, rc.Provider, provider)
+		}
 	}
 
 	// Enforce provider ACL.

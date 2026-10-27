@@ -29,6 +29,8 @@ export function asRequestError(err, action) {
   return friendly;
 }
 
+export const GATEWAY_CONFIG_QUERY_KEY = "agentcc-gateway-config";
+
 // Returned from every config mutation's onSuccess, so the mutation (and the
 // dialog that closes on it) settles only once the config has been re-read:
 // otherwise Edit, clicked straight after Save, opens on the cached config from
@@ -38,13 +40,24 @@ export function refreshGatewayConfig(queryClient, ...alsoStaleKeys) {
     queryClient.invalidateQueries({ queryKey }),
   );
   return queryClient.invalidateQueries({
-    queryKey: ["agentcc-gateway-config"],
+    queryKey: [GATEWAY_CONFIG_QUERY_KEY],
   });
+}
+
+// Whether the re-read above ended in an error. `invalidateQueries` resolves
+// whether or not the refetch succeeded, so a save that landed and a re-read
+// that did not would otherwise be reported as an unqualified success next to an
+// unattributed error toast. Callers use it to name the half that failed.
+export function gatewayConfigRefreshFailed(queryClient) {
+  return queryClient
+    .getQueryCache()
+    .findAll({ queryKey: [GATEWAY_CONFIG_QUERY_KEY] })
+    .some((query) => query.state.status === "error");
 }
 
 export function useGatewayConfig(gatewayId) {
   return useQuery({
-    queryKey: ["agentcc-gateway-config", gatewayId],
+    queryKey: [GATEWAY_CONFIG_QUERY_KEY, gatewayId],
     queryFn: async () => {
       const { data } = await axios.get(
         endpoints.gateway.config(gatewayId),

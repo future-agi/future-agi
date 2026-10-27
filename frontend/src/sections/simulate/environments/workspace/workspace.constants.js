@@ -10,11 +10,33 @@
 // component/folder keep the OverviewPanel name.
 export const WORKSPACE_TABS = [
   { id: "overview", label: "Overview", icon: "solar:widget-5-linear" },
-  { id: "contract", label: "Contract", icon: "solar:document-text-linear" },
-  { id: "scenarios", label: "Scenarios", icon: "solar:layers-minimalistic-linear", badge: "scenarios" },
-  { id: "evals", label: "Evaluations", icon: "solar:shield-check-linear", badge: "evals" },
+  {
+    id: "contract",
+    label: "Contract",
+    icon: "solar:document-text-linear",
+    hint: "What this environment is made of: the world runs execute against, the code behind every tool call and grader, and how each run ends.",
+  },
+  {
+    id: "scenarios",
+    label: "Scenarios",
+    icon: "solar:layers-minimalistic-linear",
+    badge: "scenarios",
+    hint: "Each scenario is one task your agent has to complete, and carries its own persona.",
+  },
+  {
+    id: "evals",
+    label: "Evaluations",
+    icon: "solar:shield-check-linear",
+    badge: "evals",
+    hint: "These decide whether each task passed. Pick them from the library and map their inputs onto what the run produces.",
+  },
   { id: "runs", label: "Runs", icon: "solar:play-circle-linear", badge: "runs" },
-  { id: "settings", label: "Settings", icon: "solar:settings-linear" },
+  {
+    id: "settings",
+    label: "Settings",
+    icon: "solar:settings-linear",
+    hint: "How this environment was built. Everything here is fixed at build time. Only the name can be changed.",
+  },
 ];
 
 // Setup-gap areas map onto the tab that owns the underlying answer, so a
@@ -60,6 +82,13 @@ export const WORKSPACE_COPY = {
     body: "Something went wrong fetching it. Retry, or go back to your environments.",
     retry: "Retry",
   },
+  // The environment's status loaded but its details (contract, world, agent,
+  // counts) did not. Every tab reads those, so none is shown half-filled.
+  detailError: {
+    title: "Couldn’t load this environment’s details",
+    body: "Its contract, world and counts didn’t load, so the tabs would show the wrong thing. Retry to load them again.",
+    retry: "Retry",
+  },
   // The route-level error boundary fallback: a render error was caught instead of
   // blanking the page.
   crashed: {
@@ -68,10 +97,14 @@ export const WORKSPACE_COPY = {
     reload: "Reload",
   },
   runBlocked: {
-    agent: "Connect an agent on the Agents tab",
+    agent: "No agent is connected to this environment yet",
     scenarios: "Add scenarios on the Scenarios tab",
-    evals: "Add at least one evaluation on the Evaluations tab",
     generic: "Setup incomplete",
+    starting: "Starting a run",
+    notReady: "This environment hasn't finished building",
+    noRunTest: "This environment isn't linked to a run yet. Rebuild it to run simulations.",
+    detailFailed: "This environment's details didn't load. Retry them first.",
+    detailLoading: "Loading this environment's details",
   },
   // The env-version pin: the menu that lists every version of the world so the
   // reader can switch which one the next run stamps against.
@@ -103,15 +136,16 @@ export const WORKSPACE_COPY = {
   gaps: {
     tooltip: "Needs your input before you can run:",
   },
-  // The pairing strip under the header: a run is this environment version
-  // against that agent version, stated rather than selected.
+  // The strip under the header: the agent version under test, stated rather
+  // than selected.
   versionBar: {
     envPrefix: "env",
-    agentPrefix: "agent",
     testSubject: "Test subject",
+    // The agent has no name on record; the Overview agent card says the same.
+    unnamedAgent: "Agent",
     scenariosShared: (n) => `${n} scenarios, shared across agent versions`,
-    pairingTooltip: (envLabel, envNote, agentLabel) =>
-      `Environment ${envLabel} - ${envNote}. Test subject: agent ${agentLabel}. Different agents can run against this env; the env stays put.`,
+    subjectTooltip:
+      "The agent version runs are scored against. Other agents can run against this environment too, and the environment stays the same.",
     scenariosTooltip:
       "Scenarios belong to the environment, so the same set runs against any agent version",
   },

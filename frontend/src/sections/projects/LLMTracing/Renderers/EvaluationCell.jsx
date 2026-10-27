@@ -6,6 +6,8 @@ import NumericCell from "../../../common/DevelopCellRenderer/EvaluateCellRendere
 import { OutputTypes } from "src/sections/common/DevelopCellRenderer/CellRenderers/cellRendererHelper";
 import EvalStatusIndicator from "src/components/eval/EvalStatusIndicator";
 import { getEvalNonScoreStatusFromValue } from "src/utils/evalStatus";
+import EvalResultChips from "./EvalResultChips";
+import { buildEvalCellModel } from "../evalCellModel";
 
 const EvaluationCell = ({ value, column, isSpanLevel = false }) => {
   const shouldReverse = column?.reverseOutput;
@@ -36,6 +38,24 @@ const EvaluationCell = ({ value, column, isSpanLevel = false }) => {
           skippedReason={value?.skipped_reason}
         />
       </div>
+    );
+  }
+
+  const isCountCell =
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.keys(value).length > 0 &&
+    Object.values(value).every(
+      (count) => typeof count === "number" && Number.isFinite(count),
+    );
+  if (isCountCell) {
+    return (
+      <EvalResultChips
+        value={value}
+        outputType={column?.outputType}
+        choicesMap={column?.choicesMap}
+      />
     );
   }
 
@@ -81,6 +101,33 @@ const EvaluationCell = ({ value, column, isSpanLevel = false }) => {
     const { bgcolor: backgroundColor, color } =
       interpolateColorTokenBasedOnScore(isPass ? 100 : 0, 100);
 
+    return (
+      <div
+        style={{
+          height: "100%",
+          width: "100%",
+          display: "flex",
+          alignItems: "center",
+          backgroundColor,
+          padding: "0 12px",
+          margin: 0,
+          fontSize: "14px",
+          color,
+        }}
+      >
+        {isPass ? "Pass" : "Fail"}
+      </div>
+    );
+  }
+
+  // Voice keeps scalar Pass/Fail output rather than count-mode cells. Normalize
+  // its historical casing/boolean variants before the numeric fallback so a
+  // literal "Fail" never becomes a missing value or a passing result.
+  const scalarModel = buildEvalCellModel(value, column?.outputType);
+  if (scalarModel.kind === "verdict") {
+    const isPass = scalarModel.verdict === "pass";
+    const { bgcolor: backgroundColor, color } =
+      interpolateColorTokenBasedOnScore(isPass ? 100 : 0, 100);
     return (
       <div
         style={{

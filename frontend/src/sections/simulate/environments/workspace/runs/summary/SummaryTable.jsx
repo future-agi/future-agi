@@ -9,12 +9,12 @@ import { runColor } from "../runs.constants";
 import StatusChip from "../StatusChip";
 import StopRunControl from "../StopRunControl";
 
-// The dashed placeholder a not-yet-backed cell shows.
+// The dashed cell a run with no value for a column shows.
 const DASH = "-";
 
 // The run comparison table. Real columns (pass, avg duration) plus the derived
-// eval columns render live values; the columns with no backend field yet show a
-// plain dashed cell.
+// eval columns render live values; Tokens and Cost have no field on the runs
+// list and show a plain dashed cell.
 export default function SummaryTable({ rows, evals, onOpenRun }) {
   return (
     // The card no longer clips (the graph tooltip must escape it), so clip the
@@ -45,8 +45,6 @@ export default function SummaryTable({ rows, evals, onOpenRun }) {
             <TableCell align="right">Duration</TableCell>
             <TableCell align="right">Tokens</TableCell>
             <TableCell align="right">Cost</TableCell>
-            <TableCell align="right">Said not done</TableCell>
-            <TableCell align="right">Mean return</TableCell>
             {evals.map((e) => (
               <TableCell key={e.id} align="right">{e.name}</TableCell>
             ))}
@@ -123,8 +121,6 @@ function SummaryRow({ row, evals, onOpenRun }) {
 
       <NumCell value={`${row.passRate}%`} bold />
       <NumCell value={row.durationS != null ? formatDuration(row.durationS) : DASH} />
-      <NumCell value={DASH} muted />
-      <NumCell value={DASH} muted />
       <NumCell value={DASH} muted />
       <NumCell value={DASH} muted />
       {evals.map((e) => {

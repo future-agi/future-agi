@@ -286,20 +286,52 @@ describe("WorkspaceHeader", () => {
 });
 
 describe("VersionBar", () => {
-  it("counts the scenarios for a real environment whose version carries no count", () => {
-    const v1 = { label: "v1", note: "First run of this environment." };
+  const SUBJECT = {
+    id: "agent-1",
+    name: "Single Prompt Agent",
+    provider: "retell",
+    versions_count: 1,
+    active_version: "v1",
+  };
+
+  it("names the agent under test and its active version from the API", () => {
     render(
       <VersionBar
-        env={ENV}
-        envState={{
-          scenarios: [1, 2, 3, 4],
-          envVersions: [v1],
-          agentVersions: [v1],
-          activeEnvVersion: "v1",
-          activeAgentVersion: "v1",
-        }}
+        env={{ ...ENV, testSubject: SUBJECT, counts: { scenarios: 3 } }}
+        envState={{ scenarios: [1] }}
       />,
     );
-    expect(screen.getByText("4 scenarios, shared across agent versions")).toBeInTheDocument();
+    expect(screen.getByText("Single Prompt Agent")).toBeInTheDocument();
+    expect(screen.getByText("v1")).toBeInTheDocument();
+    expect(screen.queryByText(/^env$/)).toBeNull();
+  });
+
+  it("calls an agent with no name on record \"Agent\", as the Overview card does", () => {
+    render(
+      <VersionBar
+        env={{ ...ENV, testSubject: { ...SUBJECT, name: null }, counts: { scenarios: 3 } }}
+        envState={{ scenarios: [1] }}
+      />,
+    );
+    expect(screen.getByText("Agent")).toBeInTheDocument();
+    expect(screen.getByText("v1")).toBeInTheDocument();
+  });
+
+  it("counts every scenario the environment has, not just the loaded page", () => {
+    render(
+      <VersionBar
+        env={{ ...ENV, testSubject: SUBJECT, counts: { scenarios: 42 } }}
+        envState={{ scenarios: [1, 2, 3, 4] }}
+      />,
+    );
+    expect(screen.getByText("42 scenarios, shared across agent versions")).toBeInTheDocument();
+  });
+
+  it("leaves the agent out when no agent is connected yet", () => {
+    render(
+      <VersionBar env={{ ...ENV, testSubject: null, counts: { scenarios: 0 } }} envState={{}} />,
+    );
+    expect(screen.queryByText("Test subject")).toBeNull();
+    expect(screen.getByText("0 scenarios, shared across agent versions")).toBeInTheDocument();
   });
 });

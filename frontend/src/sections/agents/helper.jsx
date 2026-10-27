@@ -13,6 +13,7 @@ import { useQuery } from "@tanstack/react-query";
 import axios, { readQuery, endpoints } from "src/utils/axios";
 import { Box, Skeleton } from "@mui/material";
 import EvaluationCell from "src/sections/projects/LLMTracing/Renderers/EvaluationCell";
+import { evalColumnMinWidth } from "src/sections/projects/LLMTracing/evalCellModel";
 import { AGENT_TYPES, isLiveKitProvider, VOICE_TRANSPORT } from "./constants";
 import AnnotationHeaderCellRenderer from "./CallLogs/AnnotationHeaderCellRenderer";
 import NewAnnotationCellRenderer from "./NewAnnotationCellRenderer";
@@ -91,6 +92,7 @@ export const emptyAgentSteps = [
 export const createAgentDefinitionSchema = (options) => {
   const keysRequired = options?.keysRequired || false;
   const agentDefinitionId = options?.agentDefinitionId;
+  const isSourceAgent = options?.agentKind === "source";
   return z
     .object({
       // Basic Information
@@ -121,7 +123,10 @@ export const createAgentDefinitionSchema = (options) => {
         .optional(),
 
       // Behaviour
-      description: z.string().min(1, "Description is required"),
+      // A code agent keeps its instructions in its stored Agent, so its description can be empty.
+      description: isSourceAgent
+        ? z.string()
+        : z.string().min(1, "Description is required"),
       knowledgeBase: z.string().optional(),
       countryCode: z.string().optional(),
       contactNumber: z.string().optional(),
@@ -222,33 +227,36 @@ export const createAgentDefinitionSchema = (options) => {
       }
 
       if (isLiveKitProvider(data.provider)) {
-        if (!data.livekitUrl || data.livekitUrl.trim() === "") {
-          ctx.addIssue({
-            path: ["livekitUrl"],
-            message: "LiveKit Server URL is required",
-            code: z.ZodIssueCode.custom,
-          });
-        }
-        if (!data.livekitApiKey || data.livekitApiKey.trim() === "") {
-          ctx.addIssue({
-            path: ["livekitApiKey"],
-            message: "LiveKit API Key is required",
-            code: z.ZodIssueCode.custom,
-          });
-        }
-        if (!data.livekitApiSecret || data.livekitApiSecret.trim() === "") {
-          ctx.addIssue({
-            path: ["livekitApiSecret"],
-            message: "LiveKit API Secret is required",
-            code: z.ZodIssueCode.custom,
-          });
-        }
-        if (!data.livekitAgentName || data.livekitAgentName.trim() === "") {
-          ctx.addIssue({
-            path: ["livekitAgentName"],
-            message: "Agent Name is required",
-            code: z.ZodIssueCode.custom,
-          });
+        // A code agent only carries the word livekit; its credentials are not on this form.
+        if (!isSourceAgent) {
+          if (!data.livekitUrl || data.livekitUrl.trim() === "") {
+            ctx.addIssue({
+              path: ["livekitUrl"],
+              message: "LiveKit Server URL is required",
+              code: z.ZodIssueCode.custom,
+            });
+          }
+          if (!data.livekitApiKey || data.livekitApiKey.trim() === "") {
+            ctx.addIssue({
+              path: ["livekitApiKey"],
+              message: "LiveKit API Key is required",
+              code: z.ZodIssueCode.custom,
+            });
+          }
+          if (!data.livekitApiSecret || data.livekitApiSecret.trim() === "") {
+            ctx.addIssue({
+              path: ["livekitApiSecret"],
+              message: "LiveKit API Secret is required",
+              code: z.ZodIssueCode.custom,
+            });
+          }
+          if (!data.livekitAgentName || data.livekitAgentName.trim() === "") {
+            ctx.addIssue({
+              path: ["livekitAgentName"],
+              message: "Agent Name is required",
+              code: z.ZodIssueCode.custom,
+            });
+          }
         }
       } else if (data.provider === "others") {
         // if (data.authenticationMethod === "api_key") {
@@ -278,7 +286,9 @@ export const createAgentDefinitionSchema = (options) => {
       } else {
         if (
           data.agentType === AGENT_TYPES.VOICE &&
-          (data.observabilityEnabled || keysRequired || !data.inbound)
+          ((!isSourceAgent && data.observabilityEnabled) ||
+            keysRequired ||
+            !data.inbound)
         ) {
           if (!data?.authenticationMethod) {
             ctx.addIssue({
@@ -422,7 +432,7 @@ export const generateEvalColumnsFromConfig = (items = []) => {
         minWidth: 140,
         hide: item.is_visible === false,
         headerComponent: CallLogsHeaderCellRenderer,
-        headerComponentParams: { displayName },
+        headerComponentParams: { displayName, targetType: item.target_type },
         valueGetter: (params) => {
           const v = params.data?.[evalId];
           return v === null || v === undefined || v === "" ? null : Number(v);
@@ -468,6 +478,18 @@ export const generateEvalColumnsFromConfig = (items = []) => {
           </Box>
         );
       }
+      // Project call lists send count tiles, rendered as on the Observe lists.
+      if (evalData?.counts && typeof evalData.counts === "object") {
+        return (
+          <EvaluationCell
+            value={evalData.counts}
+            column={{
+              outputType: item.output_type,
+              choicesMap: item.choices_map,
+            }}
+          />
+        );
+      }
       // PASS_FAIL carries a numeric pass rate — route it through the score
       // (percentage) renderer so it shows "X%" instead of the pill path,
       // which string-matches "fail" and would render 0% as a false "Pass".
@@ -491,10 +513,13 @@ export const generateEvalColumnsFromConfig = (items = []) => {
       headerName: displayName,
       field: `eval_outputs.${evalId}`,
       flex: 1,
-      minWidth: isReason ? 240 : 140,
+      minWidth: isReason ? 240 : evalColumnMinWidth(item, 140),
       hide: item.is_visible === false,
       headerComponent: CallLogsHeaderCellRenderer,
-      headerComponentParams: { displayName },
+      headerComponentParams: {
+        displayName,
+        targetType: isReason ? undefined : item.target_type,
+      },
       valueGetter: (params) => params.data?.eval_outputs?.[dataKey] || {},
       ...(isFilterableEval && {
         context: {

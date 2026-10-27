@@ -12,6 +12,7 @@ from mcp_server.api_executor import (
     MCPRequestContext,
     ensure_urlconf_loaded,
     executor,
+    load_urlconf_outside_workspace,
 )
 from mcp_server.generated_registry import registry
 from mcp_server.models.connection import MCPConnection
@@ -28,6 +29,7 @@ from model_hub.serializers.contracts import CreateEmptyDatasetRequestSerializer
 from model_hub.serializers.prompt_requests import PromptRunRequestSerializer
 from tfc.middleware.workspace_context import (
     clear_workspace_context,
+    get_current_workspace,
     workspace_context,
 )
 
@@ -127,6 +129,16 @@ def test_urlconf_loading_refuses_to_run_inside_a_bound_workspace(user, workspace
     with workspace_context(workspace, organization=user.organization, user=user):
         with pytest.raises(RuntimeError, match="before a workspace is bound"):
             ensure_urlconf_loaded()
+
+
+@pytest.mark.django_db
+def test_urlconf_loading_clears_bound_workspace_for_in_process_callers(
+    user, workspace
+):
+    with workspace_context(workspace, organization=user.organization, user=user):
+        assert get_current_workspace() == workspace
+        load_urlconf_outside_workspace()
+        assert get_current_workspace() == workspace
 
 
 @pytest.mark.django_db

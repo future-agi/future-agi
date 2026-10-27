@@ -1,8 +1,8 @@
 """Private grouping worker boundary; source evidence remains server-owned."""
 
 from rest_framework import serializers
-from tfc.utils.api_serializers import ManagementAPIErrorResponseSerializer
 
+from tfc.utils.api_serializers import ManagementAPIErrorResponseSerializer
 from tracer.serializers.filters import StrictInputSerializer
 
 
@@ -24,7 +24,10 @@ class RenewGroupingFeatureSerializer(GroupingLeaseSerializer):
 
 
 class UpdateGroupingAttemptSerializer(GroupingLeaseSerializer):
-    action = serializers.ChoiceField(choices=("renew", "cancel"))
+    action = serializers.ChoiceField(choices=("renew", "cancel", "fail"))
+    failure_code = serializers.CharField(
+        max_length=100, required=False, default="", allow_blank=True
+    )
 
 
 class CompleteGroupingFeatureSerializer(GroupingLeaseSerializer):
@@ -111,6 +114,7 @@ class GroupingControlResponseSerializer(serializers.Serializer):
     """Variable typed operation result; operation-specific service owns shape."""
 
     state = serializers.CharField(required=False)
+    failure_code = serializers.CharField(required=False)
     status = serializers.CharField(required=False)
     checkpoint_revision = serializers.IntegerField(required=False)
     receipt_id = serializers.UUIDField(required=False)

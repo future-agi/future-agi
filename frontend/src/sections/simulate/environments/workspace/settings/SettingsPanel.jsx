@@ -64,13 +64,6 @@ export default function SettingsPanel({ env, backed = false, locked = false }) {
 
   return (
     <Box sx={{ p: 2 }}>
-      <Box sx={{ mb: 3 }}>
-        <Typography sx={{ typography: "m2", fontWeight: 600 }}>Settings</Typography>
-        <Typography sx={{ typography: "s1", color: "text.secondary", maxWidth: 760 }}>
-          How this environment was built. Everything here is fixed at build time.
-          Only the name can be changed.
-        </Typography>
-      </Box>
 
       {!backed ? (
         <SectionCard title="Settings">

@@ -27,10 +27,15 @@ const environmentEvaluationPath = (id, evalConfigId) =>
     { id, eval_config_id: evalConfigId },
   );
 
-export const listHarnessEnvironments = async ({ page, limit } = {}) => {
+export const listHarnessEnvironments = async ({
+  page,
+  limit,
+  agentDefinitionId,
+} = {}) => {
   const params = {};
   if (page != null) params.page = page;
   if (limit != null) params.limit = limit;
+  if (agentDefinitionId) params.agent_definition_id = agentDefinitionId;
   return (await axios.get(environmentsPath(), { params })).data;
 };
 
@@ -68,6 +73,12 @@ export const renameHarnessEnvironment = async (id, name) =>
 // locally.
 export const deleteAppliedEvaluation = async (id, evalConfigId) =>
   (await axios.delete(environmentEvaluationPath(id, evalConfigId))).data;
+
+// Edit an applied evaluation. Same path as the remove; the body carries only
+// the fields being changed and never grades. The 200 body is the updated eval
+// in the run test's `simulate_eval_configs_detail` item shape.
+export const updateAppliedEvaluation = async (id, evalConfigId, body) =>
+  (await axios.patch(environmentEvaluationPath(id, evalConfigId), body)).data;
 
 // Turn the tool-call judge on or off. PUT with the whole state of the switch;
 // the 200 body is the full detail (`settings.enable_tool_evaluation`), so the

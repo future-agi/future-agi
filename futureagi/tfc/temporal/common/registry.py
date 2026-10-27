@@ -65,12 +65,14 @@ TEMPORAL_ACTIVITY_MODULES = [
     "tracer.utils.external_eval",
     "tracer.utils.eval_tasks",
     "tracer.utils.monitor",
+    "tracer.services.feed_alerts.events",
     # simulate tasks
     "simulate.tasks.eval_summary_tasks",
     "simulate.tasks.scenario_tasks",
     "simulate.services.test_executor",
     "simulate.tasks.chat_sim",
     "simulate.tasks.alk_sim",
+    "simulate.tasks.hosted_harness_usage",
     # voice tasks
     "ee.voice.tasks.call_log_tasks",
     # integration tasks
@@ -83,6 +85,8 @@ TEMPORAL_ACTIVITY_MODULES = [
     "tfc.temporal.schedules.deployment_telemetry",
     # Deployment telemetry receiver-side integrations (PostHog, HubSpot, Slack)
     "ee.cloud.telemetry.deployment_telemetry_integrations",
+    # Bounded SAML login-state retention.
+    "saml2_auth.tasks",
 ]
 
 

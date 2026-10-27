@@ -38,6 +38,7 @@ BASE = "/simulate/api/harness/attempts"
 # Asserted against a freshly seeded database.
 VOICE_OFFER = [
     "advice_authority_boundary",
+    "audio_signal_metrics",
     "audio_quality",
     "claim_intake_accuracy",
     "conversation_coherence",
@@ -74,7 +75,8 @@ VOICE_OFFER.sort()
 # unclear_audio_handling takes call audio only and is tagged Audio alone, so a
 # chat run is never offered it.
 CHAT_OFFER = sorted(
-    set(VOICE_OFFER) - {"audio_quality", "unclear_audio_handling"}
+    set(VOICE_OFFER)
+    - {"audio_quality", "audio_signal_metrics", "unclear_audio_handling"}
     | {"bias_detection", "toxicity"}
 )
 # Legacy templates the catalog does not list.
@@ -206,7 +208,7 @@ def test_offer_matches_the_catalog(seeded_evals, organization, workspace):
     chat = [entry["name"] for entry in offered_evals(organization, workspace, "text")]
     assert voice == VOICE_OFFER, sorted(set(voice) ^ set(VOICE_OFFER))
     assert chat == CHAT_OFFER, sorted(set(chat) ^ set(CHAT_OFFER))
-    assert len(voice) == 31
+    assert len(voice) == 32
     assert len(chat) == 31
 
 
@@ -232,94 +234,64 @@ def test_cap_filler_names_are_still_catalog_keys():
     for name in [*CAP_FILLERS, ONE_TOO_MANY]:
         assert (
             name in known
-        ), f"{name} is no longer a catalog key; update CAP_FILLERS/ONE_TOO_MANY"
+        ), f"{name} is no longer offered; update CAP_FILLERS/ONE_TOO_MANY"
 
 
-# --- A failed catalog read is never memoised ------------------------------------
+# --- A failed read of the eval definitions is never memoised -------------------
 
 
-def test_an_unreadable_catalog_is_retried_not_memoised(monkeypatch):
+def test_an_unreadable_offer_is_retried_not_memoised(monkeypatch):
     """A cache that only ever holds a successful read: a transient read
-    failure must not get memoised forever.
-
-    Patches the `CATALOG_YAML` name in `seed_system_evals` rather than
-    `pathlib.PosixPath.read_text` on the class, so the patch is narrowed to
-    exactly this lookup rather than every `PosixPath` in the process.
-    """
-    from simulate.services import harness_evals
+    failure must not get memoised forever, nor surface as a 500."""
     import model_hub.management.commands.seed_system_evals as seed_system_evals
+    from simulate.services import harness_evals
 
-    class _UnreadableCatalog:
-        def read_text(self, **_kwargs):
-            raise OSError("gone")
+    def _unreadable():
+        raise OSError("gone")
 
     harness_evals._offerable_eval_names_cache = None
-    monkeypatch.setattr(seed_system_evals, "CATALOG_YAML", _UnreadableCatalog())
-    assert harness_evals.offerable_eval_names() == frozenset()
-    monkeypatch.undo()
-    assert "no_misselling" in harness_evals.offerable_eval_names()
-
-
-def test_a_mis_encoded_catalog_is_retried_not_memoised(monkeypatch):
-    """`.read_text(encoding="utf-8")` on a truncated or mis-encoded catalog
-    raises `UnicodeDecodeError`, a `ValueError` subclass, not an `OSError` —
-    it must surface as the documented empty offer, not an unhandled 500.
-    """
-    from simulate.services import harness_evals
-    import model_hub.management.commands.seed_system_evals as seed_system_evals
-
-    class _MisEncodedCatalog:
-        def read_text(self, **_kwargs):
-            raise UnicodeDecodeError("utf-8", b"\xff\xfe", 0, 1, "invalid start byte")
-
-    harness_evals._offerable_eval_names_cache = None
-    monkeypatch.setattr(seed_system_evals, "CATALOG_YAML", _MisEncodedCatalog())
-    assert harness_evals.offerable_eval_names() == frozenset()
-    monkeypatch.undo()
-    assert "no_misselling" in harness_evals.offerable_eval_names()
-
-
-def test_an_empty_catalog_is_not_memoised_either(monkeypatch):
-    """A zero-byte or all-comments catalog parses to `{}` — a successful read
-    of nothing — and that empty answer must not be cached either: the very
-    next call, once the catalog is readable again, must see the real keys.
-    """
-    from simulate.services import harness_evals
-    import model_hub.management.commands.seed_system_evals as seed_system_evals
-
-    class _EmptyCatalog:
-        def read_text(self, **_kwargs):
-            return ""
-
-    harness_evals._offerable_eval_names_cache = None
-    monkeypatch.setattr(seed_system_evals, "CATALOG_YAML", _EmptyCatalog())
-    assert harness_evals.offerable_eval_names() == frozenset()
-    assert (
-        harness_evals._offerable_eval_names_cache is None
-    ), "an empty read must not be cached (L6)"
-    monkeypatch.undo()
-    assert "no_misselling" in harness_evals.offerable_eval_names()
-
-
-def test_a_non_mapping_catalog_offers_nothing_rather_than_raising(monkeypatch):
-    """A catalog that parses to a list or a scalar (a malformed edit, not an
-    unreadable file) must not raise an unhandled `AttributeError` from
-    `.items()` — that would surface as a 500 rather than the documented empty
-    offer. Also not cached, for the same reason as the empty-dict case.
-    """
-    from simulate.services import harness_evals
-    import model_hub.management.commands.seed_system_evals as seed_system_evals
-
-    class _ListCatalog:
-        def read_text(self, **_kwargs):
-            return "- just\n- a\n- list\n"
-
-    harness_evals._offerable_eval_names_cache = None
-    monkeypatch.setattr(seed_system_evals, "CATALOG_YAML", _ListCatalog())
+    monkeypatch.setattr(seed_system_evals, "load_yaml_evals", _unreadable)
     assert harness_evals.offerable_eval_names() == frozenset()
     assert harness_evals._offerable_eval_names_cache is None
     monkeypatch.undo()
     assert "no_misselling" in harness_evals.offerable_eval_names()
+
+
+def test_an_empty_offer_is_not_memoised_either(monkeypatch):
+    """No definitions, or none offered, is an empty answer that must not be
+    cached: the very next call must see the real offer."""
+    import model_hub.management.commands.seed_system_evals as seed_system_evals
+    from simulate.services import harness_evals
+
+    harness_evals._offerable_eval_names_cache = None
+    monkeypatch.setattr(
+        seed_system_evals,
+        "load_yaml_evals",
+        lambda: [{"name": "not_offered", "eval_tags": ["Voice"]}],
+    )
+    assert harness_evals.offerable_eval_names() == frozenset()
+    assert harness_evals._offerable_eval_names_cache is None
+    monkeypatch.undo()
+    assert "no_misselling" in harness_evals.offerable_eval_names()
+
+
+def test_only_definitions_that_set_the_flag_are_offered(monkeypatch):
+    import model_hub.management.commands.seed_system_evals as seed_system_evals
+    from simulate.services import harness_evals
+
+    harness_evals._offerable_eval_names_cache = None
+    monkeypatch.setattr(
+        seed_system_evals,
+        "load_yaml_evals",
+        lambda: [
+            {"name": "offered", "offered_in_environments": True},
+            {"name": "not_set"},
+            {"name": "false", "offered_in_environments": False},
+            {"name": "truthy_string", "offered_in_environments": "yes"},
+        ],
+    )
+    assert harness_evals.offerable_eval_names() == frozenset({"offered"})
+    harness_evals._offerable_eval_names_cache = None
 
 
 def test_offered_templates_sorts_even_when_the_queryset_does_not(monkeypatch):
@@ -399,7 +371,9 @@ def test_a_voice_conversation_binds_to_the_combined_recording():
     which is what the recording-slot guard names as correct; a chat run has no
     recording and uses the transcript."""
     template = _template("customer_agent_conversation_quality", ["conversation"])
-    assert resolve_eval_mapping(template, "voice") == {"conversation": "voice_recording"}
+    assert resolve_eval_mapping(template, "voice") == {
+        "conversation": "voice_recording"
+    }
     assert resolve_eval_mapping(template, "text") == {"conversation": "transcript"}
 
 
@@ -480,6 +454,7 @@ def test_every_table_source_has_a_label():
         assert missing == [], missing
     assert set(_LABEL_BY_SOURCE.values()) == {
         "Call recording",
+        "Agent recording",
         "Transcript",
         "Agent instructions",
         "Scenario situation",
@@ -498,8 +473,12 @@ def test_the_agent_kinds_match_the_read_model():
 @pytest.mark.django_db
 def test_an_unlisted_built_in_is_never_offered(organization, workspace):
     """A system-owned name the catalog does not list is out, whatever its tags."""
-    _template("customer_agent_single_choice", ["conversation"], tags=("Agents", "Voice"))
-    assert "customer_agent_single_choice" not in _offer(organization, workspace, "voice")
+    _template(
+        "customer_agent_single_choice", ["conversation"], tags=("Agents", "Voice")
+    )
+    assert "customer_agent_single_choice" not in _offer(
+        organization, workspace, "voice"
+    )
 
 
 @pytest.mark.django_db
@@ -720,16 +699,22 @@ def test_entry_shape(organization, workspace):
         "credits_per_run": EVAL_RUN_CREDITS,
         "charges_judge_tokens": True,
         "inputs": [
-            {"key": "agent_prompt", "source": "agent_prompt", "label": "Agent instructions"},
-            {"key": "conversation", "source": "voice_recording", "label": "Call recording"},
+            {
+                "key": "agent_prompt",
+                "source": "agent_prompt",
+                "label": "Agent instructions",
+            },
+            {
+                "key": "conversation",
+                "source": "voice_recording",
+                "label": "Call recording",
+            },
         ],
     }
 
 
 @pytest.mark.django_db
-def test_required_keys_keeps_stored_order_and_inputs_is_sorted(
-    organization, workspace
-):
+def test_required_keys_keeps_stored_order_and_inputs_is_sorted(organization, workspace):
     """The two lists are not aligned; pair them by key, never by position."""
     _template(
         "conversation_hallucination",
@@ -850,7 +835,9 @@ def test_briefing_validates_against_the_sandbox_reader(organization, workspace):
     """A copy of the sandbox validator's logic — name + modality only."""
     _template("conversation_coherence", ["conversation"], tags=("Conversation",))
     _template("audio_quality", ["input_audio"], tags=("Audio",))
-    entries = {entry["name"]: entry for entry in briefing_evals(organization, workspace)}
+    entries = {
+        entry["name"]: entry for entry in briefing_evals(organization, workspace)
+    }
 
     def accepted(name: str, run_modality: str) -> bool:
         entry = entries.get(name)
@@ -915,7 +902,9 @@ def test_a_name_the_briefing_never_carried_is_refused(organization, workspace):
         modality="voice",
     )
     with pytest.raises(UnknownEvalSelection):
-        create_selected_eval_configs(run_test, ["customer_agent_single_choice"], "voice")
+        create_selected_eval_configs(
+            run_test, ["customer_agent_single_choice"], "voice"
+        )
 
 
 # --- A stale pick is dropped, not refused ----------------------------------------
@@ -1136,7 +1125,10 @@ def test_selection_is_capped_and_idempotent(organization, workspace):
         first[0].save(update_fields=["error_localizer"])
         again = create_selected_eval_configs(run_test, names, "voice")
         assert {config.id for config in again} == {config.id for config in first}
-        assert next(config for config in again if config.id == first[0].id).error_localizer is False
+        assert (
+            next(config for config in again if config.id == first[0].id).error_localizer
+            is False
+        )
     assert (
         SimulateEvalConfig.objects.filter(run_test=run_test).count()
         == MOST_SELECTED_EVALS
@@ -1165,12 +1157,16 @@ def test_only_mapped_configs_are_runnable(organization, workspace):
         modality="voice",
     )
     create_selected_eval_configs(run_test, [selected.name], "voice")
-    column_config = _get_or_create_harness_eval_config(run_test, column, "booking_created")
+    column_config = _get_or_create_harness_eval_config(
+        run_test, column, "booking_created"
+    )
     assert column_config.error_localizer is True
 
     runnable = runnable_eval_config_ids(run_test.id)
     assert len(runnable) == 1
-    assert SimulateEvalConfig.objects.get(id=runnable[0]).eval_template_id == selected.id
+    assert (
+        SimulateEvalConfig.objects.get(id=runnable[0]).eval_template_id == selected.id
+    )
 
 
 @pytest.mark.django_db

@@ -76,6 +76,9 @@ export function executionToRun(raw) {
     runState: runStateFor(raw?.status) ?? status,
     // Only a run that hasn't finished and isn't already stopping can be stopped.
     stoppable: STOPPABLE_RUN_STATUSES.includes(raw?.status),
+    // Its evals are being graded. `runState` reads this as running, like a run
+    // whose calls are still going.
+    grading: raw?.status === "Evaluating",
     startedAt: raw?.start_time ?? null,
     finishedAt: raw?.completed_at ?? null,
     total,

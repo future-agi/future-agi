@@ -79,6 +79,7 @@ const avoidRedirect = [
   "/mcp/authorize",
   "/auth/jwt/two-factor",
   "/auth/jwt/org-removed",
+  "/shared/",
 ];
 
 axiosInstance.interceptors.request.use((config) =>
@@ -138,8 +139,34 @@ axiosInstance.interceptors.response.use(
       );
     }
 
+    // A signed-out viewer of a shared link has no session to refresh or end:
+    // let the page show its own "Sign in required" screen.
+    const signedOutOnSharedLink =
+      window.location.pathname.startsWith("/shared/") &&
+      (!getRememberMe() || !getRefreshToken());
+
+    // A dead session token on a shared link (nothing to refresh it with)
+    // turns even a public link into a 401. Drop the session and ask once
+    // more without it; a restricted link then answers 401 on its own.
+    if (
+      status === RESPONSE_CODES.UNAUTHORIZED &&
+      signedOutOnSharedLink &&
+      originalRequest?.headers?.Authorization &&
+      !originalRequest._sharedRetry
+    ) {
+      setSession(null);
+      clearTokens();
+      originalRequest._sharedRetry = true;
+      delete originalRequest.headers.Authorization;
+      return axiosInstance(originalRequest);
+    }
+
     // Handle 401 and try refresh
-    if (status === RESPONSE_CODES.UNAUTHORIZED && !originalRequest?._retry) {
+    if (
+      status === RESPONSE_CODES.UNAUTHORIZED &&
+      !originalRequest?._retry &&
+      !signedOutOnSharedLink
+    ) {
       const refreshToken = getRefreshToken();
       const rememberMe = getRememberMe();
 
@@ -167,10 +194,18 @@ axiosInstance.interceptors.response.use(
       setIsRefreshing(true);
 
       try {
+        const refreshGeneration = localStorage.getItem("fai_auth_generation");
         const res = await refreshTokenRequest();
         const newAccessToken = res.data?.access;
 
         if (!newAccessToken) throw new Error("No access token returned");
+
+        if (refreshGeneration !== localStorage.getItem("fai_auth_generation")) {
+          const sessionReplaced = new Error("session replaced");
+          processQueue(sessionReplaced, null);
+          window.location.replace("/dashboard/develop");
+          throw sessionReplaced;
+        }
 
         // 🪪 Save new token in storage + axios headers
         // Workspace header is managed by WorkspaceProvider (reads from sessionStorage).
@@ -196,6 +231,9 @@ axiosInstance.interceptors.response.use(
         originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
         return axiosInstance(originalRequest);
       } catch (err) {
+        if (err?.message === "session replaced") {
+          return Promise.reject(err);
+        }
         processQueue(err, null); // ❌ Fail queued requests too
         setSession(null);
         resetUser();
@@ -1513,6 +1551,10 @@ export const endpoints = {
   },
   agentDefinitions: {
     list: apiPath("/simulate/agent-definitions/"),
+    edit: (id) =>
+      apiPath("/simulate/agent-definitions/{agent_id}/edit/", {
+        agent_id: id,
+      }),
     create: apiPath("/simulate/agent-definitions/create/"),
     versions: (id) =>
       apiPath("/simulate/agent-definitions/{agent_id}/versions/", {
@@ -1534,6 +1576,15 @@ export const endpoints = {
       ),
     detail: (id) =>
       apiPath("/simulate/agent-definitions/{agent_id}/", { agent_id: id }),
+    runs: (id) =>
+      apiPath("/simulate/agent-definitions/{agent_id}/runs/", {
+        agent_id: id,
+      }),
+    storedAgent: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/agent/",
+        { agent_id: id, version_id: version },
+      ),
     delete: apiPath("/simulate/agent-definitions/"),
     getTestAnalytics: (agent, version) =>
       apiPath(
@@ -1729,8 +1780,16 @@ export const endpoints = {
       apiPath("/simulate/v3/call-executions/{call_execution_id}/", {
         call_execution_id: id,
       }),
+    traces: (id) =>
+      apiPath("/simulate/v3/test-executions/{test_execution_id}/traces/", {
+        test_execution_id: id,
+      }),
     analytics: (id) =>
       apiPath("/simulate/v3/test-executions/{test_execution_id}/analytics/", {
+        test_execution_id: id,
+      }),
+    reliability: (id) =>
+      apiPath("/simulate/v3/test-executions/{test_execution_id}/reliability/", {
         test_execution_id: id,
       }),
     export: (id) =>
@@ -1824,6 +1883,13 @@ export const endpoints = {
         access_id: accessId,
       }),
     resolve: (token) => apiPath("/tracer/shared/{token}/", { token: token }),
+    issueSidebar: (token) =>
+      apiPath("/tracer/shared/{token}/sidebar/", { token: token }),
+    issueTrace: (token, traceId) =>
+      apiPath("/tracer/shared/{token}/traces/{trace_id}/", {
+        token: token,
+        trace_id: traceId,
+      }),
   },
   organizations: {
     list: apiPath("/accounts/organizations/"),
@@ -1833,10 +1899,25 @@ export const endpoints = {
     update: apiPath("/accounts/organizations/update/"),
   },
   errorFeed: {
+    alerts: {
+      list: apiPath("/tracer/alerts/"),
+      options: apiPath("/tracer/alerts/options/"),
+      detail: (id) =>
+        apiPath("/tracer/alerts/{kind}/{alert_id}/", {
+          kind: "error_feed",
+          alert_id: id,
+        }),
+      test: (id) =>
+        apiPath("/tracer/alerts/error_feed/{alert_id}/test/", { alert_id: id }),
+    },
     list: apiPath("/tracer/feed/issues/"),
     stats: apiPath("/tracer/feed/issues/stats/"),
     detail: (clusterId) =>
       apiPath("/tracer/feed/issues/{cluster_id}/", { cluster_id: clusterId }),
+    redirect: (clusterId) =>
+      apiPath("/tracer/feed/issues/{cluster_id}/redirect/", {
+        cluster_id: clusterId,
+      }),
     update: (clusterId) =>
       apiPath("/tracer/feed/issues/{cluster_id}/", { cluster_id: clusterId }),
     overview: (clusterId) =>
@@ -2040,6 +2121,13 @@ export const endpoints = {
     },
   },
   integrations: {
+    slack: {
+      install: apiPath("/integrations/slack/install/"),
+      channels: (id) =>
+        apiPath("/integrations/connections/{connection_id}/slack/channels/", {
+          connection_id: id,
+        }),
+    },
     connections: {
       list: apiPath("/integrations/connections/"),
       create: apiPath("/integrations/connections/"),

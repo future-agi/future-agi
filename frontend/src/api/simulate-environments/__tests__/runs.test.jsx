@@ -131,7 +131,7 @@ describe("executionToRun", () => {
     const state = (status) => executionToRun({ id: "x", status, total_chats: 1 }).runState;
     expect(state("Pending")).toBe("queued");
     expect(state("Running")).toBe("running");
-    expect(state("Evaluating")).toBe("running");
+    expect(state("Evaluating")).toBe("grading");
     // Its own state so a stopped run reads as cancelling, not still running.
     expect(state("Cancelling")).toBe("cancelling");
     // Its own key so the table can show a finished run green without recolouring
@@ -151,6 +151,22 @@ describe("executionToRun", () => {
     expect(stoppable("Cancelling")).toBe(false);
     expect(stoppable("Completed")).toBe(false);
     expect(stoppable("Cancelled")).toBe(false);
+  });
+
+  it("marks only a run whose evals are being graded as grading", () => {
+    const grading = (status) =>
+      executionToRun({ id: "x", status, total_chats: 1 }).grading;
+    expect(grading("Evaluating")).toBe(true);
+    for (const status of [
+      "Pending",
+      "Running",
+      "Cancelling",
+      "Completed",
+      "Failed",
+      "Cancelled",
+    ]) {
+      expect(grading(status)).toBe(false);
+    }
   });
 
   it("reads a stopped run as cancelled, not failed", () => {

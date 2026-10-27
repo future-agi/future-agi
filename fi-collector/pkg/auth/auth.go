@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -37,6 +38,17 @@ type Authenticator struct {
 	sfKey    singleflight.Group // dedup concurrent key lookups
 	sfProj   singleflight.Group // dedup concurrent project lookups
 	log      *slog.Logger
+
+	// Simulation routing. sim makes a sandbox key's hidden project; columns is
+	// the last known state of the columns routing depends on, checked through
+	// checker.
+	sim     simulationProjectResolver
+	columns *routingColumns
+	checker columnChecker
+
+	dropped [len(dropReasons)]atomic.Int64
+	dropLog LogLimiter
+	clock   func() time.Time // nil: time.Now
 }
 
 type projectResolver interface {
@@ -59,14 +71,19 @@ func New(ctx context.Context, cfg Config, rdb *redis.Client, log *slog.Logger) (
 		return nil, fmt.Errorf("auth pg resolver: %w", err)
 	}
 
-	return &Authenticator{
+	a := &Authenticator{
 		cfg:      cfg,
 		pg:       pg,
 		projects: pg,
+		sim:      pg,
+		checker:  pg,
 		cache:    newCache(cfg.CacheTTL, cfg.WarmTTL),
 		rdb:      rdb,
 		log:      log,
-	}, nil
+	}
+	a.columns = newRoutingColumns(log)
+	pg.columns = a.columns
+	return a, nil
 }
 
 // WatchRevocations evicts cache entries on two Redis channels: fi:auth:revoke
@@ -188,6 +205,15 @@ func (a *Authenticator) ResolveProjectsForKey(ctx context.Context, cacheKey stri
 		return errors.New("resolve projects requires a PostgreSQL project resolver")
 	}
 
+	// A sandbox key's hidden name is put in its map by routing alone; looking
+	// it up here could bind it to a visible project of the same name.
+	if result.KeyType == keyTypeIngest {
+		missing = withoutReservedNames(missing)
+		if len(missing) == 0 {
+			return nil
+		}
+	}
+
 	// Batch resolve from PG read pool
 	resolved, err := resolver.ResolveProjects(ctx, result.OrgID, result.WorkspaceID, missing)
 	if err != nil {
@@ -202,6 +228,12 @@ func (a *Authenticator) ResolveProjectsForKey(ctx context.Context, cacheKey stri
 	// Auto-create any still-missing projects via write pool
 	for _, name := range missing {
 		if _, ok := result.GetProjectInWorkspace(result.WorkspaceID, name); ok {
+			continue
+		}
+		// A hidden-project name that no key's routing has put in the map is
+		// never created here: this would make a visible twin of the hidden
+		// project. The name stays unresolved and the stamp drops its spans.
+		if isReservedProjectName(name) {
 			continue
 		}
 		sfKey := strings.Join(

@@ -15,8 +15,14 @@ from simulate.serializers.hosted_harness_conversation import (
     HarnessConversationCommandQuerySerializer,
     HarnessConversationEventAckSerializer,
     HarnessConversationEventBatchSerializer,
+    HarnessConversationOverviewQuerySerializer,
+    HarnessConversationOverviewSerializer,
+    HarnessConversationPublishSerializer,
     HarnessConversationRerunSerializer,
+    HarnessConversationRunsQuerySerializer,
+    HarnessConversationRunStartSerializer,
     HarnessConversationRunStatusSerializer,
+    HarnessConversationScenarioQuerySerializer,
     HarnessConversationTranscriptAppendResponseSerializer,
     HarnessConversationTranscriptAppendSerializer,
     HarnessConversationTranscriptQuerySerializer,
@@ -26,11 +32,16 @@ from simulate.serializers.hosted_harness_conversation import (
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.services.hosted_harness_conversation import (
     append_provider_transcript,
+    conversation_overview,
     conversation_run_status,
+    conversation_runs,
+    conversation_scenarios,
     ingest_conversation_events,
     load_provider_transcript,
     pending_commands,
     promote_latest_checkpoint,
+    publish_conversation_workspace,
+    start_conversation_run,
     store_workspace_archive,
 )
 from tfc.utils.api_contracts import validated_request
@@ -210,3 +221,64 @@ class HostedHarnessConversationViewSet(viewsets.ViewSet):
             body=request.body,
         )
         return Response(result)
+
+    @validated_request(
+        request_serializer=HarnessConversationScenarioQuerySerializer,
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"])
+    def scenarios(self, request, pk=None):
+        return Response(conversation_scenarios(self._conversation, request.validated_data))
+
+    @validated_request(
+        request_serializer=HarnessConversationPublishSerializer,
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"])
+    def publish(self, request, pk=None):
+        return Response(
+            publish_conversation_workspace(
+                self._conversation, digest=request.validated_data["digest"]
+            )
+        )
+
+    @validated_request(
+        request_serializer=HarnessConversationRunsQuerySerializer,
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"])
+    def runs(self, request, pk=None):
+        body = request.validated_data
+        return Response(
+            conversation_runs(
+                self._conversation,
+                run_id=body.get("run_id") or "",
+                limit=body.get("limit") or 10,
+            )
+        )
+
+    @validated_request(
+        request_serializer=HarnessConversationRunStartSerializer,
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="runs/start")
+    def start_run(self, request, pk=None):
+        body = request.validated_data
+        return Response(
+            start_conversation_run(
+                self._conversation,
+                numbers=body.get("numbers") or [],
+                ranges=body.get("ranges") or [],
+                trials=body["trials"],
+                operation_id=body.get("operation_id") or "",
+            )
+        )
+
+    @validated_request(
+        request_serializer=HarnessConversationOverviewQuerySerializer,
+        responses={200: HarnessConversationOverviewSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"])
+    def overview(self, request, pk=None):
+        return Response(conversation_overview(self._conversation))

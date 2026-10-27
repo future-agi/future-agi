@@ -14,6 +14,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from simulate.models import (
+    AgentVersion,
     CallExecution,
     HostedHarnessAttempt,
     HostedHarnessCleanupReceipt,
@@ -24,6 +25,7 @@ from simulate.models import (
     HostedHarnessScenario,
     TestExecution,
 )
+from simulate.services.agent_setup import AgentStoreError, store_agent
 from simulate.services.alk_simulate_ingestion import (
     ALKSimulateIngestionError,
     append_alk_sim_scenarios,
@@ -31,6 +33,16 @@ from simulate.services.alk_simulate_ingestion import (
     create_alk_sim_test_execution,
     precreate_alk_sim_call_executions,
     provision_alk_sim_run_test,
+    resolved_agent_version,
+)
+from tracer.services.observability_switch import (
+    ObservabilityRefused,
+    refusal_body,
+    set_agent_observability,
+)
+from simulate.services.scoring_status import (
+    TRANSPORT_RUN_STATUSES,
+    settle_run_after_commit,
 )
 
 _CAPABILITY_SCHEMA_VERSION = "futureagi.harness-capabilities.v1"
@@ -366,6 +378,7 @@ def create_selected_harness_run(
             "authoring_usage_reports",
             "usage_reports",
             "sandbox_runtime",
+            "observability_refusal",
         ):
             child_metadata.pop(key, None)
         child_metadata.update(
@@ -402,7 +415,7 @@ def create_selected_harness_run(
             picked_up_by_executor=True,
             simulator_agent=environment.run_test.simulator_agent,
             agent_definition=environment.run_test.agent_definition,
-            agent_version=environment.run_test.agent_version,
+            agent_version=resolved_agent_version(environment.run_test),
             execution_metadata={
                 "environment_job_id": str(environment.id),
                 "harness_job_id": str(child.id),
@@ -528,6 +541,198 @@ def _scenario_edits(
     return edits
 
 
+# Job payload metadata naming the executions an in-run re-run chose. Every later attempt
+# of the job is that re-run (infrastructure retries included), so launch dispatches only
+# these and the job's counters treat every other receipt as still current.
+RERUN_EXECUTION_KEYS = "rerun_execution_keys"
+
+
+def rerun_calls_in_run(
+    test_execution: TestExecution, call_execution_ids: list[uuid.UUID]
+) -> HostedHarnessJob:
+    """Re-run chosen calls of a finished Run as a new attempt of that same Run.
+
+    Each call row is reset in place and refilled by the new attempt's receipt. The
+    earlier result survives as a ``CallExecutionSnapshot`` and in the earlier attempt's
+    ``receipt_history``; nothing about it is deleted.
+    """
+    from simulate.services.alk_simulate_ingestion import (
+        PREALLOCATED_CALL_METADATA_KEYS,
+    )
+    from simulate.services.call_rerun import clear_call_for_rerun
+    from simulate.temporal.client import (
+        hosted_harness_gateway_workflow_running,
+        start_hosted_harness_gateway_workflow,
+    )
+
+    base_url = str(getattr(settings, "HARNESS_PUBLIC_BASE_URL", "") or "").rstrip("/")
+    if not base_url:
+        raise HostedHarnessError(
+            "public_base_url_missing",
+            "HARNESS_PUBLIC_BASE_URL is required to rerun a hosted harness job",
+            status_code=503,
+        )
+    if not call_execution_ids:
+        raise HostedHarnessError(
+            "call_selection_empty", "select at least one call", status_code=400
+        )
+    job_id = (
+        HostedHarnessJob.no_workspace_objects.filter(
+            test_execution_id=test_execution.id
+        )
+        .values_list("id", flat=True)
+        .first()
+    )
+    if job_id is None:
+        raise HostedHarnessError(
+            "run_not_rerunnable",
+            "this run has no saved harness job to re-run",
+            status_code=409,
+        )
+    # The job and run turn terminal before the previous gateway workflow returns, and
+    # starting its id again while it is still exiting would attach to it, not launch.
+    try:
+        workflow_running = hosted_harness_gateway_workflow_running(str(job_id))
+    except Exception as exc:
+        raise HostedHarnessError(
+            "scheduler_unavailable",
+            "Hosted rerun could not be scheduled",
+            status_code=503,
+            retryable=True,
+        ) from exc
+    if workflow_running:
+        raise HostedHarnessError(
+            "rerun_in_progress",
+            "this run is still running or grading; re-run its calls once it finishes",
+            status_code=409,
+        )
+    with transaction.atomic():
+        job = HostedHarnessJob.no_workspace_objects.select_for_update().get(id=job_id)
+        execution = TestExecution.no_workspace_objects.select_for_update().get(
+            id=test_execution.id
+        )
+        # The job and the run settle separately: transport ends with the job, grading
+        # with the run. A re-run waits for both so it never races either one.
+        if job.state not in _TERMINAL_STATES or execution.status not in (
+            TestExecution.ExecutionStatus.COMPLETED,
+            TestExecution.ExecutionStatus.FAILED,
+            TestExecution.ExecutionStatus.CANCELLED,
+        ):
+            raise HostedHarnessError(
+                "rerun_in_progress",
+                "this run is still running or grading; re-run its calls once it finishes",
+                status_code=409,
+            )
+        allocations = list(
+            HostedHarnessExecution.no_workspace_objects.filter(
+                job=job, call_execution_id__in=call_execution_ids
+            ).select_related("call_execution")
+        )
+        if len(allocations) != len(set(call_execution_ids)):
+            raise HostedHarnessError(
+                "call_selection_unknown",
+                "some selected calls do not belong to this run",
+                status_code=400,
+            )
+        for allocation in allocations:
+            clear_call_for_rerun(
+                allocation.call_execution,
+                keep_metadata_keys=PREALLOCATED_CALL_METADATA_KEYS,
+            )
+        payload = dict(job.payload)
+        payload["metadata"] = {
+            **(payload.get("metadata") or {}),
+            RERUN_EXECUTION_KEYS: sorted(
+                allocation.execution_key for allocation in allocations
+            ),
+            # The re-run gets the infrastructure retry budget of a new Run.
+            "attempt_cycle_start": job.current_attempt_number + 1,
+        }
+        job.payload = payload
+        job.state = HostedHarnessJob.State.QUEUED
+        job.current_stage = "queued"
+        job.failure = None
+        job.terminal_at = None
+        job.cancel_requested_at = None
+        job.cancel_reason = None
+        job.save(
+            update_fields=[
+                "payload",
+                "state",
+                "current_stage",
+                "failure",
+                "terminal_at",
+                "cancel_requested_at",
+                "cancel_reason",
+                "updated_at",
+            ]
+        )
+        execution.status = TestExecution.ExecutionStatus.RUNNING
+        execution.completed_at = None
+        execution.error_reason = None
+        execution.save(
+            update_fields=["status", "completed_at", "error_reason", "updated_at"]
+        )
+
+    retry_cfg = job.payload["retry"]
+    try:
+        start_hosted_harness_gateway_workflow(
+            str(job.id),
+            base_url,
+            retry_cfg["max_infrastructure_attempts"],
+            retry_cfg["initial_backoff_seconds"],
+            retry_cfg["max_backoff_seconds"],
+        )
+    except Exception as exc:
+        with transaction.atomic():
+            job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+                id=job.id
+            )
+            now = timezone.now()
+            job.state = HostedHarnessJob.State.FAILED
+            job.current_stage = "failed"
+            job.terminal_at = now
+            job.failure = {
+                "domain": "infrastructure",
+                "stage": "queued",
+                "code": "scheduler_unavailable",
+                "message": "Hosted rerun could not be scheduled",
+            }
+            job.save(
+                update_fields=[
+                    "state",
+                    "current_stage",
+                    "terminal_at",
+                    "failure",
+                    "updated_at",
+                ]
+            )
+            project_terminal_job_onto_run(job, now)
+        raise HostedHarnessError(
+            "scheduler_unavailable",
+            "Hosted rerun could not be scheduled",
+            status_code=503,
+            retryable=True,
+        ) from exc
+    return job
+
+
+def scope_dispatch_to_rerun(dispatch_payload: dict[str, Any]) -> dict[str, Any]:
+    """Narrow a Run's dispatch document to the executions an in-run re-run chose."""
+
+    metadata = dict(dispatch_payload.get("metadata") or {})
+    chosen = set(metadata.pop(RERUN_EXECUTION_KEYS, None) or ())
+    if not chosen:
+        return dispatch_payload
+    manifest = [
+        entry
+        for entry in metadata.get("execution_manifest") or []
+        if entry["execution_key"] in chosen
+    ]
+    metadata["execution_manifest"] = manifest
+    return {**dispatch_payload, "scenario_count": len(manifest), "metadata": metadata}
+
+
 def _apply_parallelism_admission(
     job: HostedHarnessJob, snapshot_digest: str | None
 ) -> int:
@@ -549,7 +754,8 @@ def _apply_parallelism_admission(
     admitted, clamped = clamp_parallelism(requested, snapshot_digest)
     from simulate.services.harness_capacity import configured_capacity
 
-    capacity = configured_capacity(job.payload)
+    # An in-run re-run executes only its chosen calls, so W is bounded by those.
+    capacity = configured_capacity(scope_dispatch_to_rerun(job.payload))
     admitted = min(admitted, capacity.parallelism)
     clamped = admitted != requested
     metadata = dict(job.payload.get("metadata") or {})
@@ -781,17 +987,13 @@ def delete_environment(job: HostedHarnessJob) -> None:
                 )
 
                 cancel_job = HostedHarnessJob.no_workspace_objects.get(id=job_id)
-                HostedHarnessGateway().cancel(
-                    cancel_job, reason=DELETE_CANCEL_REASON
-                )
+                HostedHarnessGateway().cancel(cancel_job, reason=DELETE_CANCEL_REASON)
             except Exception:
                 logger.exception(
                     "hosted_harness_delete_direct_cancel_failed", job_id=job_id
                 )
                 if job_id == parent_cancel_id:
-                    _soft_delete(
-                        HostedHarnessJob.no_workspace_objects.get(id=job_id)
-                    )
+                    _soft_delete(HostedHarnessJob.no_workspace_objects.get(id=job_id))
 
 
 def _soft_delete(job: HostedHarnessJob) -> None:
@@ -892,6 +1094,15 @@ def provision_scenarios(
             "persona scenario_key values must be unique",
             status_code=400,
         )
+    if (
+        len(persona_keys) != job.scenario_count
+        and job.environment_id is None
+        and job.test_execution_id is None
+    ):
+        # A build holds what its harness built; the count it was asked for was the starting brief.
+        job.scenario_count = len(persona_keys)
+        job.payload = {**(job.payload or {}), "scenario_count": len(persona_keys)}
+        job.save(update_fields=["scenario_count", "payload", "updated_at"])
     if len(persona_keys) != job.scenario_count:
         raise HostedHarnessError(
             "scenario_count_mismatch",
@@ -1084,6 +1295,8 @@ def provision_scenarios(
                 for persona, row in zip(payload["personas"], dataset_rows, strict=True)
             ]
         _record_target_agent_facts(locked, agent_definition, payload)
+        stored = _store_authored_agent(locked, agent_definition, payload)
+        _turn_on_observability(locked, agent_definition, payload, stored)
         _select_platform_evals(locked, run_test, payload, modality)
     return _provision_response(locked, registrations)
 
@@ -1091,7 +1304,7 @@ def provision_scenarios(
 def _target_agent_prompt(job: HostedHarnessJob, payload: dict[str, Any]) -> str:
     """Resolve target instructions without reducing an Others prompt."""
     connector = str((job.payload.get("agent") or {}).get("connector") or "")
-    if connector == "phone":
+    if connector in {"phone", "livekit"}:
         # "Others" is configured from a user-supplied system prompt.  Keep that
         # complete prompt as the agent definition's source of truth: the hosted
         # guest's ``agent_prompt`` may only be the short contract excerpt used
@@ -1207,6 +1420,130 @@ def _record_target_agent_facts(
             description=prompt,
             commit_message="hosted harness target agent prompt",
             status="active",
+        )
+
+
+def _store_authored_agent(
+    job: HostedHarnessJob, agent_definition, payload: dict[str, Any]
+) -> tuple[str | None, uuid.UUID | None]:
+    sent = payload.get("agent")
+    source_kind = str((job.payload.get("source") or {}).get("kind") or "")
+    if (
+        sent is None
+        or payload.get("agent_definition_id")
+        or source_kind not in ("github", "archive")
+    ):
+        return None, None
+    agent_version_id = None
+    try:
+        with transaction.atomic():
+            version = agent_definition.latest_version
+            if version is None:
+                version = agent_definition.create_version(
+                    description="",
+                    commit_message="hosted harness authored agent",
+                    status="active",
+                )
+                AgentVersion.no_workspace_objects.filter(id=version.id).update(
+                    configuration_snapshot={
+                        **version.configuration_snapshot,
+                        "description": "",
+                    }
+                )
+            agent_version_id = version.id
+            if not (
+                isinstance(sent, dict)
+                and isinstance(sent.get("agent"), dict)
+                and isinstance(sent.get("sdk_version"), str)
+            ):
+                raise AgentStoreError("agent_invalid")
+            outcome = store_agent(
+                agent_version_id=version.id,
+                agent=sent["agent"],
+                sdk_version=sent["sdk_version"],
+            )
+        return outcome, agent_version_id
+    except Exception as exc:
+        logger.warning(
+            "harness_agent_not_stored",
+            job_id=str(job.id),
+            agent_version_id=str(agent_version_id) if agent_version_id else None,
+            code=exc.code if isinstance(exc, AgentStoreError) else type(exc).__name__,
+        )
+        return None, None
+
+
+def _turn_on_observability(
+    job: HostedHarnessJob,
+    agent_definition,
+    payload: dict[str, Any],
+    stored: tuple[str | None, uuid.UUID | None],
+) -> None:
+    """Turn observability on for the agent just stored, when the Environment asked for it.
+
+    A refusal never fails the provision: the reason is logged and kept on the job.
+    """
+    if (job.payload.get("metadata") or {}).get("observability_enabled") is not True:
+        return
+    details: dict[str, Any] = {}
+    failure: Exception | None = None
+    if payload.get("agent_definition_id"):
+        code = "bound"
+    elif stored[0] != "stored":
+        code = "agent_not_stored"
+    else:
+        # The try sits outside the savepoint so its rollback runs before the handler.
+        try:
+            with transaction.atomic():
+                row = set_agent_observability(
+                    agent_definition=agent_definition,
+                    enabled=True,
+                    user_id=None,
+                    organization=job.organization,
+                    workspace=job.workspace,
+                )
+                if row is not None:
+                    versions = AgentVersion.no_workspace_objects.filter(id=stored[1])
+                    snapshot = dict(
+                        versions.values_list("configuration_snapshot", flat=True).get()
+                        or {}
+                    )
+                    snapshot["observability_enabled"] = True
+                    versions.update(configuration_snapshot=snapshot)
+            return
+        except ObservabilityRefused as exc:
+            code = ",".join(entry.code for entry in exc.missing)
+            details = refusal_body(exc)["details"]
+        except Exception as exc:  # noqa: BLE001 - the provision must go on
+            code = type(exc).__name__
+            failure = exc
+    logger.warning(
+        "harness_observability_not_enabled",
+        job_id=str(job.id),
+        agent_definition_id=str(agent_definition.id),
+        code=code,
+        **({"exc_info": failure} if failure is not None else {}),
+    )
+    _save_observability_refusal(job, code, details)
+
+
+def _save_observability_refusal(
+    job: HostedHarnessJob, code: str, details: dict[str, Any]
+) -> None:
+    try:
+        with transaction.atomic():
+            payload = dict(job.payload)
+            metadata = dict(payload.get("metadata") or {})
+            metadata["observability_refusal"] = {"code": code, "details": details}
+            payload["metadata"] = metadata
+            job.payload = payload
+            job.save(update_fields=["payload", "updated_at"])
+    except Exception as exc:  # noqa: BLE001 - the provision must go on
+        logger.error(
+            "harness_observability_refusal_not_saved",
+            job_id=str(job.id),
+            code=type(exc).__name__,
+            exc_info=True,
         )
 
 
@@ -1411,14 +1748,13 @@ def record_cleanup(
         if attempt.state != HostedHarnessAttempt.State.SUPERSEDED:
             attempt.state = _attempt_terminal_state(attempt)
         attempt.save(update_fields=["cleanup_verified_at", "state", "updated_at"])
-        from simulate.services.harness_usage import (
-            record_sandbox_runtime,
-            replay_harness_usage,
-        )
+        from simulate.services.harness_usage import record_sandbox_runtime
+        from simulate.tasks.hosted_harness_usage import schedule_usage_seal
 
         record_sandbox_runtime(attempt, final=True)
-        # Teardown seals all measured authoring, even when no bundle was produced.
-        replay_harness_usage(attempt)
+        # Sealed after commit on the backend queue: the sandbox runner has no billing config.
+        sealed_attempt_id = str(attempt.id)
+        transaction.on_commit(lambda: schedule_usage_seal(sealed_attempt_id))
         job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
             id=attempt.job_id
         )
@@ -1477,35 +1813,93 @@ def record_cleanup(
                 *finish_deferred_delete(job),
             ]
         )
-        if job.test_execution_id:
-            execution_status = {
-                HostedHarnessJob.State.COMPLETED: TestExecution.ExecutionStatus.COMPLETED,
-                HostedHarnessJob.State.CANCELED: TestExecution.ExecutionStatus.CANCELLED,
-                HostedHarnessJob.State.FAILED: TestExecution.ExecutionStatus.FAILED,
-            }[job.state]
-            TestExecution.no_workspace_objects.filter(id=job.test_execution_id).update(
-                status=execution_status,
-                completed_at=now,
-                error_reason=(
-                    (attempt.terminal_failure or {}).get("message")
-                    if job.state == HostedHarnessJob.State.FAILED
-                    else None
-                ),
+        if job.state == HostedHarnessJob.State.COMPLETED:
+            built_job_id, built_attempt_id = str(job.id), str(attempt.id)
+            transaction.on_commit(
+                lambda: _ask_builder_to_check(built_job_id, built_attempt_id)
             )
-            remaining_status = (
-                CallExecution.CallStatus.CANCELLED
-                if job.state == HostedHarnessJob.State.CANCELED
-                else CallExecution.CallStatus.FAILED
-            )
-            CallExecution.no_workspace_objects.filter(
-                test_execution_id=job.test_execution_id,
-                status__in=(
-                    CallExecution.CallStatus.PENDING,
-                    CallExecution.CallStatus.REGISTERED,
-                    CallExecution.CallStatus.ONGOING,
-                ),
-            ).update(status=remaining_status, completed_at=now)
+        project_terminal_job_onto_run(job, now)
         return job
+
+
+def _ask_builder_to_check(job_id: str, attempt_id: str) -> None:
+    """Tell the builder session that built this environment to check it against the agent."""
+    from simulate.models import HostedHarnessConversationMessage
+    from simulate.services.hosted_harness_conversation import send_to_harness
+    from simulate.services.hosted_harness_ingress import _public_base_url
+
+    try:
+        if not HostedHarnessConversationMessage.no_workspace_objects.filter(
+            conversation__job_id=job_id, client_request_id=f"build-{attempt_id}"
+        ).exists():
+            return
+        send_to_harness(
+            HostedHarnessJob.no_workspace_objects.get(id=job_id),
+            content="The environment is validated and sealed. Check it against the agent.",
+            client_request_id=f"check-{attempt_id}",
+            endpoint_base_url=_public_base_url(None),
+        )
+    except Exception:
+        logger.exception("builder_check_request_failed", job_id=job_id)
+
+
+def project_terminal_job_onto_run(job: HostedHarnessJob, now: datetime) -> None:
+    """Move a terminal job's Run, and the calls it left open, to their end states."""
+    if not job.test_execution_id:
+        return
+    message = (job.failure or {}).get("message")
+    calls = CallExecution.no_workspace_objects.filter(
+        test_execution_id=job.test_execution_id
+    )
+    calls.filter(
+        status__in=(
+            CallExecution.CallStatus.PENDING,
+            CallExecution.CallStatus.REGISTERED,
+            CallExecution.CallStatus.ONGOING,
+        )
+    ).update(
+        status=(
+            CallExecution.CallStatus.CANCELLED
+            if job.state == HostedHarnessJob.State.CANCELED
+            else CallExecution.CallStatus.FAILED
+        ),
+        completed_at=now,
+        **({"ended_reason": message} if message else {}),
+    )
+    execution_status = {
+        HostedHarnessJob.State.COMPLETED: TestExecution.ExecutionStatus.COMPLETED,
+        HostedHarnessJob.State.CANCELED: TestExecution.ExecutionStatus.CANCELLED,
+        HostedHarnessJob.State.FAILED: TestExecution.ExecutionStatus.FAILED,
+    }[job.state]
+    has_completed_calls = calls.filter(
+        status=CallExecution.CallStatus.COMPLETED
+    ).exists()
+    # An in-run re-run stops only its chosen calls; the Run's other calls already
+    # finished, so the Run settles from its calls whatever ended the re-run.
+    rerun = bool((job.payload.get("metadata") or {}).get(RERUN_EXECUTION_KEYS))
+    if execution_status == TestExecution.ExecutionStatus.COMPLETED or (
+        rerun and has_completed_calls
+    ):
+        # Transport finished, scoring may not have: only a run still in
+        # transport is moved, and only the settle decides it is done.
+        in_transport = TestExecution.no_workspace_objects.filter(
+            id=job.test_execution_id, status__in=TRANSPORT_RUN_STATUSES
+        )
+        if has_completed_calls:
+            in_transport.update(
+                status=TestExecution.ExecutionStatus.EVALUATING, error_reason=None
+            )
+            settle_run_after_commit(job.test_execution_id)
+        else:
+            in_transport.update(
+                status=execution_status, completed_at=now, error_reason=None
+            )
+        return
+    TestExecution.no_workspace_objects.filter(id=job.test_execution_id).update(
+        status=execution_status,
+        completed_at=now,
+        error_reason=message if job.state == HostedHarnessJob.State.FAILED else None,
+    )
 
 
 def update_execution_counts(job: HostedHarnessJob) -> None:
@@ -1521,10 +1915,19 @@ def update_execution_counts(job: HostedHarnessJob) -> None:
         current_attempt_number = locked_job.current_attempt_number
         # Reruns retain old receipts until their replacements arrive. Counters must describe
         # only the current attempt while its parallel receipts are delivered independently.
-        receipts = HostedHarnessReceipt.no_workspace_objects.filter(
-            job=locked_job,
-            attempt_number=current_attempt_number,
+        receipts = HostedHarnessReceipt.no_workspace_objects.filter(job=locked_job)
+        rerun_keys = (locked_job.payload.get("metadata") or {}).get(
+            RERUN_EXECUTION_KEYS
         )
+        if rerun_keys:
+            # An in-run re-run replaces only its chosen calls: every other call's
+            # receipt is still that call's result in the Run.
+            receipts = receipts.exclude(
+                execution__execution_key__in=rerun_keys,
+                attempt_number__lt=current_attempt_number,
+            )
+        else:
+            receipts = receipts.filter(attempt_number=current_attempt_number)
         # Harness receipt outcomes answer "did the scenario satisfy its checks?"; TestExecution
         # counters answer "did the call transport complete?". Keep those dimensions separate so a
         # completed, playable call with a failed behavioural/evidence verdict is not reported as a

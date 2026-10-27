@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render } from "src/utils/test-utils";
+import { render, screen, fireEvent, within } from "src/utils/test-utils";
 
 import { MOCK_WORLD } from "src/api/simulate-environments/_fixtures/world";
 import { SAMPLE_ROWS } from "src/api/simulate-environments/_fixtures/scenariosFixtures";
@@ -42,4 +42,24 @@ export function renderWithClient(ui) {
   );
   Wrapper.propTypes = { children: PropTypes.node };
   return render(<Wrapper>{ui}</Wrapper>);
+}
+
+// View, grouping and row height live in the toolbar's Display panel: View and
+// Row height are segmented tabs, Group by a dropdown. Each helper opens the
+// panel, makes the pick and closes it again.
+export function openDisplay() {
+  fireEvent.click(screen.getByRole("button", { name: "Display" }));
+  return screen.getByRole("dialog", { name: "Display" });
+}
+export function closeDisplay() {
+  fireEvent.keyDown(screen.getByRole("dialog", { name: "Display" }), { key: "Escape" });
+}
+export function pickView(name) {
+  fireEvent.click(within(openDisplay()).getByRole("tab", { name }));
+  closeDisplay();
+}
+export function pickGroupBy(name) {
+  fireEvent.mouseDown(within(openDisplay()).getByRole("combobox", { name: "Group by" }));
+  fireEvent.click(screen.getByRole("option", { name }));
+  closeDisplay();
 }

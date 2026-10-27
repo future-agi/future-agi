@@ -2,6 +2,8 @@ import React, { useEffect, useMemo } from "react";
 import PropTypes from "prop-types";
 import { useTheme } from "@mui/material/styles";
 import HeaderIcon from "./HeaderIcon";
+import EvalTargetGlyph from "src/components/traceDetail/EvalRollupSection/EvalTargetGlyph";
+import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
 
 const wrapperStyle = {
   display: "flex",
@@ -35,6 +37,9 @@ const CustomTraceHeaderRenderer = ({
     [column],
   );
   const isGroupHeader = Boolean(group);
+  const targetType =
+    column?.colDef?.context?.sourceColumn?.targetType ||
+    column?.colDef?.context?.sourceColumn?.target_type;
 
   const textStyle = {
     fontSize: "13px",
@@ -53,7 +58,10 @@ const CustomTraceHeaderRenderer = ({
         isGroup={isGroupHeader}
         isEvaluationMetric={isEvaluationMetric}
       />
-      <span style={textStyle}>{displayName}</span>
+      {isEvaluationMetric && <EvalTargetGlyph targetType={targetType} />}
+      <OverflowTooltip title={displayName}>
+        <span style={textStyle}>{displayName}</span>
+      </OverflowTooltip>
     </div>
   );
 };

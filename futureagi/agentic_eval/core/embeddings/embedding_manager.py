@@ -434,6 +434,8 @@ class EmbeddingManager:
         unique_key_value,
         unique_key="item_id",
         exclude_keys=None,
+        embedding_vector=None,
+        mark_existing_deleted=True,
     ):
         """
         Inserts the embedding of a data item into the ClickHouse vector table.
@@ -446,35 +448,35 @@ class EmbeddingManager:
         """
         db_client = self.db_client
         db_client.create_table(table_name)
-        if index_col_type == "image":
-            embedding_vector = self.get_image_query_embedding(
-                "image", data[column_name]
-            )
-
-        elif index_col_type == "audio":
-            embedding_vector = self.get_audio_query_embedding(
-                "audio", data[column_name]
-            )
-
-        elif index_col_type == "image-text":
-            embedding_vector = self.get_image_query_embedding(
-                "image-text", data[column_name]
-            )
-        else:
-            model = model_manager.text_model
-            if model_manager._use_serving:
-                embedding_vector = model(data[column_name])
+        if embedding_vector is None:
+            if index_col_type == "image":
+                embedding_vector = self.get_image_query_embedding(
+                    "image", data[column_name]
+                )
+            elif index_col_type == "audio":
+                embedding_vector = self.get_audio_query_embedding(
+                    "audio", data[column_name]
+                )
+            elif index_col_type == "image-text":
+                embedding_vector = self.get_image_query_embedding(
+                    "image-text", data[column_name]
+                )
             else:
-                embedding_vector = model.encode(data[column_name])
-                embedding_vector = embedding_vector.tolist()
+                model = model_manager.text_model
+                if model_manager._use_serving:
+                    embedding_vector = model(data[column_name])
+                else:
+                    embedding_vector = model.encode(data[column_name])
+                    embedding_vector = embedding_vector.tolist()
 
         db_client.upsert_vector(
             table_name,
             eval_id,
             embedding_vector,
             data,
-            [unique_key],
+            [unique_key] if isinstance(unique_key, str) else unique_key,
             exclude_keys,
+            mark_existing_deleted=mark_existing_deleted,
         )
 
     # @log_performance
@@ -488,6 +490,7 @@ class EmbeddingManager:
         organization_id=None,
         workspace_id=None,
     ):
+        feedback_revision = None
         try:
             if table_name in _TENANT_SCOPED_TABLES and not organization_id:
                 raise ValueError(
@@ -563,6 +566,8 @@ class EmbeddingManager:
                 mod_dict["input_type"] = input_dict[inp]
                 if table_name == GROUND_TRUTH_TABLE_NAME:
                     mod_dict["column_name"] = str(inp)
+                if table_name == FEEDBACK_TABLE_NAME and mod_dict.get("feedback_id"):
+                    mod_dict["feedback_input"] = str(inp)
 
                 # Get embedding for this input
                 try:
@@ -586,6 +591,9 @@ class EmbeddingManager:
                             embedding_vector = model.encode(mod_dict["index_column"])
                             embedding_vector = embedding_vector.tolist()
 
+                    if embedding_vector is None or len(embedding_vector) == 0:
+                        raise ValueError(f"No embedding generated for input {inp}")
+
                     vectors.append(embedding_vector)
 
                     metadata_list.append(mod_dict)
@@ -601,25 +609,62 @@ class EmbeddingManager:
                         f"Error getting embedding for table {table_name}: {e}"
                     )
                     raise
-                try:
-                    if insert and table_name==FEEDBACK_TABLE_NAME and eval_id!="":
-                        self.insert_embedding(
-                            eval_id,
-                            data=mod_dict,
-                            table_name=f"{table_name}",
-                            index_col_type=index_col_type[n],  # Accessing index_col_type[n]
-                            column_name="index_column",
-                            unique_key_value=mod_dict["item_id"],
-                        )
+            if insert and table_name == FEEDBACK_TABLE_NAME and eval_id != "":
+                feedback_revision = (
+                    str(uuid.uuid4())
+                    if row_dict.get("feedback_id") and vectors
+                    else None
+                )
+                if feedback_revision:
+                    for metadata in metadata_list:
+                        metadata["feedback_revision"] = feedback_revision
+                    self.db_client.create_table(table_name)
+                for metadata, embedding_vector in zip(
+                    metadata_list, vectors, strict=True
+                ):
+                    if metadata.get("feedback_id"):
+                        unique_key = ["feedback_id", "feedback_input"]
+                        unique_key_value = metadata["feedback_id"]
+                    else:
+                        unique_key = "item_id"
+                        unique_key_value = metadata["item_id"]
+                    self.insert_embedding(
+                        eval_id,
+                        data=metadata,
+                        table_name=table_name,
+                        index_col_type=metadata["input_type"],
+                        column_name="index_column",
+                        unique_key_value=unique_key_value,
+                        unique_key=unique_key,
+                        embedding_vector=embedding_vector,
+                        mark_existing_deleted=not feedback_revision,
+                    )
 
-                except Exception:
-                    traceback.print_exc()
-
-                    raise
+                if row_dict.get("feedback_id"):
+                    self.db_client.mark_deleted_by_metadata(
+                        table_name,
+                        {"feedback_id": str(row_dict["feedback_id"])},
+                        exclude_filters=(
+                            {"feedback_revision": feedback_revision}
+                            if feedback_revision
+                            else None
+                        ),
+                    )
 
             return vectors, metadata_list
 
         except Exception as e:
+            if insert and table_name == FEEDBACK_TABLE_NAME and feedback_revision:
+                try:
+                    self.db_client.mark_deleted_by_metadata(
+                        table_name,
+                        {"feedback_revision": feedback_revision},
+                    )
+                except Exception:
+                    logger.exception(
+                        "feedback_replacement_cleanup_failed",
+                        feedback_revision=feedback_revision,
+                    )
             traceback.print_exc()
             logger.exception(f"Error in data_formatter: {e}")
             return [], []

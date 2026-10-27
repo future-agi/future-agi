@@ -53,7 +53,12 @@ from accounts.serializers.contracts import (
 )
 from accounts.serializers.user import UpdateUserSerializer
 from accounts.services.token_service import issue_tokens
-from accounts.utils import WorkEmailRequired, build_password_reset_link, first_signup
+from accounts.utils import (
+    WorkEmailRequired,
+    build_password_reset_link,
+    first_signup,
+    refresh_pending_invite_expiration,
+)
 from accounts.views.workspace_management import clear_user_redis_cache
 from analytics.utils import (
     MixpanelEvents,
@@ -71,7 +76,6 @@ from tfc.utils.api_contracts import validated_api_request
 from tfc.utils.email import email_delivery_configured, email_helper
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.install_setup import manage_py_command
-
 
 try:
     from ee.usage.utils.usage_entries import (
@@ -261,6 +265,18 @@ def user_signup(request):
 
         if is_oss():
             logger.info("signup_auto_login", email=email, user_id=str(user.id))
+            try:
+                from tfc.deployment_telemetry.events import record_event
+
+                record_event(
+                    "user_logged_in",
+                    actor_type="human_user",
+                    actor_id=user.id,
+                    source="web",
+                    organization_id=user.organization_id,
+                )
+            except Exception:
+                logger.debug("deployment_telemetry_signup_login_event_failed", exc_info=True)
             return _gm.success_response(_login_payload(user), status=status.HTTP_200_OK)
 
         return _gm.success_response(
@@ -557,9 +573,6 @@ def reset_password_confirm(request, uidb64, token):
     new_password = request.validated_data.get("new_password")
     repeat_password = request.validated_data.get("repeat_password")
 
-    if new_password != repeat_password:
-        return _gm.bad_request("Passwords do not match.")
-
     try:
         # Decode the uidb64 to the user ID
         uid = force_str(urlsafe_base64_decode(uidb64))
@@ -579,6 +592,12 @@ def reset_password_confirm(request, uidb64, token):
             )
         except AuthToken.DoesNotExist:
             return _gm.forbidden_response("Invalid token id.")
+
+        if auth_token_obj.auth_origin == "saml":
+            return _gm.forbidden_response("Invalid token.")
+
+        if new_password != repeat_password:
+            return _gm.bad_request("Passwords do not match.")
 
         if (
             not auth_token_obj.is_active
@@ -887,6 +906,12 @@ def resend_invitation_emails(request):
 
             if user:
                 logger.info(f"Resending invitation email to {user.email}")
+
+                # Refresh the matching OrganizationInvite's expiry too, so
+                # this bulk path behaves the same as the other resend
+                # endpoints (#2437).
+                refresh_pending_invite_expiration(organization, user.email)
+
                 # Generate a token
                 token = default_token_generator.make_token(user)
 
