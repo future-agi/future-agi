@@ -203,6 +203,27 @@ def test_a_cut_value_partly_masked_inside_is_still_masked(values, secret_text):
         assert leaked not in message
 
 
+def test_a_cut_run_of_one_repeated_value_is_masked_quickly():
+    values = ["aaaaaaaa", *(f"a{index:04d}" + "b" * 35 for index in range(500))]
+    nudge = SimpleNamespace(
+        trigger_agent_version_id="a1",
+        base_agent_version_id=None,
+        base_environment_version=None,
+        draft_snapshot={},
+    )
+
+    started = time.monotonic()
+    with patch.object(nudges, "_agent_secrets", return_value={"K": set(values)}):
+        report = rebuild._report(
+            SimpleNamespace(id="env", agent_version_id=None),
+            nudge,
+            {"checks": {"problems": [{"message": "a" * ALK_CUT}]}},
+        )
+
+    assert time.monotonic() - started < 5
+    assert "aaaa" not in report["problems"][0]["message"]
+
+
 def test_a_value_the_report_cuts_short_is_masked():
     # A stored value longer than accepted today, straddling the notes' own cut.
     value = ("FAKE-CREDENTIAL-" + "0123456789abcdef" * 6_000)[:90_000]

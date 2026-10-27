@@ -685,8 +685,15 @@ def _cut_value_start(text: str, secret_values: Iterable[str]) -> int:
     while moved:
         moved = False
         for secret_value in secret_values:
-            at = text.find(secret_value, max(0, secret_start - len(secret_value) + 1))
-            if 0 <= at < secret_start:
+            # Only occurrences straddling the start; a run of them is followed back.
+            while True:
+                at = text.find(
+                    secret_value,
+                    max(0, secret_start - len(secret_value) + 1),
+                    secret_start + len(secret_value) - 1,
+                )
+                if not 0 <= at < secret_start:
+                    break
                 secret_start, moved = at, True
     return secret_start
 
