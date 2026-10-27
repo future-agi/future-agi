@@ -212,8 +212,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 			chunk, done, err := state.parseStreamData(data)
 			if err != nil {
 				slog.Warn("cohere: error parsing stream event",
-					"error", err,
-					"provider", p.id,
+					"provider", p.id, "model", req.Model, "status", resp.StatusCode,
 				)
 				continue
 			}

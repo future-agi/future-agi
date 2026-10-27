@@ -188,6 +188,33 @@ func (p *GuardrailPlugin) ObserveResponse(_ context.Context, rc *models.RequestC
 	}
 }
 
+// responseOnlyInput adapts the reserved native content scanners whose extractors
+// otherwise scan both request and response messages. Do not infer this from Stage:
+// expressions, webhooks, tool permissions and external evaluators need both sides.
+// Keep request settings, but isolate prompt-bearing fields and request mutations.
+func responseOnlyInput(g Guardrail, input *CheckInput) *CheckInput {
+	if input.Request == nil || input.Response == nil {
+		return input
+	}
+	switch g.Name() {
+	case "input-validation", "keyword-blocklist", "pii-detection", "content-moderation", "secret-detection":
+	default:
+		return input
+	}
+	view := *input
+	request := *input.Request
+	request.Messages = nil
+	request.Stop = nil
+	request.LogitBias = nil
+	request.User = ""
+	request.Tools = nil
+	request.ToolChoice = nil
+	request.ResponseFormat = nil
+	request.Extra = nil
+	view.Request = &request
+	return &view
+}
+
 // Successful synchronous checks may redact messages in place. Copy those
 // changes back only after the check has returned, never from a timed-out worker.
 func applyCheckMutations(original, owned *CheckInput) {

@@ -3,8 +3,10 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strconv"
 	"time"
 
@@ -114,12 +116,8 @@ func (e *Engine) BeginProviderAttempt(ctx context.Context, rc *models.RequestCon
 				if !ok || !g.IsRetryAdmission() || p.Name() != name {
 					continue
 				}
-				model := rc.Model
-				if rc.Request != nil {
-					rc.Model = rc.Request.Model
-				}
+				// Admission uses the caller's logical model, as on the first attempt.
 				r := p.ProcessRequest(ctx, rc)
-				rc.Model = model
 				if r.Error != nil {
 					l.Denied = &models.AdmissionError{Err: r.Error}
 					return l.Denied
@@ -146,17 +144,18 @@ func (e *Engine) EndProviderAttempt(ctx context.Context, rc *models.RequestConte
 		return
 	}
 	l.Open = false
-	model := rc.Model
 	servingModel := rc.ResolvedModel
 	if servingModel == "" && rc.Request != nil {
 		servingModel = rc.Request.Model
 	}
-	if servingModel != "" {
-		rc.Model = servingModel
-	}
+	// Preserve rc.Model for pricing fallback and budget identity, including when
+	// routing rewrote Request.Model. The serving model is the preferred price;
+	// a response that omits its model is priced by the upstream request model.
 	// Settlement must survive caller cancellation. Never rerun admission here.
+	resolved := rc.ResolvedModel
+	rc.ResolvedModel = servingModel
 	e.accountAttempt(context.WithoutCancel(ctx), rc)
-	rc.Model = model
+	rc.ResolvedModel = resolved
 	a := models.ProviderAttempt{Provider: models.RedactCredentials(rc.Provider), Model: models.RedactCredentials(servingModel), Cost: rc.Metadata["cost"], Credits: rc.Metadata["credits_used"], UsageMissing: true}
 	if rc.Response != nil && rc.Response.Usage != nil {
 		u := rc.Response.Usage
@@ -219,6 +218,9 @@ func (e *Engine) processCandidates(ctx context.Context, rc *models.RequestContex
 		e.EndProviderAttempt(ctx, rc)
 		rc.Request = original
 		if err != nil {
+			if pendingReflection {
+				err = sanitizeReflectionError(err)
+			}
 			finalErr = err
 			rc.Response = nil
 			break
@@ -281,6 +283,44 @@ func (e *Engine) processCandidates(ctx context.Context, rc *models.RequestContex
 	publishAttempts(rc, retries, debug)
 	e.runFinalPlugins(context.WithoutCancel(ctx), rc)
 	return finalErr
+}
+
+// Upstream validation errors can echo the private answer and evaluator feedback.
+func sanitizeReflectionError(err error) error {
+	var admission *models.AdmissionError
+	if errors.As(err, &admission) || err == context.Canceled || err == context.DeadlineExceeded {
+		return err
+	}
+	const message = "Provider request failed during response repair"
+	var apiErr *models.APIError
+	if errors.As(err, &apiErr) {
+		// Upstream type/code/param are arbitrary text too. Derive identifiers
+		// from the status using only gateway constructors, never upstream fields.
+		safe := models.ErrUpstreamProvider(apiErr.Status, message)
+		switch apiErr.Status {
+		case http.StatusBadRequest:
+			safe = models.ErrBadRequest(safe.Code, message)
+		case http.StatusUnauthorized:
+			safe = models.ErrUnauthorized(message)
+		case http.StatusForbidden:
+			safe = models.ErrForbidden(message)
+		case http.StatusNotFound:
+			safe = models.ErrNotFound(safe.Code, message)
+		case http.StatusRequestTimeout:
+			safe = models.ErrRequestTimeout(message)
+		case http.StatusTooManyRequests:
+			safe = models.ErrTooManyRequests(message)
+		case http.StatusInternalServerError:
+			safe = models.ErrInternal(message)
+		case http.StatusServiceUnavailable:
+			safe = models.ErrServiceUnavailable(message)
+		case http.StatusGatewayTimeout:
+			safe = models.ErrGatewayTimeout(message)
+		}
+		safe.Status = apiErr.Status
+		return safe
+	}
+	return models.ErrUpstreamProvider(http.StatusBadGateway, message)
 }
 
 func cloneRequest(req *models.ChatCompletionRequest) (*models.ChatCompletionRequest, error) {

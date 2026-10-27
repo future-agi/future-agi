@@ -620,8 +620,7 @@ func citationsForBlock(block anthropicContentBlock, offset int) []urlCitation {
 	}
 	var cites []anthropicCitation
 	if err := json.Unmarshal(block.Citations, &cites); err != nil {
-		slog.Warn("anthropic: could not decode citations, dropping them",
-			"error", err)
+		slog.Warn("anthropic: could not decode citations, dropping them")
 		return nil
 	}
 	out := make([]urlCitation, 0, len(cites))

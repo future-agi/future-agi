@@ -1978,6 +1978,13 @@ func waitForFirstStreamChunk(ctx context.Context, chunks <-chan models.StreamChu
 		select {
 		case chunk, ok := <-chunks:
 			if !ok {
+				select {
+				case err := <-errCh:
+					if err != nil {
+						return nil, err
+					}
+				default:
+				}
 				return nil, models.ErrUpstreamProvider(http.StatusBadGateway, "upstream stream closed before sending any chunks")
 			}
 			return &chunk, nil

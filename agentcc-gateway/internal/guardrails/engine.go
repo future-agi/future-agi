@@ -137,8 +137,14 @@ func (e *Engine) run(ctx context.Context, rules []resolvedRule, input *CheckInpu
 			continue
 		}
 
+		// Retry-enabled content checks validate the candidate, not the immutable
+		// prompt. Legacy static rules retain their existing mixed-input behavior.
+		checkInput := input
+		if rule.reflection.Enabled {
+			checkInput = responseOnlyInput(rule.guardrail, input)
+		}
 		// Sync execution with per-guardrail timeout.
-		checkResult := e.runSync(ctx, rule, input)
+		checkResult := e.runSync(ctx, rule, checkInput)
 		if checkResult == nil {
 			continue
 		}

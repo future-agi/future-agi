@@ -327,8 +327,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 			chunk, err := state.parseStreamData(data)
 			if err != nil {
 				slog.Warn("gemini: error parsing stream data",
-					"error", err,
-					"provider", p.id,
+					"provider", p.id, "model", model, "status", resp.StatusCode,
 				)
 				continue
 			}

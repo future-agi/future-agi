@@ -31,13 +31,17 @@ import (
 // handler, OpenAI adapter, policy engine, pipeline, accounting and cache. Native
 // leakage/PII checks are covered separately in reflexion_compat_test.go.
 type reflectionUpstream struct {
-	mu          sync.Mutex
-	requests    []models.ChatCompletionRequest
-	blocked     int
-	blockedText string
-	status      int
-	tool        bool
-	multi       bool
+	mu                sync.Mutex
+	requests          []models.ChatCompletionRequest
+	blocked           int
+	blockedText       string
+	status            int
+	tool              bool
+	multi             bool
+	responseModel     string
+	usage             *models.Usage
+	repairError       bool
+	repairStreamError string
 }
 
 func (u *reflectionUpstream) serve(w http.ResponseWriter, r *http.Request) {
@@ -54,6 +58,15 @@ func (u *reflectionUpstream) serve(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "upstream failure", u.status)
 		return
 	}
+	if u.repairError && n > 1 {
+		messages, _ := json.Marshal(req.Messages)
+		models.WriteError(w, &models.APIError{Status: 400, Type: "private-error-type: " + string(messages), Code: "private-error-code: " + string(messages), Message: string(messages)})
+		return
+	}
+	model := req.Model
+	if u.responseModel != "" {
+		model = u.responseModel
+	}
 	text := "accepted answer"
 	if n <= u.blocked {
 		text = "rejected secret answer"
@@ -63,14 +76,30 @@ func (u *reflectionUpstream) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	content, _ := json.Marshal(text)
 	usage := &models.Usage{PromptTokens: 10, CompletionTokens: 20, TotalTokens: 30}
+	if u.usage != nil {
+		usage = u.usage
+	}
 	if req.Stream {
 		w.Header().Set("Content-Type", "text/event-stream")
 		finish := "stop"
-		for _, chunk := range []models.StreamChunk{
-			{ID: "candidate", Object: "chat.completion.chunk", Model: req.Model, Choices: []models.StreamChoice{{Index: 0, Delta: models.Delta{Role: "assistant", Content: &text}}}},
-			{ID: "candidate", Object: "chat.completion.chunk", Model: req.Model, Choices: []models.StreamChoice{{Index: 0, FinishReason: &finish}}},
-			{ID: "candidate", Object: "chat.completion.chunk", Model: req.Model, Choices: []models.StreamChoice{}, Usage: usage},
-		} {
+		chunks := []models.StreamChunk{
+			{ID: "candidate", Object: "chat.completion.chunk", Model: model, Choices: []models.StreamChoice{{Index: 0, Delta: models.Delta{Role: "assistant", Content: &text}}}},
+			{ID: "candidate", Object: "chat.completion.chunk", Model: model, Choices: []models.StreamChoice{{Index: 0, FinishReason: &finish}}},
+			{ID: "candidate", Object: "chat.completion.chunk", Model: model, Choices: []models.StreamChoice{}, Usage: usage},
+		}
+		if u.repairStreamError != "" && n > 1 {
+			chunks = chunks[:2]
+			messages, _ := json.Marshal(req.Messages)
+			private, _ := json.Marshal("STREAM_PRIVATE_SENTINEL: " + string(messages))
+			chunks[1].Extra = map[string]json.RawMessage{"detail": private}
+			if strings.Contains(u.repairStreamError, "envelope") {
+				chunks[1].Extra["error"] = json.RawMessage(`{"message":` + string(private) + `}`)
+			}
+			if strings.Contains(u.repairStreamError, "finish") {
+				finish = "error"
+			}
+		}
+		for _, chunk := range chunks {
 			b, _ := json.Marshal(chunk)
 			fmt.Fprintf(w, "data: %s\n\n", b)
 			w.(http.Flusher).Flush()
@@ -86,7 +115,7 @@ func (u *reflectionUpstream) serve(w http.ResponseWriter, r *http.Request) {
 	if u.multi {
 		choices = append(choices, models.Choice{Index: 1, Message: m, FinishReason: "stop"})
 	}
-	json.NewEncoder(w).Encode(models.ChatCompletionResponse{ID: "candidate", Object: "chat.completion", Model: req.Model, Choices: choices, Usage: usage})
+	json.NewEncoder(w).Encode(models.ChatCompletionResponse{ID: "candidate", Object: "chat.completion", Model: model, Choices: choices, Usage: usage})
 }
 
 func (u *reflectionUpstream) calls() []models.ChatCompletionRequest {

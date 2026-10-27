@@ -56,6 +56,7 @@ type bufferedCandidate struct {
 	model   string
 	usage   *models.Usage
 	choices map[int]*bufferedChoice
+	failed  bool // an in-band upstream error ended this candidate
 }
 
 func newBufferedCandidate() *bufferedCandidate {
@@ -65,9 +66,19 @@ func newBufferedCandidate() *bufferedCandidate {
 func (b *bufferedCandidate) add(chunk models.StreamChunk) error {
 	// Even a frame that exceeds the body limit may carry measured usage. Keep
 	// its scalar counters for settlement, without retaining its rejected body.
-	if chunk.Usage != nil {
-		u := chunk.Usage
-		b.usage = &models.Usage{PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens, TotalTokens: u.TotalTokens}
+	// The reported model prices that usage, so keep it on the same terms.
+	b.keepAccounting(chunk)
+	// HTTP 200 streams can fail in-band. These frames must never be accepted
+	// as a candidate or replayed, especially if they echo private repair input.
+	if raw, ok := chunk.Extra["error"]; ok && !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		b.failed = true
+		return models.ErrUpstreamProvider(http.StatusBadGateway, "upstream stream returned an error")
+	}
+	for _, choice := range chunk.Choices {
+		if choice.FinishReason != nil && *choice.FinishReason == "error" {
+			b.failed = true
+			return models.ErrUpstreamProvider(http.StatusBadGateway, "upstream stream returned an error")
+		}
 	}
 	// Refuse large payloads before JSON encoding can allocate another full copy.
 	if streamChunkFloor(chunk) > maxReflexionStreamBytes-b.bytes || len(b.frames) >= maxReflexionStreamChunks {
@@ -93,9 +104,6 @@ func (b *bufferedCandidate) add(chunk models.StreamChunk) error {
 	}
 	if b.created == 0 {
 		b.created = chunk.Created
-	}
-	if chunk.Model != "" {
-		b.model = chunk.Model
 	}
 	if chunk.Usage != nil {
 		b.usage = chunk.Usage
@@ -203,10 +211,41 @@ func (b *bufferedCandidate) response() *models.ChatCompletionResponse {
 	return r
 }
 
+// keepAccounting records the scalar usage and model a frame reports, without
+// retaining any of its content.
+func (b *bufferedCandidate) keepAccounting(chunk models.StreamChunk) {
+	if chunk.Usage != nil {
+		u := chunk.Usage
+		b.usage = &models.Usage{PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens, TotalTokens: u.TotalTokens}
+	}
+	if chunk.Model != "" {
+		b.model = chunk.Model
+	}
+}
+
+// harvestQueued settles usage that already arrived after an in-band failure
+// (often a separate usage-only trailer). It never waits for more frames.
+func (b *bufferedCandidate) harvestQueued(chunks <-chan models.StreamChunk) {
+	for {
+		select {
+		case c, ok := <-chunks:
+			if !ok {
+				return
+			}
+			b.keepAccounting(c)
+		default:
+			return
+		}
+	}
+}
+
 func collectCandidate(ctx context.Context, chunks <-chan models.StreamChunk, errs <-chan error, first *models.StreamChunk) (*bufferedCandidate, error) {
 	b := newBufferedCandidate()
 	if first != nil {
 		if err := b.add(*first); err != nil {
+			if b.failed {
+				b.harvestQueued(chunks)
+			}
 			return b, err
 		}
 	}
@@ -237,6 +276,9 @@ func collectCandidate(ctx context.Context, chunks <-chan models.StreamChunk, err
 				return b, nil
 			}
 			if err := b.add(c); err != nil {
+				if b.failed {
+					b.harvestQueued(chunks)
+				}
 				return b, err
 			}
 		case err, ok := <-errs:

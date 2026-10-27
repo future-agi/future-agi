@@ -89,10 +89,20 @@ func (p *GuardrailPlugin) ProcessRequest(ctx context.Context, rc *models.Request
 
 // ProcessResponse runs post-stage guardrails.
 func (p *GuardrailPlugin) ProcessResponse(ctx context.Context, rc *models.RequestContext) (result pipeline.PluginResult) {
+	warnings, hadWarnings := rc.Metadata["guardrail_warnings"]
+	preResults := len(rc.GuardrailResults)
 	defer func() {
 		if result.Error != nil {
 			rc.Response = nil
 			rc.Metadata["guardrail_action"] = "blocked"
+			if hadWarnings {
+				rc.Metadata["guardrail_warnings"] = warnings
+			} else {
+				delete(rc.Metadata, "guardrail_warnings")
+			}
+			for i := preResults; i < len(rc.GuardrailResults); i++ {
+				rc.GuardrailResults[i].Message = "response check failed"
+			}
 		}
 	}()
 	if rc.Response == nil {
@@ -203,6 +213,7 @@ func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.Reque
 		}
 		if stage == StagePost {
 			input.Response = rc.Response
+			input = responseOnlyInput(g, input)
 		}
 
 		// Run with timeout and panic recovery.
