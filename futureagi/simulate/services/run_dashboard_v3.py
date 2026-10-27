@@ -491,6 +491,16 @@ def build_run_dashboard(
     is_voice = noun == "call"
     outcomes = summary["outcomes"]
     interval = (reliability or {}).get("pass_rate_interval")
+    # Calls with no pass or fail are never in the pass rate; their counts are always shown with it.
+    left_out = ", ".join(
+        f"{count} {label}"
+        for count, label in (
+            (outcomes["no_score"], "no score"),
+            (outcomes["inconclusive"], "inconclusive"),
+            (outcomes["error"], "errored"),
+        )
+        if count
+    )
     metric(
         "pass_rate",
         f"{noun.capitalize()}s passed",
@@ -502,8 +512,9 @@ def build_run_dashboard(
             f"{interval['low']:.0f}–{interval['high']:.0f}% across "
             f"{interval['clusters']} scenarios."
             if interval
-            else f"Passed every eval, out of evaluated {noun}s. Errored {noun}s are excluded."
-        ),
+            else f"Passed every eval, out of evaluated {noun}s."
+        )
+        + (f" Not counted: {left_out}." if left_out else ""),
     )
     metric("total", f"Total {noun}s", total, measured=total)
     metric(

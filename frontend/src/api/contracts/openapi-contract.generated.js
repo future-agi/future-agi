@@ -64659,7 +64659,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         status: {
           title: "Status",
           type: "string",
-          enum: ["passed", "failed", "errored", "skipped"],
+          enum: ["passed", "failed", "inconclusive", "errored", "skipped"],
         },
         sub_goals: {
           type: "array",
@@ -86099,6 +86099,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "outcome_passed",
         "outcome_failed",
         "outcome_skipped",
+        "outcome_scored",
         "started_at",
         "completed_at",
       ],
@@ -86151,6 +86152,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         outcome_skipped: {
           title: "Outcome skipped",
+          type: "integer",
+          "x-nullable": true,
+        },
+        outcome_scored: {
+          title: "Outcome scored",
           type: "integer",
           "x-nullable": true,
         },
@@ -101946,6 +101952,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           readOnly: true,
           "x-nullable": true,
         },
+        outcome_scored: {
+          title: "Outcome scored",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
       },
     },
     RunTestNameResult: {
@@ -111739,8 +111751,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "x-nullable": true,
           },
         },
-        loudness_db: {
-          title: "Loudness db",
+        loudness_ratio: {
+          title: "Loudness ratio",
           type: "number",
         },
         scenarios_count: {

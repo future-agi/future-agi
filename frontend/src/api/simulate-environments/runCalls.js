@@ -114,7 +114,7 @@ export function mapCallRow(row, evalColumns = []) {
     sourceScenarioKey: row?.source_scenario_key ?? null,
     harnessOutcomeStatus: row?.harness_outcome_status ?? outcome ?? null,
     // Why the scenario was skipped, when it was skipped for a reason.
-    skipReason: row?.skip_reason ?? null,
+    outcomeReason: row?.outcome_reason ?? null,
     trialIndex,
     scenarioDetails: row?.scenario_details ?? null,
     idealOutcome: row?.ideal_outcome ?? null,

@@ -121099,6 +121099,7 @@
                 "outcome_passed",
                 "outcome_failed",
                 "outcome_skipped",
+                "outcome_scored",
                 "started_at",
                 "completed_at"
             ],
@@ -121154,6 +121155,11 @@
                 },
                 "outcome_skipped": {
                     "title": "Outcome skipped",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "outcome_scored": {
+                    "title": "Outcome scored",
                     "type": "integer",
                     "x-nullable": true
                 },
@@ -124942,8 +124948,8 @@
                         "x-nullable": true
                     }
                 },
-                "loudness_db": {
-                    "title": "Loudness db",
+                "loudness_ratio": {
+                    "title": "Loudness ratio",
                     "type": "number"
                 },
                 "scenarios_count": {
@@ -128635,6 +128641,7 @@
                     "enum": [
                         "passed",
                         "failed",
+                        "inconclusive",
                         "errored",
                         "skipped"
                     ]
@@ -134179,6 +134186,12 @@
                 },
                 "outcome_skipped": {
                     "title": "Outcome skipped",
+                    "type": "integer",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "outcome_scored": {
+                    "title": "Outcome scored",
                     "type": "integer",
                     "readOnly": true,
                     "x-nullable": true

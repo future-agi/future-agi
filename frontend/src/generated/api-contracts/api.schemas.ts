@@ -16059,6 +16059,7 @@ export interface HarnessRunSummaryApi {
   outcome_passed: number;
   outcome_failed: number;
   outcome_skipped: number;
+  outcome_scored: number;
   started_at: string;
   completed_at: string;
 }
@@ -17693,7 +17694,7 @@ export interface HarnessEnvironmentSubActorApi {
   /** @minLength 1 */
   channel: string;
   persona: HarnessEnvironmentSubActorApiPersona;
-  loudness_db?: number;
+  loudness_ratio?: number;
   scenarios_count: number;
 }
 
@@ -19134,6 +19135,7 @@ export type HarnessResultReceiptApiStatus =
 export const HarnessResultReceiptApiStatus = {
   passed: "passed",
   failed: "failed",
+  inconclusive: "inconclusive",
   errored: "errored",
   skipped: "skipped",
 } as const;
@@ -21807,6 +21809,7 @@ export interface TestExecutionItemResponseApi {
   readonly outcome_passed?: number;
   readonly outcome_failed?: number;
   readonly outcome_skipped?: number;
+  readonly outcome_scored?: number;
 }
 
 export interface RunTestExecutionsResponseApi {

@@ -95,6 +95,7 @@ class HarnessRunSummarySerializer(serializers.Serializer):
     outcome_passed = serializers.IntegerField(allow_null=True)
     outcome_failed = serializers.IntegerField(allow_null=True)
     outcome_skipped = serializers.IntegerField(allow_null=True)
+    outcome_scored = serializers.IntegerField(allow_null=True)
     started_at = serializers.DateTimeField(allow_null=True)
     completed_at = serializers.DateTimeField(allow_null=True)
 
@@ -288,7 +289,7 @@ class HarnessEnvironmentSubActorSerializer(serializers.Serializer):
     role = serializers.CharField(allow_blank=True)
     channel = serializers.CharField()
     persona = serializers.DictField()
-    loudness_db = serializers.FloatField(required=False)
+    loudness_ratio = serializers.FloatField(required=False)
     scenarios_count = serializers.IntegerField()
 
 

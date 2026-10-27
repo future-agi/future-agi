@@ -1530,6 +1530,12 @@ def _store_alk_chat_messages(
                 item["start_time_ms"] = seg["start_time_ms"]
             content_items.append(item)
         joined = "\n".join(t for t in texts if t)
+        reported = [seg.get("tokens") for seg in segs]
+        tokens = (
+            sum(reported)
+            if reported and all(isinstance(one, int) for one in reported)
+            else estimate_tokens_text(joined)
+        )
         return ChatMessageModel(
             id=uuid.uuid4(),
             role=role,
@@ -1540,7 +1546,7 @@ def _store_alk_chat_messages(
             created_at=created_at,
             organization=run_test.organization,
             workspace=run_test.workspace,
-            tokens=estimate_tokens_text(joined),
+            tokens=tokens,
             latency_ms=latency_ms,
         )
 

@@ -18,7 +18,18 @@ import uuid
 from collections.abc import Iterable
 from typing import Any
 
-from django.db.models import Count, OuterRef, Prefetch, Q, QuerySet, Subquery
+from django.db.models import (
+    CharField,
+    Count,
+    F,
+    OuterRef,
+    Prefetch,
+    Q,
+    QuerySet,
+    Subquery,
+)
+from django.db.models.fields.json import KeyTextTransform
+from django.db.models.functions import Coalesce
 
 from simulate.models import (
     AgentVersion,
@@ -209,6 +220,12 @@ def run_summaries(executions: list[TestExecution]) -> dict[Any, dict[str, Any]]:
             "outcome_skipped": (
                 outcomes.get("skipped", 0) if outcomes is not None else None
             ),
+            # Calls with a pass or fail, the only ones a pass rate counts; none means no score.
+            "outcome_scored": (
+                outcomes.get("passed", 0) + outcomes.get("failed", 0)
+                if outcomes is not None
+                else None
+            ),
             "started_at": _isoformat(execution.started_at),
             "completed_at": _isoformat(execution.completed_at),
         }
@@ -220,7 +237,8 @@ def receipt_outcome_counts(job_ids: Iterable[uuid.UUID]) -> dict[Any, dict[str, 
 
     A receipt belongs to a call through its execution, or, for a scenario-level
     receipt, through the scenario registration. Receipts of soft-deleted calls
-    stay in the table and must not be counted.
+    stay in the table and must not be counted. A call's own outcome wins over its receipt's
+    status, so a call with no pass or fail counts as no score, never as passed.
     """
     job_ids = list(job_ids)
     counts: dict[Any, dict[str, int]] = {}
@@ -232,10 +250,19 @@ def receipt_outcome_counts(job_ids: Iterable[uuid.UUID]) -> dict[Any, dict[str, 
     for row in (
         HostedHarnessReceipt.no_workspace_objects.filter(job_id__in=job_ids)
         .exclude(receipt_of_deleted_call)
-        .values("job_id", "status")
+        .annotate(
+            outcome=Coalesce(
+                KeyTextTransform(
+                    "harness_outcome_status", "execution__call_execution__call_metadata"
+                ),
+                F("status"),
+                output_field=CharField(),
+            )
+        )
+        .values("job_id", "outcome")
         .annotate(count=Count("id"))
     ):
-        counts.setdefault(row["job_id"], {})[row["status"]] = row["count"]
+        counts.setdefault(row["job_id"], {})[row["outcome"]] = row["count"]
     return counts
 
 

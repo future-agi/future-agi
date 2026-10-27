@@ -331,8 +331,12 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
     {
       key: "pass_rate",
       label: "Calls passed",
-      value: format(passRate?.value, "percent"),
-      reported: passRate?.value != null,
+      // Calls ran but none had a pass or fail: nothing to score, which is not missing data.
+      value:
+        passRate?.value == null && passRate?.total
+          ? "No score"
+          : format(passRate?.value, "percent"),
+      reported: passRate?.value != null || !!passRate?.total,
       detail: passMargin == null ? null : `±${number(passMargin)} pts`,
       coverage: `${passRate?.measured ?? 0} / ${passRate?.total ?? 0} evaluated`,
       note: passRate?.note,

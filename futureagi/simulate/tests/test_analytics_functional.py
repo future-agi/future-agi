@@ -1309,7 +1309,7 @@ class TestRunResultsV3Views:
         row = next(
             item for item in calls.json()["results"] if item["id"] == str(call.id)
         )
-        assert (row["outcome"], row["skip_reason"]) == (
+        assert (row["outcome"], row["outcome_reason"]) == (
             "skipped",
             "sub-actors are switched off",
         )

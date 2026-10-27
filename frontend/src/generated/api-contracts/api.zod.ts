@@ -32121,6 +32121,7 @@ export const SimulateAgentDefinitionsRunsListResponse = zod.object({
         outcome_passed: zod.number(),
         outcome_failed: zod.number(),
         outcome_skipped: zod.number(),
+        outcome_scored: zod.number(),
         started_at: zod.string().datetime({ offset: true }),
         completed_at: zod.string().datetime({ offset: true }),
       }),
@@ -35470,6 +35471,7 @@ export const SimulateApiHarnessEnvironmentsListResponse = zod.object({
         outcome_passed: zod.number(),
         outcome_failed: zod.number(),
         outcome_skipped: zod.number(),
+        outcome_scored: zod.number(),
         started_at: zod.string().datetime({ offset: true }),
         completed_at: zod.string().datetime({ offset: true }),
       }),
@@ -35559,7 +35561,7 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
         role: zod.string(),
         channel: zod.string().min(1),
         persona: zod.record(zod.string(), zod.string()),
-        loudness_db: zod.number().optional(),
+        loudness_ratio: zod.number().optional(),
         scenarios_count: zod.number(),
       }),
     ),
@@ -35788,7 +35790,7 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
         role: zod.string(),
         channel: zod.string().min(1),
         persona: zod.record(zod.string(), zod.string()),
-        loudness_db: zod.number().optional(),
+        loudness_ratio: zod.number().optional(),
         scenarios_count: zod.number(),
       }),
     ),
@@ -36080,7 +36082,7 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
           role: zod.string(),
           channel: zod.string().min(1),
           persona: zod.record(zod.string(), zod.string()),
-          loudness_db: zod.number().optional(),
+          loudness_ratio: zod.number().optional(),
           scenarios_count: zod.number(),
         }),
       ),
@@ -38248,7 +38250,7 @@ export const SimulateApiHarnessAttemptsResultsBody = zod.object({
     .number()
     .min(simulateApiHarnessAttemptsResultsBodyWorldIndexMin)
     .max(simulateApiHarnessAttemptsResultsBodyWorldIndexMax),
-  status: zod.enum(["passed", "failed", "errored", "skipped"]),
+  status: zod.enum(["passed", "failed", "inconclusive", "errored", "skipped"]),
   sub_goals: zod.array(
     zod.object({
       name: zod
@@ -45224,6 +45226,7 @@ export const SimulateRunTestsExecutionsListResponse = zod.object({
         outcome_passed: zod.number().optional(),
         outcome_failed: zod.number().optional(),
         outcome_skipped: zod.number().optional(),
+        outcome_scored: zod.number().optional(),
       }),
     )
     .optional(),

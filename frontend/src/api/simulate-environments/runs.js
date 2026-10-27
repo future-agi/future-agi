@@ -84,6 +84,8 @@ export function executionToRun(raw) {
     total,
     passed,
     failed,
+    // Calls with a pass or fail; the pass rate counts only these.
+    scored: hasOutcomes ? raw.outcome_scored ?? passed + failed : passed + failed,
     pending: hasOutcomes
       ? Math.max(total - passed - failed, 0)
       : raw?.pending_calls ?? Math.max(total - passed - failed, 0),

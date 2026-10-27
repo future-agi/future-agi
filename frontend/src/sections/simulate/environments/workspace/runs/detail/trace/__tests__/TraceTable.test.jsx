@@ -843,7 +843,7 @@ describe("TraceTable skipped scenarios", () => {
             ...row("off"),
             status: "skipped",
             durationMs: null,
-            skipReason: "sub-actors are switched off",
+            outcomeReason: "sub-actors are switched off",
             subGoalResults: [{ name: "noticed", passed: null }],
           },
         ],
@@ -856,5 +856,49 @@ describe("TraceTable skipped scenarios", () => {
     // Nothing was run, so the sub-goal has no verdict at all.
     expect(screen.getByText("noticed")).toBeInTheDocument();
     expect(screen.queryByText("Inconclusive")).not.toBeInTheDocument();
+  });
+});
+
+describe("TraceTable calls with no pass or fail", () => {
+  it("reads No score with what it has instead", () => {
+    render(
+      table({
+        rows: [
+          {
+            ...row("ns"),
+            status: "no_score",
+            subGoalResults: [
+              { name: "noticed", passed: null, result: "not_applicable" },
+              { name: "checked", passed: null, result: "not_applicable" },
+              { name: "asked", passed: null, result: "inconclusive" },
+            ],
+          },
+        ],
+        columns: new Set(["callDetails"]),
+      }),
+    );
+    expect(screen.getByText("No score")).toBeInTheDocument();
+    expect(
+      screen.getByText("2 not applicable, 1 inconclusive"),
+    ).toBeInTheDocument();
+  });
+
+  it("reads Inconclusive with why the call was not scored", () => {
+    render(
+      table({
+        rows: [
+          {
+            ...row("in"),
+            status: "inconclusive",
+            outcomeReason: "Rowan was triggered but did not take part: voice failed.",
+            subGoalResults: [{ name: "booked", passed: true }],
+          },
+        ],
+        columns: new Set(["callDetails"]),
+      }),
+    );
+    expect(
+      screen.getByText("Rowan was triggered but did not take part: voice failed."),
+    ).toBeInTheDocument();
   });
 });

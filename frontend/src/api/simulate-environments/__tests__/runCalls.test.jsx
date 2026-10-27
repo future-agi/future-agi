@@ -691,12 +691,12 @@ describe("sub-goal verdicts", () => {
   });
 });
 
-describe("mapCallRow skip reason", () => {
-  it("carries why a scenario was skipped, and nothing when it was not", () => {
+describe("mapCallRow outcome reason", () => {
+  it("carries why a scenario was skipped or is inconclusive, and nothing otherwise", () => {
     expect(
-      mapCallRow({ id: "a", skip_reason: "sub-actors are switched off" })
-        .skipReason,
+      mapCallRow({ id: "a", outcome_reason: "sub-actors are switched off" })
+        .outcomeReason,
     ).toBe("sub-actors are switched off");
-    expect(mapCallRow({ id: "b" }).skipReason).toBeNull();
+    expect(mapCallRow({ id: "b" }).outcomeReason).toBeNull();
   });
 });

@@ -1178,15 +1178,20 @@ def _call_lifecycle_status(body: dict[str, Any]) -> str:
     call = body.get("call")
     if isinstance(call, dict) and call.get("started_at") and call.get("ended_at"):
         return CallExecution.CallStatus.COMPLETED
-    if outcome in {"passed", "failed"}:
+    if outcome in {"passed", "failed", "inconclusive"}:
         return CallExecution.CallStatus.COMPLETED
     return CallExecution.CallStatus.FAILED
 
 
 def receipt_outcome_status(body: dict[str, Any]) -> str:
-    """The receipt's status, or no_score when every sub-goal was not applicable."""
+    """The receipt's status, or no_score for a call that ran and has no pass or fail at all: every
+    sub-goal not applicable, inconclusive, or a mix of the two. An execution error stays an error."""
     goals = [one for one in body.get("sub_goals") or [] if isinstance(one, dict)]
-    if goals and all(sub_goal_result(one) == "not_applicable" for one in goals):
+    if (
+        body["status"] in ("passed", "inconclusive")
+        and goals
+        and not any(sub_goal_result(one) in ("pass", "fail") for one in goals)
+    ):
         return "no_score"
     return body["status"]
 
@@ -1407,6 +1412,9 @@ def _ingest_hosted_transcript(
                     segment["speaker_name"] = str(message["name"])[:255]
                 if message.get("tool_calls"):
                     segment["tool_calls"] = message["tool_calls"]
+                # A sub-actor message's own tokens, as the model reported them.
+                if isinstance(message.get("tokens"), int):
+                    segment["tokens"] = message["tokens"]
                 at = sent_at(message)
                 if base_time is not None and at is not None:
                     segment["start_time_ms"] = int(round((at - base_time) * 1000))

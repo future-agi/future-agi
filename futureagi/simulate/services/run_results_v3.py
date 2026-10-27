@@ -745,7 +745,8 @@ def build_call_rows(
                 "outcome": call_outcome(call, live_eval_configs, specs),
                 "execution_status": call.status,
                 "harness_outcome_status": metadata.get("harness_outcome_status"),
-                "skip_reason": receipt.get("reason"),
+                # Why it was skipped, or why a call that ran is inconclusive.
+                "outcome_reason": receipt.get("reason"),
                 "source_scenario_key": metadata.get("harness_scenario_key"),
                 "trial_index": metadata.get("harness_trial_index"),
                 "modality": call.simulation_call_type,

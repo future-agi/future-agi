@@ -167,6 +167,7 @@ class TestExecutionItemResponseSerializer(serializers.Serializer):
     outcome_passed = serializers.IntegerField(read_only=True, allow_null=True)
     outcome_failed = serializers.IntegerField(read_only=True, allow_null=True)
     outcome_skipped = serializers.IntegerField(read_only=True, allow_null=True)
+    outcome_scored = serializers.IntegerField(read_only=True, allow_null=True)
 
 
 class RunTestExecutionsResponseSerializer(serializers.Serializer):

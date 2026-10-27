@@ -114,6 +114,20 @@ const clampSx = {
   wordBreak: "break-word",
 };
 
+// A call with no pass or fail says what it has instead: "2 not applicable, 1 inconclusive".
+export const unscoredSummary = (t) => {
+  if (t.status !== "no_score") return "";
+  const count = (result) =>
+    (t.subGoalResults || []).filter((goal) => goal.result === result).length;
+  return [
+    [count("not_applicable"), "not applicable"],
+    [count("inconclusive"), "inconclusive"],
+  ]
+    .filter(([n]) => n)
+    .map(([n, label]) => `${n} ${label}`)
+    .join(", ");
+};
+
 // A persona is worth showing when any field is filled, not only the name: the
 // API sends name: null when the persona has no name key.
 const hasPersonaDetails = (p) =>
@@ -330,9 +344,9 @@ export default function TraceTable({
                     </Typography>
                   </>
                 )}
-                {t.skipReason && (
+                {(t.outcomeReason || unscoredSummary(t)) && (
                   <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                    {t.skipReason}
+                    {t.outcomeReason || unscoredSummary(t)}
                   </Typography>
                 )}
               </Stack>
