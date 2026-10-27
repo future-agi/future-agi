@@ -416,15 +416,13 @@ def _resealed(
             held = archives.sha256_hex(files[SEALED_MANIFEST])
         if held == manifest:
             sealed_for = (kept.get("environment_hash"), kept.get("suite_hash"))
-            return bool(kept.get("resealed")) and sealed_for == hashes
-    key = str(
-        ((head.payload or {}).get("metadata") or {}).get("authoring_object_key") or ""
-    )
-    try:
-        default = archives.split_authoring(
-            archives.read_archive(archives.get_archive(key))
-        )
-    except (S3Error, HostedHarnessError, ValueError):
+            return (
+                bool(kept.get("resealed"))
+                and sealed_for == hashes
+                and _contract_carried(head, split)
+            )
+    default = _default_authoring(head)
+    if default is None:
         return False
     # A reseal refreshes its inputs; every other file the bundle holds stays as built.
     if any(
@@ -434,17 +432,40 @@ def _resealed(
         and not hashing.is_environment_unhashed(path)
     ):
         return False
-    # An edited contract counts only when the reseal compiled what a build derives from
-    # it (tool handlers, traced tools); an older reseal copied the file alone.
-    contract = split.environment.get("contract.json")
-    if contract != default.environment.get("contract.json") and (
-        contract is None
-        or _sealed_metadata(split).get("contract_compiled")
-        != archives.sha256_hex(contract)
-    ):
+    if not _contract_carried(head, split, default):
         return False
     held = default.sealed.get(SEALED_MANIFEST)
     return held is None or archives.sha256_hex(held) != manifest
+
+
+def _default_authoring(head: HostedHarnessJob) -> archives.SplitArchive | None:
+    key = str(
+        ((head.payload or {}).get("metadata") or {}).get("authoring_object_key") or ""
+    )
+    try:
+        return archives.split_authoring(
+            archives.read_archive(archives.get_archive(key))
+        )
+    except (S3Error, HostedHarnessError, ValueError):
+        return None
+
+
+def _contract_carried(
+    head: HostedHarnessJob,
+    split: archives.SplitArchive,
+    default: archives.SplitArchive | None = None,
+) -> bool:
+    """Whether the bundle runs the tree's contract.json: the default pair's, or an edit
+    the reseal compiled (tool handlers, traced tools); an older reseal copied the file
+    alone."""
+    contract = split.environment.get("contract.json")
+    if contract is not None and _sealed_metadata(split).get(
+        "contract_compiled"
+    ) == archives.sha256_hex(contract):
+        return True
+    if default is None:
+        default = _default_authoring(head)
+    return default is not None and contract == default.environment.get("contract.json")
 
 
 # --- writing drafts -----------------------------------------------------------------

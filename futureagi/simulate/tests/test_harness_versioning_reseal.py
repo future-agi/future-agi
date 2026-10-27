@@ -125,6 +125,33 @@ def test_a_contract_edit_counts_only_when_the_reseal_compiled_it(
     assert drafts._resealed(head, split, HASHES) is expected
 
 
+@pytest.mark.parametrize(
+    ("compiled_for", "expected"),
+    [(None, False), (b'{"tools": []}', False), (b'{"tools": ["refund"]}', True)],
+)
+def test_a_drafts_own_bundle_counts_a_contract_edit_only_when_compiled(
+    head, monkeypatch, compiled_for, expected
+):
+    # Recorded resealed before reseals said whether they compiled the contract.
+    tree = {**BUILT, "contract.json": b'{"tools": ["refund"]}'}
+    compiled = (
+        {}
+        if compiled_for is None
+        else {"contract_compiled": archives.sha256_hex(compiled_for)}
+    )
+    manifest = _manifest(drafts.sealed_from(tree), **compiled)
+    kept = {
+        "manifest_sha256": archives.sha256_hex(manifest),
+        "resealed": True,
+        "environment_hash": HASHES[0],
+        "suite_hash": HASHES[1],
+    }
+    draft = SimpleNamespace(documents={"workspace_sealed": kept})
+    monkeypatch.setattr(drafts, "fresh_draft", lambda head, piece: draft)
+
+    assert drafts._resealed(head, _split(tree, manifest), HASHES) is expected
+
+
 def test_an_unreadable_draft_bundle_may_be_this_very_one(head, monkeypatch):
     draft = SimpleNamespace(documents={"workspace_sealed": {"key": "gone"}})
     monkeypatch.setattr(drafts, "fresh_draft", lambda head, piece: draft)
