@@ -44,6 +44,7 @@ import {
 } from "../buildEnvironment/console/scenarioSelectionBus";
 import { CHAT_SUGGESTIONS } from "./chat/chatSuggestions";
 import SelectionContextChip from "./chat/SelectionContextChip";
+import RunUsageBanner from "./run/RunUsageBanner";
 import BuildingStage from "../buildEnvironment/building/BuildingStage";
 import WorkspaceHeader from "./WorkspaceHeader";
 import SystemBanners from "./SystemBanners";
@@ -466,6 +467,7 @@ export default function EnvironmentWorkspace() {
 
       <SystemBanners env={env} envState={envState} patch={patch} />
       {!detailLoading && !detailFailed && <VersionBar env={env} envState={envState} />}
+      <RunUsageBanner />
 
       {/* A template-seeded env is read-only until forked — the banner states the
           lock and offers the fork. */}
