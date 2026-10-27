@@ -666,7 +666,28 @@ def _secret_line_parts(secret_value: str) -> list[str]:
     return [secret_part for secret_part in secret_parts if secret_part]
 
 
-def _redact_texts(texts: list[str], secret_values: Iterable[str]) -> list[str]:
+def _masked_cut_end(text: str, secret_values: Iterable[str]) -> str:
+    """``text`` with its end masked where it is the start of a value: a cut text may
+    end inside one, which then matches nothing."""
+    secret_start = len(text)
+    for secret_value in secret_values:
+        secret_head = secret_value[:SHORT_SECRET_MIN]
+        if len(secret_head) < SHORT_SECRET_MIN:
+            continue
+        at = text.find(secret_head, max(0, len(text) - len(secret_value)))
+        while 0 <= at < secret_start:
+            if secret_value.startswith(text[at:]):
+                secret_start = at
+                break
+            at = text.find(secret_head, at + 1)
+    if secret_start == len(text):
+        return text
+    return text[:secret_start] + "[REDACTED]"
+
+
+def _redact_texts(
+    texts: list[str], secret_values: Iterable[str], *, cut: Iterable[bool] = ()
+) -> list[str]:
     from simulate.services.hosted_harness_diagnostics import _redact, _secret_fragments
 
     # Locals holding values are named for the error tracker's scrubber (``secret``).
@@ -690,23 +711,27 @@ def _redact_texts(texts: list[str], secret_values: Iterable[str]) -> list[str]:
         ]
     )
     # ``_secret_fragments`` skips values under 8 characters.
+    secret_short = sorted(
+        {
+            secret_value
+            for secret_value in secret_whole
+            if SHORT_SECRET_MIN <= len(secret_value) < 8
+        },
+        key=len,
+        reverse=True,
+    )
     secret_patterns = [
         re.compile(rf"(?<![A-Za-z0-9_]){re.escape(secret_value)}(?![A-Za-z0-9_])")
-        for secret_value in sorted(
-            {
-                secret_value
-                for secret_value in secret_whole
-                if SHORT_SECRET_MIN <= len(secret_value) < 8
-            },
-            key=len,
-            reverse=True,
-        )
+        for secret_value in secret_short
     ]
+    cut = list(cut)
     redacted = []
-    for text in texts:
+    for index, text in enumerate(texts):
         text = _redact(text, secret_fragments)
         for secret_pattern in secret_patterns:
             text = secret_pattern.sub("[REDACTED]", text)
+        if index < len(cut) and cut[index]:
+            text = _masked_cut_end(text, [*secret_fragments, *secret_short])
         redacted.append(text)
     return redacted
 
@@ -720,18 +745,23 @@ def _every_value(secret_values: Mapping[str, set[str]]) -> list[str]:
 
 
 def redact_with_agent_values(
-    environment: HostedHarnessJob, texts: list[str], agent_version_ids: Iterable[Any]
+    environment: HostedHarnessJob,
+    texts: list[str],
+    agent_version_ids: Iterable[Any],
+    *,
+    cut: Iterable[bool] = (),
 ) -> list[str]:
     """``texts`` with every value of these agent versions masked; values of 8 or more
-    characters anywhere, of 4 to 7 as whole tokens. Raises ``redaction_unavailable``
-    when the values can't be read."""
+    characters anywhere, of 4 to 7 as whole tokens. A text flagged in ``cut`` also
+    loses an end that starts a value. Raises ``redaction_unavailable`` when the values
+    can't be read."""
     try:
         secret_values = _agent_secrets(environment, agent_version_ids)
     except Exception:  # noqa: BLE001 - nothing of a value may reach the error
         raise HostedHarnessError(
             "redaction_unavailable", "the agent's values can't be read", status_code=409
         ) from None
-    return _redact_texts(texts, _every_value(secret_values))
+    return _redact_texts(texts, _every_value(secret_values), cut=cut)
 
 
 def _mark_secret_paths(files: list[dict[str, Any]], secret_adc_names: set[str]) -> None:

@@ -1,3 +1,4 @@
+import time
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -95,6 +96,63 @@ def test_control_characters_cannot_push_a_value_past_the_masked_prefix():
 
     assert value[:4] not in report["notes"]
     assert "[REDAC" in report["notes"]
+
+
+def _report(result, value):
+    nudge = SimpleNamespace(
+        trigger_agent_version_id="a1",
+        base_agent_version_id=None,
+        base_environment_version=None,
+        draft_snapshot={},
+    )
+    with patch.object(nudges, "_agent_secrets", return_value={"K": {value}}):
+        return rebuild._report(
+            SimpleNamespace(id="env", agent_version_id=None), nudge, result
+        )
+
+
+# ALK cuts a problem text at the platform's cap plus the longest credential.
+ALK_CUT = rebuild.PROBLEM_TEXT_MAX + CREDENTIAL_VALUE_MAX_CHARS
+
+
+@pytest.mark.parametrize(
+    "secret_text",
+    [
+        # Masking the earlier copies shrinks the text, pulling the cut one forward.
+        lambda value: "boom: " + value * 3,
+        # A masked assignment shrinks it the same way.
+        lambda value: "token=" + "x" * 65_600 + " " + value,
+    ],
+    ids=["repeated", "assignment"],
+)
+def test_a_value_cut_short_by_alk_is_masked_where_masking_pulls_it_in(secret_text):
+    value = ("FAKE-CREDENTIAL-" + "0123456789abcdef" * 2_000)[:22_200]
+    cut = secret_text(value)[:ALK_CUT]
+
+    report = _report({"checks": {"problems": [{"message": cut}]}}, value)
+
+    message = report["problems"][0]["message"]
+    assert value[:8] not in message
+    assert "[REDAC" in message
+
+
+def test_a_value_the_report_cuts_short_is_masked():
+    # A stored value longer than accepted today, straddling the notes' own cut.
+    value = ("FAKE-CREDENTIAL-" + "0123456789abcdef" * 6_000)[:90_000]
+    notes = "n" * (rebuild.NOTES_MAX - 10) + value
+
+    report = _report({"notes": notes}, value)
+
+    assert value[:8] not in report["notes"]
+
+
+def test_a_private_key_header_flood_is_masked_quickly():
+    notes = "-----BEGIN PRIVATE KEY-----" * 15_000
+
+    started = time.monotonic()
+    _report({"notes": notes, "checks": {"problems": [{"message": notes}]}}, "x" * 8)
+
+    assert time.monotonic() - started < 5
 
 
 # ALK normalises its result texts the same way before it cuts them
