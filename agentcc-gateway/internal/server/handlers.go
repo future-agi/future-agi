@@ -1971,6 +1971,10 @@ func (h *Handlers) setAgentccHeadersForProvider(w http.ResponseWriter, rc *model
 		w.Header().Set("x-agentcc-model-used", rc.ResolvedModel)
 	}
 
+	if reason := rc.Metadata[metadataErrorKey]; reason != "" {
+		w.Header().Set("x-agentcc-metadata-error", reason)
+	}
+
 	latency := rc.Elapsed()
 	w.Header().Set("x-agentcc-latency-ms", latencyString(latency))
 
@@ -2056,14 +2060,23 @@ func applyCallerMetadata(rc *models.RequestContext, r *http.Request, body json.R
 		mergeCallerMetadata(rc, body)
 	}
 	if meta := r.Header.Get("x-agentcc-metadata"); meta != "" {
-		mergeCallerMetadata(rc, json.RawMessage(meta))
+		parseMetadataHeader(meta, rc)
 	}
 }
 
+// metadataErrorKey flags a request whose x-agentcc-metadata header carried no
+// dimensions because it is not a JSON object. The request still goes through:
+// refusing it would break callers that send a bad header today. The flag
+// reaches the request log row and the x-agentcc-metadata-error response
+// header, so the unattributed cost can be traced back to its caller.
+const metadataErrorKey = "metadata_error"
+
 // parseMetadataHeader records the dimensions carried by the x-agentcc-metadata
-// header alone, for endpoints that read the header before their body exists.
+// header, and flags a header that is not a JSON object.
 func parseMetadataHeader(meta string, rc *models.RequestContext) {
-	mergeCallerMetadata(rc, json.RawMessage(meta))
+	if !mergeCallerMetadata(rc, json.RawMessage(meta)) {
+		rc.Metadata[metadataErrorKey] = "x-agentcc-metadata is not a JSON object"
+	}
 }
 
 // applyCallerExtras snapshots the request body's unknown top-level fields onto
@@ -2186,10 +2199,10 @@ func isCredentialShapedKey(key string) bool {
 // its JSON text. Strict string-only decoding threw away the whole object over
 // one numeric value, which is a silent and very confusing way to lose every
 // dimension a caller sent.
-func mergeCallerMetadata(rc *models.RequestContext, raw json.RawMessage) {
+func mergeCallerMetadata(rc *models.RequestContext, raw json.RawMessage) bool {
 	var m map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &m); err != nil {
-		return
+	if err := json.Unmarshal(raw, &m); err != nil || m == nil {
+		return false
 	}
 	for k, rv := range m {
 		if isBlockedMetadataKey(k) {
@@ -2207,6 +2220,7 @@ func mergeCallerMetadata(rc *models.RequestContext, raw json.RawMessage) {
 		}
 		rc.Metadata[k] = v
 	}
+	return true
 }
 
 // isBlockedMetadataKey returns true for metadata keys that must not be
@@ -2229,7 +2243,7 @@ func isBlockedMetadataKey(key string) bool {
 	// to cover them also swallows cost_center and cost_code — ordinary business
 	// dimensions. A new internal cost_* key must be added here by hand.
 	switch lower {
-	case "authorization", "client_ip", "timeout_ms", "cost", "cost_source":
+	case "authorization", "client_ip", "timeout_ms", "cost", "cost_source", metadataErrorKey:
 		return true
 	}
 	return false
