@@ -2076,6 +2076,10 @@ const metadataErrorKey = "metadata_error"
 func parseMetadataHeader(meta string, rc *models.RequestContext) {
 	if !mergeCallerMetadata(rc, json.RawMessage(meta)) {
 		rc.Metadata[metadataErrorKey] = "x-agentcc-metadata is not a JSON object"
+		// Requests on config-file keys write no log row, so this line is what
+		// an operator can find. The header's value is not logged.
+		slog.Warn("x-agentcc-metadata is not a JSON object",
+			"request_id", rc.RequestID, "header_bytes", len(meta))
 	}
 }
 
