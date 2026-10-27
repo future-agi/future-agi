@@ -136,10 +136,10 @@ def _result(nudge, *, changed=True, passed=True, problems=(), notes="done", **ex
     )
 
 
-def _rebuilt(nudge, *, contract=REFUND, **files):
+def _rebuilt(nudge, *, contract=REFUND, compiled=True, **files):
     """The bundle the rebuild seals, stamped with what it carried."""
     tree = archives.read_archive(_authoring(contract=contract, **files))
-    return _resealed_manifest(tree, rebuilt=str(nudge.id))
+    return _resealed_manifest(tree, compiled=compiled, rebuilt=str(nudge.id))
 
 
 def _saved_world(world):
@@ -162,6 +162,7 @@ def _turn(
     result=...,
     meanwhile=None,
     lease_agent=None,
+    compiled=True,
     **files,
 ):
     """The rebuild's turn as feedNudgeTurn runs it: dispatched, started, its save
@@ -194,7 +195,8 @@ def _turn(
         files.setdefault("sub_goals.json", CHECKED)
     # The rebuild seals its own bundle.
     files.setdefault(
-        "environment-bundle/manifest.json", _rebuilt(nudge, contract=contract, **files)
+        "environment-bundle/manifest.json",
+        _rebuilt(nudge, contract=contract, compiled=compiled, **files),
     )
     from simulate.services.hosted_harness_gateway import (
         with_authoring_basis,
@@ -955,12 +957,14 @@ class TestLanding:
         )
 
         with django_capture_on_commit_callbacks(execute=True):
-            nudge = _turn(environment, nudge, storage, **_saved_world(world))
+            # ALK leaves a tool-free contract's first tool to a build: unstamped.
+            nudge = _turn(
+                environment, nudge, storage, compiled=False, **_saved_world(world)
+            )
 
         assert nudge.state == "applied", (nudge.error, nudge.summary)
-        # A new handler is not in the resealed bundle, so that pair certifies.
-        sealed = environment.payload["metadata"]["default_pair_sealed"]
-        assert sealed is not bool(world["tools"])
+        # The edit is not compiled into the resealed bundle, so that pair certifies.
+        assert environment.payload["metadata"]["default_pair_sealed"] is False
 
     @pytest.mark.parametrize(
         ("base", "contract", "sub_goals", "state"),

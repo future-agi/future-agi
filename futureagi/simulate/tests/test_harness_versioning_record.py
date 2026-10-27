@@ -78,8 +78,11 @@ def _scenario(name, **fields):
     }
 
 
-def _resealed_manifest(tree, **fields):
-    """A bundle manifest stamped for ``tree`` as ALK's reseal stamps it."""
+def _resealed_manifest(tree, *, compiled=True, **fields):
+    """A bundle manifest stamped for ``tree`` as ALK's reseal stamps it; ``compiled``
+    False when ALK left the contract edit to a build (e.g. a first tool added)."""
+    if not compiled:
+        return json.dumps({**fields, "metadata": {}})
     metadata = {"sealed_from": drafts.sealed_from(tree)}
     if "contract.json" in tree:
         metadata["contract_compiled"] = archives.sha256_hex(tree["contract.json"])
