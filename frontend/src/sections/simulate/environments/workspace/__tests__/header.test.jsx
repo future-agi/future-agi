@@ -271,25 +271,41 @@ describe("WorkspaceHeader", () => {
 
     await user.click(screen.getByRole("button", { name: "Run simulation" }));
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(onStartRun).toHaveBeenCalledWith(undefined, 1);
+    // Three repeats by default: the fewest where a scenario can be flaky.
+    expect(onStartRun).toHaveBeenCalledWith(undefined, 3);
   });
 
-  it("runs with the repeats picked in the header dropdown", async () => {
+  it("keeps the repeats picked in the header dropdown in the environment's state", async () => {
+    const user = userEvent.setup();
+    const patch = vi.fn();
+    render(withRouter(<WorkspaceHeader {...baseProps} patch={patch} canRun />));
+
+    await user.click(screen.getByRole("button", { name: "Repeats: 3" }));
+    await user.click(screen.getByText("5×"));
+    expect(patch).toHaveBeenCalledWith({ runRepeats: 5 });
+  });
+
+  it("runs with the environment's repeats", async () => {
     const user = userEvent.setup();
     const onStartRun = vi.fn();
-    render(withRouter(<WorkspaceHeader {...baseProps} canRun onStartRun={onStartRun} />));
-
-    await user.click(screen.getByText(/^Repeats:/));
-    await user.click(screen.getByText("3×"));
+    render(
+      withRouter(
+        <WorkspaceHeader
+          {...baseProps}
+          envState={{ ...baseProps.envState, runRepeats: 5 }}
+          canRun
+          onStartRun={onStartRun}
+        />,
+      ),
+    );
     await user.click(screen.getByRole("button", { name: "Run simulation" }));
-    expect(onStartRun).toHaveBeenCalledWith(undefined, 3);
+    expect(onStartRun).toHaveBeenCalledWith(undefined, 5);
   });
 
   it("hides the header Run + Repeats while a scenario selection is active", () => {
     render(withRouter(<WorkspaceHeader {...baseProps} canRun selectionActive />));
     expect(screen.queryByRole("button", { name: "Run simulation" })).toBeNull();
-    // The Repeats button's accessible name is its tooltip, so match its text.
-    expect(screen.queryByText(/^Repeats:/)).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Repeats:/ })).toBeNull();
   });
 
   it("disables Run simulation with a reason tooltip when the env cannot run", async () => {

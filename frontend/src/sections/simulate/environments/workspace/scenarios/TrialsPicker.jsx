@@ -11,9 +11,15 @@ import Iconify from "src/components/iconify";
 // in 1–20. Same presets and popover shape as the selection bar's inline picker,
 // extracted so the environment header can share the identical control.
 const TRIAL_PRESETS = [1, 3, 5, 8];
-const DEFAULT_TRIALS_LABEL = 1;
+const DEFAULT_TRIALS_LABEL = 3;
 
-export default function TrialsPicker({ trials, onChange, scenarioCount = 0, size = "sm" }) {
+export default function TrialsPicker({
+  trials,
+  onChange,
+  scenarioCount = 0,
+  unit = "conversation",
+  size = "sm",
+}) {
   const [anchor, setAnchor] = useState(null);
   const [customOpen, setCustomOpen] = useState(false);
   const [customValue, setCustomValue] = useState(String(trials || 1));
@@ -39,10 +45,11 @@ export default function TrialsPicker({ trials, onChange, scenarioCount = 0, size
 
   return (
     <>
-      <Tooltip arrow title="How many times to run each scenario (reliability across trials)">
+      <Tooltip arrow title={`Repeats: each scenario runs ${k} time${k === 1 ? "" : "s"}`}>
         <Button
           size="small"
           variant="outlined"
+          aria-label={`Repeats: ${k}`}
           onClick={(e) => setAnchor(e.currentTarget)}
           endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={11} />}
           startIcon={<Iconify icon="solar:repeat-linear" width={13} />}
@@ -58,7 +65,8 @@ export default function TrialsPicker({ trials, onChange, scenarioCount = 0, size
             },
           }}
         >
-          Repeats: {k}
+          {/* "3×": the word lives in the tooltip and the menu, as in Vel's header. */}
+          {`${k}×`}
         </Button>
       </Tooltip>
 
@@ -76,7 +84,8 @@ export default function TrialsPicker({ trials, onChange, scenarioCount = 0, size
           </Typography>
           {scenarioCount > 0 && (
             <Typography sx={{ typography: "s3", color: "text.subtitle", fontSize: 11.5, mt: 0.25 }}>
-              {scenarioCount} {scenarioCount === 1 ? "scenario" : "scenarios"} × {k} {k === 1 ? "repeat" : "repeats"} = {totalRuns} runs
+              {scenarioCount} {scenarioCount === 1 ? "scenario" : "scenarios"} × {k} {k === 1 ? "repeat" : "repeats"} = {totalRuns} {unit}
+              {totalRuns === 1 ? "" : "s"}
             </Typography>
           )}
           <Typography sx={{ typography: "s3", color: k < 3 ? "warning.main" : "text.subtitle", fontSize: 11.5, mt: 0.25 }}>
@@ -180,6 +189,7 @@ export default function TrialsPicker({ trials, onChange, scenarioCount = 0, size
   );
 }
 TrialsPicker.propTypes = {
+  unit: PropTypes.string,
   trials: PropTypes.number,
   onChange: PropTypes.func,
   scenarioCount: PropTypes.number,

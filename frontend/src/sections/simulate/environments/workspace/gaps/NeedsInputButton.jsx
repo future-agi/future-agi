@@ -74,6 +74,8 @@ export default function NeedsInputButton({ onGo }) {
             color: "text.primary",
             borderColor: "divider",
             minWidth: 0,
+            // Icon only when nothing is open, so the button hugs it.
+            ...(!openCount && { px: 0.875 }),
             "& .MuiButton-startIcon": { mr: openCount ? 0.75 : 0, ml: 0 },
           }}
         >

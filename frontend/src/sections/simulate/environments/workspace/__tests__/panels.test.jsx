@@ -130,7 +130,7 @@ describe("WorkspacePanels", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText("runs-body")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Run baseline" }));
-    expect(onStartRun).toHaveBeenCalledWith(undefined, 1);
+    expect(onStartRun).toHaveBeenCalledWith(undefined, 3);
   });
 
   it("disables Run baseline when the environment can't run yet", () => {

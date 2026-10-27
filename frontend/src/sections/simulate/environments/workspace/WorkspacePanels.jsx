@@ -13,6 +13,7 @@ import RunsSummary from "./runs/summary/RunsSummary";
 import SettingsPanel from "./settings/SettingsPanel";
 import WorldPanel from "./world/WorldPanel";
 import RunsEmptyState from "./runs/RunsEmptyState";
+import useRunRepeats from "./run/useRunRepeats";
 import WorkspaceTabLabel from "./WorkspaceTabLabel";
 import { WORKSPACE_TABS } from "./workspace.constants";
 
@@ -73,6 +74,7 @@ export default function WorkspacePanels({
     : runCount ?? runs.length;
   // Runs is always in the rail; before the first run it offers the baseline.
   const tabs = WORKSPACE_TABS;
+  const [repeats] = useRunRepeats(envState, patch);
   const noRuns = !runsLoading && runsTotal === 0;
 
   // Default landing is the Overview, which is also the first tab in the rail.
@@ -124,6 +126,7 @@ export default function WorkspacePanels({
         if (noRuns)
           return (
             <RunsEmptyState
+              repeats={repeats}
               onStartRun={onStartRun}
               canRun={canRun}
               runBlockedReason={runBlockedReason}

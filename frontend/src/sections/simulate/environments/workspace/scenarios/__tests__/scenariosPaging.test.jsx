@@ -274,7 +274,8 @@ describe("ScenariosStep — run a selection", () => {
     // never the row ids (`srv-N`) the selection holds.
     expect(keys).toHaveLength(2);
     keys.forEach((k) => expect(k).toMatch(/^key-\d+$/));
-    expect(trials).toBe(1);
+    // The shared default: three repeats.
+    expect(trials).toBe(3);
   });
 
   it("runs every match minus the un-ticked rows, by key", async () => {

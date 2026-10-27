@@ -27,6 +27,8 @@ import TrialsPicker from "./scenarios/TrialsPicker";
 // import EnvVersionPin from "./EnvVersionPin";
 import ForkMenu from "./ForkMenu";
 import NeedsInputButton from "./gaps/NeedsInputButton";
+import RunButton from "./run/RunButton";
+import useRunRepeats from "./run/useRunRepeats";
 import { RUN_MODE_CHIP, WORKSPACE_COPY } from "./workspace.constants";
 
 // The environment workspace header: back to the list, the channel icon, the
@@ -37,9 +39,8 @@ import { RUN_MODE_CHIP, WORKSPACE_COPY } from "./workspace.constants";
 // read-only and the overflow is hidden (Fork lives on the Overview card there).
 export default function WorkspaceHeader({
   env,
-  // patch is still passed by the parent for the version pin; re-add it here when
-  // the commented-out <EnvVersionPin> below is restored.
   envState,
+  patch,
   canRun,
   runBlockedReason,
   locked = false,
@@ -56,7 +57,7 @@ export default function WorkspaceHeader({
   // run-all over every scenario × k straight away. A scenario selection on the
   // Scenarios tab takes over the primary Run, so the header yields while one is
   // active.
-  const [headerTrials, setHeaderTrials] = useState(1);
+  const [repeats, setRepeats] = useRunRepeats(envState, patch);
   const scenarioCount = envState?.scenarios?.length ?? 0;
   // Cancel is offered only while the build is actually running (not once it has
   // failed/canceled). CancelBuildControl self-hides otherwise.
@@ -150,26 +151,20 @@ export default function WorkspaceHeader({
           <NeedsInputButton onGo={onGo} />
           {canRun && (
             <TrialsPicker
-              trials={headerTrials}
-              onChange={setHeaderTrials}
+              trials={repeats}
+              onChange={setRepeats}
               scenarioCount={scenarioCount}
+              unit={env.surface === "voice" ? "call" : "conversation"}
             />
           )}
-          <CustomTooltip show={!canRun} title={runBlockedReason} size="small" arrow>
-            <span>
-              <Button
-                variant="contained"
-                color="primary"
-                size="small"
-                disabled={!canRun}
-                onClick={() => onStartRun?.(undefined, headerTrials)}
-                startIcon={<Iconify icon="solar:play-bold" width={15} />}
-                sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
-              >
-                {WORKSPACE_COPY.run}
-              </Button>
-            </span>
-          </CustomTooltip>
+          <RunButton
+            env={env}
+            scenarioCount={scenarioCount}
+            repeats={repeats}
+            canRun={canRun}
+            runBlockedReason={runBlockedReason}
+            onStartRun={onStartRun}
+          />
         </Stack>
       )}
 

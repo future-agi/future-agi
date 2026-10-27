@@ -15,6 +15,7 @@ import AddScenariosDrawer from "./AddScenariosDrawer";
 import ScenarioEditor from "./ScenarioEditor";
 import ScenarioDrawer from "./ScenarioDrawer";
 import PropTypes from "prop-types";
+import useRunRepeats from "../run/useRunRepeats";
 import {
   publishScenarioSelection,
   clearScenarioSelection,
@@ -94,9 +95,8 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
   const [view, setView] = useState("table");
   const [rowHeight, setRowHeight] = useState("Short");
   // Repeats (k) for a selection run — how many times each selected scenario is
-  // re-run. Lives here (the selection bar is presentational) and rides the run
-  // URL as ?trials=k. Default single-shot.
-  const [trials, setTrials] = useState(1);
+  // re-run. Shared with the header's Run and the Runs tab's baseline.
+  const [trials, setTrials] = useRunRepeats(envState, patch);
   const [query, setQuery] = useState("");
   const [filters, setFilters] = useState({});
   const [adding, setAdding] = useState(false);

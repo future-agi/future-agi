@@ -485,7 +485,7 @@ describe("RunTraceTable — re-running as a new simulation", () => {
 
     await openMenu(user);
     expect(screen.getByText("Re-run 2 scenarios")).toBeInTheDocument();
-    expect(screen.getByText("Repeats: 3")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Repeats: 3" })).toBeInTheDocument();
     expect(
       screen.getByText("2 scenarios × 3 repeats = 6 calls"),
     ).toBeInTheDocument();
@@ -592,7 +592,7 @@ describe("RunTraceTable — re-running as a new simulation", () => {
     await user.click(rowBox("refund · Trial 1"));
     await openMenu(user);
 
-    await user.click(screen.getByText("Repeats: 3"));
+    await user.click(screen.getByRole("button", { name: "Repeats: 3" }));
     await user.click(screen.getByText("1×"));
     expect(
       screen.getByText("1 scenario × 1 repeat = 1 call"),
@@ -612,7 +612,7 @@ describe("RunTraceTable — re-running as a new simulation", () => {
     await user.click(rowBox("escalate · Trial 1"));
     await openMenu(user);
 
-    await user.click(screen.getByText("Repeats: 3"));
+    await user.click(screen.getByRole("button", { name: "Repeats: 3" }));
     await user.click(screen.getByText("Custom…"));
     const custom = screen.getByRole("spinbutton");
     await user.clear(custom);
