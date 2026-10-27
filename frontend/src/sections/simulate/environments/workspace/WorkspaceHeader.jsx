@@ -26,6 +26,7 @@ import TrialsPicker from "./scenarios/TrialsPicker";
 // contract yet. Hidden in the header until the contract exposes one.
 // import EnvVersionPin from "./EnvVersionPin";
 import ForkMenu from "./ForkMenu";
+import NeedsInputButton from "./gaps/NeedsInputButton";
 import { RUN_MODE_CHIP, WORKSPACE_COPY } from "./workspace.constants";
 
 // The environment workspace header: back to the list, the channel icon, the
@@ -46,6 +47,7 @@ export default function WorkspaceHeader({
   onFork,
   onStartRun,
   selectionActive = false,
+  onGo,
 }) {
   const navigate = useNavigate();
   const [renameOpen, setRenameOpen] = useState(false);
@@ -145,6 +147,7 @@ export default function WorkspaceHeader({
           Repeats pill + Run to keep one primary action at a time. */}
       {!selectionActive && (
         <Stack direction="row" alignItems="center" spacing={1}>
+          <NeedsInputButton onGo={onGo} />
           {canRun && (
             <TrialsPicker
               trials={headerTrials}
@@ -291,4 +294,6 @@ WorkspaceHeader.propTypes = {
   onStartRun: PropTypes.func,
   // True while a scenario selection owns the primary Run; hides the header's.
   selectionActive: PropTypes.bool,
+  // Switches the workspace tab (Needs input links into a tab).
+  onGo: PropTypes.func,
 };

@@ -46,6 +46,7 @@ import VersionBar from "./VersionBar";
 import TemplateLockBanner from "./TemplateLockBanner";
 import WorkspacePanels from "./WorkspacePanels";
 import useWorkspaceTab from "./helpers/useWorkspaceTab";
+import useUiSample from "../hooks/useUiSample";
 import { gapsByTab, counts } from "./helpers/workspaceGaps";
 import { forkEnvironment as buildFork } from "./helpers/forkEnvironment";
 import { WORKSPACE_COPY } from "./workspace.constants";
@@ -104,6 +105,9 @@ export default function EnvironmentWorkspace() {
     building || buildFailed ? undefined : bootstrapState,
   );
   const { tab, setTab } = useWorkspaceTab();
+  // The setup gaps are sample data, so their tab badges show only with
+  // ?uiSample=gaps, like the Needs input count.
+  const sampleGaps = useUiSample("gaps");
   const {
     exhaustionError,
     handleError: handleCreditError,
@@ -443,6 +447,7 @@ export default function EnvironmentWorkspace() {
         onFork={onFork}
         onStartRun={startRun}
         selectionActive={selectionActive}
+        onGo={setTab}
       />
       {creditBanner}
       {refusalLine}
@@ -498,7 +503,7 @@ export default function EnvironmentWorkspace() {
             locked={locked}
             backed={source === "harness"}
             onFork={onFork}
-            gapsByTab={gapsByTab(env, serverEnvState)}
+            gapsByTab={sampleGaps ? gapsByTab(env, serverEnvState) : undefined}
             counts={counts(serverEnvState)}
             overviewCounts={overviewCounts}
             overviewWorld={overviewWorld}
