@@ -195,6 +195,10 @@ def _passing(**extra):
             "simulate.services.harness_provider._preflight_credential_probe",
             **({"return_value": []} | extra),
         ),
+        patch(
+            "simulate.services.hosted_harness_gateway.platform_dialer_status",
+            return_value={"available": True, "missing": []},
+        ),
     ]
 
 

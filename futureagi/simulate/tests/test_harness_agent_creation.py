@@ -86,6 +86,10 @@ def gates():
             return_value=None,
         )
         on("simulate.services.harness_provider._validate_phone_connectivity")
+        on(
+            "simulate.services.hosted_harness_gateway.platform_dialer_status",
+            return_value={"available": True, "missing": []},
+        )
         on("simulate.services.harness_usage.require_harness_run_usage")
         on("simulate.services.harness_usage.require_harness_source_call_usage")
         yield SimpleNamespace(

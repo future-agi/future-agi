@@ -36,8 +36,9 @@ def test_agent_version_preflight_runs_on_the_runner_queue():
     from simulate.temporal.constants import QUEUE_RUNNER
     from tfc.temporal.drop_in.decorator import _ACTIVITY_WRAPPERS
 
+    runner_activities = registry.get_activities_for_queue(QUEUE_RUNNER)
     runner = _ACTIVITY_WRAPPERS[preflight_harness_agent_version.name]
-    assert runner in registry.get_activities_for_queue(QUEUE_RUNNER)
+    assert runner in runner_activities
     for queue in ("default", "tasks_s", "tasks_l", "tasks_xl"):
         assert runner not in registry.get_activities_for_queue(queue)
 
@@ -50,10 +51,12 @@ def test_agent_change_detection_runs_on_the_default_queue():
     from simulate.temporal.constants import QUEUE_RUNNER
     from tfc.temporal.drop_in.decorator import _ACTIVITY_WRAPPERS
 
+    default_activities = registry.get_activities_for_queue("default")
+    runner_activities = registry.get_activities_for_queue(QUEUE_RUNNER)
     for task in (poll_harness_github_heads, observe_harness_github_push):
         wrapper = _ACTIVITY_WRAPPERS[task.name]
-        assert wrapper in registry.get_activities_for_queue("default")
-        assert wrapper not in registry.get_activities_for_queue(QUEUE_RUNNER)
+        assert wrapper in default_activities
+        assert wrapper not in runner_activities
 
 
 def test_nudge_activities_run_on_the_default_queue():
@@ -70,6 +73,8 @@ def test_nudge_activities_run_on_the_default_queue():
     from tfc.temporal.drop_in.decorator import _ACTIVITY_WRAPPERS
     from tfc.temporal.schedules.simulate import SIMULATE_SCHEDULES
 
+    default_activities = registry.get_activities_for_queue("default")
+    runner_activities = registry.get_activities_for_queue(QUEUE_RUNNER)
     for task in (
         raise_harness_environment_nudge,
         reconcile_harness_environment_nudges,
@@ -79,11 +84,11 @@ def test_nudge_activities_run_on_the_default_queue():
         stop_harness_nudge_sandbox,
     ):
         wrapper = _ACTIVITY_WRAPPERS[task.name]
-        assert wrapper in registry.get_activities_for_queue("default")
-        assert wrapper not in registry.get_activities_for_queue(QUEUE_RUNNER)
+        assert wrapper in default_activities
+        assert wrapper not in runner_activities
     # Activations run where the agent check runs.
     retry = _ACTIVITY_WRAPPERS[retry_harness_deferred_activations.name]
-    assert retry in registry.get_activities_for_queue(QUEUE_RUNNER)
+    assert retry in runner_activities
     [tick] = [
         one for one in SIMULATE_SCHEDULES if one.schedule_id == "tick-harness-nudges"
     ]
