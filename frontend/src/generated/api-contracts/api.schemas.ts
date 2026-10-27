@@ -1196,6 +1196,25 @@ export interface TeamCreateRequestApi {
   members?: CreateMemberApi[];
 }
 
+export interface TeamCreatedMemberResponseApi {
+  id: string;
+  /** @minLength 1 */
+  email: string;
+  name: string;
+  organization_role: string;
+  organization: AccountOrganizationDetailApi;
+  created_at: string;
+  /** @minLength 1 */
+  status: string;
+  role: string;
+  goals?: string[];
+  /**
+   * Member was added, but the invitation email could not be sent.
+   * @minLength 1
+   */
+  invite_email_warning?: string;
+}
+
 export interface TeamCreateErrorItemApi {
   index?: number;
   /** @minLength 1 */
@@ -1205,7 +1224,7 @@ export interface TeamCreateErrorItemApi {
 }
 
 export interface TeamCreateResultApi {
-  created_members: AccountUserItemResponseApi[];
+  created_members: TeamCreatedMemberResponseApi[];
   workspace: WorkspaceSummaryApi;
   errors?: TeamCreateErrorItemApi[];
 }
@@ -1213,6 +1232,56 @@ export interface TeamCreateResultApi {
 export interface TeamCreateResponseApi {
   status: boolean;
   result: TeamCreateResultApi;
+}
+
+export type TeamCreateErrorResponseApiType =
+  (typeof TeamCreateErrorResponseApiType)[keyof typeof TeamCreateErrorResponseApiType];
+
+export const TeamCreateErrorResponseApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+/**
+ * String error message or structured account/login error metadata.
+ */
+export type TeamCreateErrorResponseApiResult = {
+  error?: string;
+  error_code?: string;
+  message?: string;
+  blocked?: boolean;
+  remaining_attempts?: number;
+  block_time?: number;
+  block_time_remaining?: number;
+  created_members?: TeamCreatedMemberResponseApi[];
+  workspace?: WorkspaceSummaryApi;
+  errors?: TeamCreateErrorItemApi[];
+};
+
+export type TeamCreateErrorResponseApiDetails = { [key: string]: string[] };
+
+export interface TeamCreateErrorResponseApi {
+  status?: boolean;
+  type?: TeamCreateErrorResponseApiType;
+  code?: string;
+  detail?: string;
+  /** String error message or structured account/login error metadata. */
+  result?: TeamCreateErrorResponseApiResult;
+  message?: string;
+  error?: string;
+  attr?: string;
+  details?: TeamCreateErrorResponseApiDetails;
 }
 
 export interface TeamRemoveResultApi {
@@ -23395,8 +23464,8 @@ export interface ReliabilityIntervalApi {
   low: number;
   high: number;
   effective_n: number;
+  scenarios: number;
   evaluated: number;
-  clusters: number;
 }
 
 export type ReliabilityRowApiVerdict =
@@ -23424,6 +23493,7 @@ export interface ReliabilityRowApi {
   evaluated: number;
   pass_rate: number;
   verdict: ReliabilityRowApiVerdict;
+  call_ids: string[];
 }
 
 export interface ReliabilityApi {
@@ -23434,6 +23504,15 @@ export interface ReliabilityApi {
   repeated: number;
   flaky: number;
   flip_rate: number;
+  k: number;
+  inconclusive: number;
+  pass_hat_1: number;
+  pass_hat_k: number;
+  pass_hat_k_scenarios: number;
+  pass_hat_k_passed: number;
+  pass_hat_k_excluded: number;
+  trials_passed: number;
+  trials_evaluated: number;
   pass_rate_interval: ReliabilityIntervalApi;
   rows: ReliabilityRowApi[];
 }
@@ -29233,6 +29312,7 @@ export const SharedLinkListApiResourceType = {
   dataset: "dataset",
   project: "project",
   call_execution: "call_execution",
+  error_feed_issue: "error_feed_issue",
 } as const;
 
 export type SharedLinkListApiAccessType =
@@ -29267,6 +29347,7 @@ export const SharedLinkCreateApiResourceType = {
   dashboard: "dashboard",
   project: "project",
   call_execution: "call_execution",
+  error_feed_issue: "error_feed_issue",
 } as const;
 
 export type SharedLinkCreateApiAccessType =
@@ -29300,6 +29381,7 @@ export const SharedLinkDetailApiResourceType = {
   dataset: "dataset",
   project: "project",
   call_execution: "call_execution",
+  error_feed_issue: "error_feed_issue",
 } as const;
 
 export type SharedLinkDetailApiAccessType =
@@ -29367,6 +29449,7 @@ export const SharedLinkResolveResponseApiResourceType = {
   dataset: "dataset",
   project: "project",
   call_execution: "call_execution",
+  error_feed_issue: "error_feed_issue",
 } as const;
 
 export type SharedLinkResolveResponseApiAccessType =
@@ -29452,6 +29535,11 @@ export interface SharedLinkResolvedDataApi {
   updated_at?: string;
   widgets?: SharedLinkResolvedDataApiWidgetsItem[];
   widget_count?: number;
+  issue?: FeedDetailCoreApi;
+  overview?: OverviewResponseApi;
+  traces?: TracesTabResponseApi;
+  trends?: TrendsTabResponseApi;
+  sidebar?: FeedSidebarApi;
 }
 
 export interface SharedLinkResolveResponseApi {
@@ -29495,6 +29583,110 @@ export interface SharedLinkResolveErrorApi {
   error?: string;
   attr?: string;
   details?: SharedLinkResolveErrorApiDetails;
+}
+
+export type EvalRollupApiScope =
+  (typeof EvalRollupApiScope)[keyof typeof EvalRollupApiScope];
+
+export const EvalRollupApiScope = {
+  trace: "trace",
+  span: "span",
+} as const;
+
+export type EvalRollupEvalApiTargetType =
+  (typeof EvalRollupEvalApiTargetType)[keyof typeof EvalRollupEvalApiTargetType];
+
+export const EvalRollupEvalApiTargetType = {
+  span: "span",
+  trace: "trace",
+} as const;
+
+/**
+ * Any valid JSON value.
+ */
+export type EvalRollupSpanApiValue = JsonValueApi;
+
+export interface EvalRollupSpanApi {
+  /** @minLength 1 */
+  span_id: string;
+  span_name?: string;
+  /** Any valid JSON value. */
+  value?: EvalRollupSpanApiValue | null;
+  /** @minLength 1 */
+  explanation?: string | null;
+  error?: boolean;
+  /** @minLength 1 */
+  status?: string | null;
+  eval_config_id?: string;
+}
+
+/**
+ * Any valid JSON value.
+ */
+export type EvalRollupEvalApiChoicesMap = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type EvalRollupEvalApiAggregate = JsonValueApi;
+
+export interface EvalRollupEvalApi {
+  /** @minLength 1 */
+  eval_config_id: string;
+  /** @minLength 1 */
+  eval_name: string;
+  /** @minLength 1 */
+  output_type?: string | null;
+  /** @minLength 1 */
+  template_type?: string | null;
+  target_type?: EvalRollupEvalApiTargetType | null;
+  /** Any valid JSON value. */
+  choices_map?: EvalRollupEvalApiChoicesMap | null;
+  /** Any valid JSON value. */
+  aggregate: EvalRollupEvalApiAggregate;
+  spans: EvalRollupSpanApi[];
+  error?: boolean;
+}
+
+export interface EvalRollupApi {
+  scope: EvalRollupApiScope;
+  evals: EvalRollupEvalApi[];
+  error?: boolean;
+}
+
+export type TraceDetailSpanApiObservationSpan = { [key: string]: unknown };
+
+export type TraceDetailSpanApiChildrenItem = { [key: string]: unknown };
+
+export type TraceDetailSpanApiEvalScoresItem = { [key: string]: unknown };
+
+export type TraceDetailSpanApiAnnotationsItem = { [key: string]: unknown };
+
+export interface TraceDetailSpanApi {
+  observation_span: TraceDetailSpanApiObservationSpan;
+  children?: TraceDetailSpanApiChildrenItem[];
+  /** Raw eval rows retained for backwards-compatible array consumers. */
+  eval_scores?: TraceDetailSpanApiEvalScoresItem[];
+  eval_rollup?: EvalRollupApi;
+  annotations?: TraceDetailSpanApiAnnotationsItem[];
+}
+
+export type TraceDetailResultApiTrace = { [key: string]: unknown };
+
+export type TraceDetailResultApiSummary = { [key: string]: unknown };
+
+export type TraceDetailResultApiGraph = { [key: string]: unknown };
+
+export interface TraceDetailResultApi {
+  trace: TraceDetailResultApiTrace;
+  observation_spans: TraceDetailSpanApi[];
+  summary: TraceDetailResultApiSummary;
+  graph: TraceDetailResultApiGraph;
+}
+
+export interface TraceDetailResponseApi {
+  status?: boolean;
+  result: TraceDetailResultApi;
 }
 
 export type TraceAnnotationValueResponseApiAnnotationValue = {
@@ -30617,61 +30809,6 @@ export const TraceVoiceCallDetailResultApiEvalRollupScope = {
   span: "span",
 } as const;
 
-export type EvalRollupEvalApiTargetType =
-  (typeof EvalRollupEvalApiTargetType)[keyof typeof EvalRollupEvalApiTargetType];
-
-export const EvalRollupEvalApiTargetType = {
-  span: "span",
-  trace: "trace",
-} as const;
-
-/**
- * Any valid JSON value.
- */
-export type EvalRollupSpanApiValue = JsonValueApi;
-
-export interface EvalRollupSpanApi {
-  /** @minLength 1 */
-  span_id: string;
-  span_name?: string;
-  /** Any valid JSON value. */
-  value?: EvalRollupSpanApiValue | null;
-  /** @minLength 1 */
-  explanation?: string | null;
-  error?: boolean;
-  /** @minLength 1 */
-  status?: string | null;
-  eval_config_id?: string;
-}
-
-/**
- * Any valid JSON value.
- */
-export type EvalRollupEvalApiChoicesMap = JsonValueApi;
-
-/**
- * Any valid JSON value.
- */
-export type EvalRollupEvalApiAggregate = JsonValueApi;
-
-export interface EvalRollupEvalApi {
-  /** @minLength 1 */
-  eval_config_id: string;
-  /** @minLength 1 */
-  eval_name: string;
-  /** @minLength 1 */
-  output_type?: string | null;
-  /** @minLength 1 */
-  template_type?: string | null;
-  target_type?: EvalRollupEvalApiTargetType | null;
-  /** Any valid JSON value. */
-  choices_map?: EvalRollupEvalApiChoicesMap | null;
-  /** Any valid JSON value. */
-  aggregate: EvalRollupEvalApiAggregate;
-  spans: EvalRollupSpanApi[];
-  error?: boolean;
-}
-
 export type TraceVoiceCallDetailResultApiCostBreakdown = {
   [key: string]: unknown;
 };
@@ -30797,55 +30934,6 @@ export interface TraceVoiceCallDetailResultApi {
 export interface TraceVoiceCallDetailResponseApi {
   status: boolean;
   result: TraceVoiceCallDetailResultApi;
-}
-
-export type EvalRollupApiScope =
-  (typeof EvalRollupApiScope)[keyof typeof EvalRollupApiScope];
-
-export const EvalRollupApiScope = {
-  trace: "trace",
-  span: "span",
-} as const;
-
-export interface EvalRollupApi {
-  scope: EvalRollupApiScope;
-  evals: EvalRollupEvalApi[];
-  error?: boolean;
-}
-
-export type TraceDetailSpanApiObservationSpan = { [key: string]: unknown };
-
-export type TraceDetailSpanApiChildrenItem = { [key: string]: unknown };
-
-export type TraceDetailSpanApiEvalScoresItem = { [key: string]: unknown };
-
-export type TraceDetailSpanApiAnnotationsItem = { [key: string]: unknown };
-
-export interface TraceDetailSpanApi {
-  observation_span: TraceDetailSpanApiObservationSpan;
-  children?: TraceDetailSpanApiChildrenItem[];
-  /** Raw eval rows retained for backwards-compatible array consumers. */
-  eval_scores?: TraceDetailSpanApiEvalScoresItem[];
-  eval_rollup?: EvalRollupApi;
-  annotations?: TraceDetailSpanApiAnnotationsItem[];
-}
-
-export type TraceDetailResultApiTrace = { [key: string]: unknown };
-
-export type TraceDetailResultApiSummary = { [key: string]: unknown };
-
-export type TraceDetailResultApiGraph = { [key: string]: unknown };
-
-export interface TraceDetailResultApi {
-  trace: TraceDetailResultApiTrace;
-  observation_spans: TraceDetailSpanApi[];
-  summary: TraceDetailResultApiSummary;
-  graph: TraceDetailResultApiGraph;
-}
-
-export interface TraceDetailResponseApi {
-  status?: boolean;
-  result: TraceDetailResultApi;
 }
 
 export interface TraceTagsUpdateApi {
@@ -37064,6 +37152,13 @@ export type TracerSharedLinksList200 = {
   next?: string;
   previous?: string;
   results: SharedLinkListApi[];
+};
+
+export type TracerSharedSidebarListParams = {
+  /**
+   * @minLength 1
+   */
+  trace_id?: string;
 };
 
 export type TracerTraceAnnotationGetAnnotationValuesParams = {

@@ -784,6 +784,55 @@
 - successful reconnect preserves the same workspace connection ID
 - disconnect removes the connection from the scoped integrations API
 
+### ERR-E2E-004 — an issue's traces download as a dataset-ready CSV
+
+**Goal:** A developer downloads an issue's traces from the issue page and uploads the file unchanged as a dataset (overview response stubbed)  
+**Spec:** `flows/error-feed/export-traces-csv.spec.ts:33`  
+**Tags:** —
+
+**User steps:**
+
+1. open the issue page
+2. click Export
+3. save the downloaded CSV
+4. upload the downloaded CSV using the Add Dataset form
+
+**Backend state verified:**
+
+- the imported dataset has exactly the 12 export columns
+- each exported trace becomes one dataset row, with its quoted multiline input and leading-symbol output stored unchanged
+
+**Browser observations:**
+
+- the export requests the issue overview once, with rep_limit=200
+- the file is named error-feed-<issue>-traces.csv and its header is exactly the 12 export columns
+- the file has exactly one row per stubbed trace, with quoted cells intact and no formula prefix
+- the snackbar reports exactly the exported trace count
+- the uploaded dataset's grid shows exactly the exported trace ids
+
+### ERR-E2E-005 — a shared issue opens read-only for someone who is not signed in
+
+**Goal:** Someone who is not signed in opens a shared Error Feed issue and reads it without being able to change it  
+**Spec:** `flows/error-feed/shared-issue.spec.ts:28`  
+**Tags:** —
+
+**User steps:**
+
+1. open the issue's public share link while signed out
+2. read the issue on Overview
+3. pick another trace in Traces affected
+4. open a trace from the Traces tab
+5. open the Trends and Fix tabs
+6. open a restricted share link while signed out
+
+**Browser observations:**
+
+- the page shows the issue title and View only, with no Resolve, Acknowledge, Ignore, Share, Debug or Create Linear issue action
+- the browser never calls the signed-in Error Feed endpoints (/tracer/feed/issues/)
+- picking a trace reads the sidebar through the share token for exactly that trace
+- opening a trace reads it through the share token and shows its spans
+- a restricted link shows Sign in required, with no error toast, and stays on the shared URL
+
 ### FEED-E2E-001 — an old issue URL opens the surviving issue
 
 **Goal:** A saved link to a retired issue opens its surviving issue  

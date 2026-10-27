@@ -47862,12 +47862,21 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
     repeated: zod.number(),
     flaky: zod.number(),
     flip_rate: zod.number(),
+    k: zod.number(),
+    inconclusive: zod.number(),
+    pass_hat_1: zod.number(),
+    pass_hat_k: zod.number(),
+    pass_hat_k_scenarios: zod.number(),
+    pass_hat_k_passed: zod.number(),
+    pass_hat_k_excluded: zod.number(),
+    trials_passed: zod.number(),
+    trials_evaluated: zod.number(),
     pass_rate_interval: zod.object({
       low: zod.number(),
       high: zod.number(),
       effective_n: zod.number(),
+      scenarios: zod.number(),
       evaluated: zod.number(),
-      clusters: zod.number(),
     }),
     rows: zod.array(
       zod.object({
@@ -47883,6 +47892,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
         evaluated: zod.number(),
         pass_rate: zod.number(),
         verdict: zod.enum(["passed", "failed", "flaky", "not_evaluated"]),
+        call_ids: zod.array(zod.string().min(1)),
       }),
     ),
   }),
@@ -48637,6 +48647,56 @@ export const SimulateV3TestExecutionExportBody = zod.object({
       "-outcome",
     ])
     .default(simulateV3TestExecutionExportBodyOrderingDefault),
+});
+
+/**
+ * The reliability block alone, for the run header.
+ */
+export const SimulateV3TestExecutionReliabilityParams = zod.object({
+  test_execution_id: zod.string(),
+});
+
+export const SimulateV3TestExecutionReliabilityResponse = zod.object({
+  trials: zod.number(),
+  scenarios: zod.number(),
+  consistent_pass: zod.number(),
+  passed_at_least_once: zod.number(),
+  repeated: zod.number(),
+  flaky: zod.number(),
+  flip_rate: zod.number(),
+  k: zod.number(),
+  inconclusive: zod.number(),
+  pass_hat_1: zod.number(),
+  pass_hat_k: zod.number(),
+  pass_hat_k_scenarios: zod.number(),
+  pass_hat_k_passed: zod.number(),
+  pass_hat_k_excluded: zod.number(),
+  trials_passed: zod.number(),
+  trials_evaluated: zod.number(),
+  pass_rate_interval: zod.object({
+    low: zod.number(),
+    high: zod.number(),
+    effective_n: zod.number(),
+    scenarios: zod.number(),
+    evaluated: zod.number(),
+  }),
+  rows: zod.array(
+    zod.object({
+      queued: zod.number(),
+      in_progress: zod.number(),
+      passed: zod.number(),
+      failed: zod.number(),
+      error: zod.number(),
+      inconclusive: zod.number(),
+      scenario: zod.string().min(1),
+      scenario_key: zod.string().min(1),
+      runs: zod.number(),
+      evaluated: zod.number(),
+      pass_rate: zod.number(),
+      verdict: zod.enum(["passed", "failed", "flaky", "not_evaluated"]),
+      call_ids: zod.array(zod.string().min(1)),
+    }),
+  ),
 });
 
 export const SimulateV3TestExecutionTracesParams = zod.object({
@@ -63608,6 +63668,7 @@ export const TracerSharedLinksListResponse = zod.object({
           "dataset",
           "project",
           "call_execution",
+          "error_feed_issue",
         ])
         .optional(),
       resource_id: zod.string().min(1).optional(),
@@ -63632,7 +63693,13 @@ export const tracerSharedLinksCreateBodyAccessTypeDefault = `restricted`;
 export const tracerSharedLinksCreateBodyEmailsDefault = [];
 
 export const TracerSharedLinksCreateBody = zod.object({
-  resource_type: zod.enum(["trace", "dashboard", "project", "call_execution"]),
+  resource_type: zod.enum([
+    "trace",
+    "dashboard",
+    "project",
+    "call_execution",
+    "error_feed_issue",
+  ]),
   resource_id: zod
     .string()
     .min(1)
@@ -63669,6 +63736,7 @@ export const TracerSharedLinksReadResponse = zod.object({
       "dataset",
       "project",
       "call_execution",
+      "error_feed_issue",
     ])
     .optional(),
   resource_id: zod.string().min(1).optional(),
@@ -63784,6 +63852,10 @@ export const TracerSharedReadParams = zod.object({
   token: zod.string(),
 });
 
+export const tracerSharedReadResponseDataOverviewPatternSummaryInsightsItemTitleDefault = ``;
+
+export const tracerSharedReadResponseDataOverviewRepresentativeTotalDefault = 0;
+
 export const TracerSharedReadResponse = zod.object({
   resource_type: zod.enum([
     "trace",
@@ -63792,6 +63864,7 @@ export const TracerSharedReadResponse = zod.object({
     "dataset",
     "project",
     "call_execution",
+    "error_feed_issue",
   ]),
   resource_id: zod.string().min(1),
   access_type: zod.enum(["public", "restricted"]),
@@ -63832,6 +63905,392 @@ export const TracerSharedReadResponse = zod.object({
     updated_at: zod.string().min(1).optional(),
     widgets: zod.array(zod.object({}).passthrough()).optional(),
     widget_count: zod.number().optional(),
+    issue: zod
+      .object({
+        row: zod.object({
+          severity_assessment_status: zod.string().min(1).optional(),
+          severity_source: zod.string().min(1).optional(),
+          severity_reason: zod.string().optional(),
+          cluster_id: zod.string().min(1),
+          source: zod.string().min(1),
+          modality: zod.string().min(1),
+          error: zod.object({
+            name: zod.string().min(1),
+            type: zod.string(),
+          }),
+          status: zod.string().min(1),
+          severity: zod.string().min(1),
+          occurrences: zod.number(),
+          trace_count: zod.number(),
+          fix_layer: zod.string().min(1),
+          users_affected: zod.number(),
+          sessions: zod.number(),
+          first_seen: zod.string().datetime({ offset: true }),
+          last_seen: zod.string().datetime({ offset: true }),
+          trends: zod.array(
+            zod.object({
+              timestamp: zod.string().datetime({ offset: true }),
+              value: zod.number(),
+              users: zod.number(),
+            }),
+          ),
+          assignees: zod.array(zod.string().min(1)),
+          model: zod.string().min(1),
+          model_version: zod.string().min(1),
+          project: zod.string().min(1),
+          project_id: zod.string().min(1),
+          environment: zod.string().min(1),
+          eval_score: zod.number(),
+          trace_id: zod.string().min(1),
+          external_issue_url: zod.string().min(1),
+          external_issue_id: zod.string().min(1),
+        }),
+        description: zod.string().min(1),
+        success_trace: zod.object({
+          trace_id: zod.string().min(1),
+          input: zod.string().min(1),
+          output: zod.string().min(1),
+        }),
+        representative_trace: zod.object({
+          trace_id: zod.string().min(1),
+          input: zod.string().min(1),
+          output: zod.string().min(1),
+        }),
+        rca: zod
+          .object({
+            synthesis: zod.string().min(1).optional(),
+            fix: zod.string().min(1).optional(),
+            confidence: zod.string().min(1).optional(),
+            evidence_trace_ids: zod.array(zod.string().min(1)).optional(),
+            analyzed_at: zod.string().datetime({ offset: true }).optional(),
+            failures_at_run: zod.number().optional(),
+            trace: zod
+              .array(
+                zod.object({
+                  type: zod.string().min(1),
+                  text: zod.string().optional(),
+                  call_id: zod.string().min(1).optional(),
+                  tool: zod.string().min(1).optional(),
+                  args: zod.object({}).passthrough().optional(),
+                  result: zod.object({}).passthrough().optional(),
+                  synthesis: zod.string().optional(),
+                  fix: zod.string().optional(),
+                  confidence: zod.string().min(1).optional(),
+                }),
+              )
+              .optional(),
+          })
+          .optional(),
+      })
+      .optional(),
+    overview: zod
+      .object({
+        events_over_time: zod.array(
+          zod.object({
+            date: zod.string().min(1),
+            errors: zod.number(),
+            passing: zod.number(),
+            users: zod.number(),
+          }),
+        ),
+        pattern_summary: zod.object({
+          insights: zod.array(
+            zod.object({
+              title: zod
+                .string()
+                .min(1)
+                .default(
+                  tracerSharedReadResponseDataOverviewPatternSummaryInsightsItemTitleDefault,
+                ),
+              value: zod.string().min(1),
+              caption: zod.string(),
+              evidence: zod
+                .object({
+                  test: zod.string().min(1).optional(),
+                  baseline: zod.string().min(1).optional(),
+                  tool: zod.string().min(1).optional(),
+                  z: zod.number().optional(),
+                  p_value: zod.number().optional(),
+                  ks_stat: zod.number().optional(),
+                  fail_median: zod.number().optional(),
+                  baseline_median: zod.number().optional(),
+                  fail_pct: zod.number().optional(),
+                  baseline_pct: zod.number().optional(),
+                  hits: zod.number().optional(),
+                  total: zod.number().optional(),
+                  missing_in: zod.number().optional(),
+                  traces_with_tools: zod.number().optional(),
+                })
+                .optional(),
+            }),
+          ),
+          key_moments: zod.array(
+            zod.object({
+              kevinified: zod.string().min(1),
+              verbatim: zod.string(),
+            }),
+          ),
+        }),
+        representative_traces: zod.array(
+          zod.object({
+            id: zod.string().min(1),
+            status: zod.string().min(1),
+            timestamp: zod.string().datetime({ offset: true }),
+            summary: zod.object({
+              eval_score: zod.number(),
+              latency_ms: zod.number(),
+              turns: zod.number(),
+              model: zod.string().min(1),
+              input_tokens: zod.number(),
+              output_tokens: zod.number(),
+            }),
+            evidence: zod.object({
+              input: zod.string().min(1),
+              output: zod.string().min(1),
+              fail_reel: zod.array(zod.record(zod.string(), zod.string())),
+              pass_reel: zod.array(zod.record(zod.string(), zod.string())),
+              judge_reason: zod.string().min(1).optional(),
+              score: zod.number().optional(),
+            }),
+            agent_flow: zod.object({
+              nodes: zod.array(zod.record(zod.string(), zod.string())),
+              edges: zod.array(zod.record(zod.string(), zod.string())),
+            }),
+            root_causes: zod.array(zod.record(zod.string(), zod.string())),
+            recommendations: zod.array(zod.record(zod.string(), zod.string())),
+            what_changed: zod.record(zod.string(), zod.string()),
+          }),
+        ),
+        representative_total: zod
+          .number()
+          .default(
+            tracerSharedReadResponseDataOverviewRepresentativeTotalDefault,
+          ),
+      })
+      .optional(),
+    traces: zod
+      .object({
+        aggregates: zod.object({
+          total_traces: zod.number(),
+          failing_traces: zod.number(),
+          passing_traces: zod.number(),
+          avg_score: zod.number(),
+          p50_latency: zod.number(),
+          p95_latency: zod.number(),
+          avg_turns: zod.number(),
+        }),
+        traces: zod.array(
+          zod.object({
+            id: zod.string().min(1),
+            input: zod.string().min(1),
+            timestamp: zod.string().datetime({ offset: true }),
+            latency_ms: zod.number(),
+            tokens: zod.number(),
+            cost: zod.number(),
+            score: zod.number(),
+            turns: zod.number(),
+          }),
+        ),
+        total: zod.number(),
+      })
+      .optional(),
+    trends: zod
+      .object({
+        metrics: zod.array(
+          zod.object({
+            label: zod.string().min(1),
+            value: zod.string().min(1),
+            delta: zod.number(),
+            unit: zod.string(),
+          }),
+        ),
+        events_over_time: zod.array(
+          zod.object({
+            date: zod.string().min(1),
+            errors: zod.number(),
+            passing: zod.number(),
+            users: zod.number(),
+          }),
+        ),
+        score_trends: zod.array(
+          zod.object({
+            label: zod.string().min(1),
+            current: zod.number(),
+            prev: zod.number(),
+            sparkline: zod.array(zod.number()),
+          }),
+        ),
+        activity_heatmap: zod.array(
+          zod.array(
+            zod.object({
+              day: zod.number(),
+              hour: zod.number(),
+              value: zod.number(),
+            }),
+          ),
+        ),
+      })
+      .optional(),
+    sidebar: zod
+      .object({
+        timeline: zod.object({
+          first_seen: zod.string().datetime({ offset: true }),
+          last_seen: zod.string().datetime({ offset: true }),
+          age_days: zod.number(),
+        }),
+        ai_metadata: zod.object({
+          model: zod.string().min(1),
+          model_version: zod.string().min(1),
+          project: zod.string().min(1),
+          eval_score: zod.number(),
+          trace_id: zod.string().min(1),
+        }),
+        evaluations: zod.array(
+          zod.object({
+            label: zod.string().min(1),
+            type: zod.string().min(1),
+            result: zod.string().min(1),
+            score: zod.number(),
+            value: zod.string().min(1),
+          }),
+        ),
+        co_occurring_issues: zod.array(
+          zod.object({
+            id: zod.string().min(1),
+            title: zod.string().min(1),
+            type: zod.string(),
+            co_occurrence: zod.number(),
+            count: zod.number(),
+            severity: zod.string().min(1),
+          }),
+        ),
+      })
+      .optional(),
+  }),
+});
+
+/**
+ * Mirrors the issue page: AI metadata and evaluations follow the trace
+picked in Traces affected (``?trace_id=``).
+ * @summary A shared Error Feed issue's sidebar, scoped to one of its traces.
+ */
+export const TracerSharedSidebarListParams = zod.object({
+  token: zod.string(),
+});
+
+export const TracerSharedSidebarListQueryParams = zod.object({
+  trace_id: zod.string().min(1).optional(),
+});
+
+export const tracerSharedSidebarListResponseStatusDefault = true;
+
+export const TracerSharedSidebarListResponse = zod.object({
+  status: zod.boolean().default(tracerSharedSidebarListResponseStatusDefault),
+  result: zod.object({
+    timeline: zod.object({
+      first_seen: zod.string().datetime({ offset: true }),
+      last_seen: zod.string().datetime({ offset: true }),
+      age_days: zod.number(),
+    }),
+    ai_metadata: zod.object({
+      model: zod.string().min(1),
+      model_version: zod.string().min(1),
+      project: zod.string().min(1),
+      eval_score: zod.number(),
+      trace_id: zod.string().min(1),
+    }),
+    evaluations: zod.array(
+      zod.object({
+        label: zod.string().min(1),
+        type: zod.string().min(1),
+        result: zod.string().min(1),
+        score: zod.number(),
+        value: zod.string().min(1),
+      }),
+    ),
+    co_occurring_issues: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        title: zod.string().min(1),
+        type: zod.string(),
+        co_occurrence: zod.number(),
+        count: zod.number(),
+        severity: zod.string().min(1),
+      }),
+    ),
+  }),
+});
+
+/**
+ * Only traces linked to the shared issue are readable through its token.
+ * @summary One trace of a shared Error Feed issue, under the issue link's rules.
+ */
+export const TracerSharedTracesReadParams = zod.object({
+  token: zod.string(),
+  trace_id: zod.string(),
+});
+
+export const tracerSharedTracesReadResponseStatusDefault = true;
+
+export const TracerSharedTracesReadResponse = zod.object({
+  status: zod.boolean().default(tracerSharedTracesReadResponseStatusDefault),
+  result: zod.object({
+    trace: zod.object({}).passthrough(),
+    observation_spans: zod.array(
+      zod.object({
+        observation_span: zod.object({}).passthrough(),
+        children: zod.array(zod.object({}).passthrough()).optional(),
+        eval_scores: zod
+          .array(zod.object({}).passthrough())
+          .optional()
+          .describe(
+            "Raw eval rows retained for backwards-compatible array consumers.",
+          ),
+        eval_rollup: zod
+          .object({
+            scope: zod.enum(["trace", "span"]),
+            evals: zod.array(
+              zod.object({
+                eval_config_id: zod.string().min(1),
+                eval_name: zod.string().min(1),
+                output_type: zod.string().min(1).optional(),
+                template_type: zod.string().min(1).optional(),
+                target_type: zod.enum(["span", "trace"]).optional(),
+                choices_map: zod
+                  .object({})
+                  .passthrough()
+                  .optional()
+                  .describe("Any valid JSON value."),
+                aggregate: zod
+                  .object({})
+                  .passthrough()
+                  .describe("Any valid JSON value."),
+                spans: zod.array(
+                  zod.object({
+                    span_id: zod.string().min(1),
+                    span_name: zod.string().optional(),
+                    value: zod
+                      .object({})
+                      .passthrough()
+                      .optional()
+                      .describe("Any valid JSON value."),
+                    explanation: zod.string().min(1).optional(),
+                    error: zod.boolean().optional(),
+                    status: zod.string().min(1).optional(),
+                    eval_config_id: zod.string().optional(),
+                  }),
+                ),
+                error: zod.boolean().optional(),
+              }),
+            ),
+            error: zod.boolean().optional(),
+          })
+          .optional(),
+        annotations: zod.array(zod.object({}).passthrough()).optional(),
+      }),
+    ),
+    summary: zod.object({}).passthrough(),
+    graph: zod.object({}).passthrough(),
   }),
 });
 

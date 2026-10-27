@@ -46,6 +46,7 @@ from simulate.services.hosted_harness import (
     record_cleanup,
     register_attempt,
     request_cancellation,
+    scope_dispatch_to_rerun,
 )
 from simulate.services.hosted_harness_conversation import (
     ensure_conversation,
@@ -1360,6 +1361,29 @@ def _with_simulation_mark(
     return document
 
 
+def _with_used_scenario_keys(
+    payload: Mapping[str, Any], job: HostedHarnessJob
+) -> dict[str, Any]:
+    """A copy of the document carrying every key the environment has given a scenario, a
+    dropped one's included, so the harness never gives one to a new scenario and the new
+    scenario never inherits another's row and run history."""
+    from simulate.models import HostedHarnessScenario
+
+    document = dict(payload)
+    if not isinstance(job, HostedHarnessJob):
+        return document
+    metadata = dict(document.get("metadata") or {})
+    metadata["used_scenario_keys"] = sorted(
+        set(
+            HostedHarnessScenario.all_objects.filter(job_id=(job.environment or job).id)
+            .exclude(scenario_key="")
+            .values_list("scenario_key", flat=True)
+        )
+    )
+    document["metadata"] = metadata
+    return document
+
+
 def attach_observability_export_secret_refs(
     payload: dict[str, Any], aliases: Iterable[str]
 ) -> dict[str, Any]:
@@ -2265,7 +2289,7 @@ class HostedHarnessGateway:
 
         # The export decision needs the selected snapshot, so capacity comes first.
         try:
-            capacity = configured_capacity(payload)
+            capacity = configured_capacity(scope_dispatch_to_rerun(payload))
         except ValueError as exc:
             raise HostedHarnessError(
                 "sandbox_capacity_unavailable",
@@ -2305,14 +2329,18 @@ class HostedHarnessGateway:
         secrets_map = {**secrets_map, **dict(export_plan.secrets)}
         if export_plan.egress_domains is not None:
             allowed_domains = set(export_plan.egress_domains)
-        dispatch_payload = prepare_dispatch_payload(
-            payload, secrets_map, simulator_secrets=simulator_env, job=job
+        dispatch_payload = scope_dispatch_to_rerun(
+            prepare_dispatch_payload(
+                payload, secrets_map, simulator_secrets=simulator_env, job=job
+            )
         )
         if export_plan.secrets:
             dispatch_payload = attach_observability_export_secret_refs(
                 dispatch_payload, [alias for alias, _value in export_plan.secrets]
             )
-        dispatch_payload = _with_simulation_mark(dispatch_payload, simulation_mark)
+        dispatch_payload = _with_used_scenario_keys(
+            _with_simulation_mark(dispatch_payload, simulation_mark), job
+        )
         registered_snapshot_digest = (
             capacity.snapshot_digest or self.client.runtime_digest
         )
@@ -3020,7 +3048,9 @@ class HostedHarnessGateway:
             sandbox.fs.upload_file(workspace_archive, "/work/conversation.tar.gz")
             sandbox.fs.upload_file(
                 json.dumps(
-                    _with_simulation_mark(job.payload, simulation_mark),
+                    _with_used_scenario_keys(
+                        _with_simulation_mark(job.payload, simulation_mark), job
+                    ),
                     sort_keys=True,
                     separators=(",", ":"),
                 ).encode(),
