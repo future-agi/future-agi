@@ -19,6 +19,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
+	"github.com/futureagi/agentcc-gateway/internal/tokenizer"
 )
 
 // upstreamStream is what a fake upstream sends on one route: the events
@@ -937,5 +938,30 @@ func TestStreamedCharsCountsEachDialectsDeltas(t *testing.T) {
 	}}}})
 	if want := 3 + 7 + 2 + 4 + 2 + 2 + 1 + 3; int(n) != want {
 		t.Errorf("streamedChars = %d, want %d", n, want)
+	}
+}
+
+// Only text counts as text: an inline image, file data or encrypted reasoning
+// would put a cut Responses stream's prompt at hundreds of thousands of tokens.
+func TestResponsesPromptTokensCountsMediaAFixedAmount(t *testing.T) {
+	image := "data:image/png;base64," + strings.Repeat("A", 1<<20)
+	body, _ := json.Marshal(map[string]any{
+		"model":        "gpt-4o",
+		"instructions": "Be brief.",
+		"input": []any{
+			map[string]any{"type": "reasoning", "id": "rs_1", "encrypted_content": strings.Repeat("x", 1<<16), "summary": []any{}},
+			map[string]any{"type": "message", "role": "user", "content": []any{
+				map[string]any{"type": "input_text", "text": "What is this?"},
+				map[string]any{"type": "input_image", "image_url": image, "detail": "auto"},
+			}},
+			map[string]any{"type": "function_call_output", "call_id": "c1", "output": "sunny"},
+		},
+	})
+	want := estimatedTokens(len("Be brief.")+len("What is this?")+len("sunny")) + tokenizer.MediaPartTokens
+	if got := responsesPromptTokens(body); got != want {
+		t.Errorf("responsesPromptTokens = %d, want %d", got, want)
+	}
+	if got := responsesPromptTokens([]byte(`{"input":"hi"}`)); got != 1 {
+		t.Errorf("a string input = %d tokens, want 1", got)
 	}
 }

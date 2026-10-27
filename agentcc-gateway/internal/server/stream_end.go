@@ -311,8 +311,8 @@ func chatPromptTokens(req *models.ChatCompletionRequest) int {
 	return tokenizer.EstimateTokens(req.Messages)
 }
 
-// responsesPromptTokens estimates a Responses request's prompt from the text
-// of its input and instructions.
+// responsesPromptTokens estimates a Responses request's prompt: the text of its
+// input and instructions, and a fixed amount per image, audio or file part.
 func responsesPromptTokens(body []byte) int {
 	var req struct {
 		Input        json.RawMessage `json:"input"`
@@ -323,31 +323,33 @@ func responsesPromptTokens(body []byte) int {
 	}
 	var input any
 	_ = json.Unmarshal(req.Input, &input)
-	return estimatedTokens(textChars(input) + len(req.Instructions))
+	chars, media := responsesInputText(input)
+	return estimatedTokens(chars+len(req.Instructions)) + media*tokenizer.MediaPartTokens
 }
 
-// textChars sums the lengths of the strings in a decoded JSON value, leaving
-// out the fields that name or label an item rather than carry its text.
-func textChars(v any) int {
+// responsesInputText sums the text of a decoded Responses input and counts its
+// image, audio and file parts. Only the fields that hold text are read: an
+// image URL, file data or encrypted reasoning is not text.
+func responsesInputText(v any) (chars, media int) {
 	switch t := v.(type) {
 	case string:
-		return len(t)
+		return len(t), 0
 	case []any:
-		n := 0
 		for _, item := range t {
-			n += textChars(item)
+			c, m := responsesInputText(item)
+			chars, media = chars+c, media+m
 		}
-		return n
 	case map[string]any:
-		n := 0
-		for key, value := range t {
-			switch key {
-			case "type", "role", "id", "call_id", "status", "detail":
-				continue
-			}
-			n += textChars(value)
+		switch t["type"] {
+		case "input_image", "input_audio", "input_file":
+			return 0, 1
 		}
-		return n
+		for _, key := range []string{"text", "content", "output", "arguments"} {
+			if value, ok := t[key]; ok {
+				c, m := responsesInputText(value)
+				chars, media = chars+c, media+m
+			}
+		}
 	}
-	return 0
+	return chars, media
 }
