@@ -22,7 +22,7 @@ from datetime import timedelta
 
 import structlog
 from django.core.cache import cache
-from django.db.models import F, Q
+from django.db.models import Q
 from django.utils import timezone
 from rest_framework import serializers, status
 from rest_framework.permissions import IsAuthenticated
@@ -73,6 +73,8 @@ ESTIMATE_SAMPLE_IDS = 20
 UNITS_PAGE = 50
 MAX_CONTENT_UNITS = 20
 ASKS_PER_HOUR = 120
+# Units of the last reports whose measured size sizes a new estimate.
+TYPICAL_UNITS = 200
 
 
 # ─── Request serializers ─────────────────────────────────────────────────────
@@ -631,12 +633,16 @@ def _billing():
     return billing if billing.applies() else None
 
 
-def _charge(org, cost_usd, source: str, source_id) -> None:
+def _charge(org, cost_usd, source: str, source_id, *, unpriced=False) -> None:
     """Charge a step's model spend as AI credits (a no-op without billing)."""
     billing = _billing()
     if billing is not None:
         billing.charge(
-            org.id, float(cost_usd or 0), source=source, source_id=str(source_id)
+            org.id,
+            float(cost_usd or 0),
+            source=source,
+            source_id=str(source_id),
+            unpriced=unpriced,
         )
 
 
@@ -671,7 +677,13 @@ def _credit_count(credits: float) -> str:
 
 
 def _credit_verdict(
-    billing, org, cost_usd: float, *, what: str, unit: str | None = None
+    billing,
+    org,
+    cost_usd: float,
+    *,
+    what: str,
+    unit: str | None = None,
+    sizing: dict | None = None,
 ):
     """The organization's credit cap against a step costing about
     ``cost_usd``: None when it may run, else why not, what is left and, for a
@@ -684,7 +696,9 @@ def _credit_verdict(
     if refused.error_code == "FREE_TIER_LIMIT":
         left = max(0.0, float(refused.limit or 0) - float(refused.current_usage or 0))
         if unit is not None:
-            fits = billing.largest_sample(left, MIN_SAMPLE, MAX_SAMPLE)
+            fits = billing.largest_sample(
+                left, MIN_SAMPLE, MAX_SAMPLE, **(sizing or {})
+            )
         have = f"you have {_credit_amount(left)}" if left >= 0.05 else "you have none"
         message = f"{what} needs about {_credit_count(needed)}; {have} left this month."
         if fits:
@@ -713,9 +727,54 @@ _STEPS = {
 }
 
 
-def _step_cost(billing, step: str, sample_size: int | None = None) -> float:
+def _typical_unit_chars(project, unit: str) -> int | None:
+    """How large a unit of this project reads, in rendered characters: the
+    mean the agent measured on the units of its last completed reports on
+    the same kind of unit (insights-agent/v2 runs record it), or None."""
+    if project is None:
+        return None
+    rows = (
+        InsightUnit.objects.filter(
+            run__project=project,
+            run__unit=unit,
+            run__status="completed",
+            run__deleted=False,
+            status="done",
+        )
+        .order_by("-run__created_at", "-id")
+        .values_list("metrics", flat=True)[:TYPICAL_UNITS]
+    )
+    sizes = []
+    for metrics in rows:
+        chars = ((metrics or {}).get("coverage") or {}).get("chars_total")
+        if isinstance(chars, int) and not isinstance(chars, bool) and chars > 0:
+            sizes.append(chars)
+    return sum(sizes) // len(sizes) if sizes else None
+
+
+def _sizing(unit: str | None, project=None, engine: dict | None = None) -> dict:
+    """What a report's per-unit reading cost depends on: the engine the run
+    is pinned to (``engine``), else the one it would likely start on, the
+    kind of unit and how large one typically reads."""
+    try:
+        from ee.agenthub.insights.agent import CONTRACT_V2, expected_contract, is_omega
+    except ImportError:
+        return {}
+    if engine is None:
+        contract = expected_contract()
+    else:
+        contract = engine.get("contract") if is_omega(engine) else None
+    sizing = {"contract": contract, "unit": unit}
+    if contract == CONTRACT_V2:
+        sizing["unit_chars"] = _typical_unit_chars(project, unit)
+    return sizing
+
+
+def _step_cost(
+    billing, step: str, sample_size: int | None = None, sizing: dict | None = None
+) -> float:
     if step == "run":
-        return billing.run_cost(sample_size or DEFAULT_SAMPLE)
+        return billing.run_cost(sample_size or DEFAULT_SAMPLE, **(sizing or {}))
     return {
         "ask": billing.ask_cost,
         "draft": billing.draft_cost,
@@ -723,10 +782,11 @@ def _step_cost(billing, step: str, sample_size: int | None = None) -> float:
     }[step]()
 
 
-def _credit_estimate(org, sample_size: int, unit: str) -> dict:
+def _credit_estimate(org, sample_size: int, unit: str, project=None) -> dict:
     """The estimate's credit fields: about what a report over
     ``sample_size`` units costs, and whether the credit cap lets it start.
-    The estimate is None where reports aren't billed."""
+    The estimate is None where reports aren't billed. A unit costs what the
+    engine a run would start on spends on one of its size (``_sizing``)."""
     out = {
         "credits_estimate": None,
         "credit_limited": False,
@@ -740,10 +800,13 @@ def _credit_estimate(org, sample_size: int, unit: str) -> dict:
     out["credits_estimate"] = 0.0
     if sample_size <= 0:
         return out
-    cost = billing.run_cost(sample_size)
+    sizing = _sizing(unit, project)
+    cost = billing.run_cost(sample_size, **sizing)
     out["credits_estimate"] = billing.credits(cost)
     try:
-        verdict = _credit_verdict(billing, org, cost, what=_STEPS["run"], unit=unit)
+        verdict = _credit_verdict(
+            billing, org, cost, what=_STEPS["run"], unit=unit, sizing=sizing
+        )
     except billing.CreditCheckUnavailable:
         # Fail closed: the report can't start until billing answers.
         out.update({"credit_limited": True, "credit_message": CREDIT_CHECK_UNAVAILABLE})
@@ -760,19 +823,23 @@ def _credit_estimate(org, sample_size: int, unit: str) -> dict:
     return out
 
 
-def _credits_refused(gm, org, step: str, *, sample_size=None, unit=None):
+def _credits_refused(
+    gm, org, step: str, *, sample_size=None, unit=None, project=None, engine=None
+):
     """A 402/403 when billing refuses a step: why, what it needs, what is
-    left and, for a report, the largest sample that fits."""
+    left and, for a report, the largest sample that fits on ``engine``."""
     billing = _billing()
     if billing is None:
         return None
+    sizing = _sizing(unit, project, engine) if step == "run" else {}
     try:
         verdict = _credit_verdict(
             billing,
             org,
-            _step_cost(billing, step, sample_size),
+            _step_cost(billing, step, sample_size, sizing),
             what=_STEPS[step],
             unit=unit,
+            sizing=sizing,
         )
     except billing.CreditCheckUnavailable:
         # Fail closed: reports run on Future AGI's model keys, so an outage
@@ -1120,7 +1187,7 @@ class InsightEstimateView(InsightsLicenseRequired, APIView):
                     "sample_size": reads,
                     "window": None,
                     "sample_ids": [],
-                    **_credit_estimate(_org(request), reads, unit),
+                    **_credit_estimate(_org(request), reads, unit, project),
                 }
             )
         scope = normalize_scope(data["scope"])
@@ -1152,7 +1219,7 @@ class InsightEstimateView(InsightsLicenseRequired, APIView):
                 "sample_size": reads,
                 "window": _window(population),
                 "sample_ids": [rid for rid, _ in first],
-                **_credit_estimate(_org(request), reads, unit),
+                **_credit_estimate(_org(request), reads, unit, project),
             }
         )
 
@@ -1171,7 +1238,7 @@ class InsightRunCreateView(InsightsLicenseRequired, APIView):
         modules = _pipeline()
         if modules is None:
             return _unavailable(self._gm)
-        _, pipeline, _ = modules
+        _, pipeline, InsightModelError = modules
         data = request.validated_data
         org = _org(request)
         project = _project(request, data["project_id"])
@@ -1245,12 +1312,26 @@ class InsightRunCreateView(InsightsLicenseRequired, APIView):
                 resolved.date_from.isoformat(),
                 resolved.date_to.isoformat(),
             ]
+        try:
+            from ee.agenthub.insights.agent import resolve_engine
+
+            # The engine the run is pinned to, asked before anything is saved
+            # and before the run is priced: it costs what that engine spends.
+            engine = resolve_engine()
+        except InsightModelError as exc:
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                str(exc),
+                code="insight_unavailable",
+            )
         refused = _credits_refused(
             self._gm,
             org,
             "run",
             sample_size=min(int(data.get("sample_size") or size), len(population)),
             unit=unit,
+            project=project,
+            engine=engine,
         )
         if refused:
             return refused
@@ -1287,6 +1368,7 @@ class InsightRunCreateView(InsightsLicenseRequired, APIView):
             user=request.user,
             population_size=resolved.count if resolved is not None else None,
             discover=rediscover,
+            engine=engine,
         )
         _start(run)
         if rediscover and run.status != "failed":
@@ -1425,6 +1507,10 @@ class InsightAskResultSerializer(serializers.Serializer):
     answer = InsightAskParagraphSerializer(many=True)
     follow_ups = serializers.ListField(child=serializers.CharField())
     dropped = serializers.IntegerField()
+    # A report on the Insights agent's v2 engine: an answer its verifier did
+    # not pass comes here instead of ``answer``, with the verifier's verdict.
+    unverified_answer = InsightAskParagraphSerializer(many=True, required=False)
+    verification = serializers.JSONField(required=False)
 
 
 class InsightAskResponseSerializer(serializers.Serializer):
@@ -1445,7 +1531,7 @@ class InsightRunAskView(InsightsLicenseRequired, APIView):
         try:
             from ee.agenthub.insights import report
             from ee.agenthub.insights.llm import InsightModelError, Spend
-            from ee.agenthub.insights.pipeline import _unit_dict
+            from ee.agenthub.insights.pipeline import _unit_dict, add_spend
         except ImportError:
             return _unavailable(self._gm)
 
@@ -1481,11 +1567,11 @@ class InsightRunAskView(InsightsLicenseRequired, APIView):
                 spend,
             )
         except InsightModelError as exc:
+            # What the agent reported for the failed call is spend too.
+            add_spend(run.id, spend)
             return self._gm.custom_error_response(
                 status.HTTP_503_SERVICE_UNAVAILABLE, str(exc), code="model_unavailable"
             )
-        InsightRun.objects.filter(id=run.id).update(
-            cost_usd=F("cost_usd") + spend.cost_usd
-        )
-        _charge(org, spend.cost_usd, "insights_ask", run.id)
+        add_spend(run.id, spend)
+        _charge(org, spend.cost_usd, "insights_ask", run.id, unpriced=spend.unpriced)
         return self._gm.success_response(answer)

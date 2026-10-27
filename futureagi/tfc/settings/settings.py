@@ -1621,3 +1621,26 @@ INSTANT_EVAL_USERS_ESTIMATE_BUDGET_S = max(
 INSTANT_EVAL_USERS_RUN_BUDGET_S = max(
     1.0, min(float(os.getenv("INSTANT_EVAL_USERS_RUN_BUDGET_S") or 60), 600.0)
 )
+
+# The Insights agent's evidence broker (ee/agenthub/insights/broker.py): the
+# secret its run-scoped capabilities are signed with (empty keeps runs on the
+# agent's insights-agent/v1 contract), the previous one while a new one rolls
+# out, where the worker stores the unit snapshots the web pods serve
+# (ee/agenthub/insights/evidence_store.py: "local", a directory of each host,
+# empty: <tmp>/insights-evidence, and how large it may grow; or "object", a
+# private bucket every pod reads, never the upload bucket), and whether media
+# outside the platform's own storage may be fetched for the agent to view
+# (off by default).
+INSIGHTS_EVIDENCE_SECRET = os.getenv("INSIGHTS_EVIDENCE_SECRET", "")
+INSIGHTS_EVIDENCE_SECRET_PREVIOUS = os.getenv("INSIGHTS_EVIDENCE_SECRET_PREVIOUS", "")
+INSIGHTS_EVIDENCE_STORE = (
+    os.getenv("INSIGHTS_EVIDENCE_STORE", "").strip().lower() or "local"
+)
+INSIGHTS_EVIDENCE_BUCKET = os.getenv("INSIGHTS_EVIDENCE_BUCKET", "").strip()
+INSIGHTS_EVIDENCE_CACHE_DIR = os.getenv("INSIGHTS_EVIDENCE_CACHE_DIR", "").strip()
+INSIGHTS_EVIDENCE_CACHE_MAX_BYTES = max(
+    1, int(os.getenv("INSIGHTS_EVIDENCE_CACHE_MAX_BYTES") or 2 * 1024**3)
+)
+INSIGHTS_EVIDENCE_FETCH_EXTERNAL_MEDIA = os.getenv(
+    "INSIGHTS_EVIDENCE_FETCH_EXTERNAL_MEDIA", ""
+).strip().lower() in ("1", "true", "yes", "on")

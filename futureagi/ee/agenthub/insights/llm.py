@@ -11,6 +11,7 @@ models, which go through the deployment's gateway.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import threading
@@ -54,22 +55,37 @@ def model_for(tier: str) -> str:
 
 @dataclass
 class Spend:
-    """Thread-safe running total of model cost for one run."""
+    """Thread-safe running total of model cost for one run. ``unpriced`` is
+    set when some of it was priced at the ceiling because nothing knew the
+    model's price (see ``usage_cost``)."""
 
     cost_usd: float = 0.0
     calls: int = 0
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    image_parts: int = 0
+    audio_seconds: float = 0.0
+    unpriced: bool = False
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def add(
-        self, cost: float, prompt_tokens: int = 0, completion_tokens: int = 0
+        self,
+        cost: float,
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+        *,
+        image_parts: int = 0,
+        audio_seconds: float = 0.0,
+        unpriced: bool = False,
     ) -> None:
         with self._lock:
             self.cost_usd += cost or 0.0
             self.calls += 1
             self.prompt_tokens += prompt_tokens or 0
             self.completion_tokens += completion_tokens or 0
+            self.image_parts += image_parts or 0
+            self.audio_seconds += audio_seconds or 0.0
+            self.unpriced = self.unpriced or unpriced
 
 
 def call_cost(
@@ -96,6 +112,66 @@ def call_cost(
     except Exception:
         logger.warning("insight_call_unpriced", model=model, exc_info=True)
         return 0.0
+
+
+# The least a model nothing prices is charged per million input and output
+# tokens: the price of the dearest models an agent may route to, so an
+# unknown one is never undercharged. An image part counts as this many input
+# tokens on top of the reported ones.
+UNPRICED_CEILING = (15.0, 75.0)
+IMAGE_PART_TOKENS = 1_600
+
+
+def _token_price(model: str) -> tuple[float, float] | None:
+    """The price list's input and output price per million tokens, or None
+    when the model isn't on it (the price list would charge a cheap default)."""
+    if not model:
+        return None
+    try:
+        from agentic_eval.core_evals.run_prompt.model_pricing import (
+            get_model_pricing,
+        )
+
+        pricing = get_model_pricing(model) or {}
+        return (
+            float(pricing["input_per_1M_tokens"]),
+            float(pricing["output_per_1M_tokens"]),
+        )
+    except Exception:
+        return None
+
+
+def ceiling_price() -> tuple[float, float]:
+    """The highest price, per direction, of the two tier models and
+    ``UNPRICED_CEILING``."""
+    tiers = map(_token_price, (model_for(FAST), model_for(THINKING)))
+    prices = [UNPRICED_CEILING, *(p for p in tiers if p)]
+    return max(p[0] for p in prices), max(p[1] for p in prices)
+
+
+def usage_cost(
+    model: str,
+    cost_usd,
+    input_tokens: int,
+    output_tokens: int,
+    *,
+    image_parts: int = 0,
+) -> tuple[float, bool]:
+    """What an agent's model calls cost, and whether anything knew the price:
+    the gateway's figure, else the price list's, else the ceiling price with
+    each image part as ``IMAGE_PART_TOKENS`` input tokens. An unknown cost is
+    never priced at $0."""
+    known = isinstance(cost_usd, int | float) and not isinstance(cost_usd, bool)
+    if known and math.isfinite(cost_usd) and cost_usd > 0:
+        return float(cost_usd), True
+    if not (input_tokens or output_tokens or image_parts):
+        return 0.0, True
+    if _token_price(model) is not None:
+        return call_cost(model, 0.0, input_tokens, output_tokens), True
+    price_in, price_out = ceiling_price()
+    tokens_in = input_tokens + image_parts * IMAGE_PART_TOKENS
+    logger.warning("insight_call_priced_at_ceiling", model=model)
+    return (tokens_in * price_in + output_tokens * price_out) / 1_000_000, False
 
 
 def parse_json(raw: str):

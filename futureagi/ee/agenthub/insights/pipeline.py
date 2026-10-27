@@ -6,6 +6,19 @@ organise -> discover categories, or classify into the config's saved taxonomy
            as the run started with it (new themes in the leftovers become
            "emerging" categories)
 finish   -> statistics, executive summary, freeze the taxonomy on first run
+
+Each stage runs on the engine the run was pinned to when it was created
+(``agent.pinned``). On an ``insights-agent/v2`` pin the agent reads each unit's
+whole span graph through the evidence broker, so prepare keeps only a short
+display excerpt of the unit, and extract builds each call's unit snapshots
+into the run's evidence store before the agent is asked (a unit that can't be
+built fails with the builder's code, never sent), then stores the agent's
+facets, receipts and coverage (``facets["evidence"]``,
+``facets["evidence_meta"]``, ``metrics["coverage"]``). The run's snapshots
+are deleted when it finishes or fails.
+
+A stage works only on a run still running: one failed meanwhile (lost, or a
+stage that gave up) is never started again, read, completed or charged.
 """
 
 from __future__ import annotations
@@ -15,10 +28,13 @@ from datetime import UTC, datetime
 
 import structlog
 from django.db import transaction
+from django.db.models import DateTimeField, F, Value
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from ee.agenthub.insights import agent as insight_agent
 from ee.agenthub.insights import billing, clustering, report
+from ee.agenthub.insights.agent import InsightEngineMismatch
 from ee.agenthub.insights.facets import clean_attributes, extract, included, lens_for
 from ee.agenthub.insights.llm import FAST, THINKING, InsightModelError, Spend, model_for
 from ee.agenthub.insights.stats import compare_runs, measure
@@ -28,6 +44,17 @@ logger = structlog.get_logger(__name__)
 
 MAX_SAMPLE = 1000
 EXTRACT_WORKERS = 8
+# An insights-agent/v2 read-units call reads at most eight units; a batch's
+# calls go a few at a time.
+V2_UNITS_PER_CALL = 8
+V2_PARALLEL_CALLS = 3
+# What a v2 unit keeps of its own text: an excerpt of its final output, for
+# display. The agent never gets it back; it reads the unit itself.
+V2_CONTENT_CHARS = 600
+# How long finishing or failing a run waits for its snapshots to be deleted,
+# however slow the store (the fail stage has 30 s in all); the store's sweep
+# deletes whatever is left.
+EVIDENCE_DELETE_S = 15.0
 STAGES = [
     "queued",
     "reading",
@@ -39,10 +66,24 @@ STAGES = [
 ]
 
 
+class InsightRunNotRunning(InsightModelError):
+    """A stage of a run that is no longer running (failed meanwhile): it
+    does nothing, and the run keeps the reason it already has."""
+
+    def __init__(self):
+        super().__init__("This report stopped before it finished. Run it again.")
+
+
 def _models():
     from tracer.models.insights import InsightRun, InsightUnit
 
     return InsightRun, InsightUnit
+
+
+def _require_running(run) -> None:
+    if run.status != "running":
+        logger.warning("insight_stage_run_not_running", run_id=str(run.id))
+        raise InsightRunNotRunning()
 
 
 def _aware(value):
@@ -87,7 +128,42 @@ def _log_spend(run_id, stage: str, spend: Spend) -> None:
         cost_usd=round(spend.cost_usd, 6),
         prompt_tokens=spend.prompt_tokens,
         completion_tokens=spend.completion_tokens,
+        image_parts=spend.image_parts,
+        unpriced=spend.unpriced,
     )
+
+
+def _flag_spend(run, spend: Spend) -> bool:
+    """Mark the run when some of a step's spend was priced at the ceiling
+    because nothing knew its model's price; True when ``run.settings``
+    changed."""
+    flags = dict((run.settings or {}).get("spend_flags") or {})
+    if not spend.unpriced or flags.get("unpriced"):
+        return False
+    run.settings = {**(run.settings or {}), "spend_flags": {**flags, "unpriced": True}}
+    return True
+
+
+def add_spend(run_id, spend: Spend) -> None:
+    """Add a step's model spend to its run (with its flags): what the agent
+    reported for a call that failed is spend too."""
+    InsightRun, _ = _models()
+    if not (spend.cost_usd or spend.unpriced):
+        return
+    with transaction.atomic():
+        run = (
+            InsightRun.no_workspace_objects.select_for_update()
+            .filter(id=run_id)
+            .first()
+        )
+        if run is None:
+            # Deleted meanwhile: nothing left to add it to.
+            return
+        run.cost_usd = (run.cost_usd or 0) + spend.cost_usd
+        fields = ["cost_usd", "updated_at"]
+        if _flag_spend(run, spend):
+            fields.append("settings")
+        run.save(update_fields=fields)
 
 
 def set_progress(
@@ -114,6 +190,7 @@ def create_run(
     user,
     population_size: int | None = None,
     discover: bool = False,
+    engine: dict | None = None,
 ):
     """Create a run with its sampled units; the workflow does the rest.
 
@@ -122,7 +199,8 @@ def create_run(
     The run reads each unit inside ``scope["window"]``. How the units were
     chosen is kept in ``settings["sampling"]`` (see ``sampling_method``).
     ``discover`` finds new categories even though the report has saved ones
-    ("Rediscover categories")."""
+    ("Rediscover categories"). ``engine`` is the engine the run is pinned to
+    (``agent.resolve_engine``), asked of the agent when not given."""
     InsightRun, InsightUnit = _models()
     seen, unique = set(), []
     for entry in population:
@@ -135,6 +213,12 @@ def create_run(
     total = len(unique) if population_size is None else population_size
     taxonomy = config.taxonomy or {}
     classify = bool(taxonomy.get("subs")) and not discover
+    # Asked of the agent before anything is written: one that can't answer
+    # refuses the run rather than start it on an engine nobody chose.
+    engine = engine or insight_agent.resolve_engine()
+    models = engine.get("models") if insight_agent.is_v2(engine) else None
+    if not (isinstance(models, dict) and models.get("fast")):
+        models = {"fast": model_for(FAST), "thinking": model_for(THINKING)}
     with transaction.atomic():
         run = InsightRun.objects.create(
             config=config,
@@ -158,11 +242,16 @@ def create_run(
                 # when it started: an edit that resets them (a new question or
                 # lens) applies from the next run, not halfway through this one.
                 **({"taxonomy": taxonomy} if classify else {}),
+                # Every stage runs on this engine, whatever is configured later.
+                "engine": engine,
             },
             population_size=total,
             sample_size=len(sampled),
             taxonomy_mode="classify" if classify else "discover",
-            models_used={"fast": model_for(FAST), "thinking": model_for(THINKING)},
+            models_used={
+                "fast": str(models.get("fast") or ""),
+                "thinking": str(models.get("thinking") or ""),
+            },
             progress={
                 "stage": "queued",
                 "stage_index": 0,
@@ -196,31 +285,48 @@ def _parse_time(value):
 def prepare(run_id: str) -> list[int]:
     """Load text and metrics; returns the unit pks ready for extraction."""
     InsightRun, InsightUnit = _models()
+    now = timezone.now()
+    # Started (or this stage retried) only while it is still to run: a run
+    # failed before its workflow got here stays failed.
+    started = InsightRun.objects.filter(
+        id=run_id, status__in=["pending", "running"]
+    ).update(
+        status="running",
+        started_at=Coalesce("started_at", Value(now, output_field=DateTimeField())),
+        updated_at=now,
+    )
     run = InsightRun.objects.get(id=run_id)
-    run.status = "running"
-    run.started_at = run.started_at or timezone.now()
-    run.save(update_fields=["status", "started_at", "updated_at"])
+    if not started:
+        _require_running(run)
     set_progress(run, "reading", 0, run.sample_size)
     units = list(InsightUnit.objects.filter(run=run))
     window = (run.scope or {}).get("window") or []
     since = _parse_time(window[0]) if len(window) == 2 else None
     until = _parse_time(window[1]) if len(window) == 2 else None
+    # A v2 unit is read whole by the agent: one whose root has no input or
+    # output of its own may still hold everything in its spans.
+    v2 = insight_agent.is_v2(insight_agent.pinned(run.settings))
     loaded = {}
     ids = [u.unit_id for u in units]
     for start in range(0, len(ids), 200):
         loaded.update(
             load_units(
-                run.unit, str(run.project_id), ids[start : start + 200], since, until
+                run.unit,
+                str(run.project_id),
+                ids[start : start + 200],
+                since,
+                until,
+                **({"keep_empty": True} if v2 else {}),
             )
         )
     ready = []
     for unit in units:
         text = loaded.get(unit.unit_id)
-        if text is None or not text.content.strip():
+        if text is None or not (v2 or text.content.strip()):
             unit.status = "skipped"
             unit.error = "No readable input or output."
         else:
-            unit.content = text.content
+            unit.content = text.output[:V2_CONTENT_CHARS] if v2 else text.content
             unit.excerpt = text.excerpt
             unit.label = text.label[:255]
             unit.user_id = (text.user_id or unit.user_id)[:255]
@@ -250,6 +356,8 @@ def prepare(run_id: str) -> list[int]:
 def extract_batch(run_id: str, unit_pks: list[int]) -> dict:
     InsightRun, InsightUnit = _models()
     run = InsightRun.objects.get(id=run_id)
+    # Nothing is read, nor paid for, for a run that has stopped.
+    _require_running(run)
     s = run.settings
     attributes = s.get("attributes") or []
     spend = Spend()
@@ -267,25 +375,37 @@ def extract_batch(run_id: str, unit_pks: list[int]) -> dict:
                 attributes=attributes,
                 spend=spend,
             )
-            unit.facets = facets
-            unit.summary = facets["summary"]
-            unit.lens_answer = facets["lens_answer"]
-            unit.topic = facets["topic"]
-            unit.included = included(facets, s.get("lens", "usage"), attributes)
-            unit.status = "done"
+            _apply_facets(unit, facets, s.get("lens", "usage"), attributes)
         except InsightModelError as exc:
             unit.status = "failed"
             unit.error = str(exc)
         return unit
 
-    if insight_agent.enabled():
-        finished = _read_with_agent(run, units, attributes, spend)
-    else:
-        with ThreadPoolExecutor(max_workers=EXTRACT_WORKERS) as pool:
-            finished = list(pool.map(one, units))
+    engine = insight_agent.pinned(s)
+    error = None
+    try:
+        if insight_agent.is_v2(engine):
+            finished, error = _read_with_agent_v2(run, units, attributes, spend, engine)
+        elif insight_agent.is_omega(engine):
+            finished = _read_with_agent(run, units, attributes, spend, engine)
+        else:
+            with ThreadPoolExecutor(max_workers=EXTRACT_WORKERS) as pool:
+                finished = list(pool.map(one, units))
+    except InsightModelError:
+        add_spend(run_id, spend)
+        raise
     InsightUnit.objects.bulk_update(
         finished,
-        ["facets", "summary", "lens_answer", "topic", "included", "status", "error"],
+        [
+            "facets",
+            "summary",
+            "lens_answer",
+            "topic",
+            "included",
+            "status",
+            "error",
+            "metrics",
+        ],
         batch_size=100,
     )
     with transaction.atomic():
@@ -300,21 +420,41 @@ def extract_batch(run_id: str, unit_pks: list[int]) -> dict:
             progress["recent"] = (progress.get("recent", []) + recent)[-8:]
         locked.progress = progress
         locked.cost_usd = (locked.cost_usd or 0) + spend.cost_usd
-        locked.save(update_fields=["progress", "cost_usd", "updated_at"])
+        fields = ["progress", "cost_usd", "updated_at"]
+        if _flag_spend(locked, spend):
+            fields.append("settings")
+        locked.save(update_fields=fields)
     _log_spend(run_id, "read", spend)
+    if error is not None:
+        # What was read is kept; Temporal retries the units still pending,
+        # or the run fails on an engine mismatch.
+        raise error
     return {
         "done": len(finished),
         "failed": sum(1 for u in finished if u.status == "failed"),
     }
 
 
-def _read_with_agent(run, units, attributes, spend) -> list:
+def _apply_facets(unit, facets: dict, lens_key: str, attributes) -> None:
+    unit.facets = facets
+    unit.summary = facets["summary"]
+    unit.lens_answer = facets["lens_answer"]
+    unit.topic = facets["topic"]
+    unit.included = included(facets, lens_key, attributes)
+    unit.status = "done"
+
+
+def _read_with_agent(run, units, attributes, spend, engine) -> list:
     """One agent call reads the batch; a unit it couldn't read fails alone.
     An unreachable agent raises, so Temporal retries the batch."""
     lens_key = run.settings.get("lens", "usage")
     context = insight_agent.run_context(run.settings, run.unit, run.id)
     results = insight_agent.read_units(
-        context, [(str(u.pk), u.content) for u in units], attributes, spend
+        context,
+        [(str(u.pk), u.content) for u in units],
+        attributes,
+        spend,
+        engine=engine,
     )
     for unit in units:
         result = results.get(str(unit.pk), {})
@@ -322,14 +462,83 @@ def _read_with_agent(run, units, attributes, spend) -> list:
             unit.status = "failed"
             unit.error = result["error"]
             continue
-        facets = result["facets"]
-        unit.facets = facets
-        unit.summary = facets["summary"]
-        unit.lens_answer = facets["lens_answer"]
-        unit.topic = facets["topic"]
-        unit.included = included(facets, lens_key, attributes)
-        unit.status = "done"
+        _apply_facets(unit, result["facets"], lens_key, attributes)
     return units
+
+
+def _read_with_agent_v2(run, units, attributes, spend, engine):
+    """The batch in calls of up to V2_UNITS_PER_CALL units, each through its
+    own capability. Before each call its units' snapshots are built into the
+    run's evidence store (``broker.prebuild``, a few at a time for the whole
+    batch, the first call's first): a unit that can't be built fails with
+    the builder's code (``metrics["evidence_error"]``) and is not sent, and a
+    unit the agent couldn't read fails alone. Returns the units read and the
+    first error of a call that failed (one that fails the run before one
+    Temporal may retry): the units of that call stay pending."""
+    from ee.agenthub.insights import broker, evidence_store
+
+    lens_key = run.settings.get("lens", "usage")
+    context = insight_agent.run_context(run.settings, run.unit, run.id)
+    by_key = {str(unit.pk): unit for unit in units}
+    keys = list(by_key)
+    calls = [
+        keys[start : start + V2_UNITS_PER_CALL]
+        for start in range(0, len(keys), V2_UNITS_PER_CALL)
+    ]
+
+    def read(call, builders):
+        built = broker.prebuild(
+            run, [by_key[key] for key in call], stage="read", pool=builders
+        )
+        results = {
+            key: {
+                "error": f"This item's evidence could not be read ({code}).",
+                "code": code,
+            }
+            for key, code in built.failed.items()
+        }
+        if built.ready:
+            results.update(
+                insight_agent.read_units_v2(
+                    run, context, built.ready, attributes, spend, engine=engine
+                )
+            )
+        return results
+
+    finished, error = [], None
+    # Swept here, on this stage's own thread: the calls' pre-builds share a
+    # pool and don't.
+    evidence_store.sweep()
+    with (
+        ThreadPoolExecutor(max_workers=broker.PREBUILD_WORKERS) as builders,
+        ThreadPoolExecutor(max_workers=V2_PARALLEL_CALLS) as pool,
+    ):
+        futures = [pool.submit(read, call, builders) for call in calls]
+        for call, future in zip(calls, futures, strict=True):
+            try:
+                results = future.result()
+            except InsightModelError as exc:
+                if error is None or (error.unavailable and not exc.unavailable):
+                    error = exc
+                continue
+            for key in call:
+                unit, result = by_key[key], results[key]
+                if result.get("error"):
+                    unit.status = "failed"
+                    unit.error = result["error"]
+                    if result.get("code"):
+                        unit.metrics = {
+                            **(unit.metrics or {}),
+                            "evidence_error": result["code"],
+                        }
+                else:
+                    _apply_facets(unit, result["facets"], lens_key, attributes)
+                    unit.metrics = {
+                        **(unit.metrics or {}),
+                        "coverage": result["coverage"],
+                    }
+                finished.append(unit)
+    return finished, error
 
 
 def retry_failed(run_id: str) -> list[int]:
@@ -356,13 +565,20 @@ def _item_text(unit) -> str:
     return f"{topic}. {unit.lens_answer}" if topic else unit.lens_answer
 
 
-def _namer(run, spend):
-    if not insight_agent.enabled():
+def _namer(run, spend, audit: dict):
+    """The agent's namer on an agent run, else None (the built-in one).
+    ``audit`` collects its audit of the taxonomy as a whole."""
+    engine = insight_agent.pinned(run.settings)
+    if not insight_agent.is_omega(engine):
         return None
     context = insight_agent.run_context(run.settings, run.unit, run.id)
 
     def name(clusters, target):
-        return insight_agent.name_taxonomy(context, clusters, target, spend)
+        reply = insight_agent.name_taxonomy(
+            context, clusters, target, spend, engine=engine
+        )
+        audit.update(insight_agent.naming_audit(reply, engine))
+        return reply
 
     return name
 
@@ -370,6 +586,7 @@ def _namer(run, spend):
 def organise(run_id: str) -> dict:
     InsightRun, InsightUnit = _models()
     run = InsightRun.objects.get(id=run_id)
+    _require_running(run)
     set_progress(run, "grouping")
     spend = Spend()
     units = list(InsightUnit.objects.filter(run=run, status="done", included=True))
@@ -386,6 +603,40 @@ def organise(run_id: str) -> dict:
         )
     items = [clustering.Item(key=str(u.pk), text=_item_text(u)) for u in units]
     context = _context(run)
+    audit: dict = {}
+    try:
+        tops, subs, parent_of, sub_of, info = _organise(
+            run, items, context, spend, audit
+        )
+    except InsightModelError:
+        add_spend(run_id, spend)
+        raise
+    if audit:
+        info["naming_audit"] = audit
+    by_pk = {str(u.pk): u for u in units}
+    for key, unit in by_pk.items():
+        sub_id = sub_of.get(key, "")
+        unit.sub_category_id = sub_id
+        unit.category_id = parent_of.get(sub_id, "") or ""
+    InsightUnit.objects.bulk_update(
+        units, ["category_id", "sub_category_id"], batch_size=200
+    )
+    result = dict(run.result or {})
+    result["taxonomy"] = {"tops": tops, "subs": subs}
+    result["clustering"] = info
+    run.result = result
+    run.cost_usd = (run.cost_usd or 0) + spend.cost_usd
+    run.analysed_count = len(units)
+    fields = ["result", "cost_usd", "analysed_count", "taxonomy_mode", "updated_at"]
+    if _flag_spend(run, spend):
+        fields.append("settings")
+    run.save(update_fields=fields)
+    _log_spend(run_id, "organise", spend)
+    return {"categories": len(tops), "subcategories": len(subs)}
+
+
+def _organise(run, items, context, spend, audit):
+    """(tops, subs, parent of each sub, sub of each item, info)."""
     info: dict = {}
     taxonomy = (run.settings or {}).get("taxonomy") or {}
     if run.taxonomy_mode == "classify" and taxonomy.get("subs"):
@@ -399,7 +650,10 @@ def organise(run_id: str) -> dict:
         sub_of = {k: v for k, v in assigned.items() if v != clustering.NONE}
         if len(leftovers) >= max(5, 0.08 * len(items)):
             new_tops, new_subs, info = clustering.discover(
-                leftovers, context=context, spend=spend, namer=_namer(run, spend)
+                leftovers,
+                context=context,
+                spend=spend,
+                namer=_namer(run, spend, audit),
             )
             emerging = {
                 "id": clustering._new_id(),
@@ -448,38 +702,14 @@ def organise(run_id: str) -> dict:
         # classified with the last one.
         run.taxonomy_mode = "discover"
         top_nodes, sub_nodes, info = clustering.discover(
-            items, context=context, spend=spend, namer=_namer(run, spend)
+            items, context=context, spend=spend, namer=_namer(run, spend, audit)
         )
         tops = [t.as_dict() for t in top_nodes]
         subs = [s.as_dict() for s in sub_nodes]
         parent_of = {s.id: s.parent_id for s in sub_nodes}
         sub_of = {key: s.id for s in sub_nodes for key in s.members}
         info["mode"] = "discover"
-    by_pk = {str(u.pk): u for u in units}
-    for key, unit in by_pk.items():
-        sub_id = sub_of.get(key, "")
-        unit.sub_category_id = sub_id
-        unit.category_id = parent_of.get(sub_id, "") or ""
-    InsightUnit.objects.bulk_update(
-        units, ["category_id", "sub_category_id"], batch_size=200
-    )
-    result = dict(run.result or {})
-    result["taxonomy"] = {"tops": tops, "subs": subs}
-    result["clustering"] = info
-    run.result = result
-    run.cost_usd = (run.cost_usd or 0) + spend.cost_usd
-    run.analysed_count = len(units)
-    run.save(
-        update_fields=[
-            "result",
-            "cost_usd",
-            "analysed_count",
-            "taxonomy_mode",
-            "updated_at",
-        ]
-    )
-    _log_spend(run_id, "organise", spend)
-    return {"categories": len(tops), "subcategories": len(subs)}
+    return tops, subs, parent_of, sub_of, info
 
 
 def _unit_dict(unit) -> dict:
@@ -560,6 +790,7 @@ def finish(run_id: str) -> dict:
         # report again or add its model spend twice.
         _settle_written(run, taxonomy)
         return {"categories": len((run.result or {}).get("categories") or [])}
+    _require_running(run)
     set_progress(run, "measuring")
     s = run.settings
     attributes = s.get("attributes") or []
@@ -622,6 +853,10 @@ def finish(run_id: str) -> dict:
             if category["id"] in insights:
                 category["insight"] = insights[category["id"]]
         result["summary"] = summary
+    except InsightEngineMismatch:
+        # Not a report written another way: the run fails.
+        add_spend(run_id, spend)
+        raise
     except InsightModelError:
         result["summary"] = {
             "title": "",
@@ -631,26 +866,55 @@ def finish(run_id: str) -> dict:
             "examples": [],
             "error": "unavailable",
         }
-    result["engine"] = insight_agent.engine()
-    run.result = result
-    run.cost_usd = (run.cost_usd or 0) + spend.cost_usd
-    run.status = "completed"
-    run.finished_at = timezone.now()
-    run.save(
-        update_fields=["result", "cost_usd", "status", "finished_at", "updated_at"]
-    )
+    result["engine"] = insight_agent.pinned(run.settings)
+    now = timezone.now()
+    values = {
+        "result": result,
+        "cost_usd": F("cost_usd") + spend.cost_usd,
+        "status": "completed",
+        "finished_at": now,
+        "updated_at": now,
+    }
+    if _flag_spend(run, spend):
+        values["settings"] = run.settings
+    # Completed only while it still runs: a run failed while its report was
+    # being written stays failed and uncharged, with what the writing spent
+    # added to it.
+    completed = InsightRun.objects.filter(id=run_id, status="running").update(**values)
     _log_spend(run_id, "write", spend)
+    _forget_evidence(run_id)
+    if not completed:
+        logger.warning("insight_finish_run_not_running", run_id=str(run_id))
+        add_spend(run_id, spend)
+        return {"categories": len(measured["categories"])}
+    run.result = result
+    run.refresh_from_db(fields=["cost_usd", "status", "finished_at"])
     # Charged once the report is written; a failed report isn't charged.
     _settle_written(run, taxonomy)
     return {"categories": len(measured["categories"])}
 
 
+def _forget_evidence(run_id) -> None:
+    """Delete the run's unit snapshots from its evidence store: the bucket's,
+    which every web pod read, or this host's directory (the web pods that
+    built their own drop them in their sweep). Returns within
+    EVIDENCE_DELETE_S, so the fail stage stays inside its own limit and
+    finishing does not wait on a store that does not answer: the sweep
+    deletes the rest."""
+    from ee.agenthub.insights import evidence_store
+
+    try:
+        evidence_store.delete_run(run_id, budget_s=EVIDENCE_DELETE_S)
+    except Exception:
+        logger.warning("insight_evidence_forget_failed", run_id=str(run_id))
+
+
 def fail(run_id: str, message: str) -> None:
+    """Mark the run failed. A run that already failed keeps its first reason
+    (a lost run's, or the stage that gave up first)."""
     InsightRun, _ = _models()
-    run = InsightRun.objects.filter(id=run_id).first()
-    if run is None:
-        return
-    run.status = "failed"
-    run.error = message[:2000]
-    run.finished_at = timezone.now()
-    run.save(update_fields=["status", "error", "finished_at", "updated_at"])
+    now = timezone.now()
+    InsightRun.objects.filter(id=run_id).exclude(status="failed").update(
+        status="failed", error=message[:2000], finished_at=now, updated_at=now
+    )
+    _forget_evidence(run_id)

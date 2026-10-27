@@ -3,6 +3,9 @@
 A trace reads as one exchange, a session as its turns in order, and a user as
 their recent sessions. Text is clipped on turn boundaries (first turns and the
 last ones are kept) so long conversations stay within the extraction budget.
+An insights-agent/v2 run reads each unit's whole span graph itself
+(``evidence.py``) and takes only the metrics and the final output from here,
+for units whose roots carry no input or output too (``keep_empty``).
 """
 
 from __future__ import annotations
@@ -33,6 +36,8 @@ class UnitText:
     session_id: str = ""
     time: datetime | None = None
     metrics: dict = field(default_factory=dict)
+    # The unit's last answer: its (last) trace's root output.
+    output: str = ""
 
 
 def _clip(text: str, limit: int) -> str:
@@ -97,7 +102,9 @@ def _span_metrics(spans) -> dict:
     }
 
 
-def load_traces(project_id: str, trace_ids: list[str]) -> dict[str, UnitText]:
+def load_traces(
+    project_id: str, trace_ids: list[str], *, keep_empty: bool = False
+) -> dict[str, UnitText]:
     from tracer.services.clickhouse.v2 import get_reader
 
     with get_reader() as reader:
@@ -109,7 +116,7 @@ def load_traces(project_id: str, trace_ids: list[str]) -> dict[str, UnitText]:
     units = {}
     for trace_id, span in latest.items():
         text_in, text_out = _io(span)
-        if not (text_in.strip() or text_out.strip()):
+        if not (keep_empty or text_in.strip() or text_out.strip()):
             continue
         user = labels.get(str(span.end_user_id or ""), "")
         units[trace_id] = UnitText(
@@ -121,11 +128,14 @@ def load_traces(project_id: str, trace_ids: list[str]) -> dict[str, UnitText]:
             session_id=str(span.trace_session_id or ""),
             time=span.start_time,
             metrics={**_span_metrics([span]), "turns": 1},
+            output=text_out,
         )
     return units
 
 
-def load_sessions(project_id: str, session_ids: list[str]) -> dict[str, UnitText]:
+def load_sessions(
+    project_id: str, session_ids: list[str], *, keep_empty: bool = False
+) -> dict[str, UnitText]:
     from tracer.services.clickhouse.v2 import get_reader
 
     with get_reader() as reader:
@@ -143,7 +153,7 @@ def load_sessions(project_id: str, session_ids: list[str]) -> dict[str, UnitText
     for session_id, traces in by_session.items():
         spans = sorted(traces.values(), key=lambda s: s.start_time)
         turns = [_io(s) for s in spans]
-        if not any(u.strip() or a.strip() for u, a in turns):
+        if not (keep_empty or any(u.strip() or a.strip() for u, a in turns)):
             continue
         first, last = spans[0], spans[-1]
         user = next(
@@ -163,6 +173,7 @@ def load_sessions(project_id: str, session_ids: list[str]) -> dict[str, UnitText
                 "turns": len(spans),
                 "duration_s": max(0.0, (end - first.start_time).total_seconds()),
             },
+            output=turns[-1][1],
         )
     return units
 
@@ -240,6 +251,7 @@ def load_users(
                 "first_seen": spans[0].start_time.isoformat(),
                 "last_seen": spans[-1].start_time.isoformat(),
             },
+            output=_io(spans[-1])[1],
         )
     return units
 
@@ -250,9 +262,13 @@ def load_units(
     unit_ids: list[str],
     since: datetime | None = None,
     until: datetime | None = None,
+    *,
+    keep_empty: bool = False,
 ) -> dict[str, UnitText]:
+    """Each unit's text and metrics. ``keep_empty`` keeps units whose roots
+    hold no input or output (users always are)."""
     if unit == "sessions":
-        return load_sessions(project_id, unit_ids)
+        return load_sessions(project_id, unit_ids, keep_empty=keep_empty)
     if unit == "users":
         return load_users(project_id, unit_ids, since, until)
-    return load_traces(project_id, unit_ids)
+    return load_traces(project_id, unit_ids, keep_empty=keep_empty)

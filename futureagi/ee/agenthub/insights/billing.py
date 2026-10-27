@@ -33,6 +33,39 @@ ASK_TOKENS = (12_000, 1_600)
 DRAFT_TOKENS = (4_000, 900)
 PREVIEW_UNITS = 3
 
+# The insights-agent/v2 reader reads a unit's whole span graph with tools over
+# a few turns, each sending again what was read so far, inside its budgets
+# (characters read plus the graph's structure shown). So a unit costs about
+# its rendered size, up to those budgets, not a fixed 9,000 characters; one
+# small enough is read whole in a single call. A typical unit's rendered
+# size: measured on the project's last report when there is one, else these.
+V2_UNIT_CHARS = {"traces": 24_000, "sessions": 60_000, "users": 120_000}
+V2_INLINE_CHARS = 24_000
+V2_BUDGET_CHARS = 120_000 + 60_000
+V2_TURNS = 4
+V2_TURN_TOKENS = (4_000, 1_000)
+CHARS_PER_TOKEN = 4
+
+
+def read_tokens(
+    contract: str | None = None, unit: str | None = None, unit_chars=None
+) -> tuple[int, int]:
+    """Tokens reading one unit takes on ``contract``: a fixed upper-end figure
+    for the built-in engine and v1, the unit's size for v2."""
+    from ee.agenthub.insights.agent import CONTRACT_V2
+
+    if contract != CONTRACT_V2:
+        return READ_TOKENS
+    chars = int(unit_chars or V2_UNIT_CHARS.get(unit or "", V2_UNIT_CHARS["sessions"]))
+    if chars <= V2_INLINE_CHARS:
+        return V2_TURN_TOKENS[0] + chars // CHARS_PER_TOKEN, V2_TURN_TOKENS[1]
+    read = min(chars, V2_BUDGET_CHARS) // CHARS_PER_TOKEN
+    # Each turn sends again what was read before it: on average half of it.
+    return (
+        V2_TURNS * V2_TURN_TOKENS[0] + read * (V2_TURNS + 1) // 2,
+        V2_TURNS * V2_TURN_TOKENS[1],
+    )
+
 
 def _price(tier: str, tokens: tuple[int, int]) -> float:
     return call_cost(model_for(tier), 0.0, *tokens)
@@ -43,25 +76,26 @@ def _run_cost(sample_size: int, read: float, classify: float, write: float) -> f
     return sample_size * read + batches * classify + write
 
 
-def _step_prices() -> tuple[float, float, float]:
+def _step_prices(**sizing) -> tuple[float, float, float]:
     return (
-        _price(FAST, READ_TOKENS),
+        _price(FAST, read_tokens(**sizing)),
         _price(FAST, CLASSIFY_TOKENS),
         _price(THINKING, REPORT_TOKENS),
     )
 
 
-def run_cost(sample_size: int) -> float:
-    """About what a report over ``sample_size`` units costs, in USD."""
-    return _run_cost(sample_size, *_step_prices())
+def run_cost(sample_size: int, **sizing) -> float:
+    """About what a report over ``sample_size`` units costs, in USD.
+    ``sizing`` is ``read_tokens``'s: the contract, unit and typical unit size."""
+    return _run_cost(sample_size, *_step_prices(**sizing))
 
 
 def largest_sample(
-    credits_left: float, low: int, high: int, step: int = 10
+    credits_left: float, low: int, high: int, step: int = 10, **sizing
 ) -> int | None:
     """The largest sample from ``high`` down to ``low`` (in ``step``s) whose
     report costs no more than ``credits_left``, or None when none does."""
-    prices = _step_prices()
+    prices = _step_prices(**sizing)
     for size in range(high, low - 1, -step):
         if credits(_run_cost(size, *prices)) <= credits_left + 1e-9:
             return size
@@ -150,10 +184,12 @@ def charge(
     source_id: str,
     spend=None,
     event_id: str | None = None,
+    unpriced: bool = False,
 ) -> float:
     """Emit the usage event for model calls that cost ``cost_usd``. Returns
     the credits charged (0 when nothing was spent). Never raises: the user's
-    report must not fail because metering did."""
+    report must not fail because metering did. ``unpriced`` marks a cost
+    partly at the ceiling price of a model nothing priced."""
     amount = credits(cost_usd)
     if not org_id or amount <= 0:
         return 0.0
@@ -176,6 +212,8 @@ def charge(
                     "completion_tokens": spend.completion_tokens,
                 }
             )
+        if unpriced or getattr(spend, "unpriced", False):
+            properties["unpriced"] = True
         event = UsageEvent(
             org_id=str(org_id),
             event_type=EVENT,
@@ -192,10 +230,12 @@ def charge(
 
 def charge_run(run) -> float:
     """Charge a written report its model cost so far, once per run."""
+    flags = (getattr(run, "settings", None) or {}).get("spend_flags") or {}
     return charge(
         run.organization_id,
         float(run.cost_usd or 0),
         source="insights_report",
         source_id=str(run.id),
         event_id=str(uuid.uuid5(_EVENT_NAMESPACE, f"run:{run.id}")),
+        unpriced=bool(flags.get("unpriced")),
     )

@@ -228,7 +228,8 @@ class TestCharging:
     ):
         response = auth_client.post(RUNS, new_run_body(observe_project), format="json")
         run_id = response.json()["result"]["run_id"]
-        InsightRun.objects.filter(id=run_id).update(cost_usd=0.3)
+        # As its read stages leave it: finish completes only a running run.
+        InsightRun.objects.filter(id=run_id).update(cost_usd=0.3, status="running")
 
         def write(run, result, units, contents, spend):
             spend.add(0.1)

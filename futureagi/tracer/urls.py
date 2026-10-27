@@ -47,6 +47,7 @@ from tracer.views.insights import (
     InsightRunDetailView,
     InsightRunUnitsView,
 )
+from tracer.views.insights_evidence import InsightEvidenceView
 from tracer.views.instant_eval import InstantEvalRunsView
 from tracer.views.instant_eval_scale import (
     InstantEvalControlView,
@@ -275,6 +276,16 @@ urlpatterns = [
         "insights/runs/<uuid:run_id>/ask/",
         InsightRunAskView.as_view(),
         name="insight-run-ask",
+    ),
+    # The Insights agent's evidence broker (PROTOCOL_V2): no trailing slash,
+    # the agent posts to <base>/<op>.
+    *(
+        path(
+            f"internal/insights/evidence/{op}",
+            InsightEvidenceView.as_view(op=op),
+            name=f"insight-evidence-{op}",
+        )
+        for op in ("manifest", "fields", "media")
     ),
     path(
         "instant-eval/runs/",

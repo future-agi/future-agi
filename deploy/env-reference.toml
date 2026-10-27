@@ -1826,6 +1826,41 @@ read these keys.
     text = "Future AGI's separate Insights agent service and the bearer token it accepts. Set, every model step of an Insights run goes to that service; empty, the API and workers run the same steps themselves."
     audience = "internal"
 
+    [[part.section.row]]
+    keys = ["INSIGHTS_EVIDENCE_SECRET", "INSIGHTS_EVIDENCE_SECRET_PREVIOUS"]
+    default = "empty: runs stay on the agent's `insights-agent/v1` contract"
+    setups = ["S", "D", "H"]
+    text = "The secret the API signs the Insights agent's run-scoped evidence capabilities with, and the one it replaces while a new secret rolls out. Set, with an agent that serves `insights-agent/v2`, the agent reads each trace, session or user through the API's internal evidence endpoints instead of a clipped copy of its text."
+    audience = "internal"
+
+    [[part.section.row]]
+    keys = ["INSIGHTS_EVIDENCE_STORE"]
+    default = "`local`"
+    setups = ["S", "D", "H"]
+    text = "Where the worker stores each Insights unit snapshot before the agent reads it, for the API to serve. `local` keeps them in `INSIGHTS_EVIDENCE_CACHE_DIR` on each host: fine for Standalone, where one container runs both, but with separate API and worker hosts every API pod reads ClickHouse again for what it serves. `object` keeps one copy per run in `INSIGHTS_EVIDENCE_BUCKET`, which every API pod reads. Any other value, `object` without its own bucket, or a bucket whose policy lets anyone in (asked when a report is started), keeps new reports on the agent's `insights-agent/v1` contract."
+    audience = "internal"
+
+    [[part.section.row]]
+    keys = ["INSIGHTS_EVIDENCE_BUCKET"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "The bucket of the `object` evidence store, reached with the platform's storage credentials (`STORAGE_BACKEND`, `S3_*` or `GCS_*`) under `insights-evidence/<run>/`. It holds full trace content: create it yourself as a private bucket with no public or anonymous policy (a bucket whose policy lets anyone in is refused; never `UPLOAD_BUCKET_NAME`, whose objects anyone can read by URL, which is refused too), dedicated to this deployment (not shared with another environment or region: each deployment deletes the objects of runs its own database does not know), and add a lifecycle rule deleting objects under `insights-evidence/` after 2 days as a backstop: each run's objects are deleted when it ends and swept within minutes otherwise. S3 uploads ask for server-side encryption; GCS encrypts at rest itself; MinIO only with its KMS set up."
+    audience = "internal"
+
+    [[part.section.row]]
+    keys = ["INSIGHTS_EVIDENCE_CACHE_DIR", "INSIGHTS_EVIDENCE_CACHE_MAX_BYTES"]
+    default = "`<tmp>/insights-evidence`, `2147483648`"
+    setups = ["S", "D", "H"]
+    text = "The directory of the `local` evidence store, on the worker and the API alike (owner-only files; a run's go when it ends, and each process sweeps within a minute or so what it missed: a finished report's five minutes after its questions last built one, anything after 6 hours), and the most bytes it may hold before the oldest files go. Keep it on the pod's own ephemeral disk. The API also keeps up to 128 MiB of recently read snapshots in memory with either store."
+    audience = "internal"
+
+    [[part.section.row]]
+    keys = ["INSIGHTS_EVIDENCE_FETCH_EXTERNAL_MEDIA"]
+    default = "`false`"
+    setups = ["S", "D", "H"]
+    text = "Lets the API fetch images and audio a trace links outside the platform's own storage (over https, through its SSRF guard, never following a redirect off the host) for the Insights agent to view. Off, such media is reported as not fetched."
+    audience = "internal"
+
   [[part.section]]
   heading = "Observed-attribute catalog"
   body = '''

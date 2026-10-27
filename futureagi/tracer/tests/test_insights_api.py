@@ -205,6 +205,46 @@ def test_run_units_filter_by_category_and_skip_left_out_units(
 
 
 @pytest.mark.django_db
+def test_run_units_give_v2_evidence_as_the_list_the_report_page_reads(
+    auth_client, observe_project
+):
+    created = auth_client.post(
+        RUNS, new_run_body(observe_project), format="json"
+    ).json()["result"]
+    unit = InsightUnit.objects.filter(run_id=created["run_id"]).order_by("id").first()
+    receipt = {
+        "kind": "text",
+        "evidence_id": f"ev2|{unit.pk}|s3|output|10|15",
+        "span": "s3",
+        "field": "output",
+        "quote": "refund=declined",
+        "supports": "failure",
+    }
+    image = {
+        "kind": "media",
+        "evidence_id": f"ev2m|{unit.pk}|m1|full",
+        "media": "m1",
+        "observation": "A crushed box.",
+    }
+    unit.status, unit.included = "done", True
+    unit.facets = {
+        "summary": "Refund refused",
+        "evidence": [receipt, image],
+        "evidence_meta": {"dropped": 1, "coverage_note": "Read the refund span."},
+    }
+    unit.metrics = {"coverage": {"chars_total": 182_000, "chars_read": 21_000}}
+    unit.save(update_fields=["status", "included", "facets", "metrics"])
+
+    result = auth_client.get(f"{RUNS}{created['run_id']}/units/").json()["result"]
+
+    [shown] = result["units"]
+    # The citation card and the example panel call list methods on it.
+    assert shown["facets"]["evidence"] == [receipt, image]
+    assert shown["facets"]["evidence_meta"]["dropped"] == 1
+    assert shown["metrics"]["coverage"]["chars_total"] == 182_000
+
+
+@pytest.mark.django_db
 def test_saved_reports_list_their_latest_run(auth_client, observe_project):
     created = auth_client.post(
         RUNS, new_run_body(observe_project), format="json"

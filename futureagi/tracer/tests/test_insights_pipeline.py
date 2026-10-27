@@ -612,3 +612,82 @@ def test_a_classify_run_without_categories_to_sort_into_discovers(
     assert run.taxonomy_mode == "discover"
     assert run.result["clustering"]["mode"] == "discover"
     assert "changes" not in run.result
+
+
+@pytest.mark.django_db
+def test_finish_never_completes_or_charges_a_run_failed_meanwhile(
+    report, user, model, loaded, monkeypatch
+):
+    """A run marked failed while its report is written (lost, or a stage
+    that gave up) stays failed: finish neither completes nor charges it, nor
+    saves its categories, but what the writing spent is added to it."""
+    from ee.agenthub.insights import billing
+
+    charged = []
+    monkeypatch.setattr(billing, "charge_run", lambda run: charged.append(run.id))
+    run = start_run(report, user, ids(order=6, human=6, refund=6, stock=6))
+    pipeline.organise(str(run.id))
+    before = InsightRun.objects.get(id=run.id).cost_usd
+
+    def write(run, result, units, contents, spend):
+        InsightRun.objects.filter(id=run.id).update(status="failed", error="lost")
+        spend.add(0.25)
+        return {
+            "title": "t",
+            "findings": [],
+            "key_points": [],
+            "highlights": [],
+            "examples": [],
+        }
+
+    monkeypatch.setattr(pipeline.report, "write", write)
+    pipeline.finish(str(run.id))
+    run.refresh_from_db()
+
+    assert (run.status, run.error) == ("failed", "lost")
+    assert "summary" not in run.result
+    assert run.cost_usd == pytest.approx(before + 0.25)
+    assert charged == []
+    report.refresh_from_db()
+    assert not (report.taxonomy or {}).get("subs")
+
+
+@pytest.mark.django_db
+def test_a_failed_run_is_never_started_or_read_again(report, user, model, loaded):
+    """A run failed before its workflow got to it is not revived by
+    prepare; one failed mid-way makes no more model calls; and the workflow
+    failing it again keeps its first reason."""
+    run = pipeline.create_run(
+        config=report,
+        scope={"window": WINDOW, "preset": "Custom"},
+        population=[{"id": unit_id} for unit_id in ids(order=6)],
+        sample_size=6,
+        user=user,
+    )
+    pipeline.fail(str(run.id), "stopped")
+    with pytest.raises(pipeline.InsightRunNotRunning):
+        pipeline.prepare(str(run.id))
+    run.refresh_from_db()
+    assert (run.status, run.started_at) == ("failed", None)
+    assert loaded == []
+    pipeline.fail(str(run.id), str(pipeline.InsightRunNotRunning()))
+    run.refresh_from_db()
+    assert run.error == "stopped"
+
+    second = pipeline.create_run(
+        config=report,
+        scope={"window": WINDOW, "preset": "Custom"},
+        population=[{"id": unit_id} for unit_id in ids(human=6)],
+        sample_size=6,
+        user=user,
+    )
+    ready = pipeline.prepare(str(second.id))
+    InsightRun.objects.filter(id=second.id).update(status="failed")
+    calls = dict(model.calls)
+    with pytest.raises(pipeline.InsightRunNotRunning):
+        pipeline.extract_batch(str(second.id), ready)
+    with pytest.raises(pipeline.InsightRunNotRunning):
+        pipeline.organise(str(second.id))
+    with pytest.raises(pipeline.InsightRunNotRunning):
+        pipeline.finish(str(second.id))
+    assert model.calls == calls
