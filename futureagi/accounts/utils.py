@@ -389,8 +389,13 @@ def first_signup(data, mode=None, telemetry_source="web"):
                     key_id, org_id
                 )
             )
-        if generated_password:
-            process_post_registration(user.id, generated_password)
+        # Demo data is needed for every signup, including user-set passwords.
+        # Dispatch only after the worker can see the committed account.
+        transaction.on_commit(
+            lambda user_id=user.id, password=generated_password: (
+                process_post_registration(user_id, password)
+            )
+        )
 
         transaction.on_commit(
             lambda user_id=user.id, source=telemetry_source: _fire_deployment_telemetry_registration(
@@ -809,7 +814,8 @@ def _run_post_registration(user_id, generated_password):
     """Process post-registration steps in a separate thread"""
     user = User.objects.get(id=user_id)
     if user:
-        send_signup_email(generated_password, user.email, user.name)
+        if generated_password:
+            send_signup_email(generated_password, user.email, user.name)
 
         # Each of these returns without a network call unless its key is set
         # (HUBSPOT_API_TOKEN, SLACK_WEBHOOK_CHANNEL), so a self-hosted install

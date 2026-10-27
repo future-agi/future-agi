@@ -43,6 +43,24 @@ class TestProcessPostRegistration:
 class TestRunPostRegistration:
     """Tests for _run_post_registration implementation function."""
 
+    @patch.dict("os.environ", {"ENV_TYPE": "local"})
+    def test_user_set_password_seeds_without_password_email(self):
+        from accounts.utils import _run_post_registration
+
+        user = MagicMock(id="user-123")
+        org = MagicMock(id="org-123")
+        with (
+            patch("accounts.utils.User.objects.get", return_value=user),
+            patch("accounts.utils.get_user_organization", return_value=org),
+            patch("accounts.utils.send_signup_email") as email,
+            patch("accounts.user_onboard.upload_demo_dataset") as datasets,
+            patch("accounts.user_onboard.create_demo_traces_and_spans") as traces,
+        ):
+            _run_post_registration(user.id, None)
+        email.assert_not_called()
+        datasets.assert_called_once_with(org.id, user.id)
+        traces.assert_called_once_with(org.id)
+
     @patch("accounts.utils.get_user_organization", return_value=None)
     @patch("accounts.utils.send_slack_notification")
     @patch("accounts.utils.send_hubspot_notification")
