@@ -37,7 +37,6 @@ from simulate.models.harness_versioning import DiscardReason, VersionStatus
 from simulate.services.harness_versioning import nudges
 from simulate.services.harness_versioning import read as reads
 from simulate.services.hosted_harness import HostedHarnessError
-from simulate.services.hosted_harness_diagnostics import _normalize_log_text
 
 logger = logging.getLogger(__name__)
 
@@ -58,10 +57,6 @@ PROBLEMS_MAX = 50
 PROBLEM_TEXT_MAX = 500
 # ALK writes up to PROBLEMS_MAX of each list, each text up to 4000 characters.
 RESULT_FILE_MAX = 4 * 1024 * 1024
-# Longer than any credential value: a text is cut to its cap plus this before masking
-# (after masking would strip control characters), so a value across the cap is still
-# whole and the patterns stay cheap.
-SECRET_VALUE_MAX = 16 * 1024
 PROOFS_FILE_MAX = 64 * 1024 * 1024
 DEFERRED_RETRIES = 20
 DEFERRED_RETRY_AFTER = timedelta(minutes=5)
@@ -1412,13 +1407,10 @@ def _report(
             for field in ("key", "why")
         ),
     ]
+    # Whole texts, so a value of any length across a cap is masked before the cut; all of
+    # them come from one result file of at most RESULT_FILE_MAX.
     masked = _redacted(
-        environment,
-        nudge,
-        [
-            _normalize_log_text(text)[: cap + SECRET_VALUE_MAX]
-            for _part, _at, text, cap in secret_parts
-        ],
+        environment, nudge, [text for _part, _at, text, _cap in secret_parts]
     )
     report: dict[str, Any] = {
         "notes": "",
