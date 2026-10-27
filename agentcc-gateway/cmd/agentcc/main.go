@@ -251,24 +251,31 @@ func main() {
 	var grEngine *guardrails.Engine
 	var policyStore *policy.Store
 	var onOrgConfigChange func(string) // called when an org config changes (e.g. invalidate guardrail cache)
-	if cfg.Guardrails.Enabled {
+	if cfg.Guardrails.Enabled || cfg.ControlPlane.URL != "" {
+		// The global switch controls operator-defined static rules, not tenant
+		// policies delivered by the control plane. Managed mode always needs
+		// the plugin, dynamic factory, and config-change invalidation hook.
+		grConfig := cfg.Guardrails
+		if !grConfig.Enabled {
+			grConfig.Rules = nil
+		}
 		guardrailRegistry := make(map[string]guardrails.Guardrail)
 
 		// Register built-in guardrails.
-		guardrailRegistry["pii-detection"] = pii.New(findRuleConfig(cfg.Guardrails.Rules, "pii-detection"))
-		guardrailRegistry["content-moderation"] = contentmod.New(findRuleConfig(cfg.Guardrails.Rules, "content-moderation"))
-		guardrailRegistry["keyword-blocklist"] = blocklist.New(findRuleConfig(cfg.Guardrails.Rules, "keyword-blocklist"))
-		guardrailRegistry["input-validation"] = validation.New(findRuleConfig(cfg.Guardrails.Rules, "input-validation"))
-		guardrailRegistry["prompt-injection"] = injection.New(findRuleConfig(cfg.Guardrails.Rules, "prompt-injection"))
-		guardrailRegistry["secret-detection"] = secrets.New(findRuleConfig(cfg.Guardrails.Rules, "secret-detection"))
-		guardrailRegistry["topic-restriction"] = topic.New(findRuleConfig(cfg.Guardrails.Rules, "topic-restriction"))
-		guardrailRegistry["language-detection"] = language.New(findRuleConfig(cfg.Guardrails.Rules, "language-detection"))
-		guardrailRegistry["system-prompt-protection"] = sysprompt.New(findRuleConfig(cfg.Guardrails.Rules, "system-prompt-protection"))
-		guardrailRegistry["hallucination-detection"] = hallucination.New(findRuleConfig(cfg.Guardrails.Rules, "hallucination-detection"))
-		guardrailRegistry["data-leakage-prevention"] = leakage.New(findRuleConfig(cfg.Guardrails.Rules, "data-leakage-prevention"))
+		guardrailRegistry["pii-detection"] = pii.New(findRuleConfig(grConfig.Rules, "pii-detection"))
+		guardrailRegistry["content-moderation"] = contentmod.New(findRuleConfig(grConfig.Rules, "content-moderation"))
+		guardrailRegistry["keyword-blocklist"] = blocklist.New(findRuleConfig(grConfig.Rules, "keyword-blocklist"))
+		guardrailRegistry["input-validation"] = validation.New(findRuleConfig(grConfig.Rules, "input-validation"))
+		guardrailRegistry["prompt-injection"] = injection.New(findRuleConfig(grConfig.Rules, "prompt-injection"))
+		guardrailRegistry["secret-detection"] = secrets.New(findRuleConfig(grConfig.Rules, "secret-detection"))
+		guardrailRegistry["topic-restriction"] = topic.New(findRuleConfig(grConfig.Rules, "topic-restriction"))
+		guardrailRegistry["language-detection"] = language.New(findRuleConfig(grConfig.Rules, "language-detection"))
+		guardrailRegistry["system-prompt-protection"] = sysprompt.New(findRuleConfig(grConfig.Rules, "system-prompt-protection"))
+		guardrailRegistry["hallucination-detection"] = hallucination.New(findRuleConfig(grConfig.Rules, "hallucination-detection"))
+		guardrailRegistry["data-leakage-prevention"] = leakage.New(findRuleConfig(grConfig.Rules, "data-leakage-prevention"))
 
 		// Register dynamic guardrails: webhooks and expressions.
-		for _, rule := range cfg.Guardrails.Rules {
+		for _, rule := range grConfig.Rules {
 			if _, exists := guardrailRegistry[rule.Name]; exists {
 				continue
 			}
@@ -293,7 +300,7 @@ func main() {
 			}
 		}
 
-		grEngine = guardrails.NewEngine(cfg.Guardrails, guardrailRegistry)
+		grEngine = guardrails.NewEngine(grConfig, guardrailRegistry)
 
 		// Build per-key guardrail policy store.
 		policyStore = policy.NewStore()
@@ -367,6 +374,8 @@ func main() {
 			}
 		}
 		slog.Info("guardrails enabled",
+			"static_enabled", cfg.Guardrails.Enabled,
+			"managed_enabled", cfg.ControlPlane.URL != "",
 			"pre_guardrails", grEngine.PreCount(),
 			"post_guardrails", grEngine.PostCount(),
 			"registry_size", len(guardrailRegistry),

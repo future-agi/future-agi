@@ -32,6 +32,7 @@ type Engine struct {
 	failOpen       bool
 	defaultTimeout time.Duration
 	asyncSem       chan struct{} // bounds async goroutine count
+	configErr      error
 }
 
 // NewEngine creates a guardrail engine from config and a registry of guardrail implementations.
@@ -47,7 +48,10 @@ func NewEngine(cfg config.GuardrailsConfig, registry map[string]Guardrail) *Engi
 
 	for _, rule := range cfg.Rules {
 		g, ok := registry[rule.Name]
-		if !ok {
+		if !ok || g == nil {
+			if rule.Config["on_block"] == "reflect" && e.configErr == nil {
+				e.configErr = fmt.Errorf("reflect check %q has no registered implementation", rule.Name)
+			}
 			slog.Warn("guardrail not found in registry, skipping",
 				"name", rule.Name,
 			)
@@ -59,10 +63,7 @@ func NewEngine(cfg config.GuardrailsConfig, registry map[string]Guardrail) *Engi
 			timeout = e.defaultTimeout
 		}
 
-		reflection, configErr := reflexion.Parse(rule.Config)
-		if rule.Stage != "post" || rule.Mode == "async" || rule.Action != "block" {
-			reflection.Enabled = false
-		}
+		reflection, configErr := reflexion.Validate(rule.Config, rule.Name, rule.Stage, rule.Action, rule.Mode)
 		resolved := resolvedRule{
 			reflection: reflection,
 			configErr:  configErr,
@@ -124,31 +125,9 @@ func (e *Engine) run(ctx context.Context, rules []resolvedRule, input *CheckInpu
 	}
 
 	for _, rule := range rules {
-		// Apply per-key policy overrides.
-		effectiveAction := rule.action
-		effectiveThreshold := rule.threshold
-
-		if p != nil {
-			if ov, ok := p.Overrides[rule.guardrail.Name()]; ok {
-				if ov.Disabled {
-					continue // skip this guardrail for this key
-				}
-				if ov.Action != "" {
-					effectiveAction = parseAction(ov.Action)
-				}
-				if ov.Threshold != nil {
-					effectiveThreshold = *ov.Threshold
-				}
-			}
-		}
-
-		// Apply per-request policy overrides (take precedence over per-key).
-		switch rp {
-		case policy.RequestPolicyLogOnly:
-			effectiveAction = ActionLog
-		case policy.RequestPolicyStrict:
-			effectiveAction = ActionBlock
-			effectiveThreshold = 0
+		effectiveAction, effectiveThreshold, enabled := effectiveCheckPolicy(rule.guardrail.Name(), rule.action, rule.threshold, p, rp)
+		if !enabled {
+			continue
 		}
 
 		if rule.mode == "async" {
@@ -210,6 +189,7 @@ func (e *Engine) run(ctx context.Context, rules []resolvedRule, input *CheckInpu
 }
 
 func (e *Engine) runSync(ctx context.Context, rule resolvedRule, input *CheckInput) *CheckResult {
+	original := input
 	owned, err := snapshotInput(input)
 	if err != nil {
 		return &CheckResult{Pass: false, Score: 1, Message: "invalid guardrail input", OperationalError: true}
@@ -247,6 +227,7 @@ func (e *Engine) runSync(ctx context.Context, rule resolvedRule, input *CheckInp
 		if res.err != nil {
 			return e.handleError(rule, res.err)
 		}
+		applyCheckMutations(original, owned)
 		return res.cr
 	case <-checkCtx.Done():
 		slog.Warn("guardrail timed out",

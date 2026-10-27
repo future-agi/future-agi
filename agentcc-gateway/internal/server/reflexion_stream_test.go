@@ -14,10 +14,12 @@ import (
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/guardrails"
+	"github.com/futureagi/agentcc-gateway/internal/metrics"
 	"github.com/futureagi/agentcc-gateway/internal/modeldb"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
 	costplugin "github.com/futureagi/agentcc-gateway/internal/plugins/cost"
+	promplugin "github.com/futureagi/agentcc-gateway/internal/plugins/prometheus"
 )
 
 type gatedReflectionCheck struct {
@@ -108,6 +110,10 @@ func TestReflexionFailoverUsageRetainsServingModel(t *testing.T) {
 			var primaryCalls atomic.Int32
 			blocked := &reflectionUpstream{blocked: 1}
 			primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.URL.Path != "/v1/chat/completions" {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
 				if primaryCalls.Add(1) == 1 {
 					blocked.serve(w, r)
 				} else {
@@ -122,9 +128,10 @@ func TestReflexionFailoverUsageRetainsServingModel(t *testing.T) {
 			db := modeldb.New(map[string]*modeldb.ModelInfo{
 				"primary-model":  {ID: "primary-model", Pricing: modeldb.PricingInfo{InputPerToken: .01, OutputPerToken: .01}},
 				"fallback-model": {ID: "fallback-model", Pricing: modeldb.PricingInfo{InputPerToken: .02, OutputPerToken: .02}},
-			})
+			}, nil)
 			observer := &reflectionObserver{}
-			h.engine = pipeline.NewEngine(reflectionPlugin(&reflectionCheck{name: "output"}, reflectionPolicy(), "block", "post"), costplugin.New(true, func() *modeldb.ModelDB { return db }, nil, nil), observer)
+			metricRegistry := metrics.NewRegistry()
+			h.engine = pipeline.NewEngine(reflectionPlugin(&reflectionCheck{name: "output"}, reflectionPolicy(), "block", "post"), costplugin.New(true, func() *modeldb.ModelDB { return db }, nil, nil), observer, promplugin.New(metricRegistry, true))
 			rc := models.AcquireRequestContext()
 			defer rc.Release()
 			rc.Model = "primary-model"
@@ -142,6 +149,21 @@ func TestReflexionFailoverUsageRetainsServingModel(t *testing.T) {
 			}
 			if observer.count != 1 || observer.usage.TotalTokens != 60 || observer.metadata["cost"] != "0.900000" {
 				t.Fatalf("usage=%+v metadata=%v observers=%d", observer.usage, observer.metadata, observer.count)
+			}
+			metricText := metricRegistry.Render()
+			for _, want := range []string{
+				`agentcc_requests_total{model="fallback-model",provider="fallback",status="ok"} 1`,
+				`agentcc_tokens_input_total{model="primary-model",provider="primary"} 10`,
+				`agentcc_tokens_input_total{model="fallback-model",provider="fallback"} 10`,
+				`agentcc_cost_microdollars_total{model="primary-model",provider="primary"} 300000`,
+				`agentcc_cost_microdollars_total{model="fallback-model",provider="fallback"} 600000`,
+			} {
+				if !strings.Contains(metricText, want) {
+					t.Fatalf("missing %s in metrics:\n%s", want, metricText)
+				}
+			}
+			if strings.Count(metricText, "agentcc_requests_total{") != 1 {
+				t.Fatalf("duplicated request metrics:\n%s", metricText)
 			}
 			var attempts []models.ProviderAttempt
 			if err := json.Unmarshal([]byte(observer.metadata["provider_attempt_usage"]), &attempts); err != nil {

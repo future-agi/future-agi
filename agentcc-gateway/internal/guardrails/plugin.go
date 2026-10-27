@@ -64,12 +64,12 @@ func (p *GuardrailPlugin) ProcessRequest(ctx context.Context, rc *models.Request
 	if err := p.validateReflectionConfig(rc); err != nil {
 		return pipeline.ResultError(err)
 	}
+	keyPolicy, reqPolicy, err := p.resolvePolicy(rc)
+	if err != nil {
+		return pipeline.ResultError(err)
+	}
 	// 1. Run static engine rules (self-hosted / config.yaml rules).
 	if p.engine != nil && p.engine.PreCount() > 0 {
-		keyPolicy, reqPolicy, err := p.resolvePolicy(rc)
-		if err != nil {
-			return pipeline.ResultError(err)
-		}
 
 		input := &CheckInput{
 			Request:  rc.Request,
@@ -148,6 +148,10 @@ func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.Reque
 		return pipeline.ResultContinue()
 	}
 
+	keyPolicy, reqPolicy, err := p.resolvePolicy(rc)
+	if err != nil {
+		return pipeline.ResultError(err)
+	}
 	result := &PipelineResult{}
 
 	names := make([]string, 0, len(orgCfg.Guardrails.Checks))
@@ -181,6 +185,11 @@ func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.Reque
 			continue
 		}
 
+		action, threshold, enabled := effectiveCheckPolicy(name, parseAction(check.Action), check.ConfidenceThreshold, keyPolicy, reqPolicy)
+		if !enabled {
+			continue
+		}
+
 		// Determine timeout.
 		timeout := p.defaultTimeout
 		if orgCfg.Guardrails.TimeoutMs > 0 {
@@ -203,13 +212,10 @@ func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.Reque
 		}
 
 		// Apply threshold.
-		threshold := check.ConfidenceThreshold
 		triggered := shouldTrigger(cr, threshold)
 		if !triggered {
 			continue
 		}
-
-		action := parseAction(check.Action)
 
 		tg := TriggeredGuardrail{
 			Name:      name,
@@ -218,7 +224,7 @@ func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.Reque
 			Action:    action,
 			Message:   cr.Message,
 		}
-		if stage == StagePost && action == ActionBlock && check.Config["mode"] != "async" && !cr.OperationalError {
+		if stage == StagePost && action == ActionBlock && !cr.OperationalError {
 			tg.Reflection, _ = reflexion.Parse(check.Config)
 		}
 		result.Triggered = append(result.Triggered, tg)
@@ -340,6 +346,7 @@ func (p *GuardrailPlugin) createDynamicGuardrail(orgID, name string, cfg map[str
 
 // runGuardrailSafe runs a guardrail check with timeout and panic recovery.
 func (p *GuardrailPlugin) runGuardrailSafe(ctx context.Context, g Guardrail, input *CheckInput, timeout time.Duration) *CheckResult {
+	original := input
 	owned, err := snapshotInput(input)
 	if err != nil {
 		return &CheckResult{Pass: false, Score: 1, Message: "invalid guardrail input", OperationalError: true}
@@ -389,6 +396,7 @@ func (p *GuardrailPlugin) runGuardrailSafe(ctx context.Context, g Guardrail, inp
 				OperationalError: true,
 			}
 		}
+		applyCheckMutations(original, owned)
 		return res.cr
 	case <-checkCtx.Done():
 		slog.Warn("dynamic guardrail timed out",

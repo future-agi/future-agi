@@ -74,7 +74,7 @@ func (a *enkryptAdapter) buildRequest(ctx context.Context, text string) (*http.R
 func (a *enkryptAdapter) parseResponse(body []byte) *guardrails.CheckResult {
 	var resp enkryptResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return &guardrails.CheckResult{Pass: false, Score: 1.0, Message: fmt.Sprintf("failed to parse enkrypt response: %v", err)}
+		return &guardrails.CheckResult{Pass: false, Score: 1.0, OperationalError: true, Message: fmt.Sprintf("failed to parse enkrypt response: %v", err)}
 	}
 
 	var flagged []string

@@ -32,9 +32,9 @@ type lassoMessage struct {
 }
 
 type lassoResponse struct {
-	ViolationsDetected bool                       `json:"violations_detected"`
-	Deputies           map[string]bool            `json:"deputies"`
-	Findings           map[string][]lassoFinding  `json:"findings"`
+	ViolationsDetected bool                      `json:"violations_detected"`
+	Deputies           map[string]bool           `json:"deputies"`
+	Findings           map[string][]lassoFinding `json:"findings"`
 }
 
 type lassoFinding struct {
@@ -85,7 +85,7 @@ func (a *lassoAdapter) buildRequest(ctx context.Context, text string) (*http.Req
 func (a *lassoAdapter) parseResponse(body []byte) *guardrails.CheckResult {
 	var resp lassoResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return &guardrails.CheckResult{Pass: false, Score: 1.0, Message: fmt.Sprintf("failed to parse lasso response: %v", err)}
+		return &guardrails.CheckResult{Pass: false, Score: 1.0, OperationalError: true, Message: fmt.Sprintf("failed to parse lasso response: %v", err)}
 	}
 
 	if !resp.ViolationsDetected {

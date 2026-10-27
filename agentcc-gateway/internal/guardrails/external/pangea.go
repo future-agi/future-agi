@@ -55,7 +55,7 @@ func (a *pangeaAdapter) buildRequest(ctx context.Context, text string) (*http.Re
 func (a *pangeaAdapter) parseResponse(body []byte) *guardrails.CheckResult {
 	var resp pangeaResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return &guardrails.CheckResult{Pass: false, Score: 1.0, Message: fmt.Sprintf("failed to parse pangea response: %v", err)}
+		return &guardrails.CheckResult{Pass: false, Score: 1.0, OperationalError: true, Message: fmt.Sprintf("failed to parse pangea response: %v", err)}
 	}
 
 	if !resp.Result.Detected {

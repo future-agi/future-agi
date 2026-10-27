@@ -44,7 +44,7 @@ type CheckResult struct {
 	Action           Action                 // what action to take if triggered
 	Message          string                 // human-readable explanation
 	Details          map[string]interface{} // guardrail-specific metadata
-	OperationalError bool                   // timeouts/panics are not repairable content failures
+	OperationalError bool                   // transport/auth/parse errors and timeouts/panics are not repairable content failures
 }
 
 // Guardrail is the interface that all guardrail implementations must satisfy.

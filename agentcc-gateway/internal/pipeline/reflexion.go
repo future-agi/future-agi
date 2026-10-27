@@ -23,6 +23,21 @@ func (e *Engine) BufferResponse(rc *models.RequestContext) bool {
 	return false
 }
 
+func reflectionEndpointError(rc *models.RequestContext, enabled, buffered bool) *models.APIError {
+	if !enabled {
+		return nil
+	}
+	switch rc.EndpointType {
+	case "anthropic_messages", "genai_generate", "genai_stream", "responses", "completion":
+		return models.ErrBadRequest("reflection_endpoint_unsupported", "Response repair is supported only on /v1/chat/completions; use that endpoint or disable this reflection rule")
+	case "chat", "":
+		if rc.IsStream && !buffered {
+			return models.ErrBadRequest("reflection_endpoint_unsupported", "Response repair requires the guarded /v1/chat/completions streaming adapter")
+		}
+	}
+	return nil
+}
+
 func (e *Engine) accountAttempt(ctx context.Context, rc *models.RequestContext) {
 	if rc.Flags.CacheHit {
 		return
@@ -45,13 +60,18 @@ func (e *Engine) validateResponse(ctx context.Context, rc *models.RequestContext
 		return ResultContinue()
 	}
 	result := ResultContinue()
+	candidate := rc.Response
 	for _, p := range e.postSequential {
 		if _, ok := p.(ResponseValidator); !ok {
 			continue
 		}
+		rc.Response = candidate
 		start := time.Now()
 		r := p.ProcessResponse(ctx, rc)
 		rc.RecordTiming("post_"+p.Name(), time.Since(start))
+		if rc.Response != nil {
+			candidate = rc.Response
+		}
 		if r.Error != nil {
 			if result.Error == nil {
 				result = r
@@ -64,6 +84,9 @@ func (e *Engine) validateResponse(ctx context.Context, rc *models.RequestContext
 				result.Reflection.Reason += "\n" + r.Reflection.Reason
 			}
 		}
+	}
+	if result.Error != nil {
+		rc.Response = nil
 	}
 	return result
 }
@@ -206,6 +229,14 @@ func (e *Engine) processCandidates(ctx context.Context, rc *models.RequestContex
 			break
 		}
 		blocked := rc.Response
+		if blocked != nil {
+			candidate := *blocked
+			candidate.Choices = append([]models.Choice(nil), blocked.Choices...)
+			for i := range candidate.Choices {
+				candidate.Choices[i].Message.Content = append(json.RawMessage(nil), blocked.Choices[i].Message.Content...)
+			}
+			blocked = &candidate
+		}
 		result := e.validateResponse(ctx, rc)
 		if ctx.Err() != nil {
 			finalErr = models.ErrRequestTimeout("request canceled during response validation")
@@ -233,6 +264,9 @@ func (e *Engine) processCandidates(ctx context.Context, rc *models.RequestContex
 		pendingReflection = true
 	}
 	rc.Request = original
+	if admission, ok := finalErr.(*models.AdmissionError); ok {
+		finalErr = admission.Err
+	}
 	if finalErr != nil {
 		if ctx.Err() != nil {
 			rc.Flags.Timeout = true

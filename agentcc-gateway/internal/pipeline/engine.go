@@ -110,13 +110,27 @@ func (e *Engine) process(ctx context.Context, rc *models.RequestContext, provide
 			if result.Response != nil {
 				rc.Response = result.Response
 			}
+			if err := reflectionEndpointError(rc, e.BufferResponse(rc), buffered); err != nil {
+				rc.Response = nil
+				rc.AddError(err)
+				e.RunPostPlugins(ctx, rc)
+				return err
+			}
 			return e.RunPostPlugins(ctx, rc)
 		}
 	}
 
-	rc.BufferedResponse = rc.IsStream && buffered && e.BufferResponse(rc)
+	reflectEnabled := e.BufferResponse(rc)
+	if err := reflectionEndpointError(rc, reflectEnabled, buffered); err != nil {
+		rc.Response = nil
+		rc.Flags.ShortCircuited = true
+		rc.AddError(err)
+		e.RunPostPlugins(ctx, rc)
+		return err
+	}
+	rc.BufferedResponse = rc.IsStream && buffered && reflectEnabled
 	chat := rc.Request != nil && (rc.EndpointType == "chat" || rc.EndpointType == "")
-	if (!rc.IsStream && chat) || rc.BufferedResponse {
+	if (!rc.IsStream && chat && reflectEnabled) || rc.BufferedResponse {
 		return e.processCandidates(ctx, rc, providerCall)
 	}
 

@@ -1395,8 +1395,10 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 	originalModel := rc.Request.Model
 	orgID := rc.Metadata["org_id"]
 	servingProvider := provider
+	primaryProviderID := rc.Provider
 
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
+		rc.Provider = primaryProviderID
 		resp, err := h.chatAttempt(ctx, rc, provider)
 		if err == nil {
 			servingProvider = provider
@@ -1561,6 +1563,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	rc.IsStream = true
 	rc.AttemptHooks = true
 	var candidate *bufferedCandidate
+	primaryProviderID := rc.Provider
 	sseWriter := streaming.NewSSEWriter(w)
 	if sseWriter == nil {
 		models.WriteError(w, models.ErrInternal("streaming not supported by server"))
@@ -1584,7 +1587,6 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	// attempt returns, which would otherwise end the stream after one chunk.
 	openStream := func(callCtx context.Context, callProvider providers.Provider) error {
 		if rc.BufferedResponse {
-			rc.Provider = callProvider.ID()
 			if err := h.engine.BeginProviderAttempt(callCtx, rc); err != nil {
 				return err
 			}
@@ -1671,6 +1673,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 				} else {
 					rc.Request.Model = originalModel
 				}
+				rc.Provider = providerID
 				return openStream(callCtx, p)
 			})
 			if err != nil {
@@ -1693,6 +1696,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			return nil
 		}
 
+		rc.Provider = primaryProviderID
 		if err := openStream(ctx, provider); err != nil {
 			return tryModelFallbacks(err)
 		}

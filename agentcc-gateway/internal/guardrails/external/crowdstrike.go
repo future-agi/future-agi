@@ -38,8 +38,8 @@ type crowdstrikeMessage struct {
 }
 
 type crowdstrikeResponse struct {
-	Status  string           `json:"status"`
-	Summary string           `json:"summary"`
+	Status  string            `json:"status"`
+	Summary string            `json:"summary"`
 	Result  crowdstrikeResult `json:"result"`
 }
 
@@ -124,7 +124,7 @@ func (a *crowdstrikeAdapter) buildRequest(ctx context.Context, text string) (*ht
 func (a *crowdstrikeAdapter) parseResponse(body []byte) *guardrails.CheckResult {
 	var resp crowdstrikeResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return &guardrails.CheckResult{Pass: false, Score: 1.0, Message: fmt.Sprintf("failed to parse crowdstrike response: %v", err)}
+		return &guardrails.CheckResult{Pass: false, Score: 1.0, OperationalError: true, Message: fmt.Sprintf("failed to parse crowdstrike response: %v", err)}
 	}
 
 	if !resp.Result.Blocked {

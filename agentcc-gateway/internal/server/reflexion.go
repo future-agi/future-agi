@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -23,7 +24,6 @@ func (h *Handlers) setReflexionHeaders(w http.ResponseWriter, rc *models.Request
 }
 
 func (h *Handlers) chatAttempt(ctx context.Context, rc *models.RequestContext, p providers.Provider) (*models.ChatCompletionResponse, error) {
-	rc.Provider = p.ID()
 	if err := h.engine.BeginProviderAttempt(ctx, rc); err != nil {
 		return nil, err
 	}
@@ -253,6 +253,53 @@ func collectCandidate(ctx context.Context, chunks <-chan models.StreamChunk, err
 	}
 }
 
+// A synchronous check can redact the validated response. Replaying the original
+// upstream frames in that case would undo the redaction and disclose its input.
+func (b *bufferedCandidate) replayFrames(response *models.ChatCompletionResponse) ([]models.StreamChunk, error) {
+	before, err := json.Marshal(b.response().Choices)
+	if err != nil {
+		return nil, err
+	}
+	after, err := json.Marshal(response.Choices)
+	if err != nil {
+		return nil, err
+	}
+	if bytes.Equal(before, after) {
+		return b.frames, nil
+	}
+	out := newBufferedCandidate()
+	for _, choice := range response.Choices {
+		m := choice.Message
+		if len(m.ThinkingBlocks) > 0 || len(m.Annotations) > 0 {
+			return nil, models.ErrGuardrailBlocked("stream_transform_unsupported", "Response transformation cannot be safely streamed")
+		}
+		var text string
+		if len(m.Content) > 0 && string(m.Content) != "null" {
+			if json.Unmarshal(m.Content, &text) != nil {
+				return nil, models.ErrGuardrailBlocked("stream_transform_unsupported", "Response transformation cannot be safely streamed")
+			}
+		}
+		delta := models.Delta{Role: "assistant", Content: &text}
+		if m.ReasoningContent != "" {
+			delta.ReasoningContent = &m.ReasoningContent
+		}
+		for i, tool := range m.ToolCalls {
+			fn := tool.Function
+			delta.ToolCalls = append(delta.ToolCalls, models.ToolCallDelta{Index: i, ID: tool.ID, Type: tool.Type, Function: &fn})
+		}
+		chunk := models.StreamChunk{ID: b.id, Object: "chat.completion.chunk", Created: b.created, Model: response.Model, Choices: []models.StreamChoice{{Index: choice.Index, Delta: delta}}}
+		if err := out.add(chunk); err != nil {
+			return nil, err
+		}
+		finish := choice.FinishReason
+		chunk.Choices = []models.StreamChoice{{Index: choice.Index, FinishReason: &finish}}
+		if err := out.add(chunk); err != nil {
+			return nil, err
+		}
+	}
+	return out.frames, nil
+}
+
 func (h *Handlers) replayCandidate(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, provider providers.Provider, candidate *bufferedCandidate) {
 	if ctx.Err() != nil {
 		models.WriteError(w, models.ErrRequestTimeout("request canceled before response replay"))
@@ -262,6 +309,11 @@ func (h *Handlers) replayCandidate(ctx context.Context, w http.ResponseWriter, r
 		models.WriteError(w, models.ErrInternal("no validated stream candidate"))
 		return
 	}
+	frames, err := candidate.replayFrames(rc.Response)
+	if err != nil {
+		models.WriteErrorFromError(w, err)
+		return
+	}
 	sse := streaming.NewSSEWriter(w)
 	if sse == nil {
 		models.WriteError(w, models.ErrInternal("streaming not supported by server"))
@@ -269,7 +321,7 @@ func (h *Handlers) replayCandidate(ctx context.Context, w http.ResponseWriter, r
 	}
 	h.setAgentccHeadersForProvider(w, rc, provider)
 	sse.WriteHeaders()
-	for _, frame := range candidate.frames {
+	for _, frame := range frames {
 		if ctx.Err() != nil {
 			return
 		}

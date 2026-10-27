@@ -27,15 +27,17 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
 )
 
-// The provider is the only simulated component: these tests exercise the real
-// HTTP handler, OpenAI adapter, policy engine, pipeline, accounting and cache.
+// Deterministic upstream responses and check fixtures exercise the real HTTP
+// handler, OpenAI adapter, policy engine, pipeline, accounting and cache. Native
+// leakage/PII checks are covered separately in reflexion_compat_test.go.
 type reflectionUpstream struct {
-	mu       sync.Mutex
-	requests []models.ChatCompletionRequest
-	blocked  int
-	status   int
-	tool     bool
-	multi    bool
+	mu          sync.Mutex
+	requests    []models.ChatCompletionRequest
+	blocked     int
+	blockedText string
+	status      int
+	tool        bool
+	multi       bool
 }
 
 func (u *reflectionUpstream) serve(w http.ResponseWriter, r *http.Request) {
@@ -55,6 +57,9 @@ func (u *reflectionUpstream) serve(w http.ResponseWriter, r *http.Request) {
 	text := "accepted answer"
 	if n <= u.blocked {
 		text = "rejected secret answer"
+		if u.blockedText != "" {
+			text = u.blockedText
+		}
 	}
 	content, _ := json.Marshal(text)
 	usage := &models.Usage{PromptTokens: 10, CompletionTokens: 20, TotalTokens: 30}
@@ -151,7 +156,7 @@ func reflectionPolicy() map[string]interface{} {
 	return map[string]interface{}{"on_block": "reflect", "reflect_debug": true}
 }
 func reflectionCost() pipeline.Plugin {
-	db := modeldb.New(map[string]*modeldb.ModelInfo{"gpt-4o": {ID: "gpt-4o", Pricing: modeldb.PricingInfo{InputPerToken: .01, OutputPerToken: .01}}})
+	db := modeldb.New(map[string]*modeldb.ModelInfo{"gpt-4o": {ID: "gpt-4o", Pricing: modeldb.PricingInfo{InputPerToken: .01, OutputPerToken: .01}}}, nil)
 	return costplugin.New(true, func() *modeldb.ModelDB { return db }, nil, nil)
 }
 func callReflectionServer(s *Server, stream bool) *httptest.ResponseRecorder {
@@ -220,9 +225,12 @@ func TestReflexionHTTPRejectExhaustionAndNonRepairable(t *testing.T) {
 		{"default reject", nil, 9, "block", "post", false, false, 1, 403},
 		{"exhaustion", reflectionPolicy(), 9, "block", "post", false, false, 2, 403},
 		{"hard cap", map[string]interface{}{"on_block": "reflect", "reflect_max_attempts": 5}, 9, "block", "post", false, false, 6, 403},
-		{"pre block", reflectionPolicy(), 9, "block", "pre", false, false, 0, 403},
-		{"warn", reflectionPolicy(), 9, "warn", "post", false, false, 1, 200},
-		{"log", reflectionPolicy(), 9, "log", "post", false, false, 1, 200},
+		{"pre block", nil, 9, "block", "pre", false, false, 0, 403},
+		{"warn", nil, 9, "warn", "post", false, false, 1, 200},
+		{"log", nil, 9, "log", "post", false, false, 1, 200},
+		{"pre reflect invalid", reflectionPolicy(), 9, "block", "pre", false, false, 0, 400},
+		{"warn reflect invalid", reflectionPolicy(), 9, "warn", "post", false, false, 0, 400},
+		{"log reflect invalid", reflectionPolicy(), 9, "log", "post", false, false, 0, 400},
 		{"tool calls", reflectionPolicy(), 9, "block", "post", true, false, 1, 403},
 		{"multiple choices", reflectionPolicy(), 9, "block", "post", false, true, 1, 403},
 		{"invalid limit", map[string]interface{}{"on_block": "reflect", "reflect_max_attempts": 6}, 9, "block", "post", false, false, 0, 400},
@@ -238,7 +246,7 @@ func TestReflexionHTTPRejectExhaustionAndNonRepairable(t *testing.T) {
 			if w.Code != tc.wantStatus || len(u.calls()) != tc.wantCalls {
 				t.Fatalf("status=%d calls=%d body=%s", w.Code, len(u.calls()), w.Body.String())
 			}
-			if tc.wantStatus != 200 && (strings.Contains(w.Body.String(), "rejected") || observer.snapshot.Response != nil) {
+			if tc.wantStatus != 200 && ((tc.wantCalls > 0 && strings.Contains(w.Body.String(), "rejected")) || observer.snapshot.Response != nil) {
 				t.Fatal("rejected response leaked")
 			}
 			if tc.wantCalls > 0 && observer.usage.TotalTokens != 30*tc.wantCalls {
@@ -280,7 +288,7 @@ func TestReflexionHTTPAdmissionStopsWithoutDoubleCharge(t *testing.T) {
 				observer.initial = map[string]string{"auth_key_id": key.ID, "key_type": "managed"}
 				plugins = append(plugins, creditplugin.New(true, ks))
 			case "budget":
-				observer.initial = map[string]string{"org_id": "org-a"}
+				observer.initial = map[string]string{"org_id": "org-a", tenant.MetadataKeyOrgID: "org-a"}
 				plugins = append(plugins, budgetplugin.New(nil, budgetplugin.NewPricingLookup(map[string]config.CustomPricing{"gpt-4o": {InputPerMTok: 10000, OutputPerMTok: 10000}}), false, store))
 			case "rpm":
 				plugins = append(plugins, rateplugin.New(config.RateLimitConfig{Enabled: true, GlobalRPM: 1}, nil, nil))

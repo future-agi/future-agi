@@ -1317,7 +1317,7 @@ func (c *Config) Validate() error {
 	}
 
 	for _, rule := range c.Guardrails.Rules {
-		if _, err := reflexion.Parse(rule.Config); err != nil {
+		if _, err := reflexion.Validate(rule.Config, rule.Name, rule.Stage, rule.Action, rule.Mode); err != nil {
 			return fmt.Errorf("guardrail %q: %w", rule.Name, err)
 		}
 	}

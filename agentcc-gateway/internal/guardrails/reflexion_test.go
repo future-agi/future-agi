@@ -46,7 +46,7 @@ func TestDynamicReflectionStageAndTenantIsolation(t *testing.T) {
 	store := tenant.NewStore()
 	store.Set("reflect-org", &tenant.OrgConfig{Guardrails: &tenant.GuardrailConfig{Checks: map[string]*tenant.GuardrailCheck{"output": {Enabled: true, Action: "block", Config: map[string]interface{}{"stage": "post", "on_block": "reflect"}}}}})
 	store.Set("reject-org", &tenant.OrgConfig{Guardrails: &tenant.GuardrailConfig{Checks: map[string]*tenant.GuardrailCheck{"output": {Enabled: true, Action: "block", Config: map[string]interface{}{"stage": "post"}}}}})
-	store.Set("legacy-org", &tenant.OrgConfig{Guardrails: &tenant.GuardrailConfig{Checks: map[string]*tenant.GuardrailCheck{"output": {Enabled: true, Action: "block", Config: map[string]interface{}{"on_block": "reflect"}}}}})
+	store.Set("legacy-org", &tenant.OrgConfig{Guardrails: &tenant.GuardrailConfig{Checks: map[string]*tenant.GuardrailCheck{"output": {Enabled: true, Action: "block"}}}})
 	plugin := NewPlugin(nil, map[string]Guardrail{"output": &responseWordCheck{name: "output", word: "bad", stage: StagePre}}, nil, nil, store)
 	engine := pipeline.NewEngine(plugin)
 	for _, tc := range []struct {
@@ -106,8 +106,8 @@ func TestReflectionAsyncAndOperationalFailuresNeverRetry(t *testing.T) {
 	for _, tc := range []struct {
 		name, mode string
 		delay      time.Duration
-		wantError  bool
-	}{{"async", "async", 0, false}, {"timeout", "sync", 100 * time.Millisecond, true}} {
+		wantCalls  int
+	}{{"async", "async", 0, 0}, {"timeout", "sync", 100 * time.Millisecond, 1}} {
 		t.Run(tc.name, func(t *testing.T) {
 			g := &mockGuardrail{name: "check", stage: StagePost, delay: tc.delay, result: &CheckResult{Pass: false, Score: 1, Message: "blocked"}}
 			r := map[string]Guardrail{"check": g}
@@ -121,7 +121,7 @@ func TestReflectionAsyncAndOperationalFailuresNeverRetry(t *testing.T) {
 				rc.Response = reflectionResponse("body")
 				return nil
 			})
-			if calls != 1 || (err != nil) != tc.wantError {
+			if calls != tc.wantCalls || err == nil {
 				t.Fatalf("calls=%d error=%v", calls, err)
 			}
 		})

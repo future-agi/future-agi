@@ -618,7 +618,7 @@ Every guardrail runs in the pipeline with configurable request/response/streamin
 
 #### Opt-in response repair (reflexion)
 
-On `/v1/chat/completions`, a synchronous **post-stage block** can ask the model to repair its answer. Configure this per rule, not globally:
+On `/v1/chat/completions`, a synchronous **post-stage block** can ask the model to repair its answer. An applicable reflection rule rejects other text-generation endpoints before any provider call (`reflection_endpoint_unsupported`); those endpoints do not silently fall back to unbuffered output. Embeddings, health/admin routes, and genuinely disabled or log-only policy overrides are unaffected. Configure this per rule, not globally:
 
 ```yaml
 guardrails:
@@ -635,12 +635,13 @@ guardrails:
         reflect_debug: false      # optional count-only response headers
 ```
 
-Managed checks use the same fields in their existing `config` map, plus `config.stage: post`; without an explicit dynamic stage, the check implementation's stage remains the default. Static `rule.stage` remains authoritative. Invalid common settings are rejected rather than coerced or silently clamped.
+With `control_plane.url` configured, the guardrail plugin is initialized for tenant policies even when `guardrails.enabled` is false or omitted. That global switch gates only the operator's static rules. Managed checks use the same fields in their existing `config` map, plus `config.stage: post`; without an explicit dynamic stage, the check implementation's stage remains the default. Static `rule.stage` remains authoritative. Invalid common settings are rejected rather than coerced or silently clamped.
 
-- The default permits **one additional generation**, not one total call. The whole-request repair allowance never resets when another rule fails, and any reject-only failed check stops repair. Pre-stage blocks, async/warn/log checks, upstream errors and check timeouts do not trigger repair.
+- The default permits **one additional generation**, not one total call. The whole-request repair allowance never resets when another rule fails, and any reject-only failed check stops repair. Pre-stage blocks, async/warn/log checks, upstream errors, evaluator transport/auth/parse failures and check timeouts do not trigger repair.
 - Only the model receives the rejected assistant text and failure reason. Checks and final observers see the original request, not synthetic feedback history. Blocked tool-call, reasoning-block and multi-choice responses are rejected rather than inventing an invalid tool conversation. Passing responses of those shapes are still supported.
 - Streams with repair configured buffer the complete candidate before sending headers or body. Only a passing candidate is replayed, with one aggregate usage chunk and one `[DONE]`. A 2 MiB encoded-frame / 8192-frame ceiling, incomplete stream, cancellation or exhaustion fails closed. Streams without an applicable repair policy keep the ordinary streaming path.
-- Every executed attempt with reported usage is settled against actual-model cost, credits, budgets and token limits, including rejected candidates. Each additional provider call also consumes RPM admission. Budget and credit gates run before that admission. Transport retries/fallbacks retain their existing routing behavior, but cannot bypass these gates. Final cache/logging/metrics observers run once; rejected output is never cached.
+- With reflection configured, every executed attempt with reported usage is settled against actual-model cost, credits, budgets and token limits, including rejected candidates. Each additional provider call also consumes RPM admission. Budget and credit gates run before that admission. Reflection generations are bounded separately from existing transport retries/fallbacks. Without reflection configured, ordinary failover retains its existing pre-once/post-once quota behavior. Final cache/logging/metrics observers run once; rejected output is never cached.
+- This corrects previously lost blocked-call accounting: static post-blocks cleared the response before usage accounting, while dynamic post-block errors could be ignored and expose the response. For non-streaming and reflection-buffered responses, both now reject with 403, and reported usage is settled before the body is discarded. Pricing rates are unchanged; accounting of those previously missed blocked calls is intentionally corrected.
 - Returned usage and cost include all measured attempts. A canceled or failed upstream may not report usage: the gateway does **not** invent tokens or claim complete accounting; `x-agentcc-usage-incomplete: true` marks that case. Body-free `provider_attempt_usage` metadata retains per-provider/model measurements when there are multiple attempts. With `reflect_debug: true`, headers expose only `x-agentcc-reflexion-attempts` and `x-agentcc-provider-attempts`, never rejected text or check reasons.
 
 Production regression tests live in `internal/server/reflexion*_test.go`, `internal/guardrails/reflexion_test.go` and `internal/reflexion/policy_test.go`; standalone copied algorithm models are not integration evidence.

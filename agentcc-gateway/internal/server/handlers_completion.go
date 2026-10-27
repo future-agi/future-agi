@@ -336,7 +336,7 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 	}
 
 	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
-		models.WriteError(w, models.ErrInternal(err.Error()))
+		models.WriteErrorFromError(w, err)
 		return
 	}
 

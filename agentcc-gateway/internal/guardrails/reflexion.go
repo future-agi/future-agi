@@ -25,6 +25,9 @@ func configuredStage(cfg map[string]interface{}, fallback Stage) Stage {
 
 func (p *GuardrailPlugin) validateReflectionConfig(rc *models.RequestContext) *models.APIError {
 	if p.engine != nil {
+		if p.engine.configErr != nil {
+			return models.ErrBadRequest("invalid_guardrail_config", p.engine.configErr.Error())
+		}
 		for _, rules := range [][]resolvedRule{p.engine.preGuardrails, p.engine.postGuardrails} {
 			for _, rule := range rules {
 				if rule.configErr != nil {
@@ -35,11 +38,28 @@ func (p *GuardrailPlugin) validateReflectionConfig(rc *models.RequestContext) *m
 	}
 	if p.tenantStore != nil {
 		if cfg := p.tenantStore.Get(rc.Metadata["org_id"]); cfg != nil && cfg.Guardrails != nil {
-			for _, check := range cfg.Guardrails.Checks {
+			for name, check := range cfg.Guardrails.Checks {
 				if check == nil || !check.Enabled {
 					continue
 				}
 				if _, err := reflexion.Parse(check.Config); err != nil {
+					return models.ErrBadRequest("invalid_guardrail_config", err.Error())
+				}
+				if p.engine != nil && p.engine.HasRule(name) {
+					continue
+				}
+				g := p.getGuardrail(rc.Metadata["org_id"], name, check)
+				if g == nil {
+					if check.Config["on_block"] == "reflect" {
+						return models.ErrBadRequest("invalid_guardrail_config", "reflect check has no registered implementation")
+					}
+					continue
+				}
+				stage := "pre"
+				if configuredStage(check.Config, g.Stage()) == StagePost {
+					stage = "post"
+				}
+				if _, err := reflexion.Validate(check.Config, name, stage, check.Action, "sync"); err != nil {
 					return models.ErrBadRequest("invalid_guardrail_config", err.Error())
 				}
 			}
@@ -49,9 +69,14 @@ func (p *GuardrailPlugin) validateReflectionConfig(rc *models.RequestContext) *m
 }
 
 func (p *GuardrailPlugin) BufferResponse(rc *models.RequestContext) bool {
+	keyPolicy, reqPolicy, err := p.resolvePolicy(rc)
+	if err != nil || reqPolicy == policy.RequestPolicyDisabled {
+		return false
+	}
 	if p.engine != nil {
 		for _, rule := range p.engine.postGuardrails {
-			if rule.reflection.Enabled {
+			action, _, enabled := effectiveCheckPolicy(rule.guardrail.Name(), rule.action, rule.threshold, keyPolicy, reqPolicy)
+			if enabled && action == ActionBlock && rule.reflection.Enabled {
 				return true
 			}
 		}
@@ -59,7 +84,11 @@ func (p *GuardrailPlugin) BufferResponse(rc *models.RequestContext) bool {
 	if p.tenantStore != nil {
 		if cfg := p.tenantStore.Get(rc.Metadata["org_id"]); cfg != nil && cfg.Guardrails != nil {
 			for name, check := range cfg.Guardrails.Checks {
-				if check == nil || !check.Enabled || check.Action != "block" || check.Config["mode"] == "async" {
+				if check == nil || !check.Enabled {
+					continue
+				}
+				action, _, enabled := effectiveCheckPolicy(name, parseAction(check.Action), check.ConfidenceThreshold, keyPolicy, reqPolicy)
+				if !enabled || action != ActionBlock {
 					continue
 				}
 				if p.engine != nil && p.engine.HasRule(name) {
@@ -77,6 +106,32 @@ func (p *GuardrailPlugin) BufferResponse(rc *models.RequestContext) bool {
 		}
 	}
 	return false
+}
+
+func effectiveCheckPolicy(name string, action Action, threshold float64, p *policy.Policy, rp policy.RequestPolicy) (Action, float64, bool) {
+	if rp == policy.RequestPolicyDisabled {
+		return action, threshold, false
+	}
+	if p != nil {
+		if ov, ok := p.Overrides[name]; ok {
+			if ov.Disabled {
+				return action, threshold, false
+			}
+			if ov.Action != "" {
+				action = parseAction(ov.Action)
+			}
+			if ov.Threshold != nil {
+				threshold = *ov.Threshold
+			}
+		}
+	}
+	switch rp {
+	case policy.RequestPolicyLogOnly:
+		action = ActionLog
+	case policy.RequestPolicyStrict:
+		action, threshold = ActionBlock, 0
+	}
+	return action, threshold, true
 }
 
 // postBlock leaves the body available solely for the controller's private
@@ -130,6 +185,17 @@ func (p *GuardrailPlugin) ObserveResponse(_ context.Context, rc *models.RequestC
 			continue
 		}
 		p.engine.runAsync(rule, input)
+	}
+}
+
+// Successful synchronous checks may redact messages in place. Copy those
+// changes back only after the check has returned, never from a timed-out worker.
+func applyCheckMutations(original, owned *CheckInput) {
+	if original.Request != nil && owned.Request != nil {
+		*original.Request = *owned.Request
+	}
+	if original.Response != nil && owned.Response != nil {
+		*original.Response = *owned.Response
 	}
 }
 
