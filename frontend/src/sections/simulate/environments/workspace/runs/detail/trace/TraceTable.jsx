@@ -115,7 +115,7 @@ const clampSx = {
 };
 
 // A call with no pass or fail says what it has instead: "2 not applicable, 1 inconclusive".
-export const unscoredSummary = (t) => {
+const unscoredSummary = (t) => {
   if (t.status !== "no_score") return "";
   const count = (result) =>
     (t.subGoalResults || []).filter((goal) => goal.result === result).length;

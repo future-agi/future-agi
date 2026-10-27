@@ -51,8 +51,12 @@ describe("buildSummaryRow", () => {
 
   it("counts only calls with a pass or fail, and a run with none has no score", () => {
     // 20 calls, 10 with a pass or fail: the other 10 had no score.
-    expect(buildSummaryRow({ ...run, passed: 5, scored: 10 }, {}).passRate).toBe(50);
-    expect(buildSummaryRow({ ...run, passed: 0, scored: 0 }, {}).passRate).toBeNull();
+    expect(
+      buildSummaryRow({ ...run, passed: 5, scored: 10 }, {}).passRate,
+    ).toBe(50);
+    expect(
+      buildSummaryRow({ ...run, passed: 0, scored: 0 }, {}).passRate,
+    ).toBeNull();
   });
 });
 

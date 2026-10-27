@@ -890,7 +890,8 @@ describe("TraceTable calls with no pass or fail", () => {
           {
             ...row("in"),
             status: "inconclusive",
-            outcomeReason: "Rowan was triggered but did not take part: voice failed.",
+            outcomeReason:
+              "Rowan was triggered but did not take part: voice failed.",
             subGoalResults: [{ name: "booked", passed: true }],
           },
         ],
@@ -898,7 +899,9 @@ describe("TraceTable calls with no pass or fail", () => {
       }),
     );
     expect(
-      screen.getByText("Rowan was triggered but did not take part: voice failed."),
+      screen.getByText(
+        "Rowan was triggered but did not take part: voice failed.",
+      ),
     ).toBeInTheDocument();
   });
 });
