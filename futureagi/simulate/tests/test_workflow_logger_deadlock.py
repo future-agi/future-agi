@@ -11,6 +11,7 @@ The fix: route `temporalio` logger to console-only handler (no file handler).
 import asyncio
 import logging
 import logging.handlers
+import threading
 import time
 from dataclasses import dataclass
 
@@ -32,12 +33,65 @@ class SlowHandler(logging.Handler):
     and triggers Temporal's deadlock detector (2s threshold).
     """
 
+    def createLock(self):
+        # Temporal interrupts the workflow executor when the 3 s sleep trips
+        # its deadlock detector. A handler mutex can then be stranded on that
+        # executor, blocking logger.exception() on the asyncio thread forever.
+        # This fake handler only sleeps: there is no stream or mutable state to
+        # protect. Preserve the blocking delay without adding that second fault.
+        self.lock = None
+
     def __init__(self, delay: float = 3.0):
         super().__init__()
         self.delay = delay
 
     def emit(self, record):
         time.sleep(self.delay)
+
+
+def test_slow_handler_cannot_strand_the_error_logging_thread():
+    """A failed workflow must not prevent the event loop from logging its error.
+
+    Temporal interrupts a deadlocked workflow thread asynchronously. That can
+    strand a logging-handler mutex on an idle executor thread; the event loop
+    then blocks in logger.exception() and cannot even run asyncio.wait_for().
+    Reproduce that ownership state without depending on the interruption race.
+    """
+    handler = SlowHandler(delay=0)
+    acquired = threading.Event()
+    release = threading.Event()
+    emitted = threading.Event()
+    record = logging.LogRecord(
+        "temporalio.worker", logging.ERROR, "", 0, "failed", (), None
+    )
+
+    def idle_executor_owns_lock():
+        handler.acquire()
+        try:
+            acquired.set()
+            release.wait(5)
+        finally:
+            handler.release()
+
+    def report_failure():
+        handler.handle(record)
+        emitted.set()
+
+    owner = threading.Thread(target=idle_executor_owns_lock, daemon=True)
+    reporter = threading.Thread(target=report_failure, daemon=True)
+    owner.start()
+    try:
+        assert acquired.wait(2)
+        reporter.start()
+        assert emitted.wait(2), "the idle workflow executor stranded the logging mutex"
+    finally:
+        release.set()
+        owner.join(timeout=2)
+        if reporter.ident is not None:
+            reporter.join(timeout=2)
+        handler.close()
+    assert not owner.is_alive()
+    assert not reporter.is_alive()
 
 
 # =============================================================================
