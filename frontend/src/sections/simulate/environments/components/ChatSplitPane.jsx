@@ -13,7 +13,7 @@ import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
 import { BUILD_TONES } from "../buildEnvironment/buildTones";
-import { ENV_TAB_RAIL_HEIGHT } from "../environmentOptions";
+import { WORKSPACE_RAIL_HEIGHT } from "../environmentOptions";
 import {
   CHAT_PANE_COPY as COPY,
   CHAT_PANE_DEFAULT_WIDTH,
@@ -314,7 +314,7 @@ export default function ChatSplitPane({ chat, children, busy = false }) {
             {/* Same height as the tab rail, so the expand arrow lines up with the tabs. */}
             <Box
               sx={{
-                height: ENV_TAB_RAIL_HEIGHT,
+                height: WORKSPACE_RAIL_HEIGHT,
                 boxSizing: "content-box",
                 borderBottom: "1px solid",
                 borderColor: "transparent",

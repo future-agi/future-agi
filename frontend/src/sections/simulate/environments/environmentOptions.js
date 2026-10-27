@@ -14,6 +14,37 @@ export const BUILD_DRAWER_TAB = "build";
 // The builder chat header shares ENV_TAB_RAIL_HEIGHT so the two line up.
 export const ENV_TAB_RAIL_HEIGHT = 38;
 
+// The environment workspace rail is Vel's: the product's own tabs, unstyled,
+// 32px tall. The builder chat header and the build screen's rail match it.
+export const WORKSPACE_RAIL_HEIGHT = 32;
+
+// Vel's tab style (his theme's MuiTabs/MuiTab overrides), applied to the
+// workspace rail only so the product's other tab strips are unchanged.
+export const WORKSPACE_TABS_SX = {
+  minHeight: WORKSPACE_RAIL_HEIGHT,
+  "& .MuiTabs-indicator": {
+    height: 2,
+    borderRadius: 1,
+    bgcolor: "secondary.main",
+  },
+  "& .MuiTab-root": {
+    p: "0 6px",
+    opacity: 1,
+    minWidth: 0,
+    minHeight: WORKSPACE_RAIL_HEIGHT,
+    fontSize: 13,
+    lineHeight: "20px",
+    fontWeight: 500,
+    textTransform: "none",
+    "&:not(:last-of-type)": { mr: "8px" },
+    "&.Mui-selected": { color: "text.primary" },
+    "&:not(.Mui-selected)": {
+      color: "text.subtitle",
+      "&:hover": { color: "text.primary" },
+    },
+  },
+};
+
 export const ENV_TABS_SX = {
   minHeight: ENV_TAB_RAIL_HEIGHT,
   "& .MuiTab-root:not(.Mui-selected)": { color: "text.subtitle" },

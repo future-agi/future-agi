@@ -38,6 +38,7 @@ vi.mock("../evals/EvalsStep", () => ({
   default: ({ grading }) => <div>{`evals-body:grading=${grading}`}</div>,
 }));
 vi.mock("../runs/summary/RunsSummary", () => ({ default: () => <div>runs-body</div> }));
+vi.mock("../world/WorldPanel", () => ({ default: () => <div>world-body</div> }));
 
 // The real runs hook by default; the loading cases override it.
 vi.mock("src/api/simulate-environments/runs", async (importOriginal) => {
@@ -82,11 +83,23 @@ function renderPanels(props = {}) {
 describe("WorkspacePanels", () => {
   afterEach(() => runsApi.useEnvironmentRuns.mockImplementation(realUseEnvironmentRuns));
 
-  it("renders all workspace tabs with Overview first and Settings last once a run exists", () => {
-    renderPanels({ envState: baseEnvState({ runs: [{ id: "r1" }] }) });
-    ["Overview", "Contract", "Scenarios", "Evaluations", "Runs", "Settings"].forEach((label) => {
-      expect(screen.getByRole("tab", { name: new RegExp(label) })).toBeInTheDocument();
-    });
+  it("renders the seven tabs in Vel's order, Runs included before any run", () => {
+    renderPanels();
+    expect(screen.getAllByRole("tab").map((t) => t.textContent.replace(/\d+$/, ""))).toEqual([
+      "Overview",
+      "World",
+      "Contract",
+      "Scenarios",
+      "Evaluations",
+      "Runs",
+      "Settings",
+    ]);
+  });
+
+  it("opens the World panel for ?tab=world", () => {
+    renderPanels({ tab: "world" });
+    expect(screen.getByRole("tab", { name: "World" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("world-body")).toBeInTheDocument();
   });
 
   it.each([
@@ -106,34 +119,31 @@ describe("WorkspacePanels", () => {
     ).toBeInTheDocument();
   });
 
-  it("hides the Runs tab until the environment has a run", () => {
-    renderPanels();
-    expect(screen.queryByRole("tab", { name: /Runs/ })).toBeNull();
-    ["Overview", "Contract", "Scenarios", "Evaluations", "Settings"].forEach((label) => {
-      expect(screen.getByRole("tab", { name: new RegExp(label) })).toBeInTheDocument();
-    });
-  });
-
-  it("falls back to the Overview for ?tab=runs while there are no runs", () => {
-    renderPanels({ tab: "runs" });
-    expect(screen.getByText(/^overview-body:/)).toBeInTheDocument();
+  it("shows the Runs empty state with Run baseline when there are no runs", async () => {
+    const user = userEvent.setup();
+    const onStartRun = vi.fn();
+    runsApi.useEnvironmentRuns.mockReturnValue({ runs: [], count: 0, isLoading: false });
+    renderPanels({ tab: "runs", onStartRun, canRun: true });
+    expect(screen.getByText("No runs yet")).toBeInTheDocument();
+    expect(
+      screen.getByText("The first run is the baseline improvements are measured against."),
+    ).toBeInTheDocument();
     expect(screen.queryByText("runs-body")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Run baseline" }));
+    expect(onStartRun).toHaveBeenCalledWith(undefined, 1);
   });
 
-  // A ?tab=runs deep link lands before the run list does. Keeping the tab
-  // while it loads stops the page bouncing to the Overview and back.
-  it("keeps the Runs tab for ?tab=runs while the runs are loading", () => {
+  it("disables Run baseline when the environment can't run yet", () => {
+    runsApi.useEnvironmentRuns.mockReturnValue({ runs: [], count: 0, isLoading: false });
+    renderPanels({ tab: "runs", canRun: false, runBlockedReason: "Still building" });
+    expect(screen.getByRole("button", { name: "Run baseline" })).toBeDisabled();
+  });
+
+  it("shows the runs summary, not the empty state, while the runs are loading", () => {
     runsApi.useEnvironmentRuns.mockReturnValue({ runs: [], isLoading: true });
     renderPanels({ tab: "runs" });
-    expect(screen.getByRole("tab", { name: /Runs/ })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByText("runs-body")).toBeInTheDocument();
-    expect(screen.queryByText(/^overview-body:/)).toBeNull();
-  });
-
-  it("does not show the Runs tab on other tabs while the runs are loading", () => {
-    runsApi.useEnvironmentRuns.mockReturnValue({ runs: [], isLoading: true });
-    renderPanels({ tab: "overview" });
-    expect(screen.queryByRole("tab", { name: /Runs/ })).toBeNull();
+    expect(screen.queryByText("No runs yet")).toBeNull();
   });
 
   it("badges scenarios/evals from counts and runs from the live executions", () => {
@@ -176,19 +186,6 @@ describe("WorkspacePanels", () => {
     expect(screen.getByRole("tab", { name: /Runs 2/ })).toBeInTheDocument();
   });
 
-  it("hides the Runs tab once every run is deleted, whatever the environment still counts", () => {
-    runsApi.useEnvironmentRuns.mockReturnValue({
-      runs: [],
-      count: 0,
-      isLoading: false,
-    });
-    renderPanels({
-      counts: { scenarios: 5, evals: 2 },
-      overviewCounts: { runs: 3 },
-    });
-    expect(screen.queryByRole("tab", { name: /Runs/ })).toBeNull();
-  });
-
   it("shows the Runs tab from the environment's run count while the runs list loads", () => {
     runsApi.useEnvironmentRuns.mockReturnValue({ runs: [], isLoading: true });
     renderPanels({
@@ -196,14 +193,6 @@ describe("WorkspacePanels", () => {
       overviewCounts: { runs: 4 },
     });
     expect(screen.getByRole("tab", { name: /Runs 4/ })).toBeInTheDocument();
-  });
-
-  it("hides the Runs tab when the environment's run count is zero", () => {
-    renderPanels({
-      counts: { scenarios: 5, evals: 2 },
-      overviewCounts: { runs: 0 },
-    });
-    expect(screen.queryByRole("tab", { name: /Runs/ })).toBeNull();
   });
 
   it("shows no numeric badges when counts is omitted (builder still streaming)", () => {
@@ -228,11 +217,22 @@ describe("WorkspacePanels", () => {
     expect(screen.getByText(/No evaluations added/)).toBeInTheDocument();
   });
 
+  it("uses Vel's hints for World and Runs, without em dashes", async () => {
+    const user = userEvent.setup();
+    renderPanels();
+    await user.hover(screen.getByText("World"));
+    const world = await screen.findByText(/What your agent talks to during a run/);
+    expect(world.textContent).not.toMatch(/\u2014/);
+    await user.unhover(screen.getByText("World"));
+    await user.hover(screen.getByText("Runs"));
+    expect(await screen.findByText(/Every simulation of this environment and how it scored/)).toBeInTheDocument();
+  });
+
   it("explains a tab on hover instead of repeating it as a heading", async () => {
     const user = userEvent.setup();
     renderPanels();
     await user.hover(screen.getByText("Contract"));
-    expect(await screen.findByText(/What this environment is made of/)).toBeInTheDocument();
+    expect(await screen.findByText(/The rules the agent holds to and what it's for/)).toBeInTheDocument();
     // The hint describes the tab; it never replaces the tab's name.
     expect(screen.getByRole("tab", { name: "Contract" })).toBeInTheDocument();
   });
@@ -244,7 +244,7 @@ describe("WorkspacePanels", () => {
       counts: { scenarios: 2, evals: 0 },
     });
     await user.hover(screen.getByText("Evaluations"));
-    expect(await screen.findByText(/These decide whether each task passed/)).toBeInTheDocument();
+    expect(await screen.findByText(/Sub-goals decide pass or fail/)).toBeInTheDocument();
     expect(screen.getByText("Needs your input before you can run:")).toBeInTheDocument();
   });
 

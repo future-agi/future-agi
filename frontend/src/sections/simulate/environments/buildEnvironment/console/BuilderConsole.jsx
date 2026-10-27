@@ -5,7 +5,7 @@ import { Box, Stack, Typography, TextField, IconButton } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
-import { ENV_TAB_RAIL_HEIGHT } from "../../environmentOptions";
+import { WORKSPACE_RAIL_HEIGHT } from "../../environmentOptions";
 import { BUILD_TONES } from "../buildTones";
 import { CONSOLE_COPY } from "../build.constants";
 import { Turn, Working } from "./ConsoleTurn";
@@ -109,7 +109,7 @@ export default function BuilderConsole({
       <Stack
         direction="row" alignItems="center" spacing={1.25}
         sx={{
-          flexShrink: 0, pl: 2, pr: 1, height: ENV_TAB_RAIL_HEIGHT, boxSizing: "content-box",
+          flexShrink: 0, pl: 2, pr: 1, height: WORKSPACE_RAIL_HEIGHT, boxSizing: "content-box",
           borderBottom: "1px solid", borderColor: "divider",
         }}
       >
