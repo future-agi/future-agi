@@ -576,7 +576,7 @@ describe("a new question's scope", () => {
       label: "Past 7D",
     });
     expect(scope.window).toEqual(presetWindow("7D", NOW));
-    expect(new Date(scope.window[0]).getMinutes()).toBe(0);
+    expect(new Date(scope.window[0]).getUTCMinutes()).toBe(0);
   });
 
   it("asks about a selection by id, labelled", () => {
