@@ -274,12 +274,14 @@ func mergeOverride(m *ModelInfo, ov ModelOverride) {
 	if c := ov.Capabilities; c != nil {
 		if c.FunctionCalling != nil {
 			m.Capabilities.FunctionCalling = *c.FunctionCalling
+			m.Capabilities.FunctionCallingUnstated = false
 		}
 		if c.ParallelToolCalls != nil {
 			m.Capabilities.ParallelToolCalls = *c.ParallelToolCalls
 		}
 		if c.Vision != nil {
 			m.Capabilities.Vision = *c.Vision
+			m.Capabilities.VisionUnstated = false
 		}
 		if c.AudioInput != nil {
 			m.Capabilities.AudioInput = *c.AudioInput
@@ -295,6 +297,7 @@ func mergeOverride(m *ModelInfo, ov ModelOverride) {
 		}
 		if c.ResponseSchema != nil {
 			m.Capabilities.ResponseSchema = *c.ResponseSchema
+			m.Capabilities.ResponseSchemaUnstated = false
 		}
 		if c.SystemMessages != nil {
 			m.Capabilities.SystemMessages = *c.SystemMessages

@@ -70786,6 +70786,14 @@
                 "description": "List traces filtered by project ID with optimized queries.",
                 "parameters": [
                     {
+                        "name": "sort_params",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "default": "[]",
+                        "minLength": 1
+                    },
+                    {
                         "name": "project_id",
                         "in": "query",
                         "required": false,
@@ -155556,6 +155564,13 @@
         "TraceObserveListQuery": {
             "type": "object",
             "properties": {
+                "sort_params": {
+                    "title": "Sort params",
+                    "type": "string",
+                    "default": "[]",
+                    "minLength": 1,
+                    "description": "JSON-encoded list of sort params."
+                },
                 "project_id": {
                     "title": "Project id",
                     "type": "string",

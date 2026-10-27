@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "cd8ef176392588e67aff56a4fda287fbaac6d3a029f460d03cc73b929ee18ab6",
+  "source_contract_sha256": "ffe769065665b10dc7ce8301045adb8c6fe913be9fc1eb437543c92bc2bec9eb",
   "tool_count": 107,
   "tools": [
     {
@@ -3627,6 +3627,11 @@
       "inputSchema": {
         "type": "object",
         "properties": {
+          "sort_params": {
+            "type": "string",
+            "default": "[]",
+            "minLength": 1
+          },
           "project_id": {
             "type": "string",
             "format": "uuid"
@@ -3692,6 +3697,7 @@
         "parameters": {
           "path": [],
           "query": [
+            "sort_params",
             "project_id",
             "project_version_id",
             "session_id",

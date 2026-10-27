@@ -179,6 +179,7 @@ def test_observe_view_constructors_opt_in_without_changing_task_views():
             and node.func.id
             in {
                 "TraceListQueryBuilderV2",
+                "ObserveTraceListQueryBuilderV2",
                 "SpanListQueryBuilderV2",
                 "VoiceCallListQueryBuilderV2",
             }

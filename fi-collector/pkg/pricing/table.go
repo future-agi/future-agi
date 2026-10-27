@@ -149,3 +149,25 @@ func (t *Table) ProviderPrefixedCost(model string, promptTokens, completionToken
 	}
 	return t.Cost(name, promptTokens, completionTokens)
 }
+
+// openRouterPrefix namespaces OpenRouter's own rates in the litellm table
+// ("openrouter/anthropic/claude-haiku-4.5", litellm_provider "openrouter").
+const openRouterPrefix = "openrouter/"
+
+// OpenRouterCost prices an OpenRouter model slug such as
+// "anthropic/claude-haiku-4.5" from the table's "openrouter/<slug>" entry,
+// OpenRouter's own rate for that slug. A slug that already starts with
+// "openrouter/" is looked up as given. ok=false when the table has no such
+// entry.
+//
+// Collector-only, like ProviderPrefixedCost; Pricer uses it only for spans
+// that came through OpenRouter.
+func (t *Table) OpenRouterCost(slug string, promptTokens, completionTokens int32) (float64, bool) {
+	if slug == "" {
+		return 0, false
+	}
+	if !strings.HasPrefix(slug, openRouterPrefix) {
+		slug = openRouterPrefix + slug
+	}
+	return t.Cost(slug, promptTokens, completionTokens)
+}

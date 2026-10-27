@@ -99,6 +99,25 @@ func (c *cache) addProjectsScoped(
 	return e.result.SetProjectsInWorkspace(workspaceID, projects)
 }
 
+// addProjectTypesScoped mirrors project trace_types into a cache entry under
+// the same scope check as addProjectsScoped.
+func (c *cache) addProjectTypesScoped(
+	key, organizationID, workspaceID string, types map[string]string,
+) bool {
+	if c == nil || key == "" || organizationID == "" || workspaceID == "" {
+		return false
+	}
+	val, ok := c.m.Load(key)
+	if !ok {
+		return false
+	}
+	e, ok := val.(*cacheEntry)
+	if !ok || e.result == nil || e.result.OrgID != organizationID || e.result.WorkspaceID != workspaceID {
+		return false
+	}
+	return e.result.SetProjectTypesInWorkspace(workspaceID, types)
+}
+
 // evictProjectID drops every name mapped to projectID from all cached entries
 // so the next ingest re-resolves it from PG. Returns entries touched.
 func (c *cache) evictProjectID(projectID string) int {

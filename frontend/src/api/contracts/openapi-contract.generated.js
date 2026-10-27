@@ -40023,6 +40023,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: true,
         requestBody: null,
         queryParameters: {
+          sort_params: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+              default: "[]",
+            },
+          },
           project_id: {
             required: false,
             schema: {
@@ -80422,6 +80430,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
     TraceObserveListQuery: {
       type: "object",
       properties: {
+        sort_params: {
+          title: "Sort params",
+          type: "string",
+          default: "[]",
+          minLength: 1,
+          description: "JSON-encoded list of sort params.",
+        },
         project_id: {
           title: "Project id",
           type: "string",
