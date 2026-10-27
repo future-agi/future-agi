@@ -66,8 +66,13 @@ func budgetServer(mib int) *Server {
 // flushes only when kicked or after age.
 func flushingServer(t *testing.T, mib int, age time.Duration) (*Server, *chBodies) {
 	t.Helper()
+	return flushingServerConfig(t, Config{BatchMaxRows: 1 << 30, BatchMaxAge: age, IngestBudgetMiB: mib})
+}
+
+func flushingServerConfig(t *testing.T, cfg Config) (*Server, *chBodies) {
+	t.Helper()
 	ch, w := newCHBodies(t)
-	s := New(Config{BatchMaxRows: 1 << 30, BatchMaxAge: age, IngestBudgetMiB: mib}, w, nil, nil, nil)
+	s := New(cfg, w, nil, nil, nil)
 	s.wg.Add(1)
 	go s.flushLoop()
 	t.Cleanup(func() {
@@ -446,8 +451,15 @@ func TestOTLPHTTPOverPricedBodyIs413BeforeDecoding(t *testing.T) {
 // a drain, which frees the rows' share (rows otherwise wait for the 5 s
 // flush).
 func TestOTLPHTTPConcurrentRequestsShareTheWorkPool(t *testing.T) {
-	s, ch := flushingServer(t, 96, time.Hour)
-	s.work.wait = time.Minute // slow under -race; this is about order and bounds, not speed
+	// This is an order/bounds fixture, not the production timeout contract.
+	// Set the constructor value: work.wait alone leaves limits.maxWait (and
+	// hence the shared wire/work leaseBudget) at the production two seconds.
+	s, ch := flushingServerConfig(t, Config{BatchMaxRows: 1 << 30, BatchMaxAge: time.Hour,
+		IngestBudgetMiB: 96, IngestMaxWait: time.Minute})
+	s.work.wait = time.Minute // this fixture also permits slow no-progress decode under -race
+	if s.limits.maxWait != time.Minute || s.work.maxWait != time.Minute {
+		t.Fatal("fixture must extend the actual shared lease wait, not only work.wait")
+	}
 
 	body := emptySpans(t, 3000) // about 21 MiB each: three fit at once
 	const n = 8

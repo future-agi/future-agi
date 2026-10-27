@@ -143,6 +143,9 @@ type Server struct {
 	pendCurated  *curatedwriter.Batch
 	pendProperty []observedcatalog.ScopedSpan
 	pendRoots    []traceavailable.Root
+	// Input positions, not span IDs: duplicate IDs can have different chunk
+	// outcomes. These indices are appended atomically with their canonical rows.
+	pendRootRows, pendPropertyRows []int
 	// pendLeases are the work-pool leases of the rows in the pending batch;
 	// the drain that swaps them out releases them once it has ended.
 	pendLeases []*lease
@@ -475,14 +478,14 @@ func (h *otlpHandler) export(ctx context.Context, req ptraceotlp.ExportRequest) 
 		copy := ptraceotlp.NewExportRequest()
 		req.Traces().CopyTo(copy.Traces())
 		return copy, nil
-	})
+	}, nil)
 }
 
-func (h *otlpHandler) exportDecoded(ctx context.Context, decode exportDecoder) (ptraceotlp.ExportResponse, bool, error) {
+func (h *otlpHandler) exportDecoded(ctx context.Context, decode exportDecoder, held *exportWork) (ptraceotlp.ExportResponse, bool, error) {
 	ctx, cancel := ingestContext(ctx)
 	defer cancel()
 	md, _ := metadata.FromIncomingContext(ctx)
-	prepared, rej := h.s.prepareExport(ctx, decode, auth.ProjectNameMetadataValues(md))
+	prepared, rej := h.s.prepareExport(ctx, decode, auth.ProjectNameMetadataValues(md), held)
 	if rej != nil {
 		return ptraceotlp.NewExportResponse(), false, h.s.rejectGRPC(rej)
 	}
@@ -579,14 +582,14 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		s.rejectHTTP(w, ct, s.bodyRejection(err))
 		return
 	}
-	work, rowsLease, rej := s.leaseWork(r.Context(), body, ct == "application/json")
+	held, rej := s.leaseWork(r.Context(), body, ct == "application/json")
 	if rej != nil {
 		s.rejectHTTP(w, ct, rej)
 		return
 	}
-	defer work.release()
+	defer held.work.release()
 	enqueued := false
-	defer func() { s.settleRows(rowsLease, enqueued) }()
+	defer func() { s.settleRows(held.rows, enqueued) }()
 
 	prepared, rej := s.prepareExport(r.Context(), func() (ptraceotlp.ExportRequest, error) {
 		req := ptraceotlp.NewExportRequest()
@@ -598,7 +601,7 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 			return req, fmt.Errorf("decode protobuf: %w", err)
 		}
 		return req, nil
-	}, auth.ProjectNameHTTPValues(r.Header))
+	}, auth.ProjectNameHTTPValues(r.Header), held)
 	if rej != nil {
 		s.rejectHTTP(w, ct, rej)
 		return
@@ -814,12 +817,19 @@ func (s *Server) enqueueScoped(
 		return
 	}
 	s.pendMu.Lock()
+	base := len(s.pend)
 	s.pend = append(s.pend, rows...)
 	if s.traceNotifier != nil {
-		s.pendRoots = append(s.pendRoots, traceavailable.ExtractRoots(rows, organizationID, workspaceID, workspaceProjectIDs)...)
+		for i := range rows {
+			for _, root := range traceavailable.ExtractRoots(rows[i:i+1], organizationID, workspaceID, workspaceProjectIDs) {
+				s.pendRoots = append(s.pendRoots, root)
+				s.pendRootRows = append(s.pendRootRows, base+i)
+			}
+		}
 	}
 	if s.propertyCatalog != nil && organizationID != "" && workspaceID != "" {
-		for _, row := range rows {
+		for i, row := range rows {
+			s.pendPropertyRows = append(s.pendPropertyRows, base+i)
 			projectID, _ := row["project_id"].(string)
 			scopeError := ""
 			if workspaceProjectIDs == nil {
@@ -894,11 +904,13 @@ func (s *Server) drainNow(ctx context.Context) {
 	curated := s.pendCurated
 	property := s.pendProperty
 	roots := s.pendRoots
+	rootRows, propertyRows := s.pendRootRows, s.pendPropertyRows
 	leases := s.pendLeases
 	s.pend = nil
 	s.pendCurated = nil
 	s.pendProperty = nil
 	s.pendRoots = nil
+	s.pendRootRows, s.pendPropertyRows = nil, nil
 	s.pendLeases, s.pendLeased = nil, 0
 	seq := s.drainSeq
 	s.drainSeq++
@@ -933,8 +945,10 @@ func (s *Server) drainNow(ctx context.Context) {
 	if len(batch) == 0 {
 		return
 	}
-	spanErr := s.writer.Insert(ctx, batch)
-	if spanErr == nil && s.traceNotifier != nil && len(roots) > 0 {
+	confirmed, _ := s.writer.InsertConfirmed(ctx, batch)
+	roots = confirmedSidecars(roots, rootRows, confirmed)
+	property = confirmedSidecars(property, propertyRows, confirmed)
+	if s.traceNotifier != nil && len(roots) > 0 {
 		if err := s.traceNotifier.EnqueueRoots(roots); err != nil {
 			s.log.Warn("error feed stored-root notification gap", "error", err)
 		}
@@ -947,7 +961,7 @@ func (s *Server) drainNow(ctx context.Context) {
 	// Transfer observation ownership to the fsync-backed catalog spool only
 	// after confirmed canonical success. Backfill repairs the preceding crash
 	// gap. Catalog errors never change canonical writer health or dead-letter.
-	if spanErr == nil && s.propertyCatalog != nil && len(property) > 0 {
+	if s.propertyCatalog != nil && len(property) > 0 {
 		if err := s.propertyCatalog.EnqueueCanonicalSpans(property); err != nil {
 			observedcatalog.LogHandoffGap(s.log, property, err)
 		}
@@ -965,6 +979,20 @@ func (s *Server) drainNow(ctx context.Context) {
 	if curated != nil && !curated.Empty() {
 		_ = s.curated.Write(ctx, curated, stamp)
 	}
+}
+
+// confirmedSidecars filters in place, preserving enqueue order and exact row
+// association even for repeated span IDs or interleaved hidden/visible routes.
+// The drain keeps all its leases until these handoffs and curated writes end.
+func confirmedSidecars[T any](sidecars []T, indices []int, confirmed []bool) []T {
+	out := sidecars[:0]
+	for i, sidecar := range sidecars {
+		if i < len(indices) && indices[i] >= 0 && indices[i] < len(confirmed) && confirmed[indices[i]] {
+			out = append(out, sidecar)
+		}
+	}
+	clear(sidecars[len(out):])
+	return out
 }
 
 // releaseDrained releases the leases of drain seq once it and every earlier

@@ -194,7 +194,8 @@ SDK ──OTLP/HTTP or gRPC──► fi-collector
                             ├─ auth, quota, live-heap check     (nothing read yet)
                             ├─ wire lease, then read the body   (capped; read deadline)
                             ├─ scan the body, work lease        (limits; price of decode + rows)
-                            ├─ decode, convert, park the rows   (the rows keep their lease)
+                            ├─ decode, route/stamp, reprice     (final authenticated shape)
+                            ├─ convert, park the rows           (the rows keep their lease)
                             └─ flush: inserts of a bounded size, ─► ClickHouse 25.3
                                up to 3 at once
 ```
@@ -218,7 +219,14 @@ export deadlines may expire earlier (the Collector otlp exporter commonly
 uses 5 s per attempt); for large batches that fit, consider 15 s or smaller
 batches. Lease ordering prevents cross-pool waits, not same-pool growth:
 gzip and chunked plain bodies can wait while holding part of the wire pool
-until the no-progress timeout refuses them.
+until the no-progress timeout refuses them. Header/auth/routing resource additions
+are reserved before conversion by checking the final decoded shape without
+serializing another body. This may grow the existing work reservation under the
+same wait budget; an occupied pool is retryable, but a final shape larger than
+the whole pool or stored-size limit is permanently refused before enqueue or
+usage emission. Promoted string columns, their JSON escaping, and zero-parent
+curated roots are included. More accurate accounting is not a promise that a
+previously accepted batch still fits, nor acceptance of burst-delivery loss.
 
 Quota refusals are HTTP 429 without Retry-After and gRPC RESOURCE_EXHAUSTED
 without RetryInfo. The Go SDK and Collector otlp exporter do not retry that
@@ -297,6 +305,16 @@ inserts land does not matter; the curated `end_users`/`trace_sessions` rows
 are version-stamped when their batch is swapped out, in swap order. At one
 insert at a time (R1 on #3598), Standalone stored about 500-800
 attribute-heavy spans a second.
+
+A chunk failure does not suppress stored-root notifications or catalog handoff
+for confirmed successful sibling chunks. These sidecars follow exact input-row
+positions, not span IDs (IDs may repeat), and unconfirmed/ambiguous or merely
+async-accepted chunks are excluded. Retry and dead-letter policy are unchanged;
+there is no extra canonical insert or ingestion usage event for a sidecar.
+All row leases remain held through the synchronous catalog and best-effort
+curated writes. The HTTP writer also waits for its transport to close every
+request body, including redirect/replay bodies, before releasing encoding
+ownership; response EOF alone is not that lifetime boundary.
 
 Refusals from the ingest pipeline over OTLP/HTTP (400, 413, 429, 503) carry
 a `google.rpc.Status` body in the request's media type (protobuf or JSON),

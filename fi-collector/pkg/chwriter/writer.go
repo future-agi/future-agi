@@ -195,7 +195,30 @@ func New(cfg Config) (*Writer, error) {
 // dead-letter is preferable to blocking the receiver loop indefinitely.
 func (w *Writer) Insert(ctx context.Context, rows []map[string]any) error {
 	// Hot path: use the pre-built URL (no per-batch string-concat).
-	return w.insert(ctx, w.url, rows)
+	return w.insert(ctx, w.url, rows, nil)
+}
+
+// InsertConfirmed has Insert's retry/dead-letter semantics, and additionally
+// reports the exact input positions whose chunks completed synchronously with
+// an exception-free response. Failed, unsent, ambiguous and async-accepted rows
+// are false. An error does not invalidate confirmed sibling chunks. The slice
+// is complete only on return, after all started inserts have finished; callers
+// must retain their row leases through any sidecar handoff that follows.
+func (w *Writer) InsertConfirmed(ctx context.Context, rows []map[string]any) ([]bool, error) {
+	confirmed := make([]bool, len(rows))
+	err := w.insert(ctx, w.url, rows, confirmed)
+	return confirmed, err
+}
+
+// confirm marks disjoint chunk positions. Concurrent chunks never share a
+// position, and insertConcurrently waits before publishing the result.
+func (w *Writer) confirm(confirmed []bool, start, end int) {
+	if confirmed == nil || w.cfg.AsyncInsert {
+		return
+	}
+	for i := start; i < end; i++ {
+		confirmed[i] = true
+	}
 }
 
 // InsertBestEffort inserts `rows` into a NON-pinned table (the CURATED
@@ -244,12 +267,12 @@ func (w *Writer) InsertBestEffort(ctx context.Context, table string, rows []map[
 // maxInsertBytes at a time. `url` selects the target table. The curated path
 // uses InsertBestEffort instead — single POST, no retry, no dead-letter — so
 // it deliberately does NOT share this.
-func (w *Writer) insert(ctx context.Context, url string, rows []map[string]any) error {
+func (w *Writer) insert(ctx context.Context, url string, rows []map[string]any, confirmed []bool) error {
 	if len(rows) == 0 {
 		return nil
 	}
 	if w.inserts != nil {
-		return w.insertConcurrently(ctx, url, rows)
+		return w.insertConcurrently(ctx, url, rows, confirmed)
 	}
 	limit := w.maxInsertBytes
 	// Estimate ~512 B/row so we avoid 5+ buffer-grow re-allocs; with chunks,
@@ -271,6 +294,9 @@ func (w *Writer) insert(ctx context.Context, url string, rows []map[string]any) 
 		}
 		if i == len(rows)-1 || (limit > 0 && buf.Len() >= limit) {
 			unavailable, err := w.insertChunk(ctx, url, buf.Bytes(), rows[start:i+1])
+			if err == nil {
+				w.confirm(confirmed, start, i+1)
+			}
 			if err != nil && firstErr == nil {
 				firstErr = err
 			}
@@ -300,7 +326,7 @@ func (w *Writer) insert(ctx context.Context, url string, rows []map[string]any) 
 // is unavailable, the rows not sent yet are dead-lettered at once; inserts
 // already in flight finish on their own (each dead-letters its own rows if it
 // fails). It returns only when every insert it started has ended.
-func (w *Writer) insertConcurrently(ctx context.Context, url string, rows []map[string]any) error {
+func (w *Writer) insertConcurrently(ctx context.Context, url string, rows []map[string]any, confirmed []bool) error {
 	limit := w.maxInsertBytes
 	size := len(rows) * 512
 	if limit > 0 {
@@ -346,6 +372,7 @@ func (w *Writer) insertConcurrently(ctx context.Context, url string, rows []map[
 			return errors.Join(firstErr, w.deadLetterUnsent(rows[start:]))
 		}
 		body := buf.Bytes()
+		first, end := start, i+1
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -353,6 +380,8 @@ func (w *Writer) insertConcurrently(ctx context.Context, url string, rows []map[
 			gaveUp, err := w.insertChunk(ctx, url, body, part)
 			if err != nil {
 				fail(err)
+			} else {
+				w.confirm(confirmed, first, end)
 			}
 			if gaveUp {
 				unavailable.Store(true)
@@ -449,6 +478,8 @@ func (w *Writer) insertURL(table string) string {
 // transport/confirmation error. Preserve the status on response failures so
 // insert can distinguish an unconfirmed 200 from existing retryable failures.
 func (w *Writer) doRequest(ctx context.Context, url string, body []byte) (int, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return 0, err
@@ -458,6 +489,13 @@ func (w *Writer) doRequest(ctx context.Context, url string, body []byte) (int, e
 	}
 	req.Header.Set("Content-Type", "application/x-ndjson")
 	req.Header.Set("X-ClickHouse-Format", "JSONEachRow")
+	waitForBodies := trackRequestBodies(req)
+	defer func() {
+		// An early response can finish before the upload. Stop outstanding
+		// transport work, then retain ownership until every body is closed.
+		cancel()
+		waitForBodies()
+	}()
 
 	resp, err := w.client.Do(req)
 	if err != nil {

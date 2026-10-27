@@ -32,6 +32,9 @@ func TestResolveIngestLimits(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			l := resolveIngestLimits(tc.cfg, tc.memLimit)
+			if l.maxWait != 2*time.Second {
+				t.Errorf("production default lease wait = %v, want 2s", l.maxWait)
+			}
 			if l.budget != tc.budget || l.maxBody != tc.body || l.maxRecv != tc.recv || l.source != tc.source {
 				t.Errorf("budget %d body %d recv %d source %q; want %d %d %d %q",
 					l.budget, l.maxBody, l.maxRecv, l.source, tc.budget, tc.body, tc.recv, tc.source)

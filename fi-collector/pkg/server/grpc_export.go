@@ -229,19 +229,19 @@ func (h *otlpHandler) exportStream(stream grpc.ServerStream) error {
 	}
 	defer wire.release()
 
-	work, rows, rej := s.leaseWork(ctx, raw, false)
+	held, rej := s.leaseWork(ctx, raw, false)
 	if rej != nil {
 		return s.rejectGRPC(rej)
 	}
-	defer work.release()
+	defer held.work.release()
 	resp, enqueued, err := h.exportDecoded(ctx, func() (ptraceotlp.ExportRequest, error) {
 		req := ptraceotlp.NewExportRequest()
 		if err := req.UnmarshalProto(raw); err != nil {
 			return req, fmt.Errorf("decode protobuf: %w", err)
 		}
 		return req, nil
-	})
-	s.settleRows(rows, enqueued)
+	}, held)
+	s.settleRows(held.rows, enqueued)
 	if err != nil {
 		return err
 	}

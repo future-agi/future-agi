@@ -166,13 +166,47 @@ func classifyKey(k []byte) keyClass {
 	return keyPlain
 }
 
+// promotedStringKey mirrors adapter.DeriveHotKeys' string aliases in priority
+// order. Keep this fixed-size: the pre-decode scan must not allocate a map.
+// Tests compare the resulting price with the real adapter/converter, including
+// empty aliases and repeated keys/oneofs. Zero means not a promoted string.
+func promotedStringKey(k []byte) int {
+	switch string(k) {
+	case "llm.model_name":
+		return 1
+	case "gen_ai.request.model":
+		return 2
+	case "gen_ai.response.model":
+		return 3
+	case "llm.request.model":
+		return 4
+	case "gen_ai.provider.name":
+		return 5
+	case "llm.system":
+		return 6
+	case "gen_ai.system":
+		return 7
+	case "llm.vendor":
+		return 8
+	case "llm.provider":
+		return 9
+	case "gen_ai.operation.name":
+		return 10
+	}
+	return 0
+}
+
 // valueInfo is what one AnyValue writes as JSON.
 type valueInfo struct {
-	json     int64 // as chwriter encodes it (HTML characters unescaped)
-	htmlJSON int64 // as json.Marshal encodes it (HTML characters escaped)
-	raw      int64 // string and bytes payload bytes inside it
-	scalar   bool  // string, bool, int, double or empty
-	isString bool
+	// Last recognized oneof: 0 means absent (an empty repeated message merges
+	// without changing it), -1 a non-string, >=2 the final string's JSON length.
+	// The other fields sum overwritten values to cover decoding allocations.
+	lastStringJSON int64
+	json           int64 // as chwriter encodes it (HTML characters unescaped)
+	htmlJSON       int64 // as json.Marshal encodes it (HTML characters escaped)
+	raw            int64 // string and bytes payload bytes inside it
+	scalar         bool  // string, bool, int, double or empty
+	isString       bool
 }
 
 // hotCopy is the JSON of the copy that conversion puts in the input or output
@@ -278,10 +312,23 @@ type spanAccum struct {
 	hotOutput int64
 	curated   int64 // curated attribute values
 	root      bool
+	promoted  [11]int64 // last string for each alias, as adapter.Split keeps it
+}
+
+func firstPromotedJSON(lengths []int64) int64 {
+	for _, n := range lengths {
+		if n > 2 { // firstString skips empty strings
+			return n
+		}
+	}
+	return 0
 }
 
 func (s *otlpShape) endSpan(rs *rsAccum, sp *spanAccum) {
 	sp.json += sp.hotInput + sp.hotOutput
+	// model, provider, raw gen_ai_system and raw gen_ai_operation. These
+	// share string backing with attrs_string but each is encoded on the wire.
+	sp.json += firstPromotedJSON(sp.promoted[1:5]) + firstPromotedJSON(sp.promoted[5:10]) + sp.promoted[7] + sp.promoted[10]
 	rs.spans++
 	rs.spanJSON += sp.json
 	rs.maxSpanJSON = max(rs.maxSpanJSON, sp.json)
@@ -296,11 +343,12 @@ func (s *otlpShape) endSpan(rs *rsAccum, sp *spanAccum) {
 
 // kvInfo is one KeyValue.
 type kvInfo struct {
-	keyJSON int64
-	keyHTML int64
-	keyRaw  int64
-	class   keyClass
-	val     valueInfo
+	keyJSON  int64
+	keyHTML  int64
+	keyRaw   int64
+	class    keyClass
+	promoted int // final key, not an earlier overwritten key field
+	val      valueInfo
 }
 
 // json is the KeyValue as a member of a JSON object: "key":value,
@@ -326,6 +374,11 @@ func (s *otlpShape) addKV(ctx kvContext, kv kvInfo, rs *rsAccum, sp *spanAccum) 
 		rs.resourceBytes += kv.keyRaw + kv.val.raw
 	case kvSpan:
 		sp.json += kv.json()
+		if kv.promoted != 0 && kv.val.lastStringJSON > 0 {
+			// Split overwrites the last string of a repeated attribute key. A
+			// later non-string goes into another typed map, not attrs_string.
+			sp.promoted[kv.promoted] = kv.val.lastStringJSON
+		}
 		switch kv.class {
 		case keyHotInput:
 			sp.hotInput += kv.val.hotCopy()
@@ -497,8 +550,14 @@ func (s *otlpShape) protoSpan(b []byte, rs *rsAccum) error {
 		}
 		switch num {
 		case 1, 2: // trace_id, span_id: fixed-size arrays once decoded
-		case 4: // parent_span_id; the last one wins
-			sp.root = len(val) == 0
+		case 4: // SpanID.Unmarshal resets on empty; otherwise the last 8 bytes win.
+			sp.root = true
+			for _, b := range val {
+				if b != 0 {
+					sp.root = false
+					break
+				}
+			}
 		case 3: // trace_state, not stored
 			s.protoString(val)
 		case 5: // name: the name column, and the curated trace name of a root
@@ -614,6 +673,7 @@ func (s *otlpShape) protoKeyValue(b []byte, depth int) (kvInfo, error) {
 		case 1: // key; the last one wins, but any special key prices the value
 			kv.keyJSON, kv.keyHTML = s.protoString(val)
 			kv.keyRaw = int64(len(val))
+			kv.promoted = promotedStringKey(val)
 			if c := classifyKey(val); c != keyPlain {
 				keyAny = c
 			}
@@ -638,8 +698,12 @@ func addValues(a, b valueInfo) valueInfo {
 	if a == (valueInfo{}) {
 		return b
 	}
+	last := b.lastStringJSON
+	if last == 0 {
+		last = a.lastStringJSON
+	}
 	return valueInfo{json: a.json + b.json, htmlJSON: a.htmlJSON + b.htmlJSON, raw: a.raw + b.raw,
-		scalar: a.scalar && b.scalar, isString: a.isString && b.isString}
+		scalar: a.scalar && b.scalar, isString: a.isString && b.isString, lastStringJSON: last}
 }
 
 func (s *otlpShape) protoAnyValue(b []byte, depth int) (valueInfo, error) {
@@ -684,6 +748,10 @@ func (s *otlpShape) protoAnyValue(b []byte, depth int) (valueInfo, error) {
 			one = valueInfo{json: numberJSON, htmlJSON: numberJSON, scalar: true}
 		default:
 			continue
+		}
+		one.lastStringJSON = -1
+		if one.isString {
+			one.lastStringJSON = one.json
 		}
 		if !set {
 			v, set = one, true

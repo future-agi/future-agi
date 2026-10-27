@@ -30,13 +30,14 @@ type exportDecoder func() (ptraceotlp.ExportRequest, error)
 // return a new request from the original, immutable wire bytes on EVERY call:
 // routing may have renamed resources or removed spans before the stamp fails.
 // The failed attempt's pdata is unreachable before decoding again. Keep the
-// original wire/work leases: they are global, not tenant leases, and cover the
-// same input shape throughout. Never acquire a second copy's lease while holding
-// the first, or reset the shared lease-wait budget. Recheck the fresh tenant's
+// original wire/work leases: they are global, not tenant leases. Reprice the
+// final authenticated shape before conversion, retaining the high-water lease
+// across attempts. Never lease a second decoded copy or reset the shared wait
+// budget. Recheck the fresh tenant's
 // quota before restarting; conversion, enqueue and billing happen only once.
-func (s *Server) prepareExport(ctx context.Context, decode exportDecoder, headers auth.ProjectNameValues) (preparedExport, *rejection) {
+func (s *Server) prepareExport(ctx context.Context, decode exportDecoder, headers auth.ProjectNameValues, held *exportWork) (preparedExport, *rejection) {
 	for attempt := 0; ; attempt++ {
-		prepared, err := s.prepareExportAttempt(ctx, decode, headers)
+		prepared, err := s.prepareExportAttempt(ctx, decode, headers, held)
 		if err == nil {
 			return prepared, nil
 		}
@@ -58,7 +59,7 @@ func (s *Server) prepareExport(ctx context.Context, decode exportDecoder, header
 	}
 }
 
-func (s *Server) prepareExportAttempt(ctx context.Context, decode exportDecoder, headers auth.ProjectNameValues) (preparedExport, error) {
+func (s *Server) prepareExportAttempt(ctx context.Context, decode exportDecoder, headers auth.ProjectNameValues, held *exportWork) (preparedExport, error) {
 	// All attempts share the caller's deadline and cancellation, including a
 	// cache-hit reauthentication. Do not enqueue after either has ended.
 	if err := ctx.Err(); err != nil {
@@ -111,6 +112,16 @@ func (s *Server) prepareExportAttempt(ctx context.Context, decode exportDecoder,
 	}
 	if err := ctx.Err(); err != nil {
 		return preparedExport{}, err
+	}
+	if rej := s.pricePreparedExport(ctx, req.Traces(), held); rej != nil {
+		return preparedExport{}, rej
+	}
+	// Growing a final-shape reservation may have waited. Do not carry that
+	// attempt's tenant stamps past an invalidation during the wait.
+	if result := auth.FromContext(ctx); result != nil {
+		if err := s.auth.ResolveProjectsForKey(ctx, auth.CacheKeyFromContext(ctx), result, nil); err != nil {
+			return preparedExport{}, err
+		}
 	}
 	return out, nil
 }

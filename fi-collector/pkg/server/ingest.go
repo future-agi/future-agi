@@ -263,11 +263,18 @@ func (w *authStatusWriter) WriteHeader(code int) {
 // deadline).
 func (w *authStatusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
-// leaseWork scans a body, applies the scan's limits, and leases the
-// request's price from the work pool. rows is the part to hand to the
-// pending batch with the rows; work is the rest, released by the caller when
-// the handler returns.
-func (s *Server) leaseWork(ctx context.Context, body []byte, jsonBody bool) (work, rows *lease, rej *rejection) {
+// exportWork owns both lifetimes while preparation may add authenticated
+// resource fields. A successful preparation reprices the final pdata shape
+// before conversion; retries retain the high-water reservation, never a partly
+// stamped request or a new wait budget.
+type exportWork struct {
+	work, rows *lease
+}
+
+// leaseWork scans and leases before decoding. rows goes to the pending batch;
+// work covers the handler. Final authenticated additions are checked before
+// conversion by pricePreparedExport, under these same leases and wait budget.
+func (s *Server) leaseWork(ctx context.Context, body []byte, jsonBody bool) (*exportWork, *rejection) {
 	var shape otlpShape
 	var err error
 	if jsonBody {
@@ -278,26 +285,26 @@ func (s *Server) leaseWork(ctx context.Context, body []byte, jsonBody bool) (wor
 	if err != nil {
 		var se *scanError
 		if errors.As(err, &se) {
-			return nil, nil, &rejection{reason: se.reason, tooLarge: se.tooLarge, msg: "decode: " + se.msg}
+			return nil, &rejection{reason: se.reason, tooLarge: se.tooLarge, msg: "decode: " + se.msg}
 		}
-		return nil, nil, &rejection{reason: "malformed", msg: "decode: " + err.Error()}
+		return nil, &rejection{reason: "malformed", msg: "decode: " + err.Error()}
 	}
 	if shape.rowJSONBytes > s.limits.maxEncoded {
-		return nil, nil, &rejection{reason: "stored_size", tooLarge: true,
+		return nil, &rejection{reason: "stored_size", tooLarge: true,
 			msg: fmt.Sprintf("payload too large: its row JSON before storage compression is about %d MiB, over the %d MiB limit for one request (%dx the OTLP body cap); send smaller batches",
 				shape.rowJSONBytes>>20, s.limits.maxEncoded>>20, maxEncodedPerBody)}
 	}
 	p := shape.price()
-	work, err = s.work.acquire(ctx, p.total())
+	work, err := s.work.acquire(ctx, p.total())
 	switch {
 	case errors.Is(err, errLeaseTooLarge):
-		return nil, nil, &rejection{reason: "budget", tooLarge: true,
+		return nil, &rejection{reason: "budget", tooLarge: true,
 			msg: fmt.Sprintf("payload too large: processing it needs about %d MiB, over the %d MiB this server can give one request; send smaller batches (OpenTelemetry Collector: lower send_batch_max_size), or raise FI_INGEST_BUDGET_MIB (or GOMEMLIMIT)",
 				p.total()>>20, s.work.size>>20)}
 	case err != nil:
-		return nil, nil, rejectWorkBusy
+		return nil, rejectWorkBusy
 	}
-	return work, work.split(p.rows), nil
+	return &exportWork{work: work, rows: work.split(p.rows)}, nil
 }
 
 // settleRows hands a request's rows lease to the pending batch when its rows

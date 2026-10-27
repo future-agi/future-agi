@@ -110,8 +110,8 @@ func (j *jsonScan) field() ([]byte, error) {
 type strInfo struct {
 	decoded, plain, html int64
 	sent                 int64 // its length as sent, between the quotes
-	// noNonZero is true when the raw token has no escape and no digit other
-	// than 0: a span id that is empty or all zeros.
+	// noNonZero is true when the decoded string is empty or contains only
+	// zero digits, including escaped zeros: the decoder treats it as a root.
 	noNonZero bool
 }
 
@@ -161,7 +161,6 @@ func (j *jsonScan) str(capture bool) (strInfo, error) {
 			}
 			return info, nil
 		case c == '\\':
-			info.noNonZero = false
 			escaped = true
 			runes, err := j.escape()
 			if err != nil {
@@ -170,6 +169,9 @@ func (j *jsonScan) str(capture bool) (strInfo, error) {
 			for _, r := range runes {
 				if r < 0 {
 					continue
+				}
+				if r != '0' {
+					info.noNonZero = false
 				}
 				var buf [utf8.UTFMax]byte
 				n := utf8.EncodeRune(buf[:], r)
@@ -186,7 +188,7 @@ func (j *jsonScan) str(capture bool) (strInfo, error) {
 				keep(buf[:n])
 			}
 		case c < utf8.RuneSelf:
-			if c >= '1' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F' {
+			if c != '0' {
 				info.noNonZero = false
 			}
 			j.i++
@@ -196,6 +198,7 @@ func (j *jsonScan) str(capture bool) (strInfo, error) {
 			info.html += h
 			keep(j.b[j.i-1 : j.i])
 		default:
+			info.noNonZero = false
 			r, size := utf8.DecodeRune(j.b[j.i:])
 			j.i += size
 			info.decoded += int64(size)
@@ -558,7 +561,9 @@ func (j *jsonScan) keyValue(depth int) (kvInfo, error) {
 			j.s.strings++
 			j.s.stringBytes += info.decoded
 			kv.keyJSON, kv.keyHTML, kv.keyRaw = info.plain, info.html, info.decoded
+			kv.promoted = 0
 			if j.keyN >= 0 {
+				kv.promoted = promotedStringKey(j.key[:j.keyN])
 				if c := classifyKey(j.key[:j.keyN]); c != keyPlain {
 					kv.class = c
 				}
@@ -581,6 +586,10 @@ func (j *jsonScan) anyValue(depth int) (valueInfo, error) {
 	v := valueInfo{json: 4, htmlJSON: 4, scalar: true}
 	set := false
 	add := func(one valueInfo) {
+		one.lastStringJSON = -1
+		if one.isString {
+			one.lastStringJSON = one.json
+		}
 		if !set {
 			v, set = one, true
 		} else {

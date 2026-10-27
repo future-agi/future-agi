@@ -58,7 +58,7 @@ func (p ingestPrice) total() int64 { return p.handler + p.rows }
 // price turns a scan into the heap the request will hold.
 func (s otlpShape) price() ingestPrice {
 	handler := int64(priceRequest) +
-		s.resourceSpans*priceResourceSpans +
+		s.resourceSpans*(priceResourceSpans+4*priceKeyValue) + // header, project, org, simulation marker before final-shape pricing
 		s.scopeSpans*priceScopeSpans +
 		s.spans*priceSpan +
 		s.events*priceEvent +
