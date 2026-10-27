@@ -146,7 +146,7 @@ const NavItem = forwardRef(
           placement="right"
           arrow
         >
-          <Box sx={{ width: 1, minHeight: "32px", height: "32px" }}>
+          <Box sx={{ width: 1, minHeight: "24px", height: "24px" }}>
             {renderContent}
           </Box>
         </CustomTooltip>
@@ -164,8 +164,8 @@ const NavItem = forwardRef(
             underline="none"
             sx={{
               width: 1,
-              minHeight: "32px",
-              height: "32px",
+              minHeight: "24px",
+              height: "24px",
               ...(disabled && {
                 cursor: "default",
               }),
@@ -185,8 +185,8 @@ const NavItem = forwardRef(
           underline="none"
           sx={{
             width: 1,
-            minHeight: "32px",
-            height: "32px",
+            minHeight: "24px",
+            height: "24px",
             ...(disabled && {
               cursor: "default",
             }),
@@ -240,8 +240,8 @@ const StyledNavItem = styled(ListItemButton, {
   const baseStyles = {
     item: {
       borderRadius: 6,
-      height: "32px",
-      width: "32px",
+      height: "24px",
+      width: "36px",
       color: theme.palette.text.secondary,
     },
     icon: {
@@ -264,7 +264,7 @@ const StyledNavItem = styled(ListItemButton, {
       fontSize: 11,
       lineHeight: "16px",
       textAlign: "center",
-      padding: theme.spacing(1, 2),
+      padding: 0,
       fontWeight: theme.typography.fontWeightBold,
       "& .icon": {
         ...baseStyles.icon,
@@ -303,7 +303,7 @@ const StyledNavItem = styled(ListItemButton, {
     ...(subItem && {
       ...baseStyles.item,
       ...theme.typography.body2,
-      minHeight: 32,
+      minHeight: 24,
       padding: theme.spacing(0, 1),
       fontWeight: theme.typography.fontWeightBold,
       "& .icon": {
