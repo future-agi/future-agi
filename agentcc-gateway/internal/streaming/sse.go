@@ -103,8 +103,17 @@ type Event struct {
 func (e Event) Data() []byte {
 	var data []byte
 	hasData := false
-	for _, line := range bytes.SplitAfter(e.Raw, []byte("\n")) {
-		field := bytes.TrimRight(line, "\r\n")
+	for raw := e.Raw; len(raw) > 0; {
+		field := raw
+		if i := bytes.IndexAny(raw, "\r\n"); i >= 0 {
+			field = raw[:i]
+			if raw[i] == '\r' && i+1 < len(raw) && raw[i+1] == '\n' {
+				i++
+			}
+			raw = raw[i+1:]
+		} else {
+			raw = nil
+		}
 		if !bytes.HasPrefix(field, []byte("data:")) {
 			continue
 		}
@@ -131,6 +140,9 @@ var ErrEventTooLarge = errors.New("stream event larger than 32 MiB")
 // — without parsing or rewriting the others.
 type EventReader struct {
 	r *bufio.Reader
+	// afterCR says the last line ended in a CR that was the last byte read.
+	// A LF that follows belongs to that line break.
+	afterCR bool
 }
 
 // NewEventReader reads events from r.
@@ -145,18 +157,12 @@ func NewEventReader(r io.Reader) *EventReader {
 func (er *EventReader) Next() (Event, error) {
 	var ev Event
 	hasField := false
-	lineStart := 0
 	for {
-		fragment, err := er.r.ReadSlice('\n')
-		ev.Raw = append(ev.Raw, fragment...)
+		lineStart, err := er.readLine(&ev.Raw)
 		if len(ev.Raw) > MaxEventBytes {
 			return ev, ErrEventTooLarge
 		}
-		if err == bufio.ErrBufferFull {
-			continue // the line goes on
-		}
 		field := bytes.TrimRight(ev.Raw[lineStart:], "\r\n")
-		lineStart = len(ev.Raw)
 		switch {
 		case len(field) == 0:
 			// A blank line ends an event; blank lines before one stay in its Raw.
@@ -172,6 +178,54 @@ func (er *EventReader) Next() (Event, error) {
 		if err != nil {
 			return ev, err
 		}
+	}
+}
+
+// readLine appends the next line, line break included, to raw, and returns
+// where the line starts in raw. A line breaks at LF, CRLF or a lone CR, as
+// the SSE spec allows. A CR ends its line at once: waiting for the next byte
+// to see whether it is a LF would hold back an event that has already ended.
+func (er *EventReader) readLine(raw *[]byte) (int, error) {
+	if er.afterCR {
+		er.afterCR = false
+		next, err := er.r.Peek(1)
+		if err != nil {
+			return len(*raw), err
+		}
+		if next[0] == '\n' {
+			*raw = append(*raw, '\n')
+			er.r.Discard(1)
+		}
+	}
+	start := len(*raw)
+	for {
+		if er.r.Buffered() == 0 {
+			if _, err := er.r.Peek(1); err != nil {
+				return start, err
+			}
+		}
+		buf, _ := er.r.Peek(er.r.Buffered())
+		i := bytes.IndexAny(buf, "\r\n")
+		if i < 0 {
+			*raw = append(*raw, buf...)
+			er.r.Discard(len(buf))
+			if len(*raw) > MaxEventBytes {
+				return start, ErrEventTooLarge
+			}
+			continue // the line goes on
+		}
+		end := i + 1
+		if buf[i] == '\r' {
+			switch {
+			case end < len(buf) && buf[end] == '\n':
+				end++
+			case end == len(buf):
+				er.afterCR = true
+			}
+		}
+		*raw = append(*raw, buf[:end]...)
+		er.r.Discard(end)
+		return start, nil
 	}
 }
 

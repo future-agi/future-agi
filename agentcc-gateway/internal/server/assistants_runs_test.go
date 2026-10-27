@@ -12,8 +12,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/futureagi/agentcc-gateway/internal/auth"
+	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
+	authplugin "github.com/futureagi/agentcc-gateway/internal/plugins/auth"
 	"github.com/futureagi/agentcc-gateway/internal/redisstate"
 )
 
@@ -263,4 +266,61 @@ func TestVectorStoreCallsGoThroughThePipeline(t *testing.T) {
 			t.Errorf("status = %d, want the pre-plugin's 429", status)
 		}
 	})
+	// A key out of budget must still be able to delete what it pays to keep.
+	t.Run("a spent budget stops a write, not a delete", func(t *testing.T) {
+		charges := &chargeRecorder{}
+		gateway := streamingGateway(t, upstream.URL, spendLimitPlugin{}, charges)
+		for _, path := range []string{"/v1/vector_stores/vs_1", "/v1/vector_stores/vs_1/files/file_1"} {
+			if status, body := assistantsCall(t, gateway, http.MethodDelete, path, "k", "", nil); status != http.StatusOK {
+				t.Errorf("DELETE %s: %d %s", path, status, body)
+			}
+		}
+		if status, _ := assistantsCall(t, gateway, http.MethodPost, "/v1/vector_stores/vs_1/search", "k", `{"query":"q"}`, nil); status != http.StatusTooManyRequests {
+			t.Errorf("search: status = %d, want the spend limit's 429", status)
+		}
+		if _, runs := charges.recorded(); runs != 3 {
+			t.Errorf("post-plugins ran %d times, want 3: deletes are logged too", runs)
+		}
+	})
+}
+
+// spendLimitPlugin refuses every call that could spend, as a spent budget
+// does.
+type spendLimitPlugin struct{}
+
+func (spendLimitPlugin) Name() string  { return "spend_limit" }
+func (spendLimitPlugin) Priority() int { return 10 }
+func (spendLimitPlugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pipeline.PluginResult {
+	if rc.Flags.NoSpend {
+		return pipeline.ResultContinue()
+	}
+	return pipeline.ResultError(&models.APIError{Status: http.StatusTooManyRequests, Type: models.ErrTypeRateLimit, Code: "budget_exceeded", Message: "budget exceeded"})
+}
+func (spendLimitPlugin) ProcessResponse(context.Context, *models.RequestContext) pipeline.PluginResult {
+	return pipeline.ResultContinue()
+}
+
+// Key model lists name models as clients request them, provider prefix and
+// all. A run's model used to reach the auth plugin with the prefix stripped,
+// so a key allowed "openai/gpt-4o" could not start a run on it.
+func TestRunCreationChecksTheModelAsRequested(t *testing.T) {
+	upstream := assistantsUpstream(t, false)
+	keys := auth.NewKeyStore(config.AuthConfig{Enabled: true, Keys: []config.AuthKeyConfig{
+		{Name: "runs", Key: "sk-runs", Models: []string{"openai/gpt-4o"}},
+	}})
+	gateway := streamingGateway(t, upstream.URL, authplugin.New(keys, true))
+
+	for _, route := range []struct{ name, path string }{
+		{"create a run", "/v1/threads/thread_1/runs"},
+		{"create a thread and run", "/v1/threads/runs"},
+	} {
+		t.Run(route.name, func(t *testing.T) {
+			if status, body := assistantsCall(t, gateway, http.MethodPost, route.path, "sk-runs", `{"assistant_id":"asst_1","model":"openai/gpt-4o"}`, nil); status != http.StatusOK {
+				t.Errorf("a model the key may use: %d %s", status, body)
+			}
+			if status, _ := assistantsCall(t, gateway, http.MethodPost, route.path, "sk-runs", `{"assistant_id":"asst_1","model":"openai/gpt-4o-mini"}`, nil); status != http.StatusForbidden {
+				t.Errorf("a model the key may not use: status = %d, want 403", status)
+			}
+		})
+	}
 }

@@ -128,6 +128,9 @@ type RequestFlags struct {
 	FallbackUsed       bool
 	Timeout            bool
 	ShortCircuited     bool
+	// NoSpend marks a call that cannot spend, such as a delete. Budget and
+	// credit limits do not refuse it: a key out of budget can still clean up.
+	NoSpend bool
 }
 
 var requestContextPool = sync.Pool{

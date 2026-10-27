@@ -91,13 +91,25 @@ func (s *memoryRunCharges) Take(_ context.Context, runID string) (pendingCharge,
 	return c.charge, true
 }
 
-// redisRunCharges shares pending charges between pods. GETDEL makes Take
-// atomic, so two pods that see the same run finish cannot both charge it.
+// redisRunCharges shares pending charges between pods. Take reads and
+// deletes in one script, so two pods that see the same run finish cannot both
+// charge it.
 type redisRunCharges struct {
 	client *redisstate.Client
 }
 
 func runChargeKey(runID string) string { return "agentcc:run_charge:" + runID }
+
+// takeChargeScript is GETDEL for any Redis 6: GETDEL itself needs 6.2.
+//
+// KEYS[1] = run charge key
+var takeChargeScript = redis.NewScript(`
+local charge = redis.call('GET', KEYS[1])
+if charge then
+    redis.call('DEL', KEYS[1])
+end
+return charge
+`)
 
 func (s *redisRunCharges) Put(ctx context.Context, runID string, charge pendingCharge) {
 	data, err := json.Marshal(charge)
@@ -115,11 +127,11 @@ func (s *redisRunCharges) Put(ctx context.Context, runID string, charge pendingC
 func (s *redisRunCharges) Take(ctx context.Context, runID string) (pendingCharge, bool) {
 	var data []byte
 	err := s.client.Do(func(rdb redis.UniversalClient) error {
-		var getErr error
-		data, getErr = rdb.GetDel(ctx, runChargeKey(runID)).Bytes()
+		charge, getErr := takeChargeScript.Run(ctx, rdb, []string{runChargeKey(runID)}).Text()
 		if getErr == redis.Nil {
 			return nil
 		}
+		data = []byte(charge)
 		return getErr
 	})
 	if err != nil {

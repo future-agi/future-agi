@@ -581,6 +581,9 @@ func (h *Handlers) CreateRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	modelName := models.ExtractModelFromBody(body)
+	// The name as requested, before the provider prefix is stripped: key
+	// model lists are checked against it.
+	rc.Model = modelName
 	isStream := models.ExtractStreamFromBody(body)
 	rc.IsStream = isStream
 
@@ -821,6 +824,9 @@ func (h *Handlers) CreateThreadAndRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	modelName := models.ExtractModelFromBody(body)
+	// The name as requested, before the provider prefix is stripped: key
+	// model lists are checked against it.
+	rc.Model = modelName
 	isStream := models.ExtractStreamFromBody(body)
 	rc.IsStream = isStream
 

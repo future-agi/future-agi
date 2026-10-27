@@ -1293,6 +1293,10 @@ func ConvertModelOverrides(cfgOverrides map[string]config.ModelOverrideConfig) m
 				BatchOutputPerToken: co.Pricing.BatchOutputPerToken,
 				InputPerSecond:      co.Pricing.InputPerSecond,
 				InputPerCharacter:   co.Pricing.InputPerCharacter,
+				InputPerQuery:       co.Pricing.InputPerQuery,
+				PerPage:             co.Pricing.PerPage,
+				OutputPerImage:      co.Pricing.OutputPerImage,
+				OutputPerSecond:     co.Pricing.OutputPerSecond,
 			}
 		}
 		if co.Capabilities != nil {

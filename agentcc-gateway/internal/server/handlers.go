@@ -1921,6 +1921,14 @@ func waitForFirstStreamChunk(ctx context.Context, chunks <-chan models.StreamChu
 		select {
 		case chunk, ok := <-chunks:
 			if !ok {
+				// A provider sends its error before it closes chunks, and
+				// sends none once ctx is done; see closedStreamError.
+				if apiErr := pendingStreamError(errCh); apiErr != nil {
+					return nil, apiErr
+				}
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
 				return nil, models.ErrUpstreamProvider(http.StatusBadGateway, "upstream stream closed before sending any chunks")
 			}
 			return &chunk, nil

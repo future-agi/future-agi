@@ -40,6 +40,7 @@ func (h *Handlers) proxyVectorStores(w http.ResponseWriter, r *http.Request, met
 	rc := h.setupAssistantsRC(r, operation)
 	rc.EndpointType = "vector_stores"
 	rc.Metadata["vector_stores_operation"] = operation
+	rc.Flags.NoSpend = method == http.MethodDelete
 	defer rc.Release()
 
 	timeout := h.resolveTimeout(rc, r)
@@ -66,7 +67,8 @@ func (h *Handlers) proxyVectorStores(w http.ResponseWriter, r *http.Request, met
 	}
 
 	// Writes and searches go through the pipeline — rate limits, budgets,
-	// the request log. Reads stay outside it, as the other lifecycle reads do.
+	// the request log; deletes too, but no budget refuses them. Reads stay
+	// outside it, as the other lifecycle reads do.
 	if method == http.MethodGet {
 		err = call(ctx, rc)
 	} else {

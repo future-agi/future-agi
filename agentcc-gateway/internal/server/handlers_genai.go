@@ -161,9 +161,13 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		if action == "embedContent" {
 			call = func(ctx context.Context) ([]byte, int, error) {
-				return gp.EmbedContent(ctx, model, body, googleHeaders)
+				respBody, status, err := gp.EmbedContent(ctx, model, body, googleHeaders)
+				if err == nil && status < http.StatusBadRequest {
+					// Only an embedding that was made is billed.
+					rc.Metadata["input_characters"] = strconv.Itoa(genaifmt.EmbedInputCharacters(body))
+				}
+				return respBody, status, err
 			}
-			rc.Metadata["input_characters"] = strconv.Itoa(genaifmt.EmbedInputCharacters(body))
 		}
 		h.handleGenAINativeOnly(ctx, w, rc, call)
 		return
@@ -486,6 +490,10 @@ func (h *Handlers) handleGenAINativeOnly(ctx context.Context, w http.ResponseWri
 	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
 		var callErr error
 		respBody, statusCode, callErr = call(ctx)
+		if callErr == nil && statusCode >= http.StatusBadRequest {
+			// Relayed as sent, and logged as the failure it is.
+			rc.AddError(models.ErrUpstreamProvider(statusCode, fmt.Sprintf("genai error (HTTP %d)", statusCode)))
+		}
 		return callErr
 	}); err != nil {
 		writeGenAIErrorFromError(w, err)

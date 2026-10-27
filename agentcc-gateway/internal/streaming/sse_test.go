@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/iotest"
+	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
@@ -310,3 +312,63 @@ func TestEventReader_ReturnsThePartialEventWithTheError(t *testing.T) {
 type failingReader struct{ err error }
 
 func (r *failingReader) Read([]byte) (int, error) { return 0, r.err }
+
+// The SSE spec ends a line at LF, CRLF or a lone CR. A stream that used lone
+// CRs used to read as one line that never ended.
+func TestEventReader_AcceptsEveryLineBreak(t *testing.T) {
+	streams := map[string]string{
+		"CR":    "event: a\rdata: 1\r\revent: b\rdata: 2\r\r",
+		"CRLF":  "event: a\r\ndata: 1\r\n\r\nevent: b\r\ndata: 2\r\n\r\n",
+		"mixed": "event: a\rdata: 1\r\n\nevent: b\ndata: 2\r\r",
+	}
+	for name, stream := range streams {
+		readers := map[string]func() io.Reader{
+			"whole":              func() io.Reader { return strings.NewReader(stream) },
+			"one byte at a time": func() io.Reader { return iotest.OneByteReader(strings.NewReader(stream)) },
+		}
+		for how, reader := range readers {
+			t.Run(name+", "+how, func(t *testing.T) {
+				events, err := readEvents(t, reader())
+				if err != io.EOF {
+					t.Fatalf("err = %v, want io.EOF", err)
+				}
+				var relayed bytes.Buffer
+				var got []string
+				for _, ev := range events {
+					relayed.Write(ev.Raw)
+					if ev.Name != "" {
+						got = append(got, ev.Name+"="+string(ev.Data()))
+					}
+				}
+				if strings.Join(got, " ") != "a=1 b=2" {
+					t.Errorf("events = %q, want a=1 b=2", got)
+				}
+				if relayed.String() != stream {
+					t.Errorf("relayed bytes differ from the stream:\n got %q\nwant %q", relayed.String(), stream)
+				}
+			})
+		}
+	}
+}
+
+// A CR ends its line at once. Waiting for the next byte, to see whether it is
+// a LF, would hold an event that has ended until the next one starts.
+func TestEventReader_DoesNotWaitAfterACR(t *testing.T) {
+	pr, pw := io.Pipe()
+	t.Cleanup(func() { pw.Close() })
+	go pw.Write([]byte("data: 1\r\r"))
+
+	got := make(chan Event, 1)
+	go func() {
+		ev, _ := NewEventReader(pr).Next()
+		got <- ev
+	}()
+	select {
+	case ev := <-got:
+		if string(ev.Data()) != "1" {
+			t.Errorf("data = %q, want 1", ev.Data())
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the event was held until more bytes came")
+	}
+}

@@ -20,8 +20,6 @@ import (
 // finishes, so they are charged then — on this call's stream, or on a later
 // poll — once, by whichever call takes the run's pending charge.
 func (h *Handlers) proxyRunCall(w http.ResponseWriter, ctx context.Context, rc *models.RequestContext, ap providers.AssistantsProvider, upstreamPath string, body []byte, startsRun bool) {
-	rc.Model = models.ExtractModelFromBody(body)
-
 	if rc.IsStream {
 		// Pre-plugins only; the relay runs the post-plugins when it ends.
 		if err := h.engine.Process(ctx, rc, func(context.Context, *models.RequestContext) error { return nil }); err != nil {
