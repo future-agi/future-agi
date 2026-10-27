@@ -5,9 +5,13 @@ set -euo pipefail
 cache=${1:?usage: install-test-packages.sh ABSOLUTE_CACHE_DIRECTORY}
 [[ "$cache" == /* ]] || { echo "Cache path must be absolute" >&2; exit 1; }
 mkdir -p "$cache/lists/partial" "$cache/archives/partial" "$cache/sources"
-# Only Ubuntu supplies these packages. Do not refresh unrelated Microsoft,
-# browser, etc. repositories on every shard. Keep Ubuntu's Signed-By checks.
-cp /etc/apt/sources.list.d/ubuntu.sources "$cache/sources/ubuntu.sources"
+# Only Ubuntu supplies these packages. Do not refresh unrelated repositories.
+# The runner's mirror+file source selects azure.archive.ubuntu.com over HTTP:
+# observed transfers of the 9 MB libcodec2 package took multiple minutes even
+# when index refresh took seconds. Use Ubuntu's canonical HTTPS archive, keeping
+# the distro suites/components and Signed-By checks, without editing host sources.
+sed 's|^URIs:.*|URIs: https://archive.ubuntu.com/ubuntu|' \
+  /etc/apt/sources.list.d/ubuntu.sources > "$cache/sources/ubuntu.sources"
 options=(
   -o "Dir::Etc::sourcelist=/dev/null"
   -o "Dir::Etc::sourceparts=$cache/sources"
