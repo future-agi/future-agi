@@ -425,6 +425,26 @@ jobs:
           npx --yes pnpm@8.15.0 install --ignore-workspace --frozen-lockfile --ignore-scripts
           npx --yes pnpm@8.15.0 run test:live
 
+      - name: SDK operation names match the MCP tools
+        # The SDK catalog records, per operation, the MCP tool it corresponds
+        # to; the tool list itself is generated here (scripts/generate-mcp-tools.py).
+        # A tool renamed or added on one side without the other fails here.
+        if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
+        run: |
+          python3 -m pip install --quiet pyyaml
+          python3 - <<'EOF'
+          import json, sys, yaml
+          tools = {t["name"] for t in json.load(open("futureagi/mcp_server/catalog/tools.generated.json"))["tools"]}
+          catalog = yaml.safe_load(open("futureagi-sdk/sdkgen/catalog/operations.yaml"))["operations"]
+          sdk = {(e["surfaces"]["mcp"].get("name") or e["id"].replace(".", "_"))
+                 for e in catalog if e.get("surfaces", {}).get("mcp") not in (None, False)}
+          if tools != sdk:
+              print("only in the MCP tool list:", sorted(tools - sdk))
+              print("only in the SDK catalog:  ", sorted(sdk - tools))
+              sys.exit("futureagi/mcp_server/catalog/tools.yaml and futureagi-sdk/sdkgen/catalog/operations.yaml disagree")
+          print(f"{len(tools)} MCP tools, same names in the SDK catalog")
+          EOF
+
       - name: Dump stack state on failure
         if: failure()
         run: |
