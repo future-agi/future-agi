@@ -71,8 +71,7 @@ function reducer(s, a) {
 }
 
 /**
- * The folder-upload form state shared by the Build tab's Code upload panel and
- * the Build environment drawer: the picked folder, its upload to the runner,
+ * The Build environment drawer's folder-upload form state: the picked folder, its upload to the runner,
  * and the source preflight and the build read. `build` is usePanelBuild().
  */
 export default function useCodeUpload(build) {

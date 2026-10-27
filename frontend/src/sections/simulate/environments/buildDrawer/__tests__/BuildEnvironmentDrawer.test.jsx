@@ -54,7 +54,7 @@ const { preflightHarnessJob, createHarnessJob } = await import(
 const { default: BuildEnvironmentDrawer } = await import(
   "../BuildEnvironmentDrawer"
 );
-const { useEnvironmentsStore, resetEnvironmentsStore } = await import(
+const { resetEnvironmentsStore } = await import(
   "../../store/useEnvironmentsStore"
 );
 
@@ -212,12 +212,6 @@ describe("BuildEnvironmentDrawer setup", () => {
     const chat = screen.getByRole("button", { name: /Chat/ });
     expect(chat).toBeEnabled();
     expect(within(chat).getByText("UI only")).toBeInTheDocument();
-  });
-
-  it("leaves the Build tab's choice alone", () => {
-    render();
-    connect("GitHub");
-    expect(useEnvironmentsStore.getState().choice).toBeNull();
   });
 
   it("can't be closed while the build is being created", async () => {

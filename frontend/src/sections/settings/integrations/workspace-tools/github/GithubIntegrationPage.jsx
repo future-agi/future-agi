@@ -83,7 +83,7 @@ export default function GithubIntegrationPage() {
   const integrationsHome = workspaceMatch
     ? paths.dashboard.settings.workspaceIntegrations(workspaceMatch[1])
     : paths.dashboard.settings.integrations;
-  /* Connecting an agent and building its environment both start from the Environments build tab on dev. */
+  /* Connecting an agent and building its environment both start from the Environments Build environment drawer on dev. */
   const buildEnvironment = () =>
     navigate(`${paths.dashboard.simulate.environments.root}?tab=build`);
   const viewAgents = () => navigate(`${paths.dashboard.agents}/connected`);

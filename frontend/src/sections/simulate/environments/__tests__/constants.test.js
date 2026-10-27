@@ -1,10 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  OPTIONS,
-  OPTION_STATUS,
-  BRING_YOUR_AGENT_ORDER,
-  DEFAULT_ENTRY_TAB,
-} from "../environmentOptions";
+import { DEFAULT_ENTRY_TAB } from "../environmentOptions";
 import { CODE_UPLOAD_COPY } from "../codeUpload.constants";
 import { ENTRY_AGENT_TYPES } from "../agentTypes";
 import { HOSTED_PLATFORMS_BY_TYPE } from "../hostedPlatforms";
@@ -15,45 +10,14 @@ const liveIds = (arr) => arr.filter((o) => !o.comingSoon).map((o) => o.id);
 const comingSoonIds = (arr) => arr.filter((o) => o.comingSoon).map((o) => o.id);
 
 describe("environmentOptions", () => {
-  it("omits the running and scratch options", () => {
-    const ids = OPTIONS.map((o) => o.id);
-    expect(ids).not.toContain("running");
-    expect(ids).not.toContain("scratch");
-  });
-
-  it("gates ids by status", () => {
-    const live = OPTIONS.filter((o) => o.status === OPTION_STATUS.LIVE).map(
-      (o) => o.id,
-    );
-    const coming = OPTIONS.filter(
-      (o) => o.status === OPTION_STATUS.COMING_SOON,
-    ).map((o) => o.id);
-    expect(live).toEqual(["source", "hosted", "upload"]);
-    expect(coming).toEqual(["templates", "web", "mcp", "local"]);
-  });
-
-  it("orders bring-your-agent options and every id exists in OPTIONS", () => {
-    expect(BRING_YOUR_AGENT_ORDER).toEqual([
-      "source",
-      "upload",
-      "hosted",
-      "mcp",
-      "local",
-    ]);
-    const ids = OPTIONS.map((o) => o.id);
-    BRING_YOUR_AGENT_ORDER.forEach((id) => expect(ids).toContain(id));
-  });
-
-  it("drops zip from upload preview and upload copy", () => {
-    const upload = OPTIONS.find((o) => o.id === "upload");
-    expect(upload.preview).not.toContain(".zip");
+  it("drops zip from the upload copy", () => {
     Object.values(CODE_UPLOAD_COPY).forEach((copy) => {
       expect(String(copy).toLowerCase()).not.toContain("zip");
     });
   });
 
-  it("defaults the entry tab to build", () => {
-    expect(DEFAULT_ENTRY_TAB).toBe("build");
+  it("defaults the entry tab to My Environments", () => {
+    expect(DEFAULT_ENTRY_TAB).toBe("my-environments");
   });
 });
 

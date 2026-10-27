@@ -1,4 +1,5 @@
 import { useState } from "react";
+import PropTypes from "prop-types";
 import { Box, Stack, Typography, Button } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
@@ -9,9 +10,7 @@ import {
   useMyEnvironments,
   useDeleteEnvironment,
 } from "src/api/simulate-environments/environments";
-import { ENTRY_TAB } from "./environmentOptions";
 import { EMPTY_MESSAGE, DEFAULT_PAGE_SIZE } from "./myEnvironments.constants";
-import useEnvironmentsTab from "./hooks/useEnvironmentsTab";
 import useEnvironmentFilters from "./hooks/useEnvironmentFilters";
 import MyEnvironmentsTable from "./MyEnvironmentsTable";
 import EnvironmentFilters from "./components/EnvironmentFilters";
@@ -25,9 +24,8 @@ const NO_MATCH_MESSAGE = "No environments match these filters";
  * height so DataTablePagination inside MyEnvironmentsTable pins to the bottom
  * of the screen rather than floating right under the last row.
  */
-export default function MyEnvironmentsTab() {
+export default function MyEnvironmentsTab({ onBuild }) {
   const navigate = useNavigate();
-  const { setTab } = useEnvironmentsTab();
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const { filters, setFilters } = useEnvironmentFilters();
@@ -147,7 +145,7 @@ export default function MyEnvironmentsTab() {
             <Button
               variant="contained"
               size="small"
-              onClick={() => setTab(ENTRY_TAB.BUILD)}
+              onClick={onBuild}
               startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
               sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
             >
@@ -176,3 +174,5 @@ export default function MyEnvironmentsTab() {
     </Box>
   );
 }
+
+MyEnvironmentsTab.propTypes = { onBuild: PropTypes.func };

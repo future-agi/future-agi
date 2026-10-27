@@ -4,7 +4,6 @@ import Iconify from "src/components/iconify";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import useEnvironmentsTab from "./hooks/useEnvironmentsTab";
 import { resetEnvironmentsEntryState } from "./store/useEnvironmentsStore";
-import BuildEnvironmentTab from "./BuildEnvironmentTab";
 import MyEnvironmentsTab from "./MyEnvironmentsTab";
 import { useMyEnvironments } from "src/api/simulate-environments/environments";
 import { DEFAULT_PAGE_SIZE } from "./myEnvironments.constants";
@@ -13,7 +12,6 @@ import BuildEnvironmentDrawer from "./buildDrawer/BuildEnvironmentDrawer";
 import { ENTRY_TAB, ENVIRONMENTS_HEADER, ENV_TABS_SX } from "./environmentOptions";
 
 const TAB_PANELS = {
-  [ENTRY_TAB.BUILD]: BuildEnvironmentTab,
   [ENTRY_TAB.MY]: MyEnvironmentsTab,
   [ENTRY_TAB.PERSONAS]: PersonasTab,
 };
@@ -38,9 +36,17 @@ function MyEnvironmentsLabel() {
 }
 
 export default function EnvironmentsHome() {
-  const { tab, setTab } = useEnvironmentsTab();
+  const { tab, setTab, opensBuild } = useEnvironmentsTab();
   const TabPanel = TAB_PANELS[tab];
-  const [buildOpen, setBuildOpen] = useState(false);
+  const [buildOpen, setBuildOpen] = useState(opensBuild);
+
+  // A link to the old Build tab opens the drawer over My Environments.
+  useEffect(() => {
+    if (!opensBuild) return;
+    setBuildOpen(true);
+    setTab(ENTRY_TAB.MY);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opensBuild]);
 
   const onTabChange = (next) => {
     // Keeps the event the old Personas menu item fired.
@@ -52,7 +58,7 @@ export default function EnvironmentsHome() {
     setTab(next);
   };
 
-  // The draft must survive the hop to the build page, so the matrix starts clean
+  // The draft must survive the hop to the workspace, so each visit starts clean
   // on mount instead of clearing on unmount. Only the entry/build slice is
   // cleared — adopted workspaces persist.
   useEffect(() => {
@@ -94,13 +100,12 @@ export default function EnvironmentsHome() {
           flush, padding-spaced, one continuous underline against the divider. */}
       <Box sx={{ px: 2, borderBottom: 1, borderColor: "divider", flexShrink: 0 }}>
         <Tabs value={tab} onChange={(_, v) => onTabChange(v)} sx={ENV_TABS_SX}>
-          <Tab value={ENTRY_TAB.BUILD} disableRipple label="Build environment" />
           <Tab value={ENTRY_TAB.MY} disableRipple label={<MyEnvironmentsLabel />} />
           <Tab value={ENTRY_TAB.PERSONAS} disableRipple label="Personas" />
         </Tabs>
       </Box>
 
-      <TabPanel />
+      <TabPanel onBuild={() => setBuildOpen(true)} />
       <BuildEnvironmentDrawer open={buildOpen} onClose={() => setBuildOpen(false)} />
     </Box>
   );

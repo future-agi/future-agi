@@ -1516,9 +1516,9 @@ export const dashboardRoutes = (
           element: <SimulateUseTemplate />,
         },
         {
-          // Build is no longer a page of its own — the source panels create the
-          // job and route straight to the workspace, which hosts the build. An
-          // old /build link lands back on the Build entry tab.
+          // Build is no longer a page of its own: the Build environment drawer
+          // creates the job and routes straight to the workspace, which hosts
+          // the build. An old /build link opens the drawer.
           path: "environments/build",
           element: (
             <Navigate

@@ -482,7 +482,7 @@ export function ParallelRow({ build }) {
     parallelismInput,
     admittedParallelism,
   } = build;
-  // The Build tab's own notes: what a typed-over-the-limit value becomes, and
+  // The notes the old Build tab showed: what a typed-over-the-limit value becomes, and
   // what preflight admits once it has run.
   const notes = [
     enabled &&
