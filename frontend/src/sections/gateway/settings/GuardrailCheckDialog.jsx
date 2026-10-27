@@ -17,10 +17,17 @@ import {
   Chip,
   Divider,
   CircularProgress,
+  Alert,
 } from "@mui/material";
 
 import axios, { endpoints } from "src/utils/axios";
 import { logger } from "src/utils/logger";
+
+import {
+  guardrailStage,
+  RESPONSE_ONLY_CHECKS,
+  requestOnlyGuardrail,
+} from "./guardrailOptions";
 
 const ACTION_OPTIONS = ["block", "warn", "mask", "log"];
 const CREDENTIAL_MASK = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022";
@@ -55,6 +62,11 @@ const GuardrailCheckDialog = ({
     enabled: true,
     action: "block",
     confidence_threshold: 0.8,
+    stage: "pre",
+    stageExplicit: false,
+    on_block: "reject",
+    reflect_max_attempts: 1,
+    reflect_debug: false,
   });
   const [providerFields, setProviderFields] = useState({});
   // Track which credential fields had existing values (to avoid overwriting with mask)
@@ -66,8 +78,18 @@ const GuardrailCheckDialog = ({
   useEffect(() => {
     if (!open) return;
 
+    const retryControls = {
+      stage: guardrailStage(checkName, initialData),
+      stageExplicit:
+        initialData?.config?.stage !== undefined ||
+        initialData?.config?.on_block === "reflect",
+      on_block: initialData?.config?.on_block || "reject",
+      reflect_max_attempts: initialData?.config?.reflect_max_attempts ?? 1,
+      reflect_debug: initialData?.config?.reflect_debug ?? false,
+    };
     if (initialData) {
       setForm({
+        ...retryControls,
         enabled: initialData.enabled !== false,
         action: initialData.action || "block",
         confidence_threshold:
@@ -76,13 +98,14 @@ const GuardrailCheckDialog = ({
           0.8,
       });
 
-      // Extract provider-specific fields from initialData (check both top-level and config sub-object)
+      // Provider config wins over legacy top-level fields: a rule's execution
+      // mode is not the provider-specific mode inside config.
       if (providerMeta?.fields) {
         const pf = {};
         const mc = {};
         const cfgObj = initialData.config || {};
         providerMeta.fields.forEach(({ key, defaultValue, type }) => {
-          const val = initialData[key] ?? cfgObj[key];
+          const val = cfgObj[key] ?? initialData[key];
           if (CREDENTIAL_KEYS.has(key) && val) {
             pf[key] = CREDENTIAL_MASK;
             mc[key] = val; // remember original
@@ -104,7 +127,12 @@ const GuardrailCheckDialog = ({
         setMaskedCredentials({});
       }
     } else {
-      setForm({ enabled: true, action: "block", confidence_threshold: 0.8 });
+      setForm({
+        enabled: true,
+        action: "block",
+        confidence_threshold: 0.8,
+        ...retryControls,
+      });
       // Set defaults for provider fields
       if (providerMeta?.fields) {
         const pf = {};
@@ -117,7 +145,7 @@ const GuardrailCheckDialog = ({
       }
       setMaskedCredentials({});
     }
-  }, [open, initialData, providerMeta]);
+  }, [open, initialData, providerMeta, checkName]);
 
   // Fetch async options for async-select fields when dialog opens
   useEffect(() => {
@@ -153,8 +181,29 @@ const GuardrailCheckDialog = ({
     });
   }, [open, providerMeta, asyncOptions]);
 
+  const effectiveProviderConfig = {
+    ...initialData?.config,
+    ...providerFields,
+    provider: providerMeta?.provider ?? initialData?.config?.provider,
+  };
+  const requestOnly = requestOnlyGuardrail(checkName, effectiveProviderConfig);
+
   const handleFieldChange = (key, value) => {
     setProviderFields((prev) => ({ ...prev, [key]: value }));
+    if (
+      key === "apply_to" &&
+      requestOnlyGuardrail(checkName, {
+        ...effectiveProviderConfig,
+        [key]: value,
+      })
+    ) {
+      setForm((prev) => ({
+        ...prev,
+        stage: "pre",
+        stageExplicit: true,
+        on_block: "reject",
+      }));
+    }
     // If user edits a masked credential field, clear the mask tracking
     if (maskedCredentials[key] && value !== CREDENTIAL_MASK) {
       setMaskedCredentials((prev) => {
@@ -165,7 +214,18 @@ const GuardrailCheckDialog = ({
     }
   };
 
+  const canReflect =
+    form.stage === "post" &&
+    !requestOnly &&
+    form.action === "block" &&
+    [undefined, null, "", "sync"].includes(initialData?.mode);
+  const reflects = canReflect && form.on_block === "reflect";
+  const attempts = Number(form.reflect_max_attempts);
+  const invalidAttempts =
+    reflects && (!Number.isInteger(attempts) || attempts < 1 || attempts > 5);
+
   const handleSave = () => {
+    if (invalidAttempts) return;
     const data = {
       enabled: form.enabled,
       action: form.action,
@@ -177,10 +237,12 @@ const GuardrailCheckDialog = ({
       data.provider = providerMeta.provider;
     }
 
-    // Add provider-specific fields inside config sub-object
+    // Preserve shared and provider controls unknown to this dialog. Explicitly
+    // cleared provider fields must still be removed (including credentials).
+    const cfg = { ...initialData?.config };
     if (providerMeta?.fields) {
-      const cfg = {};
       providerMeta.fields.forEach(({ key, type }) => {
+        delete cfg[key];
         const val = providerFields[key];
         if (
           CREDENTIAL_KEYS.has(key) &&
@@ -197,10 +259,21 @@ const GuardrailCheckDialog = ({
           cfg[key] = typeof val === "string" ? val.trim() : val;
         }
       });
-      if (Object.keys(cfg).length > 0) {
-        data.config = cfg;
-      }
     }
+    if (form.stageExplicit || reflects) {
+      cfg.stage = form.stage;
+      data.stage = form.stage;
+    }
+    if (reflects) {
+      cfg.on_block = "reflect";
+      cfg.reflect_max_attempts = attempts;
+      cfg.reflect_debug = form.reflect_debug;
+    } else {
+      if (cfg.on_block !== undefined) cfg.on_block = "reject";
+      delete cfg.reflect_max_attempts;
+      delete cfg.reflect_debug;
+    }
+    data.config = cfg;
 
     onSave(checkName, data);
     onClose();
@@ -452,7 +525,13 @@ const GuardrailCheckDialog = ({
             select
             label="Action"
             value={form.action}
-            onChange={(e) => setForm((p) => ({ ...p, action: e.target.value }))}
+            onChange={(e) =>
+              setForm((p) => ({
+                ...p,
+                action: e.target.value,
+                on_block: e.target.value === "block" ? p.on_block : "reject",
+              }))
+            }
             fullWidth
           >
             {ACTION_OPTIONS.map((a) => (
@@ -461,6 +540,113 @@ const GuardrailCheckDialog = ({
               </MenuItem>
             ))}
           </TextField>
+
+          <TextField
+            select
+            label="Check stage"
+            value={form.stage}
+            onChange={(e) =>
+              setForm((p) => ({
+                ...p,
+                stage: e.target.value,
+                stageExplicit: true,
+                on_block: e.target.value === "post" ? p.on_block : "reject",
+              }))
+            }
+            fullWidth
+            helperText={
+              requestOnly
+                ? "This check inspects requests only."
+                : "Request checks run before generation. Response checks run after generation."
+            }
+          >
+            <MenuItem
+              value="pre"
+              disabled={RESPONSE_ONLY_CHECKS.has(checkName)}
+            >
+              Request
+            </MenuItem>
+            <MenuItem value="post" disabled={requestOnly}>
+              Response
+            </MenuItem>
+          </TextField>
+
+          {canReflect ? (
+            <Stack spacing={2}>
+              <TextField
+                select
+                label="When a response is blocked"
+                value={form.on_block}
+                onChange={(e) =>
+                  setForm((p) => ({ ...p, on_block: e.target.value }))
+                }
+                fullWidth
+              >
+                <MenuItem value="reject">Reject response</MenuItem>
+                <MenuItem value="reflect">Retry with feedback</MenuItem>
+              </TextField>
+              {reflects && (
+                <>
+                  <TextField
+                    label="Additional attempts"
+                    type="number"
+                    value={form.reflect_max_attempts}
+                    onChange={(e) =>
+                      setForm((p) => ({
+                        ...p,
+                        reflect_max_attempts: e.target.value,
+                      }))
+                    }
+                    inputProps={{ min: 1, max: 5, step: 1 }}
+                    error={invalidAttempts}
+                    helperText={
+                      invalidAttempts
+                        ? "Enter a whole number from 1 to 5."
+                        : "After the original response. Stops at the first passing response; rejects if the limit is reached."
+                    }
+                    fullWidth
+                  />
+                  <Alert severity="info">
+                    Sends the rejected answer and check feedback back to the
+                    model. Each additional generation uses provider tokens and
+                    is checked against rate limits, credits and budgets. This
+                    adds latency. Streaming responses are buffered until checks
+                    pass; rejected text is never streamed to the client.
+                  </Alert>
+                  <Typography variant="caption" color="text.secondary">
+                    Use /v1/chat/completions. Other generation endpoints reject
+                    requests while this rule applies. Repair supports
+                    single-choice text responses. Blocked tool calls, reasoning
+                    and multi-choice responses are rejected without a repair
+                    attempt. Normal provider failover can add upstream calls.
+                  </Typography>
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={form.reflect_debug}
+                        onChange={(e) =>
+                          setForm((p) => ({
+                            ...p,
+                            reflect_debug: e.target.checked,
+                          }))
+                        }
+                      />
+                    }
+                    label="Include safe retry details in request logs"
+                  />
+                  <Typography variant="caption" color="text.secondary">
+                    Records attempt outcomes, not rejected answers or
+                    credentials.
+                  </Typography>
+                </>
+              )}
+            </Stack>
+          ) : (
+            <Typography variant="body2" color="text.secondary">
+              Retry with feedback is available for synchronous response checks
+              with the Block action.
+            </Typography>
+          )}
 
           {!hideConfidence && (
             <Stack spacing={1}>
@@ -497,7 +683,11 @@ const GuardrailCheckDialog = ({
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose}>Cancel</Button>
-        <Button variant="contained" onClick={handleSave}>
+        <Button
+          variant="contained"
+          onClick={handleSave}
+          disabled={invalidAttempts}
+        >
           Save
         </Button>
       </DialogActions>

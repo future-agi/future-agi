@@ -338,7 +338,7 @@ function checksToRules(guardrailObj) {
 
   const rules = Object.entries(checks).map(([catalogName, cfg]) => ({
     name: cfg._originalName || CATALOG_TO_RULE[catalogName] || catalogName,
-    stage: cfg.stage || cfg.phase || "pre",
+    stage: cfg.config?.stage || cfg.stage || cfg.phase || "pre",
     mode: cfg.mode || "sync",
     action: cfg.action || "block",
     threshold: cfg.confidence_threshold ?? cfg.confidenceThreshold ?? 0.8,
@@ -766,9 +766,7 @@ const LogsTab = ({ gatewayId }) => {
   const logList = Array.isArray(logs) ? logs : logs?.results || [];
 
   if (isLoading) {
-    return (
-      <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />
-    );
+    return <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />;
   }
 
   return (
