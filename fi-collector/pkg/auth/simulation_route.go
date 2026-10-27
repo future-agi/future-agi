@@ -239,7 +239,7 @@ func (a *Authenticator) RouteSimulation(
 // forget drops a cached key result.
 func (a *Authenticator) forget(cacheKey string) {
 	if a.cache != nil && cacheKey != "" {
-		a.cache.m.Delete(cacheKey)
+		a.cache.invalidateKey(cacheKey)
 	}
 }
 

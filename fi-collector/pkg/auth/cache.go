@@ -30,9 +30,10 @@ func (e *cacheEntry) isWarm(warmTTL time.Duration) bool {
 // — they always hit PG (deduplicated by singleflight). This prevents
 // unbounded memory growth from scanners sending random keys.
 type cache struct {
-	m       sync.Map
-	ttl     time.Duration
-	warmTTL time.Duration
+	m           sync.Map
+	ttl         time.Duration
+	warmTTL     time.Duration
+	generations [64]keyGeneration
 }
 
 func newCache(ttl, warmTTL time.Duration) *cache {

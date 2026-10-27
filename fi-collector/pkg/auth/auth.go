@@ -136,11 +136,11 @@ func (a *Authenticator) keyResolver() interface {
 }
 
 // InvalidateKey removes a hashed CacheKey after revocation or explicit
-// invalidation. In-flight project lookups cannot repopulate this entry; the next
-// request must authenticate again. It is also used by WatchRevocations.
+// invalidation. In-flight key and project lookups cannot repopulate this entry;
+// the next request must authenticate again. It is also used by WatchRevocations.
 func (a *Authenticator) InvalidateKey(cacheKey string) {
 	if a != nil {
-		a.cache.m.Delete(cacheKey)
+		a.cache.invalidateKey(cacheKey)
 	}
 }
 
@@ -200,33 +200,55 @@ func (a *Authenticator) Authenticate(ctx context.Context, apiKey, secretKey stri
 		return nil, nil // auth disabled
 	}
 
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
 	ck := CacheKey(apiKey, secretKey)
+	// At most one revalidation, with the original caller deadline. Repeated
+	// invalidation fails closed rather than retrying indefinitely.
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		entry, status := a.cache.get(ck)
+		switch status {
+		case "fresh":
+			return entry.result, nil
+		case "warm":
+			go a.sfKey.Do(ck+":refresh", func() (any, error) {
+				a.refreshKey(context.Background(), apiKey, secretKey)
+				return nil, nil
+			})
+			return entry.result, nil
+		}
 
-	entry, status := a.cache.get(ck)
-	switch status {
-	case "fresh":
-		return entry.result, nil
-
-	case "warm":
-		// Singleflight dedup — 10K concurrent warm hits = 1 PG query, not 10K goroutines
-		go a.sfKey.Do(ck+":refresh", func() (any, error) {
-			a.refreshKey(context.Background(), apiKey, secretKey)
-			return nil, nil
-		})
-		return entry.result, nil
+		result, err := a.authenticateUncached(ctx, apiKey, secretKey, ck)
+		var changed *ProjectAuthChangedError
+		if errors.As(err, &changed) {
+			continue
+		}
+		return result, err
 	}
+	return nil, &ProjectAuthChangedError{}
+}
 
-	// cache miss — resolve from PG
-	lookup := a.sfKey.DoChan(ck, func() (any, error) {
+func (a *Authenticator) authenticateUncached(ctx context.Context, apiKey, secretKey, ck string) (*ResolveResult, error) {
+	epoch := a.cache.keyGeneration(ck)
+	// A request after invalidation must not join a lookup started before it.
+	lookup := a.sfKey.DoChan(fmt.Sprintf("%s:%d", ck, epoch), func() (any, error) {
 		sfCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
-		return a.keyResolver().ValidateKey(sfCtx, apiKey, secretKey)
+		result, err := a.keyResolver().ValidateKey(sfCtx, apiKey, secretKey)
+		if err != nil {
+			return nil, err
+		}
+		if !a.cache.publishValidated(ck, result, epoch) {
+			return nil, &ProjectAuthChangedError{}
+		}
+		if result == nil {
+			return nil, ErrUnauthenticated
+		}
+		// Publish once inside singleflight, not once per waiter: a late waiter
+		// must not overwrite a more recent cache refresh.
+		return result, nil
 	})
-	// The shared lookup has its own bounded lifetime, but each waiter must
-	// respect its original request deadline, including an internal restart.
 	var resolved singleflight.Result
 	select {
 	case <-ctx.Done():
@@ -239,15 +261,11 @@ func (a *Authenticator) Authenticate(ctx context.Context, apiKey, secretKey stri
 	if resolved.Err != nil {
 		return nil, fmt.Errorf("auth resolve: %w", resolved.Err)
 	}
-
 	result, _ := resolved.Val.(*ResolveResult)
-	if result == nil {
-		// Don't cache invalid keys — avoids unbounded memory from scanners.
-		// Trade-off: invalid keys always hit PG, but singleflight deduplicates.
-		return nil, ErrUnauthenticated
+	entry, _ := a.cache.peek(ck)
+	if entry == nil || entry.result != result {
+		return nil, &ProjectAuthChangedError{}
 	}
-
-	a.cache.putPositive(ck, result)
 	return result, nil
 }
 
@@ -356,6 +374,7 @@ func (a *Authenticator) refreshKey(ctx context.Context, apiKey, secretKey string
 	defer cancel()
 
 	ck := CacheKey(apiKey, secretKey)
+	epoch := a.cache.keyGeneration(ck)
 
 	result, err := a.keyResolver().ValidateKey(ctx, apiKey, secretKey)
 	if err != nil {
@@ -363,9 +382,8 @@ func (a *Authenticator) refreshKey(ctx context.Context, apiKey, secretKey string
 		return
 	}
 	if result == nil {
-		// Key was disabled since last cache — evict it
-		a.cache.m.Delete(ck)
+		a.cache.invalidateGeneration(ck, epoch)
 		return
 	}
-	a.cache.putPositive(ck, result)
+	a.cache.publishValidated(ck, result, epoch)
 }
