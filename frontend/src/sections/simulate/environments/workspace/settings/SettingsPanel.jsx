@@ -117,7 +117,7 @@ export default function SettingsPanel({ env, backed = false, locked = false }) {
                       </Button>
                     </Stack>
                     <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.625 }}>
-                      Renaming changes the identifier used by runs and SDK clients.
+                      The name only. The environment ID and every run stay as they are.
                     </Typography>
                   </>
                 ) : (

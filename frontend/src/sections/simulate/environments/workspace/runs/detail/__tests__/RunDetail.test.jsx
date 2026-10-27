@@ -3,6 +3,7 @@ import PropTypes from "prop-types";
 import { useEffect } from "react";
 import {
   act,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -469,7 +470,7 @@ describe("RunDetail", () => {
     renderDetail();
 
     expect(screen.getByText(/Run 3 · agent v2/)).toBeInTheDocument();
-    // The lifecycle remains Completed even when some calls fail.
+    // Some calls passed and some failed: a completed run with findings.
     expect(screen.getByText("Completed")).toBeInTheDocument();
     expect(screen.getByText(/Refund Copilot · 12 tasks/)).toBeInTheDocument();
     expect(
@@ -478,19 +479,54 @@ describe("RunDetail", () => {
   });
 
   it.each([
-    ["all passed", 12, 0],
-    ["all failed", 0, 12],
-    ["no conclusive outcomes", 0, 0],
-  ])("shows Completed for a completed run with %s", (_, passed, failed) => {
+    ["all passed", 12, 0, "Passed"],
+    ["all failed", 0, 12, "Failed"],
+    ["some failed", 5, 7, "Completed"],
+    ["no conclusive outcomes", 0, 0, "Completed"],
+  ])(
+    "shows the verdict for a finished run with %s",
+    (_, passed, failed, chip) => {
+      useRunDetail.mockReturnValue({
+        identity: IDENTITY,
+        stats: { ...STATS, passed, failed },
+        isLoading: false,
+      });
+      renderDetail();
+      expect(screen.getByText(chip)).toBeInTheDocument();
+      for (const other of ["Passed", "Failed", "Completed"].filter(
+        (c) => c !== chip,
+      ))
+        expect(screen.queryByText(other)).toBeNull();
+    },
+  );
+
+  it("shows a loading state, not Run complete, while the run is pending", () => {
     useRunDetail.mockReturnValue({
-      identity: IDENTITY,
-      stats: { ...STATS, passed, failed },
-      isLoading: false,
+      identity: null,
+      stats: { total: 0, passed: 0, failed: 0, passRate: 0, scores: {} },
+      isLoading: true,
     });
     renderDetail();
-    expect(screen.getByText("Completed")).toBeInTheDocument();
-    expect(screen.queryByText("Passed")).toBeNull();
-    expect(screen.queryByText("Failed")).toBeNull();
+    expect(screen.queryByText("Run complete")).toBeNull();
+    expect(
+      screen.getByRole("status", { name: "Loading run" }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows an error state with Retry when the run fails to load", () => {
+    const refetch = vi.fn();
+    useRunDetail.mockReturnValue({
+      identity: null,
+      stats: { total: 0, passed: 0, failed: 0, passRate: 0, scores: {} },
+      isLoading: false,
+      error: new Error("boom"),
+      refetch,
+    });
+    renderDetail();
+    expect(screen.queryByText("Run complete")).toBeNull();
+    expect(screen.getByText("Couldn't load this run")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(refetch).toHaveBeenCalled();
   });
 
   it("shows Queued for a pending run", () => {

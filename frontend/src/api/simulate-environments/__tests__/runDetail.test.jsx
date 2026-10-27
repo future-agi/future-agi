@@ -29,6 +29,7 @@ const {
   useCallTraces,
   withScoringStatus,
   useRunCalls,
+  runVerdict,
 } = await import("../runDetail");
 const { runSummaryKey } = await import("../runCalls");
 const { RUN_COLORS } = await import(
@@ -80,6 +81,17 @@ const perfPayload = () => ({
     latest_fail_rate: 26,
   },
   top_performing_scenarios: [],
+});
+
+describe("runVerdict", () => {
+  it.each([
+    [{ passed: 3, failed: 0 }, "passed"],
+    [{ passed: 0, failed: 2 }, "failed"],
+    [{ passed: 2, failed: 1 }, "completed"],
+    [{ passed: 0, failed: 0 }, "completed"],
+  ])("%o is %s", (stats, verdict) => {
+    expect(runVerdict(stats)).toBe(verdict);
+  });
 });
 
 describe("buildRunIdentity", () => {

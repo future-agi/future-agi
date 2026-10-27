@@ -97,6 +97,14 @@ describe("SettingsPanel — environment variables (§11, read-only)", () => {
 });
 
 describe("SettingsPanel — rename (§8)", () => {
+  it("says renaming changes only the name", () => {
+    renderPanel();
+    expect(
+      screen.getByText("The name only. The environment ID and every run stay as they are."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/changes the identifier/)).toBeNull();
+  });
+
   it("seeds the field from the §6 name and keeps Save disabled until it changes", () => {
     renderPanel();
     const input = screen.getByRole("textbox");

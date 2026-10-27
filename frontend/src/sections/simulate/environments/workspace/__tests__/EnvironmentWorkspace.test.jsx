@@ -369,7 +369,8 @@ describe("EnvironmentWorkspace route shell", () => {
     // The row opens the designer-style RunDetail as its own full page: its
     // identity header names the ordinal + agent version and the run status.
     expect(await screen.findByText(/Run 1 · agent v1/)).toBeInTheDocument();
-    expect(screen.getByText("Passed")).toBeInTheDocument();
+    // The header verdict (every call passed) beside the table's Passed chip.
+    expect(screen.getAllByText("Passed")).toHaveLength(2);
     expect(screen.getByTestId("location")).toHaveTextContent(
       "/dashboard/simulate/environments/job-done/runs/rt1/ex1",
     );

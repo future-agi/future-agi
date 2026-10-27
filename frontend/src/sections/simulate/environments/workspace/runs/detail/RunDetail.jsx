@@ -4,7 +4,15 @@ import { enqueueSnackbar } from "notistack";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Button, IconButton, Tab } from "@mui/material";
+import {
+  Box,
+  Stack,
+  Typography,
+  Button,
+  IconButton,
+  Tab,
+  Skeleton,
+} from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import { CustomTabs } from "src/components/tabs/tabs";
@@ -13,6 +21,7 @@ import { fToNow } from "src/utils/format-time";
 import {
   useRunDetail,
   useOptimizationRuns,
+  runVerdict,
 } from "src/api/simulate-environments/runDetail";
 import { exportRunResults } from "src/api/simulate-environments/runAnalytics";
 import {
@@ -22,6 +31,7 @@ import {
 import { useRerunCallsInRun } from "src/api/simulate-environments/rerunScenarios";
 
 import SectionCard from "../../../components/SectionCard";
+import EmptyState from "../../../components/EmptyState";
 import StatusChip from "../StatusChip";
 import StopRunControl from "../StopRunControl";
 import AddEvaluationDrawer from "../../evals/AddEvaluationDrawer";
@@ -87,7 +97,13 @@ export default function RunDetail({
   const [debugging, setDebugging] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const { identity, stats } = useRunDetail(testId, executionId, {
+  const {
+    identity,
+    stats,
+    isLoading: runLoading,
+    error: runError,
+    refetch: refetchRun,
+  } = useRunDetail(testId, executionId, {
     envName: env?.name,
     callsShown: tab === "tasks",
   });
@@ -138,7 +154,10 @@ export default function RunDetail({
       `${paths.dashboard.simulate.test}/${testId}/${executionId}/${row.id}`,
     );
 
-  const status = identity?.runState;
+  // A finished run reads as its verdict; until then, as where it is.
+  const status =
+    identity?.runState === "finished" ? runVerdict(stats) : identity?.runState;
+  const loadFailed = !identity && !!runError;
   // A live run has no final results yet, so its header actions wait for it to
   // finish. Stop simulation is the exception and stays in its own control.
   const live =
@@ -219,11 +238,21 @@ export default function RunDetail({
                 {identity.letter}
               </Box>
             )}
-            <Typography noWrap sx={{ typography: "s1_2", fontWeight: 700 }}>
-              {identity
-                ? `Run ${identity.ordinal} · agent ${identity.agentVersion ?? "-"}`
-                : "Run complete"}
-            </Typography>
+            {identity || !runLoading ? (
+              <Typography noWrap sx={{ typography: "s1_2", fontWeight: 700 }}>
+                {identity
+                  ? `Run ${identity.ordinal} · agent ${identity.agentVersion ?? "-"}`
+                  : "Run"}
+              </Typography>
+            ) : (
+              <Skeleton
+                role="status"
+                aria-label="Loading run"
+                variant="text"
+                width={180}
+                sx={{ typography: "s1_2" }}
+              />
+            )}
             {status && <StatusChip status={status} />}
             <StopRunControl
               executionId={executionId}
@@ -325,130 +354,153 @@ export default function RunDetail({
 
       <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
         <Box sx={{ p: 2 }}>
-          <CustomTabs
-            value={tab}
-            onChange={(_, v) => setTab(v)}
-            sx={{
-              borderBottom: "1px solid",
-              borderColor: "divider",
-              mb: 2,
-              minHeight: 38,
-              // The app theme puts a 40px marginRight on every non-last Tab, and
-              // MUI's default 90px min-width centers short labels ("Analytics")
-              // inside a wide box — together they leave dead space between tabs.
-              // Zero the theme margin (matching its :not(:last-of-type) specificity)
-              // and size each tab to its label, then space them with one even
-              // gutter so the strip reads as a single seamless row.
-              "& .MuiTabs-flexContainer": { gap: 3 },
-              "& .MuiTab-root": { minWidth: "auto", px: 0 },
-              "& .MuiTab-root:not(:last-of-type)": { mr: 0 },
-            }}
-          >
-            <Tab
-              value="tasks"
-              label={`Test runs (${stats.total})`}
-              sx={{ minHeight: 38 }}
-            />
-            {hasTrials && (
-              <Tab
-                value="trials"
-                disabled={!selfImprovementOpen}
-                label={
-                  <>
-                    Trials ({optimizationRuns.length})
-                    {!selfImprovementOpen && <BetaChip />}
-                  </>
-                }
-                sx={{ minHeight: 38 }}
-              />
-            )}
-            <Tab value="analytics" label="Analytics" sx={{ minHeight: 38 }} />
-          </CustomTabs>
-
-          {tab === "tasks" && (
-            <RunTraceTable
-              key={tableHandoff.seq}
-              executionId={executionId}
-              onOpenCall={(task) =>
-                showCall({ task, source: "table", page: null })
-              }
-              onQueryChange={setTableQuery}
-              activeCallId={openCall?.task.id ?? null}
-              activePage={openCall?.page ?? null}
-              // Same gating as the All Evaluations drawer below; a client-only
-              // env has no server evals to act on.
-              evalActions={
-                backed
-                  ? {
-                      runTestId: testId,
-                      canRun: executionStatus === "completed",
-                      grading: executionStatus === "evaluating",
-                      rerunPending: evalRun.isPending,
-                      onRerun: evalRun.requestRerun,
-                      onEdit: evalRun.requestEdit,
-                    }
-                  : null
-              }
-              initialFilters={tableHandoff.filters}
-              // Ticked calls re-run either inside this run (their rows are
-              // refilled in place) or as a new simulation, through the same
-              // start as any run: that one opens the new run.
-              onRerunScenarios={onStartRun}
-              onRerunInRun={rerunInRun.mutate}
-              onTickableChange={setHasTickableCalls}
-              runTrials={identity?.trials || 1}
-              rerunDisabledReason={
-                live
-                  ? "Wait for this run to finish before re-running calls"
-                  : runStarting
-                    ? "Starting the run…"
-                    : rerunInRun.isPending
-                      ? "Starting the re-run…"
-                      : null
-              }
-            />
-          )}
-
-          {tab === "trials" && hasTrials && (
-            <SectionCard
-              title="Self-improvement runs"
-              subtitle="Optimizations launched against this run"
+          {loadFailed ? (
+            <EmptyState
+              icon="solar:danger-triangle-linear"
+              title="Couldn't load this run"
+              body="Check your connection and try again."
               action={
                 <Button
-                  variant="outlined"
                   size="small"
-                  onClick={() => setLaunching(true)}
-                  startIcon={
-                    <Iconify icon="solar:magic-stick-3-linear" width={15} />
-                  }
-                  sx={{
-                    color: "text.primary",
-                    borderColor: "divider",
-                    typography: "s2",
-                    fontWeight: 600,
-                  }}
+                  variant="outlined"
+                  onClick={() => refetchRun?.()}
                 >
-                  Launch optimization
+                  Retry
                 </Button>
               }
-              sx={{ border: "none" }}
-            >
-              <OptimizationRunsList
-                runs={optimizationRuns}
-                isLoading={optimizationsLoading}
-                onOpen={openOptimization}
-              />
-            </SectionCard>
-          )}
-
-          {tab === "analytics" && (
-            <RunAnalytics
-              executionId={executionId}
-              onOpenCall={(task) =>
-                showCall({ task, source: "analytics", page: null })
-              }
-              onOpenCalls={openCallsWith}
             />
+          ) : (
+            <>
+              <CustomTabs
+                value={tab}
+                onChange={(_, v) => setTab(v)}
+                sx={{
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
+                  mb: 2,
+                  minHeight: 38,
+                  // The app theme puts a 40px marginRight on every non-last Tab, and
+                  // MUI's default 90px min-width centers short labels ("Analytics")
+                  // inside a wide box — together they leave dead space between tabs.
+                  // Zero the theme margin (matching its :not(:last-of-type) specificity)
+                  // and size each tab to its label, then space them with one even
+                  // gutter so the strip reads as a single seamless row.
+                  "& .MuiTabs-flexContainer": { gap: 3 },
+                  "& .MuiTab-root": { minWidth: "auto", px: 0 },
+                  "& .MuiTab-root:not(:last-of-type)": { mr: 0 },
+                }}
+              >
+                <Tab
+                  value="tasks"
+                  label={`Test runs (${stats.total})`}
+                  sx={{ minHeight: 38 }}
+                />
+                {hasTrials && (
+                  <Tab
+                    value="trials"
+                    disabled={!selfImprovementOpen}
+                    label={
+                      <>
+                        Trials ({optimizationRuns.length})
+                        {!selfImprovementOpen && <BetaChip />}
+                      </>
+                    }
+                    sx={{ minHeight: 38 }}
+                  />
+                )}
+                <Tab
+                  value="analytics"
+                  label="Analytics"
+                  sx={{ minHeight: 38 }}
+                />
+              </CustomTabs>
+
+              {tab === "tasks" && (
+                <RunTraceTable
+                  key={tableHandoff.seq}
+                  executionId={executionId}
+                  onOpenCall={(task) =>
+                    showCall({ task, source: "table", page: null })
+                  }
+                  onQueryChange={setTableQuery}
+                  activeCallId={openCall?.task.id ?? null}
+                  activePage={openCall?.page ?? null}
+                  // Same gating as the All Evaluations drawer below; a client-only
+                  // env has no server evals to act on.
+                  evalActions={
+                    backed
+                      ? {
+                          runTestId: testId,
+                          canRun: executionStatus === "completed",
+                          grading: executionStatus === "evaluating",
+                          rerunPending: evalRun.isPending,
+                          onRerun: evalRun.requestRerun,
+                          onEdit: evalRun.requestEdit,
+                        }
+                      : null
+                  }
+                  initialFilters={tableHandoff.filters}
+                  // Ticked calls re-run either inside this run (their rows are
+                  // refilled in place) or as a new simulation, through the same
+                  // start as any run: that one opens the new run.
+                  onRerunScenarios={onStartRun}
+                  onRerunInRun={rerunInRun.mutate}
+                  onTickableChange={setHasTickableCalls}
+                  runTrials={identity?.trials || 1}
+                  rerunDisabledReason={
+                    live
+                      ? "Wait for this run to finish before re-running calls"
+                      : runStarting
+                        ? "Starting the run…"
+                        : rerunInRun.isPending
+                          ? "Starting the re-run…"
+                          : null
+                  }
+                />
+              )}
+
+              {tab === "trials" && hasTrials && (
+                <SectionCard
+                  title="Self-improvement runs"
+                  subtitle="Optimizations launched against this run"
+                  action={
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      onClick={() => setLaunching(true)}
+                      startIcon={
+                        <Iconify icon="solar:magic-stick-3-linear" width={15} />
+                      }
+                      sx={{
+                        color: "text.primary",
+                        borderColor: "divider",
+                        typography: "s2",
+                        fontWeight: 600,
+                      }}
+                    >
+                      Launch optimization
+                    </Button>
+                  }
+                  sx={{ border: "none" }}
+                >
+                  <OptimizationRunsList
+                    runs={optimizationRuns}
+                    isLoading={optimizationsLoading}
+                    onOpen={openOptimization}
+                  />
+                </SectionCard>
+              )}
+
+              {tab === "analytics" && (
+                <RunAnalytics
+                  executionId={executionId}
+                  onOpenCall={(task) =>
+                    showCall({ task, source: "analytics", page: null })
+                  }
+                  onOpenCalls={openCallsWith}
+                />
+              )}
+            </>
           )}
         </Box>
       </Box>

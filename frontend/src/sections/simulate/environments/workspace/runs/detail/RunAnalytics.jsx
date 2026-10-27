@@ -33,6 +33,14 @@ import DashboardControls, {
 import DashboardHistogram from "./analytics/DashboardHistogram";
 import { CHART_GUIDE } from "./analytics/chartGuide";
 
+// The voice-pipeline p90 a caller starts to hear as silence. Over it, the
+// cell turns red.
+const VOICE_P90_LIMITS_MS = {
+  model: 2500,
+  voice: 800,
+  transcriber: 500,
+};
+
 const WIDGETS = [
   { id: "goal_outcome", title: "Goal outcome breakdown", section: "Outcomes" },
   {
@@ -507,11 +515,25 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
                       <span>{row.label}</span>
                     </Tooltip>
                   </TableCell>
-                  {["p50", "p90", "p99"].map((p) => (
-                    <TableCell key={p} align="right">
-                      {format(row[p], "ms")}
-                    </TableCell>
-                  ))}
+                  {["p50", "p90", "p99"].map((p) => {
+                    const limit = VOICE_P90_LIMITS_MS[row.key];
+                    const over = p === "p90" && limit != null && row[p] > limit;
+                    return (
+                      <TableCell key={p} align="right">
+                        {over ? (
+                          <Box
+                            component="span"
+                            aria-label={`${format(row[p], "ms")}, over the ${limit} ms target`}
+                            sx={{ color: "error.main", fontWeight: 600 }}
+                          >
+                            {format(row[p], "ms")}
+                          </Box>
+                        ) : (
+                          format(row[p], "ms")
+                        )}
+                      </TableCell>
+                    );
+                  })}
                 </TableRow>
               ))}
             </TableBody>

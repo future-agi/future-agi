@@ -261,7 +261,26 @@ export function useRunDetail(
 
   const isLoading = !!executionId && query.isPending;
 
-  return { identity, stats, isLoading, error: query.error };
+  return {
+    identity,
+    stats,
+    isLoading,
+    error: query.error,
+    refetch: query.refetch,
+  };
+}
+
+/**
+ * A finished run's verdict. Failed means the run failed, not that something
+ * in it did: nothing passed is a failed run, nothing failed is a passed run,
+ * and a mix is a completed run with findings. Errors count as failures.
+ * @param {{passed: number, failed: number}} stats
+ * @returns {"passed"|"failed"|"completed"}
+ */
+export function runVerdict({ passed = 0, failed = 0 } = {}) {
+  if (passed === 0 && failed > 0) return "failed";
+  if (failed === 0 && passed > 0) return "passed";
+  return "completed";
 }
 
 /**
