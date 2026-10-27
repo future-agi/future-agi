@@ -7,12 +7,20 @@ from tracer.models.shared_link import (
     SharedLink,
     SharedLinkAccess,
 )
+from tracer.serializers.feed import (
+    FeedDetailCoreSerializer,
+    FeedSidebarSerializer,
+    OverviewResponseSerializer,
+    TracesTabResponseSerializer,
+    TrendsTabResponseSerializer,
+)
 
 SUPPORTED_SHARED_RESOURCE_TYPE_CHOICES = [
     (ResourceType.TRACE.value, ResourceType.TRACE.label),
     (ResourceType.DASHBOARD.value, ResourceType.DASHBOARD.label),
     (ResourceType.PROJECT.value, ResourceType.PROJECT.label),
     (ResourceType.CALL_EXECUTION.value, ResourceType.CALL_EXECUTION.label),
+    (ResourceType.ERROR_FEED_ISSUE.value, ResourceType.ERROR_FEED_ISSUE.label),
 ]
 
 
@@ -150,6 +158,11 @@ class SharedLinkResolvedDataSerializer(serializers.Serializer):
     updated_at = serializers.CharField(required=False, allow_null=True)
     widgets = serializers.ListField(child=serializers.JSONField(), required=False)
     widget_count = serializers.IntegerField(required=False)
+    issue = FeedDetailCoreSerializer(required=False)
+    overview = OverviewResponseSerializer(required=False, allow_null=True)
+    traces = TracesTabResponseSerializer(required=False, allow_null=True)
+    trends = TrendsTabResponseSerializer(required=False, allow_null=True)
+    sidebar = FeedSidebarSerializer(required=False, allow_null=True)
 
 
 class SharedLinkResolveResponseSerializer(serializers.Serializer):

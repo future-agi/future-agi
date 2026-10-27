@@ -14,6 +14,9 @@ import {
   useAddSharedLinkAccess,
   useCreateSharedLink,
   useGetSharedLinks,
+  useResolveSharedLink,
+  useSharedIssueSidebar,
+  useSharedIssueTrace,
   useUpdateSharedLink,
 } from "../shared-links";
 
@@ -26,6 +29,10 @@ vi.mock("src/utils/axios", () => ({
       create: "/tracer/shared-links/",
       update: (id) => `/tracer/shared-links/${id}/`,
       addAccess: (id) => `/tracer/shared-links/${id}/access/`,
+      resolve: (token) => `/tracer/shared/${token}/`,
+      issueSidebar: (token) => `/tracer/shared/${token}/sidebar/`,
+      issueTrace: (token, traceId) =>
+        `/tracer/shared/${token}/traces/${traceId}/`,
     },
   },
 }));
@@ -56,6 +63,20 @@ describe("shared-links error reporting", () => {
     axios.get.mockRejectedValueOnce(serverError);
     const { queryClient, Wrapper } = makeWrapper();
     const { result } = renderHook(() => useGetSharedLinks("trace", "trace-1"), {
+      wrapper: Wrapper,
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(queryClient.getQueryCache().getAll().at(-1)?.options.meta).toEqual({
+      errorHandled: true,
+    });
+    expect(enqueueSnackbar).not.toHaveBeenCalled();
+  });
+
+  it("leaves a failed link resolve to the shared page's own error screen", async () => {
+    axios.get.mockRejectedValueOnce({ statusCode: 401, message: "Sign in" });
+    const { queryClient, Wrapper } = makeWrapper();
+    const { result } = renderHook(() => useResolveSharedLink("tok"), {
       wrapper: Wrapper,
     });
 
@@ -116,5 +137,48 @@ describe("shared-links error reporting", () => {
       expect.any(String),
       expect.objectContaining({ variant: "error" }),
     );
+  });
+});
+
+describe("useSharedIssueTrace", () => {
+  it("reads one trace through the share token and returns its result", async () => {
+    axios.get.mockResolvedValueOnce({
+      data: { status: true, result: { trace: { id: "trace-1" } } },
+    });
+    const { Wrapper } = makeWrapper();
+    const { result } = renderHook(() => useSharedIssueTrace("tok", "trace-1"), {
+      wrapper: Wrapper,
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(axios.get).toHaveBeenCalledWith(
+      "/tracer/shared/tok/traces/trace-1/",
+    );
+    expect(result.current.data).toEqual({ trace: { id: "trace-1" } });
+  });
+
+  it("stays idle until a trace is picked", () => {
+    const { Wrapper } = makeWrapper();
+    renderHook(() => useSharedIssueTrace("tok", null), { wrapper: Wrapper });
+    expect(axios.get).not.toHaveBeenCalled();
+  });
+});
+
+describe("useSharedIssueSidebar", () => {
+  it("reads the sidebar for the picked trace through the share token", async () => {
+    axios.get.mockResolvedValueOnce({
+      data: { status: true, result: { timeline: {} } },
+    });
+    const { Wrapper } = makeWrapper();
+    const { result } = renderHook(
+      () => useSharedIssueSidebar("tok", "trace-2"),
+      { wrapper: Wrapper },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(axios.get).toHaveBeenCalledWith("/tracer/shared/tok/sidebar/", {
+      params: { trace_id: "trace-2" },
+    });
+    expect(result.current.data).toEqual({ timeline: {} });
   });
 });
