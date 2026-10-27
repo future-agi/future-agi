@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Box, Typography, Button } from "@mui/material";
 import { useSnackbar } from "notistack";
 
@@ -19,6 +19,7 @@ import useRunRepeats from "../run/useRunRepeats";
 import {
   publishScenarioSelection,
   clearScenarioSelection,
+  subscribeScenarioSelection,
 } from "../../buildEnvironment/console/scenarioSelectionBus";
 import { SCENARIOS_COPY } from "./scenarios.constants";
 import { withServedLabels } from "./scenarioEditor.constants";
@@ -296,6 +297,18 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
   // Clear the bus on unmount so navigating off the tab doesn't leave a stale
   // "N selected" chip hanging in the chat.
   useEffect(() => () => clearScenarioSelection(), []);
+  // The chat's selection chip clears through the bus; follow it here.
+  const selCount = useRef(sel.count);
+  selCount.current = sel.count;
+  const clearSel = useRef(sel.clear);
+  clearSel.current = sel.clear;
+  useEffect(
+    () =>
+      subscribeScenarioSelection((next) => {
+        if (next.count === 0 && selCount.current > 0) clearSel.current?.();
+      }),
+    [],
+  );
 
   // Escape clears the selection, unless it is closing something on top
   // (drawer, editor, confirm) or the user is typing in a field.

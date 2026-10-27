@@ -38,7 +38,12 @@ import ChatSplitPane from "../components/ChatSplitPane";
 import EmptyState from "../components/EmptyState";
 import BuilderConsole from "../buildEnvironment/console/BuilderConsole";
 import { CONSOLE_COPY } from "../buildEnvironment/build.constants";
-import { subscribeScenarioSelection } from "../buildEnvironment/console/scenarioSelectionBus";
+import {
+  clearScenarioSelection,
+  subscribeScenarioSelection,
+} from "../buildEnvironment/console/scenarioSelectionBus";
+import { CHAT_SUGGESTIONS } from "./chat/chatSuggestions";
+import SelectionContextChip from "./chat/SelectionContextChip";
 import BuildingStage from "../buildEnvironment/building/BuildingStage";
 import WorkspaceHeader from "./WorkspaceHeader";
 import SystemBanners from "./SystemBanners";
@@ -469,9 +474,22 @@ export default function EnvironmentWorkspace() {
       <Box sx={{ flex: 1, minHeight: 0 }}>
         <ChatSplitPane
           busy={chat.running || chat.inFlight || chat.waiting}
+          replies={(chat.turns || []).filter((t) => t.role === "builder").length}
           chat={({ collapse, open, collapseRef }) => (
             <BuilderConsole
               turns={chat.turns}
+              chips={CHAT_SUGGESTIONS[activeTab] || []}
+              emptyText={`${displayEnv.name || "This environment"} is ready. Ask me to add scenarios, change a rule, or add an evaluation, or edit directly on the right.`}
+              preComposer={
+                selectionActive && (
+                  <SelectionContextChip
+                    count={selection.count ?? selection.ids.length}
+                    rows={selection.rows}
+                    all={selection.all}
+                    onClear={clearScenarioSelection}
+                  />
+                )
+              }
               running={chat.running}
               onSend={chat.send}
               onStop={chat.stop}

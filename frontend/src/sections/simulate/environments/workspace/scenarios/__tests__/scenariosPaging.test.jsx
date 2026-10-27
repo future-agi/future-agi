@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
-import { configure } from "@testing-library/react";
+import { act, configure } from "@testing-library/react";
+import { clearScenarioSelection } from "../../../buildEnvironment/console/scenarioSelectionBus";
 import { screen, fireEvent, waitFor } from "src/utils/test-utils";
 
 // Heavy ScenariosStep render — give async utils headroom so page-range/count
@@ -260,6 +261,15 @@ describe("ScenariosStep — keyboard and drawer", () => {
 
 describe("ScenariosStep — run a selection", () => {
   const runButton = () => screen.getByRole("button", { name: /scenarios? × \d+ repeat/ });
+
+  it("clears the ticked rows when the chat's selection chip is cleared", async () => {
+    renderStep();
+    await screen.findByText(/Showing 1–25 of 60/);
+    fireEvent.click(screen.getAllByRole("checkbox")[1]);
+    expect(screen.getAllByRole("checkbox")[1]).toBeChecked();
+    act(() => clearScenarioSelection());
+    await waitFor(() => expect(screen.getAllByRole("checkbox")[1]).not.toBeChecked());
+  });
 
   it("runs the ticked rows by scenario key, not row id", async () => {
     const { onStartRun } = renderStep();
