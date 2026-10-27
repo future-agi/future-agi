@@ -73,7 +73,7 @@ func (s otlpShape) price() ingestPrice {
 		stackPrice(s.depth)
 	// Synchronous catalog Merge keeps its bounded sort scratch under this same
 	// row lease until canonical AND sidecar work finishes. No nested acquisition.
-	rows := int64(priceRows+observedcatalog.MergeSortScratchBytes) +
+	rows := int64(priceRows) + s.catalogSortScratch() +
 		s.spans*priceRow +
 		s.keyValues*priceRowKeyValue +
 		(s.arrayValues+s.containers)*priceRowNested +
@@ -91,6 +91,23 @@ func (s otlpShape) price() ingestPrice {
 		2*s.maxRowJSON +
 		2*s.curatedJSONBytes
 	return ingestPrice{handler: handler, rows: rows}
+}
+
+// catalogSortScratch prepays the bounded Merge decoration under the row lease.
+// Each scalar/array member can produce at most a key and a value observation;
+// 2KiB covers their fixed JSON, row copies and metadata. 128x source string/byte
+// length covers folding, both JSON escaping layers, allocator rounding and the
+// marshaler's growth buffer; 64KiB/span covers authenticated scope/time/model
+// fields and fixed sort overhead. Coalescing sums these prepaid shares. Large
+// requests retain the full 1MiB ceiling, but tiny requests do not become
+// permanently oversize under a valid small admission budget.
+func (s otlpShape) catalogSortScratch() int64 {
+	if s.spans == 0 {
+		return 0
+	}
+	return min(int64(observedcatalog.MergeSortScratchBytes),
+		s.spans*(64<<10)+(s.keyValues+s.arrayValues+s.containers)*2048+
+			128*(s.stringBytes+s.bytesValues))
 }
 
 // stackPrice is the goroutine stack a request nested depth levels deep
