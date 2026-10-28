@@ -20,6 +20,11 @@ func endpointDB() *modeldb.ModelDB {
 		"rerank-v3.5":                {ID: "rerank-v3.5", Mode: modeldb.ModeRerank, Pricing: modeldb.PricingInfo{InputPerQuery: 0.002}},
 		"mistral/mistral-ocr-latest": {ID: "mistral/mistral-ocr-latest", Mode: modeldb.ModeOCR, Pricing: modeldb.PricingInfo{PerPage: 0.001}},
 		"perplexity/sonar":           {ID: "perplexity/sonar", Pricing: modeldb.PricingInfo{InputPerToken: 1e-6, OutputPerToken: 1e-6}},
+		// Perplexity's Agent API rates: its own Sonar, and a Google model it
+		// resells above Google's price.
+		"perplexity/perplexity/sonar":                    {ID: "perplexity/perplexity/sonar", Pricing: modeldb.PricingInfo{InputPerToken: 2.5e-7, OutputPerToken: 2.5e-6}},
+		"perplexity/google/gemini-3.6-flash":             {ID: "perplexity/google/gemini-3.6-flash", Pricing: modeldb.PricingInfo{InputPerToken: 1.5e-6, OutputPerToken: 7.5e-6}},
+		"gemini-3.6-flash":                               {ID: "gemini-3.6-flash", Pricing: modeldb.PricingInfo{InputPerToken: 7.5e-7, OutputPerToken: 3.75e-6}},
 		"fireworks_ai/accounts/fireworks/models/glm-5p3": {ID: "fireworks_ai/accounts/fireworks/models/glm-5p3", Pricing: modeldb.PricingInfo{InputPerToken: 1.4e-6, OutputPerToken: 4.4e-6}},
 		"text-embedding-gecko":                           {ID: "text-embedding-gecko", Mode: modeldb.ModeEmbedding, Pricing: modeldb.PricingInfo{InputPerCharacter: 2.5e-8}},
 		"gemini-embedding-001":                           {ID: "gemini-embedding-001", Mode: modeldb.ModeEmbedding, Pricing: modeldb.PricingInfo{InputPerToken: 1.5e-7}},
@@ -126,6 +131,27 @@ func TestChatCostUnderTheTablesProviderName(t *testing.T) {
 	rc.Provider = "fireworks"
 	rc.Response = &models.ChatCompletionResponse{Usage: &models.Usage{PromptTokens: 1000, CompletionTokens: 100}}
 	priced(t, rc, 1000*1.4e-6+100*4.4e-6)
+}
+
+// Perplexity's Agent API names models with their vendor's prefix. They are
+// priced at Perplexity's rate, not at the vendor's own.
+func TestChatCostUnderTheResellersPrice(t *testing.T) {
+	for _, tc := range []struct {
+		model, provider string
+		want            float64
+	}{
+		{"google/gemini-3.6-flash", "perplexity", 1000*1.5e-6 + 100*7.5e-6},
+		{"perplexity/sonar", "perplexity", 1000*2.5e-7 + 100*2.5e-6},
+		// The legacy Sonar API names the model bare.
+		{"sonar", "perplexity", 1000*1e-6 + 100*1e-6},
+		// The vendor's own provider keeps the vendor's price.
+		{"google/gemini-3.6-flash", "gemini", 1000*7.5e-7 + 100*3.75e-6},
+	} {
+		rc := endpointRC("chat", tc.model)
+		rc.Provider = tc.provider
+		rc.Response = &models.ChatCompletionResponse{Usage: &models.Usage{PromptTokens: 1000, CompletionTokens: 100}}
+		t.Run(tc.provider+"/"+tc.model, func(t *testing.T) { priced(t, rc, tc.want) })
+	}
 }
 
 // embedContent reports no usage. A model priced per character is priced; one

@@ -198,19 +198,28 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 	return pipeline.ResultContinue()
 }
 
-// priceKey is the key the price table lists a model under. The table keys
-// many models by provider, as "mistral/mistral-ocr-latest" or
+// priceKey is the key the price table lists a model under.
+//
+// The table keys many models by provider, as "mistral/mistral-ocr-latest" or
 // "perplexity/sonar", while a request names the bare model, and a lookup
 // strips a provider prefix but never adds one.
+//
+// A provider that resells other vendors' models names them with the vendor's
+// prefix, as Perplexity's "google/gemini-3.6-flash". The lookup would strip
+// that to the vendor's own price, so the provider's entry
+// ("perplexity/google/gemini-3.6-flash") is tried first.
 func priceKey(db *modeldb.ModelDB, model, provider string) string {
-	if _, ok := db.Get(model); ok || provider == "" || model == "" {
+	if provider == "" || model == "" {
+		return model
+	}
+	if _, ok := db.Get(model); ok && !strings.Contains(model, "/") {
 		return model
 	}
 	for _, name := range []string{provider, tableProviderNames[provider]} {
 		if name == "" {
 			continue
 		}
-		if prefixed := name + "/" + model; hasModel(db, prefixed) {
+		if prefixed := name + "/" + model; listsExactly(db, prefixed) {
 			return prefixed
 		}
 	}
@@ -224,9 +233,11 @@ var tableProviderNames = map[string]string{
 	"together":  "together_ai",
 }
 
-func hasModel(db *modeldb.ModelDB, id string) bool {
-	_, ok := db.Get(id)
-	return ok
+// listsExactly says whether the table has an entry under id itself, not
+// under id with its prefix stripped.
+func listsExactly(db *modeldb.ModelDB, id string) bool {
+	m, ok := db.Get(id)
+	return ok && m.ID == id
 }
 
 // imageCost prices an image call: by tokens when the upstream reported them,
