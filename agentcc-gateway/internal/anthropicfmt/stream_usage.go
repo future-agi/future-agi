@@ -54,6 +54,20 @@ func (s *StreamUsageScanner) Usage() (inputTokens, outputTokens int, ok bool) {
 	return inputTokens, outputTokens, ok
 }
 
+// Finished reports whether the stream reached message_delta, which carries the
+// final output_tokens. Before it, output_tokens is message_start's placeholder.
+func (s *StreamUsageScanner) Finished() bool {
+	for _, data := range sseDataLines(s.tail) {
+		var ev struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(data, &ev) == nil && ev.Type == "message_delta" {
+			return true
+		}
+	}
+	return false
+}
+
 // Model returns the model from message_start, if still in the retained head.
 func (s *StreamUsageScanner) Model() string {
 	for _, data := range sseDataLines(s.head) {

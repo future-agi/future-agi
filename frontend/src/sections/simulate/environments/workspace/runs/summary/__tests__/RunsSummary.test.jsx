@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, fireEvent, within } from "@testing-library/react";
+import { render, screen, fireEvent, within, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 // jsdom can't lay the chart out; capture what it's handed instead.
@@ -18,6 +18,11 @@ vi.mock("src/api/simulate-environments/runs", async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, useEnvironmentRuns: vi.fn() };
 });
+
+const useCompareRuns = vi.fn();
+vi.mock("src/api/simulate-environments/compareRuns", () => ({
+  useCompareRuns: (...args) => useCompareRuns(...args),
+}));
 
 const { useEnvironmentRuns } = await import("src/api/simulate-environments/runs");
 const { default: RunsSummary } = await import("../RunsSummary");
@@ -50,11 +55,13 @@ function renderSummary(props = {}, runs = RUNS, isLoading = false, totals = {}) 
     ...totals,
   });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(
+  const ui = () => (
     <QueryClientProvider client={client}>
       <RunsSummary env={env} envState={envState} onStart={vi.fn()} onOpenRun={vi.fn()} onGo={vi.fn()} {...props} />
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const view = render(ui());
+  return { rerender: () => view.rerender(ui()) };
 }
 
 // The nearest element holding both nodes — where a control actually sits.
@@ -126,10 +133,11 @@ describe("RunsSummary", () => {
     expect(screen.queryByText("Dummy")).toBeNull();
   });
 
-  it("shows no run-compare checkboxes or compare hint in the runs table", () => {
+  it("shows no run-compare checkboxes or compare hint with versioning off", () => {
     renderSummary();
     expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
-    expect(screen.queryByText(/compare them/)).toBeNull();
+    expect(screen.queryByText(/to compare/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Compare" })).toBeNull();
   });
 
   it("defers Choose winner behind a disabled 'coming soon' control", () => {
@@ -169,6 +177,19 @@ describe("RunsSummary", () => {
     // for all of them, which misrepresents what each run actually ran against.
     expect(screen.getByText(/Run 2 · agent v2/)).toBeInTheDocument();
     expect(screen.queryByText(/× env/)).toBeNull();
+  });
+
+  it("tags a run whose agent differs from its environment version's", () => {
+    renderSummary({}, [
+      {
+        ...RUNS[0],
+        pinnedAgentVersion: { id: "a4", label: "v4" },
+        environmentVersion: { id: "e2", label: "v2" },
+        agentDiffers: true,
+      },
+      RUNS[1],
+    ]);
+    expect(screen.getAllByText("A4 differs from E2")).toHaveLength(1);
   });
 
   it("opens a run when its row is clicked", () => {
@@ -300,5 +321,181 @@ describe("RunsSummary", () => {
     const heads = document.querySelectorAll("thead th");
     expect(heads.length).toBeGreaterThan(0);
     heads.forEach((th) => expect(th).toHaveClass("MuiTableCell-stickyHeader"));
+  });
+});
+
+// TODO: unskip when compare is shown again.
+describe.skip("RunsSummary compare", () => {
+  const versioned = { ...env, versioning: { enabled: true } };
+  const run = (ordinal, fields = {}) => ({
+    ...RUNS[0],
+    id: `ex${ordinal}`,
+    executionId: `ex${ordinal}`,
+    ordinal,
+    label: `Run ${ordinal}`,
+    runState: "finished",
+    ...fields,
+  });
+  // Run 2 finished with failures: still a finished run, so still comparable.
+  const COMPARE_RUNS = [
+    run(4),
+    run(3, { runState: "running" }),
+    run(2, { status: "failed" }),
+    run(1),
+  ];
+  const box = (label) =>
+    screen.getByRole("checkbox", { name: `Select ${label}` });
+  const compare = () => screen.getByRole("button", { name: "Compare" });
+
+  beforeEach(() => {
+    useEnvironmentRuns.mockReset();
+    useCompareRuns.mockReset();
+    useCompareRuns.mockReturnValue({
+      data: undefined,
+      isPending: true,
+      isError: false,
+    });
+  });
+
+  it("lets only finished runs be ticked", () => {
+    renderSummary({ env: versioned }, COMPARE_RUNS);
+    expect(box("Run 3")).toBeDisabled();
+    expect(box("Run 4")).toBeEnabled();
+    expect(box("Run 2")).toBeEnabled();
+    expect(
+      screen.getByText("Select 2 finished runs to compare"),
+    ).toBeInTheDocument();
+    expect(compare()).toBeDisabled();
+  });
+
+  it("enables Compare at two runs and blocks a third", () => {
+    renderSummary({ env: versioned }, COMPARE_RUNS);
+    fireEvent.click(box("Run 4"));
+    expect(screen.getByText("1 of 2 selected")).toBeInTheDocument();
+    expect(compare()).toBeDisabled();
+
+    fireEvent.click(box("Run 1"));
+    expect(
+      screen.getByText("2 of 2 selected. Clear one to pick another"),
+    ).toBeInTheDocument();
+    expect(compare()).toBeEnabled();
+    expect(box("Run 2")).toBeDisabled();
+
+    fireEvent.click(box("Run 4"));
+    expect(box("Run 2")).toBeEnabled();
+    expect(compare()).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    expect(box("Run 1")).not.toBeChecked();
+    expect(
+      screen.getByText("Select 2 finished runs to compare"),
+    ).toBeInTheDocument();
+  });
+
+  it.each(["failed", "cancelled", "cancelling", "queued"])(
+    "does not let a %s run be ticked",
+    (runState) => {
+      renderSummary({ env: versioned }, [run(1, { runState })]);
+      expect(box("Run 1")).toBeDisabled();
+    },
+  );
+
+  it("says why a box is disabled", async () => {
+    renderSummary({ env: versioned }, COMPARE_RUNS);
+    const hover = (label) =>
+      fireEvent.mouseOver(box(label).closest("td").firstChild);
+
+    hover("Run 3");
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Only finished runs can be compared",
+    );
+
+    fireEvent.click(box("Run 4"));
+    fireEvent.click(box("Run 1"));
+    hover("Run 2");
+    expect(
+      await screen.findByText("2 runs already selected"),
+    ).toBeInTheDocument();
+  });
+
+  it("will not compare a ticked run that is no longer finished", () => {
+    const { rerender } = renderSummary({ env: versioned }, COMPARE_RUNS);
+    fireEvent.click(box("Run 4"));
+    fireEvent.click(box("Run 1"));
+    expect(compare()).toBeEnabled();
+
+    // Re-graded: the run is evaluating again.
+    useEnvironmentRuns.mockReturnValue({
+      runs: [run(4), run(1, { runState: "running" })],
+      count: 2,
+      isLoading: false,
+    });
+    rerender();
+    expect(compare()).toBeDisabled();
+  });
+
+  it("keeps the selection across pages", () => {
+    const firstPage = [run(12), run(11)];
+    renderSummary({ env: versioned }, firstPage, false, { count: 12 });
+    fireEvent.click(box("Run 12"));
+    useEnvironmentRuns.mockImplementation((e, s, { page }) => ({
+      runs: page ? [run(1)] : firstPage,
+      count: 12,
+      isLoading: false,
+    }));
+    const pager = screen.getByText("1–10 of 12").parentElement;
+    fireEvent.click(within(pager).getAllByRole("button").at(-1));
+
+    fireEvent.click(box("Run 1"));
+    expect(
+      screen.getByText("2 of 2 selected. Clear one to pick another"),
+    ).toBeInTheDocument();
+    expect(compare()).toBeEnabled();
+  });
+
+  it("closes the comparison", async () => {
+    renderSummary({ env: versioned }, COMPARE_RUNS);
+    fireEvent.click(box("Run 4"));
+    fireEvent.click(box("Run 1"));
+    fireEvent.click(compare());
+    expect(
+      screen.getByRole("region", { name: "Compare runs" }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("region", { name: "Compare runs" })).toBeNull(),
+    );
+  });
+
+  it("does not open a run when it is ticked", () => {
+    const onOpenRun = vi.fn();
+    renderSummary({ env: versioned, onOpenRun }, COMPARE_RUNS);
+    fireEvent.click(box("Run 4"));
+    fireEvent.click(box("Run 4").closest("td"));
+    expect(onOpenRun).not.toHaveBeenCalled();
+    expect(box("Run 4")).toBeChecked();
+  });
+
+  it("compares the newer run against the older, whichever was ticked first", () => {
+    renderSummary({ env: versioned }, COMPARE_RUNS);
+    fireEvent.click(box("Run 1"));
+    fireEvent.click(box("Run 4"));
+    expect(useCompareRuns).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      { enabled: true },
+    );
+    expect(screen.queryByRole("region", { name: "Compare runs" })).toBeNull();
+
+    fireEvent.click(compare());
+
+    expect(
+      screen.getByRole("region", { name: "Compare runs" }),
+    ).toBeInTheDocument();
+    expect(useCompareRuns).toHaveBeenLastCalledWith("env-1", "ex4", "ex1", {
+      enabled: true,
+    });
   });
 });

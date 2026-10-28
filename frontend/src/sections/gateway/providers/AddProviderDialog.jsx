@@ -133,6 +133,16 @@ const PROVIDER_PRESETS = {
     keyPlaceholder: "Enter your Mistral API key",
     supportedFormats: ["openai"],
   },
+  // Perplexity's Agent API (/v1/responses). Its Sonar chat completions are
+  // served without the version segment: add them as a custom provider with an
+  // empty API Path Prefix.
+  perplexity: {
+    label: "Perplexity",
+    baseUrl: "https://api.perplexity.ai/v1",
+    apiFormat: "openai",
+    keyPlaceholder: "pplx-...",
+    supportedFormats: ["openai"],
+  },
   custom: {
     label: "Custom / Self-hosted",
     baseUrl: "",
@@ -212,6 +222,22 @@ const AWS_REGIONS = [
   { value: "sa-east-1", label: "South America (São Paulo)" },
 ];
 
+// A custom provider's name is its ID: model IDs are prefixed with it, keys
+// allow it by name, and saving under a name that exists replaces that provider.
+const customNameError = (value, existingNames) => {
+  if (!value) return "Name is required";
+  if (!/^[a-z0-9][a-z0-9_-]{0,62}$/.test(value)) {
+    return "Use lowercase letters, digits, - and _, starting with a letter or digit";
+  }
+  if (value !== "custom" && Object.hasOwn(PROVIDER_PRESETS, value)) {
+    return `"${value}" is a built-in provider. Choose it from the Provider list, or use another name`;
+  }
+  if (existingNames.includes(value)) {
+    return `A provider named "${value}" already exists. Use another name, or edit that provider`;
+  }
+  return "";
+};
+
 const PROVIDER_OPTIONS = Object.entries(PROVIDER_PRESETS).map(
   ([key, preset]) => ({
     value: key,
@@ -261,6 +287,7 @@ const STORED_KEY_UNVERIFIED =
 // Summary labels, in form order so the summary reads like the dialog.
 const FIELD_LABELS = {
   name: "Provider Name",
+  customName: "Name",
   awsAccessKeyId: "AWS Access Key ID",
   awsSecretAccessKey: "AWS Secret Access Key",
   baseUrl: "Base URL",
@@ -291,10 +318,18 @@ EndpointTag.propTypes = {
   label: PropTypes.string.isRequired,
 };
 
-const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
+const AddProviderDialog = ({
+  open,
+  onClose,
+  gatewayId,
+  provider,
+  existingNames = [],
+}) => {
   const isEditMode = Boolean(provider);
 
   const [name, setName] = useState("openai");
+  // The saved name of a custom provider; `name` holds the preset key.
+  const [customName, setCustomName] = useState("custom");
   const [baseUrl, setBaseUrl] = useState(PROVIDER_PRESETS.openai.baseUrl);
   const [apiKey, setApiKey] = useState("");
   const [apiFormat, setApiFormat] = useState("openai");
@@ -577,6 +612,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   const resetForm = () => {
     const defaultPreset = PROVIDER_PRESETS.openai;
     setName("openai");
+    setCustomName("custom");
     setBaseUrl(defaultPreset.baseUrl);
     setApiKey("");
     setApiFormat(defaultPreset.apiFormat);
@@ -691,7 +727,8 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   );
 
   const allSelected =
-    bulkSelectable.length > 0 && bulkSelectable.every((m) => models.includes(m));
+    bulkSelectable.length > 0 &&
+    bulkSelectable.every((m) => models.includes(m));
 
   const handleSelectAll = () => {
     if (allSelected) {
@@ -715,6 +752,10 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
 
     if (!name.trim()) {
       newErrors.name = "Provider name is required";
+    }
+    if (!isEditMode && name === "custom") {
+      const nameError = customNameError(customName.trim(), existingNames);
+      if (nameError) newErrors.customName = nameError;
     }
 
     if (isVertexAuth) {
@@ -762,7 +803,8 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       if (baseUrl.trim() && !/^https?:\/\//i.test(baseUrl.trim())) {
         newErrors.baseUrl = `Base URL must start with http:// or https:// (got "${baseUrl.trim()}")`;
       } else if (baseUrl.trim() && !parseProviderBaseUrl(baseUrl)) {
-        newErrors.baseUrl = "Enter a valid http(s) base URL with a host and valid port";
+        newErrors.baseUrl =
+          "Enter a valid http(s) base URL with a host and valid port";
       }
 
       // Only Generic System One with an explicit valid endpoint may be keyless.
@@ -822,15 +864,17 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
     if (timeoutSeconds !== null) config.default_timeout = timeoutSeconds;
     if (maxConcurrent) config.max_concurrent = Number(maxConcurrent);
 
+    const providerName =
+      !isEditMode && name === "custom" ? customName.trim() : name;
     updateProvider.mutate(
-      { gatewayId, name, config },
+      { gatewayId, name: providerName, config },
       {
         onSuccess: () => {
           // The write landed. Only the re-read that follows it can still have
           // failed, and that is a stale screen, not a lost save — say which.
           const saved = isEditMode
-            ? `Provider "${name}" updated`
-            : `Provider "${name}" added`;
+            ? `Provider "${providerName}" updated`
+            : `Provider "${providerName}" added`;
           if (gatewayConfigRefreshFailed(queryClient)) {
             enqueueSnackbar(
               `${saved}, but the provider list could not be reloaded — refresh the page to see it.`,
@@ -940,6 +984,24 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
                 </MenuItem>
               ))}
             </TextField>
+          )}
+
+          {!isEditMode && name === "custom" && (
+            <TextField
+              label="Name"
+              fullWidth
+              required
+              value={customName}
+              onChange={(e) => {
+                setCustomName(e.target.value);
+                setErrors((prev) => ({ ...prev, customName: undefined }));
+              }}
+              error={!!errors.customName}
+              helperText={
+                errors.customName ||
+                "Model IDs and key permissions use this name. It cannot be changed later."
+              }
+            />
           )}
 
           {isVertexAuth ? (
@@ -1374,6 +1436,7 @@ AddProviderDialog.propTypes = {
     name: PropTypes.string.isRequired,
     config: PropTypes.object,
   }),
+  existingNames: PropTypes.arrayOf(PropTypes.string),
 };
 
 export default AddProviderDialog;

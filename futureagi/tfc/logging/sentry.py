@@ -116,6 +116,9 @@ SENSITIVE_KEY_SUBSTRINGS = (
     # as its TypeSafe key on a Jev eval (ee/jev/client.py). The scrubber below
     # matches whole names only, so it is listed in full.
     "x-agentcc-provider-key",
+    # A rerun's changed credential values, and an agent version check's.
+    "environment_values",
+    "credential_values",
 )
 _REDACTED = "[Filtered]"
 

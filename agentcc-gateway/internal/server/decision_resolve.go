@@ -311,10 +311,12 @@ func apiFormatDecisionFormat(apiFormat, id, baseURL string) string {
 	}
 }
 
-// listsModel reports whether a provider's model list has the requested model.
+// listsModel reports whether a provider's model list has the requested model,
+// as written or without a leading "<providerID>/".
 func listsModel(registered []string, model, providerID string) bool {
+	bare := stripProviderPrefix(model, providerID)
 	for _, m := range registered {
-		if orgModelMatches(m, model, providerID) {
+		if m == model || (bare != model && m == bare) {
 			return true
 		}
 	}
@@ -322,8 +324,8 @@ func listsModel(registered []string, model, providerID string) bool {
 }
 
 // stripProviderPrefix removes a leading "<providerID>/" from model, matching
-// the ID as orgModelMatches does. Only that one prefix goes: a vendor whose
-// own model IDs contain a slash keeps them.
+// the ID case-insensitively. Only that one prefix goes: a vendor whose own
+// model IDs contain a slash keeps them.
 func stripProviderPrefix(model, providerID string) string {
 	if prefix, rest, ok := strings.Cut(model, "/"); ok && strings.EqualFold(prefix, providerID) {
 		return rest

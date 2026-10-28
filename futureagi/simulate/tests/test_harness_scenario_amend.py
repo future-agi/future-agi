@@ -535,6 +535,123 @@ def test_an_archive_that_cannot_take_the_edit_leaves_everything_unchanged(
     pushed.assert_not_called()
 
 
+def _run_of(environment):
+    run = HostedHarnessJob.no_workspace_objects.create(
+        organization=environment.organization,
+        workspace=environment.workspace,
+        environment=environment,
+        run_id=uuid.uuid4(),
+        idempotency_key=uuid.uuid4().hex,
+        request_digest=uuid.uuid4().hex,
+        schema_version="1.6",
+        seed=1,
+        artifact_level="standard",
+        max_artifact_bytes=1024,
+        deadline_at=timezone.now() + timedelta(hours=1),
+        scenario_count=len(SUITE),
+        payload={"metadata": {}, "runtime": {"max_duration_seconds": 600}},
+    )
+    HostedHarnessStageOutput.no_workspace_objects.create(
+        job=run,
+        title="Scenarios",
+        summary=f"{len(SUITE)} pre-authored scenarios",
+        kind="scenarios",
+        data=SUITE,
+    )
+    return run
+
+
+@pytest.mark.parametrize("versioning", [True, False])
+def test_editing_a_run_is_refused_whatever_the_flag(
+    user, workspace, settings, versioning
+):
+    settings.HARNESS_VERSIONING_ENABLED = versioning
+    environment = _job(user, workspace, SUITE)
+    run = _run_of(environment)
+
+    with patch(
+        "simulate.services.hosted_harness_gateway.rewrite_authoring_scenarios"
+    ) as rewrite:
+        response = _post(
+            user,
+            run,
+            [{"op": "set_field", "scenario": "one", "field": "tests", "value": "x"}],
+        )
+
+    assert response.status_code == 409
+    assert response.json()["error"] == "scenario_edit_on_run"
+    rewrite.assert_not_called()
+    output = HostedHarnessStageOutput.no_workspace_objects.get(
+        job=run, kind="scenarios"
+    )
+    assert output.data[0]["tests"] == "the agent holds the line"
+
+
+def test_editing_a_run_of_a_deleted_environment_is_refused(user, workspace):
+    environment = _job(user, workspace, SUITE)
+    run = _run_of(environment)
+    HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(deleted=True)
+
+    response = _post(user, run, [{"op": "drop", "scenario": "two"}])
+
+    assert response.status_code == 409
+    assert response.json()["error"] == "scenario_edit_on_run"
+
+
+def test_a_version_conflict_is_a_409(user, workspace):
+    from simulate.services.hosted_harness_gateway import AuthoringArchiveKept
+
+    job = _job(user, workspace, SUITE)
+    with (
+        patch(
+            "simulate.services.hosted_harness_gateway.push_scenarios_into_live_sandbox",
+            return_value=False,
+        ),
+        patch(
+            "simulate.services.hosted_harness_gateway.rewrite_authoring_scenarios",
+            side_effect=AuthoringArchiveKept(
+                "the environment changed", code="version_conflict", status_code=409
+            ),
+        ),
+    ):
+        response = _post(user, job, [{"op": "drop", "scenario": "two"}])
+
+    assert response.status_code == 409
+    assert response.json()["error"] == "version_conflict"
+    output = HostedHarnessStageOutput.no_workspace_objects.get(
+        job=job, kind="scenarios"
+    )
+    assert [one["name"] for one in output.data] == ["one", "two"]
+
+
+@pytest.mark.parametrize("code", ["scenario_key_retired", "scenario_key_taken"])
+def test_a_save_that_refuses_a_scenario_key_is_a_422(user, workspace, code):
+    """The provider passes the save's refusal through; the refusals are tested on saves."""
+    from simulate.services.hosted_harness_gateway import AuthoringArchiveKept
+
+    job = _job(user, workspace, SUITE)
+    with (
+        patch(
+            "simulate.services.hosted_harness_gateway.push_scenarios_into_live_sandbox",
+            return_value=False,
+        ),
+        patch(
+            "simulate.services.hosted_harness_gateway.rewrite_authoring_scenarios",
+            side_effect=AuthoringArchiveKept(
+                "give the scenario a new name", code=code, status_code=422
+            ),
+        ),
+    ):
+        response = _post(user, job, [{"op": "drop", "scenario": "two"}])
+
+    assert response.status_code == 422
+    assert response.json()["error"] == code
+    output = HostedHarnessStageOutput.no_workspace_objects.get(
+        job=job, kind="scenarios"
+    )
+    assert [one["name"] for one in output.data] == ["one", "two"]
+
+
 def test_the_harness_is_sent_every_key_the_environment_has_used(user, workspace):
     from simulate.services.harness_scenarios import index_scenarios
     from simulate.services.hosted_harness_gateway import _with_used_scenario_keys

@@ -5,7 +5,10 @@ import { useSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import { ConfirmDialog } from "src/components/custom-dialog";
-import { resolveScenarioSelection } from "src/api/simulate-environments/scenarioSelection";
+import {
+  resolveScenarioSelection,
+  runnableScenarioKey,
+} from "src/api/simulate-environments/scenarioSelection";
 import { useAmendScenarios } from "src/api/simulate-environments/scenariosHooks";
 import EmptyState from "../../components/EmptyState";
 import ScenarioToolbar from "./ScenarioToolbar";
@@ -20,6 +23,7 @@ import {
   clearScenarioSelection,
 } from "../../buildEnvironment/console/scenarioSelectionBus";
 import { SCENARIOS_COPY } from "./scenarios.constants";
+import { DRAFTS_COPY } from "../workspace.constants";
 import { withServedLabels } from "./scenarioEditor.constants";
 import { ENV_SHAPE, ENV_STATE_SHAPE } from "./scenarios.shapes";
 import useScenarioPage, { PAGE_SIZE } from "./useScenarioPage";
@@ -244,7 +248,10 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
       });
       return;
     }
-    enqueueSnackbar(successLabel, { variant: "success", autoHideDuration: 4000 });
+    // With versioning on the edit waits in the unsaved changes; a null draft
+    // means the edit undid them.
+    const label = data?.draft ? DRAFTS_COPY.addedToDraft : successLabel;
+    enqueueSnackbar(label, { variant: "success", autoHideDuration: 4000 });
   };
 
   // Row trash → confirm, then drop that one scenario by name.
@@ -270,12 +277,17 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
   const handleRunSelected = async (k) => {
     let keys;
     try {
-      keys = await resolveSelection((r) => r.scenario_key);
+      // Rows only the unsaved changes add have nothing saved to run.
+      keys = (await resolveSelection(runnableScenarioKey)).filter(Boolean);
     } catch {
       enqueueSnackbar("Couldn't start the run. Try again", { variant: "error" });
       return;
     }
-    if (keys.length) onStartRun?.(keys, k || trials);
+    if (!keys.length) {
+      enqueueSnackbar(DRAFTS_COPY.saveToRunSelected, { variant: "info" });
+      return;
+    }
+    onStartRun?.(keys, k || trials);
   };
 
   // Mirror the predicate selection into the workspace builder chat. include-mode

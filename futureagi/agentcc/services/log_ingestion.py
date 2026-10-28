@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
 import structlog
@@ -7,6 +7,21 @@ import structlog
 from agentcc.models import AgentccAPIKey, AgentccRequestLog, AgentccSession
 
 logger = structlog.get_logger(__name__)
+
+# The codes the gateway sets on a request a budget refused.
+BUDGET_ERROR_CODES = frozenset({"budget_exceeded", "org_budget_exceeded"})
+
+
+def _event_types(entry):
+    """The events a log entry raises, for webhooks and email alerts alike."""
+    events = ["request.completed"]
+    if bool(entry.get("is_error", False)) or int(entry.get("status_code", 0)) >= 400:
+        events.append("error.occurred")
+    if entry.get("guardrail_triggered"):
+        events.append("guardrail.triggered")
+    if entry.get("error_code") in BUDGET_ERROR_CODES:
+        events.append("budget.exceeded")
+    return events
 
 
 def _dispatch_webhook_events(org, logs):
@@ -62,13 +77,7 @@ def _dispatch_webhook_events(org, logs):
             "cost": float(entry.get("cost", 0) or 0),
         }
 
-        triggered = ["request.completed"]
-        if is_error:
-            triggered.append("error.occurred")
-        if guardrail_triggered:
-            triggered.append("guardrail.triggered")
-
-        for event_type in triggered:
+        for event_type in _event_types(entry):
             for webhook in webhooks_by_event.get(event_type, []):
                 events_to_create.append(
                     AgentccWebhookEvent(
@@ -96,6 +105,76 @@ def _dispatch_webhook_events(org, logs):
             deliver_webhook_events(org_id=org.id, limit=max(len(events_to_create), 100))
         except Exception:
             logger.exception("webhook_immediate_delivery_failed", org_id=str(org.id))
+
+
+def _send_email_alerts(org, logs):
+    """Start an email for each active alert of the org whose events a log
+    entry raises, at most once per the alert's cooldown.
+
+    The cooldown starts here, when the alert fires: a conditional update claims
+    it, so two ingests cannot both send, and a provider that keeps failing is
+    not retried on every batch. The send runs as a background activity, so
+    ingestion never waits on a mail provider.
+
+    The events that need a threshold (error.rate_spike, latency.spike,
+    cost.threshold) are not sent: an alert has no threshold to compare with.
+    """
+    from django.db.models import Q
+
+    from agentcc.models import AgentccEmailAlert
+    from agentcc.services.email_sender import send_alert_email_activity
+
+    now = datetime.now(timezone.utc)
+    alerts = AgentccEmailAlert.no_workspace_objects.filter(
+        organization=org, is_active=True, deleted=False
+    )
+    for alert in alerts:
+        wanted = set(alert.events or [])
+        fired = next(
+            (
+                (event_type, entry)
+                for entry in logs
+                if isinstance(entry, dict)
+                for event_type in _event_types(entry)
+                if event_type in wanted
+            ),
+            None,
+        )
+        if fired is None:
+            continue
+        event_type, entry = fired
+        cooled = Q(last_triggered_at__isnull=True) | Q(
+            last_triggered_at__lte=now - timedelta(minutes=alert.cooldown_minutes)
+        )
+        claimed = (
+            AgentccEmailAlert.no_workspace_objects.filter(id=alert.id)
+            .filter(cooled)
+            .update(last_triggered_at=now)
+        )
+        if not claimed:
+            continue
+        try:
+            send_alert_email_activity.apply_async(
+                args=(
+                    str(alert.id),
+                    event_type,
+                    {
+                        "request_id": entry.get("request_id", ""),
+                        "model": entry.get("model", ""),
+                        "provider": entry.get("provider", ""),
+                        "status_code": entry.get("status_code", ""),
+                        "error_code": entry.get("error_code", ""),
+                        "error_message": entry.get("error_message", ""),
+                    },
+                ),
+                dispatch_timeout_seconds=5,
+            )
+        except Exception:
+            logger.exception(
+                "email_alert_dispatch_failed",
+                alert_id=str(alert.id),
+                event_type=event_type,
+            )
 
 
 MAX_BODY_SIZE = 65536  # 64KB
@@ -245,6 +324,7 @@ def ingest_request_logs(logs):
         return 0
 
     objects = []
+    entries = []
     for entry in logs:
         try:
             obj = AgentccRequestLog(
@@ -285,6 +365,7 @@ def ingest_request_logs(logs):
                 guardrail_results=entry.get("guardrail_results"),
             )
             objects.append(obj)
+            entries.append(entry)
         except Exception:
             logger.exception(
                 "failed_to_parse_log_entry",
@@ -296,11 +377,26 @@ def ingest_request_logs(logs):
 
     if objects:
         AgentccRequestLog.no_workspace_objects.bulk_create(objects, ignore_conflicts=True)
+        # The gateway resends a batch whose response it did not get in time, so a
+        # batch can hold rows saved already. The unique request ID skips those;
+        # only the rows saved now go on to webhooks and metering.
+        saved_ids = set(
+            AgentccRequestLog.no_workspace_objects.filter(
+                id__in=[obj.id for obj in objects]
+            ).values_list("id", flat=True)
+        )
+        entries = [e for o, e in zip(objects, entries) if o.id in saved_ids]
+        objects = [o for o in objects if o.id in saved_ids]
 
     try:
-        _dispatch_webhook_events(org, logs)
+        _dispatch_webhook_events(org, entries)
     except Exception:
         logger.exception("webhook_dispatch_failed", org_id=str(org.id))
+
+    try:
+        _send_email_alerts(org, entries)
+    except Exception:
+        logger.exception("email_alert_dispatch_failed", org_id=str(org.id))
 
     try:
         try:
@@ -346,13 +442,13 @@ def ingest_request_logs(logs):
         pass  # Metering failure must not break log ingestion
 
     try:
-        _ensure_sessions_exist(org, logs)
+        _ensure_sessions_exist(org, entries)
     except Exception:
         logger.exception("ensure_sessions_failed", org_id=str(org.id))
 
     api_key_ids = {
         entry.get("api_key_id") or entry.get("auth_key_id")
-        for entry in logs
+        for entry in entries
         if isinstance(entry, dict)
         and (entry.get("api_key_id") or entry.get("auth_key_id"))
     }

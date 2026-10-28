@@ -69,4 +69,7 @@ type AudioStreamChunk struct {
 	ContentType string `json:"content_type"`
 	Data        string `json:"data"` // base64-encoded audio bytes
 	Done        bool   `json:"done,omitempty"`
+
+	// AgentccMetadata rides on the done chunk when x-agentcc-include-metadata asks for it.
+	AgentccMetadata *AgentccStreamMetadata `json:"agentcc_metadata,omitempty"`
 }

@@ -41,8 +41,8 @@ func (p *Plugin) SetRedisCredit(rc RedisCreditBackend) {
 	p.redisCredit = rc
 }
 
-func (p *Plugin) Name() string           { return "credits" }
-func (p *Plugin) Priority() int          { return 510 } // After auth (100) and cost (500).
+func (p *Plugin) Name() string               { return "credits" }
+func (p *Plugin) Priority() int              { return 510 }  // After auth (100) and cost (500).
 func (p *Plugin) ShouldSkipOnCacheHit() bool { return true } // No credits deducted on cache hits.
 
 // skips reports whether the request draws no credits. A decision call runs on
@@ -54,7 +54,7 @@ func skips(rc *models.RequestContext) bool {
 
 // ProcessRequest checks credit balance for managed keys.
 func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pipeline.PluginResult {
-	if !p.enabled || p.keyStore == nil {
+	if !p.enabled || p.keyStore == nil || rc.Flags.NoSpend {
 		return pipeline.ResultContinue()
 	}
 	if skips(rc) {

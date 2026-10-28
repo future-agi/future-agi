@@ -21,10 +21,7 @@ import SurfaceIcon from "../components/SurfaceIcon";
 import LivePill from "./LivePill";
 import RenameEnvironmentDialog from "./RenameEnvironmentDialog";
 import TrialsPicker from "./scenarios/TrialsPicker";
-// EnvVersionPin renders a mock "env v3" version from a fixture fallback
-// (_fixtures/versions.js) — there is no real version field in the environments
-// contract yet. Hidden in the header until the contract exposes one.
-// import EnvVersionPin from "./EnvVersionPin";
+import EnvVersionPin from "./EnvVersionPin";
 import ForkMenu from "./ForkMenu";
 import { WORKSPACE_COPY } from "./workspace.constants";
 
@@ -32,12 +29,10 @@ import { WORKSPACE_COPY } from "./workspace.constants";
 // name + Live pill + env-version pin, the primary "Run simulation" action, and
 // (for a regular, unlocked env) the Fork overflow. Run simulation is the
 // product's own navigation — a built env opens its execution detail, otherwise
-// the product's run entry. `locked` = template-seeded until forked: the pin is
-// read-only and the overflow is hidden (Fork lives on the Overview card there).
+// the product's run entry. `locked` = template-seeded until forked: the overflow
+// is hidden (Fork lives on the Overview card there).
 export default function WorkspaceHeader({
   env,
-  // patch is still passed by the parent for the version pin; re-add it here when
-  // the commented-out <EnvVersionPin> below is restored.
   envState,
   canRun,
   runBlockedReason,
@@ -116,8 +111,8 @@ export default function WorkspaceHeader({
               </IconButton>
             </CustomTooltip>
           )}
-          {/* Mock version pin hidden until the contract exposes a real version:
-              <EnvVersionPin env={env} envState={envState} patch={patch} readOnly={locked} /> */}
+          {/* The default environment version; hidden while versioning is off. */}
+          <EnvVersionPin env={env} />
         </Stack>
         <Typography noWrap sx={{ typography: "s2", color: "text.subtitle" }}>
           {env.tagline}
@@ -222,13 +217,11 @@ WorkspaceHeader.propTypes = {
       runTestId: PropTypes.string,
       testExecutionId: PropTypes.string,
     }),
+    versioning: PropTypes.shape({ enabled: PropTypes.bool }),
   }).isRequired,
   envState: PropTypes.shape({
-    envVersions: PropTypes.arrayOf(PropTypes.shape({ label: PropTypes.string })),
-    activeEnvVersion: PropTypes.string,
     scenarios: PropTypes.arrayOf(PropTypes.any),
   }).isRequired,
-  patch: PropTypes.func.isRequired,
   canRun: PropTypes.bool,
   runBlockedReason: PropTypes.string,
   locked: PropTypes.bool,

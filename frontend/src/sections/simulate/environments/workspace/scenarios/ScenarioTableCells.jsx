@@ -1,8 +1,46 @@
 import PropTypes from "prop-types";
-import { Box, Stack, Tooltip, Typography } from "@mui/material";
+import { Box, Chip, Stack, Tooltip, Typography } from "@mui/material";
 
+import { DRAFTS_COPY } from "../workspace.constants";
 import { SUB_TASK_SHAPE } from "./scenarios.shapes";
 import { normaliseSubTasks } from "./scenarioEditor.constants";
+import {
+  hasUnsavedChange,
+  isUnsavedAddition,
+  unsavedReasonId,
+} from "./scenarios.constants";
+
+// "Unsaved" on a row the unsaved changes add or change; an added row also says
+// why it can't be selected.
+export function UnsavedMark({ row }) {
+  if (!hasUnsavedChange(row)) return null;
+  return (
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={0.75}
+      sx={{ flexShrink: 0 }}
+    >
+      <Chip
+        size="small"
+        variant="outlined"
+        color="warning"
+        label={DRAFTS_COPY.unsaved}
+      />
+      {isUnsavedAddition(row) && (
+        <Typography
+          id={unsavedReasonId(row)}
+          sx={{ typography: "s3", color: "text.subtitle" }}
+        >
+          {DRAFTS_COPY.saveToRun}
+        </Typography>
+      )}
+    </Stack>
+  );
+}
+UnsavedMark.propTypes = {
+  row: PropTypes.shape({ id: PropTypes.string, draftChange: PropTypes.string }),
+};
 
 // Attach a tooltip to a truncated line so hovering reveals the full value. Kept
 // thin — the tooltip lives at the row level, not per-Typography, so the same
