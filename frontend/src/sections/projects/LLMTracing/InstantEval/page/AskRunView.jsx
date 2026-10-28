@@ -833,7 +833,10 @@ export default function AskRunView({
     if (!record) return;
     if (unit === "users") {
       const userId = record.user_id || record.label;
-      if (userId) navigate(userPageLink(userId));
+      if (userId)
+        navigate(
+          userPageLink(userId, { window: run.window, time: record.time }),
+        );
       return;
     }
     setOpened(record);

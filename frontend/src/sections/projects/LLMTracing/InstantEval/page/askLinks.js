@@ -104,6 +104,7 @@ export function answerGridLink({ projectId, question, answer, window }) {
   return `/dashboard/observe/${projectId}/llm-tracing?${params.toString()}`;
 }
 
-/** A user's page, keyed by the external user id. */
-export const userPageLink = (userId) =>
-  `/dashboard/users/${encodeURIComponent(userId)}`;
+// A user's page, keyed by the external user id, its Sessions list on the
+// run's days (`window`) widened to the row's `time`: the page's own default
+// is Today. Insights opens a user the same way.
+export { userPageLink } from "src/sections/projects/Insights/insightsLinks";

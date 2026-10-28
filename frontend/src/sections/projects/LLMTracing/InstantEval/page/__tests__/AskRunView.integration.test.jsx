@@ -382,3 +382,44 @@ describe("the run's recovery and confidence headline", () => {
     expect(run.control).toHaveBeenCalledWith("read_more", { more: 5 });
   });
 });
+
+describe("opening a user from a user question's table", () => {
+  it("opens the user's sessions on the run's days, not on Today", async () => {
+    http.get.mockResolvedValue(
+      response(
+        [
+          {
+            ...row(9),
+            id: "u9",
+            label: "cust_009",
+            user_id: "cust_009",
+            end_user_id: "cust_009",
+            answers: {
+              [CONFIG]: { answer: "No", counts: { No: 2 }, confidence: 0.9 },
+            },
+          },
+        ],
+        1,
+      ),
+    );
+    const run = runOf({ unit: "users", status: "done", total: 1, answered: 1 });
+    renderRun(run);
+    const table = screen.getByRole("region", { name: "Users asked about" });
+    await waitFor(() =>
+      expect(within(table).getAllByRole("row")).toHaveLength(2),
+    );
+    fireEvent.click(within(table).getAllByRole("row")[1]);
+    const url = new URL(
+      screen.getByTestId("where").textContent,
+      "http://app.test",
+    );
+    expect(url.pathname).toBe("/dashboard/users/cust_009");
+    // The user page opens on Today, which misses older sessions.
+    expect(url.searchParams.get("userTab")).toBe("sessions");
+    const dates = JSON.parse(url.searchParams.get("sessionDateFilter"));
+    expect(dates.dateOption).toBe("Custom");
+    expect(dates.dateFilter.map((value) => new Date(value).getTime())).toEqual(
+      run.window.map((value) => new Date(value).getTime()),
+    );
+  });
+});
