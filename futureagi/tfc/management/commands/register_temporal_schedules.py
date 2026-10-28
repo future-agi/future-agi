@@ -9,9 +9,17 @@ Usage:
     python manage.py register_temporal_schedules --pause <schedule_id>
     python manage.py register_temporal_schedules --unpause <schedule_id>
     python manage.py register_temporal_schedules --trigger <schedule_id>
+
+Registration creates missing schedules and updates the spec, action and policy
+of existing ones, but keeps an existing schedule's paused state and note, so a
+--pause lasts until --unpause, across every later deploy.
 """
 
 import asyncio
+import atexit
+import os
+import sys
+import threading
 
 from django.core.management.base import BaseCommand, CommandError
 
@@ -62,13 +70,13 @@ class Command(BaseCommand):
             "--pause",
             type=str,
             metavar="SCHEDULE_ID",
-            help="Pause a specific schedule",
+            help="Pause a specific schedule (later registrations keep it paused)",
         )
         parser.add_argument(
             "--unpause",
             type=str,
             metavar="SCHEDULE_ID",
-            help="Unpause a specific schedule",
+            help="Unpause a specific schedule (later registrations keep it running)",
         )
         parser.add_argument(
             "--trigger",
@@ -83,17 +91,25 @@ class Command(BaseCommand):
             help="Describe a specific schedule",
         )
 
+    def run_from_argv(self, argv):
+        super().run_from_argv(argv)
+        # The usual exit steps, minus the teardown that aborts under an SDK thread.
+        threading._shutdown()
+        atexit._run_exitfuncs()
+        sys.stdout.flush()
+        os._exit(0)
+
     def handle(self, *args, **options):
         asyncio.run(self._handle_async(options))
 
     async def _handle_async(self, options):
         id_actions = ("pause", "unpause", "trigger", "describe")
-        has_action = options["list"] or options["delete_all"] or any(
-            options[name] is not None for name in id_actions
+        has_action = (
+            options["list"]
+            or options["delete_all"]
+            or any(options[name] is not None for name in id_actions)
         )
-        if options["cleanup_orphans"] and (
-            options["model_hub_only"] or has_action
-        ):
+        if options["cleanup_orphans"] and (options["model_hub_only"] or has_action):
             raise CommandError(
                 "--cleanup-orphans requires full registration without schedule actions"
             )

@@ -197,6 +197,28 @@ func policyOptions(t *testing.T) options {
 		checkpointPath: filepath.Join(t.TempDir(), "progress.json"), maxPages: 1, pageSize: 2, limits: observedcatalog.DefaultLimits()}
 }
 
+// A preview writes no checkpoint, so a budget stop has to say how to finish
+// the preview, not to resume a checkpoint that does not exist.
+func TestPreviewPageBudgetNamesTheFix(t *testing.T) {
+	cfg := policyOptions(t)
+	cfg.apply = false
+	err := runSpans(context.Background(), cfg, &testScopeReader{scope: exampleScope()}, nil, io.Discard)
+	if err == nil {
+		t.Fatal("bounded preview not stopped")
+	}
+	for _, want := range []string{"page budget reached (--max-pages 1)", "raise --max-pages", "has 2 hours", "narrow --since/--until"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("preview budget error %q lacks %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "resume the same checkpoint") {
+		t.Fatalf("preview told to resume a checkpoint it never wrote: %v", err)
+	}
+	if _, statErr := os.Stat(cfg.checkpointPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatal("preview wrote checkpoint")
+	}
+}
+
 func TestExclusionCheckpointResumeAndPreview(t *testing.T) {
 	cfg := policyOptions(t)
 	scopes := &testScopeReader{scope: exampleScope()}

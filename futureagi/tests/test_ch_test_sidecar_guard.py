@@ -52,10 +52,12 @@ _FUTUREAGI = Path(__file__).resolve().parents[1]
 _LIVE_MODULES = (
     "model_hub/tests/test_bulk_selection_bounded_ch25.py",
     "model_hub/tests/test_eval_usage_clickhouse_selector.py",
+    "model_hub/tests/test_feedback_vector_lifecycle.py",
     "tracer/tests/test_bounded_filter_key_ch25.py",
     "tracer/tests/test_ch25_typed_json_roundtrip.py",
     "tracer/tests/test_eval_status_reads_ch25.py",
     "tracer/tests/test_hourly_aggregate_state_exactness_ch25.py",
+    "tracer/tests/test_openrouter_broadcast_list_rollups_ch25.py",
     "tracer/tests/test_score_filter_hard_tombstone_ch25.py",
     "tracer/tests/test_trace_conjunction_seed_gate_ch25.py",
     "tracer/tests/test_hourly_aggregate_state_route_live_ch.py",

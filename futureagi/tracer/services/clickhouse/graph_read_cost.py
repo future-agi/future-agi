@@ -85,6 +85,67 @@ _SCAN_WINDOW_MARGIN = timedelta(days=1)
 # written down anywhere.
 _RAW_SCAN_ROWS_PER_MS = 1_796
 
+# The Voice chart's "exclude simulation calls" toggle adds a predicate that
+# reads every span's raw_log - the ``attributes_extra`` JSON and the
+# ``attrs_string`` map - to find simulator phone numbers. That arm costs the
+# BYTES of those columns, and a voice call's raw_log is a whole call record,
+# so the span count above cannot price it. Measured read-only on dev against
+# project 5272afb0, this surface's own statement at
+# DASHBOARD_TRACE_READ_MAX_THREADS workers, first run of each window:
+#
+#   toggle off: 90 days 4.44 MiB in 708 ms, 180 days 7.52 MiB in 524 ms;
+#   toggle on:  90 days 5.72 GiB in 4,579 ms, 180 days 15.92 GiB in 14,117 ms
+#   (47,824 and 69,587 estimated spans, which the rate above prices at 27 ms
+#   and 39 ms).
+#
+# Restricting the parse to VAPI/Retell conversation roots in PREWHERE read the
+# same 5.72 GiB: the calls interleave with other fat roots in the same
+# granules, and a granule is the unit ClickHouse reads.
+#
+# So the arm is priced by granules. ``spans`` closes a granule at 64 MiB
+# (``index_granularity_bytes``, v2/schema/002_spans_v2.sql), which bounds the
+# bytes any column subset can read from it; the measured reads stayed under
+# that cap at 12-45 MiB per granule. The throughput is the slowest whole read,
+# the 180-day one, whose older half sits on the cold storage tier: 17,095,283,420
+# bytes in 14,117 ms. One full granule at that rate is 55.4 ms, rounded up.
+# The price is additive with the span rate above (both are the one statement's
+# work, so this errs toward scheduling), an upper bound of every measured
+# window, and it is coupled to that granule cap and to
+# DASHBOARD_TRACE_READ_MAX_THREADS: re-measure if either moves.
+# Production, read-only on 2026-09-28 (largest voice project, 7/30/90 days,
+# 82/203/420 granules): 3.7-7.9 ms a granule, so this price is 7-15 times
+# production's. It errs toward the worker; recalibrate it on production.
+_RAW_LOG_GRANULE_SCAN_MS = 56
+
+# The eval and annotation charts carry the same toggle in a different
+# statement: ``latest_span_membership_source_sql`` over ``spans FINAL`` at
+# EXACT_GRAPH_READ_SETTINGS (FILTER_SELECTOR_MAX_THREADS = 1 worker), which
+# collects every trace in the window whose live root is a simulator call and
+# drops it with ``trace_id NOT IN``. Measured read-only on dev on 2026-09-26,
+# first run of each window (bytes read / granules / duration; granule counts
+# drift as parts merge: the 90-day eval window was 148 granules on 09-28):
+#
+#   the eval chart statement (EvalMetricsQueryBuilderV2, project 2843b914):
+#     30 days 977 MiB / 96 / 1,206 ms; 90 days 4.81 GiB / 302 / 6,628 ms;
+#     180 days killed by the 20 s read-only cap after 4.73 GiB at 2.19 GiB of
+#     memory (toggle off 1,209 ms). Its older half on the cold storage tier:
+#     03-30..05-14 3.26 GiB / 107 / 15,479 ms, 05-14..06-28 2.26 GiB / 85 /
+#     11,781 ms;
+#   one annotation membership batch of 14 traces (project 5272afb0): 135 days
+#   3.87 GiB / 276 / 13,786 ms; 180 days killed at 20 s (toggle off 436 ms).
+#
+# That is 13-22 ms a granule on the hot tier and 139-145 ms on the cold one.
+# The constant is the cold rate rounded up, so it over-prices a hot window by
+# up to twelve times: the 90-day eval chart above (6.6 s) is priced at 45 s
+# and renders through the background worker. That is the direction this gate
+# errs - a rate the hot tier licenses would admit the 180-day read, which did
+# not finish in 20 s, to the 30 s wall. It is coupled to
+# FILTER_SELECTOR_MAX_THREADS, to FINAL and to the storage tiering, and was
+# measured on dev, not production: re-measure there. The annotation chart
+# issues this membership once per batch of Score rows per output partition;
+# the gate prices one.
+_RAW_LOG_MEMBERSHIP_GRANULE_SCAN_MS = 150
+
 
 def raw_graph_scan_window(
     start_date: datetime | None,
@@ -97,21 +158,26 @@ def raw_graph_scan_window(
     return start_date - _SCAN_WINDOW_MARGIN, end_date + _SCAN_WINDOW_MARGIN
 
 
-def _reduce_estimate(
+def reduce_spans_estimate(
     rows: Iterable[Mapping[str, Any]] | None,
     columns: Iterable[str] | None,
+    *,
+    field: str = "rows",
 ) -> int | None:
     """Reduce one ``EXPLAIN ESTIMATE`` result to the rows the scan would read.
+
+    ``field="marks"`` reduces the granules instead, by the same rules.
 
     Three shapes have to be told apart, and the ``columns`` the transport
     reports are what separate the last one - not the row count:
 
     * the estimate table with part rows is their summed ``rows``;
-    * the estimate table with NO rows is zero. For this statement that reading
-      is unambiguous: the key condition is ``project_id`` and a half-open
-      ``start_time`` range over a table partitioned by ``toDate(start_time)``,
-      there is no subquery and no step that could vanish, so "no part
-      selected" means "nothing to read" and the scan is affordable;
+    * the estimate table with NO rows is zero. For the statements this reads
+      (the raw graph's scan and the Sessions root read) that is unambiguous:
+      their key condition is ``project_id`` and a half-open ``start_time``
+      range over a table partitioned by ``toDate(start_time)``, with no
+      subquery and no step that could vanish, so "no part selected" means
+      "nothing to read" and the scan is affordable;
     * anything else - a transport that answered something other than this
       statement, or a server whose estimate table changed shape - is ``None``,
       meaning unknown.
@@ -133,7 +199,7 @@ def _reduce_estimate(
             return None
         if str(row.get("table") or "") != _ESTIMATE_TABLE:
             return None
-        counted = row.get("rows")
+        counted = row.get(field)
         if isinstance(counted, bool) or not isinstance(counted, (int, float)):
             return None
         estimate += max(0, int(counted))
@@ -183,6 +249,60 @@ def estimate_raw_graph_scan_rows(
     costs 27 ms of server time at thirty days and 90 ms at twelve months.
     """
 
+    estimate = _explain_raw_graph_scan(
+        analytics=analytics,
+        project_id=project_id,
+        scan_start=scan_start,
+        scan_end=scan_end,
+        timeout_ms=timeout_ms,
+    )
+    if estimate is None:
+        return None
+    return reduce_spans_estimate(*estimate)
+
+
+def estimate_raw_log_graph_scan(
+    *,
+    analytics: Any,
+    project_id: str,
+    scan_start: datetime,
+    scan_end: datetime,
+    timeout_ms: int,
+) -> tuple[int, int] | None:
+    """Estimate the spans and granules a statement that parses raw_log reads.
+
+    The probe ``estimate_raw_graph_scan_rows`` issues also reports the granules
+    its key condition selects, and a raw_log parse costs granules - see
+    ``_RAW_LOG_GRANULE_SCAN_MS``. One probe answers both. ``None`` when either
+    count is missing: an uncounted parse is unknown, never small.
+    """
+
+    estimate = _explain_raw_graph_scan(
+        analytics=analytics,
+        project_id=project_id,
+        scan_start=scan_start,
+        scan_end=scan_end,
+        timeout_ms=timeout_ms,
+    )
+    if estimate is None:
+        return None
+    rows = reduce_spans_estimate(*estimate)
+    marks = reduce_spans_estimate(*estimate, field="marks")
+    if rows is None or marks is None:
+        return None
+    return rows, marks
+
+
+def _explain_raw_graph_scan(
+    *,
+    analytics: Any,
+    project_id: str,
+    scan_start: datetime,
+    scan_end: datetime,
+    timeout_ms: int,
+) -> tuple[Any, Any] | None:
+    """Issue the raw-scan cost probe; ``None`` when it cannot answer."""
+
     probe_settings = {
         "max_threads": settings.DASHBOARD_TRACE_READ_MAX_THREADS,
         "optimize_use_projections": 0,
@@ -214,13 +334,21 @@ def estimate_raw_graph_scan_rows(
         # that cannot answer can never license the interactive full-window scan.
         logger.info("graph_raw_scan_estimate_unavailable", exc_info=True)
         return None
-    return _reduce_estimate(
-        getattr(result, "data", None), getattr(result, "columns", None)
-    )
+    return getattr(result, "data", None), getattr(result, "columns", None)
 
 
-def raw_graph_scan_fits_wall(estimated_rows: int | None, *, remaining_ms: int) -> bool:
+def raw_graph_scan_fits_wall(
+    estimated_rows: int | None,
+    *,
+    remaining_ms: int,
+    raw_log_marks: int | None = None,
+) -> bool:
     """Whether a scan of *estimated_rows* is PROVEN to complete in *remaining_ms*.
+
+    ``raw_log_marks`` is the granule count of a statement that parses raw_log
+    (the Voice chart's simulator toggle, see ``_RAW_LOG_GRANULE_SCAN_MS``).
+    Those granules spend the wall first, and the spans must fit in what is
+    left of it.
 
     An unknown estimate does not fit. A read nobody could cost is exactly the
     read least safe to issue unbounded: the shape this gate exists to remove is
@@ -235,15 +363,60 @@ def raw_graph_scan_fits_wall(estimated_rows: int | None, *, remaining_ms: int) -
     the bounded background worker instead of being refused outright.
     """
 
+    return _scan_fits_wall(
+        estimated_rows,
+        remaining_ms=remaining_ms,
+        raw_log_marks=raw_log_marks,
+        raw_log_ms=int(raw_log_marks or 0) * _RAW_LOG_GRANULE_SCAN_MS,
+    )
+
+
+def raw_log_membership_fits_wall(
+    estimated_rows: int | None,
+    *,
+    remaining_ms: int,
+    raw_log_marks: int | None = None,
+) -> bool:
+    """Whether an exact membership read that parses raw_log is PROVEN to fit.
+
+    The eval and annotation charts' form of the simulator toggle, priced at
+    ``_RAW_LOG_MEMBERSHIP_GRANULE_SCAN_MS`` a granule. It has
+    ``raw_graph_scan_fits_wall``'s shape so ``_schedule_unaffordable_graph_read``
+    can ask it about the background wall. The membership parses raw_log by
+    definition, so an uncounted granule set is unknown, and unknown never fits.
+    """
+
+    if raw_log_marks is None:
+        logger.info("graph_raw_log_membership_granules_unknown_not_affordable")
+        return False
+    return _scan_fits_wall(
+        estimated_rows,
+        remaining_ms=remaining_ms,
+        raw_log_marks=raw_log_marks,
+        raw_log_ms=int(raw_log_marks) * _RAW_LOG_MEMBERSHIP_GRANULE_SCAN_MS,
+    )
+
+
+def _scan_fits_wall(
+    estimated_rows: int | None,
+    *,
+    remaining_ms: int,
+    raw_log_marks: int | None,
+    raw_log_ms: int,
+) -> bool:
+    """The raw_log granules spend the wall first; the spans get the rest."""
+
     if estimated_rows is None:
         logger.info("graph_raw_scan_estimate_unknown_not_affordable")
         return False
-    affordable_rows = max(0, int(remaining_ms)) * _RAW_SCAN_ROWS_PER_MS
-    if estimated_rows <= affordable_rows:
+    span_ms = max(0, int(remaining_ms)) - raw_log_ms
+    affordable_rows = max(0, span_ms) * _RAW_SCAN_ROWS_PER_MS
+    if span_ms >= 0 and estimated_rows <= affordable_rows:
         return True
     logger.info(
         "graph_raw_scan_predicted_over_wall",
         estimated_rows=int(estimated_rows),
+        raw_log_marks=raw_log_marks,
         affordable_rows=int(affordable_rows),
         remaining_ms=int(remaining_ms),
     )
@@ -358,7 +531,7 @@ def estimate_user_graph_scan_rows(
         # an uncosted read affordable.
         logger.info("user_graph_scan_estimate_unavailable", exc_info=True)
         return None
-    return _reduce_estimate(
+    return reduce_spans_estimate(
         getattr(result, "data", None), getattr(result, "columns", None)
     )
 
@@ -388,9 +561,12 @@ def user_graph_scan_fits_wall(estimated_rows: int | None, *, remaining_ms: int) 
 
 __all__ = [
     "estimate_raw_graph_scan_rows",
+    "estimate_raw_log_graph_scan",
     "estimate_user_graph_scan_rows",
     "raw_graph_scan_fits_wall",
     "raw_graph_scan_window",
+    "raw_log_membership_fits_wall",
+    "reduce_spans_estimate",
     "user_graph_scan_fits_wall",
     "user_graph_scan_window",
 ]

@@ -72,6 +72,9 @@ def user_graph_tables(ch_client):
             cost Float64,
             status String,
             created_at DateTime64(6, 'UTC'),
+            -- MATERIALIZED as deployed (a trace_dict lookup there): the FINAL
+            -- snapshot names it after ``*``, which omits it.
+            trace_name String MATERIALIZED '',
             is_deleted UInt8,
             _version UInt64
         ) ENGINE = ReplacingMergeTree(_version, is_deleted)

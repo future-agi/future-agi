@@ -356,9 +356,12 @@ def test_fusion_preserves_latest_population_and_metric_reductions_verbatim():
     assert "user_snapshot_start_us" in having and "user_snapshot_end_us" in having
     for expression in (
         "min(rs.start_time) AS min_start",
-        "avg(rs.latency_ms) AS span_avg_latency",
-        "avg(span_avg_latency) AS user_avg_latency",
-        "avg(user_avg_latency) AS avg_latency",
+        # Latency is the pooled span mean: sums and counts at every level.
+        "sum(rs.latency_ms) AS span_latency_sum",
+        "count(rs.latency_ms) AS span_latency_count",
+        "sum(span_latency_sum) AS user_latency_sum",
+        "sum(span_latency_count) AS user_latency_count",
+        "sum(user_latency_sum) / greatest(sum(user_latency_count), 1) AS avg_latency",
         "sum(rs.cost) AS span_total_cost",
         "sum(span_total_cost) AS user_total_cost",
         "avg(user_total_cost) AS avg_cost",
@@ -523,7 +526,11 @@ def test_generated_sql_fused_window_matches_declared_users_and_nested_metrics(
         for key in left.keys() - {"time_bucket"}:
             assert left[key] == pytest.approx(right[key])
     if not mapped_nil:
-        assert actual[0]["avg_latency"] == (185 if mode == "null" else 127.5)
+        # The pooled mean of every span of the bucket's user traces: t1 of
+        # old-a contributes both its day-1 and day-2 spans (0, 20), t2 100,
+        # unmapped 200, and in null mode absent 300. Never a mean of per-user
+        # means (that was 185 / 127.5).
+        assert actual[0]["avg_latency"] == (124 if mode == "null" else 80)
         assert actual[0]["avg_cost"] == (11 if mode == "null" else 10)
         assert (
             actual[0]["total_cost_sum"]

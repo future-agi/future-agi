@@ -27,6 +27,11 @@ from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.observation_span import ObservationSpan, UserIdType
 from tracer.models.project import PROJECT_TYPES, Project, ProjectSourceChoices
 from tracer.models.project_version import ProjectVersion
+from tracer.services.simulation_project import (
+    RESERVED_PROJECT_NAME_MESSAGE,
+    ReservedProjectNameError,
+    agent_id_in_simulation_project_name,
+)
 from tracer.utils.helper import (
     get_default_project_version_config,
     get_default_trace_config,
@@ -37,6 +42,7 @@ from tracer.utils.semantic_conventions import (
     get_attribute,
 )
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_resource_request
 except ImportError:
@@ -558,6 +564,10 @@ class ConversationAttributes:
     MONO_ASSISTANT = "mono.assistant"
     """
     The assistant recording of the conversation.
+    """
+    PROVIDER_LOG_ISSUES = "conversation.provider_log.issues"
+    """
+    Warning and error lines of the provider's own call log, as a JSON list.
     """
 
 
@@ -1109,6 +1119,8 @@ def get_or_create_project(
     workspace_id=None,
     source: str = ProjectSourceChoices.PROTOTYPE.value,
 ) -> Project | None:
+    if agent_id_in_simulation_project_name(project_name) is not None:
+        raise ReservedProjectNameError(RESERVED_PROJECT_NAME_MESSAGE)
     try:
         project_type = _get_project_type(project_type)
 

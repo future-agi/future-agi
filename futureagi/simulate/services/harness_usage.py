@@ -12,6 +12,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from simulate.models import HostedHarnessAttempt, HostedHarnessJob
+from simulate.services.harness_environment import _VOICE_CONNECTORS
 from simulate.services.hosted_harness import HostedHarnessError
 from tfc.ee_gating import is_oss
 
@@ -69,6 +70,15 @@ def require_harness_authoring(organization_id: str) -> None:
     _require_harness_action(organization_id, "harness_authoring")
 
 
+def require_harness_call_usage(job: HostedHarnessJob) -> None:
+    from simulate.services.hosted_harness import _resolve_scenario_modality
+
+    action = (
+        "voice_call" if _resolve_scenario_modality(job, {}) == "voice" else "text_call"
+    )
+    _require_harness_action(str(job.organization_id), action)
+
+
 def require_harness_run_usage(organization_id: str, payload: dict) -> None:
     """Check authoring and any call rail that the submitted connector identifies."""
 
@@ -80,7 +90,7 @@ def require_harness_run_usage(organization_id: str, payload: dict) -> None:
     connector = str(agent.get("connector") or "").lower()
     if modality == "text" or connector == "retell_chat":
         actions = ("text_call",)
-    elif modality == "voice" or connector in {"livekit", "vapi", "retell"}:
+    elif modality == "voice" or connector in _VOICE_CONNECTORS:
         actions = ("voice_call",)
     else:
         # ``auto`` can resolve to either lane only after the authored contract is available.
@@ -90,7 +100,25 @@ def require_harness_run_usage(organization_id: str, payload: dict) -> None:
         _require_harness_action(organization_id, action)
 
 
-def record_harness_usage(attempt: HostedHarnessAttempt, report: dict) -> dict:
+def require_harness_source_call_usage(
+    organization_id: str, payload: dict, detected_connectors
+) -> None:
+    """Check the voice rail for an ``auto`` source whose scan found a voice provider."""
+
+    agent = payload.get("agent") or {}
+    config = agent.get("config") or {}
+    metadata = payload.get("metadata") or {}
+    modality = str(metadata.get("modality") or config.get("modality") or "").lower()
+    connector = str(agent.get("connector") or "").lower()
+    if connector != "auto" or modality in {"text", "voice"}:
+        return
+    if _VOICE_CONNECTORS & set(detected_connectors):
+        _require_harness_action(organization_id, "voice_call")
+
+
+def record_harness_usage(
+    attempt: HostedHarnessAttempt, report: dict, *, emit: bool = True
+) -> dict:
     normalized = json.loads(json.dumps(report, cls=DjangoJSONEncoder))
     records = normalized["records"]
     by_id = {item["id"]: item for item in records}
@@ -132,13 +160,14 @@ def record_harness_usage(attempt: HostedHarnessAttempt, report: dict) -> dict:
         new_record_ids = frozenset(by_id) - frozenset(previous)
         current.usage_report = normalized
         current.save(update_fields=["usage_report", "updated_at"])
-        transaction.on_commit(
-            lambda: emit_harness_usage(
-                current,
-                normalized,
-                record_ids=new_record_ids,
+        if emit:
+            transaction.on_commit(
+                lambda: emit_harness_usage(
+                    current,
+                    normalized,
+                    record_ids=new_record_ids,
+                )
             )
-        )
     return {"accepted": True}
 
 
@@ -150,11 +179,13 @@ def _billable_records(
 ):
     cached = getattr(attempt, "_prefetched_objects_cache", {}).get("result_receipts")
     receipts = {
-        receipt.scenario.scenario_key: receipt
+        receipt.execution.execution_key
+        if receipt.execution_id
+        else receipt.scenario.scenario_key: receipt
         for receipt in (
             cached
             if cached is not None
-            else attempt.result_receipts.select_related("scenario").all()
+            else attempt.result_receipts.select_related("scenario", "execution").all()
         )
     }
     history = attempt.receipt_history or {}
@@ -341,7 +372,7 @@ def record_harness_authoring_usage(attempt: HostedHarnessAttempt, spend: dict) -
         )
         old = current.authoring_usage_report
         if old is None:
-            legacy_job = HostedHarnessJob.no_workspace_objects.only("payload").get(
+            legacy_job = HostedHarnessJob.all_objects.only("payload").get(
                 id=current.job_id
             )
             old = (
@@ -400,30 +431,31 @@ def emit_harness_authoring_usage(attempt: HostedHarnessAttempt, report: dict) ->
 
 def replay_harness_usage(attempt: HostedHarnessAttempt) -> None:
     current = HostedHarnessAttempt.no_workspace_objects.get(id=attempt.id)
-    job = HostedHarnessJob.no_workspace_objects.only("payload").get(id=current.job_id)
+    job = HostedHarnessJob.all_objects.only("payload").get(id=current.job_id)
     metadata = job.payload.get("metadata") or {}
     report = current.usage_report
     if report is None:
         report = (metadata.get(_REPORT_KEY) or {}).get(str(current.id))
     if report is not None:
         emit_harness_usage(current, report)
-    authoring = current.authoring_usage_report
-    if authoring is None:
-        authoring = (metadata.get(_AUTHORING_REPORT_KEY) or {}).get(str(current.id))
-    if authoring is not None:
-        emit_harness_authoring_usage(current, authoring)
-    elif current.cleanup_verified_at is not None:
-        spend = ((metadata.get("harness_spend") or {}).get("attempts") or {}).get(
-            str(current.attempt_number)
-        )
-        if spend is not None:
-            try:
-                record_harness_authoring_usage(current, spend)
-            except HostedHarnessError:
-                logger.exception(
-                    "Authoring usage could not be finalized for attempt %s",
-                    current.id,
-                )
+    if not metadata.get("simulation_only"):
+        authoring = current.authoring_usage_report
+        if authoring is None:
+            authoring = (metadata.get(_AUTHORING_REPORT_KEY) or {}).get(str(current.id))
+        if authoring is not None:
+            emit_harness_authoring_usage(current, authoring)
+        elif current.cleanup_verified_at is not None:
+            spend = ((metadata.get("harness_spend") or {}).get("attempts") or {}).get(
+                str(current.attempt_number)
+            )
+            if spend is not None:
+                try:
+                    record_harness_authoring_usage(current, spend)
+                except HostedHarnessError:
+                    logger.exception(
+                        "Authoring usage could not be finalized for attempt %s",
+                        current.id,
+                    )
 
 
 def harness_consumption(job: HostedHarnessJob) -> dict | None:
@@ -431,7 +463,11 @@ def harness_consumption(job: HostedHarnessJob) -> dict | None:
     legacy_reports = metadata.get(_REPORT_KEY) or {}
     legacy_authoring_reports = metadata.get(_AUTHORING_REPORT_KEY) or {}
     legacy_runtimes = metadata.get("sandbox_runtime") or {}
-    authoring_spend = (metadata.get("harness_spend") or {}).get("attempts") or {}
+    authoring_spend = (
+        {}
+        if metadata.get("simulation_only")
+        else (metadata.get("harness_spend") or {}).get("attempts") or {}
+    )
     attempts = {
         str(attempt.id): attempt
         for attempt in job.attempts.prefetch_related("result_receipts__scenario")
@@ -452,7 +488,8 @@ def harness_consumption(job: HostedHarnessJob) -> dict | None:
             else legacy_authoring_reports.get(attempt_id)
         )
         for attempt_id, attempt in attempts.items()
-        if (
+        if not metadata.get("simulation_only")
+        and (
             attempt.authoring_usage_report is not None
             or attempt_id in legacy_authoring_reports
         )

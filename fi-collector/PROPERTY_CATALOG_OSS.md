@@ -1,11 +1,22 @@
 # Observed attributes in OSS and local development
 
-The root Compose stack runs one Kafka observation topic and one consumer:
+The Distributed stack (`docker-compose.distributed.yml`) runs one Kafka
+observation topic and one consumer:
 
 `fi-collector → futureagi.observed-attributes.v1 → fi-property-catalog-consumer`
 
 The consumer writes `observed_attribute_keys` and `observed_attribute_values`
-in the isolated `property_catalog` ClickHouse database. Definitions and values
+in the isolated `property_catalog` ClickHouse database. Standalone
+(`docker-compose.yml`) and the Helm chart have no Kafka: their collector runs
+with `FI_OBSERVED_CATALOG_MODE=direct` and replays its spool straight into the
+same two tables with the consumer's sink, as the same writer user:
+
+`fi-collector → local spool → observed_attribute_keys/values`
+
+Extraction, limits, the spool, the row contract and the min/max duplicate
+semantics are shared. Direct replay merges up to 1000 spooled rows into one
+write per table instead of one per record; a spool file is removed only once
+both writes are confirmed. Definitions and values
 from relational metadata keep their native readers. The live pipeline has no sequencer,
 activation, epoch, revision, projection, Python supervisor or catalog schedule.
 
@@ -48,12 +59,13 @@ This feature does not perform automatic destructive source or catalog cleanup.
 From the repository root:
 
 ```sh
-docker compose up -d --build
+docker compose -f docker-compose.distributed.yml up -d --build
 ```
 
-The installer (`bin/install` or `bin/install.ps1`) uses the same topology.
-For development, layer `docker-compose.dev.yml` over the root file after the
-normal application bootstrap. The dev overlay skips application migrations;
+The installer's distributed stack (`bin/install --distributed` or `bin/install.ps1 -Distributed`)
+uses the same topology. The standalone install (`docker-compose.yml`) writes the
+same index without Kafka (see above); its bootstrap creates the index and users. For development, layer `docker-compose.distributed.dev.yml` over
+`docker-compose.distributed.yml` after the normal application bootstrap. The dev overlay skips application migrations;
 use the standard E2E harness for a fresh installation test.
 
 Kafka, topic creation and the two-index bootstrap have explicit startup
@@ -149,7 +161,8 @@ See the repository-root `.env.example` for local defaults.
 Collector/consumer process variables use the `FI_OBSERVED_CATALOG_` prefix.
 The producer uses `MODE=kafka`, `KAFKA_BROKERS`, `KAFKA_TOPIC`, and
 `SPOOL_DIR`. The consumer uses `KAFKA_BROKERS`, `KAFKA_TOPIC`, `KAFKA_GROUP`
-and `CH_URL`, `CH_DATABASE`, `CH_USERNAME`, `CH_PASSWORD`.
+and `CH_URL`, `CH_DATABASE`, `CH_USERNAME`, `CH_PASSWORD`. A direct-mode
+collector uses `MODE=direct`, `SPOOL_DIR` and the consumer's `CH_*` settings.
 
 Old `FI_PROPERTY_CATALOG_*`, candidate/ordered-topic and lifecycle settings do
 not configure this transport. Keep the fresh observation topic/group defaults;
@@ -167,7 +180,10 @@ Unicode secrets are supported.
 
 After the source insert returns, the collector synchronously enqueues and
 fsyncs observations to its local spool. Replay publishes them to Kafka; the
-consumer commits offsets only after both index writes succeed. Duplicate
+consumer commits offsets only after both index writes succeed. In direct mode
+replay writes the index itself and deletes a spool file only after both index
+writes succeed; on shutdown it makes one bounded final attempt, since a
+Kubernetes `emptyDir` spool does not outlive its pod. Duplicate
 delivery is supported by the min/max observation identities. The existing
 source writer's asynchronous acknowledgement behavior is unchanged.
 
@@ -194,6 +210,12 @@ ownership; it is not the catalog writer.
 When using logged bounds, convert them to RFC3339 UTC and choose `UNTIL` strictly
 after `source_last_seen` (at least one microsecond) to include the final span.
 
+Apply publishes to Kafka, or with `FI_OBSERVED_CATALOG_MODE=direct` writes the
+index through the `FI_OBSERVED_CATALOG_CH_*` writer settings, as a direct-mode
+collector does. Standalone's `app` container has the binary and those
+settings (see INSTALLATION.md, "Filters suggest no attributes or values for
+older traces").
+
 Preview first; without `--apply` the command does not publish observations:
 
 ```sh
@@ -206,6 +228,10 @@ docker compose run --rm --no-deps \
   --source spans --project "$PROJECT_ID" --since "$SINCE" --until "$UNTIL" \
   --page-size 64 --max-pages 100 --page-delay 100ms
 ```
+
+Every hour of the range takes at least one page, and a run stops after
+`--max-pages`. A preview keeps no checkpoint, so give it a `--max-pages` of at
+least the range's hours (busy hours take more), or narrow the range.
 
 To apply the reviewed scope, repeat with `--apply --checkpoint /backfill/progress.json`
 and mount an operator-owned writable directory at `/backfill`. The container

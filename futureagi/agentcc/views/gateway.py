@@ -10,7 +10,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from django.core.cache import cache
 from django.db import transaction
-from django.db.models import Avg, Count, Q
+from django.db.models import Avg, Count, Max, Q
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework.decorators import action
@@ -55,12 +55,17 @@ from agentcc.serializers.contracts import (
     GatewayProviderUpdateRequestSerializer,
     GatewayToggleGuardrailRequestSerializer,
 )
-from agentcc.services.config_push import push_all_org_configs, push_org_config
+from agentcc.services.config_push import (
+    push_all_org_configs,
+    push_org_config,
+    validate_org_config,
+)
 from agentcc.services.gateway_client import (
     AGENTCC_GATEWAY_URL,
     GatewayClientError,
     get_gateway_client,
 )
+from agentcc.services.url_safety import ensure_provider_base_url_allowed
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
 
@@ -556,6 +561,19 @@ class AgentccGatewayViewSet(ViewSet):
                 return self._gm.bad_request(
                     "Google service-account credentials can only be used with Vertex AI."
                 )
+            saved_base_url = (
+                AgentccProviderCredential.no_workspace_objects.filter(
+                    organization=org, provider_name=provider_name, deleted=False
+                )
+                .values_list("base_url", flat=True)
+                .first()
+            )
+            try:
+                ensure_provider_base_url_allowed(
+                    provider_config.get("base_url", ""), saved_base_url=saved_base_url
+                )
+            except ValueError as e:
+                return self._gm.bad_request(str(e))
 
             from integrations.services.credentials import CredentialManager
 
@@ -1658,9 +1676,15 @@ class AgentccGatewayViewSet(ViewSet):
                     change_description=desc or "Config update v1",
                 )
             else:
-                # Derive next version from locked active config — safe because
-                # select_for_update prevents concurrent reads of this row.
-                next_version = active_config.version + 1
+                # The active version is not always the highest: after a rollback
+                # an older version is active. The lock on the active row
+                # serializes savers, so the max is stable here.
+                next_version = (
+                    AgentccOrgConfig.no_workspace_objects.filter(
+                        organization=org, deleted=False
+                    ).aggregate(Max("version"))["version__max"]
+                    + 1
+                )
 
                 AgentccOrgConfig.no_workspace_objects.filter(
                     organization=org,
@@ -1693,6 +1717,9 @@ class AgentccGatewayViewSet(ViewSet):
                     change_description=desc or f"Config update v{next_version}",
                 )
             updater_fn(new_config)
+            # Fail closed: a version the gateway contract rejects must not
+            # become active. Raising here rolls the whole save back.
+            validate_org_config(new_config)
             new_config.save()
 
         synced = self._push_current_config(org, new_config)

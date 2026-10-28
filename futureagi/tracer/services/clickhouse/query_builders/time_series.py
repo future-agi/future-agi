@@ -161,6 +161,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                 exact_filter_plan.required_matches,
                 exact_filter_plan.match_condition_groups,
                 exact_filter_plan.contribution_predicates,
+                root_contribution=exact_filter_plan.root_contribution,
             )
         if extra_where:
             return self._build_raw_query(extra_where)
@@ -437,6 +438,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         scan_end_param: str,
         candidate_trace_ids_param: str | None = None,
         candidate_span_predicate: str = "",
+        with_version: bool = False,
     ) -> str:
         """Collapse physical versions to one narrow current-row tuple.
 
@@ -469,6 +471,9 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             "status",
             "is_deleted",
         ]
+        if with_version:
+            scalar_expressions.append("_version")
+            scalar_aliases.append("_version")
         for index, predicate in enumerate(row_predicates):
             scalar_expressions.append(f"toUInt8(ifNull(({predicate}), 0))")
             scalar_aliases.append(f"graph_row_match_{index}")
@@ -539,6 +544,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         contribution_predicates: tuple[str, ...],
         scan_start_param: str,
         scan_end_param: str,
+        with_version: bool = False,
     ) -> str:
         """Project append-only physical span rows to the graph scalars.
 
@@ -558,6 +564,8 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             "toInt64(completion_tokens) AS completion_tokens",
             "status",
         ]
+        if with_version:
+            scalar_columns.append("_version")
         scalar_columns.extend(
             f"toUInt8(ifNull(({predicate}), 0)) AS graph_row_match_{index}"
             for index, predicate in enumerate(row_predicates)
@@ -632,6 +640,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         contribution_predicates: tuple[str, ...],
         scan_start_param: str,
         scan_end_param: str,
+        with_version: bool = False,
     ) -> str:
         if self.resolve_span_versions:
             return self._exact_latest_scalar_source(
@@ -639,12 +648,14 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                 contribution_predicates=contribution_predicates,
                 scan_start_param=scan_start_param,
                 scan_end_param=scan_end_param,
+                with_version=with_version,
             )
         return self._raw_scalar_source(
             row_predicates=row_predicates,
             contribution_predicates=contribution_predicates,
             scan_start_param=scan_start_param,
             scan_end_param=scan_end_param,
+            with_version=with_version,
         )
 
     def build_exact_trace_contribution_batch(
@@ -899,6 +910,8 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         required_matches: tuple[bool, ...],
         match_condition_groups: tuple[tuple[tuple[int, bool], ...], ...],
         contribution_predicates: tuple[str, ...],
+        *,
+        root_contribution: bool = False,
     ) -> tuple[str, dict[str, Any]]:
         """Aggregate the configured scalar source over the bounded window.
 
@@ -990,7 +1003,30 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                 contribution_predicates=contribution_predicates,
                 scan_start_param="graph_witness_start_date",
                 scan_end_param="graph_witness_end_date",
+                with_version=root_contribution,
             )
+
+            # A voice call contributes its root once per bucket. A re-polled
+            # root stays several live physical rows until ClickHouse merges
+            # them, so take the newest version's scalars, as the Voice list
+            # does, instead of adding every version.
+            def contributed(value: str) -> str:
+                if root_contribution:
+                    return f"argMaxIf({value}, _version, {contribution_condition})"
+                return f"sumIf({value}, {contribution_condition})"
+
+            if root_contribution:
+                row_count = f"toUInt64(countIf({contribution_condition}) > 0)"
+                error_count = (
+                    f"toUInt64(upper({contributed('status')})"
+                    " IN ('ERROR', 'ERRORED', 'FAILED'))"
+                )
+            else:
+                row_count = f"countIf({contribution_condition})"
+                error_count = f"""countIf(
+                            ({contribution_condition})
+                            AND upper(status) IN ('ERROR', 'ERRORED', 'FAILED')
+                        )"""
             source = f"""(
             SELECT
                 graph_output_bucket
@@ -1020,21 +1056,18 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                             {sentinel_bucket}
                         ) AS graph_bucket,
                         toUInt8({output_window}) AS graph_in_output_window,
-                        sumIf(toInt64(latency_ms), {contribution_condition})
+                        {contributed("toInt64(latency_ms)")}
                             AS graph_latency_sum,
-                        sumIf(toInt64(total_tokens), {contribution_condition})
+                        {contributed("toInt64(total_tokens)")}
                             AS graph_total_tokens_sum,
-                        sumIf(cost, {contribution_condition})
+                        {contributed("cost")}
                             AS graph_cost_sum,
-                        countIf({contribution_condition}) AS graph_row_count,
-                        sumIf(toInt64(prompt_tokens), {contribution_condition})
+                        {row_count} AS graph_row_count,
+                        {contributed("toInt64(prompt_tokens)")}
                             AS graph_prompt_tokens_sum,
-                        sumIf(toInt64(completion_tokens), {contribution_condition})
+                        {contributed("toInt64(completion_tokens)")}
                             AS graph_completion_tokens_sum,
-                        countIf(
-                            ({contribution_condition})
-                            AND upper(status) IN ('ERROR', 'ERRORED', 'FAILED')
-                        ) AS graph_error_count,
+                        {error_count} AS graph_error_count,
 {local_match_columns}
                     FROM {latest_source}
                     GROUP BY trace_id, graph_bucket, graph_in_output_window

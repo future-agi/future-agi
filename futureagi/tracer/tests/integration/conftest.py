@@ -86,6 +86,9 @@ def ch_client():
 def ch_schema(ch_client):
     """Apply schema DDL once per session. Targets the database in settings.CLICKHOUSE['CH_DATABASE']."""
     from tracer.services.clickhouse.schema import get_all_schema_ddl
+    from tracer.services.clickhouse.v2.apply_schema_rewriter import (
+        with_dictionary_credentials,
+    )
 
     db = settings.CLICKHOUSE["CH_DATABASE"]
     ch_client.command(f"CREATE DATABASE IF NOT EXISTS {db}")
@@ -95,7 +98,11 @@ def ch_schema(ch_client):
     except Exception:
         pass
     for _name, ddl in get_all_schema_ddl():
-        rewritten = ddl.replace("futureagi.", f"{db}.")
+        rewritten = with_dictionary_credentials(
+            ddl.replace("futureagi.", f"{db}."),
+            settings.CLICKHOUSE.get("CH_USERNAME", "default"),
+            settings.CLICKHOUSE.get("CH_PASSWORD", ""),
+        )
         try:
             ch_client.command(rewritten)
         except Exception:

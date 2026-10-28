@@ -439,11 +439,16 @@ class CustomPromptEvaluator(LLM):
         )
 
         gt_blocks = kwargs.get("ground_truth_blocks") or []
+        feedback_blocks = kwargs.get("few_shots") or []
+        if isinstance(feedback_blocks, str):
+            feedback_blocks = [{"type": "text", "text": feedback_blocks}]
 
-        # GT exemplars first, then the case text, then case media.
-        if media_blocks or gt_blocks:
+        if media_blocks or gt_blocks or feedback_blocks:
             user_content = (
-                gt_blocks + [{"type": "text", "text": user_text}] + media_blocks
+                gt_blocks
+                + feedback_blocks
+                + [{"type": "text", "text": user_text}]
+                + media_blocks
             )
         else:
             user_content = user_text

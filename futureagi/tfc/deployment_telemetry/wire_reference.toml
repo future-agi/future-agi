@@ -1,0 +1,162 @@
+# What each deployment-telemetry field means, with the example payloads the
+# telemetry page of the docs site shows
+# (https://docs.futureagi.com/docs/self-hosting/configuration/telemetry,
+# rendered by `python3 scripts/docs_site.py`).
+#
+# Kept apart from schema.py, whose body is vendored verbatim into the
+# receiver. tests/test_wire_reference.py fails when a field here and a field in
+# schema.py differ, when an example payload would not be valid, or when the
+# opt-out fields differ from the payload payloads.py builds.
+# The FUTURE_AGI_TELEMETRY_* settings are rows of deploy/env-reference.toml
+# (tag = "telemetry").
+
+[registration]
+
+[[registration.field]]
+name = "schema_version"
+example = 1
+meaning = "Version of this payload format."
+
+[[registration.field]]
+name = "instance_id"
+example = "5b0c6a4e-8f0e-4c55-9d1a-2f5c1a7e9b3d"
+meaning = "A random UUID created on first run and stored in your database. It identifies the install, not a person."
+
+[[registration.field]]
+name = "version"
+example = "1.8.0"
+meaning = "The first of `FUTURE_AGI_VERSION`, `SERVICE_VERSION` and `GIT_SHA` that names a release (`unknown` and `latest` are skipped), else `unknown`. `FUTURE_AGI_VERSION` is the image tag in `.env`; `SERVICE_VERSION` and `GIT_SHA` come from the image."
+
+[[registration.field]]
+name = "deployment_type"
+example = "docker"
+meaning = "`FUTURE_AGI_DEPLOYMENT_TYPE` if set (`docker` in both compose files); otherwise `kubernetes`, `docker` or `bare_metal`, detected."
+
+[[registration.field]]
+name = "timestamp"
+example = "2026-09-25T10:15:00Z"
+meaning = "When the payload was built (UTC)."
+
+[[registration.field]]
+name = "telemetry_disabled"
+example = false
+meaning = "`false` here. `true` on the opt-out registration."
+
+[[registration.field]]
+name = "users"
+meaning = "One entry for each active account that is an organization owner or admin, or a Django staff or superuser account (for example one made with `manage.py createsuperuser`), at the time of registration, most recent login first, at most 500. On a new install that is normally only the first account."
+
+[[user_field]]
+name = "email"
+example = "owner@example.com"
+meaning = "The account's email address, lowercased."
+
+[[user_field]]
+name = "domain"
+example = "example.com"
+meaning = "The part of `email` after the `@`."
+
+[heartbeat]
+counts_intro = '''
+Every count covers only that window, across the whole install:
+'''
+after = '''
+A count is `null` when it could not be read (for example, ClickHouse was
+unavailable), so a failure is never reported as zero.
+'''
+
+[[heartbeat.field]]
+name = "schema_version"
+example = 1
+meaning = "Same as in registration."
+
+[[heartbeat.field]]
+name = "instance_id"
+example = "5b0c6a4e-8f0e-4c55-9d1a-2f5c1a7e9b3d"
+meaning = "Same as in registration."
+
+[[heartbeat.field]]
+name = "version"
+example = "1.8.0"
+meaning = "Same as in registration."
+
+[[heartbeat.field]]
+name = "window_start"
+example = "2026-09-25T06:00:00Z"
+meaning = "Start of the fixed UTC window the counts cover, included. A heartbeat covers the previous window, for example 06:00 to 12:00."
+
+[[heartbeat.field]]
+name = "window_end"
+example = "2026-09-25T12:00:00Z"
+meaning = "End of that window, excluded."
+
+# In COUNT_FIELDS order.
+[[heartbeat.count]]
+name = "active_users_count"
+example = 3
+counts = "Distinct users who created a project, dataset, evaluation or experiment, plus owners of projects that received spans."
+
+[[heartbeat.count]]
+name = "traces_count"
+example = 1520
+counts = "Distinct traces received."
+
+[[heartbeat.count]]
+name = "spans_count"
+example = 20417
+counts = "Spans received."
+
+[[heartbeat.count]]
+name = "projects_count"
+example = 1
+counts = "Projects created."
+
+[[heartbeat.count]]
+name = "eval_logger_count"
+example = 212
+counts = "Evaluation results logged on traces."
+
+[[heartbeat.count]]
+name = "model_hub_evaluations_count"
+example = 40
+counts = "Evaluations created."
+
+[[heartbeat.count]]
+name = "dataset_eval_runs_count"
+example = 96
+counts = "Evaluation cells written in datasets."
+
+[[heartbeat.count]]
+name = "total_evaluations_count"
+example = 348
+counts = "The sum of the three evaluation counts above."
+
+[[heartbeat.count]]
+name = "simulation_runs_count"
+example = 2
+counts = "Simulation runs started."
+
+[[heartbeat.count]]
+name = "simulation_calls_count"
+example = 18
+counts = "Calls those simulation runs completed."
+
+[[heartbeat.count]]
+name = "experiments_count"
+example = 1
+counts = "Experiments created."
+
+[[heartbeat.count]]
+name = "gateway_requests_count"
+example = 930
+counts = "Requests through the Agent Command Center gateway."
+
+[[heartbeat.count]]
+name = "datasets_count"
+example = 2
+counts = "Datasets created."
+
+# What the opt-out registration (FUTURE_AGI_TELEMETRY_DISABLED=true) still
+# sends: the keys of payloads.build_minimal_registration_payload().
+[opt_out]
+fields = ["schema_version", "instance_id", "version", "deployment_type", "timestamp", "telemetry_disabled"]

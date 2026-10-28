@@ -26,7 +26,12 @@ logger = structlog.get_logger(__name__)
 from tfc.settings.settings import MINIO_URL, UPLOAD_BUCKET_NAME
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.ssrf_guard import SsrfBlocked, safe_fetch
-from tfc.utils.storage_client import ensure_bucket, get_object_url, get_storage_client
+from tfc.utils.storage_client import (
+    ensure_bucket,
+    extract_object_key,
+    get_object_url,
+    get_storage_client,
+)
 
 MAX_VIDEO_FILE_SIZE = 200 * 1024 * 1024
 # safe_fetch default max_bytes is 25 MiB (a general safety cap); real
@@ -73,16 +78,20 @@ def is_own_storage_url(value, bucket_name):
     ):
         return True
 
-    # MinIO / custom S3-compatible endpoint: only trust hosts that match
-    # the configured MINIO_URL.
-    try:
-        own_host = (urlparse(MINIO_URL).hostname or "").lower()
-    except Exception:
-        own_host = ""
-    if own_host and host == own_host and (
-        path.startswith(bucket_path + "/") or path == bucket_path
-    ):
-        return True
+    # MinIO / custom S3-compatible endpoints: trust only the explicitly
+    # configured browser-facing and server-facing endpoints. Stored artifact
+    # URLs can use either form (for example ``localhost:9005`` outside Docker
+    # and ``minio:9000`` between services).
+    configured_endpoints = (MINIO_URL, os.getenv("S3_ENDPOINT_URL", ""))
+    for endpoint in configured_endpoints:
+        try:
+            own_host = (urlparse(endpoint).hostname or "").lower()
+        except Exception:
+            own_host = ""
+        if own_host and host == own_host and (
+            path.startswith(bucket_path + "/") or path == bucket_path
+        ):
+            return True
 
     return False
 
@@ -1349,8 +1358,8 @@ def audio_bytes_from_url_or_base64(
             elif audio_input.get("data"):
                 audio_bytes = base64.b64decode(str(audio_input["data"]))
             elif audio_input.get("url"):
-                audio_bytes = download_audio_from_url(
-                    audio_url=str(audio_input["url"]),
+                audio_bytes = _audio_bytes_from_url(
+                    str(audio_input["url"]),
                     min_duration_seconds=min_duration_seconds,
                     pad_silence=pad_silence,
                     timeout=timeout,
@@ -1358,8 +1367,8 @@ def audio_bytes_from_url_or_base64(
         elif isinstance(audio_input, str):
             s = audio_input.strip()
             if s.startswith(("http://", "https://")):
-                audio_bytes = download_audio_from_url(
-                    audio_url=s,
+                audio_bytes = _audio_bytes_from_url(
+                    s,
                     min_duration_seconds=min_duration_seconds,
                     pad_silence=pad_silence,
                     timeout=timeout,
@@ -1409,6 +1418,61 @@ def audio_bytes_from_url_or_base64(
         audio_bytes = _ensure_min_duration(audio_bytes, float(min_duration_seconds))
 
     return audio_bytes
+
+
+def _read_own_storage_object(file_url: str, bucket_name: str) -> bytes:
+    """Read a verified first-party object without making an HTTP request.
+
+    Internal object-store hostnames correctly fail the generic SSRF guard.
+    For URLs that match one of our configured storage endpoints and the exact
+    upload bucket, use the authenticated storage client instead. This keeps
+    arbitrary/private URLs behind ``safe_fetch`` while allowing workers to
+    consume artifacts that the platform itself produced.
+    """
+    if not is_own_storage_url(file_url, bucket_name):
+        raise ValueError("URL is not a trusted platform storage URL")
+
+    object_key = extract_object_key(file_url, bucket_name)
+    if not object_key:
+        raise ValueError("Storage URL does not contain an object key")
+
+    response = get_storage_client().get_object(bucket_name, object_key)
+    chunks = []
+    total = 0
+    try:
+        while True:
+            chunk = response.read(8192)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_AUDIO_FILE_SIZE:
+                raise ValueError(
+                    f"Audio file exceeds maximum size of {MAX_AUDIO_FILE_SIZE / (1024 * 1024):.1f}MB"
+                )
+            chunks.append(chunk)
+    finally:
+        response.close()
+        release_conn = getattr(response, "release_conn", None)
+        if callable(release_conn):
+            release_conn()
+    return b"".join(chunks)
+
+
+def _audio_bytes_from_url(
+    audio_url: str,
+    *,
+    min_duration_seconds: float | None,
+    pad_silence: bool,
+    timeout: int,
+) -> bytes:
+    if is_own_storage_url(audio_url, UPLOAD_BUCKET_NAME):
+        return _read_own_storage_object(audio_url, UPLOAD_BUCKET_NAME)
+    return download_audio_from_url(
+        audio_url=audio_url,
+        min_duration_seconds=min_duration_seconds,
+        pad_silence=pad_silence,
+        timeout=timeout,
+    )
 
 
 def download_audio_from_url(

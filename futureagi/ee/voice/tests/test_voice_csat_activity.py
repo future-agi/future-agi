@@ -11,7 +11,6 @@ The activity must:
      instead of silently disabling CSAT for every call.
 """
 
-import logging
 from unittest.mock import patch
 
 import pytest
@@ -219,7 +218,7 @@ async def test_recording_url_reaches_agent_evaluator_unchanged(
 @pytest.mark.asyncio
 @pytest.mark.django_db(transaction=True)
 async def test_import_error_is_logged_loudly_and_propagates(
-    test_execution, scenario, caplog
+    test_execution, scenario, monkeypatch
 ):
     """A broken AgentEvaluator import disables CSAT for every call. The
     activity must emit an ERROR log so the regression is visible (this
@@ -249,18 +248,20 @@ async def test_import_error_is_logged_loudly_and_propagates(
             raise ImportError("AgentEvaluator module disappeared")
         return real_import(name, *args, **kwargs)
 
-    with caplog.at_level(logging.ERROR), patch(
-        "builtins.__import__", side_effect=_fake_import
-    ):
+    # Temporal logs do not always propagate to caplog's root handler.
+    # Capture the activity's ERROR calls directly, like other activity tests.
+    errors = []
+    monkeypatch.setattr(voice_xl.activity.logger, "error", errors.append)
+
+    with patch("builtins.__import__", side_effect=_fake_import):
         result = await voice_xl.calculate_voice_csat_score(
             CalculateVoiceCSATInput(call_id=str(call.id))
         )
 
     assert result.success is False
-    assert any(
-        "CSAT AgentEvaluator import failed" in record.getMessage()
-        for record in caplog.records
-    ), f"Expected loud import-failure log; got: {[r.getMessage() for r in caplog.records]}"
+    assert any("CSAT AgentEvaluator import failed" in message for message in errors), (
+        f"Expected loud import-failure log; got: {errors}"
+    )
 
 
 @pytest.mark.asyncio

@@ -84,7 +84,6 @@ export const paths = {
       root: `${ROOTS.DASHBOARD}/simulate`,
       agentDefinition: `${ROOTS.DASHBOARD}/simulate/agent-definitions`,
       scenarios: `${ROOTS.DASHBOARD}/simulate/scenarios`,
-      personas: `${ROOTS.DASHBOARD}/simulate/personas`,
       simulatorAgent: `${ROOTS.DASHBOARD}/simulate/simulator-agent`,
       test: `${ROOTS.DASHBOARD}/simulate/test`,
       testCallDetails: (testId, executionId) =>
@@ -93,6 +92,17 @@ export const paths = {
         root: `${ROOTS.DASHBOARD}/simulate/harness`,
         new: `${ROOTS.DASHBOARD}/simulate/harness/new`,
         detail: (jobId) => `${ROOTS.DASHBOARD}/simulate/harness/${jobId}`,
+      },
+      environments: {
+        root: `${ROOTS.DASHBOARD}/simulate/environments`,
+        templates: `${ROOTS.DASHBOARD}/simulate/environments/templates`,
+        useTemplate: (templateId) =>
+          `${ROOTS.DASHBOARD}/simulate/environments/templates/${templateId}`,
+        detail: (envId) => `${ROOTS.DASHBOARD}/simulate/environments/${envId}`,
+        workspaceTab: (envId, tab) =>
+          `${ROOTS.DASHBOARD}/simulate/environments/${envId}?tab=${tab}`,
+        execution: (envId, testId, executionId) =>
+          `${ROOTS.DASHBOARD}/simulate/environments/${envId}/runs/${testId}/${executionId}`,
       },
     },
     feed: `${ROOTS.DASHBOARD}/error-feed`,

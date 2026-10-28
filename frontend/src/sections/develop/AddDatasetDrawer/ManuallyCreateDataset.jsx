@@ -75,6 +75,7 @@ const ManuallyCreateDataset = ({ open, onClose, refreshGrid }) => {
       }
       refreshGrid();
     },
+    meta: { errorHandled: true },
     onError: (error) => {
       enqueueSnackbar(
         getRequestErrorMessage(error, "Failed to create dataset", {

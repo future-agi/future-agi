@@ -3,7 +3,7 @@ import { test, expect } from '../../lib/fixtures';
 import { E2E } from '../../lib/env';
 import { flowAnnotation } from '../../lib/flow-meta';
 
-// Root docker-compose.yml AGENTCC_ADMIN_TOKEN default. This flow talks to the
+// docker-compose.distributed.yml AGENTCC_ADMIN_TOKEN default. This flow talks to the
 // managed E2E gateway's admin read endpoint to prove Django pushed the value.
 const GATEWAY_ADMIN_TOKEN = 'local-dev-only-admin-token-replace-me';
 const UI_READY = 60_000;

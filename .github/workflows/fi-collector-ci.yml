@@ -7,6 +7,9 @@ on:
       - "fi-collector/**"
       - "docker-compose*.yml"
       - "bin/install*"
+      - "bin/lib/**"
+      - "bin/uninstall"
+      - "bin/dev"
       - "bin/e2e"
       - "deploy/**"
       - "e2e/stack/**"
@@ -21,6 +24,9 @@ on:
       - "fi-collector/**"
       - "docker-compose*.yml"
       - "bin/install*"
+      - "bin/lib/**"
+      - "bin/uninstall"
+      - "bin/dev"
       - "bin/e2e"
       - "deploy/**"
       - "e2e/stack/**"
@@ -48,6 +54,11 @@ jobs:
       - name: Collector unit and race tests
         working-directory: fi-collector
         run: go test -race ./...
+      - name: Non-race pricing, latency, waits and authenticated regressions
+        working-directory: fi-collector
+        env:
+          GOMAXPROCS: "2"
+        run: go test -count=1 -p 1 -timeout 5m -run 'TestPrice|TestGRPCLargeMessage|TestScan|TestPool|TestWireGrowers|TestAuthenticated|TestQuotaRefusal' ./pkg/server
       - name: Compile shipped commands
         working-directory: fi-collector
         run: go build ./cmd/fi-collector ./cmd/fi-property-catalog-consumer ./cmd/fi-observed-catalog-backfill
@@ -95,8 +106,8 @@ jobs:
         run: |
           set -o pipefail
           go test -race -count=1 -p 1 -timeout 8m -json \
-            -run '^(TestClickHouse|TestKafka|TestPostgres|TestBackfillCLIThroughKafkaWithResume|TestObservedCatalogHTTPToLocalStack)' \
-            ./cmd/fi-observed-catalog-backfill ./pkg/server \
+            -run '^(TestClickHouse|TestKafka|TestPostgres|TestBackfillCLIThroughKafkaWithResume|TestObservedCatalogHTTPToLocalStack|TestValidateKey|TestRoutingColumnCheckSeesBothColumns|TestRoutingColumnStateIsSharedThroughNew|TestEnsureSimulationProject)' \
+            ./cmd/fi-observed-catalog-backfill ./pkg/server ./pkg/auth \
             | tee "$RUNNER_TEMP/observed-integration.jsonl"
       - name: Require executed integration proofs, not skipped tests
         run: |
@@ -117,6 +128,12 @@ jobs:
               "TestPostgresOwnershipIsCurrentAndReadOnly",
               "TestBackfillCLIThroughKafkaWithResume",
               "TestObservedCatalogHTTPToLocalStack",
+              "TestClickHouseDirectObservedCatalogFromOTLPHTTP",
+              "TestValidateKeyReadsTheAgentOfAnIngestKey",
+              "TestValidateKeyFallsBackWhenTheColumnDisappears",
+              "TestRoutingColumnCheckSeesBothColumns",
+              "TestRoutingColumnStateIsSharedThroughNew",
+              "TestEnsureSimulationProject",
           }
           evidence = Path(os.environ["RUNNER_TEMP"]) / "observed-integration.jsonl"
           events = [json.loads(line) for line in evidence.read_text().splitlines()]
@@ -193,14 +210,18 @@ jobs:
         run: python -m unittest discover -s deploy/tests -p 'test_observed_catalog_*.py' -v
       - name: Shell syntax
         run: |
-          bash -n bin/install bin/e2e
+          for script in bin/install bin/uninstall bin/dev bin/e2e bin/lib/*.sh deploy/standalone/bin/start deploy/standalone/bin/after-bootstrap; do
+            bash -n "$script"
+          done
           sh -n futureagi/scripts/property_catalog_oss/bootstrap_clickhouse.sh
       - name: PowerShell installer syntax
         shell: pwsh
         run: |
-          $tokens = $null
-          $parseErrors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-            "$PWD/bin/install.ps1", [ref]$tokens, [ref]$parseErrors
-          ) | Out-Null
-          if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
+          foreach ($file in @("$PWD/bin/install.ps1") + (Get-ChildItem "$PWD/bin/lib/*.ps1").FullName) {
+            $tokens = $null
+            $parseErrors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              $file, [ref]$tokens, [ref]$parseErrors
+            ) | Out-Null
+            if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
+          }

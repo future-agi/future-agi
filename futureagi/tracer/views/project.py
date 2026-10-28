@@ -2,15 +2,18 @@ from datetime import timedelta
 from functools import wraps
 
 import structlog
+from django.conf import settings
 from django.db import models
 from django.db.models import Count
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
 from accounts.utils import get_request_organization
+from tfc.ee_loader import is_cloud_env
 from tfc.middleware.db_health_check import db_connection_required
 from tfc.middleware.query_timeout import monitor_query_performance
 from tfc.routers import uses_db
@@ -59,6 +62,9 @@ from tracer.services.clickhouse.graph_dispatch import (
     fetch_user_system_metric_graph_ch,
     graph_payload_is_publishable,
 )
+from tracer.services.clickhouse.graph_metric_statistic import (
+    chart_bundle_statistics,
+)
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     UnsupportedFilterShapeError,
 )
@@ -78,10 +84,15 @@ from tracer.services.filter_principal_context import (
     bind_request_my_annotations_principal,
 )
 from tracer.services.project_deletion import soft_delete_projects
+from tracer.services.simulation_project import (
+    RESERVED_PROJECT_NAME_MESSAGE,
+    agent_id_in_simulation_project_name,
+)
 from tracer.utils.constants import (
     INSTALLATION_GUIDE,
     INSTRUMENTORS,
     OBSERVE_CODEBLOCK,
+    ORG_BASE_URL,
     ORG_KEYS,
     PROTOTYPE_CODEBLOCK,
 )
@@ -97,6 +108,22 @@ from tracer.utils.helper import (
 from tracer.utils.property_registry import validate_property_graph_namespace
 
 logger = structlog.get_logger(__name__)
+
+
+def sdk_key_snippets():
+    """The keys block of the in-app SDK snippet, per language, with placeholder
+    keys. Off Future AGI Cloud it also sets FI_BASE_URL to this install's
+    collector: the SDKs default to Cloud, and without it the spans (prompts and
+    completions included) would leave for api.futureagi.com."""
+    snippets = {
+        lang: code.format("YOUR_FI_API_KEY", "YOUR_FI_SECRET_KEY")
+        for lang, code in ORG_KEYS.items()
+    }
+    if not is_cloud_env(settings.CLOUD_DEPLOYMENT):
+        for lang, line in ORG_BASE_URL.items():
+            snippets[lang] += line.format(settings.FI_COLLECTOR_PUBLIC_URL)
+    return snippets
+
 
 # The Observe landing page is a latency-critical navigation path. Never replay
 # raw span versions here: the dedicated rollup has one aggregate state per
@@ -244,7 +271,12 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         return queryset.order_by(sort_query)
 
     def perform_update(self, serializer):
-        """Override to invalidate PII cache when project metadata changes."""
+        """Refuse a reserved name; invalidate the PII cache on a metadata change."""
+        if (
+            agent_id_in_simulation_project_name(serializer.validated_data.get("name"))
+            is not None
+        ):
+            raise ValidationError({"name": [RESERVED_PROJECT_NAME_MESSAGE]})
         instance = serializer.save()
         try:
             from tracer.utils.pii_settings import invalidate_pii_cache
@@ -320,6 +352,13 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             serializer = self.get_serializer(data=request.data)
 
             if serializer.is_valid():
+                if (
+                    agent_id_in_simulation_project_name(
+                        serializer.validated_data.get("name")
+                    )
+                    is not None
+                ):
+                    return self._gm.bad_request(RESERVED_PROJECT_NAME_MESSAGE)
                 serializer.save(
                     organization=getattr(self.request, "organization", None)
                     or self.request.user.organization,
@@ -437,6 +476,9 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 project_id = validated_data["project_id"]
                 new_name = validated_data["name"]
                 sampling_rate = validated_data.get("sampling_rate")
+
+                if agent_id_in_simulation_project_name(new_name) is not None:
+                    return self._gm.bad_request(RESERVED_PROJECT_NAME_MESSAGE)
 
                 project = self._get_project_in_scope(project_id)
 
@@ -889,6 +931,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 )
             graph_data = {
                 "system_metrics": response_data,
+                "system_metric_statistics": chart_bundle_statistics(),
                 "evaluations": {},
             }
             return self._gm.success_response(graph_data)
@@ -1413,10 +1456,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         response = {
             "installation_guide": INSTALLATION_GUIDE,
             "project_add_code": sdk_code,
-            "keys": {
-                lang: code.format("YOUR_FI_API_KEY", "YOUR_FI_SECRET_KEY")
-                for lang, code in ORG_KEYS.items()
-            },
+            "keys": sdk_key_snippets(),
             "instruments": INSTRUMENTORS,
         }
         return self._gm.success_response(response)

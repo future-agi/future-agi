@@ -2321,6 +2321,22 @@ func TestValidateToolStrictness(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "strict function without an explicit type conflicts with non-strict function",
+			tools: []models.Tool{
+				{Function: models.ToolFunction{Name: "a", Strict: &bTrue}},
+				{Type: "function", Function: models.ToolFunction{Name: "b", Strict: &bFalse}},
+			},
+			wantErr: true,
+		},
+		{
+			name: "non-strict function without an explicit type conflicts with strict function",
+			tools: []models.Tool{
+				{Type: "function", Function: models.ToolFunction{Name: "a", Strict: &bTrue}},
+				{Function: models.ToolFunction{Name: "b"}},
+			},
+			wantErr: true,
+		},
+		{
 			name: "non-function tools are ignored",
 			tools: []models.Tool{
 				{Type: "custom", Function: models.ToolFunction{Name: "c"}},
@@ -2339,4 +2355,3 @@ func TestValidateToolStrictness(t *testing.T) {
 		})
 	}
 }
-

@@ -594,6 +594,59 @@ def test_user_first_batch_never_stops_at_the_wall_and_no_refill_follows():
     assert page.payload["query_complete"] is False
 
 
+@pytest.mark.parametrize("refill", [True, False], ids=["refill", "first-batch"])
+def test_user_refill_candidate_statements_carry_the_page_wall_as_a_server_cap(
+    refill,
+):
+    """A refill's whole-window candidate statement is stopped by the server.
+
+    It used to be admitted by the page wall only: ``timeout_ms`` is not a
+    statement deadline, so ClickHouse ran it with ``max_execution_time`` 0.
+    Under a refill's page wall the candidate statement and its survivor
+    statement ask the server to stop them at ``USER_LIST_QUERY_TIMEOUT_MS``
+    or what is left of the wall; a stop is a page-wall stop the page
+    resumes from (``test_user_refill_stopped_by_the_wall_publishes_partial_page_and_resumes``).
+    The first batch has no deadline and still sends none.
+    """
+    from tracer.services import users_list_manager
+
+    manager = _manager()
+    user = str(uuid.UUID(int=7))
+    sent: list[dict] = []
+
+    class _Service:
+        def execute_ch_query(self, query, params=None, **kwargs):
+            sent.append(kwargs)
+            return SimpleNamespace(data=[{"end_user_id": user}])
+
+    deadline = ReadDeadline.start(5_000) if refill else None
+    with (
+        mock.patch.object(users_list_manager, "V2AnalyticsQueryService", _Service),
+        mock.patch.object(
+            manager,
+            "_format_candidate_rows",
+            return_value=[{"end_user_id": user}],
+        ),
+    ):
+        manager._read_dimension_candidates(
+            deadline=deadline,
+            limit=26,
+            before_first_seen=None,
+            before_end_user_id=None,
+            window_start=START,
+            window_end=END,
+        )
+
+    assert len(sent) == 2
+    for kwargs in sent:
+        if refill:
+            assert 0 < kwargs["timeout_ms"] <= 5_000
+            assert kwargs["server_execution_cap_ms"] == kwargs["timeout_ms"]
+        else:
+            assert kwargs["timeout_ms"] is None
+            assert kwargs.get("server_execution_cap_ms") is None
+
+
 def test_user_refill_programming_error_still_fails_closed():
     manager = _manager()
     walk = _Walk(survivors=set(), stop_on_refill=RuntimeError("private defect"))

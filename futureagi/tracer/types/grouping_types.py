@@ -1,15 +1,16 @@
 """Typed JSON contract for production Error Feed grouping snapshots."""
 
-from typing import Literal, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
 GROUPING_SNAPSHOT_CONTRACT_VERSION = "grouping-snapshot/v1"
 
 
 class GroupingSnapshotCoverage(TypedDict):
     scope: str
-    observed_span_count: int
+    observed_span_count: NotRequired[int]
+    observed_call_count: NotRequired[int]
     read_complete: bool
-    future_arrivals_known: bool
+    future_arrivals_known: NotRequired[bool]
 
 
 class GroupingSnapshotUsage(TypedDict):
@@ -29,8 +30,9 @@ class GroupingSnapshotRequirement(TypedDict):
 
 class GroupingSnapshotEvidence(TypedDict):
     evidence_id: str
-    span_id: str
+    span_id: str | None
     parent_span_id: str | None
+    call_execution_id: NotRequired[str | None]
     excerpt: str
     end_time: str | None
 
@@ -38,6 +40,7 @@ class GroupingSnapshotEvidence(TypedDict):
 class GroupingSnapshotAttributionRole(TypedDict):
     status: str
     span_id: str | None
+    call_execution_id: NotRequired[str | None]
     evidence_ids: list[str]
 
 
@@ -67,7 +70,9 @@ class GroupingSnapshotReport(TypedDict):
     organization_id: str
     workspace_id: str | None
     project_id: str
-    trace_id: str
+    trace_id: str | None
+    test_execution_id: NotRequired[str | None]
+    workload_type: NotRequired[str]
     source: Literal["omega"]
     source_version: str | None
     recorded_at: str

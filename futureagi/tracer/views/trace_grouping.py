@@ -1,5 +1,8 @@
 """Authenticated control plane: the Node worker never receives DB credentials."""
 
+from time import monotonic
+
+import structlog
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -38,12 +41,28 @@ RESPONSES = {
     404: GroupingErrorSerializer,
     409: GroupingErrorSerializer,
 }
+logger = structlog.get_logger(__name__)
 
 
 def _respond(operation, **kwargs) -> Response:
+    started = monotonic()
     try:
         return Response(operation(**kwargs))
     except control.GroupingControlError as error:
+        if error.http_status == 409:
+            # GroupingConflict reasons are static server messages, not input or
+            # provider bodies. Never log kwargs (they contain lease tokens).
+            logger.warning(
+                "grouping_control_conflict",
+                operation=getattr(operation, "__name__", type(operation).__name__),
+                attempt_id=(
+                    str(kwargs["attempt_id"]) if "attempt_id" in kwargs else None
+                ),
+                http_status=error.http_status,
+                failure_code=error.code,
+                reason=str(error),
+                duration_ms=round((monotonic() - started) * 1000, 2),
+            )
         return Response(
             build_error_envelope(
                 str(error), status_code=error.http_status, code=error.code

@@ -36,7 +36,8 @@ export const test = base.extend<{
     await use(context);
   },
   probe: async ({ actor }, use) => {
-    const probe = new StateProbe({ api: actor.api, pgUrl: E2E.pgUrl, chUrl: E2E.chUrl, chDatabase: E2E.chDatabase });
+    const probe = new StateProbe({ api: actor.api, pgUrl: E2E.pgUrl, chUrl: E2E.chUrl, chDatabase: E2E.chDatabase,
+      chPassword: E2E.chPassword });
     try { await use(probe); } finally { await probe.dispose(); }
   },
   mockModel: async ({ actor, probe, managedMock }, use, testInfo) => {

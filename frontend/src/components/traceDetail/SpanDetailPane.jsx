@@ -46,6 +46,7 @@ import { normalizeTags } from "./tagUtils";
 import TagChip from "./TagChip";
 import TagInput from "./TagInput";
 import EvalsTabView, { collectAllEvalsFromEntry } from "./EvalsTabView";
+import EvalRollupBreakdown from "./EvalRollupSection/EvalRollupBreakdown";
 import { openFixWithFalcon } from "src/sections/falcon-ai/helpers/openFixWithFalcon";
 import ImageCard from "src/components/multimodal/ImageCard";
 import AudioCellRenderer from "src/sections/common/DevelopCellRenderer/CellRenderers/AudioCellRenderer";
@@ -1197,7 +1198,7 @@ LogViewTable.propTypes = {
 
 /* ── InlineTagsRow — always-visible tag chips with add/remove ── */
 
-const InlineTagsRow = ({ tags = [], traceId, spanId }) => {
+const InlineTagsRow = ({ tags = [], traceId, spanId, readOnly = false }) => {
   const [isAdding, setIsAdding] = useState(false);
   const queryClient = useQueryClient();
 
@@ -1242,6 +1243,7 @@ const InlineTagsRow = ({ tags = [], traceId, spanId }) => {
           name={tag.name}
           color={tag.color}
           size="small"
+          readOnly={readOnly}
           onRemove={() => persist(normalized.filter((_, i) => i !== idx))}
           onColorChange={(c) =>
             persist(
@@ -1257,7 +1259,8 @@ const InlineTagsRow = ({ tags = [], traceId, spanId }) => {
         />
       ))}
 
-      {isAdding ? (
+      {!readOnly &&
+        (isAdding ? (
         <Box
           sx={{ minWidth: 130 }}
           onBlur={(e) => {
@@ -1297,7 +1300,7 @@ const InlineTagsRow = ({ tags = [], traceId, spanId }) => {
           <Iconify icon="mdi:plus" width={12} />
           tag
         </Box>
-      )}
+      ))}
     </Stack>
   );
 };
@@ -1306,6 +1309,7 @@ InlineTagsRow.propTypes = {
   tags: PropTypes.array,
   traceId: PropTypes.string,
   spanId: PropTypes.string,
+  readOnly: PropTypes.bool,
 };
 
 /* ── EvalCard — single eval score display ─────────────── */
@@ -1434,7 +1438,7 @@ EvalCard.propTypes = { ev: PropTypes.object, spanLabel: PropTypes.string };
 
 /* ── AnnotationsTabContent — uses ScoresListSection ── */
 
-const AnnotationsTabContent = ({ spanId, traceId, onAction }) => (
+const AnnotationsTabContent = ({ spanId, traceId, projectId, onAction }) => (
   <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
     <Box sx={{ flex: 1, overflow: "auto", p: 2 }}>
       <ScoresListSection
@@ -1442,6 +1446,7 @@ const AnnotationsTabContent = ({ spanId, traceId, onAction }) => (
         sourceId={spanId}
         secondarySourceType="trace"
         secondarySourceId={traceId}
+        projectId={projectId}
         title=""
         openQueueItemOnRowClick
         renderActions={
@@ -1474,6 +1479,7 @@ const AnnotationsTabContent = ({ spanId, traceId, onAction }) => (
 AnnotationsTabContent.propTypes = {
   spanId: PropTypes.string,
   traceId: PropTypes.string,
+  projectId: PropTypes.string,
   onAction: PropTypes.func,
 };
 
@@ -1720,9 +1726,29 @@ const SpanDetailPane = ({
   onClose,
   onAction,
   onSelectSpan,
+  initialEvalFocus = false,
   drawerOpen = true,
+  readOnly = false,
 }) => {
   const [activeTab, setActiveTab] = useState("preview");
+  const evalFocusSeededRef = useRef(false);
+  const lastEntryIdRef = useRef(null);
+  useEffect(() => {
+    if (!drawerOpen) {
+      evalFocusSeededRef.current = false;
+      return;
+    }
+    if (initialEvalFocus && !evalFocusSeededRef.current) {
+      evalFocusSeededRef.current = true;
+      setActiveTab("evals");
+    }
+  }, [drawerOpen, initialEvalFocus]);
+  useEffect(() => {
+    const entryId = entry?.observation_span?.id || entry?.observationSpan?.id;
+    if (entryId === lastEntryIdRef.current) return;
+    lastEntryIdRef.current = entryId;
+    if (!initialEvalFocus) setActiveTab("preview");
+  }, [entry, initialEvalFocus]);
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState("markdown"); // "markdown" | "json" | "chat"
 
@@ -1817,11 +1843,15 @@ const SpanDetailPane = ({
         label: "Evals",
         icon: "mdi:checkbox-marked-circle-outline",
       },
-      { key: "annotations", label: "Annotations", icon: "mdi:pencil-outline" },
+      !readOnly && {
+        key: "annotations",
+        label: "Annotations",
+        icon: "mdi:pencil-outline",
+      },
       { key: "events", label: "Events", icon: "mdi:bell-outline" },
     );
-    return tabs;
-  }, [hasLogView]);
+    return tabs.filter(Boolean);
+  }, [hasLogView, readOnly]);
 
   if (!span) return null;
 
@@ -1918,6 +1948,7 @@ const SpanDetailPane = ({
           tags={span?.tags || []}
           traceId={span?.trace}
           spanId={span?.id}
+          readOnly={readOnly}
         />
       </Box>
 
@@ -2126,10 +2157,19 @@ const SpanDetailPane = ({
             shared EvalsTabView component so the trace drawer and the
             voice drawer use the same eval UI. */}
         {activeTab === "evals" && (
-          <EvalsTabView
+          <>
+            {entry?.eval_rollup && (
+              <EvalRollupBreakdown
+                rollup={entry.eval_rollup}
+                onSelectSpan={onSelectSpan}
+              />
+            )}
+            <EvalsTabView
             evals={collectAllEvalsFromEntry(entry)}
             onSelectSpan={onSelectSpan}
             emptyMessage="No evaluations for this span or its children"
+            showErrorLocalization={!readOnly}
+            showFixWithFalcon={!readOnly}
             onFixWithFalcon={({ level, ev, failingEvals, allEvals }) => {
               const traceId = span?.trace;
               if (level === "eval" && ev) {
@@ -2171,14 +2211,16 @@ const SpanDetailPane = ({
                 },
               });
             }}
-          />
+            />
+          </>
         )}
 
         {/* Annotations Tab */}
-        {activeTab === "annotations" && (
+        {activeTab === "annotations" && !readOnly && (
           <AnnotationsTabContent
             spanId={span?.id}
             traceId={span?.trace}
+            projectId={projectId}
             onAction={onAction}
           />
         )}
@@ -2735,6 +2777,7 @@ SpanDetailPane.propTypes = {
     observationSpan: PropTypes.object,
     eval_scores: PropTypes.array,
     evalScores: PropTypes.array,
+    eval_rollup: PropTypes.object,
     annotations: PropTypes.array,
   }),
   allSpans: PropTypes.array,
@@ -2745,7 +2788,9 @@ SpanDetailPane.propTypes = {
   onClose: PropTypes.func.isRequired,
   onAction: PropTypes.func,
   onSelectSpan: PropTypes.func,
+  initialEvalFocus: PropTypes.bool,
   drawerOpen: PropTypes.bool,
+  readOnly: PropTypes.bool,
 };
 
 export default React.memo(SpanDetailPane);

@@ -8,6 +8,7 @@ from clickhouse_driver.errors import NetworkError, ServerException, SocketTimeou
 from tracer.services.clickhouse.read_budget import (
     ReadDeadlineExceeded,
     is_clickhouse_api_read_unavailable_error,
+    is_clickhouse_overload_error,
     is_clickhouse_query_error,
     is_clickhouse_query_size_error,
     is_read_budget_error,
@@ -76,6 +77,31 @@ def test_other_syntax_errors_are_not_query_size_errors() -> None:
     assert not is_clickhouse_query_size_error(
         RuntimeError("Max query size exceeded at position 262133")
     )
+
+
+@pytest.mark.parametrize("code", [241, 202, 159, 252])
+def test_overload_classifier_accepts_capacity_codes_from_either_driver(
+    code: int,
+) -> None:
+    assert is_clickhouse_overload_error(ServerException("private", code=code))
+    assert is_clickhouse_overload_error(
+        ClickHouseConnectDatabaseError(
+            f"Received ClickHouse exception, code: {code}, server response: private"
+        )
+    )
+
+
+@pytest.mark.parametrize("code", [27, 53, 62, 60])
+def test_overload_classifier_rejects_row_and_query_defects(code: int) -> None:
+    # CANNOT_PARSE_INPUT, TYPE_MISMATCH, syntax and unknown table are not
+    # capacity: a writer must still isolate the rows that cause them.
+    assert not is_clickhouse_overload_error(ServerException("private", code=code))
+    assert not is_clickhouse_overload_error(
+        ClickHouseConnectDatabaseError(
+            f"Received ClickHouse exception, code: {code}, server response: private"
+        )
+    )
+    assert not is_clickhouse_overload_error(RuntimeError("code: 252"))
 
 
 def test_request_owned_deadline_is_a_budget_error() -> None:

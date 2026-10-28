@@ -46,6 +46,7 @@ from tracer.services.clickhouse.query_builders.session_filters import (
     SESSION_ID_FILTER_COLS,
     build_session_id_filter_clause,
 )
+from tracer.services.clickhouse.query_builders.trace_usage import usage_aggregate_sql
 from tracer.services.clickhouse.v2.id_remap_sql import (
     bounded_survivor_map_subquery,
     remap_left_join,
@@ -3112,6 +3113,17 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         them once and projecting every payload from that one scan returns the
         same rows, in the same order, with the union of the columns the three
         separate hydrations used to return.
+
+        Cost and tokens sum every live member span of the session in the
+        window, as the session detail does, not just the roots: a trace's
+        LLM children carry its usage (OpenRouter Broadcast roots carry none,
+        and neither do traceAI agent roots).  A session's first/last message
+        stays the root input of its first/last trace whenever that root has
+        one; only an empty one falls back to the trace's first LLM span with
+        input.  The member pass reads light columns only and keeps one
+        message key per trace; the page's at most two message inputs per
+        session are then read by exact physical key, so no span content
+        beyond those is read.
         """
 
         ids = tuple(dict.fromkeys(str(value) for value in session_ids if value))
@@ -3130,16 +3142,29 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         # remap so a page read cannot materialize the tenant-global bridge.
         ts_map_ctes = self._candidate_survivor_map_ctes(params, ids)
         resolved_session = resolved_id_expr("latest_trace_session_id", "ts_remap")
+        resolved_member_session = resolved_id_expr(
+            "latest_trace_session_id", "member_remap"
+        )
         physical_time_scope = self._physical_time_scope_sql()
         latest_time_scope = self._latest_time_scope_sql(
             params, param_prefix="build_page_hydration_query_latest_time"
         )
+        member_latest_time_scope = self._latest_time_scope_sql(
+            params, param_prefix="build_page_hydration_query_member_time"
+        )
+        identity_select = self._physical_identity_select_sql()
+        identity_names = self._physical_identity_names_sql()
+        group_by = self._physical_group_by_sql()
         attributes = self._page_attribute_fragments()
+        attribute_columns = ",\n            ".join(
+            f"root_page.{array_column} AS {array_column}"
+            for array_column, _key in self.PAGE_ATTRIBUTE_ARRAY_COLUMNS
+        )
         query = f"""
         WITH
         {ts_map_ctes},
         candidate_root_identities AS (
-            SELECT DISTINCT {self._physical_identity_select_sql()}
+            SELECT DISTINCT {identity_select}
             FROM {self.TABLE}
             PREWHERE {self.project_filter_sql()}{physical_time_scope}
               AND (
@@ -3168,11 +3193,11 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 argMax(_peerdb_is_deleted, _peerdb_version) AS latest_is_deleted
             FROM {self.TABLE}
             PREWHERE {self.project_filter_sql()}{physical_time_scope}
-              AND ({self._physical_group_by_sql()}) IN (
-                  SELECT {self._physical_identity_names_sql()}
+              AND ({group_by}) IN (
+                  SELECT {identity_names}
                   FROM candidate_root_identities
               )
-            GROUP BY {self._physical_group_by_sql()}
+            GROUP BY {group_by}
         ),
         resolved_roots AS (
             SELECT
@@ -3191,20 +3216,162 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             WHERE latest_is_deleted = 0{latest_time_scope}
               AND (latest_parent_span_id IS NULL OR latest_parent_span_id = '')
               AND {resolved_session} IN %(candidate_session_ids)s
+        ),
+        root_page AS (
+            SELECT
+                session_id,
+                min(start_time) AS session_start,
+                max(end_time) AS session_end,
+                dateDiff('second', min(start_time), max(end_time)) AS duration,
+                sum(cost) AS root_total_cost,
+                sum(total_tokens) AS root_total_tokens,
+                uniqExact(trace_id) AS traces_count,
+                argMin(input, start_time) AS root_first_message,
+                argMax(input, start_time) AS root_last_message,
+                {attributes["arrays"]}
+            FROM resolved_roots
+            GROUP BY session_id
+        ),
+        candidate_member_identities AS (
+            SELECT DISTINCT {identity_select}
+            FROM {self.TABLE}
+            PREWHERE {self.project_filter_sql()}{physical_time_scope}
+              AND (
+                  trace_session_id IN %(candidate_session_ids)s
+                  OR trace_session_id IN (
+                      SELECT any_id
+                      FROM ts_survivor_map
+                      WHERE survivor_id IN %(candidate_session_ids)s
+                  )
+              )
+        ),
+        session_members AS (
+            SELECT
+                {resolved_member_session} AS member_session_id,
+                {identity_names},
+                id AS latest_id,
+                latest_parent_span_id,
+                latest_name,
+                latest_observation_type,
+                latest_prompt_tokens,
+                latest_completion_tokens,
+                latest_start_time,
+                latest_cost,
+                latest_total_tokens,
+                (latest_parent_span_id IS NULL OR latest_parent_span_id = '')
+                    AS latest_is_root,
+                multiIf(
+                    latest_is_root AND latest_input_length > 0, 0,
+                    latest_observation_type = 'llm' AND latest_input_length > 0, 1,
+                    latest_is_root, 2,
+                    3
+                ) AS message_rank
+            FROM (
+                SELECT
+                    {identity_select},
+                    argMax(start_time, _peerdb_version) AS latest_start_time,
+                    argMax(tuple(parent_span_id), _peerdb_version).1 AS latest_parent_span_id,
+                    argMax(tuple(trace_session_id), _peerdb_version).1 AS latest_trace_session_id,
+                    argMax(tuple(observation_type), _peerdb_version).1 AS latest_observation_type,
+                    argMax(tuple(name), _peerdb_version).1 AS latest_name,
+                    argMax(tuple(prompt_tokens), _peerdb_version).1 AS latest_prompt_tokens,
+                    argMax(tuple(completion_tokens), _peerdb_version).1 AS latest_completion_tokens,
+                    argMax(tuple(cost), _peerdb_version).1 AS latest_cost,
+                    argMax(tuple(total_tokens), _peerdb_version).1 AS latest_total_tokens,
+                    argMax(tuple(input_length), _peerdb_version).1 AS latest_input_length,
+                    argMax(_peerdb_is_deleted, _peerdb_version) AS latest_is_deleted
+                FROM {self.TABLE}
+                PREWHERE {self.project_filter_sql()}{physical_time_scope}
+                  AND ({group_by}) IN (
+                      SELECT {identity_names}
+                      FROM candidate_member_identities
+                  )
+                GROUP BY {group_by}
+            ) AS latest_members
+            LEFT JOIN ts_survivor_map AS member_remap
+                ON latest_trace_session_id = member_remap.any_id
+            WHERE latest_is_deleted = 0{member_latest_time_scope}
+              AND {resolved_member_session} IN %(candidate_session_ids)s
+        ),
+        (
+            SELECT groupArray(tuple(
+                member_session_id, member_total_cost, member_total_tokens,
+                first_message_key, last_message_key
+            ))
+            FROM (
+                SELECT
+                    member_session_id,
+                    sum(trace_cost) AS member_total_cost,
+                    sum(trace_tokens) AS member_total_tokens,
+                    argMinIf(trace_message_key, tuple(trace_root_start, trace_id),
+                        trace_has_root) AS first_message_key,
+                    argMaxIf(trace_message_key, tuple(trace_root_start, trace_id),
+                        trace_has_root) AS last_message_key
+                FROM (
+                    SELECT
+                        member_session_id,
+                        trace_id,
+                        {usage_aggregate_sql(prefix="latest_")},
+                        usage_cost AS trace_cost,
+                        usage_total_tokens AS trace_tokens,
+                        minIf(latest_start_time, latest_is_root) AS trace_root_start,
+                        countIf(latest_is_root) > 0 AS trace_has_root,
+                        argMinIf(tuple({identity_names}),
+                            tuple(message_rank, latest_start_time, id),
+                            message_rank < 3) AS trace_message_key
+                    FROM session_members
+                    GROUP BY member_session_id, trace_id
+                )
+                GROUP BY member_session_id
+            )
+        ) AS member_rollup_rows,
+        member_rollup AS (
+            SELECT
+                tupleElement(member_row, 1) AS member_session_id,
+                tupleElement(member_row, 2) AS member_total_cost,
+                tupleElement(member_row, 3) AS member_total_tokens,
+                tupleElement(member_row, 4) AS first_message_key,
+                tupleElement(member_row, 5) AS last_message_key
+            FROM (SELECT arrayJoin(member_rollup_rows) AS member_row)
+        ),
+        message_inputs AS (
+            SELECT
+                groupArray(message_key) AS message_keys,
+                groupArray(message_input) AS message_input_values
+            FROM (
+                SELECT
+                    tuple({group_by}) AS message_key,
+                    argMax(tuple(input), _peerdb_version).1 AS message_input
+                FROM {self.TABLE}
+                PREWHERE {self.project_filter_sql()}{physical_time_scope}
+                  AND ({group_by}) IN (
+                      SELECT arrayJoin([first_message_key, last_message_key])
+                      FROM member_rollup
+                  )
+                GROUP BY {group_by}
+            )
         )
         SELECT
-            session_id,
-            min(start_time) AS session_start,
-            max(end_time) AS session_end,
-            dateDiff('second', min(start_time), max(end_time)) AS duration,
-            sum(cost) AS total_cost,
-            sum(total_tokens) AS total_tokens,
-            uniqExact(trace_id) AS traces_count,
-            argMin(input, start_time) AS first_message,
-            argMax(input, start_time) AS last_message,
-            {attributes["arrays"]}
-        FROM resolved_roots
-        GROUP BY session_id
+            root_page.session_id AS session_id,
+            root_page.session_start AS session_start,
+            root_page.session_end AS session_end,
+            root_page.duration AS duration,
+            if(member_rollup.member_session_id = root_page.session_id,
+               member_rollup.member_total_cost, root_page.root_total_cost) AS total_cost,
+            if(member_rollup.member_session_id = root_page.session_id,
+               member_rollup.member_total_tokens, root_page.root_total_tokens) AS total_tokens,
+            root_page.traces_count AS traces_count,
+            if(root_page.root_first_message != '', root_page.root_first_message,
+               arrayElement(message_input_values,
+                   indexOf(message_keys, member_rollup.first_message_key))) AS first_message,
+            if(root_page.root_last_message != '', root_page.root_last_message,
+               arrayElement(message_input_values,
+                   indexOf(message_keys, member_rollup.last_message_key))) AS last_message,
+            {attribute_columns}
+        FROM root_page
+        LEFT ANY JOIN member_rollup
+            ON root_page.session_id = member_rollup.member_session_id
+        CROSS JOIN message_inputs
         """
         return query, params
 

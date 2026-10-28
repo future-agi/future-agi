@@ -8,30 +8,64 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import structlog
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
 from simulate.models import (
+    AgentVersion,
     CallExecution,
     HostedHarnessAttempt,
     HostedHarnessCleanupReceipt,
     HostedHarnessConversation,
+    HostedHarnessExecution,
     HostedHarnessJob,
     HostedHarnessReceipt,
     HostedHarnessScenario,
     TestExecution,
 )
+from simulate.services.agent_setup import AgentStoreError, store_agent
 from simulate.services.alk_simulate_ingestion import (
     ALKSimulateIngestionError,
     append_alk_sim_scenarios,
     create_alk_sim_call_execution_batch,
     create_alk_sim_test_execution,
+    precreate_alk_sim_call_executions,
     provision_alk_sim_run_test,
+    resolved_agent_version,
+)
+from tracer.services.observability_switch import (
+    ObservabilityRefused,
+    refusal_body,
+    set_agent_observability,
+)
+from simulate.services.scoring_status import (
+    TRANSPORT_RUN_STATUSES,
+    settle_run_after_commit,
 )
 
 _CAPABILITY_SCHEMA_VERSION = "futureagi.harness-capabilities.v1"
 _JOB_SCHEMA_VERSION = "futureagi.harness-job.v1"
 _TOKEN_TAIL_SECONDS = 120 + 300
+
+logger = structlog.get_logger(__name__)
+
+
+def _active_attempt_budget_seconds(job: HostedHarnessJob) -> int:
+    """Budget an active capability for authoring plus scenario execution."""
+
+    authoring_seconds = max(
+        0,
+        int(
+            getattr(
+                settings,
+                "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS",
+                3600,
+            )
+        ),
+    )
+    return authoring_seconds + int(job.payload["runtime"]["max_duration_seconds"])
 
 
 class HostedHarnessError(Exception):
@@ -63,6 +97,7 @@ class AttemptCapability:
     token: str
     fence: str
     document: dict[str, Any]
+    admitted_parallelism: int
 
 
 def canonical_json_bytes(value: object) -> bytes:
@@ -81,6 +116,48 @@ def canonical_digest(value: object) -> str:
 
 def hash_secret(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def parallelism_w_gt_1_enabled(snapshot_digest: str | None) -> bool:
+    """The ONE shared W>1 admission predicate (C4 §5, decisions D12/D23/D24).
+
+    W>1 is admitted only when the ``HARNESS_PARALLELISM_ENABLED`` flag is truthy
+    AND the selected guest runtime identifier is certified by
+    ``HARNESS_PARALLEL_SNAPSHOT_DIGESTS``. In the dockerfile-mode dev lane
+    (``ALK_DAYTONA_DOCKERFILE`` set) the digest half is skipped — that lane
+    carries no meaningful registered digest — so W>1 needs the FLAG only. In the
+    production snapshot lane an empty/unset digest FAILS CLOSED (never matches
+    the allowlist). This single predicate backs both the ``register_attempt``
+    authoritative gate and the create-time serializer / preflight advisory.
+    """
+    if not getattr(settings, "HARNESS_PARALLELISM_ENABLED", False):
+        return False
+    from simulate.services.hosted_sandbox import sandbox_runtime_policy
+
+    if sandbox_runtime_policy().permits_unpinned_parallelism:
+        return True
+    digest = (snapshot_digest or "").strip()
+    if not digest:
+        return False
+    allowlist = set(getattr(settings, "HARNESS_PARALLEL_SNAPSHOT_DIGESTS", ()) or ())
+    return digest in allowlist
+
+
+def clamp_parallelism(
+    requested: int | None, snapshot_digest: str | None
+) -> tuple[int, bool]:
+    """Return ``(admitted, clamped)`` for a requested parallelism.
+
+    A request of W>1 is admitted at 1 (``clamped=True``) whenever the shared
+    predicate denies it (flag off OR digest unlisted). W<=1 is always admitted
+    unchanged. The caller preserves the requested value separately so a later
+    rerun re-evaluates against the then-current flag/digest.
+    """
+    value = requested or 1
+    if value > 1 and not parallelism_w_gt_1_enabled(snapshot_digest):
+        return 1, True
+    admitted = min(value, getattr(settings, "HARNESS_MAX_WORLD_SLOTS", 8), 8)
+    return admitted, admitted != value
 
 
 def create_hosted_job(
@@ -120,6 +197,11 @@ def create_hosted_job(
         if seed is None:
             seed = secrets.randbits(63)
         normalized = _json_value(payload)
+        # Deployment policy must not change the submitted request's idempotency digest.
+        artifacts = normalized["artifacts"]
+        artifacts["max_artifact_bytes"] = max(
+            artifacts.get("max_artifact_bytes", 0), settings.HARNESS_MAX_ARTIFACT_BYTES
+        )
         normalized.update(
             {
                 "schema_version": _JOB_SCHEMA_VERSION,
@@ -145,6 +227,7 @@ def create_hosted_job(
             artifact_level=normalized["artifacts"]["level"],
             max_artifact_bytes=normalized["artifacts"]["max_artifact_bytes"],
             deadline_at=now + timedelta(seconds=duration),
+            content_updated_at=now,
         )
         normalized["job_id"] = str(job.id)
         job.payload = normalized
@@ -156,6 +239,541 @@ def create_hosted_job(
             current_stage="reception",
         )
         return job, True
+
+
+def create_selected_harness_run(
+    environment: HostedHarnessJob,
+    *,
+    scenario_keys: list[str],
+    trials: int,
+    idempotency_key: str,
+) -> tuple[HostedHarnessJob, bool]:
+    """Freeze and preallocate one selected-scenario Run for an authored environment."""
+
+    if environment.environment_id is not None:
+        raise HostedHarnessError(
+            "environment_required",
+            "simulation Runs can only be submitted from an authored environment",
+            status_code=409,
+        )
+    if environment.state != HostedHarnessJob.State.COMPLETED:
+        raise HostedHarnessError(
+            "environment_not_ready",
+            "environment authoring must complete before simulations can run",
+            status_code=409,
+        )
+    metadata = dict((environment.payload or {}).get("metadata") or {})
+    if not environment.run_test_id or not metadata.get("authoring_object_key"):
+        raise HostedHarnessError(
+            "environment_snapshot_missing",
+            "environment has no durable validated snapshot",
+            status_code=409,
+        )
+    if not scenario_keys:
+        raise HostedHarnessError(
+            "scenario_selection_empty",
+            "select at least one scenario",
+            status_code=400,
+        )
+    if len(scenario_keys) != len(set(scenario_keys)):
+        raise HostedHarnessError(
+            "scenario_selection_duplicate",
+            "scenario selection must not contain duplicates",
+            status_code=400,
+        )
+    if trials < 1 or trials > 20:
+        raise HostedHarnessError(
+            "trials_out_of_range",
+            "trials must be between 1 and 20",
+            status_code=400,
+        )
+    max_executions = int(getattr(settings, "HARNESS_MAX_EXECUTIONS_PER_RUN", 200))
+    if len(scenario_keys) * trials > max_executions:
+        raise HostedHarnessError(
+            "run_too_large",
+            f"selected scenarios × trials must not exceed {max_executions}",
+            status_code=400,
+        )
+
+    with transaction.atomic():
+        try:
+            environment = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+                id=environment.id
+            )
+        except HostedHarnessJob.DoesNotExist as exc:
+            raise HostedHarnessError(
+                "environment_not_ready",
+                "environment was deleted while submitting this Run",
+                status_code=409,
+            ) from exc
+        if (
+            environment.deleted
+            or environment.state != HostedHarnessJob.State.COMPLETED
+            or not environment.run_test_id
+            or not (environment.payload.get("metadata") or {}).get(
+                "authoring_object_key"
+            )
+        ):
+            raise HostedHarnessError(
+                "environment_not_ready",
+                "environment changed while submitting this Run",
+                status_code=409,
+            )
+        registrations = list(
+            HostedHarnessScenario.no_workspace_objects.filter(
+                job=environment, scenario_key__in=scenario_keys
+            )
+            .select_related("scenario", "dataset_row")
+            .order_by("created_at", "id")
+        )
+        by_key = {
+            registration.scenario_key: registration for registration in registrations
+        }
+        missing = [key for key in scenario_keys if key not in by_key]
+        if missing:
+            raise HostedHarnessError(
+                "scenario_selection_unknown",
+                f"scenario keys do not belong to this environment: {missing}",
+                status_code=400,
+            )
+
+        idempotency_digest = hashlib.sha256(idempotency_key.encode()).hexdigest()
+        child_idempotency_key = f"run:{environment.id}:{idempotency_digest}"
+        manifest: list[dict[str, Any]] = []
+        for scenario_key in scenario_keys:
+            registration = by_key[scenario_key]
+            for trial_index in range(1, trials + 1):
+                execution_key = uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    (
+                        f"futureagi:harness-run:{environment.id}:"
+                        f"{idempotency_digest}:{registration.id}:{trial_index}"
+                    ),
+                ).hex
+                manifest.append(
+                    {
+                        "execution_key": execution_key,
+                        "scenario_key": registration.scenario_key,
+                        "scenario_id": str(registration.scenario_id),
+                        "dataset_row_id": (
+                            str(registration.dataset_row_id)
+                            if registration.dataset_row_id
+                            else None
+                        ),
+                        "trial_index": trial_index,
+                    }
+                )
+
+        child_payload = json.loads(json.dumps(environment.payload))
+        child_payload["scenario_count"] = len(manifest)
+        runtime = child_payload["runtime"]
+        runtime["max_duration_seconds"] = max(
+            runtime["max_duration_seconds"], len(manifest) * 360
+        )
+        child_metadata = child_payload.setdefault("metadata", {})
+        for key in (
+            "scenario_extend",
+            "usage_limit",
+            "harness_spend",
+            "authoring_usage_reports",
+            "usage_reports",
+            "sandbox_runtime",
+            "observability_refusal",
+        ):
+            child_metadata.pop(key, None)
+        child_metadata.update(
+            {
+                "environment_job_id": str(environment.id),
+                "simulation_only": True,
+                "execution_manifest": manifest,
+                "selected_scenario_keys": scenario_keys,
+                "trials": trials,
+                "scenario_edits": _scenario_edits(environment, registrations),
+            }
+        )
+        child_payload.pop("job_id", None)
+        child_payload.pop("run_id", None)
+
+        child, created = create_hosted_job(
+            environment.organization,
+            child_payload,
+            idempotency_key=child_idempotency_key,
+            workspace=environment.workspace,
+        )
+        if not created:
+            return child, False
+
+        scenario_ids = list(dict.fromkeys(entry["scenario_id"] for entry in manifest))
+        test_execution = TestExecution.no_workspace_objects.create(
+            run_test=environment.run_test,
+            status=TestExecution.ExecutionStatus.PENDING,
+            started_at=timezone.now(),
+            total_scenarios=len(scenario_keys),
+            trials=trials,
+            scenario_ids=scenario_ids,
+            total_calls=len(manifest),
+            picked_up_by_executor=True,
+            simulator_agent=environment.run_test.simulator_agent,
+            agent_definition=environment.run_test.agent_definition,
+            agent_version=resolved_agent_version(environment.run_test),
+            execution_metadata={
+                "environment_job_id": str(environment.id),
+                "harness_job_id": str(child.id),
+                "selected_scenario_keys": scenario_keys,
+                "trials": trials,
+                "harness_executions": manifest,
+            },
+        )
+        call_ids = precreate_alk_sim_call_executions(test_execution)
+        calls = CallExecution.no_workspace_objects.filter(id__in=call_ids)
+        calls_by_key = {
+            (call.call_metadata or {}).get("harness_execution_key"): call
+            for call in calls
+        }
+        if set(calls_by_key) != {entry["execution_key"] for entry in manifest}:
+            raise HostedHarnessError(
+                "run_preallocation_incomplete",
+                "could not preallocate every selected scenario trial",
+                status_code=500,
+                retryable=True,
+            )
+        for entry in manifest:
+            entry["call_execution_id"] = str(calls_by_key[entry["execution_key"]].id)
+        child_payload = dict(child.payload)
+        child_metadata = dict(child_payload.get("metadata") or {})
+        child_metadata["execution_manifest"] = manifest
+        child_payload["metadata"] = child_metadata
+        child.payload = child_payload
+        execution_metadata = dict(test_execution.execution_metadata or {})
+        execution_metadata["harness_executions"] = manifest
+        test_execution.execution_metadata = execution_metadata
+        test_execution.save(update_fields=["execution_metadata", "updated_at"])
+        HostedHarnessExecution.no_workspace_objects.bulk_create(
+            [
+                HostedHarnessExecution(
+                    job=child,
+                    source_scenario=by_key[entry["scenario_key"]],
+                    execution_key=entry["execution_key"],
+                    trial_index=entry["trial_index"],
+                    call_execution=calls_by_key[entry["execution_key"]],
+                )
+                for entry in manifest
+            ]
+        )
+        child.environment = environment
+        child.run_test = environment.run_test
+        child.stage_outputs = list(environment.stage_outputs or [])
+        child.bundle_digest = environment.bundle_digest
+        child.test_execution = test_execution
+        child.save(
+            update_fields=[
+                "payload",
+                "environment",
+                "run_test",
+                "test_execution",
+                "updated_at",
+                "stage_outputs",
+                "bundle_digest",
+            ]
+        )
+        return child, True
+
+
+def _scenario_edits(
+    environment: HostedHarnessJob, registrations: list[HostedHarnessScenario]
+) -> dict[str, dict[str, Any]]:
+    """Each selected scenario's editable fields as the environment holds them now."""
+    from simulate.models import HostedHarnessStageOutput
+    from simulate.services.harness_provider import HostedHarnessProvider
+    from simulate.services.hosted_harness_gateway import _scenario_token
+
+    suite = (
+        HostedHarnessStageOutput.no_workspace_objects.filter(
+            job=environment, kind="scenarios"
+        )
+        .values_list("data", flat=True)
+        .first()
+    ) or next(
+        (
+            one.get("data")
+            for one in (environment.stage_outputs or [])
+            if isinstance(one, dict) and one.get("kind") == "scenarios"
+        ),
+        None,
+    )
+    by_token = {
+        token: one
+        for one in (suite if isinstance(suite, list) else [])
+        if isinstance(one, dict)
+        for field in ("name", "scenario_key")
+        if (token := _scenario_token(one.get(field)))
+    }
+    fields = (
+        HostedHarnessProvider._DESCRIPTIVE_FIELDS
+        | HostedHarnessProvider._BEHAVIOURAL_FIELDS
+    )
+    edits: dict[str, dict[str, Any]] = {}
+    for registration in registrations:
+        document = next(
+            (
+                by_token[token]
+                for value in (
+                    registration.name,
+                    registration.scenario_key,
+                    registration.folder,
+                )
+                if (token := _scenario_token(value)) in by_token
+            ),
+            None,
+        )
+        if document is None:
+            continue
+        edit = {field: document[field] for field in fields if field in document}
+        persona = document.get("persona")
+        if isinstance(persona, dict):
+            edit["persona"] = {
+                key: value
+                for key, value in persona.items()
+                if key in HostedHarnessProvider._PERSONA_FIELDS
+            }
+        if edit:
+            edits[registration.scenario_key] = edit
+    return edits
+
+
+# Job payload metadata naming the executions an in-run re-run chose. Every later attempt
+# of the job is that re-run (infrastructure retries included), so launch dispatches only
+# these and the job's counters treat every other receipt as still current.
+RERUN_EXECUTION_KEYS = "rerun_execution_keys"
+
+
+def rerun_calls_in_run(
+    test_execution: TestExecution, call_execution_ids: list[uuid.UUID]
+) -> HostedHarnessJob:
+    """Re-run chosen calls of a finished Run as a new attempt of that same Run.
+
+    Each call row is reset in place and refilled by the new attempt's receipt. The
+    earlier result survives as a ``CallExecutionSnapshot`` and in the earlier attempt's
+    ``receipt_history``; nothing about it is deleted.
+    """
+    from simulate.services.alk_simulate_ingestion import (
+        PREALLOCATED_CALL_METADATA_KEYS,
+    )
+    from simulate.services.call_rerun import clear_call_for_rerun
+    from simulate.temporal.client import (
+        hosted_harness_gateway_workflow_running,
+        start_hosted_harness_gateway_workflow,
+    )
+
+    base_url = str(getattr(settings, "HARNESS_PUBLIC_BASE_URL", "") or "").rstrip("/")
+    if not base_url:
+        raise HostedHarnessError(
+            "public_base_url_missing",
+            "HARNESS_PUBLIC_BASE_URL is required to rerun a hosted harness job",
+            status_code=503,
+        )
+    if not call_execution_ids:
+        raise HostedHarnessError(
+            "call_selection_empty", "select at least one call", status_code=400
+        )
+    job_id = (
+        HostedHarnessJob.no_workspace_objects.filter(
+            test_execution_id=test_execution.id
+        )
+        .values_list("id", flat=True)
+        .first()
+    )
+    if job_id is None:
+        raise HostedHarnessError(
+            "run_not_rerunnable",
+            "this run has no saved harness job to re-run",
+            status_code=409,
+        )
+    # The job and run turn terminal before the previous gateway workflow returns, and
+    # starting its id again while it is still exiting would attach to it, not launch.
+    try:
+        workflow_running = hosted_harness_gateway_workflow_running(str(job_id))
+    except Exception as exc:
+        raise HostedHarnessError(
+            "scheduler_unavailable",
+            "Hosted rerun could not be scheduled",
+            status_code=503,
+            retryable=True,
+        ) from exc
+    if workflow_running:
+        raise HostedHarnessError(
+            "rerun_in_progress",
+            "this run is still running or grading; re-run its calls once it finishes",
+            status_code=409,
+        )
+    with transaction.atomic():
+        job = HostedHarnessJob.no_workspace_objects.select_for_update().get(id=job_id)
+        execution = TestExecution.no_workspace_objects.select_for_update().get(
+            id=test_execution.id
+        )
+        # The job and the run settle separately: transport ends with the job, grading
+        # with the run. A re-run waits for both so it never races either one.
+        if job.state not in _TERMINAL_STATES or execution.status not in (
+            TestExecution.ExecutionStatus.COMPLETED,
+            TestExecution.ExecutionStatus.FAILED,
+            TestExecution.ExecutionStatus.CANCELLED,
+        ):
+            raise HostedHarnessError(
+                "rerun_in_progress",
+                "this run is still running or grading; re-run its calls once it finishes",
+                status_code=409,
+            )
+        allocations = list(
+            HostedHarnessExecution.no_workspace_objects.filter(
+                job=job, call_execution_id__in=call_execution_ids
+            ).select_related("call_execution")
+        )
+        if len(allocations) != len(set(call_execution_ids)):
+            raise HostedHarnessError(
+                "call_selection_unknown",
+                "some selected calls do not belong to this run",
+                status_code=400,
+            )
+        for allocation in allocations:
+            clear_call_for_rerun(
+                allocation.call_execution,
+                keep_metadata_keys=PREALLOCATED_CALL_METADATA_KEYS,
+            )
+        payload = dict(job.payload)
+        payload["metadata"] = {
+            **(payload.get("metadata") or {}),
+            RERUN_EXECUTION_KEYS: sorted(
+                allocation.execution_key for allocation in allocations
+            ),
+            # The re-run gets the infrastructure retry budget of a new Run.
+            "attempt_cycle_start": job.current_attempt_number + 1,
+        }
+        job.payload = payload
+        job.state = HostedHarnessJob.State.QUEUED
+        job.current_stage = "queued"
+        job.failure = None
+        job.terminal_at = None
+        job.cancel_requested_at = None
+        job.cancel_reason = None
+        job.save(
+            update_fields=[
+                "payload",
+                "state",
+                "current_stage",
+                "failure",
+                "terminal_at",
+                "cancel_requested_at",
+                "cancel_reason",
+                "updated_at",
+            ]
+        )
+        execution.status = TestExecution.ExecutionStatus.RUNNING
+        execution.completed_at = None
+        execution.error_reason = None
+        execution.save(
+            update_fields=["status", "completed_at", "error_reason", "updated_at"]
+        )
+
+    retry_cfg = job.payload["retry"]
+    try:
+        start_hosted_harness_gateway_workflow(
+            str(job.id),
+            base_url,
+            retry_cfg["max_infrastructure_attempts"],
+            retry_cfg["initial_backoff_seconds"],
+            retry_cfg["max_backoff_seconds"],
+        )
+    except Exception as exc:
+        with transaction.atomic():
+            job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+                id=job.id
+            )
+            now = timezone.now()
+            job.state = HostedHarnessJob.State.FAILED
+            job.current_stage = "failed"
+            job.terminal_at = now
+            job.failure = {
+                "domain": "infrastructure",
+                "stage": "queued",
+                "code": "scheduler_unavailable",
+                "message": "Hosted rerun could not be scheduled",
+            }
+            job.save(
+                update_fields=[
+                    "state",
+                    "current_stage",
+                    "terminal_at",
+                    "failure",
+                    "updated_at",
+                ]
+            )
+            project_terminal_job_onto_run(job, now)
+        raise HostedHarnessError(
+            "scheduler_unavailable",
+            "Hosted rerun could not be scheduled",
+            status_code=503,
+            retryable=True,
+        ) from exc
+    return job
+
+
+def scope_dispatch_to_rerun(dispatch_payload: dict[str, Any]) -> dict[str, Any]:
+    """Narrow a Run's dispatch document to the executions an in-run re-run chose."""
+
+    metadata = dict(dispatch_payload.get("metadata") or {})
+    chosen = set(metadata.pop(RERUN_EXECUTION_KEYS, None) or ())
+    if not chosen:
+        return dispatch_payload
+    manifest = [
+        entry
+        for entry in metadata.get("execution_manifest") or []
+        if entry["execution_key"] in chosen
+    ]
+    metadata["execution_manifest"] = manifest
+    return {**dispatch_payload, "scenario_count": len(manifest), "metadata": metadata}
+
+
+def _apply_parallelism_admission(
+    job: HostedHarnessJob, snapshot_digest: str | None
+) -> int:
+    """Decide + record the W>1 admission under the shared guard; return admitted W.
+
+    Reads the requested parallelism from ``job.payload.runtime.parallelism`` (the
+    immutable stored intent) and, when the shared guard denies W>1, records
+    ``metadata.parallelism_clamped = {"requested": N}`` so support and the FE can
+    see it. When the request is admitted (W<=1, or W>1 that qualifies), any stale
+    clamp marker from a prior attempt is cleared so a rerun that now qualifies
+    drops the notice. The requested value itself is never rewritten.
+
+    Returns the ADMITTED parallelism so ``register_attempt`` can surface it as the
+    single admission source of truth — the gateway applies this returned value to
+    the ephemeral guest job.json rather than independently re-running the guard.
+    """
+    runtime = job.payload.get("runtime") or {}
+    requested = runtime.get("parallelism") or 1
+    admitted, clamped = clamp_parallelism(requested, snapshot_digest)
+    from simulate.services.harness_capacity import configured_capacity
+
+    # An in-run re-run executes only its chosen calls, so W is bounded by those.
+    capacity = configured_capacity(scope_dispatch_to_rerun(job.payload))
+    admitted = min(admitted, capacity.parallelism)
+    clamped = admitted != requested
+    metadata = dict(job.payload.get("metadata") or {})
+    changed = False
+    if clamped:
+        marker = {"requested": requested, "admitted": admitted}
+        if metadata.get("parallelism_clamped") != marker:
+            metadata["parallelism_clamped"] = marker
+            changed = True
+    elif "parallelism_clamped" in metadata:
+        metadata.pop("parallelism_clamped")
+        changed = True
+    if changed:
+        payload = dict(job.payload)
+        payload["metadata"] = metadata
+        job.payload = payload
+        job.save(update_fields=["payload", "updated_at"])
+    return admitted
 
 
 def register_attempt(
@@ -171,6 +789,18 @@ def register_attempt(
     fence = secrets.token_urlsafe(32)
     with transaction.atomic():
         job = HostedHarnessJob.no_workspace_objects.select_for_update().get(id=job_id)
+        # AUTHORITATIVE W>1 admission gate (C4 §4 pin ii / §5, decision D23).
+        # register_attempt is the single chokepoint every attempt crosses — fresh
+        # create, rerun_saved, harness_sandbox.rerun, and gateway retry all reach
+        # here — so the shared guard runs here regardless of how the attempt was
+        # requested. A denied W>1 is admitted at 1 and the clamp is recorded on
+        # the job metadata; the job's stored REQUESTED value
+        # (job.payload.runtime.parallelism) is preserved so a later rerun
+        # re-evaluates honestly against the then-current flag/digest. A saved W=4
+        # job therefore reruns at W=1 when the flag/digest no longer qualify. The
+        # admitted value is returned on the capability so the gateway applies it
+        # verbatim (single source of truth) instead of re-deriving the guard.
+        admitted_parallelism = _apply_parallelism_admission(job, snapshot_digest)
         previous_number = job.current_attempt_number
         attempt_number = previous_number + 1
         if previous_number:
@@ -185,9 +815,7 @@ def register_attempt(
                     HostedHarnessAttempt.State.CLEANING_UP,
                 ),
             ).update(state=HostedHarnessAttempt.State.SUPERSEDED)
-        runnable_deadline = now + timedelta(
-            seconds=job.payload["runtime"]["max_duration_seconds"]
-        )
+        runnable_deadline = now + timedelta(seconds=_active_attempt_budget_seconds(job))
         expires_at = runnable_deadline + timedelta(seconds=_TOKEN_TAIL_SECONDS)
         attempt = HostedHarnessAttempt.no_workspace_objects.create(
             job=job,
@@ -225,6 +853,12 @@ def register_attempt(
                 "updated_at",
             ]
         )
+        if job.test_execution_id:
+            TestExecution.no_workspace_objects.filter(id=job.test_execution_id).update(
+                status=TestExecution.ExecutionStatus.RUNNING,
+                completed_at=None,
+                error_reason=None,
+            )
 
     base = endpoint_base_url.rstrip("/")
     prefix = f"{base}/simulate/api/harness/attempts/{attempt.id}"
@@ -245,8 +879,139 @@ def register_attempt(
         },
     }
     return AttemptCapability(
-        attempt=attempt, token=token, fence=fence, document=document
+        attempt=attempt,
+        token=token,
+        fence=fence,
+        document=document,
+        admitted_parallelism=admitted_parallelism,
     )
+
+
+def activate_attempt_capability(capability: AttemptCapability) -> AttemptCapability:
+    """Start the guest's time budget immediately before its capability is uploaded.
+
+    A managed sandbox can take a long time to create or accept source uploads. The
+    token is not available to the guest during that work, so charging that time
+    against the guest's deadline can expire an otherwise healthy run before its
+    first call. This is only for the unissued, provisioning capability; it must
+    never extend a running guest's access.
+    """
+
+    with transaction.atomic():
+        job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+            id=capability.attempt.job_id
+        )
+        attempt = HostedHarnessAttempt.no_workspace_objects.select_for_update().get(
+            id=capability.attempt.id, job_id=job.id
+        )
+        if (
+            attempt.state != HostedHarnessAttempt.State.PROVISIONING
+            or not attempt.provider_ref
+            or job.current_attempt_number != attempt.attempt_number
+        ):
+            raise HostedHarnessError(
+                "attempt_capability_activation_invalid",
+                "Only the current, provisioned attempt can be activated",
+            )
+        runnable_deadline = timezone.now() + timedelta(
+            seconds=_active_attempt_budget_seconds(job)
+        )
+        attempt.expires_at = runnable_deadline + timedelta(seconds=_TOKEN_TAIL_SECONDS)
+        attempt.save(update_fields=["expires_at", "updated_at"])
+        job.deadline_at = runnable_deadline
+        job.save(update_fields=["deadline_at", "updated_at"])
+
+    return AttemptCapability(
+        attempt=attempt,
+        token=capability.token,
+        fence=capability.fence,
+        document={
+            **capability.document,
+            "expires_at": _rfc3339(attempt.expires_at),
+        },
+        admitted_parallelism=capability.admitted_parallelism,
+    )
+
+
+_TERMINAL_STATES = frozenset(
+    {
+        HostedHarnessJob.State.COMPLETED,
+        HostedHarnessJob.State.FAILED,
+        HostedHarnessJob.State.CANCELED,
+    }
+)
+
+
+DELETE_CANCEL_REASON = "environment_deleted"
+
+
+def delete_environment(job: HostedHarnessJob) -> None:
+    """Hide an environment and request cleanup for every live hosted sandbox."""
+    from simulate.temporal.client import cancel_hosted_harness_gateway_workflow
+
+    jobs_to_cancel = []
+    parent_cancel_id = None
+    with transaction.atomic():
+        locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+            id=job.id
+        )
+        active_children = list(
+            HostedHarnessJob.no_workspace_objects.select_for_update()
+            .filter(environment=locked)
+            .exclude(state__in=_TERMINAL_STATES)
+            .order_by("id")
+        )
+        for child in active_children:
+            child = request_cancellation(child, DELETE_CANCEL_REASON)
+            if child.state not in _TERMINAL_STATES:
+                jobs_to_cancel.append(str(child.id))
+
+        if locked.state in _TERMINAL_STATES:
+            _soft_delete(locked)
+        else:
+            locked = request_cancellation(locked, DELETE_CANCEL_REASON)
+            if locked.state in _TERMINAL_STATES:
+                _soft_delete(locked)
+            else:
+                parent_cancel_id = str(locked.id)
+                jobs_to_cancel.append(parent_cancel_id)
+
+    for job_id in jobs_to_cancel:
+        try:
+            cancel_hosted_harness_gateway_workflow(job_id)
+        except Exception:
+            logger.exception("hosted_harness_delete_cancel_failed", job_id=job_id)
+            try:
+                from simulate.services.hosted_harness_gateway import (
+                    HostedHarnessGateway,
+                )
+
+                cancel_job = HostedHarnessJob.no_workspace_objects.get(id=job_id)
+                HostedHarnessGateway().cancel(cancel_job, reason=DELETE_CANCEL_REASON)
+            except Exception:
+                logger.exception(
+                    "hosted_harness_delete_direct_cancel_failed", job_id=job_id
+                )
+                if job_id == parent_cancel_id:
+                    _soft_delete(HostedHarnessJob.no_workspace_objects.get(id=job_id))
+
+
+def _soft_delete(job: HostedHarnessJob) -> None:
+    job.deleted = True
+    job.deleted_at = timezone.now()
+    job.save(update_fields=["deleted", "deleted_at", "updated_at"])
+
+
+def finish_deferred_delete(job: HostedHarnessJob) -> list[str]:
+    """Hide a job its owner deleted while it ran, now that the run is over.
+
+    Returns the fields set, for the caller's ``update_fields``.
+    """
+    if job.cancel_reason != DELETE_CANCEL_REASON or job.deleted:
+        return []
+    job.deleted = True
+    job.deleted_at = timezone.now()
+    return ["deleted", "deleted_at"]
 
 
 def request_cancellation(job: HostedHarnessJob, reason: str) -> HostedHarnessJob:
@@ -329,6 +1094,15 @@ def provision_scenarios(
             "persona scenario_key values must be unique",
             status_code=400,
         )
+    if (
+        len(persona_keys) != job.scenario_count
+        and job.environment_id is None
+        and job.test_execution_id is None
+    ):
+        # A build holds what its harness built; the count it was asked for was the starting brief.
+        job.scenario_count = len(persona_keys)
+        job.payload = {**(job.payload or {}), "scenario_count": len(persona_keys)}
+        job.save(update_fields=["scenario_count", "payload", "updated_at"])
     if len(persona_keys) != job.scenario_count:
         raise HostedHarnessError(
             "scenario_count_mismatch",
@@ -376,12 +1150,17 @@ def provision_scenarios(
         with transaction.atomic():
             for persona, (scenario, row) in zip(new_personas, bindings, strict=True):
                 registrations.append(
-                    HostedHarnessScenario.no_workspace_objects.create(
+                    # A key an amend dropped comes back as its own row, not a duplicate.
+                    HostedHarnessScenario.all_objects.update_or_create(
                         job=job,
                         scenario_key=persona["scenario_key"],
-                        scenario=scenario,
-                        dataset_row=row,
-                    )
+                        defaults={
+                            "scenario": scenario,
+                            "dataset_row": row,
+                            "deleted": False,
+                            "deleted_at": None,
+                        },
+                    )[0]
                 )
         return _provision_response(job, registrations)
 
@@ -438,30 +1217,106 @@ def provision_scenarios(
         locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
             id=job.id
         )
-        if locked.run_test_id and locked.run_test_id != run_test.id:
+        existing_registrations = list(
+            HostedHarnessScenario.no_workspace_objects.select_for_update()
+            .filter(job=locked)
+            .order_by("created_at")
+        )
+        requested_keys = [persona["scenario_key"] for persona in payload["personas"]]
+        existing_by_key = {
+            registration.scenario_key: registration
+            for registration in existing_registrations
+        }
+        if locked.run_test_id:
+            if set(existing_by_key) == set(requested_keys):
+                # A concurrent request already provisioned this suite; return it.
+                return _provision_response(locked, existing_registrations)
             raise HostedHarnessError(
                 "scenario_registration_conflict",
                 "another attempt registered scenarios first",
                 status_code=409,
             )
         locked.run_test = run_test
-        locked.save(update_fields=["run_test", "updated_at"])
-        registrations = [
-            HostedHarnessScenario.no_workspace_objects.create(
-                job=locked,
-                scenario_key=persona["scenario_key"],
-                scenario=scenarios[0],
-                dataset_row=row,
+        locked.content_updated_at = timezone.now()
+        locked.save(update_fields=["run_test", "content_updated_at", "updated_at"])
+        if existing_registrations:
+            # Rows indexed for scenarios the final suite dropped are hidden, not fatal.
+            requested = set(requested_keys)
+            stale = [
+                registration
+                for key, registration in existing_by_key.items()
+                if key not in requested
+            ]
+            if any(row.scenario_id or row.call_execution_id for row in stale):
+                raise HostedHarnessError(
+                    "scenario_registration_conflict",
+                    "the indexed authored suite differs from the provision request",
+                    status_code=409,
+                )
+            bound_at = timezone.now()
+            for row in stale:
+                row.deleted, row.deleted_at, row.updated_at = True, bound_at, bound_at
+            HostedHarnessScenario.all_objects.bulk_update(
+                stale, ["deleted", "deleted_at", "updated_at"]
             )
-            for persona, row in zip(payload["personas"], dataset_rows, strict=True)
-        ]
+            hidden = {
+                row.scenario_key: row
+                for row in HostedHarnessScenario.all_objects.filter(
+                    job=locked,
+                    deleted=True,
+                    scenario_key__in=requested - set(existing_by_key),
+                )
+            }
+            registrations = []
+            for persona, row in zip(payload["personas"], dataset_rows, strict=True):
+                key = persona["scenario_key"]
+                registration = existing_by_key.get(key) or hidden.get(key)
+                if registration is None:
+                    registration = HostedHarnessScenario.no_workspace_objects.create(
+                        job=locked, scenario_key=key
+                    )
+                registration.deleted, registration.deleted_at = False, None
+                registration.scenario = scenarios[0]
+                registration.dataset_row = row
+                registration.updated_at = bound_at
+                registrations.append(registration)
+            HostedHarnessScenario.all_objects.bulk_update(
+                registrations,
+                ["deleted", "deleted_at", "scenario", "dataset_row", "updated_at"],
+            )
+        else:
+            registrations = [
+                HostedHarnessScenario.no_workspace_objects.create(
+                    job=locked,
+                    scenario_key=persona["scenario_key"],
+                    scenario=scenarios[0],
+                    dataset_row=row,
+                )
+                for persona, row in zip(payload["personas"], dataset_rows, strict=True)
+            ]
         _record_target_agent_facts(locked, agent_definition, payload)
+        stored = _store_authored_agent(locked, agent_definition, payload)
+        _turn_on_observability(locked, agent_definition, payload, stored)
         _select_platform_evals(locked, run_test, payload, modality)
     return _provision_response(locked, registrations)
 
 
 def _target_agent_prompt(job: HostedHarnessJob, payload: dict[str, Any]) -> str:
-    """The target agent's instructions: the guest's own prompt, else the contract excerpt."""
+    """Resolve target instructions without reducing an Others prompt."""
+    connector = str((job.payload.get("agent") or {}).get("connector") or "")
+    if connector in {"phone", "livekit"}:
+        # "Others" is configured from a user-supplied system prompt.  Keep that
+        # complete prompt as the agent definition's source of truth: the hosted
+        # guest's ``agent_prompt`` may only be the short contract excerpt used
+        # during authoring and must not replace it.
+        configured = str(
+            ((job.payload.get("agent") or {}).get("config") or {}).get(
+                "target_system_prompt"
+            )
+            or ""
+        ).strip()
+        if configured:
+            return configured
     supplied = str(payload.get("agent_prompt") or "").strip()
     if supplied:
         return supplied
@@ -497,7 +1352,7 @@ def _record_target_agent_facts(
     # model and language are left alone: the contract carries neither.
     connector = str((job.payload.get("agent") or {}).get("connector") or "").lower()
     if (
-        connector in {"livekit", "vapi", "retell", "retell_chat"}
+        connector in {"livekit", "vapi", "retell", "retell_chat", "phone"}
         and not agent_definition.provider
     ):
         agent_definition.provider = (
@@ -509,19 +1364,186 @@ def _record_target_agent_facts(
     if named and agent_definition.agent_name == "alk-sdk-agent":
         agent_definition.agent_name = named[:255]
         changed.append("agent_name")
-    direction = str(authored.get("call_direction") or "").strip().lower()
-    if direction in {"inbound", "outbound"}:
-        inbound = direction == "inbound"
+    agent = job.payload.get("agent") or {}
+    agent_config = agent.get("config") or {}
+    # Provider-backed web voice targets are identified by different payload
+    # keys, but AgentDefinition intentionally stores both in assistant_id.
+    # Without copying this identity into the definition/version, authoring can
+    # succeed while the later simulation-runner build has no Retell agent_id
+    # or Vapi assistant_id and fails every selected call before transport.
+    assistant_id = str(
+        agent_config.get("assistant_id") or agent_config.get("agent_id") or ""
+    ).strip()
+    if assistant_id and agent_definition.assistant_id != assistant_id:
+        agent_definition.assistant_id = assistant_id
+        changed.append("assistant_id")
+    contact_number = str(agent_config.get("phone_number") or "").strip()
+    if contact_number and agent_definition.contact_number != contact_number:
+        # Phone targets arrive through the hosted job payload rather than the
+        # native agent-definition form. Persist the validated destination on
+        # the definition before creating its version so the hosted runner sees
+        # a SIP target instead of treating it as a LiveKit-native agent.
+        agent_definition.contact_number = contact_number
+        changed.append("contact_number")
+    explicit_inbound = agent_config.get("inbound")
+    declared = str(agent.get("call_direction") or "").strip().lower()
+    direction = declared or str(authored.get("call_direction") or "").strip().lower()
+    if isinstance(explicit_inbound, bool) or direction in {"inbound", "outbound"}:
+        # The user's RL Environment selection is authoritative: the explicit
+        # boolean first, then the submitted direction, then the authored guess.
+        inbound = (
+            explicit_inbound
+            if isinstance(explicit_inbound, bool)
+            else direction == "inbound"
+        )
         if agent_definition.inbound != inbound:
             agent_definition.inbound = inbound
             changed.append("inbound")
+    target_speaks_first = agent_config.get("target_speaks_first")
+    if (
+        isinstance(target_speaks_first, bool)
+        and agent_definition.target_speaks_first != target_speaks_first
+    ):
+        agent_definition.target_speaks_first = target_speaks_first
+        changed.append("target_speaks_first")
     if changed:
         agent_definition.save(update_fields=[*changed, "updated_at"])
-    if prompt and agent_definition.latest_version is None:
+    if (
+        prompt
+        and (
+            agent_definition.latest_version is None
+            or "description" in changed
+            or "assistant_id" in changed
+        )
+    ):
         agent_definition.create_version(
             description=prompt,
             commit_message="hosted harness target agent prompt",
             status="active",
+        )
+
+
+def _store_authored_agent(
+    job: HostedHarnessJob, agent_definition, payload: dict[str, Any]
+) -> tuple[str | None, uuid.UUID | None]:
+    sent = payload.get("agent")
+    source_kind = str((job.payload.get("source") or {}).get("kind") or "")
+    if (
+        sent is None
+        or payload.get("agent_definition_id")
+        or source_kind not in ("github", "archive")
+    ):
+        return None, None
+    agent_version_id = None
+    try:
+        with transaction.atomic():
+            version = agent_definition.latest_version
+            if version is None:
+                version = agent_definition.create_version(
+                    description="",
+                    commit_message="hosted harness authored agent",
+                    status="active",
+                )
+                AgentVersion.no_workspace_objects.filter(id=version.id).update(
+                    configuration_snapshot={
+                        **version.configuration_snapshot,
+                        "description": "",
+                    }
+                )
+            agent_version_id = version.id
+            if not (
+                isinstance(sent, dict)
+                and isinstance(sent.get("agent"), dict)
+                and isinstance(sent.get("sdk_version"), str)
+            ):
+                raise AgentStoreError("agent_invalid")
+            outcome = store_agent(
+                agent_version_id=version.id,
+                agent=sent["agent"],
+                sdk_version=sent["sdk_version"],
+            )
+        return outcome, agent_version_id
+    except Exception as exc:
+        logger.warning(
+            "harness_agent_not_stored",
+            job_id=str(job.id),
+            agent_version_id=str(agent_version_id) if agent_version_id else None,
+            code=exc.code if isinstance(exc, AgentStoreError) else type(exc).__name__,
+        )
+        return None, None
+
+
+def _turn_on_observability(
+    job: HostedHarnessJob,
+    agent_definition,
+    payload: dict[str, Any],
+    stored: tuple[str | None, uuid.UUID | None],
+) -> None:
+    """Turn observability on for the agent just stored, when the Environment asked for it.
+
+    A refusal never fails the provision: the reason is logged and kept on the job.
+    """
+    if (job.payload.get("metadata") or {}).get("observability_enabled") is not True:
+        return
+    details: dict[str, Any] = {}
+    failure: Exception | None = None
+    if payload.get("agent_definition_id"):
+        code = "bound"
+    elif stored[0] != "stored":
+        code = "agent_not_stored"
+    else:
+        # The try sits outside the savepoint so its rollback runs before the handler.
+        try:
+            with transaction.atomic():
+                row = set_agent_observability(
+                    agent_definition=agent_definition,
+                    enabled=True,
+                    user_id=None,
+                    organization=job.organization,
+                    workspace=job.workspace,
+                )
+                if row is not None:
+                    versions = AgentVersion.no_workspace_objects.filter(id=stored[1])
+                    snapshot = dict(
+                        versions.values_list("configuration_snapshot", flat=True).get()
+                        or {}
+                    )
+                    snapshot["observability_enabled"] = True
+                    versions.update(configuration_snapshot=snapshot)
+            return
+        except ObservabilityRefused as exc:
+            code = ",".join(entry.code for entry in exc.missing)
+            details = refusal_body(exc)["details"]
+        except Exception as exc:  # noqa: BLE001 - the provision must go on
+            code = type(exc).__name__
+            failure = exc
+    logger.warning(
+        "harness_observability_not_enabled",
+        job_id=str(job.id),
+        agent_definition_id=str(agent_definition.id),
+        code=code,
+        **({"exc_info": failure} if failure is not None else {}),
+    )
+    _save_observability_refusal(job, code, details)
+
+
+def _save_observability_refusal(
+    job: HostedHarnessJob, code: str, details: dict[str, Any]
+) -> None:
+    try:
+        with transaction.atomic():
+            payload = dict(job.payload)
+            metadata = dict(payload.get("metadata") or {})
+            metadata["observability_refusal"] = {"code": code, "details": details}
+            payload["metadata"] = metadata
+            job.payload = payload
+            job.save(update_fields=["payload", "updated_at"])
+    except Exception as exc:  # noqa: BLE001 - the provision must go on
+        logger.error(
+            "harness_observability_refusal_not_saved",
+            job_id=str(job.id),
+            code=type(exc).__name__,
+            exc_info=True,
         )
 
 
@@ -671,7 +1693,15 @@ def begin_scenarios(
             )
         locked.test_execution = test_execution
         locked.state = HostedHarnessJob.State.RUNNING
-        locked.save(update_fields=["test_execution", "state", "updated_at"])
+        locked.content_updated_at = timezone.now()
+        locked.save(
+            update_fields=[
+                "test_execution",
+                "state",
+                "content_updated_at",
+                "updated_at",
+            ]
+        )
         for registration, call in zip(registrations, mapped_calls, strict=True):
             registration.call_execution = call
             registration.save(update_fields=["call_execution", "updated_at"])
@@ -718,14 +1748,13 @@ def record_cleanup(
         if attempt.state != HostedHarnessAttempt.State.SUPERSEDED:
             attempt.state = _attempt_terminal_state(attempt)
         attempt.save(update_fields=["cleanup_verified_at", "state", "updated_at"])
-        from simulate.services.harness_usage import (
-            record_sandbox_runtime,
-            replay_harness_usage,
-        )
+        from simulate.services.harness_usage import record_sandbox_runtime
+        from simulate.tasks.hosted_harness_usage import schedule_usage_seal
 
         record_sandbox_runtime(attempt, final=True)
-        # Teardown seals all measured authoring, even when no bundle was produced.
-        replay_harness_usage(attempt)
+        # Sealed after commit on the backend queue: the sandbox runner has no billing config.
+        sealed_attempt_id = str(attempt.id)
+        transaction.on_commit(lambda: schedule_usage_seal(sealed_attempt_id))
         job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
             id=attempt.job_id
         )
@@ -735,7 +1764,20 @@ def record_cleanup(
             job.state = HostedHarnessJob.State.RETRY_WAIT
             job.save(update_fields=["state", "updated_at"])
             return job
-        if attempt.terminal_stage == "completed":
+        snapshot_missing = (
+            job.environment_id is None
+            and job.test_execution_id is None
+            and attempt.terminal_stage == "completed"
+            and (
+                not job.run_test_id
+                or not (job.payload.get("metadata") or {}).get("authoring_object_key")
+                or HostedHarnessScenario.no_workspace_objects.filter(job=job).count()
+                != job.scenario_count
+            )
+        )
+        if snapshot_missing:
+            job.state = HostedHarnessJob.State.FAILED
+        elif attempt.terminal_stage == "completed":
             job.state = HostedHarnessJob.State.COMPLETED
         elif attempt.terminal_stage == "canceled":
             job.state = HostedHarnessJob.State.CANCELED
@@ -743,80 +1785,184 @@ def record_cleanup(
             job.state = HostedHarnessJob.State.FAILED
         # Cleanup is an intermediate lifecycle stage. Once absence has been verified, expose the
         # guest's terminal stage so a completed job cannot remain visually stuck on cleaning_up.
-        job.current_stage = attempt.terminal_stage or job.state
+        job.current_stage = (
+            HostedHarnessJob.State.FAILED
+            if snapshot_missing
+            else attempt.terminal_stage or job.state
+        )
         job.terminal_at = now
-        # Copy terminal stage/failure onto the job atomically so
-        # status.failure and status.stage are authoritative in the read DTO.
-        job.current_stage = attempt.terminal_stage or job.current_stage
-        job.failure = attempt.terminal_failure
+        job.failure = (
+            {
+                "domain": "platform_sync",
+                "stage": "validating_scenarios",
+                "code": "authoring_snapshot_missing",
+                "message": "Validated scenarios or their durable bundle are missing",
+            }
+            if snapshot_missing
+            else attempt.terminal_failure
+        )
+        job.content_updated_at = now
         job.save(
             update_fields=[
                 "state",
                 "terminal_at",
                 "current_stage",
                 "failure",
+                "content_updated_at",
                 "updated_at",
+                *finish_deferred_delete(job),
             ]
         )
-        if job.test_execution_id:
-            execution_status = {
-                HostedHarnessJob.State.COMPLETED: TestExecution.ExecutionStatus.COMPLETED,
-                HostedHarnessJob.State.CANCELED: TestExecution.ExecutionStatus.CANCELLED,
-                HostedHarnessJob.State.FAILED: TestExecution.ExecutionStatus.FAILED,
-            }[job.state]
-            TestExecution.no_workspace_objects.filter(id=job.test_execution_id).update(
-                status=execution_status,
-                completed_at=now,
-                error_reason=(
-                    (attempt.terminal_failure or {}).get("message")
-                    if job.state == HostedHarnessJob.State.FAILED
-                    else None
-                ),
+        if job.state == HostedHarnessJob.State.COMPLETED:
+            built_job_id, built_attempt_id = str(job.id), str(attempt.id)
+            transaction.on_commit(
+                lambda: _ask_builder_to_check(built_job_id, built_attempt_id)
             )
-            remaining_status = (
-                CallExecution.CallStatus.CANCELLED
-                if job.state == HostedHarnessJob.State.CANCELED
-                else CallExecution.CallStatus.FAILED
-            )
-            CallExecution.no_workspace_objects.filter(
-                test_execution_id=job.test_execution_id,
-                status__in=(
-                    CallExecution.CallStatus.PENDING,
-                    CallExecution.CallStatus.REGISTERED,
-                    CallExecution.CallStatus.ONGOING,
-                ),
-            ).update(status=remaining_status, completed_at=now)
+        project_terminal_job_onto_run(job, now)
         return job
 
 
-def update_execution_counts(job: HostedHarnessJob) -> None:
+def _ask_builder_to_check(job_id: str, attempt_id: str) -> None:
+    """Tell the builder session that built this environment to check it against the agent."""
+    from simulate.models import HostedHarnessConversationMessage
+    from simulate.services.hosted_harness_conversation import send_to_harness
+    from simulate.services.hosted_harness_ingress import _public_base_url
+
+    try:
+        if not HostedHarnessConversationMessage.no_workspace_objects.filter(
+            conversation__job_id=job_id, client_request_id=f"build-{attempt_id}"
+        ).exists():
+            return
+        send_to_harness(
+            HostedHarnessJob.no_workspace_objects.get(id=job_id),
+            content="The environment is validated and sealed. Check it against the agent.",
+            client_request_id=f"check-{attempt_id}",
+            endpoint_base_url=_public_base_url(None),
+        )
+    except Exception:
+        logger.exception("builder_check_request_failed", job_id=job_id)
+
+
+def project_terminal_job_onto_run(job: HostedHarnessJob, now: datetime) -> None:
+    """Move a terminal job's Run, and the calls it left open, to their end states."""
     if not job.test_execution_id:
         return
-    receipts = HostedHarnessReceipt.no_workspace_objects.filter(job=job)
-    # Harness receipt outcomes answer "did the scenario satisfy its checks?";
-    # TestExecution counters answer "did the call transport complete?".  Keep
-    # those dimensions separate so a completed, playable call with a failed
-    # behavioural/evidence verdict is not reported as a failed call.
-    scenario_completed = receipts.filter(status="passed").count()
-    scenario_failed = receipts.filter(status__in=("failed", "errored")).count()
+    message = (job.failure or {}).get("message")
     calls = CallExecution.no_workspace_objects.filter(
         test_execution_id=job.test_execution_id
     )
-    calls_completed = calls.filter(status=CallExecution.CallStatus.COMPLETED).count()
-    calls_failed = calls.filter(
+    calls.filter(
         status__in=(
-            CallExecution.CallStatus.FAILED,
-            CallExecution.CallStatus.CANCELLED,
+            CallExecution.CallStatus.PENDING,
+            CallExecution.CallStatus.REGISTERED,
+            CallExecution.CallStatus.ONGOING,
         )
-    ).count()
+    ).update(
+        status=(
+            CallExecution.CallStatus.CANCELLED
+            if job.state == HostedHarnessJob.State.CANCELED
+            else CallExecution.CallStatus.FAILED
+        ),
+        completed_at=now,
+        **({"ended_reason": message} if message else {}),
+    )
+    execution_status = {
+        HostedHarnessJob.State.COMPLETED: TestExecution.ExecutionStatus.COMPLETED,
+        HostedHarnessJob.State.CANCELED: TestExecution.ExecutionStatus.CANCELLED,
+        HostedHarnessJob.State.FAILED: TestExecution.ExecutionStatus.FAILED,
+    }[job.state]
+    has_completed_calls = calls.filter(
+        status=CallExecution.CallStatus.COMPLETED
+    ).exists()
+    # An in-run re-run stops only its chosen calls; the Run's other calls already
+    # finished, so the Run settles from its calls whatever ended the re-run.
+    rerun = bool((job.payload.get("metadata") or {}).get(RERUN_EXECUTION_KEYS))
+    if execution_status == TestExecution.ExecutionStatus.COMPLETED or (
+        rerun and has_completed_calls
+    ):
+        # Transport finished, scoring may not have: only a run still in
+        # transport is moved, and only the settle decides it is done.
+        in_transport = TestExecution.no_workspace_objects.filter(
+            id=job.test_execution_id, status__in=TRANSPORT_RUN_STATUSES
+        )
+        if has_completed_calls:
+            in_transport.update(
+                status=TestExecution.ExecutionStatus.EVALUATING, error_reason=None
+            )
+            settle_run_after_commit(job.test_execution_id)
+        else:
+            in_transport.update(
+                status=execution_status, completed_at=now, error_reason=None
+            )
+        return
     TestExecution.no_workspace_objects.filter(id=job.test_execution_id).update(
-        completed_calls=calls_completed,
-        failed_calls=calls_failed,
+        status=execution_status,
+        completed_at=now,
+        error_reason=message if job.state == HostedHarnessJob.State.FAILED else None,
     )
-    HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
-        completed_count=scenario_completed,
-        failed_count=scenario_failed,
-    )
+
+
+def update_execution_counts(job: HostedHarnessJob) -> None:
+    # Receipt deliveries for parallel scenarios arrive independently. Lock the job projection
+    # while taking the snapshot so a slower request cannot overwrite counters with an older view
+    # after a faster request has already accounted a later receipt.
+    with transaction.atomic():
+        locked_job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+            id=job.id
+        )
+        if not locked_job.test_execution_id:
+            return
+        current_attempt_number = locked_job.current_attempt_number
+        # Reruns retain old receipts until their replacements arrive. Counters must describe
+        # only the current attempt while its parallel receipts are delivered independently.
+        receipts = HostedHarnessReceipt.no_workspace_objects.filter(job=locked_job)
+        rerun_keys = (locked_job.payload.get("metadata") or {}).get(
+            RERUN_EXECUTION_KEYS
+        )
+        if rerun_keys:
+            # An in-run re-run replaces only its chosen calls: every other call's
+            # receipt is still that call's result in the Run.
+            receipts = receipts.exclude(
+                execution__execution_key__in=rerun_keys,
+                attempt_number__lt=current_attempt_number,
+            )
+        else:
+            receipts = receipts.filter(attempt_number=current_attempt_number)
+        # Harness receipt outcomes answer "did the scenario satisfy its checks?"; TestExecution
+        # counters answer "did the call transport complete?". Keep those dimensions separate so a
+        # completed, playable call with a failed behavioural/evidence verdict is not reported as a
+        # failed call.
+        scenario_completed = receipts.filter(status="passed").count()
+        scenario_failed = receipts.filter(status__in=("failed", "errored")).count()
+        calls = CallExecution.no_workspace_objects.filter(
+            test_execution_id=locked_job.test_execution_id,
+            hosted_registration__receipts__attempt_number=current_attempt_number,
+        )
+        calls_completed = calls.filter(
+            status=CallExecution.CallStatus.COMPLETED
+        ).count()
+        calls_failed = calls.filter(
+            status__in=(
+                CallExecution.CallStatus.FAILED,
+                CallExecution.CallStatus.CANCELLED,
+            )
+        ).count()
+        TestExecution.no_workspace_objects.filter(
+            id=locked_job.test_execution_id
+        ).update(
+            completed_calls=calls_completed,
+            failed_calls=calls_failed,
+        )
+        # A queryset update bypasses ``auto_now``, so the content timestamp is set
+        # explicitly here: scenarios finishing is exactly the kind of progress the
+        # environments list means by "last updated".
+        HostedHarnessJob.no_workspace_objects.filter(id=locked_job.id).exclude(
+            completed_count=scenario_completed, failed_count=scenario_failed
+        ).update(
+            completed_count=scenario_completed,
+            failed_count=scenario_failed,
+            content_updated_at=timezone.now(),
+        )
 
 
 def _attempt_terminal_state(attempt: HostedHarnessAttempt) -> str:

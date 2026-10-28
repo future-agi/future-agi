@@ -1,3 +1,4 @@
+import ast
 import concurrent.futures
 import json
 import math
@@ -41,7 +42,9 @@ from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet
 
 from model_hub.models.score import Score
+from model_hub.utils.eval_list import derive_output_type
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_errors import ApiErrorCode
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
@@ -64,15 +67,16 @@ from tracer.selectors.trace_filter_reads import (
 )
 from tracer.serializers.filters import (
     ObserveGraphDataQuerySerializer,
-    ObserveGraphDataRequestSerializer,
     ObserveGraphDataResponseSerializer,
     PageDepthExceededErrorSerializer,
 )
 from tracer.serializers.trace import (
     TraceAgentGraphQuerySerializer,
     TraceAgentGraphResponseSerializer,
+    TraceDetailQuerySerializer,
     TraceDetailResponseSerializer,
     TraceExportQuerySerializer,
+    TraceGraphDataRequestSerializer,
     TraceIndexQuerySerializer,
     TraceListQuerySerializer,
     TraceNavigationResponseSerializer,
@@ -131,6 +135,10 @@ from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
 from tracer.services.clickhouse.query_builders.user_list import (
     UnsupportedBoundedUserListQuery,
 )
+from tracer.services.clickhouse.query_builders.voice_call_list import (
+    VOICE_CALL_ROOT_FILTER,
+    VOICE_CALL_SIMULATOR_EXCLUSION_FILTER,
+)
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
 from tracer.services.clickhouse.read_budget import (
     ReadDeadline,
@@ -154,6 +162,11 @@ from tracer.services.clickhouse.v2.trace_detail_reads import (
     TraceDetailReadUnavailable,
     read_trace_detail,
 )
+from tracer.services.eval_tiles import (
+    build_eval_rollup,
+    count_column_metadata,
+    select_latest_completed,
+)
 from tracer.services.filter_attestation import (
     applied_filter_attestation,
     graph_execution_filters,
@@ -168,6 +181,7 @@ from tracer.services.users_list_manager import USER_EXPORT_PAGE_SIZE, UsersListM
 from tracer.utils.annotations import (
     build_annotation_subqueries as _build_annotation_subqueries_impl,
 )
+from tracer.utils.attribute_accessor import span_raw_log
 from tracer.utils.bounded_csv import (
     BOUNDED_EXPORT_PAGE_SIZE,
     bounded_page_csv_response,
@@ -180,7 +194,6 @@ from tracer.utils.helper import (
     get_annotation_labels_for_project,
     get_default_trace_config,
     get_project_eval_configs,
-    select_eval_score,
     update_column_config_based_on_eval_config,
     update_span_column_config_based_on_annotations,
 )
@@ -625,6 +638,8 @@ def _safe_parse_metadata(raw):
 
 def _pivot_voice_detail_eval_rows(
     eval_rows: tuple[dict[str, Any], ...] | list[dict[str, Any]],
+    *,
+    output_types: Mapping[str, str | None] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Aggregate exact per-span eval rows into the voice-detail contract.
 
@@ -661,19 +676,70 @@ def _pivot_voice_detail_eval_rows(
                 continue
             completed.append(eval_row)
 
+        # Each span counts once, by its newest completed result, as on the
+        # call list and the trace-detail rollup.
+        by_span: dict[str, list[dict[str, Any]]] = {}
+        for eval_row in completed:
+            span_id = str(
+                eval_row.get("span_id") or eval_row.get("observation_span_id") or ""
+            )
+            by_span.setdefault(span_id, []).append(eval_row)
+        completed = [
+            select_latest_completed(span_rows) for span_rows in by_span.values()
+        ]
+
         # Completed rows have precedence over a partial error, matching the
         # list endpoint's completed > errored > lifecycle state contract.
         if completed:
+            output_type = (output_types or {}).get(config_id) or ""
+            kind = output_type.replace("/", "_").replace(" ", "_").upper()
+            # Scalar output_str is also populated by numeric and Pass/Fail
+            # evaluators. Only choice templates may use it as a choice label.
+            choice_rows = (
+                completed if kind in {"", "CHOICE", "CHOICES", "DETERMINISTIC"} else []
+            )
             parsed_choice_lists: list[list[str]] = []
-            for eval_row in completed:
+            for eval_row in choice_rows:
                 raw_choices = eval_row.get("output_str_list")
                 if isinstance(raw_choices, str):
                     try:
                         raw_choices = json.loads(raw_choices)
                     except (json.JSONDecodeError, TypeError):
                         raw_choices = None
-                if isinstance(raw_choices, (list, tuple)) and raw_choices:
-                    parsed_choice_lists.append([str(value) for value in raw_choices])
+                if not raw_choices and kind in {"CHOICE", "CHOICES", "DETERMINISTIC"}:
+                    scalar_choice = eval_row.get("output_str")
+                    if (
+                        isinstance(scalar_choice, str)
+                        and scalar_choice.strip()
+                        and scalar_choice != "ERROR"
+                    ):
+                        parsed_choice: Any = scalar_choice
+                        if scalar_choice.lstrip().startswith(("{", "[")):
+                            try:
+                                parsed_choice = json.loads(scalar_choice)
+                            except json.JSONDecodeError:
+                                try:
+                                    parsed_choice = ast.literal_eval(scalar_choice)
+                                except (ValueError, SyntaxError):
+                                    parsed_choice = scalar_choice
+                        if isinstance(parsed_choice, dict):
+                            parsed_choice = (
+                                parsed_choice.get("choice")
+                                or parsed_choice.get("label")
+                                or parsed_choice.get("value")
+                                or parsed_choice.get("choices")
+                            )
+                        raw_choices = (
+                            parsed_choice
+                            if isinstance(parsed_choice, list)
+                            else [parsed_choice]
+                        )
+                if isinstance(raw_choices, (list, tuple)):
+                    labels = [
+                        str(value) for value in raw_choices if value not in (None, "")
+                    ]
+                    if labels:
+                        parsed_choice_lists.append(labels)
 
             if parsed_choice_lists:
                 choice_counts: dict[str, int] = {}
@@ -696,11 +762,19 @@ def _pivot_voice_detail_eval_rows(
                 and not isinstance(value, bool)
                 and math.isfinite(value)
             ]
-            bool_values = [
-                bool(value)
-                for value in (row.get("output_bool") for row in completed)
-                if value is not None
-            ]
+            bool_values = []
+            for row in completed:
+                output_bool = row.get("output_bool")
+                if output_bool is not None:
+                    bool_values.append(bool(output_bool))
+                    continue
+                output_float = row.get("output_float")
+                if (
+                    isinstance(output_float, (int, float))
+                    and not isinstance(output_float, bool)
+                    and math.isfinite(output_float)
+                ):
+                    bool_values.append(output_float >= 0.5)
             pivoted[config_id] = {
                 "avg_score": (
                     round(100.0 * sum(float_values) / len(float_values), 2)
@@ -1066,7 +1140,12 @@ def _voice_call_export_projection(
             eval_name = str(eval_data.get("name") or f"Eval_{config_id}")
             output = eval_data.get("output", "")
             reason = eval_data.get("reason", "")
-            row_data[eval_name] = "" if output is None else str(output)
+            counts = eval_data.get("counts")
+            if isinstance(counts, Mapping):
+                # Count tiles export as the call list shows them.
+                row_data[eval_name] = json.dumps(counts)
+            else:
+                row_data[eval_name] = "" if output is None else str(output)
             row_data[f"{eval_name}_reason"] = "" if reason is None else str(reason)
         for attribute_key in custom_columns:
             row_data[attribute_key] = result.get(attribute_key, "")
@@ -2028,7 +2107,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
     def perform_destroy(self, instance):
         _soft_delete_trace_tree([instance])
 
-    @swagger_auto_schema(
+    @validated_request(
+        query_serializer=TraceDetailQuerySerializer,
         responses={
             200: TraceDetailResponseSerializer,
             **ERROR_RESPONSES,
@@ -2038,6 +2118,12 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
     def retrieve(self, request, *args, **kwargs):
         """
         Retrieve a trace by its ID.
+
+        Query params:
+        - project_id (optional) — the project the trace was opened from.
+        - test_execution_id or call_execution_id (optional) — a run the caller
+          can read; the hidden simulation project of that run's agent is read
+          in place of the caller's projects.
         """
         from tracer.services.clickhouse.v2.trace_detail_reads import (
             TraceDetailReadUnavailable,
@@ -2049,11 +2135,15 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 TraceDetailHandlerV2,
             )
 
+            query = getattr(request, "validated_query_data", {})
             handler = TraceDetailHandlerV2(
                 view=self,
                 request=request,
                 pk=trace_id,
                 analytics=V2AnalyticsQueryService(),
+                project_id=query.get("project_id"),
+                test_execution_id=query.get("test_execution_id"),
+                call_execution_id=query.get("call_execution_id"),
             )
             return self._gm.success_response(handler.fetch())
         except Trace.DoesNotExist:
@@ -2134,18 +2224,6 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             or mono.get("assistant_url")
         )
 
-    @staticmethod
-    def _coerce_raw_log(value):
-        """raw_log rides in span attributes as a JSON string (collector path) or a
-        dict (legacy PG+CDC). Return a dict either way so process_raw_logs can
-        recompute status/duration/recording_available/transcript from it."""
-        if isinstance(value, str):
-            try:
-                return json.loads(value) or {}
-            except (json.JSONDecodeError, TypeError):
-                return {}
-        return value or {}
-
     def populate_call_logs_result(
         self, qs, eval_configs, annotation_labels=None, *, detail_mode=False
     ):
@@ -2197,7 +2275,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             recording = self._build_recording_dict(attrs)
 
             # Raw provider payload if present (collector ships it as JSON string)
-            raw_log = self._coerce_raw_log(attrs.get("raw_log"))
+            raw_log = span_raw_log(attrs)
             provider = trace.provider or "vapi"
 
             processed_log = ObservabilityService.process_raw_logs(
@@ -2747,7 +2825,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
     @bounded_graph_action_request(resource="trace_graph")
     @validated_request(
         query_serializer=ObserveGraphDataQuerySerializer,
-        request_serializer=ObserveGraphDataRequestSerializer,
+        request_serializer=TraceGraphDataRequestSerializer,
         responses={
             200: ObserveGraphDataResponseSerializer,
             400: ApiErrorResponseSerializer,
@@ -2790,6 +2868,16 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 body["filters"],
             )
             filters = graph_execution_filters(filters)
+            observe_type = body.get("observe_type", "trace")
+            evidence_filters = filters
+            if observe_type == "voice":
+                # A voice call is a trace whose canonical root is a
+                # conversation span. Apply the voice list's own private root
+                # leaf so the chart counts the list's population.
+                filters = [*filters, VOICE_CALL_ROOT_FILTER]
+                if body.get("remove_simulation_calls"):
+                    # The list's "exclude simulation calls" toggle.
+                    filters.append(VOICE_CALL_SIMULATOR_EXCLUSION_FILTER)
             interval = body["interval"]
             req_data_config = body["req_data_config"]
             try:
@@ -2894,8 +2982,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 graph.update(
                     graph_query_evidence(
                         project_id=project_id,
-                        observe_type="trace",
-                        filters=filters,
+                        observe_type=observe_type,
+                        filters=evidence_filters,
                     )
                 )
                 graph = enforce_exact_graph_data_contract(graph)
@@ -3883,6 +3971,10 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         Query params:
         - trace_id or legacy traceId (required) — UUID of the voice call trace.
+        - project_id (optional) — the project the call was opened from.
+        - test_execution_id or call_execution_id (optional) — a run the caller
+          can read; the hidden simulation project of that run's agent is read
+          in place of the caller's projects.
         """
         trace_id = ""
         try:
@@ -3891,13 +3983,38 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             # Scope the ClickHouse identity read up front.  The exact reader
             # resolves latest span versions/tombstones inside only these
             # authorized projects, so a colliding public trace id cannot select
-            # another tenant via an arbitrary LIMIT 1.
-            project_ids = [
-                str(project_id)
-                for project_id in _project_queryset_for_request(request)
-                .values_list("id", flat=True)
-                .order_by("id")[:4097]
-            ]
+            # another tenant via an arbitrary LIMIT 1.  A project_id pins the
+            # read to the project the call was opened from; outside the
+            # caller's scope it resolves like a missing trace. A run the caller
+            # can read replaces the caller's projects with the hidden project
+            # of that run's agent.
+            pinned_project_id = request.validated_query_data.get("project_id")
+            test_execution_id = request.validated_query_data.get("test_execution_id")
+            call_execution_id = request.validated_query_data.get("call_execution_id")
+            run_scope = None
+            if test_execution_id is not None or call_execution_id is not None:
+                from tracer.services.simulation_project import (
+                    run_scope_project_ids,
+                    simulation_scope_for_run,
+                )
+
+                run_scope = simulation_scope_for_run(
+                    request,
+                    test_execution_id=test_execution_id,
+                    call_execution_id=call_execution_id,
+                )
+            if run_scope is not None:
+                project_ids = run_scope_project_ids(run_scope, pinned_project_id)
+            else:
+                project_scope = _project_queryset_for_request(request)
+                if pinned_project_id:
+                    project_scope = project_scope.filter(id=pinned_project_id)
+                project_ids = [
+                    str(project_id)
+                    for project_id in project_scope.values_list(
+                        "id", flat=True
+                    ).order_by("id")[:4097]
+                ]
             eval_configs_by_project: dict[str, list[CustomEvalConfig]] = {}
 
             def resolve_eval_config_ids(selected_project_id: str) -> list[str]:
@@ -4002,7 +4119,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         # fi.simulator.call_execution_id and similar keys.
         eval_attrs = span_attrs.get("eval_attributes", {}) or {}
 
-        raw_log = self._coerce_raw_log(span_attrs.get("raw_log"))
+        root_span_id = str(row.get("span_id", row.get("id", "")))
+        raw_log = span_raw_log(span_attrs, span_id=root_span_id)
         metadata_raw = row.get("metadata_json") or "{}"
         try:
             metadata = (
@@ -4037,7 +4155,6 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         recording = self._build_recording_dict(attr_str)
 
         # Build observation_span array — root span first
-        root_span_id = str(row.get("span_id", row.get("id", "")))
         observation_span = [
             {
                 "id": root_span_id,
@@ -4135,7 +4252,46 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     processed_log["message_count"] = len(stored)
 
         eval_outputs = {}
-        trace_evals = _pivot_voice_detail_eval_rows(detail.evals)
+        rollup_config_lookup = {}
+        for config in eval_configs:
+            config_id = str(config.id)
+            template = getattr(config, "eval_template", None)
+            template_config = getattr(template, "config", {}) or {}
+            rollup_config_lookup[config_id] = {
+                "name": getattr(config, "name", None)
+                or (getattr(template, "name", None) if template else None)
+                or config_id,
+                "output_type": derive_output_type(template) if template else None,
+                "template_type": getattr(template, "template_type", None)
+                if template
+                else None,
+                "choices": list(getattr(template, "choices", None) or [])
+                if template
+                else [],
+                "choices_map": dict(template_config.get("choices_map", {}) or {}),
+            }
+        trace_evals = _pivot_voice_detail_eval_rows(
+            detail.evals,
+            output_types={
+                config_id: info["output_type"]
+                for config_id, info in rollup_config_lookup.items()
+            },
+        )
+        if detail.eval_unavailable:
+            eval_rollup = {
+                "scope": "trace",
+                "evals": [],
+                "error": True,
+            }
+        else:
+            eval_rollup = build_eval_rollup(
+                detail.evals,
+                rollup_config_lookup,
+                root_span_id,
+            ).get(
+                root_span_id,
+                {"scope": "trace", "evals": []},
+            )
 
         for config in eval_configs:
             config_id = str(config.id)
@@ -4190,11 +4346,14 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                         else scores.get("avg_score")
                     )
                     if output_type == "Pass/Fail":
-                        metric_entry["output"] = (
-                            "Pass"
-                            if isinstance(score_val, (int, float)) and score_val > 0
-                            else "Fail"
-                        )
+                        if score_val == 100:
+                            metric_entry["output"] = "Pass"
+                        elif score_val == 0:
+                            metric_entry["output"] = "Fail"
+                        else:
+                            # Mixed per-span results must not be collapsed to
+                            # Pass merely because one span passed.
+                            metric_entry["output"] = score_val
                     else:
                         # The bounded reducer uses the list endpoint's
                         # pre-scaled 0..100 score contract.
@@ -4223,6 +4382,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             "recording_available": self._recording_available(recording),
             "call_metadata": metadata,
             "observation_span": observation_span,
+            "eval_rollup": eval_rollup,
             "eval_outputs": eval_outputs,
             "turn_count": voice_metrics.get("turn_count"),
             "talk_ratio": voice_metrics.get("talk_ratio"),
@@ -4258,6 +4418,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             project_id=str(project_id),
             page_number=0,
             page_size=TRACE_NAVIGATION_CANDIDATE_LIMIT,
+            eval_count_mode=True,
             filters=list(filters or []),
             bounded_internal_scan=True,
             bounded_identity_only=True,
@@ -4490,7 +4651,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         builder paired with the V2 query service supplied by its endpoint.
         """
         from tracer.services.clickhouse.v2.query_builders.trace_list import (
-            TraceListQueryBuilderV2,
+            apply_trace_rollup,
         )
 
         read_deadline = read_deadline or ReadDeadline.start(TRACE_LIST_WALL_DEADLINE_MS)
@@ -4662,7 +4823,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "Cursor pagination is unavailable for this query shape.",
             )
         cursor_enabled = cursor_requested and cursor_supported
-        builder = TraceListQueryBuilderV2(
+        from tracer.services.clickhouse.v2.query_builders.observe_usage import (
+            ObserveTraceListQueryBuilderV2,
+        )
+
+        builder = ObserveTraceListQueryBuilderV2(
             project_id=None if org_scope else str(project_id),
             project_ids=[str(p) for p in org_project_ids] if org_scope else None,
             filters=filters,
@@ -4671,9 +4836,13 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             eval_config_ids=eval_config_ids,
             annotation_label_ids=annotation_label_ids,
             annotation_label_ids_by_project=annotation_label_ids_by_project,
+            eval_count_mode=True,
         )
         pin_filter_seed_witness_slack(builder, cursor_state)
-        requires_cursor = builder.requires_cursor_for_long_filtered_read()
+        usage_sort = validated_data.get("sort_params") or []
+        requires_cursor = (
+            not usage_sort and builder.requires_cursor_for_long_filtered_read()
+        )
         if requires_cursor and not cursor_supported:
             # A long filtered request must never escape to the legacy broad
             # query merely because its filter shape cannot carry a cursor.
@@ -4731,7 +4900,25 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "Trace data is temporarily unavailable. Please retry.",
                 code="service_unavailable",
             )
-        if builder.supports_bounded_filter_scan():
+        if usage_sort:
+            query, params = builder.build_usage_sorted_query(usage_sort)
+            result = analytics.execute_ch_query(
+                query,
+                params,
+                timeout_ms=read_deadline.remaining_ms(),
+                settings=page_read_settings,
+            )
+            count_query, count_params = builder.build_usage_sorted_query(
+                usage_sort, count_only=True
+            )
+            count_result = analytics.execute_ch_query(
+                count_query,
+                count_params,
+                timeout_ms=read_deadline.remaining_ms(),
+                settings=page_read_settings,
+            )
+            total_count = count_result.data[0]["total"]
+        elif builder.supports_bounded_filter_scan():
             from tracer.selectors.trace_filter_reads import read_bounded_filter_page
             from tracer.services.clickhouse.query_service import QueryResult
 
@@ -4953,7 +5140,22 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             user_query, user_params = "", {}
         else:
             user_query, user_params = builder.build_user_id_query(trace_ids)
-        eval_query, eval_params = builder.build_eval_replay_query(trace_ids)
+        eval_output_types = {
+            str(config.id): eval_output_type_for_config(config)
+            for config in eval_configs
+        }
+        eval_declared_choices = {
+            str(config.id): list(config.eval_template.choices or [])
+            for config in eval_configs
+            if getattr(config, "eval_template", None) is not None
+        }
+        eval_target_types: dict[str, str | None] = {}
+        eval_observed_choice_labels: dict[str, list[str]] = {}
+        # Observe lists show exact count tiles. The prototype trace list and
+        # other non-Observe readers keep their average / percentage projection.
+        eval_query, eval_params = builder.build_eval_replay_query(
+            trace_ids, count_mode=True
+        )
 
         def _execute_enrichment(query, params):
             return analytics.execute_ch_query(
@@ -5035,6 +5237,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     root_identities=builder.content_root_identities_for_rows(
                         chunk_rows
                     ),
+                    # Whole-trace usage and the first LLM span's content, for
+                    # traces whose root carries neither (OpenRouter Broadcast).
+                    include_trace_rollup=True,
                 )
             except ValueError:
                 # Never publish a cursor checkpoint for roots that cannot be
@@ -5228,6 +5433,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 ),
                 {},
             )
+            apply_trace_rollup(row, content)
             raw_meta = content.get("metadata", "{}")
             if isinstance(raw_meta, str):
                 try:
@@ -5256,10 +5462,18 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         eval_result = enrichment_results.get("evals")
         if eval_result is not None:
             try:
-                expanded_eval_rows = builder.expand_eval_replay_rows(eval_result.data)
+                expanded_eval_rows = builder.expand_eval_replay_rows(
+                    eval_result.data, count_mode=True
+                )
                 eval_map = builder.pivot_eval_results(
                     [(list(row.values())) for row in expanded_eval_rows],
                     (list(expanded_eval_rows[0].keys()) if expanded_eval_rows else []),
+                    count_mode=True,
+                    output_types=eval_output_types,
+                    declared_choices=eval_declared_choices,
+                )
+                eval_target_types, eval_observed_choice_labels = count_column_metadata(
+                    expanded_eval_rows, eval_map, eval_output_types
                 )
             except (TypeError, ValueError) as exc:
                 logger.warning(
@@ -5394,7 +5608,12 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         # all standard columns (latency, tokens, cost, user_id, etc.)
         column_config = get_default_trace_config()
         column_config = update_column_config_based_on_eval_config(
-            column_config, eval_configs
+            column_config,
+            eval_configs,
+            skip_choices=True,
+            target_types=eval_target_types,
+            observed_choice_labels=eval_observed_choice_labels,
+            count_mode=True,
         )
         column_config = update_span_column_config_based_on_annotations(
             column_config, annotation_labels
@@ -5423,7 +5642,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "prompt_tokens": row.get("prompt_tokens"),
                 "completion_tokens": row.get("completion_tokens"),
                 "cost": (
-                    round(raw_cost, 6)
+                    raw_cost
                     if isinstance(raw_cost, (int, float))
                     and not isinstance(raw_cost, bool)
                     and math.isfinite(raw_cost)
@@ -5450,12 +5669,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 config_id = str(config.id)
                 if config_id not in trace_evals:
                     continue
-                flatten_eval_score_into_entry(
-                    entry,
-                    config_id,
-                    trace_evals[config_id],
-                    eval_output_type_for_config(config),
-                )
+                entry[config_id] = trace_evals[config_id]
 
             # Add annotations
             trace_annotations = annotation_map.get(
@@ -5737,6 +5951,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             page_size=page_size,
             eval_config_ids=[],
             remove_simulation_calls=sim_flag,
+            eval_count_mode=True,
             annotation_label_ids=[],
         )
         preflight_classify_batch_size = int(
@@ -5791,6 +6006,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             page_size=page_size,
             eval_config_ids=eval_config_ids,
             remove_simulation_calls=sim_flag,
+            eval_count_mode=True,
             annotation_label_ids=annotation_label_ids,
         )
         pin_filter_seed_witness_slack(builder, cursor_state)
@@ -6089,10 +6305,18 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         trace_ids = [str(row.get("trace_id", "")) for row in page_rows]
 
-        # Phase 2: Eval scores
+        # Phase 2: Eval scores, as the same count tiles the Observe lists show.
         eval_map = {}
+        eval_output_types = {
+            str(config.id): eval_output_type_for_config(config)
+            for config in eval_configs
+        }
+        eval_target_types: dict[str, str] = {}
+        eval_observed_choice_labels: dict[str, list[str]] = {}
         if trace_ids and eval_config_ids:
-            eval_query, eval_params = builder.build_eval_query(trace_ids)
+            eval_query, eval_params = builder.build_eval_query(
+                trace_ids, count_mode=True
+            )
             if eval_query:
                 try:
                     eval_timeout_ms = read_deadline.remaining_ms(1_500)
@@ -6137,6 +6361,16 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 eval_map = TraceListQueryBuilderV2.pivot_eval_results(
                     [(list(row.values())) for row in eval_result.data],
                     list(eval_result.data[0].keys()) if eval_result.data else [],
+                    count_mode=True,
+                    output_types=eval_output_types,
+                    declared_choices={
+                        str(config.id): list(config.eval_template.choices or [])
+                        for config in eval_configs
+                        if getattr(config, "eval_template", None) is not None
+                    },
+                )
+                eval_target_types, eval_observed_choice_labels = count_column_metadata(
+                    eval_result.data, eval_map, eval_output_types
                 )
 
         # Phase 3: Annotations — fetch from PG Score (unified annotation system)
@@ -6163,8 +6397,12 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         column_config = update_column_config_based_on_eval_config(
             [],
             eval_configs,
+            skip_choices=True,
             is_simulator=True,
             property_source="traces",
+            target_types=eval_target_types,
+            observed_choice_labels=eval_observed_choice_labels,
+            count_mode=True,
         )
         column_config = update_span_column_config_based_on_annotations(
             column_config, annotation_labels
@@ -6183,13 +6421,14 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             span_attrs = attr_row.get("span_attributes") or {}
             provider = attr_row.get("provider") or provider
 
-            # Post-filter simulator calls in Python (can't do in CH without OOM)
+            raw_log = span_raw_log(span_attrs, span_id=span_id)
+            # Parity backstop: simulator_call_sql already dropped these in
+            # ClickHouse when Phase 1 selected the page.
             if sim_flag and VoiceCallListQueryBuilderV2.is_simulator_call(
-                span_attrs, provider
+                raw_log, provider
             ):
                 continue
 
-            raw_log = self._coerce_raw_log(span_attrs.get("raw_log"))
             voice_metrics = self._extract_voice_turn_and_talk_metrics(
                 span_attrs, raw_log
             )
@@ -6334,44 +6573,32 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                             metrics[config_id] = metric_entry
                             continue
                         if isinstance(scores, dict):
-                            if scores.get("per_choice"):
+                            # A count tile. ``output`` keeps the pass rate /
+                            # chosen labels that the voice drawer, annotation
+                            # queue and simulate views read.
+                            metric_entry["counts"] = scores
+                            if output_type == EvalOutputType.PASS_FAIL.value:
+                                passed = scores.get("pass", 0)
+                                total = passed + scores.get("fail", 0)
+                                metric_entry["output"] = (
+                                    round(passed * 100 / total, 2) if total else None
+                                )
+                            else:
                                 metric_entry["output"] = [
-                                    k for k, v in scores["per_choice"].items() if v > 0
+                                    label for label, count in scores.items() if count
                                 ]
                                 metric_entry["output_type"] = "str_list"
-                            elif "str_list" in scores and scores["str_list"]:
-                                metric_entry["output"] = scores["str_list"]
-                                metric_entry["output_type"] = "str_list"
-                            elif "avg_score" in scores or "pass_rate" in scores:
-                                # PASS_FAIL → pass_rate, else → avg_score. Both
-                                # come pre-scaled (×100) from pivot_eval_results;
-                                # keep 0.0 (check is-not-None, not truthiness).
-                                score_val = select_eval_score(scores, output_type)
-                                metric_entry["output"] = (
-                                    round(score_val, 2)
-                                    if isinstance(score_val, (int, float))
-                                    else score_val
-                                )
                         else:
                             metric_entry["output"] = scores
                         metrics[config_id] = metric_entry
                 if metrics:
                     entry["eval_outputs"] = metrics
 
-                # Flatten eval values onto the row too. CHOICES columns read the
-                # flat key params.data["{config_id}**{choice}"] directly; score /
-                # pass-fail columns read params.data.eval_outputs[dataKey]. Without
-                # this flatten the per-choice columns stay blank in the UI.
+                # The flat key carries the cell itself, as on the trace list.
                 for eval_config in eval_configs:
                     cid = str(eval_config.id)
-                    if cid not in trace_evals:
-                        continue
-                    flatten_eval_score_into_entry(
-                        entry,
-                        cid,
-                        trace_evals[cid],
-                        eval_output_type_for_config(eval_config),
-                    )
+                    if cid in trace_evals:
+                        entry[cid] = trace_evals[cid]
 
             # Add annotation outputs — flatten onto the row for frontend grid compatibility
             # Frontend valueGetter reads params.data[labelId] directly
@@ -7145,15 +7372,19 @@ class UsersView(APIView):
 
             # Workspace isolation is request-bound, so resolve the allowed
             # projects here and pass the plain list to the manager (CH25: the
-            # curated source has no workspace_id column to filter on).
+            # curated source has no workspace_id column to filter on).  The
+            # same read supplies each project's display name: a Users row is
+            # one user within one project, and the row names that project.
+            allowed_projects = {
+                str(pid): name
+                for pid, name in _project_queryset_for_request(request).values_list(
+                    "id", "name"
+                )
+            }
             manager = UsersListManager(
                 organization_id=str(request.user.organization.id),
-                allowed_project_ids=[
-                    str(pid)
-                    for pid in _project_queryset_for_request(request).values_list(
-                        "id", flat=True
-                    )
-                ],
+                allowed_project_ids=list(allowed_projects),
+                project_names=allowed_projects,
                 project_id=query_data.get("project_id") or None,
                 search=search.strip() if search else None,
                 filters=query_data.get("filters", []),
@@ -7243,6 +7474,15 @@ class UsersView(APIView):
                 status.HTTP_400_BAD_REQUEST, str(exc), code=exc.code
             )
         except UnsupportedBoundedUserListQuery:
+            if not query_data.get("sort_params"):
+                # Raw-span, eval/annotation and derived-metric filters decide
+                # membership after the page is read, so a numbered OFFSET page
+                # cannot be exact. The cursor contract (the UI's) serves them.
+                return self._gm.custom_error_response(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    get_error_message("USER_FILTER_REQUIRES_CURSOR"),
+                    code=ApiErrorCode.USER_FILTER_REQUIRES_CURSOR,
+                )
             # A globally sorted page over a derived metric requires evaluating
             # every matching user before LIMIT.  The bounded cursor path cannot
             # preserve that contract, so fail explicitly instead of leaking a
@@ -7291,13 +7531,13 @@ class GetUserCodeExampleView(APIView):
                 return self._gm.bad_request("Project type must be 'observe'.")
 
         code_example = f"""import openai
-from fi_instrumentation import using_attributes
+from fi_instrumentation import FITracer, register, using_attributes
+from fi_instrumentation.fi_types import ProjectType
 from traceai_openai import OpenAIInstrumentor
 
 trace_provider = register(
     project_type=ProjectType.OBSERVE,
     project_name="{project_name}",
-    session_name="new-session",
 )
 
 tracer = FITracer(trace_provider.get_tracer(__name__))

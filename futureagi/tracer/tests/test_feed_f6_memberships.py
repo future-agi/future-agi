@@ -1,6 +1,7 @@
 """F6 Feed reads use current findings, not raw junction row cardinality."""
 
 import uuid
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -22,6 +23,7 @@ from tracer.models.trace_investigation import (
     TraceInvestigationGroupingStatus,
 )
 from tracer.queries import feed, scan_clustering
+from tracer.services.grouping.publish import _recount
 from tracer.tests.test_grouping_snapshot import _saved_report
 from tracer.types.feed_types import FeedUpdatePayload
 from tracer.views.feed.linear_issue_view import CreateLinearIssueView
@@ -57,6 +59,19 @@ def omega_issue(observe_project):
         cluster=cluster, trace_id=report.trace_id, finding=finding
     )
     return report, cluster, state, finding
+
+
+def test_recount_keeps_existing_investigation(omega_issue):
+    _, cluster, state, _ = omega_issue
+    cluster.rca_synthesis = "Confirmed cause"
+    cluster.rca_fix = "Confirmed fix"
+    cluster.save(update_fields=["rca_synthesis", "rca_fix", "updated_at"])
+
+    _recount(state)
+
+    cluster.refresh_from_db()
+    assert cluster.rca_synthesis == "Confirmed cause"
+    assert cluster.rca_fix == "Confirmed fix"
 
 
 def test_f6_membership_requires_current_completed_matching_finding(omega_issue):
@@ -166,7 +181,10 @@ def test_f6_pages_distinct_traces_before_offset_and_keeps_missing_ch(omega_issue
 
     member = feed._members_with_occurrence_time().filter(cluster=cluster).first()
     assert member.occurrence_at == report.recorded_at
+    # The report's date is fixed, so the 14-day window must not follow the wall clock.
+    now = report.recorded_at + timedelta(days=1)
     with (
+        patch.object(feed.timezone, "now", return_value=now),
         patch.object(feed, "_avg_eval_score", return_value=None),
         patch.object(feed, "_users_affected_in_window", return_value=0),
     ):

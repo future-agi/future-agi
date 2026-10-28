@@ -5437,7 +5437,7 @@ def test_page_500_slow_candidate_admits_every_exact_enrichment_wave():
         ),
         mock.patch(
             "tracer.views.trace.update_column_config_based_on_eval_config",
-            side_effect=lambda config, _evals: config,
+            side_effect=lambda config, _evals, **_kwargs: config,
         ),
         mock.patch(
             "tracer.views.trace.update_span_column_config_based_on_annotations",
@@ -6637,9 +6637,12 @@ def test_span_numbered_page_does_not_retry_failed_wide_reads() -> None:
 
 
 def test_trace_route_returns_sanitized_degraded_page_for_filtered_sort() -> None:
+    from tracer.services.clickhouse.v2.query_builders.observe_usage import (
+        ObserveTraceListQueryBuilderV2,
+    )
     from tracer.views.trace import TraceView
 
-    class SortedTraceBuilder(TraceListQueryBuilderV2):
+    class SortedTraceBuilder(ObserveTraceListQueryBuilderV2):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             self.sort_params = [{"column_id": "latency", "order": "desc"}]
@@ -6665,8 +6668,8 @@ def test_trace_route_returns_sanitized_degraded_page_for_filtered_sort() -> None
             "tracer.views.trace._build_annotation_map_from_scores", return_value={}
         ),
         mock.patch(
-            "tracer.services.clickhouse.v2.query_builders.trace_list."
-            "TraceListQueryBuilderV2",
+            "tracer.services.clickhouse.v2.query_builders.observe_usage."
+            "ObserveTraceListQueryBuilderV2",
             SortedTraceBuilder,
         ),
         mock.patch(

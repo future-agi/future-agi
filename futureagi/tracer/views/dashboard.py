@@ -23,10 +23,12 @@ from rest_framework.viewsets import ModelViewSet
 
 from tfc.routers import uses_db
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_errors import ApiErrorCode
 from tfc.utils.api_serializers import (
     ApiErrorResponseSerializer,
 )
 from tfc.utils.base_viewset import BaseModelViewSetMixin
+from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tracer.db_routing import DATABASE_FOR_DASHBOARD_LIST
 from tracer.models.custom_eval_config import CustomEvalConfig
@@ -153,6 +155,18 @@ from tracer.services.dashboard_metrics_catalog import (
     get_cached_metrics_catalog,
     resolve_property_catalog_agent_scope,
     resolve_property_catalog_project_scope,
+)
+from tracer.services.dataset_choice_values import (
+    InvalidChoiceCell,
+    evaluation_choice_labels,
+)
+from tracer.services.dataset_filter_values import (
+    DATASET_METADATA_METRICS,
+    UNAVAILABLE_READ_ERRORS,
+    DatasetValuesTooBroad,
+    read_choice_column_values,
+    read_column_values,
+    read_dataset_metadata_values,
 )
 from tracer.services.exact_aggregation_cache import (
     read_or_schedule_exact_snapshot,
@@ -5295,14 +5309,14 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.custom_error_response(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 "Filter values are temporarily unavailable. Please retry.",
-                code="service_unavailable",
+                code=ApiErrorCode.SERVICE_UNAVAILABLE,
             )
         except AttributeCursorStateError as exc:
             if exc.code == "cursor_state_unavailable":
                 return self._gm.custom_error_response(
                     status.HTTP_503_SERVICE_UNAVAILABLE,
                     str(exc),
-                    code="service_unavailable",
+                    code=ApiErrorCode.SERVICE_UNAVAILABLE,
                 )
             return self._gm.custom_error_response(
                 status.HTTP_400_BAD_REQUEST,
@@ -5324,7 +5338,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 return self._gm.custom_error_response(
                     status.HTTP_503_SERVICE_UNAVAILABLE,
                     "Filter values are temporarily unavailable. Please retry.",
-                    code="service_unavailable",
+                    code=ApiErrorCode.SERVICE_UNAVAILABLE,
                 )
             logger.exception(
                 "fetch_filter_values_failed",
@@ -5362,8 +5376,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         if len(values) > max_values:
             return self._gm.custom_error_response(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
-                "Too many values to browse exactly. Enter a more specific search.",
-                code="filter_value_inventory_too_broad",
+                get_error_message("FILTER_VALUE_INVENTORY_TOO_BROAD"),
+                code=ApiErrorCode.FILTER_VALUE_INVENTORY_TOO_BROAD,
             )
         if page_size is None:
             return self._gm.success_response(
@@ -5410,65 +5424,66 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
     ):
         """Return an exact finite value page for a dataset system property."""
         try:
-            if not is_clickhouse_enabled():
-                return self._gm.custom_error_response(
-                    status.HTTP_503_SERVICE_UNAVAILABLE,
-                    "Filter values are temporarily unavailable. Please retry.",
-                    code="service_unavailable",
+            col_expr = (
+                DATASET_FILTER_COLUMNS.get(metric_name)
+                if metric_type == "system_metric"
+                else None
+            )
+            if not col_expr:
+                return self._gm.bad_request(
+                    "Unsupported dataset filter-value property."
                 )
-
-            analytics = AnalyticsQueryService()
-            workspace_id = str(request.workspace.id)
             search = query_params.get("search", "")
-            result_limit = (
+            max_values = (
                 _FINITE_NATIVE_FILTER_VALUE_MAX
                 if query_params.get("page_size") is not None
                 else _LEGACY_NATIVE_FILTER_VALUE_MAX
-            ) + 1
+            )
+            result_limit = max_values + 1
 
-            if metric_type == "system_metric":
-                col_expr = DATASET_FILTER_COLUMNS.get(metric_name)
-                if not col_expr:
-                    return self._gm.bad_request(
-                        "Unsupported dataset filter-value property."
+            if metric_name in DATASET_METADATA_METRICS:
+                values = [
+                    {"value": value, "label": value}
+                    for value in read_dataset_metadata_values(
+                        request.workspace,
+                        metric_name,
+                        search=search,
+                        max_values=max_values,
+                        max_bytes=_FINITE_NATIVE_FILTER_VALUE_MAX_RESULT_BYTES,
+                        deadline=deadline,
+                        wall_ms=_FILTER_VALUES_INTERACTIVE_TIMEOUT_MS,
                     )
-
-                if metric_name == "dataset":
-                    sql = (
-                        "SELECT DISTINCT name AS val "
-                        "FROM model_hub_dataset FINAL "
-                        "WHERE _peerdb_is_deleted = 0 "
-                        "AND deleted = 0 "
-                        "AND workspace_id = toUUID(%(workspace_id)s) "
-                        "AND name != '' "
-                        "AND (%(search)s = '' OR "
-                        "positionCaseInsensitiveUTF8(toString(name), %(search)s) > 0) "
-                        "ORDER BY val "
-                        "LIMIT %(result_limit)s"
+                ]
+            else:
+                # Cell status is per-cell data that no PostgreSQL index
+                # answers for a whole workspace; it still reads the mirror.
+                if not is_clickhouse_enabled():
+                    return self._gm.custom_error_response(
+                        status.HTTP_503_SERVICE_UNAVAILABLE,
+                        "Filter values are temporarily unavailable. Please retry.",
+                        code=ApiErrorCode.SERVICE_UNAVAILABLE,
                     )
-                else:
-                    sql = (
-                        f"SELECT DISTINCT {col_expr} AS val "
-                        f"FROM model_hub_cell AS c FINAL "
-                        f"WHERE c._peerdb_is_deleted = 0 "
-                        f"AND c.dataset_id IN ("
-                        f"SELECT id FROM model_hub_dataset FINAL "
-                        f"WHERE _peerdb_is_deleted = 0 "
-                        f"AND deleted = 0 "
-                        f"AND workspace_id = toUUID(%(workspace_id)s)"
-                        f") "
-                        f"AND {col_expr} != '' "
-                        f"AND (%(search)s = '' OR "
-                        f"positionCaseInsensitiveUTF8(toString({col_expr}), "
-                        f"%(search)s) > 0) "
-                        f"ORDER BY val "
-                        f"LIMIT %(result_limit)s"
-                    )
-
-                result = analytics.execute_ch_query(
+                sql = (
+                    f"SELECT DISTINCT {col_expr} AS val "
+                    f"FROM model_hub_cell AS c FINAL "
+                    f"WHERE c._peerdb_is_deleted = 0 "
+                    f"AND c.dataset_id IN ("
+                    f"SELECT id FROM model_hub_dataset FINAL "
+                    f"WHERE _peerdb_is_deleted = 0 "
+                    f"AND deleted = 0 "
+                    f"AND workspace_id = toUUID(%(workspace_id)s)"
+                    f") "
+                    f"AND {col_expr} != '' "
+                    f"AND (%(search)s = '' OR "
+                    f"positionCaseInsensitiveUTF8(toString({col_expr}), "
+                    f"%(search)s) > 0) "
+                    f"ORDER BY val "
+                    f"LIMIT %(result_limit)s"
+                )
+                result = AnalyticsQueryService().execute_ch_query(
                     sql,
                     {
-                        "workspace_id": workspace_id,
+                        "workspace_id": str(request.workspace.id),
                         "search": search,
                         "result_limit": result_limit,
                     },
@@ -5487,10 +5502,6 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     {"value": row["val"], "label": str(row["val"])}
                     for row in result.data
                 ]
-            else:
-                return self._gm.bad_request(
-                    "Unsupported dataset filter-value property."
-                )
 
             return self._finite_native_filter_values_response(
                 request,
@@ -5502,6 +5513,22 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "metric_type": metric_type,
                 },
             )
+        except DatasetValuesTooBroad:
+            return self._gm.custom_error_response(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                get_error_message("FILTER_VALUE_INVENTORY_TOO_BROAD"),
+                code=ApiErrorCode.FILTER_VALUE_INVENTORY_TOO_BROAD,
+            )
+        except UNAVAILABLE_READ_ERRORS as exc:
+            logger.warning(
+                "fetch_dataset_filter_values_unavailable",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Filter values are temporarily unavailable. Please retry.",
+                code=ApiErrorCode.SERVICE_UNAVAILABLE,
+            )
         except Exception as exc:
             if is_clickhouse_api_read_unavailable_error(exc):
                 logger.warning(
@@ -5511,7 +5538,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 return self._gm.custom_error_response(
                     status.HTTP_503_SERVICE_UNAVAILABLE,
                     "Filter values are temporarily unavailable. Please retry.",
-                    code="service_unavailable",
+                    code=ApiErrorCode.SERVICE_UNAVAILABLE,
                 )
             logger.exception(
                 "fetch_dataset_filter_values_failed",
@@ -5544,11 +5571,6 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         import uuid as _uuid
 
         from model_hub.models.develop_dataset import Column
-        from tracer.services.dataset_choice_values import (
-            CHOICE_INTERPRETATION_CTE,
-            InvalidChoiceCell,
-            evaluation_choice_labels,
-        )
 
         # --- Input validation --------------------------------------------
         if not dataset_id or not column_id:
@@ -5580,17 +5602,9 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.custom_error_response(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 "Filter values are temporarily unavailable. Please retry.",
-                code="service_unavailable",
+                code=ApiErrorCode.SERVICE_UNAVAILABLE,
             )
 
-        if not is_clickhouse_enabled():
-            return self._gm.custom_error_response(
-                status.HTTP_503_SERVICE_UNAVAILABLE,
-                "Filter values are temporarily unavailable. Please retry.",
-                code="service_unavailable",
-            )
-
-        analytics = AnalyticsQueryService()
         search = query_params.get("search", "")
         evaluation_choices = column.data_type == "array" and column.source in (
             "evaluation",
@@ -5602,90 +5616,39 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             if query_params.get("page_size") is not None
             else _LEGACY_NATIVE_FILTER_VALUE_MAX
         )
-        result_limit = max_values + 1
+        # Choice search must run on decoded labels, not escaped storage.
+        # Same-cell metadata disambiguates literal '[west]' from a list.
+        # Read a bounded complete inventory or refuse it; never sample.
+        read = read_choice_column_values if evaluation_choices else read_column_values
         try:
-            # Choice search must run on decoded labels, not escaped storage.
-            # Same-cell metadata disambiguates literal '[west]' from a list.
-            # Read a bounded complete inventory or refuse it; never sample.
-            projection = (
-                "value AS val, groupBitOr(if(literal_choice, 2, 1)) AS choice_modes"
-                if evaluation_choices
-                else "DISTINCT value AS val"
+            raw = read(
+                dataset_id,
+                column_id,
+                search=search,
+                max_values=max_values,
+                max_bytes=_FINITE_NATIVE_FILTER_VALUE_MAX_RESULT_BYTES,
+                deadline=deadline,
+                wall_ms=_FILTER_VALUES_INTERACTIVE_TIMEOUT_MS,
             )
-            # Choice labels are decoded in Python, so an eval-choice search
-            # cannot be answered by matching the stored text. It can still be
-            # *bounded* by it. A decoded label differs from its storage only at
-            # a backslash escape, and ClickHouse's case-insensitive match
-            # agrees with Python's casefold only while both sides stay ASCII,
-            # so keeping every row that satisfies any of those three arms can
-            # never drop a row the decoded filter below would have kept.
-            # Without it a narrow search still reads the whole inventory and a
-            # column above the cap answers 422 no matter what the user types,
-            # which the error's own advice cannot resolve.
-            choice_search = search.strip()
-            if evaluation_choices:
-                search_clause = (
-                    (
-                        "AND (positionCaseInsensitiveUTF8(value, %(choice_search)s) > 0 "
-                        # char(92) is a backslash: escaped storage may decode to
-                        # a label whose characters are not literally present.
-                        "OR position(value, char(92)) > 0 "
-                        # A non-ASCII cell may casefold differently than it
-                        # lowercases; never let this arm decide such a row.
-                        "OR lengthUTF8(value) != length(value)) "
-                    )
-                    if choice_search and choice_search.isascii()
-                    else ""
-                )
-            else:
-                search_clause = (
-                    "AND (%(search)s = '' OR "
-                    "positionCaseInsensitiveUTF8(value, %(search)s) > 0) "
-                )
-            sql = (CHOICE_INTERPRETATION_CTE if evaluation_choices else "") + (
-                f"SELECT {projection} "
-                "FROM model_hub_cell FINAL "
-                "WHERE _peerdb_is_deleted = 0 "
-                "AND dataset_id = toUUID(%(dataset_id)s) "
-                "AND column_id = toUUID(%(column_id)s) "
-                "AND value != '' "
-                f"{search_clause}"
-                f"{'GROUP BY value ' if evaluation_choices else ''}"
-                "ORDER BY val "
-                "LIMIT %(result_limit)s"
+        except DatasetValuesTooBroad:
+            return self._gm.custom_error_response(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                get_error_message("FILTER_VALUE_INVENTORY_TOO_BROAD"),
+                code=ApiErrorCode.FILTER_VALUE_INVENTORY_TOO_BROAD,
             )
-            params = {
-                "dataset_id": str(dataset_id),
-                "column_id": str(column_id),
-                "search": search,
-                "result_limit": result_limit,
-            }
-            if evaluation_choices and search_clause:
-                params["choice_search"] = choice_search
-            result = analytics.execute_ch_query(
-                sql,
-                params,
-                timeout_ms=deadline.remaining_ms(_FILTER_VALUES_INTERACTIVE_TIMEOUT_MS),
-                settings={
-                    "max_result_rows": result_limit,
-                    "max_result_bytes": _FINITE_NATIVE_FILTER_VALUE_MAX_RESULT_BYTES,
-                    "result_overflow_mode": "throw",
-                },
+        except UNAVAILABLE_READ_ERRORS as exc:
+            logger.warning(
+                "dataset_column_filter_values_query_unavailable",
+                dataset_id=str(dataset_id),
+                column_id=str(column_id),
+                error_type=type(exc).__name__,
             )
-            raw = [row for row in result.data if row.get("val")]
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Filter values are temporarily unavailable. Please retry.",
+                code=ApiErrorCode.SERVICE_UNAVAILABLE,
+            )
         except Exception as exc:
-            if is_clickhouse_api_read_unavailable_error(exc):
-                logger.warning(
-                    "dataset_column_filter_values_query_unavailable",
-                    dataset_id=str(dataset_id),
-                    column_id=str(column_id),
-                    error_type=type(exc).__name__,
-                )
-                return self._gm.custom_error_response(
-                    status.HTTP_503_SERVICE_UNAVAILABLE,
-                    "Filter values are temporarily unavailable. Please retry.",
-                    code="service_unavailable",
-                )
             logger.exception(
                 "dataset_column_filter_values_query_failed",
                 dataset_id=str(dataset_id),
@@ -5698,27 +5661,19 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 code="server_error",
             )
 
-        if len(raw) >= result_limit:
-            return self._gm.custom_error_response(
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
-                "Too many values to browse exactly. Enter a more specific search.",
-                code="filter_value_inventory_too_broad",
-            )
-
         # Flatten list / dict cells to their elements so the dropdown
         # suggests "English" instead of '["English","French"]'. Fall back
         # to the raw serialized string when parse fails or the structure
         # has nothing enumerable.
-        def _expand(serialized, choice_modes):
-            if evaluation_choices:
-                if type(choice_modes) is not int or choice_modes not in (1, 2, 3):
-                    raise InvalidChoiceCell("Invalid evaluation choice interpretation")
-                labels = (
-                    evaluation_choice_labels(serialized) if choice_modes & 1 else []
-                )
-                if choice_modes & 2:
-                    labels += evaluation_choice_labels(serialized, literal=True)
-                return labels
+        def _choice_labels(serialized, choice_modes):
+            if type(choice_modes) is not int or choice_modes not in (1, 2, 3):
+                raise InvalidChoiceCell("Invalid evaluation choice interpretation")
+            labels = evaluation_choice_labels(serialized) if choice_modes & 1 else []
+            if choice_modes & 2:
+                labels += evaluation_choice_labels(serialized, literal=True)
+            return labels
+
+        def _expand(serialized):
             if column.data_type not in ("array", "json"):
                 return [serialized]
             try:
@@ -5751,11 +5706,11 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
 
         seen = set()
         values = []
-        choice_needle = choice_search.casefold()
+        choice_needle = search.strip().casefold()
         try:
             for row in raw:
                 deadline.remaining_ms(_FILTER_VALUES_INTERACTIVE_TIMEOUT_MS)
-                for v in _expand(row["val"], row.get("choice_modes")):
+                for v in _choice_labels(*row) if evaluation_choices else _expand(row):
                     # Choice options use the decoded string as both value and
                     # label. Apply the picker match before counting distinct
                     # labels; the raw read and per-cell decoder stay bounded.
@@ -5767,14 +5722,14 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     if len(values) > max_values:
                         return self._gm.custom_error_response(
                             status.HTTP_422_UNPROCESSABLE_ENTITY,
-                            "Too many values to browse exactly. Enter a more specific search.",
-                            code="filter_value_inventory_too_broad",
+                            get_error_message("FILTER_VALUE_INVENTORY_TOO_BROAD"),
+                            code=ApiErrorCode.FILTER_VALUE_INVENTORY_TOO_BROAD,
                         )
         except (ReadDeadlineExceeded, InvalidChoiceCell):
             return self._gm.custom_error_response(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 "Filter values are temporarily unavailable. Please retry.",
-                code="service_unavailable",
+                code=ApiErrorCode.SERVICE_UNAVAILABLE,
             )
         values.sort(key=lambda s: s.lower())
         options = [{"value": v, "label": v} for v in values]

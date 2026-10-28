@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import uuid4, uuid5
 
 import pytest
 from rest_framework.test import APIClient
@@ -35,10 +35,17 @@ def hosted_attempt(organization):
 @pytest.fixture
 def metered_attempt(hosted_attempt, monkeypatch):
     from ee.usage.services import emitter
+    from simulate.tasks.hosted_harness_usage import seal_hosted_harness_usage
 
     events = []
     monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
     monkeypatch.setattr(emitter, "emit", events.append)
+    # Cleanup enqueues the seal after commit; run it inline so these tests see its events.
+    monkeypatch.setattr(
+        seal_hosted_harness_usage,
+        "apply_async",
+        lambda args, **_: seal_hosted_harness_usage._original_func(*args),
+    )
     return hosted_attempt, events
 
 
@@ -168,6 +175,45 @@ def test_authoring_tokens_become_deterministic_ai_credit_events(
 
 @pytest.mark.django_db
 @pytest.mark.requires_ee
+def test_saved_simulation_run_does_not_rebill_authoring(
+    metered_attempt, django_capture_on_commit_callbacks
+):
+    capability, events = metered_attempt
+    job = capability.attempt.job
+    job.payload["metadata"] = {
+        "simulation_only": True,
+        "harness_spend": {
+            "attempts": {
+                "1": {
+                    "stages": [
+                        {
+                            "stage": "build-environment",
+                            "models": ["gemini-3.7-flash"],
+                            "tokens_in": 1_000_000,
+                            "tokens_out": 100_000,
+                        }
+                    ]
+                }
+            }
+        },
+    }
+    job.save(update_fields=["payload"])
+    capability.attempt.cleanup_verified_at = datetime.now(UTC)
+    capability.attempt.sandbox_runtime = {"seconds": 10}
+    capability.attempt.save(update_fields=["cleanup_verified_at", "sandbox_runtime"])
+
+    with django_capture_on_commit_callbacks(execute=True):
+        harness_usage.replay_harness_usage(capability.attempt)
+
+    capability.attempt.refresh_from_db()
+    job.refresh_from_db()
+    assert capability.attempt.authoring_usage_report is None
+    assert events == []
+    assert harness_usage.harness_consumption(job)["ai_credits"] == 0
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
 @requires_cloud_billing
 def test_live_authoring_estimates_refresh_without_charging_or_double_counting(
     metered_attempt, django_capture_on_commit_callbacks
@@ -255,7 +301,9 @@ def test_unpriceable_live_authoring_is_unavailable_not_zero(metered_attempt):
 
 @pytest.mark.django_db
 @pytest.mark.requires_ee
-def test_cleanup_finalizes_when_live_authoring_is_unpriced(metered_attempt):
+def test_cleanup_finalizes_when_live_authoring_is_unpriced(
+    metered_attempt, django_capture_on_commit_callbacks
+):
     capability, events = metered_attempt
     job = capability.attempt.job
     job.payload["metadata"] = {
@@ -265,7 +313,7 @@ def test_cleanup_finalizes_when_live_authoring_is_unpriced(metered_attempt):
                     "stages": [
                         {
                             "stage": "understand-agent",
-                            "models": ["gemini-3.8-flash-unlisted"],
+                            "models": ["not-a-priced-model"],
                             "tokens_in": 1000,
                             "tokens_out": 100,
                         }
@@ -276,17 +324,41 @@ def test_cleanup_finalizes_when_live_authoring_is_unpriced(metered_attempt):
     }
     job.save(update_fields=["payload"])
 
-    record_cleanup(
-        capability.attempt.id,
-        provider_ref="",
-        verified_absent=True,
-    )
+    with django_capture_on_commit_callbacks(execute=True):
+        record_cleanup(
+            capability.attempt.id,
+            provider_ref="",
+            verified_absent=True,
+        )
 
     capability.attempt.refresh_from_db()
     job.refresh_from_db()
     assert capability.attempt.cleanup_verified_at is not None
     assert job.state == job.State.FAILED
     assert events == []
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
+def test_cleanup_seals_measured_calls_through_the_backend_job(
+    metered_attempt, django_capture_on_commit_callbacks
+):
+    capability, events = metered_attempt
+    attempt = capability.attempt
+    _provision(attempt)
+    record = _record("voice_call", amount=2)
+    with django_capture_on_commit_callbacks(execute=True):
+        harness_usage.record_harness_usage(attempt, _report([record]))
+    _receipt(attempt)
+    assert events == []
+
+    with django_capture_on_commit_callbacks(execute=True):
+        record_cleanup(attempt.id, provider_ref="", verified_absent=True)
+
+    assert [(event.event_type, float(event.amount)) for event in events] == [
+        ("voice_call", 2.0)
+    ]
+    assert events[0].event_id == str(uuid5(attempt.id, record["id"]))
 
 
 @pytest.mark.django_db
@@ -576,3 +648,120 @@ def test_successful_admission_clears_persisted_budget_refusal(
     assert harness_usage.check_harness_usage(capability.attempt, "text_call")["allowed"]
     capability.attempt.job.refresh_from_db()
     assert "usage_limit" not in capability.attempt.job.payload["metadata"]
+
+
+@pytest.fixture
+def required_actions(monkeypatch):
+    actions = []
+    monkeypatch.setattr(
+        harness_usage,
+        "_require_harness_action",
+        lambda organization_id, action: actions.append(action),
+    )
+    return actions
+
+
+@pytest.mark.parametrize(
+    ("agent", "metadata", "expected"),
+    [
+        ({"connector": "phone"}, {}, ["harness_authoring", "voice_call"]),
+        ({"connector": "livekit"}, {}, ["harness_authoring", "voice_call"]),
+        ({"connector": "retell_chat"}, {}, ["harness_authoring", "text_call"]),
+        (
+            {"connector": "auto"},
+            {"modality": "voice"},
+            ["harness_authoring", "voice_call"],
+        ),
+        ({"connector": "auto"}, {}, ["harness_authoring"]),
+        ({}, {}, ["harness_authoring"]),
+    ],
+)
+def test_run_usage_checks_the_rail_the_connector_names(
+    required_actions, agent, metadata, expected
+):
+    harness_usage.require_harness_run_usage(
+        "org-1", {"agent": agent, "metadata": metadata}
+    )
+
+    assert required_actions == expected
+
+
+@pytest.mark.parametrize(
+    ("payload", "detected", "expected"),
+    [
+        ({"agent": {"connector": "auto"}}, ["livekit"], ["voice_call"]),
+        ({"agent": {"connector": "auto"}}, ["phone", "openai"], ["voice_call"]),
+        ({"agent": {"connector": "auto"}}, ["openai"], []),
+        ({"agent": {"connector": "auto"}}, [], []),
+        (
+            {"agent": {"connector": "auto"}, "metadata": {"modality": "text"}},
+            ["livekit"],
+            [],
+        ),
+        ({"agent": {"connector": "livekit"}}, ["livekit"], []),
+        ({}, ["livekit"], []),
+    ],
+)
+def test_source_scan_checks_voice_minutes_only_for_an_undecided_source(
+    required_actions, payload, detected, expected
+):
+    harness_usage.require_harness_source_call_usage("org-1", payload, detected)
+
+    assert required_actions == expected
+
+
+@pytest.mark.django_db
+def test_selected_run_checks_the_rail_of_the_authored_modality(
+    hosted_attempt, required_actions
+):
+    job = hosted_attempt.attempt.job
+
+    harness_usage.require_harness_call_usage(job)
+    assert required_actions == ["text_call"]
+
+    job.stage_outputs = [{"kind": "contract", "data": {"modality": "voice"}}]
+    job.save(update_fields=["stage_outputs", "updated_at"])
+    required_actions.clear()
+
+    harness_usage.require_harness_call_usage(job)
+    assert required_actions == ["voice_call"]
+
+
+@pytest.mark.django_db
+def test_selected_run_reads_the_modality_past_malformed_contract_outputs(
+    hosted_attempt, required_actions
+):
+    job = hosted_attempt.attempt.job
+    job.stage_outputs = [
+        None,
+        "contract",
+        {"kind": "contract"},
+        {"kind": "contract", "data": "voice"},
+        {"kind": "contract", "data": {"modality": "VOICE"}},
+    ]
+    job.save(update_fields=["stage_outputs", "updated_at"])
+
+    harness_usage.require_harness_call_usage(job)
+
+    assert required_actions == ["voice_call"]
+
+
+@pytest.mark.django_db
+def test_oss_call_and_source_usage_checks_never_refuse(hosted_attempt, monkeypatch):
+    monkeypatch.setattr(harness_usage, "is_oss", lambda: True)
+    job = hosted_attempt.attempt.job
+    organization_id = str(job.organization_id)
+    job.stage_outputs = [{"kind": "contract", "data": {"modality": "voice"}}]
+    job.save(update_fields=["stage_outputs", "updated_at"])
+
+    harness_usage.require_harness_call_usage(job)
+    harness_usage.require_harness_source_call_usage(
+        organization_id, {"agent": {"connector": "auto"}}, ["livekit"]
+    )
+    harness_usage.require_harness_run_usage(
+        organization_id, {"agent": {"connector": "phone"}}
+    )
+
+    assert harness_usage.check_harness_action(organization_id, "voice_call") == {
+        "allowed": True
+    }

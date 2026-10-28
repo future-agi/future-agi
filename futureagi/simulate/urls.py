@@ -14,6 +14,7 @@ from simulate.views.chat_simulation import (
     RunTestNameView,
     TestExecutionChatBatchView,
 )
+from simulate.views.debug_analysis import TestExecutionDebugAnalysisView
 from simulate.views.preview_pagination import (
     RunTestPreviewExecutionsView,
     TestExecutionPreviewCallsView,
@@ -72,6 +73,7 @@ from .views import (
     AgentDefinitionDetailView,
     AgentDefinitionOperationsViewSet,
     AgentDefinitionView,
+    AgentRunsView,
     CreateAgentDefinitionView,
     CreateRunTestView,
     CreateScenarioView,
@@ -89,6 +91,7 @@ from .views import (
     SimulatorAgentDetailView,
     SimulatorAgentListView,
 )
+from .views.agent_setup import StoredAgentView
 from .views.agent_version import (
     ActivateAgentVersionView,
     AgentVersionCallExecutionView,
@@ -100,6 +103,7 @@ from .views.agent_version import (
     RestoreAgentVersionView,
 )
 from .views.alk_simulate_ingestion import ALKSimulateIngestionViewSet
+from .views.harness_environment import HarnessEnvironmentViewSet
 from .views.harness_job import HarnessJobViewSet
 from .views.hosted_harness import (
     HostedHarnessAttemptViewSet,
@@ -117,6 +121,14 @@ from .views.livekit_api import (
     ValidateLiveKitCredentialsView,
 )
 from .views.persona import PersonaDuplicateView, PersonaViewSet
+from .views.run_results_v3 import (
+    CallExecutionV3DetailView,
+    RunAnalyticsV3View,
+    RunCallsV3View,
+    RunExportV3View,
+    RunReliabilityV3View,
+    RunTracesV3View,
+)
 from .views.scenarios import EditScenarioPromptsView
 
 app_name = "simulate"
@@ -135,6 +147,11 @@ router.register(
 )
 router.register(r"harness-jobs", HarnessJobViewSet, basename="harness-job")
 router.register(
+    r"harness-environments",
+    HarnessEnvironmentViewSet,
+    basename="harness-environment",
+)
+router.register(
     r"harness/attempts",
     HostedHarnessAttemptViewSet,
     basename="hosted-harness-attempt",
@@ -147,6 +164,41 @@ router.register(
 
 urlpatterns = [
     path("api/", include(router.urls)),
+    path(
+        "test-executions/<uuid:test_execution_id>/debug-analysis/",
+        TestExecutionDebugAnalysisView.as_view(),
+        name="test-execution-debug-analysis",
+    ),
+    path(
+        "v3/test-executions/<uuid:test_execution_id>/calls/",
+        RunCallsV3View.as_view(),
+        name="v3-test-execution-calls",
+    ),
+    path(
+        "v3/test-executions/<uuid:test_execution_id>/traces/",
+        RunTracesV3View.as_view(),
+        name="v3-test-execution-traces",
+    ),
+    path(
+        "v3/call-executions/<uuid:call_execution_id>/",
+        CallExecutionV3DetailView.as_view(),
+        name="v3-call-execution-detail",
+    ),
+    path(
+        "v3/test-executions/<uuid:test_execution_id>/analytics/",
+        RunAnalyticsV3View.as_view(),
+        name="v3-test-execution-analytics",
+    ),
+    path(
+        "v3/test-executions/<uuid:test_execution_id>/reliability/",
+        RunReliabilityV3View.as_view(),
+        name="v3-test-execution-reliability",
+    ),
+    path(
+        "v3/test-executions/<uuid:test_execution_id>/export/",
+        RunExportV3View.as_view(),
+        name="v3-test-execution-export",
+    ),
     path(
         "api/harness/ingress/<str:token>/",
         HostedHarnessIngressProxyView.as_view(),
@@ -219,6 +271,11 @@ urlpatterns = [
         name="agent-definitions-detail",
     ),
     path(
+        "agent-definitions/<uuid:agent_id>/runs/",
+        AgentRunsView.as_view(),
+        name="agent-definitions-runs",
+    ),
+    path(
         "agent-definitions/<uuid:agent_id>/edit/",
         EditAgentDefinitionView.as_view(),
         name="agent-definitions-edit",
@@ -268,6 +325,11 @@ urlpatterns = [
         "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/call-executions/",
         AgentVersionCallExecutionView.as_view(),
         name="agent-versions-call-executions",
+    ),
+    path(
+        "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/agent/",
+        StoredAgentView.as_view(),
+        name="agent-versions-stored-agent",
     ),
     # Simulator Agent API endpoints
     path(

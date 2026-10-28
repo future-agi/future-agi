@@ -1,6 +1,7 @@
 // Command fi-observed-catalog-backfill repairs the observed suggestion index.
-// Source access is SELECT-only. Apply publishes through the live Kafka contract;
-// it never writes spans, changes a catalog version, or switches a reader.
+// Source access is SELECT-only. Apply publishes through the live Kafka contract,
+// or with FI_OBSERVED_CATALOG_MODE=direct writes the index with the collector's
+// sink; it never writes spans, changes a catalog version, or switches a reader.
 package main
 
 import (
@@ -30,6 +31,7 @@ type options struct {
 	apply                         bool
 	source                        *sourceReader
 	kafka                         observedcatalog.KafkaConfig
+	index                         observedcatalog.ClickHouseConfig // direct mode
 	limits                        observedcatalog.Limits
 	pgDSN                         string
 	legacyEpoch                   uint
@@ -51,7 +53,7 @@ func parseOptions(args []string, getenv func(string) string) (options, error) {
 	flags.BoolVar(&cfg.verifiedLegacy, "verified-legacy", false, "confirm this legacy batch was verified and contains no erased observations")
 	flags.StringVar(&since, "since", "", "inclusive RFC3339 observation time")
 	flags.StringVar(&until, "until", "", "exclusive RFC3339 observation time")
-	flags.BoolVar(&cfg.apply, "apply", false, "publish observations to Kafka (default: read-only preview)")
+	flags.BoolVar(&cfg.apply, "apply", false, "publish observations to Kafka, or the index in direct mode (default: read-only preview)")
 	flags.StringVar(&cfg.checkpointPath, "checkpoint", "", "local resumable progress file, required with --apply")
 	flags.IntVar(&cfg.pageSize, "page-size", 64, "source identities per bounded page, 1..256")
 	flags.IntVar(&cfg.maxPages, "max-pages", 100, "maximum pages per invocation; resume with the same checkpoint")
@@ -110,7 +112,19 @@ func parseOptions(args []string, getenv func(string) string) (options, error) {
 		return cfg, errors.New("FI_PG_DSN is required for current project ownership verification")
 	}
 	if cfg.apply {
-		cfg.kafka, err = observedcatalog.KafkaConfigFromEnv(getenv)
+		// The collector's own mode: Kafka where a consumer writes the index,
+		// the index writer itself where the collector does (direct).
+		switch getenv("FI_OBSERVED_CATALOG_MODE") {
+		case "", "kafka":
+			cfg.kafka, err = observedcatalog.KafkaConfigFromEnv(getenv)
+		case "direct":
+			cfg.index, err = observedcatalog.ClickHouseConfigFromEnv(getenv)
+			if err == nil {
+				_, err = observedcatalog.NewClickHouseSink(cfg.index)
+			}
+		default:
+			err = errors.New("--apply requires FI_OBSERVED_CATALOG_MODE kafka or direct")
+		}
 		if err != nil {
 			return cfg, err
 		}
@@ -164,7 +178,12 @@ func scanBinding(cfg options, scope observedcatalog.Scope) string {
 	// The leading element versions the binding. It is bumped to 2 because spans
 	// are now replayed newest-hour-first: a checkpoint written by the ascending
 	// scan records a completely different meaning for the same Hour field.
-	data, _ := json.Marshal([]any{2, cfg.mode, cfg.source.url, cfg.source.database, scope, cfg.since, cfg.until, cfg.kafka.Brokers, cfg.kafka.Topic, cfg.legacyEpoch, cfg.legacyRevision, cfg.legacyBuild, cfg.limits})
+	binding := []any{2, cfg.mode, cfg.source.url, cfg.source.database, scope, cfg.since, cfg.until, cfg.kafka.Brokers, cfg.kafka.Topic, cfg.legacyEpoch, cfg.legacyRevision, cfg.legacyBuild, cfg.limits}
+	if cfg.index.URL != "" {
+		// Direct writes bind the index instead; Kafka bindings are unchanged.
+		binding = append(binding, "direct", cfg.index.URL, cfg.index.Database)
+	}
+	data, _ := json.Marshal(binding)
 	digest := sha256.Sum256(data)
 	return hex.EncodeToString(digest[:])
 }
@@ -385,6 +404,12 @@ func runSpans(ctx context.Context, cfg options, scopes scopeReader, publisher ob
 		}
 	}
 	if !progress.Complete {
+		if !cfg.apply {
+			// A preview keeps no checkpoint, so running it again starts over.
+			hours := int(lastHour(cfg.until).Sub(cfg.since.Truncate(time.Hour))/time.Hour) + 1
+			return fmt.Errorf("page budget reached (--max-pages %d); preview incomplete, and a preview keeps no checkpoint to resume: "+
+				"raise --max-pages (this range has %d hours, each at least one page) or narrow --since/--until", cfg.maxPages, hours)
+		}
 		return errors.New("page budget reached; scan incomplete, resume the same checkpoint")
 	}
 	return nil
@@ -395,12 +420,15 @@ func main() {
 	defer cancel()
 	err := run(ctx, os.Args[1:], os.Getenv, os.Stdout)
 	if errors.Is(err, flag.ErrHelp) {
-		fmt.Fprint(os.Stdout, `Repair observed attributes using SELECT-only source access and Kafka publication.
+		fmt.Fprint(os.Stdout, `Repair observed attributes using SELECT-only source access, publishing to Kafka
+or, with FI_OBSERVED_CATALOG_MODE=direct, writing the index directly.
 
 Preview spans:
   fi-observed-catalog-backfill --project UUID --since RFC3339 --until RFC3339
 Apply/resume: add --apply --checkpoint /writable/progress.json
 Bounds: --page-size 64 --max-pages 100 --page-delay 100ms
+Every hour of the range takes at least one page. A preview keeps no checkpoint:
+raise --max-pages to at least the range's hours or narrow it.
 
 Preview a verified historical batch instead:
   --source legacy --project UUID --legacy-epoch N --legacy-revision N --legacy-build UUID
@@ -410,6 +438,8 @@ Source credentials (read-only): FI_PG_DSN and FI_OBSERVED_BACKFILL_CH_URL,
 FI_OBSERVED_BACKFILL_CH_DATABASE, FI_OBSERVED_BACKFILL_CH_USERNAME,
 FI_OBSERVED_BACKFILL_CH_PASSWORD. Apply uses FI_OBSERVED_CATALOG_KAFKA_BROKERS
 and optional KAFKA_TOPIC/KAFKA_GROUP with the same FI_OBSERVED_CATALOG_ prefix.
+With FI_OBSERVED_CATALOG_MODE=direct (installs without Kafka) apply writes the
+index with FI_OBSERVED_CATALOG_CH_URL, CH_DATABASE, CH_USERNAME and CH_PASSWORD.
 Live and backfill share FI_OBSERVED_CATALOG_MAX_KEYS_PER_SPAN and
 FI_OBSERVED_CATALOG_MAX_ARRAY_MEMBERS_PER_SPAN.
 Extraction policy limits omit ineligible suggestions, retaining eligible siblings.
@@ -419,8 +449,9 @@ Rows with missing or conflicting source organization are never published.
 Apply records their identities in CHECKPOINT.quarantine.jsonl before advancing;
 the checkpoint and page receipts count them separately from indexed spans.
 
-Progress proves Kafka acknowledgement, not consumer visibility or complete
-source history. Re-run overlapping source ranges to repair late-arriving spans.
+Progress proves Kafka (or direct index write) acknowledgement, not consumer
+visibility or complete source history. Re-run overlapping source ranges to
+repair late-arriving spans.
 `)
 		return
 	}
@@ -484,6 +515,9 @@ func runLegacy(ctx context.Context, cfg options, scopes scopeReader, publisher o
 		}
 	}
 	if !progress.Complete {
+		if !cfg.apply {
+			return fmt.Errorf("page budget reached (--max-pages %d); legacy preview incomplete, and a preview keeps no checkpoint to resume: raise --max-pages", cfg.maxPages)
+		}
 		return errors.New("page budget reached; legacy import incomplete, resume the same checkpoint")
 	}
 	return nil
@@ -499,13 +533,19 @@ func run(ctx context.Context, args []string, getenv func(string) string, output 
 		return err
 	}
 	defer owner.conn.Close(context.Background())
-	var publisher *observedcatalog.Producer
-	if cfg.apply {
-		publisher, err = observedcatalog.NewProducer(cfg.kafka)
+	var publisher observedcatalog.Publisher
+	if cfg.apply && cfg.index.URL != "" {
+		publisher, err = observedcatalog.NewClickHouseSink(cfg.index)
 		if err != nil {
 			return err
 		}
-		defer publisher.Close()
+	} else if cfg.apply {
+		producer, err := observedcatalog.NewProducer(cfg.kafka)
+		if err != nil {
+			return err
+		}
+		defer producer.Close()
+		publisher = producer
 	}
 	if cfg.mode == "legacy" {
 		return runLegacy(ctx, cfg, owner, publisher, output)

@@ -40,6 +40,41 @@ def _workflow_cache_kwargs(queue_name: str) -> dict[str, int]:
     return {}
 
 
+def disable_litellm_logging_worker() -> None:
+    """Disable litellm's async logging worker to prevent event loop crashes.
+
+    The worker creates asyncio Queue/Task objects on temporary event loops
+    (from asyncio.run() in thread pool threads), which get destroyed when
+    those loops close — causing "Task was destroyed but it is pending".
+    Since we don't use litellm's callback system, disabling is safe.
+    Patch at BOTH class and instance level to cover all code paths.
+    """
+    try:
+        from litellm.litellm_core_utils.logging_worker import (
+            GLOBAL_LOGGING_WORKER,
+            LoggingWorker,
+        )
+    except ImportError:
+        return
+
+    def _noop(*_args, **_kwargs):
+        return None
+
+    async def _noop_worker_loop(self):
+        return
+
+    # Class-level
+    LoggingWorker.start = _noop
+    LoggingWorker.enqueue = _noop
+    LoggingWorker.ensure_initialized_and_enqueue = _noop
+    LoggingWorker._worker_loop = _noop_worker_loop
+
+    # Instance-level for the global singleton
+    GLOBAL_LOGGING_WORKER.start = _noop
+    GLOBAL_LOGGING_WORKER.enqueue = _noop
+    GLOBAL_LOGGING_WORKER.ensure_initialized_and_enqueue = _noop
+
+
 class Command(BaseCommand):
     help = "Start a Temporal worker for processing workflows and activities"
 
@@ -142,36 +177,7 @@ class Command(BaseCommand):
         # Configure structured logging for Temporal workers
         configure_temporal_logging()
 
-        # Disable litellm's async logging worker to prevent event loop crashes.
-        # The worker creates asyncio Queue/Task objects on temporary event loops
-        # (from asyncio.run() in thread pool threads), which get destroyed when
-        # those loops close — causing "Task was destroyed but it is pending".
-        # Since we don't use litellm's callback system, disabling is safe.
-        # Patch at BOTH class and instance level to cover all code paths.
-        try:
-            from litellm.litellm_core_utils.logging_worker import (
-                GLOBAL_LOGGING_WORKER,
-                LoggingWorker,
-            )
-
-            def _noop(*_args, **_kwargs):
-                return None
-
-            async def _noop_worker_loop(self):
-                return
-
-            # Class-level
-            LoggingWorker.start = _noop
-            LoggingWorker.enqueue = _noop
-            LoggingWorker.ensure_initialized_and_enqueue = _noop
-            LoggingWorker._worker_loop = _noop_worker_loop
-
-            # Instance-level for the global singleton
-            GLOBAL_LOGGING_WORKER.start = _noop
-            GLOBAL_LOGGING_WORKER.enqueue = _noop
-            GLOBAL_LOGGING_WORKER.ensure_initialized_and_enqueue = _noop
-        except ImportError:
-            pass
+        disable_litellm_logging_worker()
 
         task_queue = options["task_queue"]
         all_queues_mode = options["all_queues"]

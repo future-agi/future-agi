@@ -123,7 +123,9 @@ def test_numeric_witness_changes_only_identity_replay_scope(monkeypatch):
     settings = [application_read_settings(capture[2]["settings"]) for capture in captures]
     assert all(all(item[key] == 0 for key in UNLIMITED_STATEMENT_SETTINGS) for item in settings)
     assert settings[0]["max_memory_usage"] == settings[1]["max_memory_usage"] > 0
-    assert settings[0]["max_threads"] == settings[1]["max_threads"] == 1
+    # Both routes run on the background Sessions thread budget.
+    session_threads = graph.settings.EXACT_GRAPH_SESSION_READ_MAX_THREADS
+    assert settings[0]["max_threads"] == settings[1]["max_threads"] == session_threads
 
 
 def test_existing_failure_and_complete_empty_contracts_remain():

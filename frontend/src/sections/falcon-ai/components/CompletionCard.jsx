@@ -5,17 +5,27 @@ import Typography from "@mui/material/Typography";
 import Button from "@mui/material/Button";
 import Iconify from "src/components/iconify";
 import { useRouter } from "src/routes/hooks";
+import {
+  isHiddenFromRestrictedOrgs,
+  useRestrictSimulateToEnvironments,
+} from "src/hooks/useRestrictSimulateToEnvironments";
 
 export default function CompletionCard({ card }) {
   const router = useRouter();
+  const restrictSimulateToEnvironments = useRestrictSimulateToEnvironments();
 
   if (!card) return null;
 
+  const path = card.action_path || card.action_url;
+  // Falcon links to the scenario, agent definition or test it created; an org
+  // restricted to Environments cannot open those pages.
+  const showAction =
+    card.action_label &&
+    path &&
+    !(restrictSimulateToEnvironments && isHiddenFromRestrictedOrgs(path));
+
   const handleNavigate = () => {
-    const path = card.action_path || card.action_url;
-    if (path) {
-      router.push(path);
-    }
+    router.push(path);
   };
 
   return (
@@ -52,7 +62,7 @@ export default function CompletionCard({ card }) {
         )}
       </Box>
 
-      {card.action_label && (card.action_url || card.action_path) && (
+      {showAction && (
         <Button
           size="small"
           variant="outlined"

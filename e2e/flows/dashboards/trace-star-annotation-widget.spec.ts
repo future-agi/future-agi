@@ -449,14 +449,16 @@ test('DASH-E2E-011: a saved trace annotation widget retains star ratings', {
           let list = await readNative<ListBody>(LIST, wire => wire.project_id === projectId && !wire.cursor, since, 'POST', owner,
             body => body?.result?.metadata?.query_complete === true);
           expect(list.input.cursor_mode).toBe(true); expect(list.input.page_number).toBe(0);
-          // dateRangeDefaults + useLLMTracingFilters: the default has one date predicate.
+          // dateRangeDefaults + useLLMTracingFilters: the default has one date predicate. Its start is
+          // floored to the UTC hour and its end is the next local midnight (observePresetDateFilter),
+          // so every visit in one hour sends the same window.
           const filters = JSON.parse(String(list.input.filters));
           expect(filters).toEqual([{ column_id: 'created_at', filter_config: {
             filter_type: 'datetime', filter_op: 'between', filter_value: [expect.any(String), expect.any(String)] } }]);
           const [from, to] = filters[0].filter_config.filter_value.map(Date.parse);
           const bounds = await surface.evaluate(([navigation, requested]) => {
-            const weekAgo = (ms: number) => { const day = new Date(ms); day.setDate(day.getDate() - 7); day.setMilliseconds(0); return day.getTime(); };
-            const end = new Date(requested); end.setHours(23, 59, 59, 0);
+            const weekAgo = (ms: number) => { const day = new Date(ms); day.setDate(day.getDate() - 7); return Math.floor(day.getTime() / 3_600_000) * 3_600_000; };
+            const end = new Date(requested); end.setHours(24, 0, 0, 0);
             return { earliest: weekAgo(navigation), latest: weekAgo(requested), end: end.getTime() };
           }, [since, list.startedAt]);
           expect(from).toBeGreaterThanOrEqual(bounds.earliest); expect(from).toBeLessThanOrEqual(bounds.latest);
@@ -490,8 +492,10 @@ test('DASH-E2E-011: a saved trace annotation widget retains star ratings', {
             .toEqual(expected.map(row => `${prefix}-${row.key}-root`).sort());
           const detailSince = Date.now(); await cells.getByText(`${prefix}-${seed.key}-root`, { exact: true }).click();
           type DetailNode = { observation_span: Wire; children: DetailNode[] };
+          // useGetTraceDetail (api/project/trace-detail.js) pins the read to the page's project:
+          // the same trace id can exist in several projects.
           const detail = await readNative<{ result: { trace: { id: string; project: string; name: string }; observation_spans: DetailNode[] } }>(
-            `/tracer/trace/${seed.traceId}/`, {}, detailSince, 'GET', owner);
+            `/tracer/trace/${seed.traceId}/`, { project_id: projectId }, detailSince, 'GET', owner);
           expect(detail.body!.result.trace).toMatchObject({ id: seed.traceId, project: projectId, name: `${prefix}-${seed.key}-root` });
           // Trace detail is a root/children tree, not the flat source-storage list.
           expect(detail.body!.result.observation_spans).toHaveLength(1);
@@ -504,7 +508,10 @@ test('DASH-E2E-011: a saved trace annotation widget retains star ratings', {
           const annotateSince = Date.now(); await surface.getByRole('button', { name: 'Actions', exact: true }).click();
           await surface.getByRole('menuitem', { name: 'Annotate', exact: true }).click();
           const sourceInput = { sources: JSON.stringify([{ source_type: 'trace', source_id: seed.traceId, span_notes_source_id: seed.spanIds[0] },
-            { source_type: 'observation_span', source_id: seed.spanIds[0] }]) };
+            { source_type: 'observation_span', source_id: seed.spanIds[0] }]),
+            // useQueueItemsForSource sends the drawer's project: the same trace id can exist in
+            // several projects, and only this project's queues belong in its sidebar.
+            project_id: projectId };
           type QueueBody = { result: { queue: Queue; item: null; labels: Wire[]; existing_scores: Wire; existing_notes: string; existing_label_notes: Wire }[] };
           const forSource = await readNative<QueueBody>(`${QUEUES}for-source/`, sourceInput, annotateSince, 'GET', owner);
           expect(forSource.body!.result).toHaveLength(1); expect(forSource.body!.result[0]).toMatchObject({
@@ -522,7 +529,9 @@ test('DASH-E2E-011: a saved trace annotation widget retains star ratings', {
           const save = drawer.getByRole('button', { name: /^Save(?:\s|$)/ }); await uiExpect(save).toHaveCount(1);
           const saveSince = Date.now(); await save.click();
           const payload = { source_type: 'trace', source_id: seed.traceId,
-            scores: [{ label_id: labelId, value: { rating: seed.value }, notes: '', score_source: 'human' }], notes: '' };
+            scores: [{ label_id: labelId, value: { rating: seed.value }, notes: '', score_source: 'human' }], notes: '',
+            // AnnotationSidebarContent → useBulkCreateScores (api/scores/scores.js) sends the drawer's project.
+            project_id: projectId };
           const receipt = await readNative<{ result: { scores: NativeScore[]; errors: unknown[] } }>(BULK, undefined, saveSince, 'POST', owner);
           expect(receipt.input).toEqual(payload); expect(receipt.body!.result.errors).toEqual([]); expect(receipt.body!.result.scores).toHaveLength(1);
           const score = receipt.body!.result.scores[0]; expect(score.id).toMatch(/^[0-9a-f-]{36}$/); expect(score.queue_item).toMatch(/^[0-9a-f-]{36}$/);

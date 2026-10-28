@@ -197,6 +197,16 @@ class FeedDetailApiResponseSerializer(serializers.Serializer):
     result = FeedDetailCoreSerializer()
 
 
+class FeedRedirectSerializer(serializers.Serializer):
+    requested_cluster_id = serializers.CharField()
+    resolved_cluster_id = serializers.CharField()
+
+
+class FeedRedirectApiResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = FeedRedirectSerializer()
+
+
 # ---------------------------------------------------------------------------
 # Overview tab
 # ---------------------------------------------------------------------------

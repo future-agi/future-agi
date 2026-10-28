@@ -108,6 +108,10 @@ def test_daytona_adapter_maps_provider_neutral_launch_spec(settings, monkeypatch
     assert not hasattr(params, "network_allow_list")
     assert provider.runtime_digest == "sha256:digest"
 
+    provider.create(_spec(runtime_name="alk-hosted-certified-large"), timeout=300)
+    params, _ = _DaytonaClient.created
+    assert params.snapshot == "alk-hosted-certified-large"
+
 
 def test_daytona_adapter_ignores_cidrs_for_restricted_empty_policy(
     settings, monkeypatch
@@ -215,6 +219,10 @@ class _E2BSandbox:
         self.files = _E2BFiles()
         self.commands = _E2BCommands()
         self.killed = False
+        self.renewed_timeout = None
+
+    def set_timeout(self, timeout):
+        self.renewed_timeout = timeout
 
     def kill(self):
         self.killed = True
@@ -262,6 +270,7 @@ def test_e2b_adapter_combines_domain_and_cidr_egress(settings, monkeypatch):
     settings.ALK_E2B_TEMPLATE_MEMORY_MB = 8192
     settings.ALK_E2B_TEMPLATE_DISK_GB = 10
     settings.ALK_E2B_MAX_TTL_SECONDS = 86400
+    settings.HARNESS_PUBLIC_BASE_URL = "https://platform.example.com"
 
     provider = E2BSandboxRuntimeProvider()
     sandbox = provider.create(_spec(), timeout=300)
@@ -285,12 +294,20 @@ def test_e2b_adapter_combines_domain_and_cidr_egress(settings, monkeypatch):
         "rm -f /usr/local/bin/python && "
         "printf '#!/bin/sh\\nexec /opt/alk-venv/bin/python \"$@\"\\n' "
         "> /usr/local/bin/python && chmod 0755 /usr/local/bin/python && "
-        "ln -sfn /opt/alk-venv/bin/pip /usr/local/bin/pip"
+        "ln -sfn /opt/alk-venv/bin/pip /usr/local/bin/pip && "
+        "if [ -x /opt/alk-venv/bin/uv ]; then "
+        "ln -sfn /opt/alk-venv/bin/uv /usr/local/bin/uv; fi && "
+        "if [ -x /opt/alk-venv/bin/uvx ]; then "
+        "ln -sfn /opt/alk-venv/bin/uvx /usr/local/bin/uvx; fi && "
+        "test -x /usr/local/bin/uv && test -x /usr/local/bin/uvx"
     )
     assert bootstrap_options["user"] == "root"
     preview = provider.create_preview_url(sandbox, 8080, expires_in_seconds=600)
     assert preview.url == "https://8080-e2b-sandbox.e2b.app"
     assert preview.headers == {"E2B-Traffic-Access-Token": "traffic-token"}
+
+    provider.renew_ttl(sandbox, 7200)
+    assert _E2BSandboxClass.sandbox.renewed_timeout == 7200
 
     assert provider.delete(sandbox, timeout=1, wait=True) is True
     assert sandbox._sandbox.killed is True

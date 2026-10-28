@@ -2,6 +2,7 @@ import Markdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import PropTypes from "prop-types";
 import {
   Alert,
   Box,
@@ -46,6 +47,7 @@ import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
 import {
   adjustmentStatus,
   completedStageCount,
+  degradeReasonCopy,
   errorMessage,
   eventTime,
   runElapsed,
@@ -91,6 +93,70 @@ const DETAIL_TABS = [
   { value: "scenarios", label: "Scenarios" },
   { value: "runs", label: "Runs" },
 ];
+
+// Parallelism surface (C4 §6). Three distinct, info-styled notices — never
+// presented as a scenario/agent failure:
+//  1. runtime degrade — effective W (from the attempt projection, NOT the event
+//     window) + per-reason copy, shown when the guest reduced parallelism;
+//  2. platform clamp — metadata.parallelism_clamped, shown when admission held
+//     the run at 1 because W>1 is not enabled for this deployment;
+//  3. literal-endpoint warning — metadata.parallelism_warnings from the
+//     submit-time environment_values scan.
+function ParallelismNotice({ parallelism, clamped, warnings }) {
+  const requested = parallelism?.requested;
+  const effective = parallelism?.effective;
+  const reasons = parallelism?.degrade_reasons || [];
+  const degraded = reasons.length > 0;
+  const clampedRequested = clamped?.requested;
+  const warningList = Array.isArray(warnings) ? warnings : [];
+  if (!degraded && !clampedRequested && warningList.length === 0) return null;
+  return (
+    <Stack spacing={1} sx={{ mt: 1.5 }}>
+      {degraded && (
+        <Alert severity="info" variant="outlined">
+          <Typography variant="subtitle2">
+            Parallelism: {effective} (requested {requested})
+          </Typography>
+          {reasons.map((reason) => (
+            <Typography key={reason} variant="body2" sx={{ mt: 0.25 }}>
+              {degradeReasonCopy(reason, effective)}
+            </Typography>
+          ))}
+        </Alert>
+      )}
+      {!degraded && clampedRequested ? (
+        <Alert severity="info" variant="outlined">
+          Requested {clampedRequested}, admitted {clamped?.admitted ?? 1} —
+          deployment, scenario-count, or sandbox capacity limits apply.
+        </Alert>
+      ) : null}
+      {warningList.map((warning, index) => (
+        <Alert key={index} severity="warning" variant="outlined">
+          An environment value points at a fixed local address
+          {warning?.aliases?.length ? ` (${warning.aliases.join(", ")})` : ""},
+          which can prevent scenarios from running in parallel.
+        </Alert>
+      ))}
+    </Stack>
+  );
+}
+
+ParallelismNotice.propTypes = {
+  parallelism: PropTypes.shape({
+    requested: PropTypes.number,
+    effective: PropTypes.number,
+    degrade_reasons: PropTypes.arrayOf(PropTypes.string),
+  }),
+  clamped: PropTypes.shape({
+    requested: PropTypes.number,
+    admitted: PropTypes.number,
+  }),
+  warnings: PropTypes.arrayOf(
+    PropTypes.shape({
+      aliases: PropTypes.arrayOf(PropTypes.string),
+    }),
+  ),
+};
 
 const parseActivityPayload = (text) => {
   if (!text) return null;
@@ -772,6 +838,25 @@ export default function HarnessDetail() {
               Cancellation requested. The sandbox is stopping and cleaning up.
             </Alert>
           )}
+          <ParallelismNotice
+            parallelism={current.parallelism}
+            clamped={current.job?.metadata?.parallelism_clamped}
+            warnings={current.job?.metadata?.parallelism_warnings}
+          />
+          {current.parallelism && (
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+              World slots: {current.parallelism.effective} effective /{" "}
+              {current.parallelism.admitted ?? current.parallelism.effective}{" "}
+              admitted / {current.parallelism.requested} requested
+              {Number.isInteger(status?.active_scenarios) && (
+                <>
+                  {" "}
+                  · {status.active_scenarios} active · {status.queued_scenarios}{" "}
+                  queued
+                </>
+              )}
+            </Typography>
+          )}
           <CreditExhaustionBanner
             error={exhaustionError}
             onUpgrade={handleUpgradeClick}
@@ -1120,7 +1205,16 @@ export default function HarnessDetail() {
                 <Stack spacing={1.5}>
                   {selectedOutputs.length ? (
                     selectedOutputs.map((output) => (
-                      <StageOutput key={output.id} output={output} />
+                      <StageOutput
+                        key={output.id}
+                        output={output}
+                        jobId={jobId}
+                        onChanged={() =>
+                          queryClient.invalidateQueries({
+                            queryKey: ["harness-jobs"],
+                          })
+                        }
+                      />
                     ))
                   ) : (
                     <Typography variant="body2" color="text.secondary">
@@ -1133,7 +1227,16 @@ export default function HarnessDetail() {
               ) : (
                 <Stack spacing={1.5}>
                   {selectedOutputs.map((output) => (
-                    <StageOutput key={output.id} output={output} />
+                    <StageOutput
+                      key={output.id}
+                      output={output}
+                      jobId={jobId}
+                      onChanged={() =>
+                        queryClient.invalidateQueries({
+                          queryKey: ["harness-jobs"],
+                        })
+                      }
+                    />
                   ))}
                   {current.credentials && (
                     <Paper
@@ -1529,9 +1632,7 @@ export default function HarnessDetail() {
                           ? "Describe the scenarios to add — e.g. 'calm first-time riders booking an airport pickup' (optional)"
                           : "Tell the run what to change…"
                     }
-                    value={
-                      conversationComposerAvailable ? message : adjustment
-                    }
+                    value={conversationComposerAvailable ? message : adjustment}
                     onChange={(event) =>
                       conversationComposerAvailable
                         ? setMessage(event.target.value)

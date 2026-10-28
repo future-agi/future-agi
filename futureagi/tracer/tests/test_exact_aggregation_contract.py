@@ -7104,6 +7104,55 @@ def test_entity_eval_graph_does_not_stitch_budget_failed_statements(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("aggregation_context", ["session", "user"])
+def test_entity_eval_graph_keeps_legacy_logger_columns_through_v2_rewrite(
+    monkeypatch,
+    settings,
+    aggregation_context,
+):
+    """The candidate read must name columns the legacy eval logger has.
+
+    Unlike the neighbouring SQL-contract tests, ``eval_logger_source`` is not
+    patched to the v2 table: the legacy PeerDB table is the default
+    ``CH25_EVAL_LOGGER_TABLE``, and it has no ``is_deleted`` column.
+    """
+    from tracer.services.clickhouse import exact_graph_reads as exact_module
+
+    settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger"
+    analytics = _EntityBudgetSplittingAnalytics()
+    start = datetime(2026, 8, 1, 0)
+    end = datetime(2026, 8, 1, 1)
+    config = SimpleNamespace(
+        name="quality",
+        eval_template=SimpleNamespace(config={"output": "SCORE"}, choices=[]),
+    )
+    monkeypatch.setattr(
+        exact_module.CustomEvalConfig.objects,
+        "select_related",
+        lambda *_args: SimpleNamespace(get=lambda **_kwargs: config),
+    )
+
+    read_exact_eval_graph(
+        analytics=analytics,
+        project_id="22222222-2222-4222-8222-222222222222",
+        filters=[_time_filter(start, end)],
+        interval="hour",
+        req_data_config={
+            "id": "33333333-3333-4333-8333-333333333333",
+            "output_type": "SCORE",
+        },
+        observe_type="trace",
+        aggregation_context=aggregation_context,
+    )
+
+    assert len(analytics.main_calls) == 1
+    query = analytics.main_calls[0][0]
+    assert "FROM tracer_eval_logger AS candidate_eval FINAL" in query
+    assert "candidate_eval._peerdb_is_deleted = 0" in query
+    assert "candidate_eval.is_deleted" not in query
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize("observe_type", ["trace", "span"])
 def test_exact_eval_graph_supports_combined_structured_filters(
     monkeypatch,

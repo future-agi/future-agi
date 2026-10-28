@@ -201,3 +201,59 @@ class TestMCPOAuthCodeModel:
         )
         code.refresh_from_db()
         assert code.is_expired
+
+
+@pytest.mark.unit
+class TestConsentRedirectBase:
+    """The consent page lives on the UI that every other link names,
+    settings.FRONTEND_BASE_URL (FRONTEND_URL, else APP_BASE_URL)."""
+
+    def test_uses_the_frontend_base_url(self, monkeypatch, settings):
+        from mcp_server.oauth_provider import FutureAGIOAuthProvider
+
+        monkeypatch.delenv("FRONTEND_URL", raising=False)
+        settings.APP_BASE_URL = "https://app.example.com"
+        settings.FRONTEND_BASE_URL = "https://ui.example.com"
+
+        assert FutureAGIOAuthProvider().frontend_url == "https://ui.example.com"
+
+    def test_without_one_the_dev_ui(self, settings):
+        from mcp_server.oauth_provider import FutureAGIOAuthProvider
+
+        settings.FRONTEND_BASE_URL = ""
+
+        assert FutureAGIOAuthProvider().frontend_url == "http://localhost:3031"
+
+    @pytest.mark.parametrize(
+        "frontend_base_url, consent_base",
+        [
+            ("https://app.example.com", "https://app.example.com"),
+            ("https://ui.example.com", "https://ui.example.com"),
+        ],
+    )
+    def test_the_oauth_app_gives_its_provider_the_consent_base(
+        self, monkeypatch, settings, frontend_base_url, consent_base
+    ):
+        from mcp_server import mcp_app, oauth_provider
+
+        monkeypatch.delenv("FRONTEND_URL", raising=False)
+        settings.APP_BASE_URL = "https://app.example.com"
+        settings.FRONTEND_BASE_URL = frontend_base_url
+        monkeypatch.setattr(mcp_app, "_oauth_app", None)
+        providers = []
+
+        class RecordingProvider(oauth_provider.FutureAGIOAuthProvider):
+            def __init__(self, frontend_url=None):
+                super().__init__(frontend_url=frontend_url)
+                providers.append(self)
+
+        monkeypatch.setattr(oauth_provider, "FutureAGIOAuthProvider", RecordingProvider)
+
+        app = mcp_app.get_mcp_oauth_app()
+
+        [provider] = providers
+        assert provider.frontend_url == consent_base
+        paths = {route.path for route in app.routes}
+        assert {"/authorize", "/token", "/register"} <= paths
+        # Built once per process.
+        assert mcp_app.get_mcp_oauth_app() is app and len(providers) == 1

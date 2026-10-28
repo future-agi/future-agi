@@ -8,11 +8,13 @@ import (
 	"github.com/future-agi/future-agi/fi-collector/pkg/observedcatalog"
 )
 
-func runObservedReplay(ctx context.Context, writer *observedcatalog.Writer, publisher observedcatalog.Publisher, interval time.Duration, log *slog.Logger) {
+// runObservedReplay drains the spool with replay (Writer.Replay for Kafka,
+// Writer.ReplayMerged for the direct ClickHouse sink) until ctx ends.
+func runObservedReplay(ctx context.Context, replay func(context.Context, observedcatalog.Publisher) (int, error), publisher observedcatalog.Publisher, interval time.Duration, log *slog.Logger) {
 	timer := time.NewTicker(interval)
 	defer timer.Stop()
 	for {
-		count, err := writer.Replay(ctx, publisher)
+		count, err := replay(ctx, publisher)
 		if err != nil && ctx.Err() == nil {
 			log.Error("observed catalog replay failed; spool retained", "delivered", count, "err", err)
 		}

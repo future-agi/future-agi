@@ -1,8 +1,10 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,14 +22,7 @@ func newTestRedis(t *testing.T) *redis.Client {
 
 func newTestMetering(t *testing.T) *Metering {
 	t.Helper()
-	rdb := newTestRedis(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	sha, err := rdb.ScriptLoad(ctx, checkQuotaLua).Result()
-	if err != nil {
-		t.Fatalf("script load: %v", err)
-	}
-	return &Metering{rdb: rdb, pg: nil, log: slog.Default(), luaSHA: sha}
+	return NewMetering(newTestRedis(t), nil, slog.Default())
 }
 
 func TestNewMeteringNilRedis(t *testing.T) {
@@ -292,21 +287,48 @@ func TestHardCapPlans(t *testing.T) {
 	}
 }
 
-func TestCheckUsageLuaNotLoaded(t *testing.T) {
+// A restarted Redis has lost the loaded script and answers EVALSHA with
+// NOSCRIPT. Quota checks keep enforcing, without a warning per span.
+func TestCheckUsageSurvivesARedisThatLostTheScript(t *testing.T) {
+	var logs bytes.Buffer
 	rdb := newTestRedis(t)
+	m := NewMetering(rdb, nil, slog.New(slog.NewTextHandler(&logs, nil)))
 	ctx := context.Background()
 
-	m := &Metering{rdb: rdb, pg: nil, log: slog.Default(), luaSHA: ""}
+	orgID := "test-org-noscript"
+	usageKey := "usage:" + orgID + ":tracing_events:" + time.Now().UTC().Format("2006-01")
+	rdb.Set(ctx, "plan:"+orgID, "free", time.Minute)
+	rdb.Set(ctx, usageKey, "50000", time.Minute)
+	if err := rdb.ScriptFlush(ctx).Err(); err != nil {
+		t.Fatal(err)
+	}
 
-	orgID := "test-org-no-lua"
-	planKey := "plan:" + orgID
-	rdb.Set(ctx, planKey, "free", time.Minute)
-	defer rdb.Del(ctx, planKey)
-
-	// Without Lua SHA, quota checks are skipped (fail-open)
 	r := m.CheckUsage(ctx, orgID, "tracing_event", 1)
-	if !r.Allowed {
-		t.Fatal("with no lua SHA, should be allowed (fail-open)")
+	if r.Allowed || r.ErrorCode != "FREE_TIER_LIMIT" {
+		t.Fatalf("over the free tier after SCRIPT FLUSH: got %+v, want FREE_TIER_LIMIT", r)
+	}
+	if strings.Contains(logs.String(), "level=WARN") {
+		t.Fatalf("NOSCRIPT must be handled, not logged: %s", logs.String())
+	}
+}
+
+// Redis down when the collector starts: quota checks load the script later.
+func TestCheckUsageLoadsTheScriptWhenStartedWithoutRedis(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { rdb.Close() })
+	mr.SetError("LOADING Redis is loading the dataset in memory")
+	m := NewMetering(rdb, nil, slog.Default())
+	mr.SetError("")
+	ctx := context.Background()
+
+	orgID := "test-org-late-redis"
+	usageKey := "usage:" + orgID + ":tracing_events:" + time.Now().UTC().Format("2006-01")
+	rdb.Set(ctx, "plan:"+orgID, "free", time.Minute)
+	rdb.Set(ctx, usageKey, "50000", time.Minute)
+
+	if r := m.CheckUsage(ctx, orgID, "tracing_event", 1); r.Allowed {
+		t.Fatal("the script must be loaded by the first quota check")
 	}
 }
 

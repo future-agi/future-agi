@@ -3,6 +3,7 @@
 import re
 import time
 from dataclasses import dataclass
+from typing import Any
 
 from clickhouse_connect.driver.exceptions import (
     DatabaseError as ClickHouseConnectDatabaseError,
@@ -41,6 +42,10 @@ _TRANSIENT_CLICKHOUSE_ERROR_CODES = {
     ErrorCodes.SHARD_HAS_NO_CONNECTIONS,
 }
 
+# An INSERT refused while merges are behind: back-pressure, like the read
+# budget codes, not a fault in the rows.
+_WRITE_BACKPRESSURE_ERROR_CODES = {ErrorCodes.TOO_MANY_PARTS}
+
 # Code 386 (NO_COMMON_TYPE) has appeared on customer-facing browse/value APIs
 # when heterogeneous production values reach a ClickHouse comparison.  It is
 # not a timeout and must not be treated as one inside selectors, but at the HTTP
@@ -73,6 +78,15 @@ _CLICKHOUSE_MAX_QUERY_SIZE_RE = re.compile(
 def _clickhouse_connect_error_code(exc: Exception) -> int | None:
     match = _CLICKHOUSE_CONNECT_CODE_RE.match(str(exc))
     return int(match.group(1)) if match else None
+
+
+def _clickhouse_error_code(exc: Exception) -> int | None:
+    """The server error code of either driver's exception; None otherwise."""
+    if isinstance(exc, ClickHouseError):
+        return getattr(exc, "code", None)
+    if isinstance(exc, ClickHouseConnectDatabaseError):
+        return _clickhouse_connect_error_code(exc)
+    return None
 
 
 class ReadDeadlineExceeded(TimeoutError):
@@ -114,6 +128,57 @@ class ReadDeadline:
         return min(int(cap_ms), remaining)
 
 
+class WallCappedAnalytics:
+    """Ask ClickHouse to stop every statement at what is left of one wall.
+
+    Application reads carry no server deadline by default: ``timeout_ms`` is
+    admission arithmetic, and ``application_read_settings`` zeroes
+    ``max_execution_time``. A caller that owns a real wall (the exact-refresh
+    worker's ``GRAPH_BACKGROUND_WALL_MS``, an inline chart's interactive wall)
+    wraps its service in this: each statement is sent with
+    ``server_execution_cap_ms`` = the time left on that wall, so a read that
+    would outlast the wall is stopped by the server
+    (``ReadDeadlineExceeded``) instead of reading to the end and holding its
+    slot for a result nobody can use. ``timeout_ms`` and ``settings`` pass
+    through unchanged; a caller's own tighter cap is kept. Below
+    ``floor_ms`` left, the statement is not sent at all. The cap is sent
+    whatever the deadline's ``enforce_on_server`` says: wrapping is the
+    opt-in.
+
+    A server profile locked at ``readonly=1`` accepts no query setting, so on
+    that lane the cap cannot reach the server (the service drops every
+    per-query setting); only the profile's own limits apply there.
+    """
+
+    def __init__(self, delegate: Any, deadline: ReadDeadline, *, floor_ms: int) -> None:
+        self._delegate = delegate
+        self._deadline = deadline
+        self._floor_ms = int(floor_ms)
+
+    def execute_ch_query(
+        self,
+        query: str,
+        params: dict | None = None,
+        timeout_ms: int | None = None,
+        settings: dict | None = None,
+        *,
+        server_execution_cap_ms: int | None = None,
+    ) -> Any:
+        cap_ms = self._deadline.remaining_ms(
+            server_execution_cap_ms, floor_ms=self._floor_ms
+        )
+        return self._delegate.execute_ch_query(
+            query,
+            params or {},
+            timeout_ms=timeout_ms,
+            settings=settings,
+            server_execution_cap_ms=cap_ms,
+        )
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._delegate, name)
+
+
 def is_read_budget_error(exc: Exception) -> bool:
     """Return whether *exc* is a timeout/resource-bounded CH read failure.
 
@@ -123,11 +188,21 @@ def is_read_budget_error(exc: Exception) -> bool:
 
     if isinstance(exc, (ReadDeadlineExceeded, ClickHouseSocketTimeoutError)):
         return True
-    if isinstance(exc, ClickHouseError):
-        return getattr(exc, "code", None) in _READ_BUDGET_ERROR_CODES
-    if isinstance(exc, ClickHouseConnectDatabaseError):
-        return _clickhouse_connect_error_code(exc) in _READ_BUDGET_ERROR_CODES
-    return False
+    return _clickhouse_error_code(exc) in _READ_BUDGET_ERROR_CODES
+
+
+def is_clickhouse_overload_error(exc: Exception) -> bool:
+    """Return whether ClickHouse refused a statement for capacity, not content.
+
+    The read-budget codes (memory, timeouts, too many queries) plus
+    TOO_MANY_PARTS. The same statement can succeed later unchanged, so a
+    writer must retry it rather than split it or blame its rows.
+    """
+
+    return (
+        is_read_budget_error(exc)
+        or _clickhouse_error_code(exc) in _WRITE_BACKPRESSURE_ERROR_CODES
+    )
 
 
 def is_clickhouse_query_size_error(exc: Exception) -> bool:
@@ -139,13 +214,7 @@ def is_clickhouse_query_size_error(exc: Exception) -> bool:
     syntax errors remain programming failures and fail closed.
     """
 
-    if isinstance(exc, ClickHouseError):
-        code = getattr(exc, "code", None)
-    elif isinstance(exc, ClickHouseConnectDatabaseError):
-        code = _clickhouse_connect_error_code(exc)
-    else:
-        return False
-    return code == ErrorCodes.SYNTAX_ERROR and bool(
+    return _clickhouse_error_code(exc) == ErrorCodes.SYNTAX_ERROR and bool(
         _CLICKHOUSE_MAX_QUERY_SIZE_RE.search(str(exc))
     )
 
@@ -199,10 +268,8 @@ def is_clickhouse_api_read_unavailable_error(exc: Exception) -> bool:
     identifiers/tables, arbitrary runtime errors, and untyped message text.
     """
 
-    if is_read_budget_error(exc) or is_clickhouse_query_error(exc):
-        return True
-    if isinstance(exc, ClickHouseError):
-        return getattr(exc, "code", None) in _API_READ_UNAVAILABLE_ERROR_CODES
-    if isinstance(exc, ClickHouseConnectDatabaseError):
-        return _clickhouse_connect_error_code(exc) in _API_READ_UNAVAILABLE_ERROR_CODES
-    return False
+    return (
+        is_read_budget_error(exc)
+        or is_clickhouse_query_error(exc)
+        or _clickhouse_error_code(exc) in _API_READ_UNAVAILABLE_ERROR_CODES
+    )

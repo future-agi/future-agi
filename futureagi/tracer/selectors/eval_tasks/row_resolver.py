@@ -30,6 +30,7 @@ from tracer.services.clickhouse.read_budget import (
 )
 from tracer.services.clickhouse.v2 import get_reader
 from tracer.services.eval_tasks.cursor_policy import CONTINUOUS_MIN_PROOF_WINDOW
+from tracer.utils.filter_operators import split_comma_joined_uuid_members
 
 if TYPE_CHECKING:
     from tracer.models.eval_task import EvalTask
@@ -1466,7 +1467,8 @@ def _validated_task_filter_items(
         raise ValueError(f"{key} must be a list")
     if any(not isinstance(item, dict) for item in values):
         raise ValueError(f"{key} entries must be objects")
-    return list(values)
+    # Tasks saved before the request contract split pasted ids read the same.
+    return [split_comma_joined_uuid_members(item) for item in values]
 
 
 def _validated_task_filters(filters: dict | None) -> dict[str, Any]:

@@ -23,16 +23,16 @@ export default function OssSetupView() {
   const [mode, setMode] = useState(DEFAULT_LAUNCH_MODE);
   const [validationProgress, setValidationProgress] = useState(0);
 
-  const handleValidationContinue = () => {
+  const handleValidationContinue = ({ accountExists = false } = {}) => {
     markValidationDone();
 
     if (authenticated) {
       navigate(postLoginPath);
       return;
     }
-    // Always signup: it carries a "Sign in" link, so an existing account is one
-    // click away. Login with no account yet is a dead end.
-    navigate(paths.auth.jwt.register);
+    // Sign-in once an account exists (./bin/install makes the owner); until
+    // then sign-up, since login with no account yet is a dead end.
+    navigate(accountExists ? paths.auth.jwt.login : paths.auth.jwt.register);
   };
 
   // Self-hosted only — a typed URL must not drop a cloud user into a wizard.
@@ -63,6 +63,7 @@ export default function OssSetupView() {
           onSwitchMode={setMode}
           onContinue={handleValidationContinue}
           onProgress={setValidationProgress}
+          authenticated={Boolean(authenticated)}
         />
       )}
     </OssSetupShell>

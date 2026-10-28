@@ -59,6 +59,7 @@ class Harness:
         self.fail_write = None
         self.retain_failed_write = True
         self.fail_read = None
+        self.outbox_capture = False
         self.pg = SimpleNamespace(execute=Mock(side_effect=self.pg_read), close=Mock())
         self.raw = SimpleNamespace(query=Mock(side_effect=self.ch_read), close=Mock())
         self.writer = SimpleNamespace(
@@ -148,6 +149,14 @@ class Harness:
             rows = [(True,)]
         elif "current_database()" in statement and "FROM" not in statement:
             rows = [("source_db",)]
+        elif "to_regclass" in statement:
+            assert "pg_catalog.pg_trigger" in statement
+            assert parameters == {
+                "outbox": "public.fi_cdc_outbox",
+                "state": "public.fi_cdc_state",
+                "triggers": ["fi_cdc_ins", "fi_cdc_upd", "fi_cdc_del", "fi_cdc_trunc"],
+            }
+            rows = [(self.outbox_capture,)]
         elif "FROM information_schema.columns" in statement:
             assert parameters == {"database": "source_db", "tables": sorted(TABLES)}
             rows = []
@@ -301,6 +310,34 @@ def test_default_fresh_check_never_opens_writer(harness):
     harness.pg.close.assert_called_once()
     harness.raw.close.assert_called_once()
     assert all("pg_try_advisory" not in e[1] for e in harness.events if e[0] == "pg")
+
+
+@pytest.mark.parametrize("kwargs", [{}, {"apply": True}, {"wait_for_mirrors": True}])
+def test_default_install_database_is_refused_before_any_peerdb_call(harness, kwargs):
+    """A database the standalone install's outbox CDC set up has landing tables
+    without mirrors and capture triggers nothing here drains. Switching with
+    retained data is unsupported, and the refusal says what to do instead."""
+    harness.retained()
+    harness.outbox_capture = True
+
+    with pytest.raises(setup.SetupError) as refused:
+        harness.run(**kwargs)
+
+    assert str(refused.value) == setup.OUTBOX_DATA_MESSAGE
+    assert "./bin/uninstall --wipe-data" in str(refused.value)
+    assert harness.writes == []
+    assert not [e for e in harness.events if e[0] in ("api", "ch")]
+    harness.pg.close.assert_called_once()
+
+
+def test_outbox_markers_match_the_outbox_module():
+    from tracer.services.clickhouse import oss_outbox_cdc
+
+    assert setup._OUTBOX_TABLES == (
+        f"public.{oss_outbox_cdc.OUTBOX}",
+        f"public.{oss_outbox_cdc.STATE}",
+    )
+    assert setup._OUTBOX_TRIGGERS == tuple(oss_outbox_cdc.TRIGGERS)
 
 
 @pytest.mark.parametrize("legacy_drop_flag", [None, "false", "true"])
@@ -973,6 +1010,22 @@ def test_cli_driver_errors_never_print_secret(monkeypatch, capsys):
     assert setup.main(["--apply"]) == 1
     captured = capsys.readouterr()
     assert captured.out == "" and "secret-do-not-log" not in captured.err
+    assert "PeerDB setup failed (OSError); partial state retained" in captured.err
+
+
+def test_cli_configuration_error_prints_its_safe_reason(monkeypatch, capsys):
+    run = Mock()
+    monkeypatch.setattr(setup, "run", run)
+    monkeypatch.setattr(
+        setup.Config,
+        "from_env",
+        Mock(side_effect=setup.install.InstallError("PG_DB must be configured")),
+    )
+    assert setup.main(["--apply"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "(InstallError: PG_DB must be configured)" in captured.err
+    run.assert_not_called()
 
 
 @pytest.mark.parametrize("field", ["name", "host", "port", "database"])
@@ -1285,3 +1338,128 @@ def test_create_transport_failure_is_sanitized_and_never_retried(monkeypatch, pa
         transport("POST", path, payload)
     assert "secret-do-not-log" not in "".join(traceback.format_exception(exc.value))
     opener.open.assert_called_once()
+
+
+def add_source_column(harness, table, column, udt, nullable="NO"):
+    """Append one PG column to the harness source, as a new migration would."""
+    read = harness.pg_read
+
+    def pg_read(statement, parameters):
+        result = read(statement, parameters)
+        if "FROM information_schema.columns" not in statement:
+            return result
+        rows = result.fetchall()
+        count = sum(row[2] == table for row in rows) + 1
+        rows = [(*row[:12], count) if row[2] == table else row for row in rows]
+        rows.append(
+            (
+                "source_db",
+                "public",
+                table,
+                column,
+                count,
+                "pg_catalog",
+                udt,
+                nullable,
+                16,
+                0,
+                None,
+                "NEVER",
+                count,
+            )
+        )
+        return SimpleNamespace(fetchall=lambda: rows)
+
+    harness.pg.execute.side_effect = pg_read
+
+
+def test_fresh_apply_accepts_smallint_source_column(harness):
+    # simulate.0092 stores TestExecution.trials (PositiveSmallIntegerField) as
+    # int2 NOT NULL; PeerDB v0.36.9 lands it as Int16. A fresh e2e boot must
+    # still submit the one initial snapshot mirror.
+    add_source_column(harness, "simulate_test_execution", "trials", "int2")
+    result = harness.run(apply=True)
+    assert result["accepted"] is True
+    assert result["created_peers"] == ["pg_source", "ch_dest"]
+    assert result["created_mirrors"] == [MIRROR]
+    assert len(harness.writes) == 3
+
+
+@pytest.mark.parametrize(
+    "nullable,landed", [("NO", "Int16"), ("YES", "Nullable(Int16)")]
+)
+def test_running_mirror_accepts_peerdb_int16_landing_for_smallint(
+    harness, nullable, landed
+):
+    harness.retained()
+    add_source_column(harness, "simulate_test_execution", "trials", "int2", nullable)
+    harness.source.columns["simulate_test_execution"]["trials"] = (landed, "", "")
+    result = harness.run()
+    assert result["ready"] is True
+    assert harness.writes == []
+
+
+def test_running_mirror_rejects_widened_smallint_landing_with_named_reason(harness):
+    harness.retained()
+    add_source_column(harness, "simulate_test_execution", "trials", "int2")
+    harness.source.columns["simulate_test_execution"]["trials"] = ("Int32", "", "")
+    with pytest.raises(setup.SetupError) as exc:
+        harness.run(apply=True)
+    assert (
+        "PeerDB setup failed (BootstrapError: simulate_test_execution.trials: "
+        "incompatible type/default expression); partial state retained."
+    ) in str(exc.value)
+    assert exc.value.__suppress_context__
+    assert harness.writes == []
+
+
+def test_source_rejection_reports_class_and_column_without_type_text(harness):
+    add_source_column(
+        harness, "simulate_test_execution", "trials", "unknown-secret-do-not-log"
+    )
+    with pytest.raises(setup.SetupError) as exc:
+        harness.run(apply=True)
+    assert str(exc.value) == (
+        "PeerDB setup failed (SourceError: simulate_test_execution.trials: "
+        "unsupported source builtin type); partial state retained. Explicitly "
+        "invoke again to inspect; no automatic retry or cleanup."
+    )
+    assert "secret-do-not-log" not in "".join(traceback.format_exception(exc.value))
+    assert exc.value.__suppress_context__
+    # Source inspection fails before any PeerDB request or ClickHouse connection.
+    assert not any(event[0] in ("api", "write", "ch") for event in harness.events)
+    harness.ch_connect.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "stage,reason",
+    [
+        ("pg_connect", "OperationalError"),
+        ("ch_connect", "OperationalError"),
+        # Native inspection already wraps driver errors in its own safe text.
+        ("ch_query", "NativeBootstrapError: native inspection failed"),
+    ],
+)
+def test_driver_failure_reports_only_class_never_dsn_or_password(
+    harness, stage, reason
+):
+    dsn = "postgresql://futureagi:secret-do-not-log@pg:5432/app"
+    error = psycopg.OperationalError(
+        f'connection to "{dsn}" failed: FATAL: password authentication failed '
+        'for user "futureagi" (password=secret-do-not-log)'
+    )
+    if stage == "pg_connect":
+        harness.pg_connect.side_effect = error
+    elif stage == "ch_connect":
+        harness.ch_connect.side_effect = error
+    else:
+        harness.raw.query.side_effect = error
+    with pytest.raises(setup.SetupError) as exc:
+        harness.run(apply=True)
+    assert str(exc.value).startswith(f"PeerDB setup failed ({reason}")
+    assert "partial state retained" in str(exc.value)
+    rendered = "".join(traceback.format_exception(exc.value))
+    for leaked in ("secret-do-not-log", "postgresql://", "password authentication"):
+        assert leaked not in rendered
+    assert exc.value.__suppress_context__ and exc.value.__cause__ is None
+    assert harness.writes == []

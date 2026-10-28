@@ -11,7 +11,9 @@
 //  1. Defaults coded into chwriter.New / server.New
 //  2. YAML file path from --config (or /etc/fi-collector/config.yaml)
 //  3. Environment overrides (FI_CH_URL, FI_GRPC_ADDR, FI_HTTP_ADDR,
-//     FI_GRPC_MAX_RECV_MIB, FI_DEAD_LETTER_FILE, ...)
+//     FI_INGEST_BUDGET_MIB, FI_OTLP_MAX_BODY_MIB, FI_GRPC_MAX_RECV_MIB,
+//     FI_OTLP_MAX_CONNECTIONS, FI_INGEST_MAX_WAIT, FI_INSERT_CONCURRENCY,
+//     FI_DEAD_LETTER_FILE, ...)
 //
 // Health surfaces:
 //   - /healthz (HTTP 200 unless writer dead-letter rate > threshold)
@@ -25,9 +27,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -61,6 +65,7 @@ func main() {
 
 	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
+	applyContainerMemoryLimit(log, os.Getenv("GOMEMLIMIT"), cgroupRoot)
 	cfg := loadConfig(log, configPath)
 	if err := applyEnvOverrides(log, &cfg); err != nil {
 		log.Error("invalid environment override", "err", err)
@@ -81,7 +86,7 @@ func main() {
 
 	var rdb *redis.Client
 	if cfg.Auth.RedisAddr != "" {
-		rdb = redis.NewClient(&redis.Options{Addr: cfg.Auth.RedisAddr})
+		rdb = redis.NewClient(&redis.Options{Addr: cfg.Auth.RedisAddr, Password: cfg.Auth.RedisPass})
 		defer rdb.Close()
 	} else {
 		log.Warn("FI_AUTH_REDIS_ADDR not set — quota enforcement, usage metering, key-revocation and project-delete cache invalidation are disabled; auth cache entries only expire via TTL")
@@ -97,7 +102,11 @@ func main() {
 	var usageEmitter server.UsageEmitter = server.NoopUsageEmitter{}
 	var metering server.Metering = server.NoopMetering{}
 	if rdb != nil {
-		usageEmitter = auth.NewUsageEmitter(rdb, authenticator.PGRead(), log)
+		if cfg.Auth.UsageEventsOn() {
+			usageEmitter = auth.NewUsageEmitter(rdb, authenticator.PGRead(), log, cfg.Auth.UsageEventsMaxLen)
+		} else {
+			log.Info("usage events off (USAGE_EVENTS_ENABLED=false): nothing writes the usage:events stream")
+		}
 		metering = auth.NewMetering(rdb, authenticator.PGRead(), log)
 	}
 
@@ -118,28 +127,41 @@ func main() {
 	if pricer != nil {
 		opts = append(opts, server.WithPricer(pricer))
 	}
-	var catalog *observedcatalog.Writer
-	var producer *observedcatalog.Producer
 	var replayDone chan struct{}
-	if cfg.Observed.Mode == "kafka" {
-		catalog, err = observedcatalog.NewWriter(cfg.Observed.Spool, cfg.Observed.Limits)
+	var finalReplay func(context.Context) (int, error)
+	if cfg.Observed.Mode != "disabled" {
+		catalog, err := observedcatalog.NewWriter(cfg.Observed.Spool, cfg.Observed.Limits)
 		if err != nil {
 			log.Error("observed catalog spool init failed", "err", err)
 			os.Exit(1)
 		}
 		defer catalog.Close()
-		producer, err = observedcatalog.NewProducer(cfg.Observed.Kafka)
-		if err != nil {
-			log.Error("observed catalog producer init failed", "err", err)
-			os.Exit(1)
+		var publisher observedcatalog.Publisher
+		replay := catalog.Replay
+		if cfg.Observed.Mode == "kafka" {
+			producer, err := observedcatalog.NewProducer(cfg.Observed.Kafka)
+			if err != nil {
+				log.Error("observed catalog producer init failed", "err", err)
+				os.Exit(1)
+			}
+			defer producer.Close()
+			publisher = producer
+		} else {
+			// direct: no Kafka; replay writes the index with the consumer's sink.
+			sink, err := observedcatalog.NewClickHouseSink(cfg.Observed.ClickHouse)
+			if err != nil {
+				log.Error("observed catalog ClickHouse sink init failed", "err", err)
+				os.Exit(1)
+			}
+			replay, publisher = catalog.ReplayMerged, sink
 		}
-		defer producer.Close()
 		opts = append(opts, server.WithPropertyCatalogWriter(catalog))
 		replayDone = make(chan struct{})
 		go func() {
 			defer close(replayDone)
-			runObservedReplay(ctx, catalog, producer, cfg.Observed.ReplayInterval, log)
+			runObservedReplay(ctx, replay, publisher, cfg.Observed.ReplayInterval, log)
 		}()
+		finalReplay = func(ctx context.Context) (int, error) { return replay(ctx, publisher) }
 	}
 	traceNotifications, err := traceavailable.FromEnv(log)
 	if err != nil {
@@ -156,15 +178,11 @@ func main() {
 	srv := server.New(cfg.Server, writer, authenticator, usageEmitter, metering, opts...)
 
 	// Admin HTTP server — internal only, health check endpoint.
-	go runAdmin(":9464", writer, log)
+	go runAdmin(":9464", writer, authenticator, srv, log)
 
-	go authenticator.WatchRevocations(ctx)
+	startAuthWatchers(ctx, authenticator)
 
-	log.Info("starting",
-		"grpc_addr", cfg.Server.GRPCAddr,
-		"http_addr", cfg.Server.HTTPAddr,
-		"ch_url", cfg.Writer.URL,
-	)
+	logStarting(log, cfg)
 	runErr := srv.Run(ctx)
 	if traceNotifications != nil {
 		drainCtx, stopDrain := context.WithTimeout(context.Background(), 10*time.Second)
@@ -182,6 +200,13 @@ func main() {
 	cancel()
 	if replayDone != nil {
 		<-replayDone
+		// One bounded attempt at the final drain's observations: a Kubernetes
+		// emptyDir spool does not outlive the pod.
+		final, stopFinal := context.WithTimeout(context.Background(), 5*time.Second)
+		if count, err := finalReplay(final); err != nil {
+			log.Warn("observed catalog final replay incomplete; spool retained", "delivered", count, "err", err)
+		}
+		stopFinal()
 	}
 	log.Info("shutdown complete", "stats", writer.Snapshot())
 	if unexpectedExit {
@@ -233,6 +258,20 @@ func loadConfig(log *slog.Logger, path string) rootConfig {
 	return cfg
 }
 
+// logStarting masks a password in FI_CH_URL (http://user:pass@host works:
+// Go's HTTP client sends it as basic auth) so it never reaches the logs.
+func logStarting(log *slog.Logger, cfg rootConfig) {
+	chURL := "<unparseable>"
+	if u, err := url.Parse(cfg.Writer.URL); err == nil {
+		chURL = u.Redacted()
+	}
+	log.Info("starting",
+		"grpc_addr", cfg.Server.GRPCAddr,
+		"http_addr", cfg.Server.HTTPAddr,
+		"ch_url", chURL,
+	)
+}
+
 // applyEnvOverrides — surgical, only the fields ops most often need to
 // override at runtime without baking a new image.
 func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
@@ -247,6 +286,38 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
 	}
 	if v := os.Getenv("FI_CH_PASSWORD"); v != "" {
 		c.Writer.Password = v
+	}
+	for _, o := range []struct {
+		env    string
+		target *int
+	}{
+		{"FI_INGEST_BUDGET_MIB", &c.Server.IngestBudgetMiB},
+		{"FI_OTLP_MAX_BODY_MIB", &c.Server.MaxBodyMiB},
+		{"FI_OTLP_MAX_CONNECTIONS", &c.Server.MaxConnections},
+		{"FI_INSERT_CONCURRENCY", &c.Server.InsertConcurrency},
+	} {
+		if v := os.Getenv(o.env); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				*o.target = n
+			} else {
+				log.Warn("ignoring invalid "+o.env, "value", v)
+			}
+		}
+	}
+	// FI_INGEST_MAX_WAIT: a Go duration ("2s", "1500ms"), the longest a
+	// request waits for the ingest budget before it is refused as busy.
+	if v := os.Getenv("FI_INGEST_MAX_WAIT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			c.Server.IngestMaxWait = d
+		} else {
+			log.Warn("ignoring invalid FI_INGEST_MAX_WAIT (want a duration such as 2s)", "value", v)
+		}
+	}
+	// FI_GZIP_INFLIGHT_MIB bounded gzip requests only. One budget now bounds
+	// every OTLP request, so it is not read: setting it to a gzip-sized value
+	// would otherwise shrink the whole budget.
+	if v := os.Getenv("FI_GZIP_INFLIGHT_MIB"); v != "" {
+		log.Warn("FI_GZIP_INFLIGHT_MIB is no longer read; the ingest budget for every OTLP request is FI_INGEST_BUDGET_MIB", "value", v)
 	}
 	if v := os.Getenv("FI_GRPC_ADDR"); v != "" {
 		c.Server.GRPCAddr = v
@@ -299,6 +370,25 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
 	if v := os.Getenv("FI_AUTH_REDIS_ADDR"); v != "" {
 		c.Auth.RedisAddr = v
 	}
+	if v := os.Getenv("FI_AUTH_REDIS_PASSWORD"); v != "" {
+		c.Auth.RedisPass = v
+	}
+	// Same variables as the Django emitter (tfc/settings/settings.py).
+	if v := os.Getenv("USAGE_EVENTS_ENABLED"); v != "" {
+		on := false
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "true", "1", "yes", "on":
+			on = true
+		}
+		c.Auth.UsageEvents = &on
+	}
+	if v := strings.TrimSpace(os.Getenv("USAGE_EVENTS_MAX_LEN")); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n <= 0 {
+			return fmt.Errorf("USAGE_EVENTS_MAX_LEN must be a positive integer")
+		}
+		c.Auth.UsageEventsMaxLen = n
+	}
 	if (c.Catalog.Mode != "" && c.Catalog.Mode != "disabled") || (c.PropertyCatalog.Mode != "" && c.PropertyCatalog.Mode != "disabled") {
 		return fmt.Errorf("legacy catalog YAML mode is obsolete; configure observed_catalog")
 	}
@@ -307,25 +397,71 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
 	if err != nil {
 		return err
 	}
-	if c.Observed.Mode == "kafka" && c.Writer.AsyncInsert {
+	if c.Observed.Mode != "disabled" && c.Writer.AsyncInsert {
 		return fmt.Errorf("observed catalog requires confirmed canonical inserts; async_insert without wait is unsupported")
 	}
 	return nil
 }
 
-// runAdmin serves /healthz for container health checks.
-func runAdmin(addr string, w *chwriter.Writer, log *slog.Logger) {
+// authWatchers is the part of the authenticator that runs in the background.
+type authWatchers interface {
+	WatchRevocations(context.Context)
+	WatchRoutingColumns(context.Context)
+}
+
+// startAuthWatchers runs the loops that keep the authenticator current until
+// ctx is cancelled: cache eviction on revocation, and the check for the
+// columns sandbox-key routing needs. Without the second, no sandbox key is
+// ever routed.
+func startAuthWatchers(ctx context.Context, a authWatchers) {
+	go a.WatchRevocations(ctx)
+	go a.WatchRoutingColumns(ctx)
+}
+
+// routingReporter is the part of the authenticator /healthz reads.
+type routingReporter interface {
+	RoutingSnapshot() auth.RoutingSnapshot
+}
+
+// healthBody is the /healthz body. The simulation routing counters are in the
+// body only; they never change the status code.
+func healthBody(status string, stats chwriter.Stats, router routingReporter) map[string]any {
+	body := map[string]any{"status": status, "stats": stats}
+	if router != nil {
+		body["simulation_routing"] = router.RoutingSnapshot().Body()
+	}
+	return body
+}
+
+// ingestReporter is the part of the server /healthz reads.
+type ingestReporter interface {
+	IngestStats() server.IngestStats
+}
+
+// withIngest adds the ingest budget's use and the refused OTLP requests to a
+// /healthz body.
+func withIngest(body map[string]any, ingest ingestReporter) map[string]any {
+	if ingest != nil {
+		body["ingest"] = ingest.IngestStats()
+	}
+	return body
+}
+
+// runAdmin serves /healthz for container health checks. The ingest budget's
+// use and the OTLP requests refused, by transport, reason and code, are in
+// the body only; they never change the status code.
+func runAdmin(addr string, w *chwriter.Writer, router routingReporter, ingest ingestReporter, log *slog.Logger) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(rw http.ResponseWriter, r *http.Request) {
 		s := w.Snapshot()
 		denom := s.BatchesInserted + s.BatchesFailed
 		if denom > 100 && s.BatchesFailed*2 > denom {
 			rw.WriteHeader(503)
-			_ = json.NewEncoder(rw).Encode(map[string]any{"status": "unhealthy", "stats": s})
+			_ = json.NewEncoder(rw).Encode(withIngest(healthBody("unhealthy", s, router), ingest))
 			return
 		}
 		rw.WriteHeader(200)
-		_ = json.NewEncoder(rw).Encode(map[string]any{"status": "ok", "stats": s})
+		_ = json.NewEncoder(rw).Encode(withIngest(healthBody("ok", s, router), ingest))
 	})
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

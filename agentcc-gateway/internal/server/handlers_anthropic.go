@@ -43,6 +43,8 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 	rc.RequestHeaders = cloneRequestHeaders(r)
 	body, err := io.ReadAll(io.LimitReader(r.Body, h.maxBodySize+1))
 	if err != nil {
+		slog.Warn("failed to read anthropic request body", "request_id", rc.RequestID,
+			"content_length", r.ContentLength, "error", err)
 		anthropicfmt.WriteError(w, http.StatusBadRequest, "invalid_request_error", "Failed to read request body")
 		return
 	}
@@ -124,52 +126,10 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve provider.
-	var provider providers.Provider
-	var orgModelResolved bool
-
-	if orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
-		for providerID, provCfg := range orgCfg.Providers {
-			if provCfg == nil || !provCfg.Enabled || !provCfg.HasCredentials() {
-				continue
-			}
-			for _, m := range provCfg.Models {
-				if orgModelMatches(m, model, providerID) {
-					orgProvider, err := h.orgProviderCache.GetOrCreateWithTenantConfig(orgID, providerID, provCfg.APIKey, provCfg)
-					if err == nil {
-						provider = orgProvider
-						rc.Provider = providerID
-						rc.Metadata["org_provider_model_match"] = model
-						orgModelResolved = true
-						break
-					}
-				}
-			}
-			if orgModelResolved {
-				break
-			}
-		}
-	}
-
-	if !orgModelResolved {
-		var err error
-		provider, err = h.resolveProvider(ctx, rc, model)
-		if err != nil {
-			if orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
-				if orgP, providerID := h.resolveOrgProvider(orgID, orgCfg, model); orgP != nil {
-					provider = orgP
-					rc.Provider = providerID
-					rc.Metadata["org_provider"] = "true"
-					err = nil
-				}
-			}
-			if err != nil {
-				writeAnthropicErrorFromError(w, err)
-				return
-			}
-		}
-	}
-	if shouldApplyOrgProviderOverride(rc) {
-		provider = h.applyOrgProviderOverride(orgID, orgCfg, rc.Provider, provider)
+	provider, upstreamModel, err := h.resolveProviderWithOrgFallback(ctx, rc, orgID, orgCfg, model)
+	if err != nil {
+		writeAnthropicErrorFromError(w, err)
+		return
 	}
 
 	// Build Anthropic-specific headers to forward.
@@ -182,8 +142,8 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 
 	// Fast path: provider natively speaks Anthropic.
 	if ap, ok := provider.(providers.AnthropicNativeProvider); ok {
-		if rc.Metadata["model_alias"] != "" {
-			body, err = rewriteAnthropicRequestModel(body, rc.Model)
+		if rc.Metadata["model_alias"] != "" || upstreamModel != model {
+			body, err = rewriteRequestModel(body, upstreamModel)
 			if err != nil {
 				anthropicfmt.WriteError(w, http.StatusBadRequest, "invalid_request_error", "Invalid JSON: "+err.Error())
 				return
@@ -227,7 +187,7 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 		rc.Metadata["translation_drops"] = joined
 		w.Header().Set("x-agentcc-translation-drops", joined)
 	}
-	canonicalReq.Model = rc.Model
+	canonicalReq.Model = upstreamModel
 	canonicalReq.Stream = isStream
 
 	if isStream {
@@ -248,6 +208,8 @@ func (h *Handlers) AnthropicCountTokens(w http.ResponseWriter, r *http.Request) 
 	rc.RequestHeaders = cloneRequestHeaders(r)
 	body, err := io.ReadAll(io.LimitReader(r.Body, h.maxBodySize+1))
 	if err != nil {
+		slog.Warn("failed to read anthropic token-count request body", "request_id", rc.RequestID,
+			"content_length", r.ContentLength, "error", err)
 		anthropicfmt.WriteError(w, http.StatusBadRequest, "invalid_request_error", "Failed to read request body")
 		return
 	}
@@ -312,7 +274,7 @@ func (h *Handlers) AnthropicCountTokens(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	provider, err := h.resolveProviderWithOrgFallback(ctx, rc, orgID, orgCfg, model)
+	provider, upstreamModel, err := h.resolveProviderWithOrgFallback(ctx, rc, orgID, orgCfg, model)
 	if err != nil {
 		writeAnthropicErrorFromError(w, err)
 		return
@@ -320,8 +282,8 @@ func (h *Handlers) AnthropicCountTokens(w http.ResponseWriter, r *http.Request) 
 
 	// Fast path: native Anthropic provider supports count_tokens.
 	if ap, ok := provider.(providers.AnthropicNativeProvider); ok {
-		if rc.Metadata["model_alias"] != "" {
-			body, err = rewriteAnthropicRequestModel(body, rc.Model)
+		if rc.Metadata["model_alias"] != "" || upstreamModel != model {
+			body, err = rewriteRequestModel(body, upstreamModel)
 			if err != nil {
 				anthropicfmt.WriteError(w, http.StatusBadRequest, "invalid_request_error", "Invalid JSON: "+err.Error())
 				return
@@ -353,9 +315,9 @@ func (h *Handlers) AnthropicCountTokens(w http.ResponseWriter, r *http.Request) 
 			"Use /v1/messages — token counts are in the response usage block.", rc.Provider))
 }
 
-// rewriteAnthropicRequestModel changes only the routed model while preserving
-// all other native Anthropic request fields for upstream pass-through.
-func rewriteAnthropicRequestModel(body []byte, model string) ([]byte, error) {
+// rewriteRequestModel changes only the routed model while preserving every
+// other field of a JSON request body forwarded upstream as-is.
+func rewriteRequestModel(body []byte, model string) ([]byte, error) {
 	var request map[string]json.RawMessage
 	if err := json.Unmarshal(body, &request); err != nil {
 		return nil, err
@@ -605,6 +567,7 @@ func (h *Handlers) handleAnthropicNonStreamViaCanonical(
 ) {
 	// Without this the pipeline sees a nil rc.Request.
 	rc.Request = canonicalReq
+	mapping := takeToolNameMapping(canonicalReq)
 
 	var canonicalResp *models.ChatCompletionResponse
 	err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
@@ -678,7 +641,7 @@ func (h *Handlers) handleAnthropicNonStreamViaCanonical(
 	var respBody []byte
 	var marshalErr error
 
-	if mapping := extractToolNameMapping(canonicalReq); mapping != nil {
+	if mapping != nil {
 		if mr, ok := translator.(MappingRestorer); ok {
 			respBody, marshalErr = mr.ResponseFromCanonicalWithMapping(canonicalResp, mapping)
 		} else {
@@ -719,6 +682,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 	canonicalReq *models.ChatCompletionRequest,
 ) {
 	rc.Request = canonicalReq
+	mapping := takeToolNameMapping(canonicalReq)
 	streamCtx, streamCancel := context.WithCancel(ctx)
 	defer streamCancel()
 
@@ -819,7 +783,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 	// otherwise the client would see the truncated name in the stream.
 	var eventCh <-chan []byte
 	var translatorErrCh <-chan error
-	if mapping := extractToolNameMapping(canonicalReq); mapping != nil {
+	if mapping != nil {
 		type streamMappingRestorer interface {
 			StreamEventsFromCanonicalWithMapping(ctx context.Context, chunks <-chan models.StreamChunk, mapping map[string]string) (<-chan []byte, <-chan error)
 		}
@@ -920,18 +884,17 @@ func writeAnthropicErrorFromError(w http.ResponseWriter, err error) {
 	anthropicfmt.WriteError(w, http.StatusInternalServerError, "api_error", err.Error())
 }
 
-// extractToolNameMapping returns the truncated→original tool name map stashed
-// by the Anthropic translator's RequestToCanonical when it had to shorten a
-// tool name to fit OpenAI's 64-char limit. Returns nil if no mapping is set
-// or the encoded value is malformed (non-fatal — restoration is skipped).
-func extractToolNameMapping(req *models.ChatCompletionRequest) map[string]string {
-	if req == nil || req.Extra == nil {
-		return nil
-	}
+// takeToolNameMapping removes and returns the truncated→original tool name map
+// stashed by the Anthropic translator's RequestToCanonical when it had to
+// shorten a tool name to fit OpenAI's 64-char limit. It must run before the
+// provider call: Extra is forwarded upstream verbatim. Returns nil if no
+// mapping is set or the encoded value is malformed (restoration is skipped).
+func takeToolNameMapping(req *models.ChatCompletionRequest) map[string]string {
 	raw, ok := req.Extra["tool_name_mapping"]
 	if !ok {
 		return nil
 	}
+	delete(req.Extra, "tool_name_mapping")
 	var m map[string]string
 	if err := json.Unmarshal(raw, &m); err != nil {
 		return nil

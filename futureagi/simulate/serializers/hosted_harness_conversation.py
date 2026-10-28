@@ -43,6 +43,10 @@ class HarnessConversationAdjustmentSerializer(serializers.Serializer):
     client_request_id = serializers.CharField(
         max_length=128, required=False, allow_blank=False
     )
+    target_stage = serializers.ChoiceField(
+        choices=("understand", "environment", "scenarios"), required=False
+    )
+    scenario_delta = serializers.IntegerField(min_value=1, required=False)
 class HarnessConversationAdjustmentResponseSerializer(serializers.Serializer):
     adjustment_id = serializers.UUIDField()
     client_request_id = serializers.CharField(
@@ -223,3 +227,61 @@ class HarnessConversationRunStatusSerializer(serializers.Serializer):
 
 class HarnessConversationRerunSerializer(serializers.Serializer):
     pass
+
+
+class HarnessConversationScenarioQuerySerializer(serializers.Serializer):
+    numbers = serializers.ListField(
+        child=serializers.IntegerField(min_value=1), required=False, max_length=5000
+    )
+    ranges = serializers.ListField(
+        child=serializers.DictField(child=serializers.IntegerField(min_value=1)),
+        required=False,
+        max_length=100,
+    )
+    names = serializers.ListField(
+        child=serializers.CharField(max_length=255), required=False, max_length=500
+    )
+    ids = serializers.ListField(
+        child=serializers.CharField(max_length=64), required=False, max_length=1000
+    )
+    search = serializers.CharField(required=False, allow_blank=True, max_length=500)
+    filters = serializers.DictField(required=False)
+    page = serializers.IntegerField(required=False, min_value=1)
+    page_size = serializers.IntegerField(required=False, min_value=1, max_value=100)
+    full = serializers.BooleanField(required=False, default=False)
+
+
+class HarnessConversationPublishSerializer(serializers.Serializer):
+    digest = serializers.CharField(max_length=128)
+
+
+class HarnessConversationRunsQuerySerializer(serializers.Serializer):
+    run_id = serializers.CharField(required=False, allow_blank=True, max_length=64)
+    limit = serializers.IntegerField(required=False, min_value=1, max_value=50)
+
+
+class HarnessConversationRunStartSerializer(serializers.Serializer):
+    numbers = serializers.ListField(
+        child=serializers.IntegerField(min_value=1), required=False, max_length=5000
+    )
+    ranges = serializers.ListField(
+        child=serializers.DictField(child=serializers.IntegerField(min_value=1)),
+        required=False,
+        max_length=100,
+    )
+    trials = serializers.IntegerField(min_value=1, max_value=20, default=1)
+    operation_id = serializers.CharField(required=False, allow_blank=True, max_length=64)
+
+
+class HarnessConversationOverviewQuerySerializer(serializers.Serializer):
+    pass
+
+
+class HarnessConversationOverviewSerializer(serializers.Serializer):
+    environment = serializers.DictField()
+    scenario_count = serializers.IntegerField()
+    use_cases = serializers.ListField(child=serializers.DictField())
+    coverage = serializers.DictField()
+    recent_runs = serializers.ListField(child=serializers.DictField())
+    build_changes = serializers.ListField(child=serializers.DictField())
+    earlier_messages = serializers.ListField(child=serializers.DictField())

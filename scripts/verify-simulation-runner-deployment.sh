@@ -6,7 +6,7 @@ usage() {
     cat <<'USAGE'
 Usage: verify-simulation-runner-deployment.sh [options]
 
-Validate the root Compose file and the disabled-by-default GCP simulation-runner
+Validate the Distributed Compose file and the disabled-by-default GCP simulation-runner
 chart scaffolding without changing Docker, Helm, or Kubernetes state.
 
 Options:
@@ -140,9 +140,9 @@ if [[ -z "$deployment_root" ]]; then
     deployment_root="$repo_root/../deployment"
 fi
 if ((${#compose_files[@]} == 0)); then
-    compose_files=("$repo_root/docker-compose.yml")
-    if [[ -f "$repo_root/docker-compose.dev.yml" ]]; then
-        compose_files+=("$repo_root/docker-compose.dev.yml")
+    compose_files=("$repo_root/docker-compose.distributed.yml")
+    if [[ -f "$repo_root/docker-compose.distributed.dev.yml" ]]; then
+        compose_files+=("$repo_root/docker-compose.distributed.dev.yml")
     fi
 fi
 

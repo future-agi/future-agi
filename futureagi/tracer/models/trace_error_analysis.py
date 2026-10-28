@@ -166,10 +166,22 @@ class ClusterSource(models.TextChoices):
     EVAL = "eval"
 
 
+class ErrorGroupTargetType(models.TextChoices):
+    ERROR_FEED = "error_feed"
+    SIMULATION = "simulation"
+
+
 class TraceErrorGroup(BaseModel):
     """Stores grouped error information — each row = one Feed issue."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    redirect_to = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="redirected_from",
+    )
 
     project = models.ForeignKey(
         Project,
@@ -197,6 +209,19 @@ class TraceErrorGroup(BaseModel):
         null=True,
         blank=True,
         help_text="span/trace/session for eval clusters; null for scanner",
+    )
+    target_type = models.CharField(
+        max_length=20,
+        choices=ErrorGroupTargetType.choices,
+        default=ErrorGroupTargetType.ERROR_FEED,
+        db_index=True,
+    )
+    test_execution = models.ForeignKey(
+        "simulate.TestExecution",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="error_groups",
     )
     issue_group = models.CharField(
         max_length=100,
@@ -357,6 +382,19 @@ class TraceErrorGroup(BaseModel):
                 fields=["project", "cluster_id"],
                 condition=models.Q(deleted=False),
                 name="unique_project_cluster_if_not_deleted",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        target_type=ErrorGroupTargetType.ERROR_FEED,
+                        test_execution__isnull=True,
+                    )
+                    | models.Q(
+                        target_type=ErrorGroupTargetType.SIMULATION,
+                        test_execution__isnull=False,
+                    )
+                ),
+                name="valid_error_group_target_scope",
             ),
         ]
 

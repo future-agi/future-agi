@@ -5,7 +5,6 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
-from integrations.services.credentials import CredentialManager
 from agentcc.models.org_config import AgentccOrgConfig
 from agentcc.models.provider_credential import AgentccProviderCredential
 from agentcc.serializers.provider_credential import (
@@ -14,7 +13,15 @@ from agentcc.serializers.provider_credential import (
     AgentccProviderCredentialUpdateSerializer,
 )
 from agentcc.services.config_push import push_org_config
-from agentcc.services.url_safety import build_ssrf_safe_session, ensure_public_http_url
+from agentcc.services.url_safety import (
+    PROVIDER_PRIVATE_URL_ERROR,
+    PROVIDER_URL_ERROR,
+    build_ssrf_safe_session,
+    ensure_provider_base_url_allowed,
+    ensure_public_http_url,
+    private_provider_urls_allowed,
+)
+from integrations.services.credentials import CredentialManager
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
 
@@ -104,6 +111,10 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
                     f"Provider '{data['provider_name']}' already has a credential. "
                     f"Use PATCH to update or rotate."
                 )
+            try:
+                ensure_provider_base_url_allowed(data.get("base_url", ""))
+            except ValueError as e:
+                return self._gm.bad_request(str(e))
 
             encrypted = CredentialManager.encrypt(data["credentials"])
 
@@ -132,12 +143,22 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
             logger.exception("provider_credential_create_error", error=str(e))
             return self._gm.bad_request(str(e))
 
+    def update(self, request, *args, **kwargs):
+        return self.partial_update(request, *args, **kwargs)
+
     def partial_update(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
             serializer = AgentccProviderCredentialUpdateSerializer(data=request.data)
             if not serializer.is_valid():
                 return self._gm.bad_request(serializer.errors)
+            try:
+                ensure_provider_base_url_allowed(
+                    serializer.validated_data.get("base_url"),
+                    saved_base_url=instance.base_url,
+                )
+            except ValueError as e:
+                return self._gm.bad_request(str(e))
 
             safe_fields = {
                 "display_name",
@@ -230,6 +251,7 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
         base_url = None
         api_format = None
         api_path_prefix = None
+        saved_base_url = None
 
         if provider_name:
             organization = getattr(request, "organization", None)
@@ -257,13 +279,33 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
                     )
                 api_key = decrypted.get("api_key", "")
                 base_url = cred.base_url.rstrip("/") if cred.base_url else ""
+                saved_base_url = base_url
                 api_format = cred.api_format
                 api_path_prefix = (cred.extra_config or {}).get("api_path_prefix")
 
+        # The saved key only ever goes where it was saved for: a caller who can
+        # use the credential but not read it must not be able to redirect it.
+        uses_saved_key = saved_base_url is not None and not request.data.get("api_key")
+        requested_base_url = (request.data.get("base_url") or "").rstrip("/")
+        if (
+            uses_saved_key
+            and requested_base_url
+            and requested_base_url != saved_base_url
+        ):
+            return self._gm.bad_request(
+                "The saved API key is only sent to the provider's saved base URL. "
+                "Provide an api_key to fetch models from a different one."
+            )
+
         # Raw values from request body override or fill gaps.
-        base_url = (request.data.get("base_url") or base_url or "").rstrip("/")
+        base_url = (requested_base_url or base_url or "").rstrip("/")
         api_key = request.data.get("api_key") or api_key or ""
-        api_format = request.data.get("api_format") or api_format or "openai"
+        # The format decides the discovery URL and how the key is sent (the
+        # google branch puts it in the query string), so a saved key keeps the
+        # format it was saved with.
+        if not uses_saved_key:
+            api_format = request.data.get("api_format") or api_format
+        api_format = api_format or "openai"
         # Presence, not truthiness: "" is an explicit "no version segment", and
         # an `or` chain would silently swap it for the stored value.
         if "api_path_prefix" in request.data:
@@ -316,15 +358,32 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
         # Validate user-supplied base_url and use safe session to prevent SSRF
         # (including DNS rebinding).
         if base_url:
-            ensure_public_http_url(base_url, "Invalid base URL")
-            http = build_ssrf_safe_session("Connection to private address blocked")
+            allow_private = private_provider_urls_allowed()
+            ensure_public_http_url(
+                base_url,
+                PROVIDER_URL_ERROR,
+                allow_private=allow_private,
+                private_message=PROVIDER_PRIVATE_URL_ERROR,
+            )
+            http = build_ssrf_safe_session(
+                "Connection to private address blocked", allow_private=allow_private
+            )
         else:
             http = http_requests
 
         name = (provider_name or "").lower()
 
         if name == "anthropic" or api_format == "anthropic":
-            url = f"{base_url or 'https://api.anthropic.com'}/v1/models"
+            # Anthropic's catalogue is always at /v1/models, so state "/v1" as
+            # the prefix rather than concatenating it: a base URL that already
+            # carries one must not produce "/v1/v1/models", and a trailing
+            # slash must not produce "//v1/models". Reachable from a custom
+            # provider, which can select the anthropic API format.
+            url = _join_api_endpoint(
+                base_url or "https://api.anthropic.com",
+                _DEFAULT_API_PATH_PREFIX,
+                "/models",
+            )
             resp = http.get(
                 url,
                 headers={
@@ -337,8 +396,23 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
             data = resp.json()
             return sorted(m["id"] for m in data.get("data", []))
 
-        if name in ("google", "gemini", "google_gemini") or api_format in ("gemini", "google"):
-            url = "https://generativelanguage.googleapis.com/v1beta/models"
+        if name in ("google", "gemini", "google_gemini") or api_format in (
+            "gemini",
+            "google",
+        ):
+            # base_url is a Gemini-protocol host only in the google/gemini
+            # formats. The Google preset can also be saved in the openai format
+            # against Google's OpenAI-compatible base (".../v1beta/openai"); its
+            # key is still a Google key, so it is listed at Google's own host.
+            gemini_base_url = base_url if api_format in ("gemini", "google") else ""
+            # No prefix to de-duplicate: the gateway's Gemini provider always
+            # appends "/v1beta" to the base URL (gemini/translate.go buildURL),
+            # so a base already ending in it fails there and must fail here.
+            url = _join_api_endpoint(
+                gemini_base_url or "https://generativelanguage.googleapis.com",
+                "",
+                "/v1beta/models",
+            )
             resp = http.get(
                 url,
                 params={"key": api_key},
@@ -357,12 +431,15 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
             return sorted(models)
 
         if name == "cohere":
-            # Cohere native: /v1/models with Bearer auth.
-            base = (base_url or "https://api.cohere.com").rstrip("/")
-            if base.endswith("/compatibility/v1"):
-                url = f"{base}/models"
-            else:
-                url = f"{base}/v1/models"
+            # Cohere native: /v1/models with Bearer auth. Stating "/v1" as the
+            # prefix subsumes the old "/compatibility/v1" special case — that
+            # base already ends in the prefix, so it lands on the identical URL
+            # — and stops any other base ending in "/v1" from doubling it.
+            url = _join_api_endpoint(
+                base_url or "https://api.cohere.com",
+                _DEFAULT_API_PATH_PREFIX,
+                "/models",
+            )
             resp = http.get(
                 url,
                 headers={"Authorization": f"Bearer {api_key}"},

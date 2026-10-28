@@ -167,7 +167,10 @@ def _current(job: TraceGroupingSeverityJob) -> bool:
         and not issue.scope.deleted
         and issue.revision == job.issue_revision
         and issue.cluster.severity_source != "manual"
-        and _eligible_project(issue.scope.project_id)
+        and _eligible_project(
+            issue.scope.project_id,
+            simulation=issue.cluster.target_type == "simulation",
+        )
     )
 
 
@@ -238,6 +241,13 @@ def claim_severity(*, worker_id: str, limit: int) -> dict:
                         claims.append(
                             {
                                 "attempt_id": str(job.id),
+                                "organization_id": str(job.issue.scope.organization_id),
+                                "organization_name": (
+                                    job.issue.scope.organization.display_name
+                                    or job.issue.scope.organization.name
+                                ),
+                                "project_id": str(job.issue.scope.project_id),
+                                "project_name": job.issue.scope.project.name,
                                 "lease_token": token,
                                 "snapshot": snapshot,
                                 "snapshot_digest": digest,
@@ -413,6 +423,9 @@ def publish_severity(
         cluster = TraceErrorGroup.no_workspace_objects.select_for_update().get(
             pk=job.issue.cluster_id
         )
+        from tracer.services.feed_alerts.events import issue_snapshot, record_issue_event
+
+        alert_before = issue_snapshot(cluster)
         cluster.severity_assessment_status = job.state
         cluster.severity_reason = result["reason"]
         fields = ["severity_assessment_status", "severity_reason", "updated_at"]
@@ -432,4 +445,9 @@ def publish_severity(
             cluster.severity_source = "llm"
             fields += ["priority", "combined_impact", "severity_source"]
         cluster.save(update_fields=fields)
+        record_issue_event(
+            cluster=cluster,
+            before=alert_before,
+            source_key=f"severity:{job.id}:{job.issue_revision}",
+        )
         return {"status": job.state}

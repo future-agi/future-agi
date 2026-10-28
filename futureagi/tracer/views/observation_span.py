@@ -99,7 +99,11 @@ from tracer.serializers.observation_span import (
     SubmitFeedbackActionTypeSerializer,
     SubmitFeedbackSerializer,
 )
-from tracer.serializers.trace import TraceNavigationResponseSerializer, TraceSerializer
+from tracer.serializers.trace import (
+    RUN_SCOPE_KEYS,
+    TraceNavigationResponseSerializer,
+    TraceSerializer,
+)
 from tracer.services.clickhouse.attribute_reads import (
     ATTRIBUTE_READ_EXPLICIT_SEGMENT,
     AttributeReadMetadata,
@@ -163,6 +167,7 @@ from tracer.services.clickhouse.v2.span_selectors import (
     flatten_span_attributes_into_entry,
     merge_content_rows,
 )
+from tracer.services.eval_tiles import count_column_metadata
 from tracer.services.filter_attestation import (
     applied_filter_attestation,
     graph_execution_filters,
@@ -184,6 +189,7 @@ from tracer.utils.eval import (
 )
 from tracer.utils.filters import FilterEngine
 from tracer.utils.helper import (
+    eval_output_type_for_config,
     get_annotation_labels_by_project,
     get_annotation_labels_for_project,
     get_default_span_config,
@@ -274,13 +280,20 @@ def _span_page_identity_sets(
 ) -> tuple[
     list[tuple[Any, ...]],
     list[tuple[str, str]],
-    dict[tuple[str, str], tuple[str, str, str]],
+    dict[tuple[str, str], tuple[tuple[str, str, str], ...]],
 ]:
-    """Build physical and external span keys without an identity downgrade."""
+    """Build physical and external span keys without an identity downgrade.
+
+    The third value maps each ``(trace_id, span_id)`` to every page copy that
+    holds it. A replay or re-import writes the same ids into several projects,
+    and an organization-scoped page lists each project's copy as its own row.
+    """
 
     physical: list[tuple[Any, ...]] = []
     external: list[tuple[str, str]] = []
-    app_identity_by_external: dict[tuple[str, str], tuple[str, str, str]] = {}
+    app_identities_by_external: dict[
+        tuple[str, str], tuple[tuple[str, str, str], ...]
+    ] = {}
     for row in rows:
         project_id = str(row.get("project_id") or default_project_id or "")
         trace_id = str(row.get("trace_id") or "")
@@ -292,11 +305,9 @@ def _span_page_identity_sets(
             row["project_id"] = project_id
         external_key = (trace_id, span_id)
         app_key = (project_id, trace_id, span_id)
-        previous = app_identity_by_external.setdefault(external_key, app_key)
-        if previous != app_key:
-            # Eval/score tables cannot reliably carry project identity. A page
-            # containing this collision cannot be decorated safely.
-            raise ValueError("ambiguous trace-scoped span identity")
+        copies = app_identities_by_external.get(external_key, ())
+        if app_key not in copies:
+            app_identities_by_external[external_key] = (*copies, app_key)
         external.append(external_key)
         if start_time is not None:
             if getattr(builder, "CONTENT_IDENTITY_FIELDS", None):
@@ -308,8 +319,40 @@ def _span_page_identity_sets(
     return (
         list(dict.fromkeys(physical)),
         list(dict.fromkeys(external)),
-        app_identity_by_external,
+        app_identities_by_external,
     )
+
+
+def _span_page_annotation_map(rows, label_types, app_identities_by_external):
+    """Key page annotations by each copy's ``(project_id, trace_id, span_id)``.
+
+    A score carrying ``tracer_project_id`` belongs to that project's copy only.
+    A score without one (legacy rows, or a read that did not select it) stays
+    on every copy of its trace/span id, under the copy's own values.
+    """
+    from tracer.services.clickhouse.query_builders import SpanListQueryBuilder
+
+    rows_by_project: dict[str, list[dict]] = {}
+    for row in rows:
+        project_id = str(row.get("tracer_project_id") or "")
+        rows_by_project.setdefault(project_id, []).append(row)
+    external_by_project = {
+        project_id: SpanListQueryBuilder.pivot_annotation_results(
+            project_rows, label_types, key_by_trace=True
+        )
+        for project_id, project_rows in rows_by_project.items()
+    }
+    unattributed = external_by_project.get("", {})
+    annotation_map = {}
+    for external_key, copies in app_identities_by_external.items():
+        for app_identity in copies:
+            values = {
+                **unattributed.get(external_key, {}),
+                **external_by_project.get(app_identity[0], {}).get(external_key, {}),
+            }
+            if values:
+                annotation_map[app_identity] = values
+    return annotation_map
 
 
 def _merge_span_page_content(rows, content_rows, *, builder, keys) -> bool:
@@ -800,20 +843,44 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             TraceDetailReadUnavailable,
         )
 
-        physical_reference = getattr(request, "validated_query_data", {}) or None
+        query = getattr(request, "validated_query_data", {}) or {}
+        # The run parameters are not part of the selector: they only replace the
+        # project set with a run's hidden project, never describe a span.
+        selector = {k: v for k, v in query.items() if k not in RUN_SCOPE_KEYS}
+        # ``project_id`` alone pins a bare span id to the project the span was
+        # opened from; any other selector is a full physical reference.
+        physical_reference = selector if selector.keys() - {"project_id"} else None
+        pinned_project_id = None if physical_reference else selector.get("project_id")
         try:
             observation_span_id = kwargs.get("pk")
             organization = _get_request_organization(request)
             project_manager = getattr(Project, "no_workspace_objects", Project.objects)
+            run_scope = None
+            if any(query.get(key) is not None for key in RUN_SCOPE_KEYS):
+                from tracer.services.simulation_project import (
+                    run_scope_project_ids,
+                    simulation_scope_for_run,
+                )
+
+                run_scope = simulation_scope_for_run(
+                    request,
+                    test_execution_id=query.get("test_execution_id"),
+                    call_execution_id=query.get("call_execution_id"),
+                )
             if physical_reference:
                 # Explicit identity is authority-scoped before a CH service is
                 # constructed. Never widen a denied selector to bare-ID lookup.
-                if not project_manager.filter(
-                    _project_workspace_scope_q(request, project_prefix=""),
-                    organization=organization,
-                    deleted=False,
-                    id=physical_reference["project_id"],
-                ).exists():
+                # With a run, the only project that opens is the run's hidden one.
+                if run_scope is not None:
+                    allowed = str(physical_reference["project_id"]) == str(run_scope.id)
+                else:
+                    allowed = project_manager.filter(
+                        _project_workspace_scope_q(request, project_prefix=""),
+                        organization=organization,
+                        deleted=False,
+                        id=physical_reference["project_id"],
+                    ).exists()
+                if not allowed:
                     raise PhysicalSpanDetailError("span_reference_not_found")
                 return self._retrieve_clickhouse(
                     request,
@@ -822,16 +889,25 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     authorized_project_ids=[str(physical_reference["project_id"])],
                     physical_reference=physical_reference,
                 )
-            authorized_project_ids = [
-                str(project_id)
-                for project_id in project_manager.filter(
+            if run_scope is not None:
+                authorized_project_ids = run_scope_project_ids(
+                    run_scope, pinned_project_id
+                )
+            else:
+                project_scope = project_manager.filter(
                     _project_workspace_scope_q(request, project_prefix=""),
                     organization=organization,
                     deleted=False,
-                ).values_list("id", flat=True)[:4097]
-            ]
-            if len(authorized_project_ids) > 4096:
-                raise TraceDetailReadUnavailable("project_scope_too_large")
+                )
+                if pinned_project_id:
+                    # Outside the caller's scope this resolves like a missing span.
+                    project_scope = project_scope.filter(id=pinned_project_id)
+                authorized_project_ids = [
+                    str(project_id)
+                    for project_id in project_scope.values_list("id", flat=True)[:4097]
+                ]
+                if len(authorized_project_ids) > 4096:
+                    raise TraceDetailReadUnavailable("project_scope_too_large")
 
             # Direct-write CH25 is the sole span source.  The project dimension
             # above is the tenant authority; no PG ObservationSpan existence
@@ -2068,6 +2144,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 deleted=False,
             ).select_related("eval_template")
             eval_config_ids = [str(c.id) for c in eval_configs]
+
         else:
             # Configuration metadata is already a finite project-scoped PG
             # read. A window-wide CH discovery query before the page selector
@@ -2081,6 +2158,18 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 ).select_related("eval_template")
             )
             eval_config_ids = [str(c.id) for c in eval_configs]
+
+        eval_output_types = {
+            str(config.id): eval_output_type_for_config(config)
+            for config in eval_configs
+        }
+        eval_declared_choices = {
+            str(config.id): list(config.eval_template.choices or [])
+            for config in eval_configs
+            if getattr(config, "eval_template", None) is not None
+        }
+        eval_target_types: dict[str, str | None] = {}
+        eval_observed_choice_labels: dict[str, list[str]] = {}
 
         # Labels can be project-local or org/shared labels referenced by span
         # scores. Completeness is project-local, so retain that mapping for the
@@ -2126,6 +2215,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             eval_config_ids=eval_config_ids,
             annotation_label_ids=annotation_label_ids,
             annotation_label_ids_by_project=annotation_label_ids_by_project,
+            eval_count_mode=True,
             bounded_internal_scan=cursor_enabled,
         )
         requires_cursor = builder.requires_cursor_for_long_filtered_read()
@@ -2322,7 +2412,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # OTel span IDs are unique only within their trace. Carry that logical
         # identity through every page-scoped read and merge; a bare span ID can
         # otherwise attach content/evals/annotations from another trace.
-        span_identities, span_entities, app_identity_by_external = (
+        span_identities, span_entities, app_identities_by_external = (
             _span_page_identity_sets(
                 result.data,
                 default_project_id=None if org_scope else str(project_id),
@@ -2461,6 +2551,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 span_ids,
                 created_after=page_min_created_at,
                 span_entities=span_entities,
+                count_mode=True,
             )
             if not eval_query:
                 return _stats({}, [], False)
@@ -2471,12 +2562,23 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 settings=SPAN_LIST_SINGLE_WORKER_READ_SETTINGS,
             )
             external_map = SpanListQueryBuilder.pivot_eval_results(
-                eval_result.data, key_by_trace=True
+                eval_result.data,
+                key_by_trace=True,
+                count_mode=True,
+                output_types=eval_output_types,
+                declared_choices=eval_declared_choices,
             )
+            target_types, observed_labels = count_column_metadata(
+                eval_result.data, external_map, eval_output_types
+            )
+            eval_target_types.update(target_types)
+            eval_observed_choice_labels.update(observed_labels)
+            # Every copy gets the pivot; the table below keeps only the
+            # columns of configs owned by the row's project.
             value = {
-                app_identity_by_external[external_key]: values
+                app_identity: values
                 for external_key, values in external_map.items()
-                if external_key in app_identity_by_external
+                for app_identity in app_identities_by_external.get(external_key, ())
             }
             return _stats(value, eval_result.data, True)
 
@@ -2487,6 +2589,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 span_ids,
                 created_after=page_min_created_at,
                 span_entities=span_entities,
+                by_project=org_scope,
             )
             if not ann_query:
                 return _stats({}, [], False)
@@ -2496,14 +2599,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 timeout_ms=read_deadline.remaining_ms(SPAN_LIST_ENRICHMENT_TIMEOUT_MS),
                 settings=SPAN_LIST_SINGLE_WORKER_READ_SETTINGS,
             )
-            external_map = SpanListQueryBuilder.pivot_annotation_results(
-                ann_result.data, label_types, key_by_trace=True
+            value = _span_page_annotation_map(
+                ann_result.data, label_types, app_identities_by_external
             )
-            value = {
-                app_identity_by_external[external_key]: values
-                for external_key, values in external_map.items()
-                if external_key in app_identity_by_external
-            }
             return _stats(value, ann_result.data, True)
 
         def _fetch_end_users():
@@ -2617,7 +2715,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # Build column config (from PG config tables)
         column_config = get_default_span_config(include_user_fields=True)
         column_config = update_column_config_based_on_eval_config(
-            column_config, eval_configs
+            column_config,
+            eval_configs,
+            skip_choices=True,
+            target_types=eval_target_types,
+            observed_choice_labels=eval_observed_choice_labels,
+            count_mode=True,
         )
         column_config = update_span_column_config_based_on_annotations(
             column_config, annotation_labels
@@ -2681,31 +2784,14 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             # Add eval metrics
             span_evals = eval_map.get(span_entity, {})
             for config in eval_configs:
+                # As in the trace list: across projects, a config's column is
+                # its own project's score, never another copy's.
+                if org_scope and str(config.project_id) != span_entity[0]:
+                    continue
                 config_id = str(config.id)
                 if config_id not in span_evals:
                     continue
-                val = span_evals[config_id]
-                # Lifecycle marker — ``{"status": ...}`` (pending/running/skipped)
-                # or ``{"error": True}`` (errored): pass the whole marker through
-                # on the ``config_id`` column so the cell renders the
-                # loading / pending / skipped / error state instead of a blank.
-                if isinstance(val, dict) and (
-                    isinstance(val.get("status"), str) or val.get("error")
-                ):
-                    entry[config_id] = val
-                # CHOICES eval: spread per-choice percentages into separate
-                # columns keyed ``{config_id}**{choice}`` to match the
-                # column config produced by
-                # ``update_column_config_based_on_eval_config``.
-                elif isinstance(val, dict) and not val.get("error") and val:
-                    for choice, pct in val.items():
-                        entry[f"{config_id}**{choice}"] = pct
-                else:
-                    entry[config_id] = val
-                    if isinstance(val, dict):
-                        entry[config_id] = val.get("score")
-                    else:
-                        entry[config_id] = val
+                entry[config_id] = span_evals[config_id]
 
             # Add annotations
             span_annotations = annotation_map.get(span_entity, {})
@@ -3027,7 +3113,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
         # Phase 1b: Fetch input/output for the page
         span_ids = [str(row.get("id", "")) for row in result.data if row.get("id")]
-        span_identities, span_entities, app_identity_by_external = (
+        span_identities, span_entities, app_identities_by_external = (
             _span_page_identity_sets(
                 result.data,
                 default_project_id=project_id,
@@ -3097,9 +3183,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     eval_result.data, key_by_trace=True
                 )
                 eval_map = {
-                    app_identity_by_external[external_key]: values
+                    app_identity: values
                     for external_key, values in external_map.items()
-                    if external_key in app_identity_by_external
+                    for app_identity in app_identities_by_external.get(external_key, ())
                 }
 
         # Phase 3: Annotations
@@ -3118,9 +3204,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     ann_result.data, label_types, key_by_trace=True
                 )
                 annotation_map = {
-                    app_identity_by_external[external_key]: values
+                    app_identity: values
                     for external_key, values in external_map.items()
-                    if external_key in app_identity_by_external
+                    for app_identity in app_identities_by_external.get(external_key, ())
                 }
 
         # Build column config
@@ -4328,6 +4414,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             project_id=str(project_id),
             page_number=0,
             page_size=SPAN_NAVIGATION_CANDIDATE_LIMIT,
+            eval_count_mode=project_version_id is None,
             filters=list(filters or []),
             project_version_id=(
                 str(project_version_id) if project_version_id is not None else None

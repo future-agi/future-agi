@@ -1,4 +1,7 @@
-# Production overlay. Layered on top of docker-compose.yml.
+# Production overlay for the distributed topology. Layered on top of
+# docker-compose.distributed.yml:
+#   docker compose --env-file deploy/.env.production \
+#     -f docker-compose.distributed.yml -f deploy/docker-compose.production.yml up -d
 # Re-binds required env vars with ${VAR:?error} so compose refuses to boot
 # if any are still unset. Pair with deploy/.env.production.
 
@@ -11,8 +14,6 @@ x-production-backend-env: &production-backend-env
   AGENTCC_ADMIN_TOKEN: ${AGENTCC_ADMIN_TOKEN:?must be set for production}
   PG_PASSWORD: ${PG_PASSWORD:?must be set for production}
   MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?must be set for production}
-  RABBITMQ_USER: ${RABBITMQ_USER:?must be set for production}
-  RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?must be set for production}
   PROPERTY_CATALOG_CH_PASSWORD: ${PROPERTY_CATALOG_API_PASSWORD:?must be set for production}
 
 services:

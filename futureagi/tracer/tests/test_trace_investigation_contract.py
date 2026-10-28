@@ -3,10 +3,13 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from tracer.models.trace_investigation import TraceInvestigationRequirementCheck
 from tracer.models.trace_scan import TraceScanConfig
 from tracer.queries.trace_scanner import get_scan_config
 from tracer.serializers.trace_investigation import (
     FindingAttributionRoleSerializer,
+    InvestigationFindingSerializer,
+    InvestigationRequirementCheckSerializer,
     PublishInvestigationRequestSerializer,
 )
 from tracer.services.trace_investigation import canonical_wire_result_digest
@@ -44,6 +47,46 @@ def test_attribution_explanation_is_optional_and_only_for_supported_roles():
         data={"status": "unknown", "span_id": None, "evidence_ids": [], "explanation": "Guess"}
     )
     assert not unsupported.is_valid()
+
+
+def test_simulation_goal_name_fits_report_requirement_ids():
+    goal_name = "g" * 256
+    assert (
+        TraceInvestigationRequirementCheck._meta.get_field("requirement_id").max_length
+        == 256
+    )
+    check = InvestigationRequirementCheckSerializer(
+        data={
+            "requirement_id": goal_name,
+            "requirement": "Agent handles the authored goal",
+            "status": "satisfied",
+            "evidence_ids": ["call-1:0:256"],
+        }
+    )
+    assert check.is_valid(), check.errors
+
+    unknown_role = {"status": "unknown", "call_execution_id": None, "evidence_ids": []}
+    finding = InvestigationFindingSerializer(
+        data={
+            "finding_id": "finding-1",
+            "kind": "goal_failure",
+            "statement": "Agent did not complete the goal",
+            "requirement_id": goal_name,
+            "evidence_ids": ["call-1:0:256"],
+            "recovery": "not_recovered",
+            "attribution": {
+                "origin": unknown_role,
+                "decisive": unknown_role,
+                "symptom": unknown_role,
+            },
+        }
+    )
+    assert finding.is_valid(), finding.errors
+
+    too_long = InvestigationRequirementCheckSerializer(
+        data={**check.initial_data, "requirement_id": goal_name + "g"}
+    )
+    assert not too_long.is_valid()
 
 
 def test_queued_legacy_task_skips_omega_project_before_embedding():

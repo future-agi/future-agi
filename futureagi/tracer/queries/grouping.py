@@ -10,7 +10,9 @@ from typing import TypeVar
 
 from django.db.models import QuerySet
 
+from tracer.constants.grouping_versions import GROUPING_GATE_VERSION
 from tracer.models.trace_investigation import (
+    InvestigationWorkload,
     TraceInvestigationAttribution,
     TraceInvestigationAttributionEvidence,
     TraceInvestigationEvidenceReceipt,
@@ -63,10 +65,23 @@ class GroupingSnapshotError(ValueError):
     """The selected report cannot safely cross the grouping boundary."""
 
 
-def groupable_findings(report: TraceInvestigationReport) -> QuerySet[TraceInvestigationFinding]:
-    """Only unresolved, evidenced task failures become Feed occurrences."""
+def groupable_findings(
+    report: TraceInvestigationReport,
+) -> QuerySet[TraceInvestigationFinding]:
+    """Only unresolved findings become Feed occurrences.
+
+    A report stamped with the current gate groups every unresolved finding,
+    whatever its outcome. Older reports keep the legacy gate, so the occurrence
+    list and source digest of a report never change after it is published.
+    """
     findings = TraceInvestigationFinding.no_workspace_objects.filter(report=report)
-    if report.execution_status != "completed" or report.outcome != "failure":
+    if report.grouping_gate not in (None, GROUPING_GATE_VERSION):
+        raise GroupingSnapshotError(f"unknown grouping gate {report.grouping_gate!r}")
+    if report.execution_status != "completed":
+        return findings.none()
+    if report.grouping_gate == GROUPING_GATE_VERSION:
+        return findings.filter(recovery__in=GROUPABLE_RECOVERY)
+    if report.outcome != "failure":
         return findings.none()
     return findings.filter(
         recovery__in=GROUPABLE_RECOVERY, requirement__status="violated"
@@ -180,6 +195,8 @@ def _validate_report_scope(report: TraceInvestigationReport) -> None:
         or job.workspace_id != report.workspace_id
         or job.project_id != report.project_id
         or job.trace_id != report.trace_id
+        or job.workload_type != report.workload_type
+        or job.test_execution_id != report.test_execution_id
     ):
         raise GroupingSnapshotError("report job does not match report scope")
     if attempt.job_id != job.id:
@@ -248,7 +265,9 @@ def export_grouping_snapshot(*, report: TraceInvestigationReport) -> GroupingSna
         label="evidence receipts",
     )
     findings = _bounded(
-        groupable_findings(report).select_related("requirement").order_by("ordinal", "id"),
+        groupable_findings(report)
+        .select_related("requirement")
+        .order_by("ordinal", "id"),
         limit=MAX_FINDINGS,
         label="findings",
     )
@@ -334,6 +353,11 @@ def export_grouping_snapshot(*, report: TraceInvestigationReport) -> GroupingSna
             "evidence_id": item.evidence_id,
             "span_id": item.span_id,
             "parent_span_id": item.parent_span_id,
+            **(
+                {"call_execution_id": str(item.call_execution_id)}
+                if item.call_execution_id
+                else {}
+            ),
             "excerpt": item.excerpt,
             "end_time": _utc_text(item.end_time),
         }
@@ -353,6 +377,11 @@ def export_grouping_snapshot(*, report: TraceInvestigationReport) -> GroupingSna
         role_payload: GroupingSnapshotAttributionRole = {
             "status": attribution.status,
             "span_id": attribution.span_id,
+            **(
+                {"call_execution_id": str(attribution.call_execution_id)}
+                if attribution.call_execution_id
+                else {}
+            ),
             "evidence_ids": attribution_citations.get(attribution.id, []),
         }
         roles[attribution.role] = role_payload
@@ -390,12 +419,21 @@ def export_grouping_snapshot(*, report: TraceInvestigationReport) -> GroupingSna
         for item in verifications
     ]
     attempt = report.attempt
+    simulation = report.workload_type == InvestigationWorkload.SIMULATION_TEST_EXECUTION
     report_payload: GroupingSnapshotReport = {
         "id": str(report.id),
         "organization_id": str(report.organization_id),
         "workspace_id": str(report.workspace_id) if report.workspace_id else None,
         "project_id": str(report.project_id),
-        "trace_id": str(report.trace_id),
+        "trace_id": str(report.trace_id) if report.trace_id else None,
+        **(
+            {
+                "workload_type": InvestigationWorkload.SIMULATION_TEST_EXECUTION,
+                "test_execution_id": str(report.test_execution_id),
+            }
+            if simulation
+            else {}
+        ),
         "source": "omega",
         "source_version": report.source_version,
         "recorded_at": _utc_text(report.recorded_at),
@@ -421,13 +459,23 @@ def export_grouping_snapshot(*, report: TraceInvestigationReport) -> GroupingSna
         "outcome": _require_text(report.outcome, "outcome"),
         "coverage": {
             "scope": _require_text(report.coverage_scope, "coverage scope"),
-            "observed_span_count": _require_nonnegative_int(
-                report.observed_span_count, "observed_span_count"
+            **(
+                {
+                    "observed_call_count": _require_nonnegative_int(
+                        report.observed_call_count, "observed_call_count"
+                    )
+                }
+                if simulation
+                else {
+                    "observed_span_count": _require_nonnegative_int(
+                        report.observed_span_count, "observed_span_count"
+                    ),
+                    "future_arrivals_known": _require_bool(
+                        report.future_arrivals_known, "future_arrivals_known"
+                    ),
+                }
             ),
             "read_complete": _require_bool(report.read_complete, "read_complete"),
-            "future_arrivals_known": _require_bool(
-                report.future_arrivals_known, "future_arrivals_known"
-            ),
         },
         "usage": {
             "model_calls": _require_nonnegative_int(report.model_calls, "model_calls"),

@@ -72,6 +72,32 @@ func TestShippedObservedConfigParsesAndPreservesEnablement(t *testing.T) {
 		cfg.Observed.ReplayInterval != time.Second || cfg.Writer.AsyncInsert {
 		t.Fatal("root Compose enablement changed the observed/source defaults")
 	}
+	// Standalone (docker-compose.yml) and Helm: no Kafka, the collector
+	// writes the index with the bootstrap-created writer.
+	t.Setenv("FI_OBSERVED_CATALOG_MODE", "direct")
+	t.Setenv("FI_OBSERVED_CATALOG_KAFKA_BROKERS", "")
+	t.Setenv("FI_OBSERVED_CATALOG_CH_URL", "http://clickhouse:8123")
+	t.Setenv("FI_OBSERVED_CATALOG_CH_DATABASE", "property_catalog")
+	t.Setenv("FI_OBSERVED_CATALOG_CH_USERNAME", "observed_catalog_writer")
+	t.Setenv("FI_OBSERVED_CATALOG_CH_PASSWORD", "writer-secret")
+	t.Setenv("FI_OBSERVED_CATALOG_SPOOL_DIR", "/data/collector/observed-catalog")
+	cfg = loadConfig(log, path)
+	if err := applyEnvOverrides(log, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Observed.Mode != "direct" || cfg.Observed.ClickHouse.URL != "http://clickhouse:8123" ||
+		cfg.Observed.ClickHouse.Database != "property_catalog" || cfg.Observed.ClickHouse.Username != "observed_catalog_writer" ||
+		cfg.Observed.ClickHouse.Password != "writer-secret" || cfg.Observed.Spool.Directory != "/data/collector/observed-catalog" ||
+		cfg.Observed.ReplayInterval != time.Second || cfg.Observed.Limits != observedcatalog.DefaultLimits() {
+		t.Fatalf("direct enablement: %+v", cfg.Observed)
+	}
+	if _, err := observedcatalog.NewClickHouseSink(cfg.Observed.ClickHouse); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Writer.AsyncInsert = true
+	if err := applyEnvOverrides(log, &cfg); err == nil {
+		t.Fatal("direct mode accepted unconfirmed async inserts")
+	}
 }
 
 func TestObservedConfigurationIsSeparateAndUsesSharedLimits(t *testing.T) {
@@ -115,7 +141,7 @@ func TestReplayStopsWhileFinalSynchronousHandoffRemainsAvailable(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		runObservedReplay(ctx, w, noPublish{}, time.Millisecond, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		runObservedReplay(ctx, w.Replay, noPublish{}, time.Millisecond, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	}()
 	cancel()
 	select {

@@ -48,6 +48,14 @@ def test_drops_opentelemetry_child_loggers_by_prefix():
     assert before_send(event, {}) is None
 
 
+def test_drops_saml_dependency_loggers_but_keeps_saml2_auth():
+    """The pysaml2 prefix must not swallow the app's own saml2_auth loggers."""
+
+    assert before_send({"logger": "saml2.response", "message": "x"}, {}) is None
+    for name in ("saml2_auth.views", "saml2_auth.security"):
+        assert before_send({"logger": name, "message": "boom"}, {}) is not None
+
+
 def test_drops_ignored_exception_types():
     assert before_send({}, _hint(ConnectionResetError(104, "reset"))) is None
     assert before_send({}, _hint(BrokenPipeError())) is None

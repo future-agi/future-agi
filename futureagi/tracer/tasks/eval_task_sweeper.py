@@ -37,10 +37,11 @@ evaluation calls on work their owner stopped on purpose. ``failed`` is out of
 scope for the same reason and is opt-in through
 ``EVAL_TASK_SWEEP_RECOVER_FAILED``; the Resume button recovers one explicitly.
 
-``EVAL_TASK_SWEEP_MAX_TASKS=0`` disables the sweep. That is the rollback that
-survives a restart: pausing the schedule in Temporal takes effect at once but
-is undone by the next backend container start, which re-registers every
-schedule with its state rebuilt from config.
+``EVAL_TASK_SWEEP_MAX_TASKS=0`` disables the sweep. Pausing the schedule in
+Temporal also stops it at once, and the pause outlives later schedule
+registrations (every deploy's one-shot ``SERVICE_TYPE=temporal-schedules``
+job keeps an existing schedule's paused state); only the setting also holds if
+the schedule is deleted and re-created.
 """
 
 from __future__ import annotations

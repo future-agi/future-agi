@@ -177,9 +177,13 @@ func TestIntegration_NonStreamingRoundTrip(t *testing.T) {
 		if !strings.Contains(r.URL.Path, "/v1beta/models/gemini-1.5-pro:generateContent") {
 			t.Errorf("URL path = %q, want to contain generateContent", r.URL.Path)
 		}
-		// Verify API key in query.
-		if r.URL.Query().Get("key") != "test-api-key" {
-			t.Errorf("key param = %q, want %q", r.URL.Query().Get("key"), "test-api-key")
+		// The credential belongs in a header, never the URL: a URL reaches the
+		// caller's error body and the request log on any network failure.
+		if got := r.Header.Get("x-goog-api-key"); got != "test-api-key" {
+			t.Errorf("x-goog-api-key = %q, want %q", got, "test-api-key")
+		}
+		if r.URL.Query().Has("key") {
+			t.Errorf("the key was sent in the query: %s", r.URL.RawQuery)
 		}
 		// Verify request body.
 		body, err := io.ReadAll(r.Body)
@@ -313,9 +317,11 @@ func TestIntegration_StreamingRoundTrip(t *testing.T) {
 		if r.URL.Query().Get("alt") != "sse" {
 			t.Errorf("alt param = %q, want %q", r.URL.Query().Get("alt"), "sse")
 		}
-		// Verify API key in query (appended with &).
-		if r.URL.Query().Get("key") != "test-api-key" {
-			t.Errorf("key param = %q, want %q", r.URL.Query().Get("key"), "test-api-key")
+		if got := r.Header.Get("x-goog-api-key"); got != "test-api-key" {
+			t.Errorf("x-goog-api-key = %q, want %q", got, "test-api-key")
+		}
+		if r.URL.Query().Has("key") {
+			t.Errorf("the key was sent in the query: %s", r.URL.RawQuery)
 		}
 
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -631,10 +637,13 @@ func TestIntegration_StreamError500(t *testing.T) {
 // API key in URL tests
 // ---------------------------------------------------------------------------
 
-func TestIntegration_APIKeyInQueryParam(t *testing.T) {
-	var capturedKey string
+// The key travels in a header. It used to be appended to the URL, which put
+// it in every *url.Error, and from there in the 502 body and the request log.
+func TestIntegration_APIKeyIsSentAsAHeader(t *testing.T) {
+	var capturedKey, capturedQuery string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capturedKey = r.URL.Query().Get("key")
+		capturedKey = r.Header.Get("x-goog-api-key")
+		capturedQuery = r.URL.RawQuery
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(geminiResponse{
 			Candidates: []geminiCandidate{
@@ -653,7 +662,10 @@ func TestIntegration_APIKeyInQueryParam(t *testing.T) {
 		t.Fatalf("ChatCompletion() error = %v", err)
 	}
 	if capturedKey != "test-api-key" {
-		t.Errorf("API key in query = %q, want %q", capturedKey, "test-api-key")
+		t.Errorf("x-goog-api-key = %q, want %q", capturedKey, "test-api-key")
+	}
+	if strings.Contains(capturedQuery, "key=") {
+		t.Errorf("the key was sent in the query: %s", capturedQuery)
 	}
 }
 
@@ -693,10 +705,11 @@ func TestIntegration_NoAPIKey(t *testing.T) {
 	}
 }
 
-func TestIntegration_StreamAPIKeyAppendedWithAmpersand(t *testing.T) {
-	var capturedURL string
+func TestIntegration_StreamAPIKeyIsSentAsAHeader(t *testing.T) {
+	var capturedURL, capturedHeaderKey string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedURL = r.URL.String()
+		capturedHeaderKey = r.Header.Get("x-goog-api-key")
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintf(w, "data: %s\n\n", `{"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}]}`)
@@ -716,12 +729,15 @@ func TestIntegration_StreamAPIKeyAppendedWithAmpersand(t *testing.T) {
 		}
 	}
 
-	// Streaming URL should have ?alt=sse&key=...
+	// The streaming URL keeps alt=sse and carries no credential.
 	if !strings.Contains(capturedURL, "alt=sse") {
 		t.Errorf("URL = %q, should contain alt=sse", capturedURL)
 	}
-	if !strings.Contains(capturedURL, "key=test-api-key") {
-		t.Errorf("URL = %q, should contain key=test-api-key", capturedURL)
+	if strings.Contains(capturedURL, "key=") {
+		t.Errorf("the key was sent in the URL: %s", capturedURL)
+	}
+	if capturedHeaderKey != "test-api-key" {
+		t.Errorf("x-goog-api-key = %q, want %q", capturedHeaderKey, "test-api-key")
 	}
 }
 
@@ -1397,6 +1413,43 @@ func TestIntegration_RequestBodyContainsTools(t *testing.T) {
 	}
 }
 
+func TestChatCompletion_StrictFunctionAndServerTool(t *testing.T) {
+	for _, toolType := range []string{"function", ""} {
+		t.Run("type="+toolType, func(t *testing.T) {
+			sent := requestSentFor(t, `{
+				"model": "gemini-2.5-flash",
+				"messages": [{"role":"user","content":"hi"}],
+				"tools": [
+					{"type":"`+toolType+`","function":{"name":"get_weather","strict":true}},
+					{"google_search": {}}
+				]
+			}`)
+
+			entries := toolsEntries(t, sent)
+			if len(entries) != 2 {
+				t.Fatalf("tools entries = %d, want 2: %s", len(entries), sent["tools"])
+			}
+			var decls []geminiFuncDecl
+			if err := json.Unmarshal(entries[0]["functionDeclarations"], &decls); err != nil {
+				t.Fatalf("reading function declarations: %v", err)
+			}
+			if len(decls) != 1 || decls[0].Name != "get_weather" {
+				t.Fatalf("function declarations = %+v, want get_weather", decls)
+			}
+			if _, ok := entries[1]["googleSearch"]; !ok {
+				t.Fatalf("googleSearch is missing: %s", sent["tools"])
+			}
+			var config geminiToolConfig
+			if err := json.Unmarshal(sent["toolConfig"], &config); err != nil {
+				t.Fatalf("reading toolConfig: %v", err)
+			}
+			if config.FunctionCallingConfig == nil || config.FunctionCallingConfig.Mode != "VALIDATED" {
+				t.Fatalf("functionCallingConfig = %+v, want VALIDATED", config.FunctionCallingConfig)
+			}
+		})
+	}
+}
+
 func TestChatCompletion_MixedStrictToolsRejected(t *testing.T) {
 	var contacted atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1593,5 +1646,3 @@ func TestStreamChatCompletion_MixedStrictToolsRejected(t *testing.T) {
 		})
 	}
 }
-
-

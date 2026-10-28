@@ -94,9 +94,11 @@ export const useLLMTracingStore = create((set, get) => ({
   ...createUrlSyncedState("compareCollapsed", true)(set, get),
   // Display panel: visualization mode — "graph" | "agentGraph" | "agentPath"
   ...createUrlSyncedState("viewMode", "graph")(set, get),
-  // Visible trace IDs from the grid — used for prev/next navigation in drawer
-  visibleTraceIds: [],
-  setVisibleTraceIds: (ids) => set({ visibleTraceIds: ids }),
+  // Visible trace rows from the grid ({ traceId, projectId }) — used for
+  // prev/next navigation in the drawers. A trace id alone is not a row: the
+  // cross-project user page lists the same trace id once per project.
+  visibleTraces: [],
+  setVisibleTraces: (traces) => set({ visibleTraces: traces }),
   resetStates: () => {
     set({
       traceDetailDrawerOpen: null,
@@ -104,7 +106,7 @@ export const useLLMTracingStore = create((set, get) => ({
       primaryCollapsed: true,
       compareCollapsed: true,
       viewMode: "graph",
-      visibleTraceIds: [],
+      visibleTraces: [],
     });
   },
 }));

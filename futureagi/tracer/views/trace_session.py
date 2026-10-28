@@ -103,6 +103,9 @@ from tracer.services.clickhouse.graph_dispatch import (
     enforce_exact_graph_data_contract,
     graph_payload_is_publishable,
 )
+from tracer.services.clickhouse.graph_metric_statistic import (
+    with_metric_statistic,
+)
 from tracer.services.clickhouse.list_cursor import (
     ListCursor,
     ListCursorError,
@@ -1761,6 +1764,10 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     error_type=type(exc).__name__,
                 )
                 graph = degraded_graph_response(metric_id, exc)
+                if metric_type == "SYSTEM_METRIC":
+                    # The dispatcher stamps every envelope it returns; this one
+                    # is built here, so it names its statistic here.
+                    graph = with_metric_statistic(graph, "session", metric_id)
 
             graph.update(
                 graph_query_evidence(

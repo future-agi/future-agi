@@ -20,6 +20,7 @@ import (
 type confirmationRoundTripper func(*http.Request) (*http.Response, error)
 
 func (f confirmationRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	defer r.Body.Close() // this synchronous fixture owns the body, like a real RoundTripper
 	return f(r)
 }
 
@@ -353,6 +354,19 @@ func TestInsertEmptyBatchNoop(t *testing.T) {
 	defer w.Close()
 	if err := w.Insert(context.Background(), nil); err != nil {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// An unparseable URL must fail at startup, and the error must not echo the
+// URL: url.Error prints it verbatim, password included.
+func TestNewRejectsUnparseableURLWithoutEchoingIt(t *testing.T) {
+	const password = "s3cretChPassw0rd"
+	_, err := New(mkConfig(t, "http://default:"+password+"@clickhouse:8123/%zz"))
+	if err == nil {
+		t.Fatal("New accepted an unparseable URL")
+	}
+	if strings.Contains(err.Error(), password) {
+		t.Errorf("error echoes the password: %v", err)
 	}
 }
 

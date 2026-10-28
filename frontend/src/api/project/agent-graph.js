@@ -139,6 +139,10 @@ export const useAgentGraph = (
     },
     enabled: !!projectId && enabled,
     staleTime: Infinity,
+    // The toolbar window is hour-stable, so a remount replays the same key.
+    // Ask the server: it serves the cached graph and, when that graph is old
+    // and its window still open, refreshes it in the background.
+    refetchOnMount: "always",
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     refetchInterval: (activeQuery) => {

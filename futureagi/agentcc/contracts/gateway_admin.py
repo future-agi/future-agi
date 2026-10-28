@@ -542,6 +542,27 @@ class KeyListResponse(GatewayAdminContractModel):
     data: list[KeyResponse] | None = None
 
 
+class SyncedKey(GatewayAdminContractModel):
+    id: str = ...
+    name: str | None = None
+    owner: str | None = None
+    key_hash: str = Field(..., validation_alias=AliasChoices('key_hash', 'keyHash'))
+    key_prefix: str | None = Field(None, validation_alias=AliasChoices('key_prefix', 'keyPrefix'))
+    models: list[str] | None = None
+    providers: list[str] | None = None
+    metadata: dict[str, str] | None = None
+    expires_at: str | None = Field(None, validation_alias=AliasChoices('expires_at', 'expiresAt'))
+
+
+class ImportKeysRequest(GatewayAdminContractModel):
+    keys: list[SyncedKey] = ...
+
+
+class ImportKeysResponse(GatewayAdminContractModel):
+    received: int = ...
+    loaded: int = ...
+
+
 class StatusResponse(GatewayAdminContractModel):
     status: str | None = None
     org_id: str | None = Field(None, validation_alias=AliasChoices('org_id', 'orgId', 'orgID'))

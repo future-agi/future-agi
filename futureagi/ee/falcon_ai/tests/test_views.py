@@ -2,6 +2,7 @@ import uuid
 
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
+
 from ee.falcon_ai.models import (
     Conversation,
     FalconFile,
@@ -10,6 +11,7 @@ from ee.falcon_ai.models import (
     Message,
     Skill,
 )
+from tfc.utils.storage_client import storage_http_client
 
 
 @pytest.mark.django_db
@@ -248,11 +250,12 @@ class TestFileUploadView:
         class FakeMinio:
             instances = []
 
-            def __init__(self, endpoint, access_key, secret_key, secure):
+            def __init__(self, endpoint, access_key, secret_key, secure, http_client):
                 self.endpoint = endpoint
                 self.access_key = access_key
                 self.secret_key = secret_key
                 self.secure = secure
+                self.http_client = http_client
                 self.put_calls = []
                 self.__class__.instances.append(self)
 
@@ -296,6 +299,8 @@ class TestFileUploadView:
         assert FakeMinio.instances[0].secret_key == "futureagi"
         assert FakeMinio.instances[0].secure is False
         assert FakeMinio.instances[0].put_calls[0]["content_type"] == "text/plain"
+        # The proxy-aware transport the app's own storage client uses.
+        assert type(FakeMinio.instances[0].http_client) is type(storage_http_client())
 
     def test_upload_rejects_unsupported_type(self, auth_client):
         upload = SimpleUploadedFile(

@@ -161,6 +161,89 @@ def test_interactive_read_profile_accepts_a_thirty_second_filter_value_wall():
     assert values["FILTER_VALUE_READ_TIMEOUT_MS"] == 30_000
 
 
+def test_sixty_second_read_profile_leaves_query_and_background_headroom():
+    walls = (
+        "INTERACTIVE_READ_DEFAULT_WALL_MS",
+        "INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS",
+        "SPAN_LIST_PAGE_WALL_MS",
+        "TRACE_LIST_PAGE_WALL_MS",
+        "SESSION_LIST_PAGE_WALL_MS",
+        "USER_LIST_PAGE_WALL_MS",
+        "DASHBOARD_FILTER_VALUE_WALL_MS",
+        "FILTER_VALUE_READ_TIMEOUT_MS",
+        "PROPERTY_CATALOG_QUERY_WALL_MS",
+    )
+    values = load_numeric_settings(
+        RUNTIME_NUMERIC_SETTING_SPECS,
+        source={
+            **dict.fromkeys(walls, "60000"),
+            "PROPERTY_CATALOG_READ_TRANSPORT_TIMEOUT_SECONDS": "60",
+            "FILTER_SELECTOR_QUERY_TIMEOUT_MS": "10000",
+            "FILTER_SELECTOR_MAX_OPT_IN_QUERY_TIMEOUT_MS": "20000",
+            "FILTER_SELECTOR_MAX_BUILDER_QUERY_TIMEOUT_MS": "30000",
+            "CLICKHOUSE_APPLICATION_READ_MAX_MEMORY_BYTES": str(64 * 1024**3),
+            "DASHBOARD_TRACE_READ_MAX_MEMORY_BYTES": str(64 * 1024**3),
+            "OBSERVABILITY_LIST_MAX_MEMORY_BYTES": str(64 * 1024**3),
+            "PROPERTY_CATALOG_READ_MAX_MEMORY_BYTES": str(12 * 1024**3),
+        },
+    )
+
+    validate_runtime_numeric_settings(values)
+    assert all(values[name] == 60_000 for name in walls)
+    assert values["PROPERTY_CATALOG_READ_TRANSPORT_TIMEOUT_SECONDS"] == 60
+    assert (
+        values["FILTER_SELECTOR_QUERY_TIMEOUT_MS"]
+        < values["FILTER_SELECTOR_MAX_OPT_IN_QUERY_TIMEOUT_MS"]
+        < values["FILTER_SELECTOR_MAX_BUILDER_QUERY_TIMEOUT_MS"]
+        < values["TRACE_LIST_PAGE_WALL_MS"]
+        < values["GRAPH_BACKGROUND_WALL_MS"]
+    )
+    for name in (
+        "CLICKHOUSE_APPLICATION_READ_MAX_MEMORY_BYTES",
+        "DASHBOARD_TRACE_READ_MAX_MEMORY_BYTES",
+        "OBSERVABILITY_LIST_MAX_MEMORY_BYTES",
+    ):
+        assert values[name] == 64 * 1024**3
+    assert values["PROPERTY_CATALOG_READ_MAX_MEMORY_BYTES"] == 12 * 1024**3
+
+
+@pytest.mark.parametrize(
+    "setting,value",
+    [
+        ("PROPERTY_CATALOG_QUERY_WALL_MS", "60001"),
+        ("PROPERTY_CATALOG_QUERY_WALL_MS", "0"),
+        ("PROPERTY_CATALOG_READ_TRANSPORT_TIMEOUT_SECONDS", "60.001"),
+        ("PROPERTY_CATALOG_READ_TRANSPORT_TIMEOUT_SECONDS", "0"),
+    ],
+)
+def test_catalog_read_timeouts_remain_bounded(setting, value):
+    with pytest.raises(ValueError, match=setting):
+        load_numeric_settings(
+            PROPERTY_CATALOG_RUNTIME_SETTING_SPECS, source={setting: value}
+        )
+
+
+@pytest.mark.parametrize("region", ["us2", "eu"])
+def test_gcp_frontend_workflows_allow_sixty_second_reads_and_background_poll(region):
+    root = Path(__file__).resolve().parents[3]
+    workflow = root / ".github/workflows" / f"frontend-deploy-{region}.yaml"
+    settings = dict(
+        line.strip().split("=", 1)
+        for line in workflow.read_text().splitlines()
+        if line.strip().startswith("VITE_") and "=" in line
+    )
+    for name in (
+        "VITE_INTERACTIVE_REQUEST_TIMEOUT_MS",
+        "VITE_ANALYTICS_REQUEST_TIMEOUT_MS",
+        "VITE_AGGREGATION_REQUEST_TIMEOUT_MS",
+        "VITE_FILTER_VALUE_REQUEST_TIMEOUT_MS",
+    ):
+        assert settings[name] == "60000"
+    assert (
+        int(settings["VITE_AGGREGATION_POLL_TIMEOUT_MS"]) == 60_000 + 180_000 + 10_000
+    )
+
+
 def test_large_tenant_reads_scan_widely_without_unbounding_memory_or_results():
     values = load_numeric_settings(INTERACTIVE_READ_SETTING_SPECS, source={})
 
@@ -330,6 +413,10 @@ def test_bulk_selection_query_budget_formula_is_shared_with_the_resolver():
         ),
         (
             "EXACT_GRAPH_TRACE_CLASSIFIER_MAX_THREADS",
+            "CLICKHOUSE_APPLICATION_READ_MAX_THREADS",
+        ),
+        (
+            "EXACT_GRAPH_SESSION_READ_MAX_THREADS",
             "CLICKHOUSE_APPLICATION_READ_MAX_THREADS",
         ),
         ("ANALYTICS_DEFAULT_LOOKBACK_DAYS", "EVAL_METRIC_MAX_WINDOW_DAYS"),
