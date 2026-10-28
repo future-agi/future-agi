@@ -37,7 +37,7 @@ global:
   storageClass: ""
   # -- Air-gapped install: turns off the platform's own calls to the internet. Turns telemetry off [FUTURE_AGI_TELEMETRY_DISABLED=true] (one minimal registration attempt remains; offline it fails harmlessly and is retried), the license heartbeat off unless `license.heartbeat` is `true` [FUTURE_AGI_ENTERPRISE_HEARTBEAT_DISABLED=true], sets [LITELLM_LOCAL_MODEL_COST_MAP=True] on the Python pods and serving, and [HF_HUB_OFFLINE=1, TRANSFORMERS_OFFLINE=1] on serving, whose models must then be pre-seeded on `serving.persistence` (examples/airgap.yaml). Mirror the images first (`hack/list-images.sh`) and set `global.imageRegistry` and `global.imagePullSecrets`.
   airgap: false
-  # Outbound HTTP(S) proxy for the Future AGI pods (backend, workers, bootstrap job, frontend, fi-collector, agentcc-gateway, serving; never the code sandbox). The LLM gateway (agentcc-gateway) uses them for its System One decision calls (Jev on TypeSafe, Perplexity Decider), decision calls made with the caller's own key and its speech relay; its chat providers, an org's OpenAI-format decision provider with its own base URL and the `openai` provider serving /v1/decisions do not: allow their egress directly.
+  # Outbound HTTP(S) proxy for the Future AGI pods (backend, workers, bootstrap job, frontend, fi-collector, agentcc-gateway, serving; never the code sandbox). The LLM gateway (agentcc-gateway) uses them for every decision call (System One and OpenAI-format models, from config.yaml providers, organization providers and calls made with the caller's own key) and its speech relay; its chat providers do not: allow their egress directly.
   proxy:
     # -- [HTTP_PROXY, http_proxy] e.g. `http://proxy.example.com:3128`. Empty: no proxy.
     httpProxy: ""
