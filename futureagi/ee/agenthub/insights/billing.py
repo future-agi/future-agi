@@ -25,8 +25,9 @@ _EVENT_NAMESPACE = uuid.UUID("5d0f3c9e-7f3a-4c1e-9b6a-2e8d4a1f6c70")
 
 # Tokens each step sends and gets back, for estimates (the charge is always
 # the actual cost). Upper-end figures for the built-in engine: a session or a
-# user is read whole, up to 9,000 characters, and classified 20 to a call.
-READ_TOKENS = (3_000, 450)
+# user is read whole with its tool calls, up to 9,000 characters, with a reply
+# that quotes it, and classified 20 to a call.
+READ_TOKENS = (3_400, 600)
 CLASSIFY_TOKENS = (3_000, 800)
 CLASSIFY_BATCH = 20
 REPORT_TOKENS = (30_000, 6_000)

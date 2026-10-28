@@ -113,7 +113,16 @@ class FakeModel:
             "outcome": "resolved" if quiet else "unresolved",
             "sentiment": 4 if quiet else 2,
             "failure_present": not quiet,
+            "failure_basis": "none" if quiet else "contradicted",
             "failure_mode": "none" if quiet else theme,
+            # Quoted from the unit's text: the user's words and the tool
+            # result that shows the failure.
+            "evidence": []
+            if quiet
+            else [
+                {"quote": f"help unit={unit_id}", "supports": "summary"},
+                {"quote": f'"theme": "{theme}"', "supports": "failure"},
+            ],
         }
 
     def name(self, prompt):
@@ -224,7 +233,10 @@ def loaded(monkeypatch):
                 continue
             texts[unit_id] = UnitText(
                 unit_id=unit_id,
-                content=f"[Turn 1] User: help unit={unit_id} theme={theme}\nAssistant: ...",
+                content=(
+                    f"[Turn 1] User: help unit={unit_id} theme={theme}\n"
+                    f'Tool lookup {{}} -> {{"theme": "{theme}"}}\nAssistant: ...'
+                ),
                 excerpt="help",
                 label=f"Session {unit_id}",
                 user_id=f"user-{index % 4}",
@@ -361,7 +373,12 @@ def test_a_first_run_reads_groups_and_freezes_its_categories(
         "Order lookups loop instead of escalating"
     ]
     assert written["dropped_points"] == 1
-    assert written["verification"] == {"numbers": True, "quotes": False, "audit": False}
+    # Each finding carries the quotes of the examples it cites.
+    cited = {u.unit_id: u for u in units.values()}
+    for quote in written["findings"][0]["evidence"]:
+        assert quote["quote"] in cited[quote["unit_id"]].content
+    assert written["findings"][0]["evidence"]
+    assert written["verification"] == {"numbers": True, "quotes": True, "audit": False}
     assert run.result["engine"] == {"kind": "builtin", "version": "builtin/v1"}
     # Off Cloud nothing is charged: the report's model cost at list prices.
     assert run.result["cost"] == {"usd": round(run.cost_usd, 6)}

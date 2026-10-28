@@ -333,7 +333,7 @@ def prepare(run_id: str) -> list[int]:
                 ids[start : start + 200],
                 since,
                 until,
-                **({"keep_empty": True} if v2 else {}),
+                **({"keep_empty": True, "read_steps": False} if v2 else {}),
             )
         )
     ready = []
@@ -398,6 +398,7 @@ def extract_batch(run_id: str, unit_pks: list[int]) -> dict:
                 instructions=s.get("instructions", ""),
                 attributes=attributes,
                 spend=spend,
+                key=str(unit.pk),
             )
             _apply_facets(unit, facets, s.get("lens", "usage"), attributes)
         except InsightModelSetupError as exc:

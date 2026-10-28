@@ -1,11 +1,13 @@
 """Executive summary for an Insights report.
 
-The thinking model sees only computed statistics and numbered example units,
-writes a few findings with citations, and picks highlighted examples. Every
-number in a finding (headline, detail and action, citations aside) is then
-checked against the statistics; a finding with a number that isn't there is
-dropped rather than shown. Nothing here checks a finding against the examples
-it cites.
+The thinking model sees only computed statistics and numbered example units
+(each with a quote from its conversation), writes a few findings with
+citations, and picks highlighted examples. Every number in a finding
+(headline, detail and action, citations aside) is then checked against the
+statistics; a finding with a number that isn't there is dropped rather than
+shown. A finding and a highlight carry the quotes of the examples they cite,
+each found verbatim in its example's text when the example was read; nothing
+here checks a finding's own words against them.
 """
 
 from __future__ import annotations
@@ -17,6 +19,8 @@ from ee.agenthub.insights.llm import THINKING, Spend, chat_json
 MAX_POINTS = 5
 MAX_HIGHLIGHTS = 6
 EXAMPLES_PER_CATEGORY = 2
+MAX_FINDING_QUOTES = 3
+EXAMPLE_QUOTE_CHARS = 200
 
 UNIT_WORDS = {"traces": "requests", "sessions": "conversations", "users": "users"}
 
@@ -134,6 +138,34 @@ def verified(text: str, numbers: set[str]) -> bool:
     return True
 
 
+def unit_quote(unit: dict) -> dict | None:
+    """The quote that best stands for a unit: the first that shows its
+    failure, else its first."""
+    evidence = [
+        e
+        for e in model_list((unit.get("facets") or {}).get("evidence"))
+        if isinstance(e, dict) and isinstance(e.get("quote"), str) and e["quote"]
+    ]
+    showing = [e for e in evidence if str(e.get("supports", "")).startswith("fail")]
+    return (showing or evidence or [None])[0]
+
+
+def _cited_quotes(examples: list[dict], refs: list[int]) -> list[dict]:
+    quotes = []
+    for ref in refs:
+        unit = examples[ref - 1]["unit"]
+        quote = unit_quote(unit)
+        if quote:
+            quotes.append(
+                {
+                    "unit_id": unit["unit_id"],
+                    "quote": quote["quote"],
+                    "evidence_id": quote.get("evidence_id"),
+                }
+            )
+    return quotes[:MAX_FINDING_QUOTES]
+
+
 def pick_examples(
     units_by_category: dict[str, list[dict]], categories: list[dict]
 ) -> list[dict]:
@@ -190,10 +222,14 @@ def write_summary(
                 sline += f" Notable: {_notable_text(note)}."
             lines.append(sline)
     examples = pick_examples(units_by_category, categories)
-    example_lines = [
-        f"#{i} [{e['category']['name']}] {e['unit']['summary']}"
-        for i, e in enumerate(examples, start=1)
-    ]
+    example_lines = []
+    for i, e in enumerate(examples, start=1):
+        line = f"#{i} [{e['category']['name']}] {e['unit']['summary']}"
+        quote = unit_quote(e["unit"])
+        if quote:
+            words = " ".join(quote["quote"].split())[:EXAMPLE_QUOTE_CHARS]
+            line += f' Quote: "{words}"'
+        example_lines.append(line)
     totals = result["totals"]
     prompt = (
         f"Report question: {question}\nAgent: {agent_description or 'an AI application'}\n"
@@ -211,7 +247,8 @@ def write_summary(
         f'"highlights": [up to {MAX_HIGHLIGHTS} {{"ref": n, "title": "at most 90 '
         'characters, what happened", "reason": "why this example matters, one line"}}]}}. '
         "Lead with the biggest or most actionable finding. Be specific: name the task, tool, "
-        "policy or behaviour, never 'some users had issues'."
+        "policy or behaviour, never 'some users had issues'. The quotes are copied from the "
+        "conversations: claim only what the examples show."
     )
     raw = chat_json(
         _SYSTEM, prompt, tier=THINKING, max_tokens=2200, temperature=0.3, spend=spend
@@ -264,7 +301,7 @@ def write_summary(
                 ),
                 "category_ids": category_ids,
                 "refs": ref_items,
-                "evidence": [],
+                "evidence": _cited_quotes(examples, refs),
             }
         )
         if len(points) >= MAX_POINTS:
@@ -278,6 +315,7 @@ def write_summary(
         if not 0 < ref <= len(examples):
             continue
         example = examples[ref - 1]
+        quote = unit_quote(example["unit"])
         highlights.append(
             {
                 "ref": ref,
@@ -288,6 +326,7 @@ def write_summary(
                 "title": " ".join(str(entry.get("title", "")).split())[:120]
                 or example["unit"]["summary"][:90],
                 "reason": " ".join(str(entry.get("reason", "")).split())[:240],
+                "quote": quote["quote"] if quote else "",
             }
         )
         if len(highlights) >= MAX_HIGHLIGHTS:

@@ -4,7 +4,9 @@ With the Insights agent the analyst reads examples through tools and writes
 findings with cited evidence; everything it returns is checked again here
 (numbers must be in the report's statistics, quotes must occur in the unit's
 text, citations must name units of the run). Without the agent the built-in
-summary writes findings in the same shape, checked for their numbers only.
+summary writes findings in the same shape, checked for their numbers, with
+the quotes of the examples they cite (each found in its example's text when
+it was read).
 ``summary["verification"]`` records which checks ran: ``numbers``, ``quotes``
 (quotes on findings found in the units they cite) and ``audit`` (an
 independent verifier passed the findings).
@@ -556,7 +558,11 @@ def write(
             for p in summary.get("key_points", [])
         ],
     )
-    summary["verification"] = {"numbers": True, "quotes": False, "audit": False}
+    summary["verification"] = {
+        "numbers": True,
+        "quotes": any(f.get("evidence") for f in summary["findings"]),
+        "audit": False,
+    }
     return summary
 
 

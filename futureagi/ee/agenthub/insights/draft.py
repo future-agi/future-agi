@@ -129,6 +129,7 @@ def preview(
             instructions=instructions,
             attributes=attributes,
             spend=spend,
+            key=text.unit_id,
         )
         return {
             "unit_id": text.unit_id,

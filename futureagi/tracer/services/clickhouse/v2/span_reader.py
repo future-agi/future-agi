@@ -1222,6 +1222,97 @@ class CHSpanReader:
         )
         return self._resolve_other(roots, "trace_session_id", "trace_session_id_remap")
 
+    # ─── What a trace did between its input and output (Insights) ────────────
+    _ACTIVITY_KEYS: tuple[str, ...] = (
+        "trace_id",
+        "id",
+        "name",
+        "observation_type",
+        "start_time",
+        "status",
+        "status_message",
+        "input",
+        "output",
+        "input_chars",
+        "output_chars",
+        "images",
+        "audio",
+        "in_trace",
+    )
+    # Trace ids bound into one statement (about 40 bytes each, inlined).
+    _ACTIVITY_BATCH = 1000
+
+    def activity_by_trace_ids(
+        self,
+        trace_ids: list[str],
+        *,
+        project_id: str,
+        media_patterns: tuple[str, str],
+        field_chars: int = 1000,
+        per_trace: int = 100,
+    ) -> list[dict[str, Any]]:
+        """The non-root spans of the given traces a transcript shows: tool
+        calls, failed steps, and steps whose input holds an image or audio
+        part (``media_patterns``: an image and an audio regex, counted in each
+        input as ``images`` and ``audio``). Input and output come back cut to
+        ``field_chars`` characters, with their full lengths. At most
+        ``per_trace`` spans of a trace come back, failed ones first;
+        ``in_trace`` says how many tool calls and failed steps it holds.
+        Ordered by trace, then start.
+
+        Latest versions by ``LIMIT 1 BY`` the sorting key rather than FINAL,
+        with the cut taken inside the dedup, so no step's whole prompt is
+        held while versions are merged. ``status`` can change between
+        versions, so it is filtered after the dedup."""
+        if not trace_ids:
+            return []
+        aliases = ", ".join(
+            f"{col} AS {alias}" for col, alias in _DEDUP_KEY_ALIASES.items()
+        )
+        shown = "(observation_type = 'tool' OR upper(status) = 'ERROR')"
+        sql = (
+            "SELECT trace_id, id, name, observation_type, start_time, status,"
+            " status_head, input_head, output_head, input_chars, output_chars,"
+            f" images, audio, countIf({shown}) OVER (PARTITION BY trace_id)"
+            " AS in_trace FROM ("
+            " SELECT trace_id, id, name, observation_type, start_time, status,"
+            " substringUTF8(status_message, 1, 300) AS status_head,"
+            " substringUTF8(input, 1, %(chars)s) AS input_head,"
+            " substringUTF8(output, 1, %(chars)s) AS output_head,"
+            " lengthUTF8(input) AS input_chars,"
+            " lengthUTF8(output) AS output_chars,"
+            " countMatches(input, %(image)s) AS images,"
+            " countMatches(input, %(audio)s) AS audio,"
+            f" is_deleted, {aliases}"
+            " FROM spans"
+            " WHERE project_id = %(pid)s AND trace_id IN %(tids)s"
+            " AND parent_span_id IS NOT NULL AND parent_span_id != ''"
+            " ORDER BY _version DESC"
+            f" LIMIT 1 BY {_DEDUP_KEY}"
+            ") WHERE is_deleted = 0"
+            f" AND ({shown} OR images > 0 OR audio > 0)"
+            " ORDER BY trace_id, upper(status) = 'ERROR' DESC, start_time, id"
+            " LIMIT %(per)s BY trace_id"
+        )
+        image, audio = media_patterns
+        params = {
+            "pid": str(project_id),
+            "chars": int(field_chars),
+            "image": image,
+            "audio": audio,
+            "per": int(per_trace),
+        }
+        out: list[dict[str, Any]] = []
+        ids = [str(t) for t in trace_ids]
+        for start in range(0, len(ids), self._ACTIVITY_BATCH):
+            batch = tuple(ids[start : start + self._ACTIVITY_BATCH])
+            rows = self._client.query(
+                sql, parameters={**params, "tids": batch}, settings={}
+            ).result_rows
+            out.extend(dict(zip(self._ACTIVITY_KEYS, row, strict=True)) for row in rows)
+        out.sort(key=lambda s: (s["trace_id"], s["start_time"], s["id"]))
+        return out
+
     # ─── Per-trace rollups (latency / tokens) ─────────────────────────────────
     def totals_by_trace_ids(
         self, trace_ids: list[str], project_ids: list[str] | None = None
