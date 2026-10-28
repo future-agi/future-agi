@@ -322,6 +322,11 @@ def test_a_cited_image_is_served_to_its_own_organization_only(
     monkeypatch.setattr(views, "_spend", lambda kind, *a: kind != "media")
     limited = auth_client.get(url, {"unit_id": kept.unit_id, "media": "m1"})
     assert limited.status_code == 429
+    assert limited.json()["code"] == "rate_limited"
+    assert (
+        limited.json()["message"]
+        == "Too many images opened this hour; try again later."
+    )
     assert built == [kept.unit_id]
     monkeypatch.setattr(views, "_spend", lambda *a: True)
 

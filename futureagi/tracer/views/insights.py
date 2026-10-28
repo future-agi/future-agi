@@ -641,11 +641,9 @@ def _config_item(config, *, with_runs=False) -> dict:
     return item
 
 
-def _rate_limited(gm):
+def _rate_limited(gm, message="Too many reports this hour. Try again later."):
     return gm.custom_error_response(
-        status.HTTP_429_TOO_MANY_REQUESTS,
-        "Too many reports this hour. Try again later.",
-        code="rate_limited",
+        status.HTTP_429_TOO_MANY_REQUESTS, message, code="rate_limited"
     )
 
 
@@ -1731,7 +1729,9 @@ class InsightRunMediaView(InsightsLicenseRequired, APIView):
         if row is None:
             return self._gm.not_found("This example is not part of the report.")
         if not _spend("media", run.organization_id, MEDIA_VIEWS_PER_HOUR):
-            return _rate_limited(self._gm)
+            return _rate_limited(
+                self._gm, "Too many images opened this hour; try again later."
+            )
         try:
             image = broker.cited_image(run, row, params["media"])
         except broker.BrokerError as refused:
