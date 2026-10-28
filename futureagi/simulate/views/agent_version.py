@@ -34,6 +34,7 @@ from simulate.services.agent_definition import (
     resolve_api_secret_for_version,
     sync_provider_credentials,
 )
+from simulate.services.agent_overview import environments_testing
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 from simulate.utils.eval_summary import (
     _build_template_statistics,
@@ -496,6 +497,14 @@ class DeleteAgentVersionView(APIView):
                         "Cannot delete the only active version. Please activate another version first.",
                         status.HTTP_400_BAD_REQUEST,
                     )
+
+            tested_in = environments_testing(version)
+            if tested_in:
+                return _error_response(
+                    f"This version is the default of {tested_in} environment"
+                    f"{'s' if tested_in != 1 else ''}. Change their agent version first.",
+                    status.HTTP_400_BAD_REQUEST,
+                )
 
             version.delete()
 

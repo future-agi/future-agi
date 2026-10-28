@@ -234,6 +234,11 @@ class AgentDefinitionListResponseSerializer(serializers.ModelSerializer):
         return version.id if version else None
 
 
+class ObserveProjectRefSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+
+
 class AgentDefinitionDetailResponseSerializer(AgentDefinitionResponseSerializer):
     """
     Response serializer for GET /agent-definitions/{id}/.
@@ -247,6 +252,7 @@ class AgentDefinitionDetailResponseSerializer(AgentDefinitionResponseSerializer)
     source = serializers.CharField(read_only=True, allow_null=True)
     environment_count = serializers.IntegerField(read_only=True)
     observability_enabled = serializers.BooleanField(read_only=True)
+    observe_project = ObserveProjectRefSerializer(read_only=True, allow_null=True)
 
     class Meta(AgentDefinitionResponseSerializer.Meta):
         fields = [
@@ -258,6 +264,7 @@ class AgentDefinitionDetailResponseSerializer(AgentDefinitionResponseSerializer)
             "source",
             "environment_count",
             "observability_enabled",
+            "observe_project",
         ]
         read_only_fields = fields
 
