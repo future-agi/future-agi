@@ -141,6 +141,22 @@ describe("ObserveToolbar Evaluate menu", () => {
     expect(menuTitles()).toEqual(["Add evaluators"]);
   });
 
+  it("rings the Evaluate button when it has keyboard focus", () => {
+    renderToolbar({ mode: "sessions", ...handlers() });
+    const button = screen.getByRole("button", { name: "Evaluate" });
+    // jsdom can't match :focus-visible, so read the rule emotion wrote for
+    // the button's own class.
+    const rules = Array.from(document.styleSheets).flatMap((sheet) =>
+      Array.from(sheet.cssRules, (rule) => rule.cssText),
+    );
+    const ring = rules.find((rule) =>
+      Array.from(button.classList).some((name) =>
+        rule.startsWith(`.${name}:focus-visible`),
+      ),
+    );
+    expect(ring).toMatch(/outline: 2px solid/);
+  });
+
   it("renders nothing without a project's handlers", () => {
     renderToolbar({ mode: "users" });
     expect(screen.queryByRole("button", { name: "Evaluate" })).toBeNull();

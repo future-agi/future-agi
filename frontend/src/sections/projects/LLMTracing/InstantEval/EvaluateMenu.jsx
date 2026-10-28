@@ -80,6 +80,11 @@ export default function EvaluateMenu({
           ...pillSx,
           ...(open && { bgcolor: "action.hover" }),
           "& .MuiButton-endIcon": { ml: 0.5 },
+          "&:focus-visible": {
+            outline: "2px solid",
+            outlineColor: "primary.main",
+            outlineOffset: 1,
+          },
         }}
       >
         Evaluate
