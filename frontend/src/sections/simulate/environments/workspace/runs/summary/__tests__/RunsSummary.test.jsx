@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 
 // Feed the summary a fixed run list with inline scores (a mock run), so
 // useRunsSummary reads scores directly and makes no kpis fetch. The chart's
@@ -77,14 +78,16 @@ function renderSummary(
   });
   render(
     <QueryClientProvider client={client}>
-      <RunsSummary
-        env={env}
-        envState={envState}
-        onStart={vi.fn()}
-        onOpenRun={vi.fn()}
-        onGo={vi.fn()}
-        {...props}
-      />
+      <MemoryRouter>
+        <RunsSummary
+          env={env}
+          envState={envState}
+          onStart={vi.fn()}
+          onOpenRun={vi.fn()}
+          onGo={vi.fn()}
+          {...props}
+        />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -179,17 +182,19 @@ describe("RunsSummary", () => {
     expect(screen.queryByText("Dummy")).toBeNull();
   });
 
-  it("shows no run-compare checkboxes or compare hint in the runs table", () => {
+  it("gives each run a compare checkbox under the compare hint", () => {
     renderSummary();
-    expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
-    expect(screen.queryByText(/compare them/)).toBeNull();
+    expect(screen.getAllByRole("checkbox")).toHaveLength(2);
+    expect(
+      screen.getByText(
+        "Select two or more to compare them scenario by scenario",
+      ),
+    ).toBeInTheDocument();
   });
 
-  it("defers Choose winner behind a disabled 'coming soon' control", () => {
+  it("offers Choose winner as a live control", () => {
     renderSummary();
-    expect(
-      screen.getByRole("button", { name: /Choose winner/ }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Choose winner/ })).toBeEnabled();
   });
 
   it("renders a run with no ordinal without crashing the identity chip", () => {
@@ -206,13 +211,15 @@ describe("RunsSummary", () => {
     expect(() =>
       render(
         <QueryClientProvider client={client}>
-          <RunsSummary
-            env={env}
-            envState={envState}
-            onStart={vi.fn()}
-            onOpenRun={vi.fn()}
-            onGo={vi.fn()}
-          />
+          <MemoryRouter>
+            <RunsSummary
+              env={env}
+              envState={envState}
+              onStart={vi.fn()}
+              onOpenRun={vi.fn()}
+              onGo={vi.fn()}
+            />
+          </MemoryRouter>
         </QueryClientProvider>,
       ),
     ).not.toThrow();
@@ -220,9 +227,9 @@ describe("RunsSummary", () => {
 
   it("labels the duration column as the run total, not an average", () => {
     renderSummary();
-    // The column shows the run's total wall-clock (executionToRun.durationS), so
-    // it must not claim to be an average.
-    expect(screen.getByText("Duration")).toBeInTheDocument();
+    // The column shows the run's total wall-clock (executionToRun.durationS),
+    // which is Vel's "Run time"; Vel's per-call Duration is a soon column.
+    expect(screen.getByText("Run time")).toBeInTheDocument();
     expect(screen.queryByText("Avg duration")).toBeNull();
   });
 
@@ -264,13 +271,15 @@ describe("RunsSummary", () => {
     });
     render(
       <QueryClientProvider client={client}>
-        <RunsSummary
-          env={env}
-          envState={envState}
-          onStart={vi.fn()}
-          onOpenRun={vi.fn()}
-          onGo={vi.fn()}
-        />
+        <MemoryRouter>
+          <RunsSummary
+            env={env}
+            envState={envState}
+            onStart={vi.fn()}
+            onOpenRun={vi.fn()}
+            onGo={vi.fn()}
+          />
+        </MemoryRouter>
       </QueryClientProvider>,
     );
 
@@ -307,13 +316,15 @@ describe("RunsSummary", () => {
     });
     render(
       <QueryClientProvider client={client}>
-        <RunsSummary
-          env={env}
-          envState={envState}
-          onStart={vi.fn()}
-          onOpenRun={vi.fn()}
-          onGo={vi.fn()}
-        />
+        <MemoryRouter>
+          <RunsSummary
+            env={env}
+            envState={envState}
+            onStart={vi.fn()}
+            onOpenRun={vi.fn()}
+            onGo={vi.fn()}
+          />
+        </MemoryRouter>
       </QueryClientProvider>,
     );
 

@@ -9,26 +9,50 @@ import { runScoreQuery } from "./useRunsSummary";
 // those two runs' plus the runs table's (`tableRows`), so an eval the table
 // shows can be drawn even when the latest runs weren't scored on it.
 //
-// Scores are a kpis fetch per run, so only the latest two are fetched up
-// front (the chips read them). The rest load once an eval is drawn on the
-// chart (`focusId`), since its line needs a score from every run.
-export function useRunsOverview(env, envState, focusId, tableRows = []) {
+// `scope` keeps one agent version's runs. `baselineId` is looked up across
+// every run, in scope or not, since a baseline can be on another version.
+//
+// Scores are a kpis fetch per run, so only the latest two and the baseline
+// are fetched up front (the chips and the deltas read them). The rest load
+// once an eval is drawn on the chart (`focusId`) or `scoreAll` asks (Choose
+// winner ranks on every run's scores).
+export function useRunsOverview(
+  env,
+  envState,
+  focusId,
+  tableRows = [],
+  { scope = null, scoreAll = false, baselineId = null } = {},
+) {
   const { runs, capped, isLoading } = useAllRuns(env, envState);
-  const finished = useMemo(() => runs.filter(isFinishedRun).reverse(), [runs]);
+  const finishedAll = useMemo(
+    () => runs.filter(isFinishedRun).reverse(),
+    [runs],
+  );
+  const inScope = (r) => !scope || r.agentVersion === scope;
+  const finished = finishedAll.filter(inScope);
   const lastTwo = finished.slice(-2).map((r) => r.id);
 
   const scoreQueries = useQueries({
-    queries: finished.map((r) =>
-      runScoreQuery(r, !!focusId || lastTwo.includes(r.id)),
+    queries: finishedAll.map((r) =>
+      runScoreQuery(
+        r,
+        scoreAll ||
+          (!!focusId && inScope(r)) ||
+          lastTwo.includes(r.id) ||
+          r.id === baselineId,
+      ),
     ),
   });
   const scoresById = Object.fromEntries(
-    finished.map((r, i) => [r.id, r.scores || scoreQueries[i]?.data || {}]),
+    finishedAll.map((r, i) => [r.id, r.scores || scoreQueries[i]?.data || {}]),
   );
   const scoreKey = JSON.stringify(scoresById);
 
   return useMemo(() => {
-    const rows = finished.map((r) => buildSummaryRow(r, scoresById[r.id]));
+    const allRows = finishedAll.map((r) =>
+      buildSummaryRow(r, scoresById[r.id]),
+    );
+    const rows = allRows.filter(inScope);
     const latest = rows[rows.length - 1] || null;
     const previous = rows[rows.length - 2] || null;
     return {
@@ -36,10 +60,22 @@ export function useRunsOverview(env, envState, focusId, tableRows = []) {
       latest,
       previous,
       evals: deriveEvals([latest, previous, ...tableRows].filter(Boolean)),
+      baseline: allRows.find((r) => r.id === baselineId) || null,
+      runs,
       capped,
       isLoading,
     };
-    // scoreKey stands in for scoresById (a fresh object each render).
+    // scoreKey stands in for scoresById (a fresh object each render); scope
+    // stands in for inScope.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [finished, scoreKey, capped, isLoading, tableRows]);
+  }, [
+    finishedAll,
+    scoreKey,
+    scope,
+    baselineId,
+    runs,
+    capped,
+    isLoading,
+    tableRows,
+  ]);
 }

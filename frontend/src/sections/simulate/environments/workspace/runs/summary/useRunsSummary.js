@@ -2,7 +2,11 @@ import { useMemo } from "react";
 import { useQueries } from "@tanstack/react-query";
 import { kpisQueryOptions } from "src/hooks/useKpis";
 import { extractKpis } from "src/sections/test-detail/common";
-import { useEnvironmentRuns } from "src/api/simulate-environments/runs";
+import {
+  RUNS_PAGE_SIZE,
+  useEnvironmentRuns,
+} from "src/api/simulate-environments/runs";
+import { useAllRuns } from "src/api/simulate-environments/useAllRuns";
 import { buildSummaryRow, deriveEvals } from "./summaryData";
 
 // The run's per-eval scores, off the SAME kpis payload the run-detail page
@@ -24,13 +28,30 @@ export function runScoreQuery(run, enabled = true) {
 // rows, newest first, plus the eval set its columns show. Real columns (pass
 // rate, tasks, duration) come from the executions list row; per-eval scores
 // from each run's kpis.
-export function useRunsSummary(env, envState, paging) {
-  const {
-    runs = [],
-    count,
-    coveredScenarioCount,
-    isLoading,
-  } = useEnvironmentRuns(env, envState, paging);
+//
+// The executions endpoint takes no agent version, so a `scope` (one agent
+// version) pages the every-run list on the client instead, the same list the
+// chart reads.
+export function useRunsSummary(env, envState, paging, { scope = null } = {}) {
+  const page = useEnvironmentRuns(env, envState, paging);
+  const all = useAllRuns(env, envState);
+  const { page: index = 0, pageSize = RUNS_PAGE_SIZE } = paging || {};
+
+  const scoped = useMemo(
+    () =>
+      scope ? (all.runs || []).filter((r) => r.agentVersion === scope) : null,
+    [all.runs, scope],
+  );
+  const runs = useMemo(
+    () =>
+      scoped
+        ? scoped.slice(index * pageSize, (index + 1) * pageSize)
+        : page.runs || [],
+    [scoped, page.runs, index, pageSize],
+  );
+  const count = scoped ? scoped.length : page.count;
+  const coveredScenarioCount = scoped ? null : page.coveredScenarioCount;
+  const isLoading = scoped ? all.isLoading : page.isLoading;
 
   const scoreQueries = useQueries({
     queries: runs.map((r) => runScoreQuery(r)),

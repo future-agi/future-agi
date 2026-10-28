@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 
 // Both run sources are mocked: the table's page and the chart's every-run
 // list. The runs carry inline scores (as a mock run does), so no kpis fetch.
@@ -75,12 +76,14 @@ function renderSummary({
   });
   render(
     <QueryClientProvider client={client}>
-      <RunsSummary
-        env={env}
-        envState={envState}
-        onOpenRun={onOpenRun}
-        onGo={vi.fn()}
-      />
+      <MemoryRouter>
+        <RunsSummary
+          env={env}
+          envState={envState}
+          onOpenRun={onOpenRun}
+          onGo={vi.fn()}
+        />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
   return { onOpenRun };
