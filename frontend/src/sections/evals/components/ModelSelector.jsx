@@ -1,10 +1,12 @@
 /* eslint-disable react/prop-types */
 import {
   Box,
+  Button,
   Chip,
   CircularProgress,
   Divider,
   IconButton,
+  Menu,
   MenuItem,
   Popover,
   Skeleton,
@@ -64,6 +66,36 @@ const MODES = [
     icon: "mdi:lightning-bolt-outline",
   },
 ];
+
+// Search and grouped rows need navigation across their nested layout.
+const handleMenuNavigation = (event, onClose) => {
+  if (event.key === "Tab") {
+    event.preventDefault();
+    onClose();
+    return;
+  }
+  const inInput = event.target.matches("input, textarea");
+  if (
+    !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key) ||
+    (inInput && ["Home", "End"].includes(event.key))
+  )
+    return;
+
+  const items = Array.from(
+    event.currentTarget.querySelectorAll(
+      '[role="menuitem"]:not([aria-disabled="true"])',
+    ),
+  );
+  if (!items.length) return;
+  event.preventDefault();
+  const index = items.indexOf(event.target.closest('[role="menuitem"]'));
+  let nextIndex;
+  if (event.key === "Home") nextIndex = 0;
+  else if (event.key === "End") nextIndex = items.length - 1;
+  else if (event.key === "ArrowDown") nextIndex = (index + 1) % items.length;
+  else nextIndex = index <= 0 ? items.length - 1 : index - 1;
+  items[nextIndex].focus();
+};
 
 // Connectors are fetched from the Falcon AI MCP connectors API
 
@@ -685,6 +717,7 @@ const ModelSelector = ({
   // back to internal state when the parent doesn't pass them (backward compat).
   mode: modeProp,
   onModeChange,
+  previousModeRef: previousModeRefProp,
   useInternet: useInternetProp,
   onUseInternetChange,
   activeSummary: activeSummaryProp,
@@ -705,10 +738,27 @@ const ModelSelector = ({
   // For each field, pick "controlled" (parent-driven) or "uncontrolled" (local state).
   const [modeLocal, setModeLocal] = useState("agent");
   const mode = modeProp !== undefined ? modeProp : modeLocal;
-  const setMode = (v) => {
-    if (onModeChange) onModeChange(v);
-    else setModeLocal(v);
-  };
+  const setMode = useCallback(
+    (v) => {
+      if (onModeChange) onModeChange(v);
+      else setModeLocal(v);
+    },
+    [onModeChange],
+  );
+  const isJevModel = JEV_MODEL_VALUES.has(model);
+  const previousModeLocalRef = useRef(null);
+  const previousModeRef = previousModeRefProp || previousModeLocalRef;
+
+  // Normalize reopened drafts and restore a choice made before a tab switch.
+  useEffect(() => {
+    if (isJevModel && mode !== "quick") {
+      previousModeRef.current ??= mode;
+      setMode("quick");
+    } else if (!isJevModel && previousModeRef.current !== null) {
+      setMode(previousModeRef.current);
+      previousModeRef.current = null;
+    }
+  }, [isJevModel, mode, setMode, previousModeRef]);
 
   const [modeAnchor, setModeAnchor] = useState(null);
   const [modelAnchor, setModelAnchor] = useState(null);
@@ -723,6 +773,15 @@ const ModelSelector = ({
   const [plusAnchor, setPlusAnchor] = useState(null);
   const [plusSubmenu, setPlusSubmenu] = useState(null);
   const [connectorSearch, setConnectorSearch] = useState("");
+  const closeModelMenu = () => {
+    setModelAnchor(null);
+    setModelSearch("");
+  };
+  const closePlusMenu = () => {
+    setPlusAnchor(null);
+    setPlusSubmenu(null);
+    setConnectorSearch("");
+  };
 
   const [activeConnectorIdsLocal, setActiveConnectorIdsLocal] = useState([]);
   const activeConnectorIds =
@@ -779,6 +838,30 @@ const ModelSelector = ({
   const [kbSearch, setKbSearch] = useState("");
   const debouncedKbSearch = useDebounce(kbSearch.trim(), 400);
   const [keysDrawerModel, setKeysDrawerModel] = useState(null);
+  const pendingModelRef = useRef(null);
+  const openKeysDrawer = (nextModel) => {
+    pendingModelRef.current = nextModel;
+    setKeysDrawerModel(nextModel);
+    setModelAnchor(null);
+  };
+  const closeKeysDrawer = () => {
+    pendingModelRef.current = null;
+    setKeysDrawerModel(null);
+  };
+  const selectModel = (value) => {
+    if (JEV_MODEL_VALUES.has(value)) {
+      if (!isJevModel) previousModeRef.current = mode;
+      setMode("quick");
+    } else if (isJevModel && previousModeRef.current !== null) {
+      setMode(previousModeRef.current);
+      previousModeRef.current = null;
+    }
+    onModelChange(value);
+    setModelAnchor(null);
+    setModelSearch("");
+    setPlusSubmenu(null);
+    closeKeysDrawer();
+  };
   const navigate = useNavigate();
   // Fail closed while capabilities load: never flash Turing models as
   // selectable during the fetch. `fagiModelsDenied` is the *confirmed* denial
@@ -796,7 +879,8 @@ const ModelSelector = ({
   const fagiModelsDenied = fagiModelsLocked && !capabilitiesLoading;
   const { allowed: falconAllowed } = useFeatureAllowed(CAPABILITY.FALCON_AI);
 
-  const currentMode = MODES.find((m) => m.value === mode) || MODES[1];
+  const effectiveMode = isJevModel ? "quick" : mode;
+  const currentMode = MODES.find((m) => m.value === effectiveMode) || MODES[1];
 
   // Fetch real MCP connectors from Falcon AI API. Falcon AI needs a
   // license/plan; skip the call when locked so the 402 doesn't fire a
@@ -944,9 +1028,17 @@ const ModelSelector = ({
     >
       {/* ── Mode selector (left pill) — hidden in LLM-As-A-Judge ── */}
       {showMode && (
-        <Box
-          onClick={(e) => !disabled && setModeAnchor(e.currentTarget)}
+        <Button
+          size="small"
+          color="inherit"
+          disabled={disabled}
+          aria-label={`Evaluation mode: ${currentMode.label}`}
+          aria-haspopup="menu"
+          aria-expanded={Boolean(modeAnchor)}
+          onClick={(e) => setModeAnchor(e.currentTarget)}
           sx={{
+            minWidth: 0,
+            textTransform: "none",
             display: "inline-flex",
             alignItems: "center",
             gap: 0.5,
@@ -981,14 +1073,22 @@ const ModelSelector = ({
             width={14}
             sx={{ color: "text.disabled" }}
           />
-        </Box>
+        </Button>
       )}
 
       {/* ── Model selector (right) ── */}
-      <Box
+      <Button
         ref={modelPillRef}
-        onClick={(e) => !disabled && setModelAnchor(e.currentTarget)}
+        size="small"
+        color="inherit"
+        disabled={disabled}
+        aria-label={`Evaluation model: ${modelDisplayName}`}
+        aria-haspopup="menu"
+        aria-expanded={Boolean(modelAnchor)}
+        onClick={(e) => setModelAnchor(e.currentTarget)}
         sx={{
+          minWidth: 0,
+          textTransform: "none",
           display: "inline-flex",
           alignItems: "center",
           gap: 0.5,
@@ -1010,13 +1110,16 @@ const ModelSelector = ({
           width={14}
           sx={{ color: "text.disabled" }}
         />
-      </Box>
+      </Button>
 
       {/* ── + button + config chips (hidden when showPlus=false, e.g. LLM tab) ── */}
       {showPlus && (
         <IconButton
           size="small"
           disabled={disabled}
+          aria-label="Configure evaluation"
+          aria-haspopup="menu"
+          aria-expanded={Boolean(plusAnchor)}
           onClick={(e) => setPlusAnchor(e.currentTarget)}
           sx={{
             border: "1px solid",
@@ -1036,22 +1139,26 @@ const ModelSelector = ({
           size="small"
           icon={<Iconify icon="mdi:web" width={12} sx={{ ml: 0.5 }} />}
           label="Internet"
+          disabled={isJevModel || disabled}
           onDelete={() => setUseInternet(false)}
           deleteIcon={DELETE_ICON}
           sx={CHIP_STYLES}
         />
       )}
-      {showPlus && activeSummary && activeSummary !== "concise" && (
-        <SummaryChip
-          activeSummary={activeSummary}
-          onClick={(e) => {
-            setPlusAnchor(e.currentTarget);
-            setPlusSubmenu("summary");
-          }}
-          onDelete={() => setActiveSummary("concise")}
-        />
-      )}
-      {showPlus && !activeSummary && (
+      {showPlus &&
+        !isJevModel &&
+        activeSummary &&
+        activeSummary !== "concise" && (
+          <SummaryChip
+            activeSummary={activeSummary}
+            onClick={(e) => {
+              setPlusAnchor(e.currentTarget);
+              setPlusSubmenu("summary");
+            }}
+            onDelete={() => setActiveSummary("concise")}
+          />
+        )}
+      {showPlus && !isJevModel && !activeSummary && (
         <Chip
           size="small"
           label="No summary"
@@ -1092,6 +1199,7 @@ const ModelSelector = ({
                 />
               }
               label={conn.name}
+              disabled={isJevModel || disabled}
               onDelete={() =>
                 setActiveConnectorIds((p) => p.filter((x) => x !== cId))
               }
@@ -1129,6 +1237,7 @@ const ModelSelector = ({
               />
             }
             label={`${selectedKBs.length} KB`}
+            disabled={isJevModel || disabled}
             onClick={(e) => {
               setPlusAnchor(e.currentTarget);
               setPlusSubmenu("knowledge");
@@ -1172,6 +1281,7 @@ const ModelSelector = ({
                 />
               }
               label={`+${activeContextOptions.filter((o) => o !== "variables_only").length} context`}
+              disabled={isJevModel || disabled}
               onClick={(e) => {
                 setPlusAnchor(e.currentTarget);
                 setPlusSubmenu("injection");
@@ -1184,7 +1294,11 @@ const ModelSelector = ({
         )}
 
       {/* ══════ Mode Dropdown ══════ */}
-      <Popover
+      <Menu
+        MenuListProps={{
+          "aria-label": "Evaluation modes",
+          disablePadding: true,
+        }}
         open={Boolean(modeAnchor)}
         anchorEl={modeAnchor}
         onClose={() => setModeAnchor(null)}
@@ -1197,7 +1311,8 @@ const ModelSelector = ({
         {MODES.map((m) => (
           <MenuItem
             key={m.value}
-            selected={m.value === mode}
+            selected={m.value === effectiveMode}
+            disabled={isJevModel && m.value !== "quick"}
             onClick={() => {
               setMode(m.value);
               setModeAnchor(null);
@@ -1209,7 +1324,8 @@ const ModelSelector = ({
               width={18}
               sx={{
                 mr: 1.5,
-                color: m.value === mode ? "primary.main" : "text.secondary",
+                color:
+                  m.value === effectiveMode ? "primary.main" : "text.secondary",
               }}
             />
             <Box sx={{ flex: 1 }}>
@@ -1224,10 +1340,12 @@ const ModelSelector = ({
                 color="text.secondary"
                 sx={{ fontSize: "11px" }}
               >
-                {m.description}
+                {isJevModel && m.value !== "quick"
+                  ? "Jev runs in Quick mode only. Your previous mode is preserved."
+                  : m.description}
               </Typography>
             </Box>
-            {m.value === mode && (
+            {m.value === effectiveMode && (
               <Iconify
                 icon="mdi:check"
                 width={16}
@@ -1236,16 +1354,14 @@ const ModelSelector = ({
             )}
           </MenuItem>
         ))}
-      </Popover>
+      </Menu>
 
       {/* ══════ Model Dropdown — two sections ══════ */}
       <Popover
         open={Boolean(modelAnchor)}
         anchorEl={modelAnchor}
-        onClose={() => {
-          setModelAnchor(null);
-          setModelSearch("");
-        }}
+        onClose={closeModelMenu}
+        onKeyDown={(event) => handleMenuNavigation(event, closeModelMenu)}
         anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
         transformOrigin={{ vertical: "top", horizontal: "left" }}
         slotProps={{ paper: { sx: { width: 320, borderRadius: "8px", p: 0 } } }}
@@ -1257,6 +1373,7 @@ const ModelSelector = ({
             fullWidth
             autoFocus
             placeholder="Search models..."
+            inputProps={{ "aria-label": "Search models" }}
             value={modelSearch}
             onChange={(e) => setModelSearch(e.target.value)}
             InputProps={{
@@ -1273,6 +1390,8 @@ const ModelSelector = ({
         </Box>
 
         <Box
+          role="menu"
+          aria-label="Evaluation models"
           sx={{ maxHeight: 350, overflowY: "auto" }}
           onScroll={(e) => {
             const { scrollTop, scrollHeight, clientHeight } = e.target;
@@ -1313,11 +1432,7 @@ const ModelSelector = ({
                   secondaryText={
                     fagiModelsLocked ? "Not enabled" : m.description
                   }
-                  onSelect={() => {
-                    onModelChange(m.value);
-                    setModelAnchor(null);
-                    setModelSearch("");
-                  }}
+                  onSelect={() => selectModel(m.value)}
                 />
               ))}
             </>
@@ -1355,16 +1470,13 @@ const ModelSelector = ({
                     if (!hasTypesafeKey) {
                       // Close the picker so its backdrop doesn't swallow the
                       // first click in the keys drawer.
-                      setModelAnchor(null);
-                      setKeysDrawerModel({
+                      openKeysDrawer({
                         model_name: m.value,
                         providers: "typesafe",
                       });
                       return;
                     }
-                    onModelChange(m.value);
-                    setModelAnchor(null);
-                    setModelSearch("");
+                    selectModel(m.value);
                   }}
                 />
               ))}
@@ -1405,13 +1517,10 @@ const ModelSelector = ({
                       if (!available) {
                         // Open keys drawer for this model; close the picker
                         // so its backdrop doesn't cover the drawer.
-                        setModelAnchor(null);
-                        setKeysDrawerModel(m);
+                        openKeysDrawer(m);
                         return;
                       }
-                      onModelChange(m.model_name);
-                      setModelAnchor(null);
-                      setModelSearch("");
+                      selectModel(m.model_name);
                     }}
                     sx={{
                       mx: 0.5,
@@ -1517,11 +1626,8 @@ const ModelSelector = ({
       <Popover
         open={Boolean(plusAnchor)}
         anchorEl={plusAnchor}
-        onClose={() => {
-          setPlusAnchor(null);
-          setPlusSubmenu(null);
-          setConnectorSearch("");
-        }}
+        onClose={closePlusMenu}
+        onKeyDown={(event) => handleMenuNavigation(event, closePlusMenu)}
         anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
         transformOrigin={{ vertical: "top", horizontal: "left" }}
         slotProps={{
@@ -1532,6 +1638,8 @@ const ModelSelector = ({
         <Box sx={{ minWidth: 220 }}>
           {/* Internet toggle */}
           <MenuItem
+            autoFocus={!isJevModel && !disabled}
+            disabled={isJevModel || disabled}
             onClick={() => setUseInternet((prev) => !prev)}
             sx={{ borderRadius: "6px", py: 1 }}
           >
@@ -1555,7 +1663,9 @@ const ModelSelector = ({
                 color="text.secondary"
                 sx={{ fontSize: "11px" }}
               >
-                Search the web during evaluation
+                {isJevModel
+                  ? "Jev does not support internet access. Your selection is preserved."
+                  : "Search the web during evaluation"}
               </Typography>
             </Box>
             <Box
@@ -1618,46 +1728,51 @@ const ModelSelector = ({
               label: "Summary",
               desc: "Control how detailed or brief the evaluation output should be",
             },
-          ].map((item) => (
-            <MenuItem
-              key={item.key}
-              onClick={() =>
-                setPlusSubmenu(plusSubmenu === item.key ? null : item.key)
-              }
-              selected={plusSubmenu === item.key}
-              sx={{ borderRadius: "6px", py: 1 }}
-            >
-              <Iconify
-                icon={item.icon}
-                width={18}
-                sx={{ mr: 1.5, color: "text.secondary" }}
-              />
-              <Box sx={{ flex: 1 }}>
-                <Typography
-                  variant="body2"
-                  sx={{ fontSize: "13px", fontWeight: 500 }}
-                >
-                  {item.label}
-                </Typography>
-                <Typography
-                  variant="caption"
-                  color="text.secondary"
-                  sx={{ fontSize: "11px" }}
-                >
-                  {item.desc}
-                </Typography>
-              </Box>
-              <Iconify
-                icon="mdi:chevron-right"
-                width={16}
-                sx={{ color: "text.disabled" }}
-              />
-            </MenuItem>
-          ))}
+          ]
+            .filter((item) => !isJevModel || item.key !== "summary")
+            .map((item) => (
+              <MenuItem
+                key={item.key}
+                disabled={isJevModel || disabled}
+                onClick={() =>
+                  setPlusSubmenu(plusSubmenu === item.key ? null : item.key)
+                }
+                selected={plusSubmenu === item.key}
+                sx={{ borderRadius: "6px", py: 1 }}
+              >
+                <Iconify
+                  icon={item.icon}
+                  width={18}
+                  sx={{ mr: 1.5, color: "text.secondary" }}
+                />
+                <Box sx={{ flex: 1 }}>
+                  <Typography
+                    variant="body2"
+                    sx={{ fontSize: "13px", fontWeight: 500 }}
+                  >
+                    {item.label}
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ fontSize: "11px" }}
+                  >
+                    {isJevModel
+                      ? `Jev does not support ${item.key === "injection" ? "automatic context" : item.label.toLowerCase()}. Your selection is preserved.`
+                      : item.desc}
+                  </Typography>
+                </Box>
+                <Iconify
+                  icon="mdi:chevron-right"
+                  width={16}
+                  sx={{ color: "text.disabled" }}
+                />
+              </MenuItem>
+            ))}
         </Box>
 
         {/* Submenu */}
-        {plusSubmenu && (
+        {plusSubmenu && !isJevModel && (
           <Box
             sx={{
               minWidth: 220,
@@ -2055,7 +2170,18 @@ const ModelSelector = ({
       <KeysDrawer
         open={Boolean(keysDrawerModel)}
         selectedModel={keysDrawerModel}
-        onClose={() => setKeysDrawerModel(null)}
+        onClose={closeKeysDrawer}
+        onKeySaved={(provider) => {
+          const pending = pendingModelRef.current;
+          if (
+            !pending ||
+            disabled ||
+            provider.toLowerCase() !== pending.providers?.toLowerCase() ||
+            (JEV_MODEL_VALUES.has(pending.model_name) && jevModelsLocked)
+          )
+            return;
+          selectModel(pending.model_name);
+        }}
       />
     </Box>
   );

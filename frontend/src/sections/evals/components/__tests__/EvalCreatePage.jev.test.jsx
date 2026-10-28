@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, userEvent, waitFor } from "src/utils/test-utils";
 import EvalCreatePage from "../EvalCreatePage";
+import axios from "src/utils/axios";
 
 const mocks = vi.hoisted(() => ({
   draft: null,
@@ -12,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   // When set, the capability hooks read Jev's entry from /api/capabilities/
   // for real: its answer, or "fail" for a fetch that fails.
   capabilities: null,
+  realPlayground: false,
+  realInstructionEditor: false,
 }));
 vi.mock("notistack", async (original) => ({
   ...(await original()),
@@ -47,17 +50,36 @@ vi.mock("src/utils/axios", () => ({
         if (mocks.capabilities === "fail") throw new Error("unavailable");
         return { data: mocks.capabilities };
       }
+      if (url === "/provider-status") {
+        return {
+          data: {
+            result: { providers: [{ provider: "typesafe", has_key: true }] },
+          },
+        };
+      }
+      if (url === "/models") {
+        return {
+          data: {
+            results: [{ model_name: "local-model", providers: "custom" }],
+            next: null,
+          },
+        };
+      }
       return { data: { result: mocks.draft } };
     }),
     post: vi.fn(),
   },
   endpoints: {
     develop: {
+      apiKey: { status: "/provider-status" },
+      modelList: "/models",
       eval: {
         getEvalDetail: (id) => `/detail/${id}`,
         createEvalTemplateV2: "/create-v2",
+        evalPlayground: "/playground",
       },
     },
+    knowledge: { list: "/knowledge" },
   },
 }));
 vi.mock("../../hooks/useEvalDetail", () => ({
@@ -68,7 +90,15 @@ vi.mock("../../hooks/useCreateEval", () => ({
 }));
 vi.mock("../../hooks/useCompositeEval", () => ({
   useCreateCompositeEval: () => ({ mutateAsync: vi.fn() }),
+  useExecuteCompositeEval: () => ({ mutateAsync: vi.fn() }),
+  useExecuteCompositeEvalAdhoc: () => ({ mutateAsync: vi.fn() }),
 }));
+vi.mock("../../hooks/useEvalVersions", () => ({
+  useEvalVersions: () => ({}),
+  useSetDefaultVersion: () => ({}),
+}));
+vi.mock("../CodeEditor", () => ({ default: () => null }));
+vi.mock("../EvalResultDisplay", () => ({ default: () => null }));
 vi.mock("../../hooks/useCompositeChildrenKeys", () => ({
   useCompositeChildrenUnionKeys: () => [],
 }));
@@ -96,12 +126,26 @@ vi.mock("../LLMPromptEditor", () => ({
     </select>
   ),
 }));
-vi.mock("../InstructionEditor", () => ({ default: () => null }));
-vi.mock("../TestPlayground", () => ({
-  default: forwardRef(function Playground() {
+vi.mock("src/components/PromptCards/PromptEditor", () => ({
+  default: forwardRef(function PromptEditor() {
     return null;
   }),
 }));
+vi.mock("../InstructionEditor", async (original) => {
+  const { default: Editor } = await original();
+  return {
+    default: (props) =>
+      mocks.realInstructionEditor ? <Editor {...props} /> : null,
+  };
+});
+vi.mock("../TestPlayground", async (original) => {
+  const { default: Playground } = await original();
+  return {
+    default: forwardRef(function TestPlayground(props, ref) {
+      return mocks.realPlayground ? <Playground {...props} ref={ref} /> : null;
+    }),
+  };
+});
 vi.mock("../FewShotExamples", () => ({ default: () => null }));
 vi.mock("../CodeEvalEditor", () => ({
   default: () => null,
@@ -114,6 +158,11 @@ const lastPayload = () => mocks.mutate.mock.calls.at(-1)?.[0];
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.capabilities = null;
+  mocks.realPlayground = false;
+  mocks.realInstructionEditor = false;
+  axios.post.mockResolvedValue({
+    data: { status: true, result: { output: 1 } },
+  });
   // An LLM judge drafted on the Agents tab: agent_mode stays "agent", and the
   // stored mapping is the Pass/Fail one from before the output change.
   mocks.draft = {
@@ -129,6 +178,70 @@ beforeEach(() => {
 });
 
 describe("EvalCreatePage with a Jev model", () => {
+  it.each(["auto", "agent"])(
+    "preserves %s through Jev selection and evaluator tab changes",
+    async (initialMode) => {
+      mocks.realInstructionEditor = true;
+      mocks.draft = {
+        ...mocks.draft,
+        eval_type: "agent",
+        config: { model: "local-model", agent_mode: initialMode },
+      };
+      render(
+        <QueryClientProvider client={new QueryClient()}>
+          <EvalCreatePage />
+        </QueryClientProvider>,
+      );
+      await userEvent.click(
+        await screen.findByRole("button", {
+          name: "Evaluation model: local-model",
+        }),
+      );
+      await userEvent.click(
+        await screen.findByRole("menuitem", { name: /Jev latest/ }),
+      );
+      expect(
+        screen.getByRole("button", { name: "Evaluation mode: Quick" }),
+      ).toBeInTheDocument();
+      await userEvent.click(screen.getByRole("tab", { name: /LLM/ }));
+      await screen.findByDisplayValue("Jev latest");
+      await userEvent.click(screen.getByRole("tab", { name: /Agents/ }));
+      await userEvent.click(
+        screen.getByRole("button", { name: "Evaluation model: Jev latest" }),
+      );
+      await userEvent.click(
+        await screen.findByRole("menuitem", { name: /local-model/ }),
+      );
+      expect(
+        screen.getByRole("button", {
+          name: `Evaluation mode: ${initialMode === "auto" ? "Auto" : "Agent"}`,
+        }),
+      ).toBeInTheDocument();
+      await waitFor(() => expect(lastPayload()?.mode).toBe(initialMode), {
+        timeout: 4000,
+      });
+
+      // Changing the model on the other tab must also restore the draft mode.
+      await userEvent.click(
+        screen.getByRole("button", { name: "Evaluation model: local-model" }),
+      );
+      await userEvent.click(
+        await screen.findByRole("menuitem", { name: /Jev latest/ }),
+      );
+      await userEvent.click(screen.getByRole("tab", { name: /LLM/ }));
+      await userEvent.selectOptions(
+        await screen.findByLabelText("Evaluator model"),
+        "turing_large",
+      );
+      await userEvent.click(screen.getByRole("tab", { name: /Agents/ }));
+      expect(
+        screen.getByRole("button", {
+          name: `Evaluation mode: ${initialMode === "auto" ? "Auto" : "Agent"}`,
+        }),
+      ).toBeInTheDocument();
+    },
+  );
+
   it("autosaves a mapping that follows the chosen output type", async () => {
     render(<EvalCreatePage />);
     await screen.findByDisplayValue("Jev latest");
@@ -201,6 +314,40 @@ describe("EvalCreatePage with a Jev model", () => {
       timeout: 4000,
     });
     expect(lastPayload()).not.toHaveProperty("jev_mapping");
+  });
+
+  it("autosaves a Jev-to-Code switch, then tests it through the real playground without a Jev override", async () => {
+    mocks.realPlayground = true;
+    mocks.draft = {
+      ...mocks.draft,
+      code: "def evaluate(input, output, expected):\n    return 1",
+    };
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <EvalCreatePage />
+      </QueryClientProvider>,
+    );
+    await screen.findByDisplayValue("Jev latest");
+    await userEvent.click(screen.getByRole("tab", { name: /Code/ }));
+    await waitFor(() => expect(lastPayload()?.eval_type).toBe("code"), {
+      timeout: 4000,
+    });
+    expect(lastPayload().model).toBe("");
+    expect(lastPayload()).not.toHaveProperty("jev_mapping");
+    await userEvent.click(
+      screen.getByRole("button", { name: /Test Evaluation/ }),
+    );
+    await waitFor(() =>
+      expect(axios.post).toHaveBeenCalledWith(
+        "/playground",
+        expect.objectContaining({ template_id: "draft-1" }),
+      ),
+    );
+    const request = axios.post.mock.calls.find(
+      ([url]) => url === "/playground",
+    )[1];
+    expect(request).not.toHaveProperty("model");
+    expect(request.config).toHaveProperty("params", {});
   });
 
   it("keeps Test off while Jev can't run the setup", async () => {

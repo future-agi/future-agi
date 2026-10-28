@@ -1702,6 +1702,7 @@ const EvalDetailPage = () => {
                       modelSelectorDisabled={false}
                     />
                     <FewShotExamples
+                      isJevModel={isJevModel}
                       selectedDatasets={fewShotExamples}
                       onChange={(v) => {
                         setFewShotExamples(v);

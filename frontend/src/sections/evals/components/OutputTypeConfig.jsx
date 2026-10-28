@@ -287,7 +287,10 @@ const OutputTypeConfig = ({
           {/* Pass Threshold */}
           <Box>
             <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
-              Pass Threshold
+              Pass threshold
+              <Box component="span" sx={{ ml: 1, color: "text.secondary" }}>
+                {Math.round(passThreshold * 100)}%
+              </Box>
             </Typography>
             <Typography
               variant="caption"
@@ -295,7 +298,7 @@ const OutputTypeConfig = ({
               sx={{ mb: 1, display: "block" }}
             >
               Set the minimum score required for an item to pass. Accepts values
-              between 0 and 1.
+              between 0% and 100%.
             </Typography>
             <Box sx={{ display: "flex", alignItems: "center", gap: 2, px: 1 }}>
               <Typography variant="caption">0</Typography>
@@ -477,7 +480,7 @@ const OutputTypeConfig = ({
                   size="small"
                   checked={multiChoice}
                   onChange={(e) => onMultiChoiceChange?.(e.target.checked)}
-                  disabled={disabled}
+                  disabled={disabled || isJevModel}
                 />
               }
               label={
@@ -487,6 +490,12 @@ const OutputTypeConfig = ({
               }
               sx={{ mt: 0.5, px: 0.25 }}
             />
+            {isJevModel && (
+              <Typography variant="caption" color="text.secondary">
+                Jev selects one choice only. Your multi-choice setting is
+                preserved.
+              </Typography>
+            )}
           </Box>
         </Box>
       )}

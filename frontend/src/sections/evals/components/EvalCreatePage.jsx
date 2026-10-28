@@ -205,6 +205,8 @@ const EvalCreatePage = () => {
   const [description, setDescription] = useState("");
   const [checkInternet, setCheckInternet] = useState(false);
   const [agentMode, setAgentMode] = useState("agent");
+  // The Agents editor unmounts on tab changes; keep its non-Jev mode here.
+  const previousAgentModeRef = useRef(null);
   const [summaryType, setSummaryType] = useState("concise");
   const [customSummary, setCustomSummary] = useState("");
   const [connectorIds, setConnectorIds] = useState([]);
@@ -975,6 +977,7 @@ const EvalCreatePage = () => {
                         return;
                       }
                       setEvalType(val);
+                      if (val === "code") setModel("");
                     }}
                     variant="standard"
                     scrollButtons={false}
@@ -1078,6 +1081,7 @@ const EvalCreatePage = () => {
                       modelSelectorDisabled={false}
                       mode={agentMode}
                       onModeChange={setAgentMode}
+                      previousModeRef={previousAgentModeRef}
                       useInternet={checkInternet}
                       onUseInternetChange={setCheckInternet}
                       activeSummary={summaryType}
@@ -1116,6 +1120,7 @@ const EvalCreatePage = () => {
 
                       {/* Few-shot examples — dataset selector */}
                       <FewShotExamples
+                        isJevModel={isJevModel}
                         selectedDatasets={fewShotExamples}
                         onChange={setFewShotExamples}
                       />
@@ -1360,7 +1365,7 @@ const EvalCreatePage = () => {
                   key={mode}
                   ref={testPlaygroundRef}
                   templateId={draftId}
-                  model={model}
+                  model={evalType === "code" ? "" : model}
                   evalName={name || ""}
                   instructions={
                     mode === "composite" || evalType === "code"

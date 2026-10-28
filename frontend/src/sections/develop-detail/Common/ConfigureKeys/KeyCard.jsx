@@ -54,7 +54,7 @@ ProviderLogo.propTypes = {
   data: PropTypes.object,
 };
 
-const KeyCardComponent = ({ data, onDeleteClick }) => {
+const KeyCardComponent = ({ data, onDeleteClick, onKeySaved }) => {
   const theme = useTheme();
   const hasClearedOnceRef = useRef(false);
   const focusTimeoutRef = useRef(null);
@@ -134,6 +134,7 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
       queryClient.invalidateQueries({ queryKey: ["api-key-status"] });
       setEditMode(false);
       hasClearedOnceRef.current = false;
+      onKeySaved?.(data.provider);
     },
   });
 
@@ -147,6 +148,7 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
       queryClient.invalidateQueries({ queryKey: ["api-key-status"] });
       setEditMode(false);
       hasClearedOnceRef.current = false;
+      onKeySaved?.(data.provider);
     },
   });
   const handleFormSubmit = async (formData) => {
@@ -435,6 +437,7 @@ KeyCardComponent.propTypes = {
   onClose: PropTypes.func,
   isFetching: PropTypes.bool,
   onDeleteClick: PropTypes.func,
+  onKeySaved: PropTypes.func,
 };
 
 const KeyCard = React.memo(KeyCardComponent);

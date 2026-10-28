@@ -1,3 +1,5 @@
+/* eslint-disable react/prop-types */
+import React, { useState } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, userEvent, waitFor } from "src/utils/test-utils";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -58,7 +60,7 @@ const OPENAI_LOGO =
   "https://fi-image-assets.s3.ap-south-1.amazonaws.com/provider-logos/openai-icon.png";
 
 function mockModelList(models) {
-  mockGet.mockImplementation((url) => {
+  mockGet.mockImplementation((url, { params } = {}) => {
     if (url === "/api/capabilities/") return capabilityResponse;
     if (url === "/model-hub/develops/provider-status/") {
       return Promise.resolve({
@@ -71,7 +73,15 @@ function mockModelList(models) {
     }
     if (url === "/model-hub/api/models_list/") {
       return Promise.resolve({
-        data: { results: models, next: null, current_page: 1 },
+        data: {
+          results: models.filter((m) =>
+            m.model_name
+              .toLowerCase()
+              .includes(params?.search?.toLowerCase() || ""),
+          ),
+          next: null,
+          current_page: 1,
+        },
       });
     }
     // connectors + knowledge bases — empty is fine for these tests
@@ -283,5 +293,270 @@ describe("ModelSelector — Jev models (bring your own key)", () => {
     await waitFor(() => expect(row).not.toHaveAttribute("aria-disabled"));
     await userEvent.click(row);
     expect(onModelChange).toHaveBeenCalledWith("jev-latest");
+  });
+});
+
+function StatefulSelector({
+  initialMode = "agent",
+  controlled = true,
+  ...props
+}) {
+  const [model, setModel] = useState("local-model");
+  const [mode, setMode] = useState(initialMode);
+  return (
+    <>
+      <output data-testid="parent-mode">{mode}</output>
+      <ModelSelector
+        {...props}
+        model={model}
+        onModelChange={setModel}
+        mode={controlled ? mode : undefined}
+        onModeChange={controlled ? setMode : undefined}
+      />
+    </>
+  );
+}
+
+function renderStatefulSelector(props = {}) {
+  return render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <StatefulSelector {...props} />
+    </QueryClientProvider>,
+  );
+}
+
+async function chooseModel(label) {
+  await userEvent.click(
+    screen.getByRole("button", { name: /^Evaluation model:/ }),
+  );
+  const row = await screen.findByRole("menuitem", { name: label });
+  await waitFor(() => expect(row).not.toHaveAttribute("aria-disabled", "true"));
+  await userEvent.click(row);
+}
+
+describe("ModelSelector Jev transitions and accessible controls", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockModelList([{ model_name: "local-model", providers: "custom" }]);
+  });
+
+  it.each(["auto", "agent"])(
+    "switches controlled %s to Quick and restores it when leaving Jev",
+    async (initialMode) => {
+      renderStatefulSelector({ initialMode });
+      await chooseModel(/Jev latest/);
+      expect(screen.getByTestId("parent-mode")).toHaveTextContent("quick");
+      await userEvent.click(
+        screen.getByRole("button", { name: "Evaluation mode: Quick" }),
+      );
+      for (const mode of ["Auto", "Agent"]) {
+        const row = screen.getByRole("menuitem", {
+          name: new RegExp(`^${mode}`),
+        });
+        expect(row).toHaveAttribute("aria-disabled", "true");
+        expect(row).toHaveTextContent("Jev runs in Quick mode only");
+      }
+      await userEvent.click(screen.getByRole("menuitem", { name: /^Quick/ }));
+      await chooseModel(/Jev 1.13/);
+      await chooseModel(/local-model/);
+      expect(screen.getByTestId("parent-mode")).toHaveTextContent(initialMode);
+      expect(
+        screen.getByRole("button", {
+          name: `Evaluation mode: ${initialMode === "auto" ? "Auto" : "Agent"}`,
+        }),
+      ).toBeInTheDocument();
+    },
+  );
+
+  it("restores a locally managed mode after leaving Jev", async () => {
+    renderStatefulSelector({ controlled: false });
+    await chooseModel(/Jev latest/);
+    expect(
+      screen.getByRole("button", { name: "Evaluation mode: Quick" }),
+    ).toBeInTheDocument();
+    await chooseModel(/local-model/);
+    expect(
+      screen.getByRole("button", { name: "Evaluation mode: Agent" }),
+    ).toBeInTheDocument();
+  });
+
+  it("disables unsupported configuration without deleting it and does not offer Summary", async () => {
+    const onUseInternetChange = vi.fn();
+    const onActiveSummaryChange = vi.fn();
+    const onActiveConnectorIdsChange = vi.fn();
+    const onSelectedKBsChange = vi.fn();
+    const onActiveContextOptionsChange = vi.fn();
+    renderStatefulSelector({
+      useInternet: true,
+      activeSummary: "long",
+      activeConnectorIds: ["connector"],
+      selectedKBs: ["kb"],
+      activeContextOptions: ["trace_context"],
+      onUseInternetChange,
+      onActiveSummaryChange,
+      onActiveConnectorIdsChange,
+      onSelectedKBsChange,
+      onActiveContextOptionsChange,
+    });
+    await chooseModel(/Jev latest/);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Configure evaluation" }),
+    );
+    for (const name of [
+      /^Use Internet/,
+      /^Connectors/,
+      /^Knowledge Base/,
+      /^Data Injection/,
+    ]) {
+      const row = screen.getByRole("menuitem", { name });
+      expect(row).toHaveAttribute("aria-disabled", "true");
+      expect(row).toHaveTextContent("Jev does not support");
+      expect(row).toHaveTextContent("preserved");
+    }
+    expect(
+      screen.queryByRole("menuitem", { name: /^Summary/ }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Long")).not.toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    await chooseModel(/local-model/);
+    expect(screen.getByText("Internet")).toBeInTheDocument();
+    expect(screen.getByText("Long")).toBeInTheDocument();
+    expect(screen.getByText("1 KB")).toBeInTheDocument();
+    expect(screen.getByText("+1 context")).toBeInTheDocument();
+    for (const cb of [
+      onUseInternetChange,
+      onActiveSummaryChange,
+      onActiveConnectorIdsChange,
+      onSelectedKBsChange,
+      onActiveContextOptionsChange,
+    ]) {
+      expect(cb).not.toHaveBeenCalled();
+    }
+  });
+
+  it("opens mode, model and configuration with native keyboard button activation", async () => {
+    renderStatefulSelector();
+    const mode = screen.getByRole("button", { name: "Evaluation mode: Agent" });
+    mode.focus();
+    await userEvent.keyboard("{Enter}");
+    const agent = await screen.findByRole("menuitem", { name: /^Agent/ });
+    await waitFor(() => expect(agent).toHaveFocus());
+    await userEvent.keyboard("{ArrowUp}");
+    expect(screen.getByRole("menuitem", { name: /^Auto/ })).toHaveFocus();
+    await userEvent.keyboard("{Enter}");
+    expect(screen.getByTestId("parent-mode")).toHaveTextContent("auto");
+    await waitFor(() => expect(mode).toHaveFocus());
+    const model = screen.getByRole("button", {
+      name: "Evaluation model: local-model",
+    });
+    model.focus();
+    await userEvent.keyboard(" ");
+    await screen.findByRole("menuitem", { name: /Jev latest/ });
+    await waitFor(() =>
+      expect(screen.getByPlaceholderText("Search models...")).toHaveFocus(),
+    );
+    await userEvent.keyboard("{ArrowDown}");
+    expect(
+      screen.getByRole("menuitem", { name: /Turing Large/ }),
+    ).toHaveFocus();
+    await userEvent.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}");
+    expect(screen.getByRole("menuitem", { name: /Jev 1.13/ })).toHaveFocus();
+    await userEvent.keyboard("{ArrowDown}{Enter}");
+    expect(
+      screen.getByRole("button", { name: "Evaluation model: Jev latest" }),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(model).toHaveFocus());
+    const config = screen.getByRole("button", { name: "Configure evaluation" });
+    config.focus();
+    await userEvent.keyboard("{Enter}");
+    expect(
+      await screen.findByRole("menuitem", { name: /^Use Internet/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("navigates model sections with arrows and skips locked models", async () => {
+    capabilityResponse = Promise.resolve({
+      data: {
+        features: {
+          turing_models: { allowed: false },
+          jev_models: { allowed: true },
+        },
+      },
+    });
+    renderStatefulSelector();
+    const trigger = screen.getByRole("button", {
+      name: "Evaluation model: local-model",
+    });
+    trigger.focus();
+    await userEvent.keyboard("{Enter}");
+    await screen.findByRole("menuitem", { name: /local-model/ });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("menuitem", { name: /Turing Large/ }),
+      ).toHaveAttribute("aria-disabled", "true"),
+    );
+    await userEvent.keyboard("{ArrowDown}");
+    expect(screen.getByRole("menuitem", { name: /Jev 1.13/ })).toHaveFocus();
+    await userEvent.keyboard("{ArrowUp}");
+    expect(screen.getByRole("menuitem", { name: /local-model/ })).toHaveFocus();
+    await userEvent.keyboard("{Home}");
+    expect(screen.getByRole("menuitem", { name: /Jev 1.13/ })).toHaveFocus();
+    await userEvent.keyboard("{End}");
+    expect(screen.getByRole("menuitem", { name: /local-model/ })).toHaveFocus();
+    await userEvent.keyboard("{Tab}");
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(
+      screen.queryByRole("menu", { name: "Evaluation models" }),
+    ).toBeNull();
+
+    await userEvent.keyboard("{Enter}");
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "Search models" }),
+      "Jev",
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("menuitem", { name: /local-model/ }),
+      ).toBeNull(),
+    );
+    await userEvent.keyboard("{ArrowUp}");
+    expect(screen.getByRole("menuitem", { name: /Jev latest/ })).toHaveFocus();
+    await userEvent.keyboard("{Enter}");
+    expect(
+      screen.getByRole("button", { name: "Evaluation model: Jev latest" }),
+    ).toBeInTheDocument();
+  });
+
+  it("focuses configuration options and toggles Internet with the keyboard", async () => {
+    renderStatefulSelector();
+    const trigger = screen.getByRole("button", {
+      name: "Configure evaluation",
+    });
+    trigger.focus();
+    await userEvent.keyboard("{Enter}");
+    const internet = await screen.findByRole("menuitem", {
+      name: /^Use Internet/,
+    });
+    await waitFor(() => expect(internet).toHaveFocus());
+    await userEvent.keyboard("{ArrowDown}");
+    expect(screen.getByRole("menuitem", { name: /^Connectors/ })).toHaveFocus();
+    await userEvent.keyboard("{Home}{Enter}{Escape}");
+    expect(screen.getByText("Internet")).toBeInTheDocument();
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  it("disables every primary selector when the editor is disabled", () => {
+    renderSelector({ disabled: true });
+    for (const name of [
+      /^Evaluation mode:/,
+      /^Evaluation model:/,
+      "Configure evaluation",
+    ]) {
+      expect(screen.getByRole("button", { name })).toBeDisabled();
+    }
   });
 });
