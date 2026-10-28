@@ -1885,6 +1885,32 @@ describe("InsightsView", () => {
       expect(screen.getByRole("button", { name: "Run report" })).toBeEnabled();
     });
 
+    it("offers billing beside the sample that fits a budget limit", async () => {
+      mocks.post.mockImplementation((url, body) =>
+        url !== "/tracer/insights/estimate/"
+          ? ok({ run_id: RUN_ID, config_id: CONFIG_ID })
+          : estimate(body.sample_size, {
+              credits_estimate: 3.6,
+              credit_limited: true,
+              credits_left: 1.3,
+              credit_max_sample: 40,
+              credit_message:
+                "This report needs about 3.6 credits; your budget limit allows 1.3 more this month. A sample of up to 40 sessions fits.",
+            }),
+      );
+      renderAt("?new=1&lens=failures");
+      const why = await screen.findByRole("status");
+      expect(why).toHaveTextContent("your budget limit allows 1.3 more");
+      expect(
+        within(why).getByRole("button", {
+          name: "Analyse a sample of 40 instead",
+        }),
+      ).toBeEnabled();
+      expect(
+        within(why).getByRole("link", { name: "Open billing" }),
+      ).toHaveAttribute("href", "/dashboard/settings/billing");
+    });
+
     it("holds Run while a new sample size is costed", async () => {
       let release;
       mocks.post.mockImplementation((url, body) => {

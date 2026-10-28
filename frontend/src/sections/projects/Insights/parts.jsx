@@ -58,8 +58,9 @@ ErrorText.propTypes = {
 const MIN_SAMPLE = 10;
 
 /**
- * Why a report can't run on the credits left, at full contrast, with the way
- * forward: a sample the credits pay for, or billing.
+ * Why a report can't run on the credits left, at full contrast, with the ways
+ * forward: a sample the credits pay for, and billing, where the plan or the
+ * budget limit that holds it back is changed.
  */
 export function CreditLimit({ credits, onSample }) {
   const fits = credits.maxSample;
@@ -67,13 +68,15 @@ export function CreditLimit({ credits, onSample }) {
     <Typography variant="body2" color="text.primary" role="status">
       {credits.message ||
         "The credits left this month don't cover this report."}{" "}
-      {fits >= MIN_SAMPLE && onSample ? (
-        <Link component="button" type="button" onClick={() => onSample(fits)}>
-          Analyse a sample of {formatCount(fits)} instead
-        </Link>
-      ) : (
-        <BillingLink />
+      {fits >= MIN_SAMPLE && onSample && (
+        <>
+          <Link component="button" type="button" onClick={() => onSample(fits)}>
+            Analyse a sample of {formatCount(fits)} instead
+          </Link>
+          {" · "}
+        </>
       )}
+      <BillingLink />
     </Typography>
   );
 }
