@@ -592,8 +592,38 @@ class TestCheckRunStatus:
                 {},
             ),
             ({}, "error", "the trial ended without a result", {}),
+            (
+                {
+                    "status": "errored",
+                    "failure": {"domain": "agent", "code": "target_agent_failed"},
+                    "sub_goals": [
+                        {"name": "refunded", "held": None},
+                        {"name": "greeted", "held": True},
+                    ],
+                },
+                "ok",
+                "",
+                {"refunded": False, "greeted": True},
+            ),
+            (
+                {
+                    "status": "errored",
+                    "failure": {"domain": "infrastructure"},
+                    "sub_goals": [{"name": "refunded", "held": None}],
+                },
+                "error",
+                "the judge decided nothing on refunded",
+                {},
+            ),
         ],
-        ids=["judged", "undecided", "no-sub-goals", "empty"],
+        ids=[
+            "judged",
+            "undecided",
+            "no-sub-goals",
+            "empty",
+            "agent-broke-it",
+            "infrastructure-broke-it",
+        ],
     )
     def test_a_trial_is_ok_only_when_every_sub_goal_was_judged(
         self, receipt, status, error, sub_goals

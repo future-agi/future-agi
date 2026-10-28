@@ -135,6 +135,9 @@ def _record(
 ) -> CheckRecord:
     checks = [one for one in receipt.get("sub_goals") or [] if isinstance(one, Mapping)]
     judged = {str(one["name"]): one.get("held") for one in checks if one.get("name")}
+    if (receipt.get("failure") or {}).get("domain") == "agent":
+        # The agent itself broke the conversation: every goal it left undecided failed.
+        judged = {name: held is True for name, held in judged.items()}
     undecided = [name for name, held in judged.items() if not isinstance(held, bool)]
     if not judged:
         error = f"the trial ended {receipt.get('status') or 'without a result'}"
