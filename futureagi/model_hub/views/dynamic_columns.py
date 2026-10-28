@@ -1631,7 +1631,7 @@ class ConditionalColumnView(APIView):
                 executor = AddApiColumnView()
                 if not source_column:
                     return executor._make_api_call(
-                        cell=Cell(row=row),
+                        cell=None,
                         config=config.get("config"),
                         dataset=row.dataset,
                     )

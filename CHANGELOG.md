@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Dataset API columns
+
+* Outbound request destination validation and tenant scoping of stored secrets apply to API-column requests. Conditional branches without a source column retain their existing behavior: row-variable substitution is not performed.
+* **Known issue:** API-column requests do not use `HTTP_PROXY` or `HTTPS_PROXY`. On self-hosted installations that require an egress proxy and block direct connections, cells return the generic error `destination not allowed or unreachable`. A proxy-aware path with destination validation is planned for a follow-up release.
+* **Compatibility:** Hostnames containing underscores are refused.
+* **Compatibility:** Redirects are refused, including HTTP-to-HTTPS upgrades. Configure the final destination URL directly.
+* **Compatibility:** Responses with a non-identity `Content-Encoding` are refused. Upstream endpoints must honor the request for identity encoding.
+
 ## [1.55.0](https://github.com/future-agi/future-agi/compare/v1.54.0...v1.55.0) (2026-10-27)
 
 
