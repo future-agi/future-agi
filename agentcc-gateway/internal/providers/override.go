@@ -102,6 +102,9 @@ func (c *OrgProviderCache) GetOrCreateWithTenantConfig(orgID, providerID, apiKey
 			orgCfg.DialContext, orgCfg.Proxy = netguard.Proxied(net.Dialer{}, c.allowPrivateBaseURLs, decisionProxy)
 		} else {
 			orgCfg.DialContext = orgDialContext(c.allowPrivateBaseURLs)
+			if orgCfg.APIFormat == "openai" {
+				orgCfg.DecisionDialContext, orgCfg.DecisionProxy = netguard.Proxied(net.Dialer{}, c.allowPrivateBaseURLs, decisionProxy)
+			}
 		}
 	}
 

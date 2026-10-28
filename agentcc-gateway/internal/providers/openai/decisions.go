@@ -34,7 +34,7 @@ func (p *Provider) CreateDecision(ctx context.Context, req *models.DecisionReque
 	// The provider's client follows redirects for the endpoints that have
 	// always allowed it. A decision call carries the caller's own key and
 	// content, so it never follows one.
-	client := *p.httpClient
+	client := *p.decisionHTTPClient
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	resp, err := client.Do(httpReq)
 	if err != nil {

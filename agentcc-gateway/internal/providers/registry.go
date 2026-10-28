@@ -119,6 +119,9 @@ func (r *Registry) hasMultiProviderModels() bool {
 func createProvider(name string, cfg config.ProviderConfig) (Provider, error) {
 	switch cfg.APIFormat {
 	case "openai":
+		if cfg.DecisionProxy == nil && cfg.DecisionDialContext == nil && cfg.Proxy == nil && cfg.DialContext == nil {
+			cfg.DecisionProxy = decisionProxy
+		}
 		return openai.New(name, cfg)
 	case "anthropic":
 		return anthropic.New(name, cfg)

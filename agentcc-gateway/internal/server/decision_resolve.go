@@ -104,8 +104,29 @@ func (h *Handlers) internalDecisionTarget(req *models.DecisionRequest, providerK
 	return newDecisionTarget(dialect, upstream, p, format), nil
 }
 
+// orgDecisionProviderEnabled allows keyless endpoints only for Generic System
+// One with an explicit, valid org URL. Known vendors still require BYOK.
+func (h *Handlers) orgDecisionProviderEnabled(id string, cfg *tenant.ProviderConfig) bool {
+	if cfg == nil || !cfg.Enabled {
+		return false
+	}
+	if cfg.HasCredentials() {
+		return true
+	}
+	if cfg.BaseURL == "" || h.orgProviderCache == nil {
+		return false
+	}
+	format, ok := h.orgProviderCache.APIFormat(id, cfg)
+	if !ok || !providers.IsSystemOneFormat(format) {
+		return false
+	}
+	dialect, err := systemone.DialectFor(id, cfg.BaseURL)
+	return err == nil && !dialect.KeyRequired
+}
+
 // orgDecisionTarget serves a byok or managed key from its org's own providers:
-// those enabled with credentials that list the model, in provider ID order.
+// those enabled with credentials (or keyless Generic endpoints) that list the
+// model, in provider ID order.
 // When none does but one holds the model's vendor key, the refusal says to add
 // the model to it, not to add a key the org already has.
 func (h *Handlers) orgDecisionTarget(rc *models.RequestContext, header http.Header, req *models.DecisionRequest, orgID string, orgCfg *tenant.OrgConfig) (*decisionTarget, error) {
@@ -128,7 +149,7 @@ func (h *Handlers) orgDecisionTarget(rc *models.RequestContext, header http.Head
 	vendor := decisionVendor(req.Model)
 	for _, id := range ids {
 		pcfg := orgCfg.Providers[id]
-		if (only != "" && id != only) || pcfg == nil || !pcfg.Enabled || !pcfg.HasCredentials() {
+		if (only != "" && id != only) || !h.orgDecisionProviderEnabled(id, pcfg) {
 			continue
 		}
 		if !listsModel(pcfg.Models, req.Model, id) {

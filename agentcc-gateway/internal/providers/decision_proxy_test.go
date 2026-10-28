@@ -280,6 +280,51 @@ func TestDecisionProxyFromEnvironment(t *testing.T) {
 	}
 
 	want := []string{"POST http://203.0.113.10/v1/systemone", "POST http://203.0.113.11/v1/systemone"}
+	for _, orgProvider := range []bool{false, true} {
+		for _, scheme := range []string{"http", "https"} {
+			base := scheme + "://203.0.113.12"
+			var p Provider
+			if orgProvider {
+				p, err = cache.GetOrCreateWithTenantConfig("org-env-"+scheme, "openai", proxyTestKey,
+					&tenant.ProviderConfig{APIFormat: "openai", BaseURL: base})
+			} else {
+				p, err = createProvider("openai", config.ProviderConfig{APIFormat: "openai", BaseURL: base, APIKey: proxyTestKey})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, callErr := decide(context.Background(), t, p, proxyTestOAIBody)
+			p.Close()
+			if scheme == "http" {
+				if callErr != nil {
+					t.Fatalf("OpenAI decision through HTTP_PROXY (org=%v): %v", orgProvider, callErr)
+				}
+				want = append(want, "POST "+base+"/v1/decisions")
+			} else {
+				if callErr == nil {
+					t.Fatal("the refused HTTPS_PROXY tunnel succeeded")
+				}
+				want = append(want, "CONNECT 203.0.113.12:443")
+			}
+		}
+		var p Provider
+		if orgProvider {
+			p, err = cache.GetOrCreateWithTenantConfig("org-no-proxy", "openai", proxyTestKey,
+				&tenant.ProviderConfig{APIFormat: "openai", BaseURL: "http://203.0.113.20"})
+		} else {
+			p, err = createProvider("openai", config.ProviderConfig{APIFormat: "openai", BaseURL: "http://203.0.113.20", APIKey: proxyTestKey})
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+		_, callErr := decide(ctx, t, p, proxyTestOAIBody)
+		cancel()
+		p.Close()
+		if callErr == nil {
+			t.Fatal("OpenAI NO_PROXY request reached the proxy")
+		}
+	}
 	if got := proxy.requests(); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("the proxy was asked for %q, want %q", got, want)
 	}

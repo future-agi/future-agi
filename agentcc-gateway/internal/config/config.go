@@ -390,6 +390,11 @@ type ProviderConfig struct {
 	// needs a Proxy made to match it (netguard.Proxied), since through a proxy
 	// it would see only the proxy's address.
 	Proxy func(*http.Request) (*url.URL, error) `yaml:"-" json:"-"`
+
+	// Decision transport overrides let OpenAI Decisions use the operator's
+	// proxy without changing the same provider's chat connections.
+	DecisionDialContext func(ctx context.Context, network, addr string) (net.Conn, error) `yaml:"-" json:"-"`
+	DecisionProxy       func(*http.Request) (*url.URL, error)                             `yaml:"-" json:"-"`
 }
 
 type LoggingConfig struct {

@@ -247,6 +247,54 @@ def _fail_entry_sync(entry_id: str) -> dict:
         close_old_connections()
 
 
+def _requeue_lost_entry_sync(entry_id: str) -> dict:
+    """Give a lost worker's entry back once, durably across workflow hops.
+
+    ``attempts`` already bounds infrastructure recovery in the reaper. Pause
+    requeues do not increment it, so pausing cannot spend this recovery retry.
+    Lock the row so an activity retry cannot increment it twice or clobber a
+    completed answer.
+    """
+    close_old_connections()
+    try:
+        from django.db import transaction
+        from django.utils import timezone
+
+        from tracer.models.custom_eval_config import CustomEvalConfig
+        from tracer.models.observation_span import EvalEntryStatus, EvalLogger
+        from tracer.services.eval_tasks.config_hash import resolved_config_hash
+        from tracer.services.eval_tasks.entries import mark_terminal
+
+        with transaction.atomic():
+            entry = EvalLogger.objects.select_for_update().filter(id=entry_id).first()
+            if entry is None:
+                return {"entry_id": str(entry_id), "status": "deleted"}
+            if entry.status != EvalEntryStatus.RUNNING:
+                return {"entry_id": str(entry_id), "status": str(entry.status)}
+            if entry.attempts < 1:
+                EvalLogger.objects.filter(id=entry.id).update(
+                    status=EvalEntryStatus.PENDING,
+                    attempts=entry.attempts + 1,
+                    updated_at=timezone.now(),
+                )
+                return {
+                    "entry_id": str(entry_id),
+                    "status": str(EvalEntryStatus.PENDING),
+                }
+            config = CustomEvalConfig.objects.get(id=entry.custom_eval_config_id)
+            mark_terminal(
+                entry,
+                EvalEntryStatus.ERRORED,
+                config_hash=resolved_config_hash(config),
+                error=True,
+                error_message="Evaluation worker was lost after its recovery retry.",
+                epoch=entry.updated_at,
+            )
+            return {"entry_id": str(entry_id), "status": str(EvalEntryStatus.ERRORED)}
+    finally:
+        close_old_connections()
+
+
 def _reap_sync(
     task_id: str,
     older_than_seconds: int,
@@ -567,6 +615,15 @@ async def fail_eval_entry_activity(input: RunEntryInput) -> RunEntryOutput:
 
 
 @activity.defn
+async def requeue_lost_eval_entry_activity(input: RunEntryInput) -> RunEntryOutput:
+    async with Heartbeater():
+        result = await otel_sync_to_async(
+            _requeue_lost_entry_sync, thread_sensitive=False
+        )(input.entry_id)
+    return RunEntryOutput(entry_id=result["entry_id"], status=result["status"])
+
+
+@activity.defn
 async def reap_stale_running_activity(input: ReapInput) -> ReapOutput:
     async with Heartbeater():
         result = await otel_sync_to_async(_reap_sync, thread_sensitive=False)(
@@ -660,6 +717,7 @@ __all__ = [
     "claim_eval_batch_activity",
     "run_eval_entry_activity",
     "fail_eval_entry_activity",
+    "requeue_lost_eval_entry_activity",
     "reap_stale_running_activity",
     "get_eval_task_state_activity",
     "get_workflow_labels_activity",

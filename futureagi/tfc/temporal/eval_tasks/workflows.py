@@ -104,6 +104,7 @@ _CONTROL_HEARTBEAT = timedelta(minutes=1)
 # its continue-as-new hops included, instead of being stamped errored: a lost
 # worker is not a failed answer.
 _LOST_WORKER_REQUEUE_PATCH = "eval-entry-lost-worker-requeue-v1"
+_DURABLE_LOST_WORKER_REQUEUE_PATCH = "eval-entry-durable-lost-worker-requeue-v1"
 _CONTINUOUS_RECONCILE_BUDGET_DEFERRAL_PATCH = (
     "continuous-eval-reconcile-budget-deferral-v1"
 )
@@ -335,8 +336,8 @@ async def _drain_batch(
 
     Checks ``is_paused`` before launching each eval so a mid-batch pause lets
     in-flight evals finish but starts no new ones; the unstarted entries are
-    returned for the caller to requeue. So are entries whose worker was lost
-    (``lost`` holds those already given back once in this execution).
+    returned for the caller to requeue. Lost-worker recovery persists its retry
+    before returning an entry here; ``lost`` also caches IDs for legacy hops.
     """
     semaphore = asyncio.Semaphore(max_concurrent)
     skipped: list[str] = []
@@ -366,6 +367,18 @@ async def _drain_batch(
                     and _worker_lost(exc)
                     and workflow.patched(_LOST_WORKER_REQUEUE_PATCH)
                 ):
+                    if workflow.patched(_DURABLE_LOST_WORKER_REQUEUE_PATCH):
+                        result = await workflow.execute_activity(
+                            "requeue_lost_eval_entry_activity",
+                            RunEntryInput(entry_id=entry_id),
+                            start_to_close_timeout=_CONTROL_TIMEOUT,
+                            heartbeat_timeout=_CONTROL_HEARTBEAT,
+                            retry_policy=CONTROL_RETRY_POLICY,
+                        )
+                        if result["status"] == STATUS_PENDING:
+                            lost.add(entry_id)
+                            skipped.append(entry_id)
+                        return
                     lost.add(entry_id)
                     skipped.append(entry_id)
                     return
@@ -393,7 +406,8 @@ async def _requeue(task_id: str, entry_ids: list[str]) -> None:
     )
 
 
-# The most lost entries a continue-as-new carries (about 40 bytes each).
+# Bound the CAN cache (about 40 bytes per entry). The activity's persisted
+# attempts cap also covers entries omitted here, so omission cannot renew a retry.
 _LOST_CARRIED = 5000
 
 

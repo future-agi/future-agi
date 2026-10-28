@@ -277,14 +277,15 @@ eval and Insights need an Enterprise licence that lists `instant_eval` and
 The gateway calls TypeSafe for every Jev eval, so `agentcc-gateway` needs egress to
 `api.typesafe.ai`. Behind an outbound proxy, set `HTTPS_PROXY` (and `NO_PROXY` for
 the internal hosts) on the gateway service through a compose override; the Helm
-chart's `global.proxy` already sets them. The gateway's System One decision
-calls (Jev on TypeSafe, Perplexity Decider), decision calls made with the
-caller's own key, and its speech relay honour them, and an organization's own
-System One `base_url` is still checked for internal and metadata addresses
-before a call goes to the proxy. Its chat providers do not use the proxy yet,
-nor do an organization's OpenAI-format decision provider with its own
-`base_url` and the `openai` provider when it serves `/v1/decisions`: allow that
-egress directly. As a fallback, `JEV_TRANSPORT=direct` on the backend
+chart's `global.proxy` already sets them. Every decision call honours them:
+System One and OpenAI-format decision models, from `config.yaml` providers,
+organization-owned providers and calls made with the caller's own key, and so
+does the speech relay. An organization's own `base_url` is still checked for
+internal and metadata addresses before the call goes to the proxy; that check
+resolves DNS before every HTTP/1.1 request, so a transient DNS failure refuses
+the request even on a live pooled connection, and the proxy's own egress policy
+should restrict destinations too. Chat providers still connect directly: allow
+that egress. As a fallback, `JEV_TRANSPORT=direct` on the backend
 and workers calls TypeSafe from there instead. Instant eval limits, Jev concurrency and the Insights models are in
 the [Configuration reference](https://docs.futureagi.com/docs/self-hosting/configuration/reference#jev-evals-instant-eval-and-insights).
 

@@ -48,9 +48,8 @@ var (
 
 	// Generic is any other System One endpoint: Microsoft Foundry (base_url
 	// "<resource>/providers/microsoft"), a self-hosted Strands or vLLM server.
-	// It has no default upstream. A config.yaml provider of it may run without
-	// a key; an organization's provider, like every org provider, counts only
-	// once it holds one (a keyless server takes any placeholder).
+	// It has no default upstream. An explicitly configured endpoint may run
+	// without a key, including one owned by an organization.
 	Generic = Dialect{
 		Name: "generic", Vendor: "System One endpoint",
 		Leaf:       "/v1/systemone",

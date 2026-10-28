@@ -1024,7 +1024,10 @@ key directly, and `x-agentcc-cost` is informational.
   provider that holds the vendor's key but does not list the model, and the
   message then names that provider and says to add the model to it. One saved
   with a format that serves no decisions means `403
-  decision_provider_wrong_format`.
+  decision_provider_wrong_format`. An enabled Generic System One provider with
+  an explicit, valid organization-owned `base_url` may be keyless, for a
+  self-hosted endpoint that needs no authentication. TypeSafe, Perplexity and
+  OpenAI providers still require the organization's credentials.
 - An internal key must send the end customer's own key in
   `x-agentcc-provider-key` and name the vendor in the model
   (`typesafe/…`, `perplexity/…`, `openai/…`); without it the call is refused
@@ -1050,16 +1053,18 @@ and the usage; full bodies only when body logging is on and privacy mode
 allows. Spans are evaluator spans carrying the format, question count and
 question types, never the state or the instructions.
 
-**Outbound proxy.** Decision calls follow the gateway's `HTTP_PROXY`,
-`HTTPS_PROXY` and `NO_PROXY`: every System One provider does, and so does
-OpenAI Decisions on an internal caller's key. Other provider connections,
-chat and an organization's own OpenAI provider included, do not use the proxy
-yet. An organization provider with its own `base_url` keeps its address
-checks: its host must resolve, from the gateway, only to addresses the
-gateway allows. That is checked before every call over HTTP/1.1, and over
-HTTP/2 whenever a connection is opened (a call on an open connection reuses
-that check); a direct connection (a `NO_PROXY` host) is checked again when it
-is dialled. The proxy resolves the host again for itself, so its own egress
+**Outbound proxy.** All System One and OpenAI decision calls follow the
+gateway's `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY`, including configured
+providers, organization providers and internal callers' own keys. Chat
+connections remain direct, even on an OpenAI provider that also serves
+decisions. An organization provider with its own `base_url` keeps its address
+checks: its host must resolve, from the gateway, only to addresses the gateway
+allows. That is checked before every call over HTTP/1.1, including a pooled
+connection: a transient DNS failure fails the request even when that connection
+is live. Over HTTP/2 the check runs whenever a connection is opened; a call on
+an open connection reuses that check. A direct connection (a `NO_PROXY` host)
+is checked again when it is dialled. These checks fail closed to preserve SSRF
+protection. The proxy resolves the host again for itself, so its own egress
 rules still apply.
 
 ---

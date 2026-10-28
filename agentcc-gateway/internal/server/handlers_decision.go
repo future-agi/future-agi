@@ -230,8 +230,8 @@ func (h *Handlers) DecisionModels(w http.ResponseWriter, r *http.Request) {
 }
 
 // orgDecisionModels lists the decision models among an org's enabled,
-// credentialed providers. A System One provider's models all are; an OpenAI
-// provider's are only those known as decision models. The format comes from
+// credentialed providers or keyless Generic endpoints. Every System One model
+// qualifies; OpenAI models must be known decision models. The format comes from
 // the provider's config: listing builds no provider, and leaves out one whose
 // build its config alone shows would be refused.
 func (h *Handlers) orgDecisionModels(orgCfg *tenant.OrgConfig) []decisionModel {
@@ -241,7 +241,7 @@ func (h *Handlers) orgDecisionModels(orgCfg *tenant.OrgConfig) []decisionModel {
 	}
 	db := h.ModelDB()
 	for id, pcfg := range orgCfg.Providers {
-		if pcfg == nil || !pcfg.Enabled || !pcfg.HasCredentials() {
+		if !h.orgDecisionProviderEnabled(id, pcfg) {
 			continue
 		}
 		apiFormat, ok := h.orgProviderCache.APIFormat(id, pcfg)

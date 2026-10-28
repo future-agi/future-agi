@@ -22,9 +22,9 @@ const DecisionDialectOpenAI = "openai"
 const defaultOpenAIBaseURL = "https://api.openai.com"
 
 // decisionProxy picks the proxy for a decision call: the operator's
-// HTTP_PROXY, HTTPS_PROXY and NO_PROXY, as every System One provider and the
-// providers built for internal callers' keys use them. Chat providers do not
-// use a proxy. A variable so tests can send decision calls to a test proxy.
+// HTTP_PROXY, HTTPS_PROXY and NO_PROXY, for System One and OpenAI Decisions.
+// Chat connections remain direct. A variable so tests can send decision calls
+// to a test proxy.
 var decisionProxy = http.ProxyFromEnvironment
 
 // DecisionDialectFormat returns the wire format a decision dialect speaks:

@@ -37,9 +37,9 @@ class EvalTaskWorkflowInput:
     # (its worker died) and retried; None keeps the default five minutes.
     # Instant eval sets a minute, since a person is watching the run.
     heartbeat_s: int | None = None
-    # Entries already given back once because their worker was lost. Carried
-    # across continue-as-new, so an eval that keeps killing its worker is
-    # failed on its second loss rather than given back once per hop.
+    # Bounded cache of entries given back once because their worker was lost.
+    # Legacy hops honour these IDs; the recovery activity also caps retries
+    # durably by the entry's attempts, including IDs omitted from this cache.
     lost_entry_ids: list[str] = field(default_factory=list)
 
 
