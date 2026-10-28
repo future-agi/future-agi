@@ -932,7 +932,7 @@ describe("RunDetail", () => {
     // the ticked calls.
     expect(screen.queryByRole("button", { name: "Re-run" })).toBeNull();
     expect(
-      screen.getByRole("button", { name: "Re-run failing" }),
+      screen.getByRole("button", { name: "Re-run what didn't pass" }),
     ).toBeInTheDocument();
   });
 

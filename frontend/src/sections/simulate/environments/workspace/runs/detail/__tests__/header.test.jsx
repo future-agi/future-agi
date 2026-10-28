@@ -356,7 +356,7 @@ describe("run detail header", () => {
     );
   });
 
-  it("Re-run failing re-runs the failed scenario keys with the current repeats; snapshot mode is flagged", async () => {
+  it("Re-run what didn't pass re-runs the failed scenario keys with the current repeats; snapshot mode is flagged", async () => {
     listMatchingCalls.mockResolvedValue([
       { id: "c1", sourceScenarioKey: "billing" },
       { id: "c2", sourceScenarioKey: "billing" },
@@ -366,7 +366,7 @@ describe("run detail header", () => {
     const user = userEvent.setup();
     renderDetail({ onStartRun });
 
-    await user.click(screen.getByRole("button", { name: "Re-run failing" }));
+    await user.click(screen.getByRole("button", { name: "Re-run what didn't pass" }));
     await waitFor(() =>
       expect(onStartRun).toHaveBeenCalledWith(["billing", "refund"], 3),
     );
@@ -400,7 +400,7 @@ describe("run detail header", () => {
     });
     renderDetail({ onStartRun });
 
-    expect(screen.queryByRole("button", { name: "Re-run failing" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Re-run what didn't pass" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Re-run" }));
     await user.click(
       screen.getByRole("menuitem", { name: /Run as configured now/ }),

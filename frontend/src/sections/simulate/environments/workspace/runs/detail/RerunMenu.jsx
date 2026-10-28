@@ -93,7 +93,7 @@ export default function RerunMenu({
                   borderBottomRightRadius: 0,
                 }}
               >
-                Re-run failing
+                Re-run what didn&apos;t pass
               </Button>
               <Button
                 variant="outlined"
