@@ -35,7 +35,9 @@ def _metadata(response):
 
 def _seeded_order(response):
     """Key names from the response, restricted to the seeded fixture rows."""
-    return [row["key_name"] for row in _rows(response) if row["key_name"] in SEEDED_NAMES]
+    return [
+        row["key_name"] for row in _rows(response) if row["key_name"] in SEEDED_NAMES
+    ]
 
 
 @pytest.fixture
@@ -418,7 +420,9 @@ class TestGetSecretKeysPagination:
         self, auth_client, seeded_keys
     ):
         """The frontend sends current_page_index; the view accepts both spellings."""
-        via_alias = auth_client.get(f"{SECRET_KEYS_URL}?current_page_index=1&page_size=2")
+        via_alias = auth_client.get(
+            f"{SECRET_KEYS_URL}?current_page_index=1&page_size=2"
+        )
         via_legacy = auth_client.get(f"{SECRET_KEYS_URL}?page_number=1&page_size=2")
 
         assert via_alias.status_code == status.HTTP_200_OK
@@ -487,7 +491,9 @@ class TestGetSecretKeysSorting:
 
     def test_sort_by_key_name_asc(self, auth_client, seeded_keys):
         """Ascending name order is actually applied."""
-        response = auth_client.get(f"{SECRET_KEYS_URL}?sort_field=keyName&sort_order=asc")
+        response = auth_client.get(
+            f"{SECRET_KEYS_URL}?sort_field=keyName&sort_order=asc"
+        )
 
         assert response.status_code == status.HTTP_200_OK
         assert _seeded_order(response) == SEEDED_NAMES
