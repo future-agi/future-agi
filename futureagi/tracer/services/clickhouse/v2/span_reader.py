@@ -2501,23 +2501,12 @@ class CHSpanReader:
         This reads the span fact directly: a span's ``trace_session_id`` is the
         single source of session membership.
 
-        Remap-aware on BOTH sides (``id_remap_sql``), so a cross-cutover straddler
-        reads as ONE session whose trace set is its OLD-id spans' traces UNION its
-        NEW-id spans' traces:
-
-          • The INPUT ``session_id`` is resolved new→old first
-            (``_resolve_session_ids_to_canonical``): a straddler queried by EITHER
-            its old curated id or its new deterministic id collapses to the one
-            survivor (old) id; a net-new id (no remap row) resolves to itself; an
-            already-old id resolves to itself.
-          • Each SPAN's ``trace_session_id`` is then resolved new→old
-            (``_session_filter_remap`` — the same join/predicate
-            ``distinct_session_ids_with_filters`` uses) and matched against that
-            resolved input id. So a straddler's NEW-id spans (carrying the new id)
-            AND its OLD-id spans (carrying the old id) BOTH match the survivor →
-            their traces are returned as ONE complete set. Pre-flip every span is
-            old-id (no ``new_id`` match) → resolved == own id → byte-identical
-            no-op (gate B).
+        Remap-aware on BOTH sides (``id_remap_sql``): ``resolve_ids`` expands
+        only the input's consolidation group and resolves its old and new aliases
+        to one survivor. The span-side join uses those same finite pairs, not a
+        window over the whole remap table. A straddler queried by either id reads
+        its old- and new-id spans as one complete trace set; an unmapped id reads
+        only itself.
 
         ``project_id`` is REQUIRED and pinned: the spans table is multi-tenant, so
         an unscoped read could surface another tenant's traces if a session id
@@ -2532,14 +2521,24 @@ class CHSpanReader:
         """
         if not project_id or not session_id:
             return []
-        # Resolve the INPUT id new→old so a straddler queried by either id, and a
-        # net-new id, both compare survivor==survivor against the span side below.
-        resolved_input = self._resolve_session_ids_to_canonical([str(session_id)])[
-            str(session_id)
-        ]
-        # The span-side remap join + ``<resolved> = %(sid)s`` predicate (same as
-        # the single-session filter ``distinct_session_ids_with_filters`` uses).
-        session_join, session_pred = self._session_filter_remap()
+        from tracer.services.clickhouse.v2.id_remap_sql import (
+            literal_survivor_map_subquery,
+        )
+
+        askers, aliases = self.resolve_ids("trace_session_id_remap", [session_id])
+        resolved_input = next(iter(askers))
+        remap = literal_survivor_map_subquery(
+            any_ids_param="remap_ids", survivor_ids_param="remap_survivors"
+        )
+        session_join = (
+            f"LEFT JOIN ({remap}) AS ts_remap "
+            "ON spans.trace_session_id = ts_remap.any_id"
+        )
+        session_pred = (
+            f"{resolved_id_expr('spans.trace_session_id', 'ts_remap')} = %(sid)s"
+        )
+        # Keep membership behind the join: a raw session-id predicate could
+        # use its bloom index before FINAL and resurrect a span that moved.
         # The resolved predicate is computed through the remap join, so no index
         # can serve it and the read scanned every span of the project (219k
         # spans and ~30 MB of memory for a 6-span session). Narrow the FINAL
@@ -2549,7 +2548,6 @@ class CHSpanReader:
         # version is still a candidate; ``trace_id`` is stable across versions,
         # so its bloom index prunes safely under FINAL; and the resolved
         # predicate still decides membership.
-        aliases = self._session_alias_ids(resolved_input)
         # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS.
         rows = self._client.query(
             f"SELECT DISTINCT toString(spans.trace_id) AS tid "
@@ -2563,6 +2561,8 @@ class CHSpanReader:
                 "p": str(project_id),
                 "sid": resolved_input,
                 "aliases": tuple(aliases),
+                "remap_ids": list(aliases),
+                "remap_survivors": list(aliases.values()),
             },
             settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows

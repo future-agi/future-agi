@@ -15,7 +15,7 @@ project id and is deleted afterwards.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -97,8 +97,21 @@ def world():
     group_a, group_b, group_new = _ids(3)
     t = dict(
         zip(
-            ["plain", "plain2", "old", "new", "a", "b", "g", "other", "moved", "gone"],
-            _ids(10),
+            [
+                "plain",
+                "plain2",
+                "old",
+                "new",
+                "a",
+                "b",
+                "g",
+                "other",
+                "moved",
+                "gone",
+                "null",
+                "nulled",
+            ],
+            _ids(12),
             strict=True,
         )
     )
@@ -125,6 +138,10 @@ def world():
         gone = str(uuid.uuid4())
         _span(client, project, plain, t["gone"], span_id=gone)
         _span(client, project, plain, t["gone"], span_id=gone, _version=2, is_deleted=1)
+        _span(client, project, None, t["null"])
+        nulled = str(uuid.uuid4())
+        _span(client, project, plain, t["nulled"], span_id=nulled)
+        _span(client, project, None, t["nulled"], span_id=nulled, _version=2)
         yield {
             "project": project,
             "plain": plain,
@@ -144,6 +161,35 @@ def world():
             "SETTINGS mutations_sync=2",
             parameters={"ids": tuple(old for old, _ in remaps)},
         )
+
+
+def test_session_trace_ids_never_builds_the_global_survivor_map():
+    from types import SimpleNamespace
+
+    from tracer.services.clickhouse.v2.span_reader import CHSpanReader
+
+    old, new, trace, project = _ids(4)
+    seen = []
+
+    class Client:
+        def query(self, sql, parameters=None, settings=None):
+            seen.append((sql, parameters))
+            if "FROM spans FINAL" in sql:
+                return SimpleNamespace(result_rows=[(trace,)])
+            return SimpleNamespace(result_rows=[(old, old), (new, old)])
+
+    reader = CHSpanReader.__new__(CHSpanReader)
+    reader._client = Client()
+    assert reader.session_trace_ids(project, new) == [trace]
+    assert all("OVER (PARTITION BY" not in sql for sql, _ in seen)
+    assert len(seen) == 2
+    assert "old_id IN %(ids)s OR new_id IN %(ids)s" in seen[0][0]
+    assert seen[0][1]["ids"] == (new,)
+    sql, params = seen[-1]
+    assert "trace_session_id_remap" not in sql
+    assert set(params["aliases"]) == {old, new}
+    assert "FROM spans FINAL" in sql
+    assert "SELECT trace_id FROM spans" in sql
 
 
 @pytest.mark.integration
@@ -168,3 +214,50 @@ def test_session_trace_ids_matches_the_shipped_read(world):
             got = set(reader.session_trace_ids(world["project"], session_id))
             assert got == traces, session_id
             assert got == _shipped(reader, world["project"], session_id)
+
+
+@pytest.mark.integration
+def test_session_trace_ids_uses_latest_remap_membership():
+    from tracer.services.clickhouse.v2 import get_reader
+
+    client = _client()
+    project, old_a, old_b, new_a, new_b = _ids(5)
+    trace_a, trace_b, trace_na, trace_nb = _ids(4)
+    try:
+        _remap(client, old_a, new_a)
+        _remap(client, old_b, new_a)
+        client.command(
+            "INSERT INTO trace_session_id_remap (old_id, new_id, version) "
+            "VALUES (%(o)s, %(n)s, %(v)s)",
+            parameters={"o": old_a, "n": new_b, "v": START + timedelta(seconds=1)},
+        )
+        for session, trace in (
+            (old_a, trace_a),
+            (old_b, trace_b),
+            (new_a, trace_na),
+            (new_b, trace_nb),
+        ):
+            _span(client, project, session, trace)
+        with get_reader() as reader:
+            for session in (old_a, new_b, old_b, new_a):
+                expected = (
+                    {trace_a, trace_nb}
+                    if session in (old_a, new_b)
+                    else {trace_b, trace_na}
+                )
+                assert set(reader.session_trace_ids(project, session)) == expected
+                assert _shipped(reader, project, session) == expected
+            assert set(reader.session_trace_ids(project, new_a.upper())) == {
+                trace_b,
+                trace_na,
+            }
+    finally:
+        client.command(
+            "ALTER TABLE spans DELETE WHERE project_id = %(p)s SETTINGS mutations_sync=2",
+            parameters={"p": project},
+        )
+        client.command(
+            "ALTER TABLE trace_session_id_remap DELETE WHERE old_id IN %(ids)s "
+            "SETTINGS mutations_sync=2",
+            parameters={"ids": (old_a, old_b)},
+        )

@@ -20,9 +20,11 @@ from __future__ import annotations
 
 import base64
 import functools
+import hashlib
 import json
 import re
 import uuid
+from bisect import bisect_right
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -1249,7 +1251,9 @@ def _rolled(view: RunView, cfg: str | None, cond) -> str:
     indexes = (
         [view.config_ids.index(cfg)]
         if cfg in view.config_ids
-        else [] if cfg else range(len(view.config_ids))
+        else []
+        if cfg
+        else range(len(view.config_ids))
     )
     tests = [cond(i) for i in indexes]
     return "(" + " OR ".join(tests) + ")" if tests else "false"
@@ -1689,6 +1693,93 @@ _USER_COLUMNS = (
 )
 
 
+_USER_KEY_CHUNK = 1000
+_USER_KEY_TTL = 3600
+
+
+def _user_page_keys(
+    view: RunView,
+    where: str,
+    params: dict,
+    sort: str,
+    state: dict,
+    page_size: int,
+    *,
+    sort_config: str | None = None,
+) -> tuple[list[tuple], int]:
+    """Seek through a versioned, filtered user selector and its exact total.
+
+    Only sort keys and user ids are kept, in small blocks: a deep page reads
+    its blocks, not every user's sessions or a 100k-user cache value. Answers
+    and facets are rolled up separately for just the selected users.
+    """
+    if sort == "confidence":
+        i = view.config_ids.index(sort_config) if sort_config in view.config_ids else 0
+        nulls, value = "0", f"COALESCE(r.c{i}, 2)"
+    else:
+        # Preserve user paging's NULLS FIRST ascending / NULLS LAST descending,
+        # with user ids ascending in both directions. Integer microseconds
+        # avoid losing precision when a time key crosses a JSON cursor.
+        nulls = (
+            "(r.time IS NOT NULL)::int" if sort == "time" else "(r.time IS NULL)::int"
+        )
+        sign = "" if sort == "time" else "-"
+        value = f"COALESCE({sign}(extract(epoch FROM r.time) * 1000000)::bigint, 0)"
+    after = state.get("k")
+    if after is not None:
+        if (
+            not isinstance(after, list)
+            or len(after) != 3
+            or after[0] not in (0, 1)
+            or not isinstance(after[1], int | float)
+            or not isinstance(after[2], str)
+            or not _is_uuid(after[2])
+        ):
+            raise BadFilter("Unreadable cursor")
+        after = tuple(after)
+    digest = hashlib.sha256(
+        json.dumps(
+            [view.rows_version, view.cancelled, view.live, where, params, nulls, value],
+            sort_keys=True,
+            default=str,
+        ).encode()
+    ).hexdigest()
+    key = f"ie-user-keys:v1:{digest}"
+    kept = cache.get(key)
+    if kept is not None:
+        token, starts, total = kept
+        block = max(0, bisect_right(starts, after) - 1) if after else 0
+        selected = []
+        while block < len(starts) and len(selected) <= page_size:
+            keys = cache.get(f"{key}:chunk:{token}:{block}")
+            if keys is None:
+                # Evicted/expired blocks are rebuilt as one selector; never
+                # return a partial page with the old total.
+                break
+            start = bisect_right(keys, after) if after else 0
+            selected.extend(keys[start : start + page_size + 1 - len(selected)])
+            block += 1
+        else:
+            return selected, total
+    keys = _rows(
+        f"WITH {_user_rollup(view)} SELECT {nulls}, {value}, r.end_user_id::text "
+        f"FROM ur r WHERE {where} ORDER BY 1, 2, 3",
+        params,
+    )
+    token = uuid.uuid4().hex
+    chunks = {
+        f"{key}:chunk:{token}:{start // _USER_KEY_CHUNK}": keys[
+            start : start + _USER_KEY_CHUNK
+        ]
+        for start in range(0, len(keys), _USER_KEY_CHUNK)
+    }
+    ttl = 30 if view.live else _USER_KEY_TTL
+    cache.set_many(chunks, ttl + 60)
+    cache.set(key, (token, keys[::_USER_KEY_CHUNK], len(keys)), ttl)
+    start = bisect_right(keys, after) if after else 0
+    return keys[start : start + page_size + 1], len(keys)
+
+
 def _user_rows_page(
     view: RunView,
     f: RowFilter,
@@ -1703,36 +1794,24 @@ def _user_rows_page(
     the sessions behind them, filtered by those answers."""
     _user_params(view, params)
     where = " AND ".join(_conditions(view, f, params)) or "true"
-    offset = int(state.get("o", 0))
-    if sort == "confidence":
-        i = view.config_ids.index(sort_config) if sort_config in view.config_ids else 0
-        order = f"COALESCE(r.c{i}, 2) ASC, r.end_user_id"
-    elif sort == "time":
-        order = "r.time ASC NULLS FIRST, r.end_user_id"
-    else:
-        order = "r.time DESC NULLS LAST, r.end_user_id"
-    params.update(lim=page_size + 1, off=offset)
-    rolled = ", ".join(f"r.l{i}, r.c{i}" for i in range(len(view.config_ids)))
-    recs = _rows(
-        f"WITH {_user_rollup(view)} SELECT {_USER_COLUMNS}, count(*) OVER (), "
-        f"{rolled} FROM ur r WHERE {where} ORDER BY {order} "
-        "LIMIT %(lim)s OFFSET %(off)s",
-        params,
+    keys, total = _user_page_keys(
+        view, where, params, sort, state, page_size, sort_config=sort_config
     )
-    if recs:
-        total = int(recs[0][8])
-    else:
-        total = (
-            _rows(
-                f"WITH {_user_rollup(view)} SELECT count(*) FROM ur r WHERE {where}",
-                params,
-            )[0][0]
-            if offset
-            else 0
+    more = len(keys) > page_size
+    keys = keys[:page_size]
+    users = [key[2] for key in keys]
+    params["users"] = users
+    rolled = ", ".join(f"r.l{i}, r.c{i}" for i in range(len(view.config_ids)))
+    rollup = _user_rollup(view, sessions=" AND r.end_user_id = ANY(%(users)s::uuid[])")
+    by_user = {
+        rec[0]: rec
+        for rec in (
+            _rows(f"WITH {rollup} SELECT {_USER_COLUMNS}, {rolled} FROM ur r", params)
+            if users
+            else []
         )
-    more = len(recs) > page_size
-    recs = recs[:page_size]
-    users = [rec[0] for rec in recs]
+    }
+    recs = [by_user[user] for user in users if user in by_user]
     tally = _user_sessions_tally(view, users)
     latest = dict(
         _rows(
@@ -1769,7 +1848,7 @@ def _user_rows_page(
         )
     return {
         "rows": rows,
-        "next_cursor": _cursor_encode({"o": offset + page_size}) if more else None,
+        "next_cursor": _cursor_encode({"k": keys[-1]}) if more and keys else None,
         "total": int(total),
     }
 
