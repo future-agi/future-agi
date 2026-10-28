@@ -38,6 +38,23 @@ type ClientTimeoutReporter interface {
 	ClientTimeout() time.Duration
 }
 
+// PriceTableNamer is implemented by providers whose models the price table
+// keys under a name the provider's ID need not match: the table lists new
+// Gemini models only as "vertex_ai/gemini-4-argon" and "gemini/gemini-4-argon",
+// so a Gemini provider named "vertex_ai_global" states "vertex_ai".
+type PriceTableNamer interface {
+	PriceTableName() string
+}
+
+// PriceTableName returns the name the price table keys p's models under, or
+// "" when p states none.
+func PriceTableName(p Provider) string {
+	if n, ok := p.(PriceTableNamer); ok {
+		return n.PriceTableName()
+	}
+	return ""
+}
+
 // EmbeddingProvider is implemented by providers that support embedding generation.
 type EmbeddingProvider interface {
 	CreateEmbedding(ctx context.Context, req *models.EmbeddingRequest) (*models.EmbeddingResponse, error)

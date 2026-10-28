@@ -13,8 +13,16 @@ type liteLLMEntry struct {
 	InputCostPerTokenBatches        float64  `json:"input_cost_per_token_batches"`
 	OutputCostPerTokenBatches       float64  `json:"output_cost_per_token_batches"`
 	OutputCostPerImage              float64  `json:"output_cost_per_image"`
+	InputCostPerImage               float64  `json:"input_cost_per_image"`
 	InputCostPerSecond              float64  `json:"input_cost_per_second"`
 	InputCostPerCharacter           float64  `json:"input_cost_per_character"`
+	InputCostPerQuery               float64  `json:"input_cost_per_query"`
+	OCRCostPerPage                  float64  `json:"ocr_cost_per_page"`
+	OutputCostPerSecond             float64  `json:"output_cost_per_second"`
+	InputCostPerPixel               float64  `json:"input_cost_per_pixel"`
+	OutputCostPerPixel              float64  `json:"output_cost_per_pixel"`
+	InputCostPerImageToken          float64  `json:"input_cost_per_image_token"`
+	OutputCostPerImageToken         float64  `json:"output_cost_per_image_token"`
 	Provider                        string   `json:"litellm_provider"`
 	Mode                            string   `json:"mode"`
 	MaxInputTokens                  float64  `json:"max_input_tokens"`
@@ -80,8 +88,16 @@ func parseLiteLLM(data []byte) (map[string]*ModelInfo, error) {
 				BatchInputPerToken:  entry.InputCostPerTokenBatches,
 				BatchOutputPerToken: entry.OutputCostPerTokenBatches,
 				OutputPerImage:      entry.OutputCostPerImage,
+				InputPerImage:       entry.InputCostPerImage,
 				InputPerSecond:      entry.InputCostPerSecond,
 				InputPerCharacter:   entry.InputCostPerCharacter,
+				InputPerQuery:       entry.InputCostPerQuery,
+				PerPage:             entry.OCRCostPerPage,
+				OutputPerSecond:     entry.OutputCostPerSecond,
+				InputPerPixel:       entry.InputCostPerPixel,
+				OutputPerPixel:      entry.OutputCostPerPixel,
+				InputPerImageToken:  entry.InputCostPerImageToken,
+				OutputPerImageToken: entry.OutputCostPerImageToken,
 			},
 			Capabilities: CapabilityFlags{
 				FunctionCalling:   stated(entry.SupportsFunctionCalling),
@@ -122,7 +138,7 @@ func mapMode(s string) ModelMode {
 		return ModeChat
 	case "embedding":
 		return ModeEmbedding
-	case "image_generation":
+	case "image_generation", "image_edit":
 		return ModeImageGeneration
 	case "audio_transcription":
 		return ModeAudioTranscription
@@ -132,6 +148,14 @@ func mapMode(s string) ModelMode {
 		return ModeRerank
 	case "moderation":
 		return ModeModeration
+	// Mapped to chat, these were dropped as zero-priced chat models, so the
+	// per-page, per-second and per-query prices never loaded.
+	case "ocr":
+		return ModeOCR
+	case "video_generation":
+		return ModeVideoGeneration
+	case "search":
+		return ModeSearch
 	default:
 		return ModeChat
 	}

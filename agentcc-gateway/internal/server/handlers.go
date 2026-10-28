@@ -43,6 +43,7 @@ const maxSessionIDLen = 255
 type Handlers struct {
 	registry       *providers.Registry
 	engine         *pipeline.Engine
+	runCharges     runChargeStore // assistants runs awaiting their charge
 	healthMonitor  *routing.HealthMonitor
 	maxBodySize    int64
 	defaultTimeout time.Duration
@@ -996,16 +997,6 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 	rc.IsStream = req.Stream
 	rc.UserID = req.User
 
-	// Ensure streaming requests always include usage in the final chunk
-	// so post-plugins (cost, logging) have accurate token counts.
-	if req.Stream {
-		if req.StreamOptions == nil {
-			req.StreamOptions = &models.StreamOptions{IncludeUsage: true}
-		} else {
-			req.StreamOptions.IncludeUsage = true
-		}
-	}
-
 	// Extract client IP for IP ACL and audit.
 	rc.Metadata["client_ip"] = extractClientIP(r)
 
@@ -1726,6 +1717,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	// Track the last usage from stream chunks so we can populate rc.Response
 	// after the stream completes (providers send usage in the final chunk).
 	var lastUsage *models.Usage
+	var streamed streamedChars
 	var streamID string
 	var streamCreated int64
 	capture := newStreamCapture(h.captureStreamContent)
@@ -1735,12 +1727,16 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	// before every return from the streaming loop. When detach is true, uses
 	// a background context so post-plugins run even after client disconnect.
 	finalizeStream := func(detach bool) *models.StreamChunk {
+		usage := lastUsage
+		if usage == nil && streamed > 0 {
+			usage = estimatedStreamUsage(rc, chatPromptTokens(rc.Request), streamed)
+		}
 		rc.Response = &models.ChatCompletionResponse{
 			ID:      streamID,
 			Object:  "chat.completion",
 			Created: streamCreated,
 			Model:   rc.ResolvedModel,
-			Usage:   lastUsage, // nil is OK — means provider didn't send usage
+			Usage:   usage, // nil only when nothing was relayed
 		}
 		capture.applyTo(rc.Response)
 		pluginCtx := ctx
@@ -1790,6 +1786,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 				lastUsage = chunk.Usage
 			}
 			capture.observe(chunk)
+			streamed.addChunk(chunk)
 
 			if streamChecker != nil {
 				if res := streamChecker.ProcessChunk(streamCtx, chunk); res.Blocked {
@@ -1814,6 +1811,14 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 		select {
 		case chunk, ok := <-chunks:
 			if !ok {
+				if apiErr, finished := closedStreamError(ctx, errCh); !finished {
+					if apiErr != nil {
+						rc.AddError(apiErr)
+						sseWriter.WriteError(apiErr)
+					}
+					finalizeStream(ctx.Err() != nil)
+					return
+				}
 				// Stream complete — run final guardrail check.
 				if streamChecker != nil {
 					if res := streamChecker.Finish(streamCtx); res.Blocked {
@@ -1853,6 +1858,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 				lastUsage = chunk.Usage
 			}
 			capture.observe(chunk)
+			streamed.addChunk(chunk)
 
 			// Run streaming guardrail check.
 			if streamChecker != nil {
@@ -1875,18 +1881,25 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 
 		case err, ok := <-errCh:
 			if ok && err != nil {
-				if apiErr, isAPI := err.(*models.APIError); isAPI {
-					sseWriter.WriteError(apiErr)
-				} else {
-					sseWriter.WriteError(models.ErrInternal(err.Error()))
+				apiErr, isAPI := err.(*models.APIError)
+				if !isAPI {
+					apiErr = models.ErrInternal(err.Error())
 				}
+				rc.AddError(apiErr)
+				sseWriter.WriteError(apiErr)
 				finalizeStream(false)
 				return
 			}
 
 		case <-ctx.Done():
-			// Client disconnected — streamCancel() in defer will stop guardrail goroutines.
-			// Drain remaining chunks to unblock the provider goroutine.
+			// The client left, or the request reached its deadline; only the
+			// second has anyone to tell. streamCancel() in defer stops the
+			// guardrail goroutines. Drain remaining chunks to unblock the
+			// provider goroutine.
+			if apiErr := streamEndError(ctx, ctx.Err()); apiErr != nil {
+				rc.AddError(apiErr)
+				sseWriter.WriteError(apiErr)
+			}
 			go func() {
 				for range chunks {
 				}
@@ -1911,28 +1924,15 @@ func (h *Handlers) buildStreamingMetadataChunk(rc *models.RequestContext, stream
 		streamCreated = time.Now().Unix()
 	}
 
-	var cost float64
-	if rawCost, ok := rc.Metadata["cost"]; ok {
-		if parsed, err := strconv.ParseFloat(rawCost, 64); err == nil {
-			cost = parsed
-		}
+	return &models.StreamChunk{
+		ID:              streamID,
+		Object:          "chat.completion.chunk",
+		Created:         streamCreated,
+		Model:           model,
+		Choices:         []models.StreamChoice{},
+		Usage:           usage,
+		AgentccMetadata: streamMetadata(rc),
 	}
-
-	chunk := &models.StreamChunk{
-		ID:      streamID,
-		Object:  "chat.completion.chunk",
-		Created: streamCreated,
-		Model:   model,
-		Choices: []models.StreamChoice{},
-		Usage:   usage,
-	}
-	if include := rc.RequestHeaders.Get("x-agentcc-include-metadata"); include == "1" || strings.EqualFold(include, "true") {
-		chunk.AgentccMetadata = &models.AgentccStreamMetadata{
-			Cost:      cost,
-			LatencyMs: rc.Elapsed().Milliseconds(),
-		}
-	}
-	return chunk
 }
 
 func waitForFirstStreamChunk(ctx context.Context, chunks <-chan models.StreamChunk, errCh <-chan error) (*models.StreamChunk, error) {
@@ -1940,6 +1940,14 @@ func waitForFirstStreamChunk(ctx context.Context, chunks <-chan models.StreamChu
 		select {
 		case chunk, ok := <-chunks:
 			if !ok {
+				// A provider sends its error before it closes chunks, and
+				// sends none once ctx is done; see closedStreamError.
+				if apiErr := pendingStreamError(errCh); apiErr != nil {
+					return nil, apiErr
+				}
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
 				return nil, models.ErrUpstreamProvider(http.StatusBadGateway, "upstream stream closed before sending any chunks")
 			}
 			return &chunk, nil
@@ -2259,7 +2267,7 @@ func isBlockedMetadataKey(key string) bool {
 	// to cover them also swallows cost_center and cost_code — ordinary business
 	// dimensions. A new internal cost_* key must be added here by hand.
 	switch lower {
-	case "authorization", "client_ip", "timeout_ms", "cost", "cost_source", metadataErrorKey:
+	case "authorization", "client_ip", "timeout_ms", "cost", "cost_source", usageEstimatedKey, metadataErrorKey:
 		return true
 	}
 	return false
