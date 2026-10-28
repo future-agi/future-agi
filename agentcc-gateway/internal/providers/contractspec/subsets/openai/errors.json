@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "provider": "openai",
+  "root": "errors",
+  "format": "openapi",
+  "select": "POST /chat/completions -> 400,401,403,404,429,500,503 application/json",
+  "description": "error bodies of the chat endpoint (every modeled 4xx/5xx), decoded by the adapter's error parser (parseProviderError; every endpoint shares this shape)",
+  "paths": {
+    "$": {"kinds":["object"]},
+    "$.error": {"kinds":["object"]},
+    "$.error.code": {"kinds":["string"],"nullable":true},
+    "$.error.message": {"kinds":["string"]},
+    "$.error.misalignment": {"kinds":["object"]},
+    "$.error.misalignment.detailed_explanation": {"kinds":["string"]},
+    "$.error.misalignment.error_type": {"kinds":["string"],"enum":["other","potentially_unintended_data_access","potentially_unintended_data_transfer","potentially_unintended_destructive_activity"],"open_enum":true},
+    "$.error.misalignment.review_target": {"kinds":["string"],"nullable":true},
+    "$.error.misalignment.steer": {"kinds":["object"]},
+    "$.error.misalignment.steer.message": {"kinds":["string"]},
+    "$.error.param": {"kinds":["string"],"nullable":true},
+    "$.error.type": {"kinds":["string"]}
+  }
+}

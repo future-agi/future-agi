@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "provider": "azure",
+  "root": "transcription",
+  "format": "openapi",
+  "select": "POST /deployments/{deployment-id}/audio/transcriptions -> 200 application/json",
+  "description": "transcription response; the gateway lifts text and passes the body through",
+  "paths": {
+    "$": {"kinds":["object"]},
+    "$.duration": {"kinds":["number"]},
+    "$.language": {"kinds":["string"]},
+    "$.segments": {"kinds":["array"]},
+    "$.segments[]": {"kinds":["object"]},
+    "$.segments[].avg_logprob": {"kinds":["number"]},
+    "$.segments[].compression_ratio": {"kinds":["number"]},
+    "$.segments[].end": {"kinds":["number"]},
+    "$.segments[].id": {"kinds":["integer"]},
+    "$.segments[].no_speech_prob": {"kinds":["number"]},
+    "$.segments[].seek": {"kinds":["number"]},
+    "$.segments[].start": {"kinds":["number"]},
+    "$.segments[].temperature": {"kinds":["number"]},
+    "$.segments[].text": {"kinds":["string"]},
+    "$.segments[].tokens": {"kinds":["array"]},
+    "$.segments[].tokens[]": {"kinds":["number"]},
+    "$.task": {"kinds":["string"],"enum":["transcribe","translate"]},
+    "$.text": {"kinds":["string"]}
+  }
+}

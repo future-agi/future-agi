@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "provider": "together",
+  "root": "images",
+  "format": "openapi",
+  "select": "POST /v1/images/generations -> 200 application/json",
+  "description": "image generation response; OpenAI-compatible preset served by the openai adapter",
+  "paths": {
+    "$": {"kinds":["object"]},
+    "$.data": {"kinds":["array"]},
+    "$.data[]": {"kinds":["object"]},
+    "$.data[].b64_json": {"kinds":["string"],"variants":["type=b64_json"]},
+    "$.data[].index": {"kinds":["integer"],"variants":["type=b64_json","type=url"]},
+    "$.data[].type": {"kinds":["string"],"enum":["b64_json","url"],"variants":["type=b64_json","type=url"]},
+    "$.data[].url": {"kinds":["string"],"variants":["type=url"]},
+    "$.id": {"kinds":["string"]},
+    "$.model": {"kinds":["string"]},
+    "$.object": {"enum":["list"]}
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "provider": "gemini",
+  "root": "batch_embed_contents",
+  "format": "discovery",
+  "select": "method models.batchEmbedContents -> BatchEmbedContentsResponse",
+  "description": "batchEmbedContents response, decoded by translateBatchEmbedResponse",
+  "paths": {
+    "$": {"kinds":["object"]},
+    "$.embeddings": {"kinds":["array"]},
+    "$.embeddings[]": {"kinds":["object"]},
+    "$.embeddings[].shape": {"kinds":["array"]},
+    "$.embeddings[].shape[]": {"kinds":["integer"]},
+    "$.embeddings[].values": {"kinds":["array"]},
+    "$.embeddings[].values[]": {"kinds":["number"]},
+    "$.usageMetadata": {"kinds":["object"]},
+    "$.usageMetadata.promptTokenCount": {"kinds":["integer"]},
+    "$.usageMetadata.promptTokenDetails": {"kinds":["array"]},
+    "$.usageMetadata.promptTokenDetails[]": {"kinds":["object"]},
+    "$.usageMetadata.promptTokenDetails[].modality": {"kinds":["string"],"enum":["AUDIO","DOCUMENT","IMAGE","MODALITY_UNSPECIFIED","TEXT","VIDEO"]},
+    "$.usageMetadata.promptTokenDetails[].tokenCount": {"kinds":["integer"]}
+  }
+}

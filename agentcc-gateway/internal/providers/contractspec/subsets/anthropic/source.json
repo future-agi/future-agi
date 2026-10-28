@@ -1,0 +1,22 @@
+{
+  "provider": "anthropic",
+  "format": "openapi",
+  "url": "https://raw.githubusercontent.com/anthropics/anthropic-sdk-python/202db72c87d7c6eaa72129c67ce67fd343a3a20c/scripts/mock-spec.json.gz",
+  "repo": "anthropics/anthropic-sdk-python",
+  "path": "scripts/mock-spec.json.gz",
+  "commit": "202db72c87d7c6eaa72129c67ce67fd343a3a20c",
+  "decode": "gzip",
+  "spec_version": {
+    "openapi": "3.1.0"
+  },
+  "sha256": "9b04c26bbcc1686606d82f9f39f8981872fe8ac6448d53706132eb134046063d",
+  "decoded_sha256": "f538a797852ce3661320bc652376cab2d3bdbed6c8ce35b79589252a43c25b05",
+  "fetched_at": "2026-10-28T21:18:18Z",
+  "license": "bundled build artifact of an Apache-2.0 SDK; no licence of its own, so only the extract is vendored",
+  "roots": [
+    "errors",
+    "messages",
+    "models",
+    "stream"
+  ]
+}

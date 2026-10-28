@@ -1,0 +1,20 @@
+{
+  "provider": "gemini",
+  "format": "discovery",
+  "url": "https://generativelanguage.googleapis.com/$discovery/rest?version=v1beta",
+  "spec_version": {
+    "id": "generativelanguage:v1beta",
+    "revision": "20261028",
+    "version": "v1beta"
+  },
+  "sha256": "7c01fff5a4a6304b9c07a64e9a6dc8a1e9debc76ffd006b656a06459377a453e",
+  "fetched_at": "2026-10-28T21:03:25Z",
+  "license": "Google APIs Terms of Service",
+  "roots": [
+    "batch_embed_contents",
+    "embed_content",
+    "generate_content",
+    "models",
+    "predict"
+  ]
+}

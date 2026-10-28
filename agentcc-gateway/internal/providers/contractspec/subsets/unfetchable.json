@@ -1,0 +1,88 @@
+{
+  "schema": 1,
+  "note": "Providers the gateway serves whose official spec cannot be fetched anonymously, why, and (where one exists) a public value that changes when their spec does. Written by cmd/contract-specs -update; -check fails when an observed value moves.",
+  "providers": [
+    {
+      "provider": "cerebras",
+      "reason": "the spec is published only at a Stainless bucket URL (403 AccessDenied to anonymous callers); the SDK embeds no copy",
+      "signal": {
+        "repo": "Cerebras/cerebras-cloud-sdk-python",
+        "path": ".stats.yml",
+        "key": "openapi_spec_hash",
+        "what": "Stainless openapi_spec_hash of the spec the Python SDK was generated from"
+      },
+      "observed": {
+        "commit": "cacaf754daf384c7066e6584f06363b6f15f8599",
+        "value": "d61ead209dd850d11698870293ec922e",
+        "checked_at": "2026-10-28T21:03:25Z"
+      }
+    },
+    {
+      "provider": "deepinfra",
+      "reason": "no official machine-readable spec found; deepinfra/deepinfra-python is a sandboxes SDK without one"
+    },
+    {
+      "provider": "deepseek",
+      "reason": "no official machine-readable spec is published (api-docs.deepseek.com is HTML; no public spec repository)"
+    },
+    {
+      "provider": "fireworks",
+      "reason": "the spec is published only at a Stainless bucket URL (403 AccessDenied to anonymous callers); the SDK embeds no copy",
+      "signal": {
+        "repo": "fw-ai-external/python-sdk",
+        "path": ".stats.yml",
+        "key": "openapi_spec_hash",
+        "what": "Stainless openapi_spec_hash of the spec the Python SDK was generated from"
+      },
+      "observed": {
+        "commit": "374be9a61edba68214489c866c549c43a739b63a",
+        "value": "e5c67d93df50bb94fca008115d11254c",
+        "checked_at": "2026-10-28T21:03:25Z"
+      }
+    },
+    {
+      "provider": "mistral",
+      "reason": "the spec is published in the Speakeasy registry (registry.speakeasyapi.dev, which needs auth) and on docs.mistral.ai; neither is fetchable anonymously from CI",
+      "signal": {
+        "repo": "mistralai/client-python",
+        "path": ".speakeasy/workflow.lock",
+        "key": "sources.mistral-openapi.sourceBlobDigest",
+        "what": "Speakeasy sourceBlobDigest of the spec the Python SDK was generated from"
+      },
+      "observed": {
+        "commit": "90e300904b64c36e0630f72ef475dbab7912068e",
+        "value": "sha256:16df92d5f5fb961cb5677c2db17092202548f7d2aea908d800653d1b5596cd78",
+        "checked_at": "2026-10-28T21:03:25Z"
+      }
+    },
+    {
+      "provider": "perplexity",
+      "reason": "the spec is published only at a Stainless bucket URL (perplexity-py .stats.yml openapi_spec_url), which answers 403 AccessDenied to anonymous callers; docs.perplexity.ai is not reachable from CI",
+      "signal": {
+        "repo": "perplexityai/perplexity-py",
+        "path": ".stats.yml",
+        "key": "openapi_spec_hash",
+        "what": "Stainless openapi_spec_hash of the spec the Python SDK was generated from"
+      },
+      "observed": {
+        "commit": "1a79c5d3a7b1ef8c2dce17c0f0aa7e23f9bbdced",
+        "value": "68e5745c9b747b7aa5f46da6c746e4ea",
+        "checked_at": "2026-10-28T21:03:25Z"
+      }
+    },
+    {
+      "provider": "xai",
+      "reason": "the REST spec is served from api.x.ai / docs.x.ai only; the official machine-readable contract on GitHub is the gRPC protobuf API (xai-org/xai-proto), whose enum names (REASON_STOP) differ from the REST strings",
+      "signal": {
+        "repo": "xai-org/xai-proto",
+        "path": "proto/xai/api/v1/chat.proto",
+        "what": "sha256 of the chat proto (same messages and finish reasons as the REST API, gRPC names)"
+      },
+      "observed": {
+        "commit": "6499fba5e5081a25a9504c96d01dc396adf35d2b",
+        "value": "sha256:46c588592a791ca20ca8dfc6e272994cb997a80e7cf9bf612d55c870f5cfaff1",
+        "checked_at": "2026-10-28T21:03:25Z"
+      }
+    }
+  ]
+}

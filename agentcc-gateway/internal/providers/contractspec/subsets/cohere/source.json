@@ -1,0 +1,23 @@
+{
+  "provider": "cohere",
+  "format": "openapi",
+  "url": "https://raw.githubusercontent.com/cohere-ai/cohere-developer-experience/b30c62945aa9043388be4f8bdd3fac7636763058/cohere-openapi.yaml",
+  "repo": "cohere-ai/cohere-developer-experience",
+  "path": "cohere-openapi.yaml",
+  "commit": "b30c62945aa9043388be4f8bdd3fac7636763058",
+  "spec_version": {
+    "info.version": "1.0",
+    "openapi": "3.1.0"
+  },
+  "sha256": "25184037512d4149d2e2ded604bcf00d748a8fe23f979534020a9f0036fd2e71",
+  "fetched_at": "2026-10-28T21:03:25Z",
+  "license": "proprietary (info.license; cohere.com/terms-of-use): only the extract of field names and enum values is vendored, never the file",
+  "roots": [
+    "chat",
+    "chat_stream",
+    "embed",
+    "errors",
+    "models",
+    "rerank"
+  ]
+}

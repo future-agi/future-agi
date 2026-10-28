@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "provider": "openai",
+  "root": "translation",
+  "format": "openapi",
+  "select": "POST /audio/translations -> 200 application/json",
+  "description": "audio translation response; the gateway lifts text and passes the body through",
+  "paths": {
+    "$": {"kinds":["object"]},
+    "$.duration": {"kinds":["number"]},
+    "$.language": {"kinds":["string"]},
+    "$.segments": {"kinds":["array"]},
+    "$.segments[]": {"kinds":["object"]},
+    "$.segments[].avg_logprob": {"kinds":["number"]},
+    "$.segments[].compression_ratio": {"kinds":["number"]},
+    "$.segments[].end": {"kinds":["number"]},
+    "$.segments[].id": {"kinds":["integer"]},
+    "$.segments[].no_speech_prob": {"kinds":["number"]},
+    "$.segments[].seek": {"kinds":["integer"]},
+    "$.segments[].start": {"kinds":["number"]},
+    "$.segments[].temperature": {"kinds":["number"]},
+    "$.segments[].text": {"kinds":["string"]},
+    "$.segments[].tokens": {"kinds":["array"]},
+    "$.segments[].tokens[]": {"kinds":["integer"]},
+    "$.text": {"kinds":["string"]}
+  }
+}
