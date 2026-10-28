@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "498a683f3786549b489f350a8586541b9abd5c9949ef02f1d78aa82227b69b4b",
+  "source_contract_sha256": "30a97bd1170f31d39ae317a7ebd86e8cce0be5ae515b67eed7140e8f4df53a8e",
   "tool_count": 105,
   "tools": [
     {
@@ -7684,6 +7684,18 @@
             "title": "Observability enabled",
             "type": "boolean"
           },
+          "production_project_id": {
+            "anyOf": [
+              {
+                "title": "Production project id",
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "agent_name": {
             "title": "Agent name",
             "type": "string",
@@ -7955,6 +7967,7 @@
           "query": [],
           "body": [
             "observability_enabled",
+            "production_project_id",
             "agent_name",
             "agent_type",
             "description",

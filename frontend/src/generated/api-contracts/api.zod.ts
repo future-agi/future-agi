@@ -31869,6 +31869,12 @@ export const SimulateAgentDefinitionsReadResponse = zod.object({
   source: zod.string().min(1).optional(),
   environment_count: zod.number().optional(),
   observability_enabled: zod.boolean().optional(),
+  observe_project: zod
+    .object({
+      id: zod.string().uuid(),
+      name: zod.string().min(1),
+    })
+    .optional(),
 });
 
 /**
@@ -31897,6 +31903,7 @@ export const simulateAgentDefinitionsEditUpdateBodyLivekitMaxConcurrencyMax = 25
 
 export const SimulateAgentDefinitionsEditUpdateBody = zod.object({
   observability_enabled: zod.boolean().optional(),
+  production_project_id: zod.string().uuid().optional(),
   agent_name: zod
     .string()
     .min(1)
@@ -32118,6 +32125,11 @@ export const SimulateAgentDefinitionsRunsListResponse = zod.object({
           id: zod.string().uuid(),
           version_number: zod.number(),
         }),
+        environment_version: zod.object({
+          id: zod.string().uuid(),
+          version_number: zod.number(),
+        }),
+        partial: zod.boolean(),
         outcome_passed: zod.number(),
         outcome_failed: zod.number(),
         outcome_skipped: zod.number(),
@@ -32314,6 +32326,18 @@ export const SimulateAgentDefinitionsVersionsReadResponse = zod.object({
   is_latest: zod.string().optional(),
   agent_kind: zod.string().min(1).optional(),
   api_key: zod.string().min(1).optional(),
+  source: zod
+    .object({
+      kind: zod.string().min(1),
+      repository: zod.string().min(1).optional(),
+      ref: zod.string().min(1).optional(),
+      commit_sha: zod.string().min(1).optional(),
+      subfolder: zod.string().min(1).optional(),
+    })
+    .optional()
+    .describe(
+      "Where a versioned agent was read from; null for a version without a runtime.",
+    ),
   created_at: zod.string().datetime({ offset: true }).optional(),
   updated_at: zod.string().datetime({ offset: true }).optional(),
 });
@@ -32397,6 +32421,18 @@ export const SimulateAgentDefinitionsVersionsActivateCreateResponse =
         is_latest: zod.string().optional(),
         agent_kind: zod.string().min(1).optional(),
         api_key: zod.string().min(1).optional(),
+        source: zod
+          .object({
+            kind: zod.string().min(1),
+            repository: zod.string().min(1).optional(),
+            ref: zod.string().min(1).optional(),
+            commit_sha: zod.string().min(1).optional(),
+            subfolder: zod.string().min(1).optional(),
+          })
+          .optional()
+          .describe(
+            "Where a versioned agent was read from; null for a version without a runtime.",
+          ),
         created_at: zod.string().datetime({ offset: true }).optional(),
         updated_at: zod.string().datetime({ offset: true }).optional(),
       })
@@ -32901,6 +32937,18 @@ export const SimulateAgentDefinitionsVersionsRestoreCreateResponse = zod.object(
         is_latest: zod.string().optional(),
         agent_kind: zod.string().min(1).optional(),
         api_key: zod.string().min(1).optional(),
+        source: zod
+          .object({
+            kind: zod.string().min(1),
+            repository: zod.string().min(1).optional(),
+            ref: zod.string().min(1).optional(),
+            commit_sha: zod.string().min(1).optional(),
+            subfolder: zod.string().min(1).optional(),
+          })
+          .optional()
+          .describe(
+            "Where a versioned agent was read from; null for a version without a runtime.",
+          ),
         created_at: zod.string().datetime({ offset: true }).optional(),
         updated_at: zod.string().datetime({ offset: true }).optional(),
       })
@@ -35441,6 +35489,10 @@ export const SimulateApiHarnessEnvironmentsListResponse = zod.object({
       sub_goals_count: zod.number(),
       tools_count: zod.number(),
       runs_count: zod.number(),
+      agent_version: zod.object({
+        id: zod.string().uuid(),
+        version_number: zod.number(),
+      }),
       last_updated: zod.string().datetime({ offset: true }),
       created_at: zod.string().datetime({ offset: true }),
       last_run: zod.object({
@@ -35458,6 +35510,11 @@ export const SimulateApiHarnessEnvironmentsListResponse = zod.object({
           id: zod.string().uuid(),
           version_number: zod.number(),
         }),
+        environment_version: zod.object({
+          id: zod.string().uuid(),
+          version_number: zod.number(),
+        }),
+        partial: zod.boolean(),
         outcome_passed: zod.number(),
         outcome_failed: zod.number(),
         outcome_skipped: zod.number(),
@@ -35492,6 +35549,10 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
     sub_goals_count: zod.number(),
     tools_count: zod.number(),
     runs_count: zod.number(),
+    agent_version: zod.object({
+      id: zod.string().uuid(),
+      version_number: zod.number(),
+    }),
     last_updated: zod.string().datetime({ offset: true }),
     created_at: zod.string().datetime({ offset: true }),
     flows_count: zod.number(),
@@ -35701,6 +35762,10 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
     sub_goals_count: zod.number(),
     tools_count: zod.number(),
     runs_count: zod.number(),
+    agent_version: zod.object({
+      id: zod.string().uuid(),
+      version_number: zod.number(),
+    }),
     last_updated: zod.string().datetime({ offset: true }),
     created_at: zod.string().datetime({ offset: true }),
     flows_count: zod.number(),
@@ -36817,6 +36882,10 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
       sub_goals_count: zod.number(),
       tools_count: zod.number(),
       runs_count: zod.number(),
+      agent_version: zod.object({
+        id: zod.string().uuid(),
+        version_number: zod.number(),
+      }),
       last_updated: zod.string().datetime({ offset: true }),
       created_at: zod.string().datetime({ offset: true }),
       flows_count: zod.number(),

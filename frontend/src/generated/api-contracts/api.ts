@@ -56363,6 +56363,11 @@ export type simulateAgentDefinitionsDeleteDeleteResponse200 = {
   status: 200;
 };
 
+export type simulateAgentDefinitionsDeleteDeleteResponse400 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 400;
+};
+
 export type simulateAgentDefinitionsDeleteDeleteResponse404 = {
   data: ApiErrorWithDetailsResponseApi;
   status: 404;
@@ -56375,7 +56380,7 @@ export type simulateAgentDefinitionsDeleteDeleteResponse500 = {
 
 export type simulateAgentDefinitionsDeleteDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>;
 };
 
 export type simulateAgentDefinitionsDeleteDeleteResponseSuccess =
@@ -56383,6 +56388,7 @@ export type simulateAgentDefinitionsDeleteDeleteResponseSuccess =
     headers: Headers;
   };
 export type simulateAgentDefinitionsDeleteDeleteResponseError = (
+  | simulateAgentDefinitionsDeleteDeleteResponse400
   | simulateAgentDefinitionsDeleteDeleteResponse404
   | simulateAgentDefinitionsDeleteDeleteResponse500
   | simulateAgentDefinitionsDeleteDeleteResponseDefault
@@ -57494,6 +57500,11 @@ export type simulateApiAgentDefinitionOperationsDeleteResponse204 = {
   status: 204;
 };
 
+export type simulateApiAgentDefinitionOperationsDeleteResponse400 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 400;
+};
+
 export type simulateApiAgentDefinitionOperationsDeleteResponse404 = {
   data: ApiErrorWithDetailsResponseApi;
   status: 404;
@@ -57506,7 +57517,7 @@ export type simulateApiAgentDefinitionOperationsDeleteResponse500 = {
 
 export type simulateApiAgentDefinitionOperationsDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 204 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 204 | 400 | 404 | 500>;
 };
 
 export type simulateApiAgentDefinitionOperationsDeleteResponseSuccess =
@@ -57514,6 +57525,7 @@ export type simulateApiAgentDefinitionOperationsDeleteResponseSuccess =
     headers: Headers;
   };
 export type simulateApiAgentDefinitionOperationsDeleteResponseError = (
+  | simulateApiAgentDefinitionOperationsDeleteResponse400
   | simulateApiAgentDefinitionOperationsDeleteResponse404
   | simulateApiAgentDefinitionOperationsDeleteResponse500
   | simulateApiAgentDefinitionOperationsDeleteResponseDefault

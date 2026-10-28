@@ -15816,6 +15816,12 @@ export type AgentDefinitionDetailResponseApiActiveVersion = {
   [key: string]: string;
 };
 
+export interface ObserveProjectRefApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+}
+
 export interface AgentDefinitionDetailResponseApi {
   readonly id?: string;
   /**
@@ -15888,6 +15894,7 @@ export interface AgentDefinitionDetailResponseApi {
   readonly source?: string;
   readonly environment_count?: number;
   readonly observability_enabled?: boolean;
+  observe_project?: ObserveProjectRefApi;
 }
 
 export interface AgentDefinitionDeleteResponseApi {
@@ -15924,6 +15931,7 @@ export type AgentDefinitionEditRequestApiLivekitConfigJson = {
 
 export interface AgentDefinitionEditRequestApi {
   observability_enabled?: boolean;
+  production_project_id?: string;
   /**
    * @minLength 1
    * @maxLength 255
@@ -15977,6 +15985,11 @@ export interface AgentVersionRefApi {
   version_number: number;
 }
 
+export interface EnvironmentVersionRefApi {
+  id: string;
+  version_number: number;
+}
+
 export interface HarnessRunSummaryApi {
   kind: HarnessRunSummaryApiKind;
   test_execution_id: string;
@@ -15987,6 +16000,8 @@ export interface HarnessRunSummaryApi {
   status: string;
   environment: RunEnvironmentRefApi;
   agent_version: AgentVersionRefApi;
+  environment_version: EnvironmentVersionRefApi;
+  partial: boolean;
   outcome_passed: number;
   outcome_failed: number;
   outcome_skipped: number;
@@ -16121,6 +16136,22 @@ export const AgentVersionResponseApiStatus = {
 } as const;
 
 /**
+ * Where a versioned agent was read from; null for a version without a runtime.
+ */
+export interface AgentVersionSourceApi {
+  /** @minLength 1 */
+  kind: string;
+  /** @minLength 1 */
+  repository?: string;
+  /** @minLength 1 */
+  ref?: string;
+  /** @minLength 1 */
+  commit_sha?: string;
+  /** @minLength 1 */
+  subfolder?: string;
+}
+
+/**
  * Snapshot of agent configuration at this version
  */
 export type AgentVersionResponseApiConfigurationSnapshot = {
@@ -16174,6 +16205,7 @@ export interface AgentVersionResponseApi {
   readonly agent_kind?: string;
   /** @minLength 1 */
   readonly api_key?: string;
+  source?: AgentVersionSourceApi;
   readonly created_at?: string;
   readonly updated_at?: string;
 }
@@ -17505,6 +17537,7 @@ export interface HarnessEnvironmentApi {
   sub_goals_count: number;
   tools_count: number;
   runs_count: number;
+  agent_version: AgentVersionRefApi;
   last_updated: string;
   created_at: string;
   last_run: HarnessRunSummaryApi;
@@ -17575,6 +17608,7 @@ export interface HarnessEnvironmentOverviewApi {
   sub_goals_count: number;
   tools_count: number;
   runs_count: number;
+  agent_version: AgentVersionRefApi;
   last_updated: string;
   created_at: string;
   flows_count: number;
