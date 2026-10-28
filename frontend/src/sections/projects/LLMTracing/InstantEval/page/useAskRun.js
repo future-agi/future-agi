@@ -345,26 +345,27 @@ export function useAskRun({
   const runLive = status === "running" || status === "preparing";
   const recordsStep = Math.max(1, Math.ceil(total / 20));
   const recordsMark = runLive ? Math.floor(settled / recordsStep) : settled;
-  // Each time the run goes live again (Retry, Read more, Resume) it can end
-  // where it ended before: five failed rows retried and answered settle at
-  // five again. Each stretch reads its squares anew, as the rows table does,
-  // rather than reusing the squares cached when the last one ended.
-  const [stretch, setStretch] = useState({ live: runLive, count: 0 });
-  if (stretch.live !== runLive)
-    setStretch({ live: runLive, count: stretch.count + (runLive ? 1 : 0) });
   const recordsQuery = useQuery({
     queryKey: [
       ...askRunKeys.records(projectId, taskId, zone),
-      stretch.count,
       recordsMark,
       total,
       runLive,
+      // A run that goes live again (Retry, Read more, Resume) can end where
+      // it ended before: five failed rows retried and answered settle at
+      // five again. When its last answer landed tells the two endings apart,
+      // on this page or on one opened again later.
+      runLive ? null : summary?.finished_at || null,
     ],
     enabled: wantRecords,
     queryFn: ({ signal }) =>
       fetchRecords({ projectId, taskId, tz: zone, unit, signal }),
     placeholderData: (previous) => previous,
     staleTime: Infinity,
+    // A live run's squares hold only while it is at that mark: they are
+    // dropped as it moves on, so a later Retry passing the same mark reads
+    // its own rather than these.
+    ...(runLive ? { gcTime: 0 } : {}),
     retry: 2,
     meta: { errorHandled: true },
   });

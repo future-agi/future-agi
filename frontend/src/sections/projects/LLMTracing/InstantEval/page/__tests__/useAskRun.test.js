@@ -280,7 +280,7 @@ describe("useAskRun", () => {
 
   it("reads the squares again once a retry ends where the run ended before", async () => {
     // Five rows that all failed (a rejected key), retried and answered: the
-    // run settles at five both times.
+    // run settles at five both times, its last answer later the second.
     let phase = "failed";
     const ids = ["s1", "s2", "s3", "s4", "s5"];
     http.get.mockImplementation((url) => {
@@ -291,7 +291,10 @@ describe("useAskRun", () => {
               ? summary({ status: "completed", total: 5, failed: 5 })
               : phase === "retrying"
                 ? summary({ status: "running", total: 5 })
-                : summary({ status: "completed", total: 5, answered: 5 }),
+                : {
+                    ...summary({ status: "completed", total: 5, answered: 5 }),
+                    finished_at: "2026-10-15T10:05:00Z",
+                  },
           ),
         );
       return Promise.resolve(
@@ -345,6 +348,182 @@ describe("useAskRun", () => {
     expect(result.current.records.map((r) => r.answers[CONFIG].answer)).toEqual(
       Array(5).fill("Yes"),
     );
+  });
+
+  describe("a retry's squares on a page opened again", () => {
+    // Five rows: the first `failed` failed, the next `answered` say Yes.
+    const server = {};
+    const FAILED = "2026-10-15T10:00:30Z";
+    const ANSWERED = "2026-10-15T10:05:00Z";
+    // The page, mounted on one cache as the app's is across runs.
+    let shared;
+    beforeEach(() => {
+      shared = wrapper();
+      Object.assign(server, {
+        status: "running",
+        answered: 0,
+        failed: 0,
+        finishedAt: null,
+      });
+      http.get.mockImplementation((url) => {
+        const { status, answered, failed, finishedAt } = server;
+        if (url === "/summary")
+          return Promise.resolve(
+            ok({
+              ...summary({ status, total: 5, answered, failed }),
+              finished_at: finishedAt,
+            }),
+          );
+        return Promise.resolve(
+          ok({
+            rows: ["s1", "s2", "s3", "s4", "s5"].map((id, at) => {
+              const answer =
+                at >= failed && at < failed + answered ? "Yes" : null;
+              const state =
+                at < failed ? "failed" : answer ? "completed" : "pending";
+              return {
+                ...row(id, answer),
+                answers: { [CONFIG]: { answer, status: state } },
+              };
+            }),
+            next_cursor: null,
+            total: 5,
+          }),
+        );
+      });
+      http.post.mockImplementation(() => {
+        Object.assign(server, {
+          status: "running",
+          failed: 0,
+          finishedAt: null,
+        });
+        return Promise.resolve(ok({ status: "running", message: "Retrying." }));
+      });
+    });
+    const open = () =>
+      renderHook(
+        () =>
+          useAskRun({
+            projectId: "p1",
+            taskId: "task-1",
+            unit: "sessions",
+            tz: "UTC",
+          }),
+        { wrapper: shared },
+      );
+    const squares = (page) =>
+      page.result.current.records.map((r) => r.answers[CONFIG].status);
+    const settle = async () => {
+      await tick(0);
+      await tick(0);
+    };
+
+    it("shows the answers when it comes back after the retry ended", async () => {
+      Object.assign(server, {
+        status: "completed",
+        failed: 5,
+        finishedAt: FAILED,
+      });
+      const first = open();
+      await settle();
+      expect(squares(first)).toEqual(Array(5).fill("failed"));
+      await act(async () => {
+        await first.result.current.control("retry_failed");
+      });
+      await tick(0);
+      Object.assign(server, {
+        status: "completed",
+        answered: 5,
+        finishedAt: ANSWERED,
+      });
+      await tick(SUMMARY_POLL_MS);
+      await tick(0);
+      expect(squares(first)).toEqual(Array(5).fill("completed"));
+
+      // Another run opened from History, then this one again.
+      first.unmount();
+      await tick(10000);
+      const again = open();
+      await settle();
+      expect(again.result.current.status).toBe("done");
+      expect(again.result.current.answered).toBe(5);
+      expect(squares(again)).toEqual(Array(5).fill("completed"));
+      again.unmount();
+    });
+
+    it("shows the answers when it comes back while the retry reads", async () => {
+      Object.assign(server, {
+        status: "completed",
+        failed: 5,
+        finishedAt: FAILED,
+      });
+      const first = open();
+      await settle();
+      expect(squares(first)).toEqual(Array(5).fill("failed"));
+      await act(async () => {
+        await first.result.current.control("retry_failed");
+      });
+      await tick(0);
+      expect(first.result.current.status).toBe("running");
+
+      // Left while the retry reads, back before it ends.
+      first.unmount();
+      server.answered = 2;
+      const again = open();
+      await settle();
+      expect(again.result.current.answered).toBe(2);
+      expect(squares(again).slice(0, 2)).toEqual(["completed", "completed"]);
+      Object.assign(server, {
+        status: "completed",
+        answered: 5,
+        finishedAt: ANSWERED,
+      });
+      await tick(SUMMARY_POLL_MS);
+      await tick(0);
+      expect(again.result.current.status).toBe("done");
+      expect(squares(again)).toEqual(Array(5).fill("completed"));
+      again.unmount();
+    });
+
+    it("doesn't show the first reading's squares to a retry passing the same mark", async () => {
+      // Watched as it read and failed.
+      const first = open();
+      await settle();
+      server.failed = 2;
+      await tick(SUMMARY_POLL_MS);
+      await tick(0);
+      expect(squares(first).slice(0, 2)).toEqual(["failed", "failed"]);
+      Object.assign(server, {
+        status: "completed",
+        failed: 5,
+        finishedAt: FAILED,
+      });
+      await tick(SUMMARY_POLL_MS);
+      await tick(0);
+      expect(squares(first)).toEqual(Array(5).fill("failed"));
+
+      // Another run opened from History, then this one again, and retried.
+      first.unmount();
+      const again = open();
+      await settle();
+      expect(again.result.current.status).toBe("done");
+      await act(async () => {
+        await again.result.current.control("retry_failed");
+      });
+      await tick(0);
+      server.answered = 2;
+      await tick(SUMMARY_POLL_MS);
+      await tick(0);
+      expect(again.result.current.answered).toBe(2);
+      expect(squares(again)).toEqual([
+        "completed",
+        "completed",
+        "pending",
+        "pending",
+        "pending",
+      ]);
+      again.unmount();
+    });
   });
 
   it("reads the summary now without cancelling a read in flight", async () => {
