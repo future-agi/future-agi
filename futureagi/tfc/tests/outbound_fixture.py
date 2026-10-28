@@ -9,15 +9,21 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
+import requests
 
 PUBLIC_IP = "93.184.216.34"
 
 
 @pytest.fixture
 def outbound_wire(monkeypatch, tmp_path):
-    from tfc.utils import outbound_destination as destination
+    try:
+        from tfc.utils import outbound_destination as destination
+    except ImportError:
+        # The identical public-response contract also runs against the base.
+        destination = None
 
     received = []
 
@@ -139,7 +145,33 @@ namespace["_worker"]()
             **kwargs,
         )
 
-    monkeypatch.setattr(destination.subprocess, "Popen", fixture_popen)
+    if destination is not None:
+        monkeypatch.setattr(destination.subprocess, "Popen", fixture_popen)
+    else:
+        real_connect = socket.socket.connect
+
+        def resolve(host, service, *args, **kwargs):
+            if host != "public.fixture.test":
+                raise OSError("unexpected fixture host")
+            return [
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", (PUBLIC_IP, int(service)))
+            ]
+
+        def connect(sock, address):
+            if address != (PUBLIC_IP, state.port):
+                raise OSError("unexpected fixture connection")
+            return real_connect(sock, ("127.0.0.1", state.port))
+
+        def legacy_request(**kwargs):
+            with requests.Session() as session:
+                session.trust_env = False
+                with (
+                    patch.object(socket, "getaddrinfo", resolve),
+                    patch.object(socket.socket, "connect", connect),
+                ):
+                    return session.request(**kwargs)
+
+        monkeypatch.setattr(requests, "request", legacy_request)
     try:
         yield state
     finally:

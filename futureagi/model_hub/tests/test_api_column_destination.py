@@ -74,6 +74,17 @@ def test_url_authority_is_validated(url, legacy_transport):
     assert columns.AddApiColumnView()._make_api_call(None, config(url)) == ERROR
 
 
+def test_row_substitution_is_checked_before_transport(monkeypatch, legacy_transport):
+    view = columns.AddApiColumnView()
+    monkeypatch.setattr(view, "_resolve_cell_value", lambda variable, row: "127.0.0.1")
+    cell = SimpleNamespace(
+        row=SimpleNamespace(
+            dataset=SimpleNamespace(organization_id="org", workspace_id="workspace")
+        )
+    )
+    assert view._make_api_call(cell, config("http://{{column}}/value")) == ERROR
+
+
 @pytest.mark.parametrize("location", ["headers", "params"])
 def test_foreign_secret_is_not_resolved(location, monkeypatch, legacy_transport):
     record = SimpleNamespace(

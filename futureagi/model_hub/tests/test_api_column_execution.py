@@ -57,7 +57,9 @@ def test_secret_scope_without_middleware(
         name="other-fixture", organization=other_org, created_by=other_user
     )
     same_org_workspace = Workspace.objects.create(
-        name="sibling-fixture", organization=organization, created_by=workspace.created_by
+        name="sibling-fixture",
+        organization=organization,
+        created_by=workspace.created_by,
     )
     foreign = SecretModel.no_workspace_objects.create(
         name="foreign-fixture",

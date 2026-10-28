@@ -1200,7 +1200,11 @@ class AddApiColumnView(APIView):
 
         except Exception as e:
             # Codes only: exception messages may contain stored header/URL secrets.
-            reason = str(e) if isinstance(e, outbound_destination.DestinationError) else type(e).__name__
+            reason = (
+                str(e)
+                if isinstance(e, outbound_destination.DestinationError)
+                else type(e).__name__
+            )
             logger.warning("API column request refused or failed", reason=reason)
             return outbound_destination.PUBLIC_ERROR, {"response_status": 400}
 
@@ -1610,7 +1614,9 @@ class ConditionalColumnView(APIView):
                 executor = AddApiColumnView()
                 if not source_column:
                     return executor._make_api_call(
-                        cell=Cell(row=row), config=config.get("config"), dataset=row.dataset
+                        cell=Cell(row=row),
+                        config=config.get("config"),
+                        dataset=row.dataset,
                     )
                 return executor._make_api_call(
                     cell=Cell.objects.get(column=source_column, row=row),
@@ -3240,9 +3246,9 @@ def add_api_column_async(
                         value=None,
                     )
                 )
-                future_to_row[executor.submit(wrapped_make_api_call, cell, config, dataset=dataset)] = (
-                    row
-                )
+                future_to_row[
+                    executor.submit(wrapped_make_api_call, cell, config, dataset=dataset)
+                ] = row
 
             # Flush buffers to DB in batches as results complete
             cells_to_update = []
@@ -3336,9 +3342,9 @@ def add_api_column_async(
                 cell = Cell(
                     dataset_id=dataset_id, column_id=new_column_id, row=row, value=None
                 )
-                future_to_row[executor.submit(wrapped_make_api_call, cell, config, dataset=dataset)] = (
-                    row
-                )
+                future_to_row[
+                    executor.submit(wrapped_make_api_call, cell, config, dataset=dataset)
+                ] = row
 
             # Flush buffer to DB in batches as results complete
             cells_to_create = []
@@ -3356,7 +3362,11 @@ def add_api_column_async(
                             value_infos=json.dumps(value_infos)
                             if value_infos
                             else None,
-                            status=(CellStatus.ERROR.value if value_infos and value_infos.get("response_status", 200) >= 400 else CellStatus.PASS.value),
+                            status=(
+                                CellStatus.ERROR.value
+                                if value_infos and value_infos.get("response_status", 200) >= 400
+                                else CellStatus.PASS.value
+                            ),
                         )
                     )
                     total_processed += 1
@@ -3535,7 +3545,9 @@ class PreviewDatasetOperationView(APIView):
             if "column_id" not in config:
                 # Create a temporary cell with the row so variable substitution works
                 cell = Cell(row=row, value=None)
-                value = api_caller._make_api_call(cell=cell, config=api_config, dataset=dataset)
+                value = api_caller._make_api_call(
+                    cell=cell, config=api_config, dataset=dataset
+                )
                 results.append({"row_id": str(row.id), "output": json.dumps(value)})
             else:
                 cell = Cell.objects.get(
