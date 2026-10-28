@@ -34,6 +34,7 @@ import { ANSWER_TYPES, readOption } from "../instantEvalPayloads";
 import { answerText, quoted } from "../instantEvalAnswers";
 import { formatWhen, unitMeta } from "../instantEvalUnits";
 import {
+  AI_PROVIDERS_SETTINGS_PATH,
   AskBusy,
   AskKeyMissing,
   AskNoCredits,
@@ -84,16 +85,38 @@ const LIVE_STATES = new Set(["running", "preparing", "loading"]);
 // Paused, or pausing while the answers already being read land.
 const PAUSED_STATES = new Set(["paused", "pausing"]);
 
+/**
+ * A run that finished without one answer: every row it read failed (a
+ * rejected key, say). It ran to the end, but it reads as failed.
+ */
+const answeredNothing = (run) =>
+  run.status === "done" &&
+  run.failed > 0 &&
+  !savedAnswerCount(run.summary?.counts);
+
+// "2 of 49 sessions done with both questions": with several questions a row
+// is done once each has its answer, so the progress says so beside the
+// answers to the question shown.
+const doneWords = (questions) =>
+  questions === 2 ? "done with both questions" : `done with all ${questions}`;
+
 function StatusLine({ run, unit, creating }) {
   const meta = unitMeta(unit);
   const live = LIVE_STATES.has(run.status);
   const noun = (n) => (n === 1 ? meta.noun : meta.plural);
+  // What a run reads in flight: a user question reads its users' sessions.
+  const rowNoun = (n) =>
+    unit === "users" ? (n === 1 ? "session" : "sessions") : noun(n);
   const settled = run.answered + run.failed;
   const answersSaved = savedAnswerCount(run.summary?.counts);
+  const questions = run.questions?.length || 1;
+  const nothing = answeredNothing(run);
   const failedRows =
-    run.failed > 0
+    run.failed > 0 && !nothing
       ? `${run.failed.toLocaleString()} ${run.failed === 1 ? "row" : "rows"} couldn't be fully answered`
       : null;
+  // The page says why it couldn't be loaded.
+  if (run.status === "error") return null;
   let text;
   if (creating) text = "Saving the question and starting Jev…";
   else if (run.status === "loading") text = "Loading the run…";
@@ -107,14 +130,20 @@ function StatusLine({ run, unit, creating }) {
       : run.answered > 0
         ? `This run failed: ${run.answered.toLocaleString()} of ${run.total.toLocaleString()} answered. Run it again.`
         : `This run failed: ${answersSaved.toLocaleString()} ${answersSaved === 1 ? "answer" : "answers"} saved. Run it again.`;
+  else if (nothing)
+    text = `Couldn't answer any of the ${run.total.toLocaleString()} ${noun(run.total)}`;
   else if (run.status === "done")
     text = `${run.answered.toLocaleString()}${
       run.answered < run.total ? ` of ${run.total.toLocaleString()}` : ""
     } ${noun(run.total)} answered${runTime(run, " in ")}`;
-  else if (run.status === "pausing")
-    text = `Pausing… ${(run.summary?.in_flight ?? 0).toLocaleString()} still answering · ${settled.toLocaleString()} of ${run.total.toLocaleString()} read`;
-  else if (run.status === "paused")
-    text = `Paused · ${settled.toLocaleString()} of ${run.total.toLocaleString()} read`;
+  else if (run.status === "pausing") {
+    const inFlight = run.summary?.in_flight ?? 0;
+    text = `Pausing… ${inFlight.toLocaleString()} ${rowNoun(inFlight)} still being answered · ${settled.toLocaleString()} of ${run.total.toLocaleString()} read`;
+  } else if (run.status === "paused")
+    // Stopped while it was still picking its rows: Resume picks them.
+    text = run.summary?.preparing
+      ? `Paused before picking the ${run.total.toLocaleString()} ${noun(run.total)} to read`
+      : `Paused · ${settled.toLocaleString()} of ${run.total.toLocaleString()} read`;
   else if (run.status === "running" && run.summary?.waiting_s)
     text = `Waiting for workers… no answer for ${Math.round(
       run.summary.waiting_s / 60,
@@ -123,7 +152,9 @@ function StatusLine({ run, unit, creating }) {
     text = `Cancelled · ${run.answered.toLocaleString()} of ${run.total.toLocaleString()} answered`;
   else
     text = [
-      `Answering ${settled.toLocaleString()} of ${run.total.toLocaleString()}`,
+      questions > 1
+        ? `Answering · ${settled.toLocaleString()} of ${run.total.toLocaleString()} ${noun(run.total)} ${doneWords(questions)}`
+        : `Answering ${settled.toLocaleString()} of ${run.total.toLocaleString()}`,
       run.rate ? rateWords(run.rate) : null,
       run.eta ? etaWords(run.eta) : null,
       runTime(run, "running ") || null,
@@ -149,7 +180,7 @@ function StatusLine({ run, unit, creating }) {
             borderRadius: "50%",
             flexShrink: 0,
             bgcolor:
-              run.status === "error" || run.status === "failed"
+              run.status === "failed" || nothing
                 ? "error.main"
                 : run.status === "stalled"
                   ? "warning.main"
@@ -172,7 +203,9 @@ function StatusLine({ run, unit, creating }) {
           sx={{
             fontVariantNumeric: "tabular-nums",
             minWidth: 0,
-            ...(run.status === "failed" && { color: "error.main" }),
+            ...((run.status === "failed" || nothing) && {
+              color: "error.main",
+            }),
           }}
         >
           {text}
@@ -677,6 +710,10 @@ export default function AskRunView({
   const live = run.status === "running" || run.status === "preparing";
   const failedBeforeAnswering =
     run.status === "failed" && !savedAnswerCount(summary?.counts);
+  // Every row failed: why (the reason its rows give), the fix and a retry
+  // sit at the top, not only in each row's explanation.
+  const nothingAnswered = answeredNothing(run);
+  const failure = nothingAnswered ? summary?.failure : null;
   const running = live || Boolean(creating);
   const reads = question?.reads || run.reads;
   const split = question
@@ -1051,11 +1088,16 @@ export default function AskRunView({
                   run={run}
                   onControl={control}
                   busy={acting || !canRun}
-                  retryElsewhere={bannerRetries(
-                    run,
-                    question,
-                    focus.configId === question?.configId ? focus.answer : null,
-                  )}
+                  retryElsewhere={
+                    nothingAnswered ||
+                    bannerRetries(
+                      run,
+                      question,
+                      focus.configId === question?.configId
+                        ? focus.answer
+                        : null,
+                    )
+                  }
                 />
               )}
               {onRunAgain && RERUNNABLE_STATES.has(run.status) && (
@@ -1187,6 +1229,42 @@ export default function AskRunView({
               : "No answers were saved. Check the evaluator or retry the run."}
           </Alert>
         )}
+        {nothingAnswered && (
+          <Alert
+            severity="error"
+            action={
+              <Stack direction="row" spacing={1}>
+                {failure?.ai_providers && (
+                  <Button
+                    size="small"
+                    color="inherit"
+                    component={RouterLink}
+                    to={AI_PROVIDERS_SETTINGS_PATH}
+                  >
+                    Open AI Providers
+                  </Button>
+                )}
+                <Button
+                  size="small"
+                  variant="outlined"
+                  color="inherit"
+                  disabled={acting}
+                  startIcon={<Iconify icon="mdi:refresh" width={16} />}
+                  onClick={() => control("retry_failed")}
+                >
+                  Retry {run.failed.toLocaleString()}{" "}
+                  {run.failed === 1 ? "row" : "rows"}
+                </Button>
+              </Stack>
+            }
+          >
+            {failure?.message
+              ? failure.every
+                ? failure.message
+                : `${failure.message} Some rows failed for another reason; open a row to see why.`
+              : "Open a row to see why Jev couldn't answer it."}
+          </Alert>
+        )}
         {copied && (
           <Alert severity="success" onClose={() => setCopied(false)}>
             Link copied. It opens this run with its answers.
@@ -1257,8 +1335,8 @@ export default function AskRunView({
           </Alert>
         )}
 
-        {/* A run that failed before reading a row has no sample to estimate from. */}
-        {!failedBeforeAnswering && (
+        {/* A run without an answer has no sample to estimate from. */}
+        {!failedBeforeAnswering && !nothingAnswered && (
           <SampleBanner
             run={run}
             unit={unit}

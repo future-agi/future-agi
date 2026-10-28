@@ -2996,3 +2996,120 @@ def test_the_worker_counts_a_finished_run_without_the_views():
     from tfc.temporal.eval_tasks import activities
 
     assert "tracer.views" not in inspect.getsource(activities)
+
+
+# ─── A run stopped before it picked its rows, in-flight rows, failures ───────
+@pytest.mark.django_db
+@pytest.mark.parametrize("action", ["pause", "cancel"])
+def test_a_run_stopped_before_it_picked_its_rows_counts_every_row_it_asked_for(
+    auth_client, observe_project, yes_no, fake_view, started, action
+):
+    """Paused 2 s after Start, while its first step still picked the rows,
+    a run read "Paused · 0 of 0 read" with no Resume: it holds no rows yet,
+    so it counted none. It asked for 6, and resuming reads all 6."""
+    result = _start(auth_client, observe_project, [yes_no], sample_size=6)
+    task = EvalTask.objects.get(id=result.json()["result"]["task_id"])
+    stopped = _control(auth_client, observe_project, task, action)
+    assert stopped.status_code == status.HTTP_200_OK, stopped.json()
+    assert not InstantEvalRow.objects.filter(task_id=task.id).exists()
+
+    s = _summary(auth_client, observe_project, task)
+    if action == "pause":
+        assert (s["status"], s["preparing"]) == ("paused", True)
+        assert (s["total"], s["pending"], s["not_read"]) == (6, 6, 0)
+    else:
+        assert (s["status"], s["preparing"]) == ("cancelled", False)
+        assert (s["total"], s["pending"], s["not_read"]) == (6, 0, 6)
+    assert (s["answered"], s["failed"]) == (0, 0)
+
+
+@pytest.mark.django_db
+def test_a_pausing_run_counts_the_rows_still_being_read_not_their_answers(
+    auth_client, observe_project, yes_no, category, fake_view, started
+):
+    """Three questions of 33 rows in flight read "79 still answering · 82 of
+    115 read": answers against rows. Two rows in flight, one asked both its
+    questions at once, are two rows."""
+    result = _start(auth_client, observe_project, [yes_no, category], sample_size=4)
+    task = EvalTask.objects.get(id=result.json()["result"]["task_id"])
+    ids = list(resolve_desired_rows(task).matched_ids)
+    logs = EvalLogger.objects.bulk_create(
+        [
+            _answer(task, yes_no, ids[0], pending=True),
+            _answer(task, category, ids[0], pending=True),
+            _answer(task, yes_no, ids[1], pending=True),
+            _answer(task, category, ids[1], "Order status"),
+        ]
+        + [_answer(task, c, i, "Yes") for i in ids[2:] for c in (yes_no,)]
+        + [_answer(task, category, i, "Order status") for i in ids[2:]]
+    )
+    for entry in logs:
+        record_answer(entry.id)
+    EvalLogger.objects.filter(
+        eval_task_id=str(task.id), status=EvalEntryStatus.PENDING
+    ).update(status=EvalEntryStatus.RUNNING, updated_at=datetime.now(UTC))
+    EvalTask.objects.filter(id=task.id).update(status=EvalTaskStatus.PAUSED)
+
+    s = _summary(auth_client, observe_project, task)
+    assert (s["status"], s["in_flight"]) == ("pausing", 2)
+    assert (s["total"], s["answered"], s["pending"]) == (4, 2, 2)
+
+
+KEY_REJECTED = (
+    "TypeSafe rejected the API key saved under Settings → AI Providers. "
+    "Update the key and try again."
+)
+
+
+@pytest.mark.django_db
+def test_a_run_that_answered_nothing_says_why_at_the_top(
+    auth_client, observe_project, yes_no, fake_view, started
+):
+    """Every row failed on a rejected TypeSafe key: the run finished, and its
+    reason was only in each row's explanation."""
+    result = _start(auth_client, observe_project, [yes_no], sample_size=5)
+    task = EvalTask.objects.get(id=result.json()["result"]["task_id"])
+    ids = list(resolve_desired_rows(task).matched_ids)
+    logs = [_answer(task, yes_no, i, error=True) for i in ids]
+    for entry in logs:
+        entry.eval_explanation = f"Error during evaluation: {KEY_REJECTED}"
+    for entry in EvalLogger.objects.bulk_create(logs):
+        record_answer(entry.id)
+    EvalTask.objects.filter(id=task.id).update(status=EvalTaskStatus.COMPLETED)
+
+    s = _summary(auth_client, observe_project, task)
+    assert (s["status"], s["answered"], s["failed"]) == ("completed", 0, 5)
+    assert s["failure"] == {
+        "message": KEY_REJECTED,
+        "every": True,
+        "ai_providers": True,
+    }
+
+
+@pytest.mark.django_db
+def test_a_run_with_an_answer_or_another_failure_names_no_key_problem(
+    auth_client, observe_project, yes_no, fake_view, started, answered_run
+):
+    task, _ = answered_run
+    assert _summary(auth_client, observe_project, task)["failure"] is None
+
+    result = _start(auth_client, observe_project, [yes_no], sample_size=3)
+    other = EvalTask.objects.get(id=result.json()["result"]["task_id"])
+    logs = [
+        _answer(other, yes_no, i, error=True)
+        for i in resolve_desired_rows(other).matched_ids
+    ]
+    logs[0].eval_explanation = f"Error during evaluation: {KEY_REJECTED}"
+    for entry in logs[1:]:
+        entry.eval_explanation = (
+            "Error during evaluation: TypeSafe didn't respond in time. Try again."
+        )
+    for entry in EvalLogger.objects.bulk_create(logs):
+        record_answer(entry.id)
+    EvalTask.objects.filter(id=other.id).update(status=EvalTaskStatus.COMPLETED)
+    # Two of its three rows timed out; one names the key.
+    assert _summary(auth_client, observe_project, other)["failure"] == {
+        "message": "TypeSafe didn't respond in time. Try again.",
+        "every": False,
+        "ai_providers": False,
+    }

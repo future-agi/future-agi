@@ -1282,7 +1282,9 @@ describe("the Ask page", () => {
       `/dashboard/observe/${PROJECT}/ask?run=task-sessions&unit=sessions&tab=sessions`,
     );
     expect(
-      screen.getByText(/Pausing… 6 still answering · 410 of 1,000 read/),
+      screen.getByText(
+        /Pausing… 6 sessions still being answered · 410 of 1,000 read/,
+      ),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Resume" })).toBeInTheDocument();
     unmount();
@@ -1317,6 +1319,121 @@ describe("the Ask page", () => {
       fireEvent.click(screen.getByRole("button", { name: "Retry 30 rows" }));
     });
     expect(fakes.control).toHaveBeenCalledWith("retry_failed", {});
+  });
+});
+
+describe("a run paused before it picked its rows", () => {
+  it("says so and offers Resume", async () => {
+    // Paused 2 s after Start: the server counts every row it asked for as
+    // still to read, and marks it as not picked yet.
+    const paused = runOf({
+      status: "paused",
+      total: 115,
+      answered: 0,
+      records: null,
+    });
+    paused.summary = { ...paused.summary, preparing: true, counts: {} };
+    fakes.askRuns["task-sessions"] = paused;
+    renderAt(
+      `/dashboard/observe/${PROJECT}/ask?run=task-sessions&unit=sessions&tab=sessions`,
+    );
+    expect(
+      screen.getByText("Paused before picking the 115 sessions to read"),
+    ).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+    });
+    expect(fakes.control).toHaveBeenCalledWith("resume", {});
+  });
+});
+
+describe("a run that answered nothing", () => {
+  const KEY_REJECTED =
+    "TypeSafe rejected the API key saved under Settings → AI Providers. Update the key and try again.";
+  const allFailed = (failure) => {
+    const run = runOf({ total: 5, answered: 0, failed: 5, records: null });
+    run.summary = {
+      ...run.summary,
+      counts: { [CONFIG]: { __error__: 5 } },
+      failure,
+    };
+    return run;
+  };
+
+  it("reads as failed, says why, links to the fix and retries", async () => {
+    fakes.askRuns["task-sessions"] = allFailed({
+      message: KEY_REJECTED,
+      every: true,
+      ai_providers: true,
+    });
+    renderAt(
+      `/dashboard/observe/${PROJECT}/ask?run=task-sessions&unit=sessions&tab=sessions`,
+    );
+    expect(
+      screen.getByText("Couldn't answer any of the 5 sessions"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/sessions answered in/)).toBeNull();
+    expect(screen.queryByText(/couldn't be fully answered/)).toBeNull();
+    const alert = screen.getByText(KEY_REJECTED).closest("[role='alert']");
+    expect(
+      within(alert).getByRole("link", { name: "Open AI Providers" }),
+    ).toHaveAttribute("href", AI_PROVIDERS);
+    // One retry, beside the reason.
+    const retries = screen.getAllByRole("button", { name: "Retry 5 rows" });
+    expect(retries).toHaveLength(1);
+    expect(alert).toContainElement(retries[0]);
+    await act(async () => {
+      fireEvent.click(retries[0]);
+    });
+    expect(fakes.control).toHaveBeenCalledWith("retry_failed", {});
+  });
+
+  it("names the reason most rows give, without a settings link it doesn't need", () => {
+    fakes.askRuns["task-sessions"] = allFailed({
+      message: "TypeSafe didn't respond in time. Try again.",
+      every: false,
+      ai_providers: false,
+    });
+    renderAt(
+      `/dashboard/observe/${PROJECT}/ask?run=task-sessions&unit=sessions&tab=sessions`,
+    );
+    expect(
+      screen.getByText(
+        "TypeSafe didn't respond in time. Try again. Some rows failed for another reason; open a row to see why.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "Open AI Providers" }),
+    ).toBeNull();
+  });
+});
+
+describe("a run asking several questions while it is answered", () => {
+  it("says its progress counts rows done with every question", () => {
+    const run = runOf({
+      status: "running",
+      total: 49,
+      answered: 2,
+      records: null,
+    });
+    run.questions = [
+      ...QUESTIONS,
+      {
+        configId: "config-2",
+        question: "What was the request about?",
+        answerType: "category",
+        labels: ["Billing", "Shipping"],
+      },
+    ];
+    fakes.askRuns["task-sessions"] = run;
+    renderAt(
+      `/dashboard/observe/${PROJECT}/ask?run=task-sessions&unit=sessions&tab=sessions`,
+    );
+    expect(
+      screen.getByText(
+        /^Answering · 2 of 49 sessions done with both questions · 152 \/ min/,
+      ),
+    ).toBeInTheDocument();
   });
 });
 

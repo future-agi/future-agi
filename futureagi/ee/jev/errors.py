@@ -37,6 +37,18 @@ _RUN_CODES = frozenset(
 )
 
 
+def key_messages():
+    """The texts a failed run carries when the organization's TypeSafe key is
+    missing or TypeSafe rejected it: both are fixed under Settings → AI
+    Providers."""
+    return frozenset(
+        {
+            _GATEWAY_MESSAGES["JEV_KEY_INVALID"],
+            missing_provider_key_message(JEV_PROVIDER),
+        }
+    )
+
+
 def _jev_cause(exc):
     """The Jev error behind exc: exc itself, or one it wraps (callers such as
     the SDK wrap the engine's exception in their own)."""

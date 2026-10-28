@@ -430,6 +430,15 @@ class InstantEvalSampleSerializer(serializers.Serializer):
     next_size = serializers.IntegerField()
 
 
+class InstantEvalFailureSerializer(serializers.Serializer):
+    # The explanation most of the run's failed answers carry, and whether
+    # every one of them carries it.
+    message = serializers.CharField()
+    every = serializers.BooleanField()
+    # A missing or rejected TypeSafe key, fixed under Settings → AI Providers.
+    ai_providers = serializers.BooleanField()
+
+
 class InstantEvalSummarySerializer(serializers.Serializer):
     status = serializers.CharField()
     unit = serializers.CharField()
@@ -448,11 +457,13 @@ class InstantEvalSummarySerializer(serializers.Serializer):
     credits_estimate = serializers.FloatField(allow_null=True)
     # What the answers given so far cost (a failed answer isn't billed).
     credits_used = serializers.FloatField(allow_null=True)
-    # Paused, with this many answers still being read (they will land).
+    # Paused, with this many rows still being read (their answers will land).
     in_flight = serializers.IntegerField(allow_null=True)
     # Running, but no answer has landed for this many seconds (two minutes
     # or more): the workers are busy elsewhere, or coming back.
     waiting_s = serializers.IntegerField(allow_null=True)
+    # A finished run that answered nothing: why, from its rows.
+    failure = InstantEvalFailureSerializer(allow_null=True, required=False)
     # How long the run actually answered (minutes in which answers landed),
     # and how long it sat paused or stopped since it started.
     active_s = serializers.IntegerField(allow_null=True)

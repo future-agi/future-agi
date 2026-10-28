@@ -260,18 +260,85 @@ def _run_time(run, progress: dict, running: bool) -> dict:
     return {"active_s": round(active), "idle_s": round(max(0, wall - active))}
 
 
-def _in_flight(task) -> int:
+# The eval logger's column naming a row of each row type.
+_ROW_COLUMN = {
+    "traces": "trace_id",
+    "spans": "observation_span_id",
+    "sessions": "trace_session_id",
+}
+
+
+def _in_flight(task, row_type: str | None = None) -> int:
     """Answers of a paused run still being read: running entries claimed or
     started in the last five minutes (older claims belong to a worker that
-    is gone)."""
+    is gone). With ``row_type``, the rows they belong to instead: a row
+    asked three questions is one row in flight, as the page counts rows."""
     from tracer.models.observation_span import EvalEntryStatus, EvalLogger
 
-    return EvalLogger.objects.filter(
+    entries = EvalLogger.objects.filter(
         eval_task_id=str(task.id),
         status=EvalEntryStatus.RUNNING,
         deleted=False,
         updated_at__gte=timezone.now() - timedelta(seconds=IN_FLIGHT_S),
-    ).count()
+    )
+    if row_type is None:
+        return entries.count()
+    column = _ROW_COLUMN.get(row_type, "trace_session_id")
+    return (
+        entries.exclude(**{f"{column}__isnull": True})
+        .order_by()
+        .values(column)
+        .distinct()
+        .count()
+    )
+
+
+# How the eval logger words every failed answer's explanation.
+_ERROR_PREFIX = "Error during evaluation: "
+_FAILURE_CHARS = 500
+
+
+def _failure(task, view) -> dict | None:
+    """Why a run that answered nothing failed: the explanation most of its
+    failed answers carry (the one each row shows), whether every one of
+    them carries it, and whether it is fixed under Settings → AI Providers
+    (a missing or rejected TypeSafe key)."""
+    from django.db.models import Count, Q, Value
+    from django.db.models.functions import Coalesce, Left, NullIf
+
+    from tracer.ee_boundary import jev_key_messages
+    from tracer.models.observation_span import EvalLogger
+
+    failed = EvalLogger.objects.filter(
+        eval_task_id=str(task.id),
+        deleted=False,
+        custom_eval_config_id__in=view.config_ids,
+    ).filter(Q(error=True) | (~Q(skipped_reason__isnull=True) & ~Q(skipped_reason="")))
+    found = (
+        failed.annotate(
+            reason=Left(
+                Coalesce(
+                    NullIf("eval_explanation", Value("")),
+                    NullIf("skipped_reason", Value("")),
+                ),
+                _FAILURE_CHARS + len(_ERROR_PREFIX),
+            )
+        )
+        .exclude(reason__isnull=True)
+        .order_by()
+        .values("reason")
+        .annotate(n=Count("id"))
+        .order_by("-n", "reason")
+        .first()
+    )
+    if not found:
+        return None
+    message = found["reason"].removeprefix(_ERROR_PREFIX).strip()[:_FAILURE_CHARS]
+    return {
+        "message": message,
+        "every": found["n"] == failed.count(),
+        "ai_providers": message in jev_key_messages(),
+    }
 
 
 def _stalled(task, status: str, data: dict, progress: dict) -> bool:
@@ -296,7 +363,7 @@ def _summary_key(task, run, status: str, view) -> str:
         f"{task.id}:{status}:{run.answers_version}:{view.unit}:"
         f"{','.join(view.config_ids)}:{view.tz.key}"
     )
-    return "ie-summary:v9:" + hashlib.sha1(raw.encode()).hexdigest()
+    return "ie-summary:v10:" + hashlib.sha1(raw.encode()).hexdigest()
 
 
 def _summary_payload(task, run, view, questions, price: float | None) -> dict:
@@ -305,18 +372,23 @@ def _summary_payload(task, run, view, questions, price: float | None) -> dict:
     data = summary_service.summary(view)
     progress = data.pop("_progress")
     status = _status(task, run)
-    # Until the task's first step stores the rows, the run is all pending.
-    preparing = status in ACTIVE and data.pop("rows_stored") == 0
-    data.pop("rows_stored", None)
+    # Until the task's first step stores the rows, every row it asked for is
+    # still to read: while it starts, and when it was paused (it resumes
+    # from that step) or cancelled before the step ran.
+    unpicked = data.pop("rows_stored") == 0
+    preparing = unpicked and status in (*ACTIVE, EvalTaskStatus.PAUSED)
     requested = run.rows_requested
     if preparing:
         data.update(total=requested, pending=requested)
+    elif unpicked and status == "cancelled":
+        data.update(total=requested, not_read=requested)
     data["preparing"] = preparing
     if _stalled(task, status, data, progress):
         status = STALLED
     in_flight = None
     if status == EvalTaskStatus.PAUSED:
-        in_flight = _in_flight(task)
+        # In rows, as the page counts its progress.
+        in_flight = _in_flight(task, view.row_type)
         if in_flight:
             status = PAUSING
     running = status in ACTIVE
@@ -374,6 +446,15 @@ def _summary_payload(task, run, view, questions, price: float | None) -> dict:
         ),
         "in_flight": in_flight,
         "waiting_s": waiting_s,
+        # A run that finished without one answer (every row failed: a
+        # rejected key, say) says why at the top, not only in each row.
+        "failure": (
+            _failure(task, view)
+            if status == EvalTaskStatus.COMPLETED
+            and data["failed"]
+            and not progress["answers_given"]
+            else None
+        ),
         "sample": {
             "population": population,
             "population_is_lower_bound": run.population_is_lower_bound,

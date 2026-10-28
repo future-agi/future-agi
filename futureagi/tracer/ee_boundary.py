@@ -196,6 +196,16 @@ def jev_credits_per_answer() -> float | None:
     return float(credits_per_answer())
 
 
+def jev_key_messages() -> frozenset[str]:
+    """What a failed Jev answer says when the organization's TypeSafe key is
+    missing or TypeSafe rejected it; empty without ee."""
+    try:
+        from ee.jev.errors import key_messages
+    except ImportError:
+        return frozenset()
+    return key_messages()
+
+
 def check_usage(org_id: str, event_type: str, amount: float):
     """Billing's cap for ``amount`` of ``event_type``, the organization's
     pause budgets included: its CheckResult, or NOT_BILLED where this
