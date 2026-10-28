@@ -75,6 +75,17 @@ type ResponsesProvider interface {
 	StreamResponse(ctx context.Context, reqBody []byte) (io.ReadCloser, int, error)
 }
 
+// ChatViaResponsesProvider is implemented by providers that can carry a chat
+// request over the Responses API, for a model that refuses it on chat
+// completions. Routes that translate their own dialect into a chat request use
+// it; /v1/chat/completions forwards the caller's request as sent.
+type ChatViaResponsesProvider interface {
+	// ChatNeedsResponses reports whether req must go to the Responses API.
+	ChatNeedsResponses(req *models.ChatCompletionRequest) bool
+	ChatCompletionViaResponses(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error)
+	StreamChatCompletionViaResponses(ctx context.Context, req *models.ChatCompletionRequest) (<-chan models.StreamChunk, <-chan error)
+}
+
 // TranslationProvider is implemented by providers that support audio translation.
 type TranslationProvider interface {
 	CreateTranslation(ctx context.Context, req *models.TranslationRequest) (*models.TranslationResponse, error)

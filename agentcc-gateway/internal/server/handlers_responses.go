@@ -94,25 +94,17 @@ func (h *Handlers) CreateResponse(w http.ResponseWriter, r *http.Request) {
 	var provider providers.Provider
 	var orgModelResolved bool
 
-	if orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
-		for providerID, provCfg := range orgCfg.Providers {
-			if provCfg == nil || !provCfg.Enabled || !provCfg.HasCredentials() {
-				continue
-			}
-			for _, m := range provCfg.Models {
-				if orgModelMatches(m, req.Model, providerID) {
-					orgProvider, err := h.orgProviderCache.GetOrCreateWithTenantConfig(orgID, providerID, provCfg.APIKey, provCfg)
-					if err == nil {
-						provider = orgProvider
-						rc.Provider = providerID
-						rc.Metadata["org_provider_model_match"] = req.Model
-						orgModelResolved = true
-						break
-					}
+	if orgID != "" {
+		if orgProvider, providerID, upstreamModel, _ := h.orgProviderFor(orgID, orgCfg, req.Model); orgProvider != nil {
+			provider = orgProvider
+			rc.Provider = providerID
+			rc.Metadata["org_provider_model_match"] = req.Model
+			orgModelResolved = true
+			if upstreamModel != req.Model {
+				if body, err = rewriteRequestModel(body, upstreamModel); err != nil {
+					models.WriteError(w, models.ErrBadRequest("invalid_json", "Invalid JSON in request body: "+err.Error()))
+					return
 				}
-			}
-			if orgModelResolved {
-				break
 			}
 		}
 	}

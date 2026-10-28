@@ -454,7 +454,7 @@ func (h *Handlers) handleGenAINonStreamViaCanonical(
 	var canonicalResp *models.ChatCompletionResponse
 	err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
 		var callErr error
-		canonicalResp, callErr = provider.ChatCompletion(ctx, canonicalReq)
+		canonicalResp, callErr = translatedChatCompletion(ctx, provider, canonicalReq)
 		if callErr != nil {
 			return callErr
 		}
@@ -550,7 +550,7 @@ func (h *Handlers) handleGenAIStreamViaCanonical(
 	var errCh <-chan error
 
 	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
-		rawChunkCh, errCh = provider.StreamChatCompletion(ctx, canonicalReq)
+		rawChunkCh, errCh = translatedStreamChatCompletion(ctx, provider, canonicalReq)
 		return nil
 	}); err != nil {
 		writeGenAIErrorFromError(w, err)
