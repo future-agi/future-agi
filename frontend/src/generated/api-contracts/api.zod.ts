@@ -58032,6 +58032,7 @@ export const TracerInstantEvalRunsListResponse = zod.object({
         answered: zod.number(),
         pending: zod.number(),
         finished_at: zod.string().min(1).optional(),
+        last_activity_at: zod.string().min(1).optional(),
         created_by: zod.string().min(1).optional(),
         credits_estimate: zod.number().optional(),
         population: zod.number().optional(),

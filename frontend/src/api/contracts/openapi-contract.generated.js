@@ -116384,6 +116384,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
           "x-nullable": true,
         },
+        last_activity_at: {
+          title: "Last activity at",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
         created_by: {
           title: "Created by",
           type: "string",

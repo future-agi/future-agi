@@ -27626,6 +27626,8 @@ export interface InstantEvalRunApi {
   /** @minLength 1 */
   finished_at?: string;
   /** @minLength 1 */
+  last_activity_at?: string;
+  /** @minLength 1 */
   created_by?: string;
   credits_estimate?: number;
   population?: number;
