@@ -706,7 +706,7 @@ def test_finish_never_completes_or_charges_a_run_failed_meanwhile(
     pipeline.organise(str(run.id))
     before = InsightRun.objects.get(id=run.id).cost_usd
 
-    def write(run, result, units, contents, spend):
+    def write(run, result, units, contents, spend, **_):
         InsightRun.objects.filter(id=run.id).update(status="failed", error="lost")
         spend.add(0.25)
         return {
@@ -940,30 +940,41 @@ class InlinePool:
     def __exit__(self, *exc):
         return False
 
-    def map(self, fn, items):
-        return [fn(item) for item in items]
+    def submit(self, fn, *args):
+        from concurrent.futures import Future
+
+        future = Future()
+        future.set_result(fn(*args))
+        return future
+
+
+@pytest.fixture
+def charged(monkeypatch):
+    """What billing was asked to charge: (org, USD, source, run id)."""
+    from ee.agenthub.insights import billing
+
+    calls = []
+
+    def charge(org_id, cost_usd, *, source, source_id, event_id=None, **_):
+        calls.append((str(org_id), round(cost_usd, 6), source, source_id))
+        return cost_usd
+
+    monkeypatch.setattr(billing, "charge", charge)
+    return calls
 
 
 @pytest.mark.django_db
 def test_a_stopped_run_is_charged_the_units_it_read_and_no_more(
-    report, user, model, loaded, monkeypatch
+    report, user, model, loaded, monkeypatch, charged
 ):
-    """Stopped during its second batch, after k = 3 units (two in the first
-    batch, one in the second): the stop charges what the run had spent, the
-    batch under way adds its one unit when it ends, and nothing else is
-    charged, however often it is stopped. A run that fails on its own still
-    isn't charged."""
-    from ee.agenthub.insights import billing
+    """Stopped during its second batch, while its third unit is read (two
+    read in the first batch): the stop charges those two, once, however
+    often it is stopped. The third, returning after the stop, is recorded
+    on the run but neither saved nor charged, and the batch fails so no
+    further batch starts. A run that fails on its own still isn't charged."""
     from ee.agenthub.insights.llm import Spend
 
     UNIT_COST = 0.01
-    charged = []
-
-    def charge(org_id, cost_usd, *, source, source_id, event_id=None, **_):
-        charged.append((str(org_id), round(cost_usd, 6), source, source_id))
-        return cost_usd
-
-    monkeypatch.setattr(billing, "charge", charge)
     monkeypatch.setattr(pipeline, "ThreadPoolExecutor", InlinePool)
     run = pipeline.create_run(
         config=report,
@@ -987,20 +998,24 @@ def test_a_stopped_run_is_charged_the_units_it_read_and_no_more(
     monkeypatch.setattr(facets, "chat_json", extract_and_pay)
     pipeline.extract_batch(str(run.id), ready[:2])
     assert charged == []
-    pipeline.extract_batch(str(run.id), ready[2:])
+    with pytest.raises(pipeline.InsightRunNotRunning):
+        pipeline.extract_batch(str(run.id), ready[2:])
 
     assert len(read) == 3
     org, run_id = str(run.organization_id), str(run.id)
-    assert charged == [
-        (org, 0.02, "insights_report", run_id),
-        (org, 0.01, "insights_report", run_id),
-    ]
+    assert charged == [(org, 0.02, "insights_report", run_id)]
     assert not pipeline.stop(run_id, "Stopped by Bo.")
     with pytest.raises(pipeline.InsightRunNotRunning):
         pipeline.organise(run_id)
-    assert len(charged) == 2
+    assert len(charged) == 1
     run.refresh_from_db()
+    statuses = sorted(
+        InsightUnit.objects.filter(run=run).values_list("status", flat=True)
+    )
+    assert statuses == ["done"] * 2 + ["pending"] * 4
+    assert run.progress["done"] == 2
     assert run.cost_usd == pytest.approx(3 * UNIT_COST)
+    assert run.settings[pipeline.SPENT_AFTER_STOP] == pytest.approx(UNIT_COST)
 
     # Failed on its own, with spend added after: not charged.
     other = pipeline.create_run(
@@ -1014,53 +1029,145 @@ def test_a_stopped_run_is_charged_the_units_it_read_and_no_more(
     spend = Spend()
     spend.add(0.5)
     pipeline.add_spend(str(other.id), spend)
-    assert len(charged) == 2
+    assert len(charged) == 1
+    other.refresh_from_db()
+    assert pipeline.SPENT_AFTER_STOP not in other.settings
 
 
 @pytest.mark.django_db
-def test_a_batch_under_way_is_in_flight_until_its_units_are_saved(
+def test_progress_and_spend_move_as_each_unit_returns(
     report, user, model, loaded, monkeypatch
 ):
-    """Stopped while a batch reads: the run fails at once with that batch
-    still in flight and none of its units saved yet; when the batch ends,
-    the unit it had started is saved and the batch is no longer in flight,
-    so the stopped run's counts are final from then on. A batch reaching a
-    run already stopped reads nothing and is never in flight."""
-    monkeypatch.setattr(pipeline, "ThreadPoolExecutor", InlinePool)
+    """The built-in engine saves each unit, with what it cost, as its call
+    returns: the page counts 1, 2, 3 of 3, not 0 until the batch ends."""
+    monkeypatch.setattr(pipeline, "EXTRACT_WORKERS", 1)
     run = pipeline.create_run(
         config=report,
         scope={"window": WINDOW, "preset": "Custom"},
-        population=[{"id": unit_id} for unit_id in ids(order=4)],
-        sample_size=4,
+        population=[{"id": unit_id} for unit_id in ids(order=3)],
+        sample_size=3,
         user=user,
     )
     ready = pipeline.prepare(str(run.id))
     fake = facets.chat_json
-    seen = []
+    saved = threading.Semaphore(0)
+    started = []
 
-    def stop_then_read(system, prompt, **kwargs):
-        if not seen:
-            assert pipeline.stop(str(run.id), "Stopped by Ada.")
-            stopped = InsightRun.objects.get(id=run.id)
-            seen.append(
-                (
-                    stopped.status,
-                    list(stopped.progress.get(pipeline.IN_FLIGHT) or {}),
-                    InsightUnit.objects.filter(run=run, status="done").count(),
-                )
-            )
+    def read_after_the_last_is_saved(system, prompt, *, spend=None, **kwargs):
+        # On the pool's thread: each unit after the first waits until the
+        # one before it is saved.
+        if started:
+            assert saved.acquire(timeout=10)
+        started.append(1)
+        spend.add(0.01)
         return fake(system, prompt, **kwargs)
 
-    monkeypatch.setattr(facets, "chat_json", stop_then_read)
-    pipeline.extract_batch(str(run.id), ready[:2])
+    seen = []
+    save_read = pipeline._save_read
 
-    assert seen == [("failed", [str(min(ready[:2]))], 0)]
+    def save_and_look(run_id, units, spend):
+        kept = save_read(run_id, units, spend)
+        now = InsightRun.objects.get(id=run_id)
+        seen.append((now.progress["done"], round(now.cost_usd, 6)))
+        saved.release()
+        return kept
+
+    monkeypatch.setattr(facets, "chat_json", read_after_the_last_is_saved)
+    monkeypatch.setattr(pipeline, "_save_read", save_and_look)
+    pipeline.extract_batch(str(run.id), ready)
+    assert seen == [(1, 0.01), (2, 0.02), (3, 0.03)]
+
+
+@pytest.mark.django_db
+def test_a_stop_between_agent_calls_charges_the_first_call_only(
+    report, user, model, loaded, monkeypatch, charged
+):
+    """An insights-agent/v2 batch of 16 sessions reads in two calls. The
+    first returns: its 8 units and its spend are saved at once, so the page
+    counts 8 of 16. The run is stopped then, and charged that call's spend
+    only. The second call, returning after the stop, is recorded on the run
+    but neither saved nor charged, and the batch fails so no further batch
+    starts."""
+    from ee.agenthub.insights import broker, evidence_store
+
+    run = pipeline.create_run(
+        config=report,
+        scope={"window": WINDOW, "preset": "Custom"},
+        population=[{"id": unit_id} for unit_id in ids(order=16)],
+        sample_size=16,
+        user=user,
+    )
+    ready = pipeline.prepare(str(run.id))
     run.refresh_from_db()
-    assert run.progress[pipeline.IN_FLIGHT] == {}
-    assert InsightUnit.objects.filter(run=run, status="done").count() == 1
+    run.settings = {
+        **run.settings,
+        "engine": {"kind": "omega", "contract": agent.CONTRACT_V2},
+    }
+    run.save(update_fields=["settings"])
+    monkeypatch.setattr(evidence_store, "sweep", lambda: None)
+    monkeypatch.setattr(
+        broker,
+        "prebuild",
+        lambda run, rows, **_: broker.Prebuilt([str(row.pk) for row in rows], {}),
+    )
+    arrived, lock, released = [], threading.Lock(), threading.Event()
+    asked_after_stop = []
 
+    def read_units_v2(run, context, keys, attributes, spend, *, engine, cancelled):
+        # On the pool's threads: the second call to arrive returns only once
+        # the run is stopped.
+        with lock:
+            arrived.append(keys)
+            second = len(arrived) == 2
+        if second:
+            assert released.wait(10)
+            asked_after_stop.append(cancelled())
+        spend.add(0.01 * len(keys))
+        return {
+            key: {
+                "facets": facets.normalise(
+                    {
+                        "summary": f"Unit {key}",
+                        "lens_answer": LENS_ANSWERS["order"],
+                        "topic": NAMES["order"],
+                        "failure_present": True,
+                    },
+                    [],
+                ),
+                "coverage": {},
+            }
+            for key in keys
+        }
+
+    seen = []
+    save_read = pipeline._save_read
+
+    def save_then_stop(run_id, units, spend):
+        kept = save_read(run_id, units, spend)
+        if not seen:
+            now = InsightRun.objects.get(id=run_id)
+            seen.append((now.progress["done"], round(now.cost_usd, 6)))
+            assert pipeline.stop(run_id, "Stopped by Ada.")
+            seen.append(list(charged))
+            released.set()
+        return kept
+
+    monkeypatch.setattr(agent, "read_units_v2", read_units_v2)
+    monkeypatch.setattr(pipeline, "_save_read", save_then_stop)
     with pytest.raises(pipeline.InsightRunNotRunning):
-        pipeline.extract_batch(str(run.id), ready[2:])
+        pipeline.extract_batch(str(run.id), ready)
+
+    org, run_id = str(run.organization_id), str(run.id)
+    assert sorted(len(keys) for keys in arrived) == [8, 8]
+    assert seen == [(8, 0.08), [(org, 0.08, "insights_report", run_id)]]
+    # The second call saw the stop: one under way over HTTP is given up.
+    assert asked_after_stop == [True]
+    assert charged == [(org, 0.08, "insights_report", run_id)]
     run.refresh_from_db()
-    assert run.progress[pipeline.IN_FLIGHT] == {}
-    assert len(seen) == 1
+    statuses = sorted(
+        InsightUnit.objects.filter(run=run).values_list("status", flat=True)
+    )
+    assert statuses == ["done"] * 8 + ["pending"] * 8
+    assert run.progress["done"] == 8
+    assert run.cost_usd == pytest.approx(0.16)
+    assert run.settings[pipeline.SPENT_AFTER_STOP] == pytest.approx(0.08)

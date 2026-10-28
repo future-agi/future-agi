@@ -30,6 +30,8 @@ import json
 import math
 import os
 import re
+import socket
+import threading
 import time
 
 import httpx
@@ -81,6 +83,13 @@ def engine() -> dict:
     if enabled():
         return {"kind": "omega", "version": ENGINE_VERSION}
     return {"kind": "builtin", "version": BUILTIN_ENGINE_VERSION}
+
+
+class InsightCallCancelled(InsightModelError):
+    """A call given up because its run was stopped."""
+
+    def __init__(self):
+        super().__init__("This report was stopped.")
 
 
 class InsightEngineMismatch(InsightModelError):
@@ -240,15 +249,92 @@ _LOST_REPLY = (httpx.ReadTimeout, httpx.ReadError, httpx.RemoteProtocolError)
 LOST_REPLY_OUTPUT_TOKENS = 4_096
 
 
+# How often a call its run may stop asks whether it has, and how long a call
+# given up then waits for its connection to close.
+CANCEL_POLL_S = 1.0
+CANCEL_GRACE_S = 5.0
+
+
+def _shut(stream) -> None:
+    """Shut a connection's socket (the plain one's shutdown, even under TLS):
+    it wakes the read waiting on the reply, and the agent sees its caller
+    go."""
+    try:
+        socket.socket.shutdown(stream.get_extra_info("socket"), socket.SHUT_RDWR)
+    except (OSError, TypeError):
+        pass
+
+
+def _send_cancellable(url, payload, headers, timeout, cancelled):
+    """The request on a thread of its own, given up as soon as
+    ``cancelled()`` says so: its connection is shut, and the agent stops the
+    work of a request whose caller goes away (its model calls are aborted).
+    Raises InsightCallCancelled."""
+    streams, outcome, gone = [], {}, threading.Event()
+
+    def trace(event, info):
+        # The connection's stream once it is open (and once TLS wraps it);
+        # one opened after the call was given up is shut at once.
+        stream = info.get("return_value") if event.endswith(".complete") else None
+        if hasattr(stream, "get_extra_info"):
+            streams.append(stream)
+            if gone.is_set():
+                _shut(stream)
+
+    def call():
+        try:
+            with (
+                httpx.Client(timeout=timeout) as client,
+                client.stream(
+                    "POST",
+                    url,
+                    json=payload,
+                    headers=headers,
+                    extensions={"trace": trace},
+                ) as response,
+            ):
+                outcome["reply"] = response.status_code, _bounded_body(response)
+        except Exception as exc:
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=call, name="insights-agent-call", daemon=True)
+    worker.start()
+    while True:
+        worker.join(CANCEL_POLL_S)
+        if not worker.is_alive():
+            break
+        if cancelled():
+            gone.set()
+            for stream in list(streams):
+                _shut(stream)
+            worker.join(CANCEL_GRACE_S)
+            raise InsightCallCancelled()
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["reply"]
+
+
 def _send(
-    path: str, payload: dict, headers: dict, spend: Spend | None = None
+    path: str,
+    payload: dict,
+    headers: dict,
+    spend: Spend | None = None,
+    cancelled=None,
 ) -> tuple[int, bytes]:
     url = _setting("INSIGHTS_AGENT_URL").rstrip("/") + path
     try:
+        if cancelled is not None:
+            return _send_cancellable(url, payload, headers, TIMEOUTS[path], cancelled)
         with httpx.stream(
             "POST", url, json=payload, headers=headers, timeout=TIMEOUTS[path]
         ) as response:
             return response.status_code, _bounded_body(response)
+    except InsightCallCancelled:
+        # What the agent spent on it is never reported: estimated, as for a
+        # lost reply, and recorded on the stopped run, never charged.
+        logger.info("insight_agent_call_cancelled", path=path)
+        _add_lost_reply(spend, payload)
+        raise
     except httpx.HTTPError as exc:
         logger.warning("insight_agent_unreachable", path=path, error=str(exc)[:200])
         if isinstance(exc, _LOST_REPLY):
@@ -270,17 +356,26 @@ def _add_lost_reply(spend: Spend | None, payload: dict) -> None:
     spend.add(cost, tokens_in, LOST_REPLY_OUTPUT_TOKENS, unpriced=True)
 
 
-def _post(path: str, payload: dict, spend: Spend | None = None, *, engine=None) -> dict:
+def _post(
+    path: str,
+    payload: dict,
+    spend: Spend | None = None,
+    *,
+    engine=None,
+    cancelled=None,
+) -> dict:
     """One agent call. What it cost is added to ``spend`` from every reply
     that says, errors included. A pinned run's call names its engine; an
     agent running another one is asked again after each of
-    ``MISMATCH_RETRY_DELAYS``, then the run fails (InsightEngineMismatch)."""
+    ``MISMATCH_RETRY_DELAYS``, then the run fails (InsightEngineMismatch).
+    A call of a run that may be stopped is given up when ``cancelled()``
+    says it was (InsightCallCancelled)."""
     headers = {"Authorization": f"Bearer {_setting('INSIGHTS_AGENT_SECRET')}"}
     pin = (engine or {}).get("engine_pin")
     if pin:
         headers[ENGINE_HEADER] = pin
     for attempt in range(len(MISMATCH_RETRY_DELAYS) + 1):
-        status_code, content = _send(path, payload, headers, spend)
+        status_code, content = _send(path, payload, headers, spend, cancelled)
         try:
             body = json.loads(content)
         except ValueError:
@@ -585,6 +680,7 @@ def read_units(
     spend: Spend,
     *,
     engine: dict | None = None,
+    cancelled=None,
 ) -> dict[str, dict]:
     """``{key: {"facets": ..., "evidence": [...], "error": str|None}}``."""
     body = _post(
@@ -592,6 +688,7 @@ def read_units(
         {"run": context, "units": [{"key": k, "content": c} for k, c in units]},
         spend,
         engine=engine,
+        cancelled=cancelled,
     )
     contents = dict(units)
     out: dict[str, dict] = {}
@@ -635,6 +732,7 @@ def read_units_v2(
     spend: Spend,
     *,
     engine: dict,
+    cancelled=None,
 ) -> dict[str, dict]:
     """Read up to eight units of a v2 run through the evidence broker:
     ``{key: {"facets": ..., "coverage": {...}} | {"error": str}}``. Keys are
@@ -657,6 +755,7 @@ def read_units_v2(
         },
         spend,
         engine=engine,
+        cancelled=cancelled,
     )
     out: dict[str, dict] = {}
     for item in body.get("units") or []:
@@ -705,12 +804,14 @@ def name_taxonomy(
     spend: Spend,
     *,
     engine: dict | None = None,
+    cancelled=None,
 ) -> dict:
     return _post(
         "/v1/name-taxonomy",
         {"run": context, "clusters": clusters, "target_top_count": target_top_count},
         spend,
         engine=engine,
+        cancelled=cancelled,
     )
 
 
@@ -728,8 +829,12 @@ def naming_audit(reply: dict, engine: dict) -> dict:
     return {}
 
 
-def analyse_report(payload: dict, spend: Spend, *, engine: dict | None = None) -> dict:
-    return _post("/v1/analyse-report", payload, spend, engine=engine)
+def analyse_report(
+    payload: dict, spend: Spend, *, engine: dict | None = None, cancelled=None
+) -> dict:
+    return _post(
+        "/v1/analyse-report", payload, spend, engine=engine, cancelled=cancelled
+    )
 
 
 def ask(payload: dict, spend: Spend, *, engine: dict | None = None) -> dict:

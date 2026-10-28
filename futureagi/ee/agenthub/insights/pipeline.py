@@ -18,13 +18,17 @@ facets, receipts and coverage (``facets["evidence"]``,
 are deleted when it finishes or fails.
 
 A stage works only on a run still running: one failed meanwhile (lost, or a
-stage that gave up) is never started again, read, completed or charged.
+stage that gave up) is never started again, read, completed or charged. Each
+read call's units are saved with what the call spent as it returns, so the
+run's count and spend move with the work, and a run stopped meanwhile keeps,
+and is charged for, only what had come back before the stop.
 """
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
+from functools import partial
 
 import structlog
 from django.db import transaction
@@ -150,6 +154,40 @@ def _flag_spend(run, spend: Spend) -> bool:
     return True
 
 
+# Model spend that reached a run after it was stopped (``settings``, USD):
+# the calls still under way then. Recorded, never charged.
+SPENT_AFTER_STOP = "spent_after_stop_usd"
+
+
+def _record_spend(run, spend: Spend) -> list[str]:
+    """Add a step's spend to its run, locked by the caller; the fields it
+    changed. Spend reaching a stopped run is also kept apart, under
+    SPENT_AFTER_STOP, and logged: Stop charged the work finished before it,
+    and what lands later is never charged."""
+    if not (spend.cost_usd or spend.unpriced):
+        return []
+    run.cost_usd = (run.cost_usd or 0) + spend.cost_usd
+    fields = ["cost_usd"]
+    if _flag_spend(run, spend):
+        fields.append("settings")
+    if _stopped(run):
+        settings = dict(run.settings or {})
+        settings[SPENT_AFTER_STOP] = round(
+            float(settings.get(SPENT_AFTER_STOP) or 0) + spend.cost_usd, 6
+        )
+        run.settings = settings
+        if "settings" not in fields:
+            fields.append("settings")
+        logger.info(
+            "insight_spend_after_stop",
+            run_id=str(run.id),
+            cost_usd=round(spend.cost_usd, 6),
+            calls=spend.calls,
+            unpriced=spend.unpriced,
+        )
+    return fields
+
+
 def add_spend(run_id, spend: Spend) -> None:
     """Add a step's model spend to its run (with its flags): what the agent
     reported for a call that failed is spend too."""
@@ -165,13 +203,7 @@ def add_spend(run_id, spend: Spend) -> None:
         if run is None:
             # Deleted meanwhile: nothing left to add it to.
             return
-        run.cost_usd = (run.cost_usd or 0) + spend.cost_usd
-        fields = ["cost_usd", "updated_at"]
-        if _flag_spend(run, spend):
-            fields.append("settings")
-        run.save(update_fields=fields)
-    if _stopped(run):
-        _charge_after_stop(run, spend)
+        run.save(update_fields=[*_record_spend(run, spend), "updated_at"])
 
 
 def set_progress(
@@ -376,66 +408,106 @@ def prepare(run_id: str) -> list[int]:
     return ready
 
 
-# The run's batches being read now (``progress["in_flight"]``: the batch's
-# first unit pk -> when it started). Stop ends the run at once, but the units
-# a batch had already started are still read and saved: the page waits for
-# them before it gives a stopped run's counts.
-IN_FLIGHT = "in_flight"
+# What reading a unit sets on it.
+READ_FIELDS = [
+    "facets",
+    "summary",
+    "lens_answer",
+    "topic",
+    "included",
+    "status",
+    "error",
+    "metrics",
+]
 
 
-def _note_in_flight(run_id, key: str, *, reading: bool) -> None:
-    """Add a batch to the run's in-flight batches (only while the run is
-    running: one stopped first reads nothing), or take it off. A retried
-    batch has the same key, so a lost attempt's entry goes with it."""
-    InsightRun, _ = _models()
+def _save_read(run_id, units: list, spend: Spend) -> bool:
+    """Save units a call just read with what the call spent, so the run's
+    count and spend move as each call returns. Under the run's lock, so a
+    Stop comes either after them (and charges them) or before: then they
+    aren't saved, a stopped run's counts being final, and their spend is
+    recorded but not charged (``_record_spend``). False when the run no
+    longer runs."""
+    InsightRun, InsightUnit = _models()
     with transaction.atomic():
         run = (
             InsightRun.no_workspace_objects.select_for_update()
             .filter(id=run_id)
             .first()
         )
-        if run is None or (reading and run.status != "running"):
-            return
-        progress = dict(run.progress or {})
-        batches = dict(progress.get(IN_FLIGHT) or {})
-        if reading:
-            batches[key] = timezone.now().isoformat()
-        elif batches.pop(key, None) is None:
-            return
-        progress[IN_FLIGHT] = batches
-        run.progress = progress
-        run.save(update_fields=["progress", "updated_at"])
+        if run is None:
+            return False
+        running = run.status == "running"
+        fields = []
+        if running and units:
+            InsightUnit.objects.bulk_update(units, READ_FIELDS, batch_size=100)
+            progress = dict(run.progress or {})
+            progress["done"] = InsightUnit.objects.filter(
+                run_id=run_id, status__in=["done", "failed"]
+            ).count()
+            progress["updated_at"] = timezone.now().isoformat()
+            recent = [u.summary for u in units if u.summary][-6:]
+            if recent:
+                progress["recent"] = (progress.get("recent", []) + recent)[-8:]
+            run.progress = progress
+            fields.append("progress")
+        fields += _record_spend(run, spend)
+        if fields:
+            run.save(update_fields=[*fields, "updated_at"])
+    if spend.calls or spend.cost_usd:
+        _log_spend(run_id, "read", spend)
+    return running
 
 
 def extract_batch(run_id: str, unit_pks: list[int]) -> dict:
-    """Read a batch of units, listed in the run's in-flight batches until
-    its units are saved."""
-    if not unit_pks:
-        return _extract_batch(run_id, unit_pks)
-    key = str(min(unit_pks))
-    _note_in_flight(run_id, key, reading=True)
-    try:
-        return _extract_batch(run_id, unit_pks)
-    finally:
-        _note_in_flight(run_id, key, reading=False)
-
-
-def _extract_batch(run_id: str, unit_pks: list[int]) -> dict:
+    """Read a batch of units, saving each call's units as it returns
+    (``_save_read``). A batch of a run stopped meanwhile starts no further
+    call, gives up its agent calls under way (a built-in model call runs to
+    its end, then is dropped) and fails, so the workflow starts no further
+    batch."""
     InsightRun, InsightUnit = _models()
     run = InsightRun.objects.get(id=run_id)
     # Nothing is read, nor paid for, for a run that has stopped.
     _require_running(run)
     s = run.settings
     attributes = s.get("attributes") or []
-    spend = Spend()
     units = list(InsightUnit.objects.filter(run=run, pk__in=unit_pks, status="pending"))
+    saved: list = []
+
+    def save(read: list, spend: Spend) -> None:
+        if _save_read(run_id, read, spend):
+            saved.extend(read)
+
+    engine = insight_agent.pinned(s)
+    if insight_agent.is_v2(engine):
+        error = _read_with_agent_v2(run, units, attributes, engine, save)
+    elif insight_agent.is_omega(engine):
+        error = _read_with_agent(run, units, attributes, engine, save)
+    else:
+        error = _read_builtin(run, units, attributes, save)
+    run.refresh_from_db(fields=["status"])
+    _require_running(run)
+    if error is not None:
+        # What was read is kept; Temporal retries the units still pending,
+        # or the run fails on an engine mismatch or a setup error.
+        raise error
+    return {
+        "done": len(saved),
+        "failed": sum(1 for u in saved if u.status == "failed"),
+    }
+
+
+def _read_builtin(run, units, attributes, save):
+    """Each unit on its own model call, EXTRACT_WORKERS at a time, saved as
+    it returns. After a setup error no other call can succeed, and after
+    Stop none is wanted: the units not started yet stay pending. Returns the
+    setup error, if any."""
+    s = run.settings
     stopped: list[InsightModelSetupError] = []
 
-    def one(unit):
-        # After a setup error no other call can succeed, and after Stop none
-        # is wanted: the units not started yet stay pending.
-        if stopped or stop_requested(run_id):
-            return unit
+    def one(unit, spend):
+        if stopped or stop_requested(run.id):
+            return None
         try:
             facets = extract(
                 run.unit,
@@ -451,67 +523,21 @@ def _extract_batch(run_id: str, unit_pks: list[int]) -> dict:
             _apply_facets(unit, facets, s.get("lens", "usage"), attributes)
         except InsightModelSetupError as exc:
             stopped.append(exc)
+            return None
         except InsightModelError as exc:
             unit.status = "failed"
             unit.error = str(exc)
         return unit
 
-    engine = insight_agent.pinned(s)
-    error = None
-    try:
-        if insight_agent.is_v2(engine):
-            finished, error = _read_with_agent_v2(run, units, attributes, spend, engine)
-        elif insight_agent.is_omega(engine):
-            finished = _read_with_agent(run, units, attributes, spend, engine)
-        else:
-            with ThreadPoolExecutor(max_workers=EXTRACT_WORKERS) as pool:
-                finished = list(pool.map(one, units))
-            error = stopped[0] if stopped else None
-    except InsightModelError:
-        add_spend(run_id, spend)
-        raise
-    InsightUnit.objects.bulk_update(
-        finished,
-        [
-            "facets",
-            "summary",
-            "lens_answer",
-            "topic",
-            "included",
-            "status",
-            "error",
-            "metrics",
-        ],
-        batch_size=100,
-    )
-    with transaction.atomic():
-        locked = InsightRun.objects.select_for_update().get(id=run_id)
-        done = InsightUnit.objects.filter(
-            run_id=run_id, status__in=["done", "failed"]
-        ).count()
-        progress = dict(locked.progress or {})
-        progress["done"] = done
-        progress["updated_at"] = timezone.now().isoformat()
-        recent = [u.summary for u in finished if u.summary][-6:]
-        if recent:
-            progress["recent"] = (progress.get("recent", []) + recent)[-8:]
-        locked.progress = progress
-        locked.cost_usd = (locked.cost_usd or 0) + spend.cost_usd
-        fields = ["progress", "cost_usd", "updated_at"]
-        if _flag_spend(locked, spend):
-            fields.append("settings")
-        locked.save(update_fields=fields)
-    if _stopped(locked):
-        _charge_after_stop(locked, spend)
-    _log_spend(run_id, "read", spend)
-    if error is not None:
-        # What was read is kept; Temporal retries the units still pending,
-        # or the run fails on an engine mismatch or a setup error.
-        raise error
-    return {
-        "done": len(finished),
-        "failed": sum(1 for u in finished if u.status == "failed"),
-    }
+    with ThreadPoolExecutor(max_workers=EXTRACT_WORKERS) as pool:
+        pending = {}
+        for unit in units:
+            spend = Spend()
+            pending[pool.submit(one, unit, spend)] = spend
+        for future in as_completed(pending):
+            unit = future.result()
+            save([unit] if unit is not None else [], pending[future])
+    return stopped[0] if stopped else None
 
 
 def _apply_facets(unit, facets: dict, lens_key: str, attributes) -> None:
@@ -523,18 +549,24 @@ def _apply_facets(unit, facets: dict, lens_key: str, attributes) -> None:
     unit.status = "done"
 
 
-def _read_with_agent(run, units, attributes, spend, engine) -> list:
+def _read_with_agent(run, units, attributes, engine, save):
     """One agent call reads the batch; a unit it couldn't read fails alone.
-    An unreachable agent raises, so Temporal retries the batch."""
+    An unreachable agent is returned, so Temporal retries the batch."""
     lens_key = run.settings.get("lens", "usage")
     context = insight_agent.run_context(run.settings, run.unit, run.id)
-    results = insight_agent.read_units(
-        context,
-        [(str(u.pk), u.content) for u in units],
-        attributes,
-        spend,
-        engine=engine,
-    )
+    spend = Spend()
+    try:
+        results = insight_agent.read_units(
+            context,
+            [(str(u.pk), u.content) for u in units],
+            attributes,
+            spend,
+            engine=engine,
+            cancelled=_stop_check(run.id),
+        )
+    except InsightModelError as exc:
+        save([], spend)
+        return exc
     for unit in units:
         result = results.get(str(unit.pk), {})
         if result.get("error"):
@@ -542,22 +574,26 @@ def _read_with_agent(run, units, attributes, spend, engine) -> list:
             unit.error = result["error"]
             continue
         _apply_facets(unit, result["facets"], lens_key, attributes)
-    return units
+    save(units, spend)
+    return None
 
 
-def _read_with_agent_v2(run, units, attributes, spend, engine):
+def _read_with_agent_v2(run, units, attributes, engine, save):
     """The batch in calls of up to V2_UNITS_PER_CALL units, each through its
     own capability. Before each call its units' snapshots are built into the
     run's evidence store (``broker.prebuild``, a few at a time for the whole
     batch, the first call's first): a unit that can't be built fails with
     the builder's code (``metrics["evidence_error"]``) and is not sent, and a
-    unit the agent couldn't read fails alone. Returns the units read and the
+    unit the agent couldn't read fails alone. Each call's units are saved
+    with what it spent as it returns (``save``). A call not started when the
+    run is stopped is never made, and one under way is given up. Returns the
     first error of a call that failed (one that fails the run before one
     Temporal may retry): the units of that call stay pending."""
     from ee.agenthub.insights import broker, evidence_store
 
     lens_key = run.settings.get("lens", "usage")
     context = insight_agent.run_context(run.settings, run.unit, run.id)
+    cancelled = _stop_check(run.id)
     by_key = {str(unit.pk): unit for unit in units}
     keys = list(by_key)
     calls = [
@@ -565,7 +601,9 @@ def _read_with_agent_v2(run, units, attributes, spend, engine):
         for start in range(0, len(keys), V2_UNITS_PER_CALL)
     ]
 
-    def read(call, builders):
+    def read(call, spend, builders):
+        if cancelled():
+            return None
         built = broker.prebuild(
             run, [by_key[key] for key in call], stage="read", pool=builders
         )
@@ -579,12 +617,18 @@ def _read_with_agent_v2(run, units, attributes, spend, engine):
         if built.ready:
             results.update(
                 insight_agent.read_units_v2(
-                    run, context, built.ready, attributes, spend, engine=engine
+                    run,
+                    context,
+                    built.ready,
+                    attributes,
+                    spend,
+                    engine=engine,
+                    cancelled=cancelled,
                 )
             )
         return results
 
-    finished, error = [], None
+    error = None
     # Swept here, on this stage's own thread: the calls' pre-builds share a
     # pool and don't.
     evidence_store.sweep()
@@ -592,14 +636,23 @@ def _read_with_agent_v2(run, units, attributes, spend, engine):
         ThreadPoolExecutor(max_workers=broker.PREBUILD_WORKERS) as builders,
         ThreadPoolExecutor(max_workers=V2_PARALLEL_CALLS) as pool,
     ):
-        futures = [pool.submit(read, call, builders) for call in calls]
-        for call, future in zip(calls, futures, strict=True):
+        pending = {}
+        for call in calls:
+            spend = Spend()
+            pending[pool.submit(read, call, spend, builders)] = (call, spend)
+        for future in as_completed(pending):
+            call, spend = pending[future]
             try:
                 results = future.result()
             except InsightModelError as exc:
                 if error is None or (error.unavailable and not exc.unavailable):
                     error = exc
+                save([], spend)
                 continue
+            if results is None:
+                # Not made: the run was stopped first.
+                continue
+            read = []
             for key in call:
                 unit, result = by_key[key], results[key]
                 if result.get("error"):
@@ -616,8 +669,9 @@ def _read_with_agent_v2(run, units, attributes, spend, engine):
                         **(unit.metrics or {}),
                         "coverage": result["coverage"],
                     }
-                finished.append(unit)
-    return finished, error
+                read.append(unit)
+            save(read, spend)
+    return error
 
 
 def retry_failed(run_id: str) -> list[int]:
@@ -654,7 +708,12 @@ def _namer(run, spend, audit: dict):
 
     def name(clusters, target):
         reply = insight_agent.name_taxonomy(
-            context, clusters, target, spend, engine=engine
+            context,
+            clusters,
+            target,
+            spend,
+            engine=engine,
+            cancelled=_stop_check(run.id),
         )
         audit.update(insight_agent.naming_audit(reply, engine))
         return reply
@@ -710,7 +769,8 @@ def organise(run_id: str) -> dict:
     run.result = result
     run.analysed_count = len(units)
     run.save(update_fields=["result", "analysed_count", "taxonomy_mode", "updated_at"])
-    # Under the run's lock, so a run stopped while it grouped is charged it.
+    # Under the run's lock: a run stopped while it grouped records it,
+    # uncharged.
     add_spend(run_id, spend)
     _log_spend(run_id, "organise", spend)
     return {"categories": len(tops), "subcategories": len(subs)}
@@ -946,7 +1006,9 @@ def finish(run_id: str) -> dict:
             "question": lens_for(s.get("lens", "usage")).title,
         }
     try:
-        summary = report.write(run, result, units, contents, spend)
+        summary = report.write(
+            run, result, units, contents, spend, cancelled=_stop_check(run_id)
+        )
         insights = summary.pop("category_insights", {}) or {}
         for category in result["categories"]:
             if category["id"] in insights:
@@ -1046,11 +1108,13 @@ STOP_KEY_TTL_S = 2 * 3600
 
 def stop(run_id, message: str) -> bool:
     """Stop a run still in flight: it fails with ``message`` and the code
-    STOPPED, and a stage under way reads no further units. False when it
-    had already ended. A stopped run is never completed, but the work it
-    did is charged, as a written report's is: its spend so far here, under
-    the run's lock, and the calls already under way as their stage adds
-    them (``_charge_after_stop``). A run that fails on its own isn't."""
+    STOPPED, a stage under way starts no further call and gives up the ones
+    under way (the agent's connections are closed, so it stops them too).
+    False when it had already ended. A stopped run is never completed; it is
+    charged, once, for the work finished before the stop: its spend so far,
+    under the run's lock, which every read waits on to save what it read.
+    What lands later is recorded on the run, not charged (``_record_spend``).
+    A run that fails on its own isn't charged."""
     from django.core.cache import cache
 
     InsightRun, _ = _models()
@@ -1063,12 +1127,13 @@ def stop(run_id, message: str) -> bool:
         if run is None:
             return False
         _end(run, message, STOPPED, timezone.now())
-    billing.charge_run(run)
     try:
         cache.set(STOP_KEY.format(run_id), True, timeout=STOP_KEY_TTL_S)
     except Exception:
-        # Each stage still checks the run before it starts.
+        # Each stage still checks the run before it starts, and nothing a
+        # call under way reads afterwards is saved or charged.
         logger.warning("insight_stop_flag_failed", run_id=str(run_id))
+    billing.charge_run(run)
     return True
 
 
@@ -1076,20 +1141,14 @@ def _stopped(run) -> bool:
     return run.status == "failed" and (run.progress or {}).get("error_code") == STOPPED
 
 
-def _charge_after_stop(run, spend: Spend) -> None:
-    """Charge spend a stage added to its run after the run was stopped (the
-    calls under way when it stopped), on its own: stop() charged what was
-    there before."""
-    billing.charge(
-        run.organization_id,
-        spend.cost_usd,
-        source="insights_report",
-        source_id=str(run.id),
-        spend=spend,
-    )
+def _stop_check(run_id):
+    """What an agent call of the run asks while it waits: whether to give
+    up, the run having been stopped."""
+    return partial(stop_requested, run_id)
 
 
 def stop_requested(run_id) -> bool:
+    """Whether someone stopped the run, as a stage under way asks it."""
     from django.core.cache import cache
 
     try:

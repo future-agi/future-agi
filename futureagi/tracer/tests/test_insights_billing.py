@@ -273,7 +273,7 @@ class TestCharging:
         # As its read stages leave it: finish completes only a running run.
         InsightRun.objects.filter(id=run_id).update(cost_usd=0.3, status="running")
 
-        def write(run, result, units, contents, spend):
+        def write(run, result, units, contents, spend, **_):
             spend.add(0.1)
             return {
                 "title": "t",

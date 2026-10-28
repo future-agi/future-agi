@@ -521,12 +521,23 @@ def _legacy_points(findings: list[dict]) -> list[dict]:
 
 
 def write(
-    run, result: dict, units: list[dict], contents: dict[str, str], spend: Spend
+    run,
+    result: dict,
+    units: list[dict],
+    contents: dict[str, str],
+    spend: Spend,
+    *,
+    cancelled=None,
 ) -> dict:
+    """The report's summary and findings. On the agent, ``cancelled`` (the
+    run was stopped) gives up its call."""
     engine = _engine(run)
     if insight_agent.is_omega(engine):
         reply = insight_agent.analyse_report(
-            agent_payload(run, result, units, contents), spend, engine=engine
+            agent_payload(run, result, units, contents),
+            spend,
+            engine=engine,
+            cancelled=cancelled,
         )
         return from_agent(
             reply, result, units, contents, v2=insight_agent.is_v2(engine)

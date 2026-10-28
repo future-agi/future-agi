@@ -2,10 +2,11 @@
 cost, times the platform markup, as AI credits.
 
 A report is charged once, when it is written; a failed report is not,
-unless someone stopped it: then the work it did is charged. A
-follow-up question, a drafted setup and a preview are charged when they
-answer. Before any of them runs, the organization's credit cap is checked
-against an estimate. Emits are no-ops where billing is off (OSS, self-hosted).
+unless someone stopped it: then the work finished before the stop is
+charged, once, and nothing that lands after it. A follow-up question, a
+drafted setup and a preview are charged when they answer. Before any of
+them runs, the organization's credit cap is checked against an estimate.
+Emits are no-ops where billing is off (OSS, self-hosted).
 """
 
 from __future__ import annotations
@@ -263,9 +264,9 @@ def charge(
 
 
 def charge_run(run) -> float:
-    """Charge a written report its model cost so far, once per run, with the
-    models it was started on (``models_used``: its engine's, or this
-    deployment's for the built-in engine)."""
+    """Charge a written (or stopped) report its model cost so far, once per
+    run, with the models it was started on (``models_used``: its engine's,
+    or this deployment's for the built-in engine)."""
     flags = (getattr(run, "settings", None) or {}).get("spend_flags") or {}
     return charge(
         run.organization_id,

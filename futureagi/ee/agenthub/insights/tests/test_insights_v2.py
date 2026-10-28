@@ -2,12 +2,19 @@
 network: the engine pin and its header, the 409 retry, usage from every
 reply (and the ceiling for a model nothing prices), read-units v2 over the
 evidence broker, fail-closed verification of reports, questions and naming,
-and estimates that scale with a unit's size (PROTOCOL_V2)."""
+and estimates that scale with a unit's size (PROTOCOL_V2). A stopped run's
+call is given up against an agent on this host, to see its connection
+close."""
 
 from __future__ import annotations
 
 import contextlib
+import http.server
 import json
+import select
+import socket
+import threading
+import time
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -79,6 +86,48 @@ class Agent:
 
 def _json(value) -> bytes:
     return json.dumps(value).encode()
+
+
+@contextlib.contextmanager
+def held_agent(monkeypatch, answer_after=10.0):
+    """An agent on this host that holds each request until its caller goes
+    away (``seen.left``), as the agent stops the work of a request whose
+    caller closes it, or answers after ``answer_after`` seconds."""
+    seen = SimpleNamespace(left=threading.Event())
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            deadline = time.monotonic() + answer_after
+            while time.monotonic() < deadline:
+                ready, _, _ = select.select([self.connection], [], [], 0.02)
+                try:
+                    gone = ready and not self.connection.recv(1, socket.MSG_PEEK)
+                except OSError:
+                    gone = True
+                if gone:
+                    seen.left.set()
+                    return
+            body = _json({"units": [], "usage": {"model_calls": 1}})
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{server.server_address[1]}"
+    monkeypatch.setattr(
+        agent, "_setting", lambda name, default="": url if "URL" in name else "token"
+    )
+    try:
+        yield seen
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 def make_run(**fields):
@@ -279,6 +328,37 @@ class TestCalls:
             agent._post("/v1/ask", {}, spend)
         assert len(fake.calls) == 1 and spend.unpriced and spend.cost_usd > 0
 
+    def test_a_stopped_runs_call_is_given_up_and_its_connection_closed(
+        self, monkeypatch
+    ):
+        """Stopped while the agent reads: the call is given up within a
+        poll, and its connection is shut, so the agent stops the work. What
+        it may have spent is never reported: estimated at the ceiling, for
+        the stopped run's record."""
+        monkeypatch.setattr(agent, "CANCEL_POLL_S", 0.05)
+        stopped = threading.Event()
+        spend = llm.Spend()
+        with held_agent(monkeypatch) as seen:
+            threading.Timer(0.3, stopped.set).start()
+            started = time.monotonic()
+            with pytest.raises(agent.InsightCallCancelled):
+                agent._post(
+                    "/v1/read-units", {"units": []}, spend, cancelled=stopped.is_set
+                )
+            assert time.monotonic() - started < 3
+            assert seen.left.wait(3)
+        assert spend.unpriced and spend.cost_usd > 0
+
+    def test_a_call_that_may_be_given_up_answers_as_any_other(self, monkeypatch):
+        monkeypatch.setattr(agent, "CANCEL_POLL_S", 0.05)
+        spend = llm.Spend()
+        with held_agent(monkeypatch, answer_after=0.2) as seen:
+            body = agent._post(
+                "/v1/read-units", {"units": []}, spend, cancelled=lambda: False
+            )
+        assert body["units"] == [] and spend.calls == 1
+        assert not seen.left.is_set()
+
     def test_usage_costs(self):
         assert llm.usage_cost("turing_flash", 0.5, 10, 10) == (0.5, True)
         assert llm.usage_cost("whatever", None, 0, 0) == (0.0, True)
@@ -476,8 +556,9 @@ class TestPipelineV2:
     def test_a_batch_reads_in_calls_of_eight_and_keeps_what_was_read(self, monkeypatch):
         calls = []
 
-        def read_units_v2(run, context, keys, attributes, spend, *, engine):
+        def read_units_v2(run, context, keys, attributes, spend, *, engine, **_):
             calls.append(list(keys))
+            spend.add(0.01 * len(keys))
             if "9" in keys:
                 raise llm.InsightModelError("down", unavailable=True)
             return {
@@ -494,32 +575,77 @@ class TestPipelineV2:
 
         monkeypatch.setattr(agent, "read_units_v2", read_units_v2)
         units = [SimpleNamespace(pk=i, metrics={"turns": 2}) for i in range(1, 21)]
-        finished, error = pipeline._read_with_agent_v2(
-            make_run(), units, [], llm.Spend(), V2
+        saves = []
+        error = pipeline._read_with_agent_v2(
+            make_run(),
+            units,
+            [],
+            V2,
+            lambda read, spend: saves.append((read, round(spend.cost_usd, 6))),
         )
 
         assert sorted(len(c) for c in calls) == [4, 8, 8]
         assert error is not None and error.unavailable
-        # The call with unit 9 failed: its units stay pending for a retry.
-        assert sorted(u.pk for u in finished) == [*range(1, 9), *range(17, 21)]
-        assert finished[0].status == "done"
+        # Each call is saved as it returns, with what it spent; the call with
+        # unit 9 failed: its units stay pending for a retry, its spend kept.
+        assert sorted((sorted(u.pk for u in read), cost) for read, cost in saves) == [
+            ([], 0.08),
+            (list(range(1, 9)), 0.08),
+            (list(range(17, 21)), 0.04),
+        ]
+        finished = [u for read, _ in saves for u in read]
+        assert all(u.status == "done" for u in finished)
         assert finished[0].metrics == {"turns": 2, "coverage": {"chars_total": 1000}}
 
+    def test_a_stopped_run_makes_no_further_call(self, monkeypatch):
+        """Stopped while its first call reads (the flag a batch under way
+        reads): the batch's other calls are never made, and only what the
+        first call read is saved."""
+        from django.core.cache import cache
+
+        run = make_run(id=uuid.uuid4())
+        sent = []
+
+        def read_units_v2(run, context, keys, attributes, spend, *, engine, **_):
+            sent.append(list(keys))
+            cache.set(pipeline.STOP_KEY.format(run.id), True)
+            return {
+                key: {
+                    "facets": {**unit_result(key)["facets"], "evidence": []},
+                    "coverage": {},
+                }
+                for key in keys
+            }
+
+        monkeypatch.setattr(agent, "read_units_v2", read_units_v2)
+        monkeypatch.setattr(pipeline, "V2_PARALLEL_CALLS", 1)
+        units = [SimpleNamespace(pk=i, metrics={}) for i in range(1, 25)]
+        saves = []
+        error = pipeline._read_with_agent_v2(
+            run, units, [], V2, lambda read, spend: saves.append(read)
+        )
+
+        assert error is None
+        assert sent == [[str(i) for i in range(1, 9)]]
+        assert [[u.pk for u in read] for read in saves] == [list(range(1, 9))]
+
     def test_a_mismatch_wins_over_an_outage(self, monkeypatch):
-        def read_units_v2(run, context, keys, attributes, spend, *, engine):
+        def read_units_v2(run, context, keys, attributes, spend, *, engine, **_):
             if "1" in keys:
                 raise llm.InsightModelError("down", unavailable=True)
             raise agent.InsightEngineMismatch()
 
         monkeypatch.setattr(agent, "read_units_v2", read_units_v2)
         units = [SimpleNamespace(pk=i, metrics={}) for i in range(1, 17)]
-        _, error = pipeline._read_with_agent_v2(make_run(), units, [], llm.Spend(), V2)
+        error = pipeline._read_with_agent_v2(
+            make_run(), units, [], V2, lambda read, spend: None
+        )
         assert isinstance(error, agent.InsightEngineMismatch)
 
     def test_a_unit_that_cannot_be_built_is_never_sent(self, monkeypatch, prebuilt):
         sent = []
 
-        def read_units_v2(run, context, keys, attributes, spend, *, engine):
+        def read_units_v2(run, context, keys, attributes, spend, *, engine, **_):
             prebuilt.order.append(("read", list(keys)))
             sent.extend(keys)
             return {
@@ -534,9 +660,11 @@ class TestPipelineV2:
         prebuilt.failing = {"2": "deadline_exceeded", "9": "unit_not_found"}
         prebuilt.failing.update({str(i): "unit_not_found" for i in range(10, 17)})
         units = [SimpleNamespace(pk=i, metrics={"turns": 1}) for i in range(1, 17)]
-        finished, error = pipeline._read_with_agent_v2(
-            make_run(), units, [], llm.Spend(), V2
+        saves = []
+        error = pipeline._read_with_agent_v2(
+            make_run(), units, [], V2, lambda read, spend: saves.append(read)
         )
+        finished = [u for read in saves for u in read]
 
         assert error is None
         # Built before each call, on the batch's own builders; a call whose
@@ -565,10 +693,11 @@ class TestPipelineV2:
         monkeypatch.setattr(broker, "prebuild", prebuild)
         monkeypatch.setattr(agent, "read_units_v2", pytest.fail)
         units = [SimpleNamespace(pk=i, metrics={}) for i in range(1, 5)]
-        finished, error = pipeline._read_with_agent_v2(
-            make_run(), units, [], llm.Spend(), V2
+        saves = []
+        error = pipeline._read_with_agent_v2(
+            make_run(), units, [], V2, lambda read, spend: saves.append(read)
         )
-        assert finished == [] and error.unavailable
+        assert saves == [[]] and error.unavailable
 
 
 RESULT = {
