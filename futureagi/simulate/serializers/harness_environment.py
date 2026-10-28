@@ -51,6 +51,15 @@ class HarnessEnvironmentRenameSerializer(serializers.Serializer):
     )
 
 
+class AgentVersionRefSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    version_number = serializers.IntegerField()
+
+
+class EnvironmentVersionRefSerializer(AgentVersionRefSerializer):
+    pass
+
+
 class HarnessEnvironmentFieldsSerializer(serializers.Serializer):
     """One row of the environments list.
 
@@ -78,13 +87,11 @@ class HarnessEnvironmentFieldsSerializer(serializers.Serializer):
     # 0 or 1 today: a job carries at most one test execution, so this counts
     # "has it been run" until run history becomes a table of its own.
     runs_count = serializers.IntegerField()
+    # The agent version this environment tests by default; null before
+    # versioning recorded one.
+    agent_version = AgentVersionRefSerializer(allow_null=True)
     last_updated = serializers.DateTimeField(allow_null=True)
     created_at = serializers.DateTimeField()
-
-
-class AgentVersionRefSerializer(serializers.Serializer):
-    id = serializers.UUIDField()
-    version_number = serializers.IntegerField()
 
 
 class RunEnvironmentRefSerializer(serializers.Serializer):
@@ -101,6 +108,10 @@ class HarnessRunSummarySerializer(serializers.Serializer):
     status = serializers.CharField()
     environment = RunEnvironmentRefSerializer(allow_null=True)
     agent_version = AgentVersionRefSerializer(allow_null=True)
+    environment_version = EnvironmentVersionRefSerializer(allow_null=True)
+    # True when the run covered only some of the environment's scenarios;
+    # null for a Simulate run, which has no environment to compare with.
+    partial = serializers.BooleanField(allow_null=True)
     outcome_passed = serializers.IntegerField(allow_null=True)
     outcome_failed = serializers.IntegerField(allow_null=True)
     outcome_skipped = serializers.IntegerField(allow_null=True)

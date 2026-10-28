@@ -10,6 +10,18 @@ from tracer.services.observability_switch import snapshot_as_shown
 
 logger = structlog.get_logger(__name__)
 
+# The non-secret facts a code version's source carries; anything else the
+# runtime recorded (installation ids, access hints) stays server-side.
+SOURCE_FACTS = ("repository", "ref", "commit_sha", "subfolder")
+
+
+class AgentVersionSourceSerializer(serializers.Serializer):
+    kind = serializers.CharField()
+    repository = serializers.CharField(required=False)
+    ref = serializers.CharField(required=False)
+    commit_sha = serializers.CharField(required=False)
+    subfolder = serializers.CharField(required=False)
+
 
 class AgentVersionResponseSerializer(serializers.ModelSerializer):
     """
@@ -24,6 +36,7 @@ class AgentVersionResponseSerializer(serializers.ModelSerializer):
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     agent_kind = serializers.SerializerMethodField()
     api_key = serializers.SerializerMethodField()
+    source = serializers.SerializerMethodField()
 
     class Meta:
         model = AgentVersion
@@ -47,6 +60,7 @@ class AgentVersionResponseSerializer(serializers.ModelSerializer):
             "is_latest",
             "agent_kind",
             "api_key",
+            "source",
             "created_at",
             "updated_at",
         ]
@@ -105,6 +119,21 @@ class AgentVersionResponseSerializer(serializers.ModelSerializer):
     def get_api_key(self, obj) -> str | None:
         api_key = resolve_api_key_for_version(obj)
         return mask_key(api_key) if api_key else None
+
+    @swagger_serializer_method(
+        serializer_or_field=AgentVersionSourceSerializer(allow_null=True)
+    )
+    def get_source(self, obj) -> dict | None:
+        """Where a versioned agent was read from; null for a version without a runtime."""
+        try:
+            runtime = obj.harness_runtime
+        except AgentVersion.harness_runtime.RelatedObjectDoesNotExist:
+            return None
+        facts = runtime.source or {}
+        return {
+            "kind": runtime.source_kind,
+            **{name: facts[name] for name in SOURCE_FACTS if facts.get(name)},
+        }
 
 
 class AgentVersionListResponseSerializer(serializers.ModelSerializer):
