@@ -234,6 +234,7 @@ export default function DiagnosisPane({
   previous = [],
   onOpenPrevious,
   onHandToAgent,
+  picked = null,
 }) {
   /* First open of this runId: play the analyzer animation. Every
      subsequent open in this session: skip straight to the results. */
@@ -598,8 +599,10 @@ export default function DiagnosisPane({
             Debug failures
           </Typography>
           <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-            {failing.length} failing of {measured.length} measured
-            {tasks.length - measured.length
+            {picked
+              ? `Only the ${picked.count} you picked${picked.leftOut ? ` · ${picked.leftOut} other failing left out` : ""}`
+              : `${failing.length} failing of ${measured.length} measured`}
+            {!picked && tasks.length - measured.length
               ? ` · ${tasks.length - measured.length} not measured`
               : ""}
           </Typography>
@@ -1451,6 +1454,8 @@ DiagnosisPane.propTypes = {
   trace: PropTypes.array,
   proposals: PropTypes.array,
   verdict: PropTypes.string,
+  /* Debug selected: { count, leftOut }. */
+  picked: PropTypes.object,
   applied: PropTypes.object,
   setApplied: PropTypes.func,
   current: PropTypes.number,

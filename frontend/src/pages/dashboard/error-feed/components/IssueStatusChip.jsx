@@ -30,6 +30,7 @@ const TONE = {
   "no-fix": { icon: "solar:close-circle-linear", role: "neutral" },
   "not-reproduced": { icon: "solar:close-circle-linear", role: "neutral" },
   "over-budget": { icon: "solar:pause-circle-linear", role: "neutral" },
+  stopped: { icon: "solar:stop-circle-linear", role: "neutral" },
 };
 
 /* What each state of the fix means, and what happens next. */
@@ -62,6 +63,8 @@ const fixTip = (status) => {
     return "The fix tried changes but none fixed the issue without breaking something else. Nothing was shipped.";
   if (key === "not-reproduced")
     return "The fix couldn't make the issue happen in the environment, so it didn't search. You can continue anyway.";
+  if (key === "stopped")
+    return "Someone stopped the fix before it finished. Nothing it tried was checked or shipped — Fix again starts a new one.";
   if (key === "over-budget")
     return "The fix stopped at its budget before searching: checking the finalists alone would have cost more. No change was tried — Fix again with a bigger budget.";
   return "Where this issue's fix stands.";

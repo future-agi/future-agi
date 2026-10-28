@@ -1215,6 +1215,9 @@ export const fixStatusOf = (
     return { ...at, key: "no-fix", label: "Failed for infrastructure reasons" };
   if (ending.key === "no-fix")
     return { ...at, key: "no-fix", label: "No safe improvement" };
+  /* Stopped by a person: nothing was checked, so nothing to review. */
+  if (ending.key === "stopped")
+    return { ...at, key: "stopped", label: "Stopped" };
   /* Stopped at budget before searching: no change was tried, so there's
      nothing to review — Fix again, with a bigger budget, is the way on. A
      stop mid-search keeps its best so far and reads Ready below. */

@@ -47,6 +47,8 @@ export const chartRunOf = (row, record) => {
     id: row.runId,
     kind: "run",
     ordinal: row.n,
+    /* Named as the trial it is on the chart. */
+    trialN: row.n,
     agentVersion: base ? `${base} + change` : "change",
     startedAt: row.createdAt,
     finishedAt: row.createdAt,

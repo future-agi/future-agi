@@ -43,6 +43,44 @@ export const OPT_STATUS = {
   /* Checking the finalists alone would cost more than the budget (or take
      longer than its time cap) — it stops before searching. */
   OVER_BUDGET: "over-budget",
+  /* Stopped by a person while it ran: the trials that finished stay, with
+     what they cost; none was checked on the held-back scenarios, so there's
+     no winner and today's version stays. */
+  STOPPED: "stopped",
+};
+
+/**
+ * Stop a running improvement where it is (`progress` from
+ * improvementProgressOf). The trials that finished are kept as evidence and
+ * spend; finalists, held-back results and the winner are dropped — none of
+ * them were checked.
+ */
+export const stopImprovement = (record, progress, now = Date.now()) => {
+  const r = record?.result || null;
+  const done = progress?.runsDone || 0;
+  const at = new Date(now).toISOString();
+  const { pendingEnding: _pending, ...rest } = record || {};
+  return {
+    ...rest,
+    status: OPT_STATUS.STOPPED,
+    completedAt: at,
+    stoppedBy: {
+      at,
+      trials: done,
+      of: progress?.runsMax || r?.trials?.length || 0,
+      /* Past the first stage, today's agent has been measured. */
+      measured: !!progress && progress.stage !== "reproduce",
+    },
+    result: r
+      ? {
+          ...r,
+          trials: (r.trials || []).slice(0, done),
+          finalists: [],
+          winner: null,
+          heldPerScenario: {},
+        }
+      : null,
+  };
 };
 
 /**
@@ -606,6 +644,35 @@ export const searchSpendParts = (result, surface, { trials } = {}) => {
   );
 };
 
+/* What a stopped improvement spent past its first run: the baseline once it
+   got that far, and the trials that finished. */
+const stoppedSpendParts = (record, surface) => {
+  const r = record?.result;
+  const s = record?.stoppedBy || {};
+  if (!r) return [];
+  const reps = r.repeats || REPEATS;
+  const out = [];
+  const base = s.measured ? baselineConversations(r.calibration, reps) : 0;
+  if (base)
+    out.push({
+      id: "baseline",
+      label: "Baseline",
+      detail: baselineDetail(r.calibration, " · stopped by you"),
+      conversations: base,
+      usd: base * PER_CONVERSATION[finalKind(surface)],
+    });
+  const tried = (s.trials || 0) * r.trainMeasured * reps;
+  if (tried)
+    out.push({
+      id: "candidates",
+      label: "Candidates",
+      detail: `${s.trials} tried on the target scenarios before it was stopped`,
+      conversations: tried,
+      usd: tried * PER_CONVERSATION[trialKind(r, surface)],
+    });
+  return out;
+};
+
 /**
  * What an improvement actually spent, by part — the same total as
  * improvementTotalSpend: reproducing first, then the search's parts (or
@@ -660,6 +727,8 @@ export const improvementSpendParts = (
     return parts;
   }
   if (status === OPT_STATUS.FAILED) return parts;
+  if (status === OPT_STATUS.STOPPED)
+    return [...parts, ...stoppedSpendParts(record, kind)];
   const r = record.result;
   if (record.fixDepth === "suggestion" && r) {
     const conv = (r.trainMeasured + r.heldMeasured) * (r.repeats || REPEATS);
@@ -730,6 +799,14 @@ export const improvementTotalSpend = (
       baselineConversations(p?.calibration, p?.repeats || REPEATS) * per;
     return first + measure;
   }
+  if (status === OPT_STATUS.STOPPED)
+    return (
+      first +
+      stoppedSpendParts(record, surface || record.surface).reduce(
+        (n, p) => n + p.usd,
+        0,
+      )
+    );
   if (status === OPT_STATUS.FAILED) return first;
   return (
     first +
@@ -1002,6 +1079,16 @@ const outcomeOf = (rec, { model } = {}) => {
           ? `Stopped at budget — checking the finalists alone would take longer than the ${s.minutes}-minute time cap, so nothing was searched.`
           : `Stopped at budget — checking the finalists alone would cost more than the ${creditsLabel(s.budget || 0)} budget, so nothing was searched.`,
       beforeSearch: true,
+    };
+  }
+  if (record?.status === OPT_STATUS.STOPPED) {
+    const s = record.stoppedBy || {};
+    return {
+      ending: { key: "stopped", label: "Stopped" },
+      headline: s.trials
+        ? `Stopped after ${s.trials} of up to ${s.of} ${s.of === 1 ? "trial" : "trials"}. None was checked on the held-back scenarios, so nothing can be chosen — today's version stays. The trials that ran stay here.`
+        : "Stopped before it tried a change. Today's version stays.",
+      beforeSearch: !s.trials,
     };
   }
   if (record?.status === OPT_STATUS.FAILED) {

@@ -610,23 +610,55 @@ export default function RunResults({
     (envState.runs || []).find((r) => r.id === runId)?.analysis || null;
   const analysisCredits =
     failingScenarioIds.length * RATE_PLAN.rates.analysis_calls.credits;
-  const openDebug = () => {
-    if (!analysisCharge && failingScenarioIds.length) {
+  /* Debug selected: only the failures picked in the table go to the
+     diagnosis and the improvement — the rest of the run's failures are left
+     out, its passing scenarios stay as what must keep passing. */
+  const [debugIds, setDebugIds] = useState(null);
+  const isFailingTask = (t) => t.status === "failed" || t.status === "flaky";
+  const selectedFailingIds = [
+    ...new Set(
+      debugTasks
+        .filter(
+          (t) =>
+            isFailingTask(t) &&
+            (selected.has(t.id) || selected.has(t.scenarioId)),
+        )
+        .map((t) => t.scenarioId || t.id),
+    ),
+  ];
+  const drawerTasks = debugIds
+    ? debugTasks.filter(
+        (t) => !isFailingTask(t) || debugIds.includes(t.scenarioId || t.id),
+      )
+    : debugTasks;
+  /* Charged per scenario read, once: a later read of more of the run's
+     failures pays only for the ones not read yet. */
+  const openDebug = (ids = null) => {
+    const want = ids || failingScenarioIds;
+    const read = analysisCharge
+      ? analysisCharge.ids || failingScenarioIds
+      : [];
+    const fresh = want.filter((id) => !read.includes(id));
+    if (fresh.length) {
       patch({
         runs: (envState.runs || []).map((r) =>
           r.id === runId
             ? {
                 ...r,
                 analysis: {
-                  credits: analysisCredits,
-                  scenarios: failingScenarioIds.length,
-                  at: new Date().toISOString(),
+                  credits:
+                    (analysisCharge?.credits || 0) +
+                    fresh.length * RATE_PLAN.rates.analysis_calls.credits,
+                  scenarios: read.length + fresh.length,
+                  ids: [...read, ...fresh],
+                  at: analysisCharge?.at || new Date().toISOString(),
                 },
               }
             : r,
         ),
       });
     }
+    setDebugIds(ids);
     setFixOptId(null);
     setFixOpen(true);
   };
@@ -1662,7 +1694,7 @@ export default function RunResults({
               color="primary"
               size="small"
               startIcon={<Iconify icon="solar:magnifer-linear" width={16} />}
-              onClick={openDebug}
+              onClick={() => openDebug()}
             >
               {!analysisCharge && failingScenarioIds.length
                 ? `Debug failures · ≈ ${analysisCredits.toLocaleString()} credits`
@@ -1699,7 +1731,7 @@ export default function RunResults({
                 size="small"
                 variant="outlined"
                 color="inherit"
-                onClick={openDebug}
+                onClick={() => openDebug()}
                 sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
               >
                 {!analysisCharge
@@ -1760,6 +1792,12 @@ export default function RunResults({
           >
             {regrade ? (
               <>
+                <Box
+                  component="span"
+                  sx={{ fontWeight: 600, color: "text.primary" }}
+                >
+                  Test repaired since this run.{" "}
+                </Box>
                 {[
                   regrade.subGoals.length
                     ? `${regrade.subGoals.length === 1 ? "A sub-goal" : `${regrade.subGoals.length} sub-goals`} this run used got a grader fix`
@@ -1769,11 +1807,12 @@ export default function RunResults({
                     : null,
                 ]
                   .filter(Boolean)
-                  .join(" and ")}
-                {` since it ran. Re-grading reads the stored traces and end-states again — ${regrade.scenarioIds.length} scenarios, no new calls.`}
+                  .join(" and ")
+                  .replace(/^./, (c) => c.toUpperCase())}
+                {`. Re-grade it so its scores use the repaired test — the stored traces and end-states, read again: ${regrade.scenarioIds.length} scenarios, no new calls. What that changes is the test's, not the agent's.`}
               </>
             ) : (
-              `Re-graded with ${sourceRun.regradedWith.label} · ${regradedChanged} ${regradedChanged === 1 ? "verdict" : "verdicts"} changed under the newer graders.`
+              `Re-graded with ${sourceRun.regradedWith.label} · ${regradedChanged} ${regradedChanged === 1 ? "verdict" : "verdicts"} changed under the repaired test — the test's change, not the agent's.`
             )}
           </Typography>
           {regrade && (
@@ -2077,11 +2116,20 @@ export default function RunResults({
                         second one is the cheap version — no LLM cost — and it
                         is the one people reach for when they added a grader
                         after the fact. */}
+                      {/* The main button is Debug when failures are picked;
+                          Re-run is the main one otherwise. */}
                       <Button
-                        variant="contained"
-                        color="primary"
+                        variant={
+                          selectedFailingIds.length ? "outlined" : "contained"
+                        }
+                        color={selectedFailingIds.length ? "inherit" : "primary"}
                         size="small"
                         onClick={(e) => setRerunAnchor(e.currentTarget)}
+                        sx={
+                          selectedFailingIds.length
+                            ? { color: "text.primary", borderColor: "divider" }
+                            : undefined
+                        }
                         startIcon={
                           <Iconify icon="solar:refresh-bold" width={16} />
                         }
@@ -2094,6 +2142,21 @@ export default function RunResults({
                       >
                         Re-run {selected.size}
                       </Button>
+                      {selectedFailingIds.length > 0 && (
+                        <Tooltip
+                          arrow
+                          title={`Diagnoses only the ${selectedFailingIds.length} failing ${selectedFailingIds.length === 1 ? "scenario" : "scenarios"} you picked, and an improvement from there aims at them alone. ${RATE_PLAN.rates.analysis_calls.credits} credits each, once.`}
+                        >
+                          <Button
+                            variant="contained"
+                            color="primary"
+                            size="small"
+                            onClick={() => openDebug(selectedFailingIds)}
+                          >
+                            {`Debug ${selectedFailingIds.length} selected`}
+                          </Button>
+                        </Tooltip>
+                      )}
                     </Stack>
                   ) : (
                     <Stack direction="row" alignItems="center" spacing={1.5}>
@@ -2506,6 +2569,7 @@ export default function RunResults({
         onClose={() => {
           setFixOpen(false);
           setFixOptId(null);
+          setDebugIds(null);
           /* Drop ?improve so "From Improvement run N" opens it again, and Back
              doesn't stop on the same run with the drawer shut. */
           if (params.get("improve")) {
@@ -2522,7 +2586,15 @@ export default function RunResults({
         envState={envState}
         patch={patch}
         addAgentVersion={addAgentVersion}
-        tasks={debugTasks}
+        tasks={drawerTasks}
+        picked={
+          debugIds
+            ? {
+                count: debugIds.length,
+                leftOut: failingScenarioIds.length - debugIds.length,
+              }
+            : null
+        }
         stats={stats}
         runId={runId}
         onOpenTask={(t, step) => {

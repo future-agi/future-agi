@@ -15,7 +15,7 @@ const num = { fontVariantNumeric: "tabular-nums" };
    repeats) is read as given; any other is counted off its tasks. */
 const statsOf = (r) => r.stats || runStatsOf(r);
 const nameOf = (r) =>
-  r.kind === "trial" ? `Trial ${r.trialN}` : `Run ${r.ordinal}`;
+  r.kind === "trial" || r.trialN ? `Trial ${r.trialN}` : `Run ${r.ordinal}`;
 const signed = (n) => `${n > 0 ? "+" : n < 0 ? "−" : ""}${Math.abs(n)}`;
 
 /**

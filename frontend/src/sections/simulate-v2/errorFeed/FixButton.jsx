@@ -42,7 +42,13 @@ const IN_FLIGHT = {
     why: "The fix held through the watch window.",
   },
 };
-const AGAIN = new Set(["reopened", "no-fix", "not-reproduced", "over-budget"]);
+const AGAIN = new Set([
+  "reopened",
+  "no-fix",
+  "not-reproduced",
+  "over-budget",
+  "stopped",
+]);
 /* What Fix again would do differently, where there's something to say. */
 const AGAIN_HOW = { "over-budget": "Fix again with a bigger budget" };
 

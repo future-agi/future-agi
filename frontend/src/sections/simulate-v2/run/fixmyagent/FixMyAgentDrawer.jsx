@@ -53,6 +53,7 @@ export default function FixMyAgentDrawer({
   patch,
   addAgentVersion,
   tasks,
+  picked = null,
   stats,
   runId,
   onOpenTask,
@@ -491,6 +492,7 @@ export default function FixMyAgentDrawer({
       {view === "diagnosis" && (
         <DiagnosisPane
           tasks={tasks}
+          picked={picked}
           report={report}
           trace={trace}
           proposals={proposals}
@@ -599,6 +601,8 @@ FixMyAgentDrawer.propTypes = {
   patch: PropTypes.func,
   addAgentVersion: PropTypes.func,
   tasks: PropTypes.array,
+  /* Debug selected: { count, leftOut } — only those failures are in tasks. */
+  picked: PropTypes.object,
   stats: PropTypes.object,
   runId: PropTypes.string,
   onOpenTask: PropTypes.func,

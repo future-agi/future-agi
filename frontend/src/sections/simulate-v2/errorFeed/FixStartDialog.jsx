@@ -78,6 +78,8 @@ const LAST_NEXT = {
     "It stopped at its budget before trying a change. Pick a bigger budget below.",
   reopened:
     "It was released and the issue came back. This fix starts from the agent as it runs now.",
+  stopped:
+    "It was stopped before it finished, so nothing it tried was checked. This one starts over.",
 };
 
 export default function FixStartDialog({

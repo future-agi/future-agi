@@ -7,6 +7,10 @@ import {
   Button,
   Checkbox,
   Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   IconButton,
   Link,
   Stack,
@@ -43,6 +47,8 @@ import {
   runsCountOf,
   searchSpend,
   improvementSpendParts,
+  improvementTotalSpend,
+  stopImprovement,
 } from "../_mock/optimizationRuns";
 import CostPartsTable from "./CostPartsTable";
 import RaiseLimitBar from "./RaiseLimitBar";
@@ -117,6 +123,16 @@ export default function ImprovementRunsView({
   );
   const [selected, setSelected] = useState([]);
   const [picking, setPicking] = useState(false);
+  /* Stop: asked first, with what has run and what it has cost so far. */
+  const [stopAsk, setStopAsk] = useState(false);
+  const stopNow = () => {
+    setStopAsk(false);
+    patch({
+      optimizations: (envState?.optimizations || []).map((o) =>
+        o.id === record.id ? stopImprovement(o, progress) : o,
+      ),
+    });
+  };
   /* Flow 5's tabs once it has finished: the runs, what the kept change
      changes (each with its reason), and what it did to each scenario. */
   const [tab, setTab] = useState("runs");
@@ -183,6 +199,9 @@ export default function ImprovementRunsView({
       ? proposalMembers(proposals, ctx)
       : null;
   }, [shipped, envState, record.limits, record.targetMember]);
+  /* A stopped one has no kept change and no held-back results: its trials
+     and what it cost, nothing to choose. */
+  const stopped = outcome?.ending?.key === "stopped";
   const tabbed = !running && !!result;
   const view = tabbed ? tab : "runs";
   /*
@@ -466,6 +485,65 @@ export default function ImprovementRunsView({
               </Typography>
             </Tooltip>
           </Box>
+          {/* Stop while it runs — what finished stays; nothing is chosen. */}
+          {running && patch && (
+            <>
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() => setStopAsk(true)}
+                startIcon={
+                  <Iconify icon="solar:stop-circle-linear" width={16} />
+                }
+                sx={{
+                  color: "text.primary",
+                  borderColor: "divider",
+                  flexShrink: 0,
+                }}
+              >
+                Stop
+              </Button>
+              <Dialog
+                open={stopAsk}
+                onClose={() => setStopAsk(false)}
+                maxWidth="xs"
+                fullWidth
+              >
+                <DialogTitle sx={{ typography: "s1", fontWeight: 600 }}>
+                  {`Stop ${row?.name || record.name}?`}
+                </DialogTitle>
+                <DialogContent>
+                  <Typography sx={{ typography: "s2" }}>
+                    {`${progress.runsDone} of up to ${progress.runsMax || progress.runsTotal} trials ${progress.runsDone === 1 ? "has" : "have"} run · ${creditsLabel(improvementTotalSpend(stopImprovement(record, progress), env.surface))} spent so far.`}
+                  </Typography>
+                  <Typography
+                    sx={{ typography: "s2", color: "text.secondary", mt: 1 }}
+                  >
+                    None of them has been checked on the held-back scenarios, so
+                    nothing can be chosen — today&apos;s version stays. The
+                    trials that ran stay on this page; nothing more is spent.
+                  </Typography>
+                </DialogContent>
+                <DialogActions sx={{ px: 3, pb: 2.5 }}>
+                  <Button
+                    size="small"
+                    onClick={() => setStopAsk(false)}
+                    sx={{ color: "text.secondary" }}
+                  >
+                    Keep running
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="contained"
+                    color="primary"
+                    onClick={stopNow}
+                  >
+                    Stop
+                  </Button>
+                </DialogActions>
+              </Dialog>
+            </>
+          )}
           {!running && (
             <Button
               size="small"
@@ -642,8 +720,8 @@ export default function ImprovementRunsView({
           }}
         >
           <Tab value="runs" label={`Trials (${runs.length})`} />
-          <Tab value="changes" label="Changes" />
-          <Tab value="scenarios" label="Per scenario" />
+          {!stopped && <Tab value="changes" label="Changes" />}
+          {!stopped && <Tab value="scenarios" label="Per scenario" />}
           <Tab value="cost" label="Cost" />
         </Tabs>
       )}
@@ -800,30 +878,34 @@ export default function ImprovementRunsView({
             >
               Compare
             </Button>
-            <Tooltip
-              arrow
-              title={
-                running
-                  ? "Once every trial has finished and been checked."
-                  : field.length < 2
-                    ? "Fewer than two trials passed the checks — there's nothing to choose between."
-                    : ""
-              }
-              disableHoverListener={!running && field.length >= 2}
-            >
-              <Box component="span">
-                <Button
-                  size="small"
-                  variant="outlined"
-                  disabled={running || field.length < 2}
-                  onClick={() => setPicking(true)}
-                  startIcon={<Iconify icon="solar:cup-star-bold" width={16} />}
-                  sx={{ color: "text.primary", borderColor: "divider" }}
-                >
-                  Choose winner
-                </Button>
-              </Box>
-            </Tooltip>
+            {!stopped && (
+              <Tooltip
+                arrow
+                title={
+                  running
+                    ? "Once every trial has finished and been checked."
+                    : field.length < 2
+                      ? "Fewer than two trials passed the checks — there's nothing to choose between."
+                      : ""
+                }
+                disableHoverListener={!running && field.length >= 2}
+              >
+                <Box component="span">
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    disabled={running || field.length < 2}
+                    onClick={() => setPicking(true)}
+                    startIcon={
+                      <Iconify icon="solar:cup-star-bold" width={16} />
+                    }
+                    sx={{ color: "text.primary", borderColor: "divider" }}
+                  >
+                    Choose winner
+                  </Button>
+                </Box>
+              </Tooltip>
+            )}
           </Stack>
 
           <Box
