@@ -58,7 +58,9 @@ def test_system_key_changes_require_current_org_admin(key_scope, tenant, level, 
     response = method(
         f"/accounts/key/{action}/", {"key_id": str(key.pk)}, format="json"
     )
-    permitted = level >= Level.ADMIN
+    # System-key enable/disable remains admin-accessible; irreversible deletion
+    # preserves the pre-existing Owner-only contract.
+    permitted = level >= (Level.OWNER if action == "delete_secret_key" else Level.ADMIN)
     assert response.status_code == (200 if permitted else 400)
     key.refresh_from_db()
     assert key.deleted is (permitted and action == "delete_secret_key")
