@@ -169,6 +169,10 @@ func (h *orgHierarchyCounters) getOrCreateCounter(level, key string) *orgBudgetC
 
 // ProcessRequest checks all applicable budgets before the provider call.
 func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pipeline.PluginResult {
+	if rc.Flags.NoSpend {
+		return pipeline.ResultContinue()
+	}
+
 	// Global budget check.
 	if p.enabled && p.tracker != nil {
 		team, user, keyName, model := extractIdentity(rc)
