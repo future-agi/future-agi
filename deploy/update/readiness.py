@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import re
 import time
+from dataclasses import dataclass
+import math
 from http.client import HTTPException
 from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Set, TextIO, Tuple
 from urllib.error import HTTPError, URLError
@@ -32,6 +34,131 @@ CRASH_LOOP_RESTARTS = 2
 
 class NotReady(RuntimeError):
     """The stack did not become ready; the message says what it waited for."""
+
+
+class AutomaticNotReady(NotReady):
+    """Closed automatic guard failure, never raw product diagnostics."""
+    def __init__(self, reason):
+        from .contracts import ReasonCode
+        self.reason_code = ReasonCode(reason)
+        super().__init__(self.reason_code.value)
+
+
+@dataclass(frozen=True)
+class RuntimeSample:
+    phase: str
+    current_migration: str
+    postgres_progress: str
+    free_bytes: int
+    # full ID -> (running without restart/oom/pause, healthy, restart count, StartedAt)
+    containers: Mapping[str, Tuple[bool, bool, int, str]]
+
+
+class AutomaticReadiness:
+    """Independent A6 deadlines and A1 continuous health/restart stability.
+
+    estimate.migration_deadline_seconds ALREADY includes the signed safety
+    factor. Do not multiply again or borrow the protected recovery budget.
+    Callback data is bounded, read-only host evidence, not a release command.
+    The legacy Readiness implementation below remains unchanged.
+    """
+    def __init__(self, *, clock=time.monotonic, sleep=time.sleep, interval=5.0):
+        self.clock, self.sleep, self.interval = clock, sleep, interval
+
+    def wait(self, sample, *, policy, estimate, deadline, previous=False, expected_ids=(),
+             startup_timeout_seconds=None, phase_started_at=None, ready_callback=None):
+        from .contracts import AutomaticUpdateEstimate, ReasonCode
+        def fail(reason):
+            raise AutomaticNotReady(reason)
+        if not previous and not isinstance(estimate, AutomaticUpdateEstimate):
+            fail(ReasonCode.RESTORE_CAPACITY_UNKNOWN)
+        start = self.clock() if phase_started_at is None else phase_started_at
+        if not math.isfinite(start) or start > self.clock() or not math.isfinite(deadline) or self.clock() >= deadline:
+            fail(ReasonCode.READINESS_FAILED)
+        migration_seconds = 0 if previous else min(estimate.migration_deadline_seconds,
+                                                   policy.migration_timeout_seconds)
+        migration_deadline = min(deadline, start + migration_seconds)
+        startup_seconds = (policy.recovery_startup_timeout_seconds if previous else policy.wait_timeout_seconds)
+        if startup_timeout_seconds is not None:
+            if not math.isfinite(startup_timeout_seconds) or startup_timeout_seconds <= 0:
+                fail(ReasonCode.READINESS_FAILED)
+            startup_seconds = min(startup_seconds, startup_timeout_seconds)
+        startup_deadline = min(deadline, start + migration_seconds + startup_seconds)
+        migration_done = previous or migration_seconds == 0
+        ready_since = None
+        last_progress, moved_at = None, start
+        stable_roster = None
+        while True:
+            before = self.clock()
+            if before >= deadline:
+                fail(ReasonCode.READINESS_FAILED)
+            observed = sample()
+            now = self.clock()  # Slow probes cannot authorize past a deadline.
+            if not isinstance(observed, RuntimeSample):
+                fail(ReasonCode.RESTORE_CAPACITY_UNKNOWN)
+            if type(observed.free_bytes) is not int or observed.free_bytes < 0:
+                fail(ReasonCode.RESTORE_CAPACITY_UNKNOWN)
+            reserve = policy.disk_watermark_reserve_bytes if previous else estimate.protected_restore_reserve_bytes
+            if observed.free_bytes < reserve:
+                fail(ReasonCode.DISK_WATERMARK_ABORT)
+            if now >= deadline:
+                fail(ReasonCode.READINESS_FAILED)
+            if set(observed.containers) != set(expected_ids) or not expected_ids:
+                fail(ReasonCode.READINESS_FAILED)
+            current = tuple(sorted((cid, row[2], row[3]) for cid, row in observed.containers.items()))
+            if any(not row[0] or type(row[2]) is not int or row[2] < 0 for row in observed.containers.values()):
+                fail(ReasonCode.READINESS_FAILED)
+            if not previous and any(row[2] != 0 for row in observed.containers.values()):
+                fail(ReasonCode.READINESS_FAILED)
+            all_ready = all(row[1] for row in observed.containers.values())
+            # Readiness cannot hide a restart or identity change during stability.
+            if ready_since is not None and (not all_ready or current != stable_roster):
+                fail(ReasonCode.READINESS_FAILED)
+            migration_active = observed.phase not in ('api', 'ready') and not all_ready
+            if not previous and not migration_done:
+                # Completion is evidence observed NOW, not retroactive proof
+                # that a migration finished before its hard deadline. In
+                # particular a slow read returning healthy cannot erase expiry.
+                if now >= migration_deadline:
+                    fail(ReasonCode.MIGRATION_EXCEEDS_WINDOW)
+                if not migration_active:
+                    migration_done = True
+                    startup_deadline = min(deadline, now + startup_seconds)
+                else:
+                    progress = (observed.phase, observed.current_migration, observed.postgres_progress)
+                    if progress != last_progress:
+                        last_progress, moved_at = progress, now
+                    if now - moved_at >= min(policy.migration_stall_timeout_seconds,
+                                             estimate.migration_stall_timeout_seconds):
+                        fail(ReasonCode.MIGRATION_STALLED)
+            # A zero plan still invokes Django's migrate check in bootstrap.
+            # Its 'migrating' phase is bounded by ordinary startup, not treated
+            # as evidence of an unqualified migration or given extra time.
+            if now >= deadline or (ready_since is None and now >= startup_deadline):
+                fail(ReasonCode.READINESS_FAILED)
+            if all_ready and migration_done:
+                if ready_since is None:
+                    ready_since, stable_roster = now, current
+                    if ready_callback is not None:
+                        # A full observer performs its genuine stability period
+                        # INSIDE this same interval, not after another wait.
+                        # The callback guards the exact roster/capacity while
+                        # observing. Always resample afterward: neither slow
+                        # completion nor a changed roster can erase a deadline.
+                        ready_callback()
+                        continue
+                if now - ready_since >= policy.stability_period_seconds:
+                    return observed
+            limits = [self.interval, max(0, deadline - self.clock())]
+            if ready_since is not None:
+                limits.append(max(0, policy.stability_period_seconds - (now - ready_since)))
+            elif not migration_done:
+                limits.extend((max(0, migration_deadline - now),
+                    max(0, min(policy.migration_stall_timeout_seconds,
+                        estimate.migration_stall_timeout_seconds) - (now - moved_at))))
+            else:
+                limits.append(max(0, startup_deadline - now))
+            self.sleep(min(limits))
 
 
 def bounded(env: Mapping[str, str], key: str, default: int, minimum: int, maximum: int) -> int:

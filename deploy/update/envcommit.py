@@ -19,7 +19,7 @@ import re
 import stat
 import sys
 import uuid
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 
 
 class CommitError(ValueError):
@@ -269,7 +269,10 @@ def _validate(body, target, op_id):
             raise CommitError("incomplete private env operation record")
 
 
-def _inspect(path, target, parent, opfd, body, *, durable):
+def _inspect(path, target, parent, opfd, body, *, durable, snapshot=None):
+    # Qualification supplies a bounded reader; commit/recovery retain their
+    # original snapshot and durability semantics.
+    snapshot = _snapshot if snapshot is None else snapshot
     if durable:
         # Exchange may already have happened, even when an unexpected symlink
         # or special object prevents inspection. Preserve both namespace entries
@@ -280,14 +283,14 @@ def _inspect(path, target, parent, opfd, body, *, durable):
         raise CommitError("previously recorded conflict requires manual reconciliation")
     if not _topology(path, target, parent, body):
         raise CommitError("env path or parent changed")
-    live = _snapshot(parent, target.name, sync=durable)
+    live = snapshot(parent, target.name, sync=durable)
     if body['phase'] in ('preparing', 'not_applied'):
         # Exchange is prohibited until the complete armed manifest is durable.
         if live != body['expected']:
             raise CommitError("env changed during preparation")
         return 'untouched'
-    candidate = _snapshot(opfd, 'candidate', sync=durable)
-    slot = _snapshot(opfd, 'slot', sync=durable)
+    candidate = snapshot(opfd, 'candidate', sync=durable)
+    slot = snapshot(opfd, 'slot', sync=durable)
     if durable:
         # Order the captured regular file's data before BOTH directory barriers,
         # including on mismatch, not only on the accepted path.
@@ -405,6 +408,147 @@ def _known_links(target: Path, info) -> bool:
         except FileNotFoundError:
             pass
     return False
+
+
+def _qualification_stamp(info):
+    return (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid,
+            info.st_nlink, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+@contextmanager
+def _qualification_directory(parent, name, *, private=False):
+    """Pin every ancestry edge, not just the final no-follow pathname."""
+    fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+    try:
+        info = os.fstat(fd)
+        if private:
+            if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
+                raise CommitError('unsafe env retention directory')
+            _plain_metadata(fd)
+        elif (info.st_uid not in (0, os.geteuid())
+              or info.st_mode & 0o022 and not (info.st_uid == 0 and info.st_mode & stat.S_ISVTX)):
+            raise CommitError('unsafe env ancestry')
+        yield fd
+        # Ignore directory timestamps: unrelated entries may be created. Never
+        # ignore replacement, ownership or permissions of the pinned directory.
+        fields = ('st_dev', 'st_ino', 'st_mode', 'st_uid', 'st_gid')
+        for after in (os.fstat(fd), os.stat(name, dir_fd=parent, follow_symlinks=False)):
+            if any(getattr(info, key) != getattr(after, key) for key in fields):
+                raise CommitError('env retention ancestry changed')
+        if private:
+            _plain_metadata(fd)
+    finally:
+        os.close(fd)
+
+
+def _qualification_read(parent, name, maximum, *, manifest=False):
+    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                or info.st_mode & 0o7022 or not 0 <= info.st_size <= maximum
+                or info.st_nlink not in (1, 2)
+                or manifest and (stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1)):
+            raise CommitError('unsafe retained env metadata')
+        _plain_metadata(fd)
+        chunks, count = [], 0
+        while count <= maximum:
+            chunk = os.read(fd, min(65536, maximum + 1 - count))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            count += len(chunk)
+        if (count != info.st_size or _qualification_stamp(os.fstat(fd)) != _qualification_stamp(info)
+                or _qualification_stamp(os.stat(name, dir_fd=parent, follow_symlinks=False)) != _qualification_stamp(info)):
+            raise CommitError('retained env changed during read')
+        return b''.join(chunks), info
+    finally:
+        os.close(fd)
+
+
+def _qualification_object(pairs):
+    body = {}
+    for key, value in pairs:
+        if key in body:
+            raise CommitError('duplicate env manifest field')
+        body[key] = value
+    return body
+
+
+def qualify_retained_env(target: Path, handle: int, before, raw: bytes, *, maximum: int) -> None:
+    """Read-only qualification of the selected .env's second link for backup.
+
+    _known_links is only a commit preflight hint, NOT sufficient authorization
+    for a backup. Require the private accepted operation, exact live candidate
+    and displaced preimage through the same _validate/_inspect checks. Armed
+    operations must be reconciled by the existing engine, never by this reader.
+    Both forward and inverse commits use this same candidate form. Nothing is
+    synced, rewritten, unlinked or repaired here. The owning user/private tree
+    is the trust boundary, not an operation's filename or a two-link count.
+    """
+    try:
+        if (not target.is_absolute() or '..' in target.parts or target.name != '.env'
+                or before.st_nlink != 2 or len(raw) != before.st_size
+                or _qualification_stamp(os.fstat(handle)) != _qualification_stamp(before)):
+            raise CommitError('unqualified live env')
+        with ExitStack() as stack:
+            parent = os.open('/', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            stack.callback(os.close, parent)
+            for part in target.parent.parts[1:]:
+                parent = stack.enter_context(_qualification_directory(parent, part))
+            _filesystem(parent)
+            base = parent
+            for part in ('.futureagi-updates', 'env-commits', directory(target, '0' * 32).parent.name):
+                base = stack.enter_context(_qualification_directory(base, part, private=True))
+            names = []
+            with os.scandir(base) as entries:
+                for entry in entries:
+                    names.append(entry.name)
+                    if len(names) > _MAX_OPERATIONS:
+                        raise CommitError('env retention budget exhausted')
+            for name in sorted(names):
+                if not _ID.fullmatch(name):
+                    continue
+                with _qualification_directory(base, name, private=True) as opfd:
+                    try:
+                        anchor = os.stat('candidate', dir_fd=opfd, follow_symlinks=False)
+                    except FileNotFoundError:
+                        continue
+                    if _identity(anchor) != _identity(before):
+                        continue
+                    metadata, manifest_info = _qualification_read(opfd, 'manifest.json', 65536, manifest=True)
+                    body = json.loads(metadata, object_pairs_hook=_qualification_object)
+                    _validate(body, target, name)
+                    if (set(body) != {'format', 'id', 'target', 'parent', 'expected', 'candidate', 'phase'}
+                            or any(type(value) is not int or value < 0 for value in body['parent'])
+                            or body['phase'] != 'accepted' or body['candidate']['links'] != 2
+                            or body['expected']['links'] not in (1, 2)
+                            or body['expected']['identity'] == body['candidate']['identity']
+                            or any(body['expected'][key] != body['candidate'][key] for key in ('uid', 'gid', 'mode'))):
+                        raise CommitError('unaccepted env operation')
+                    reads = [(opfd, 'manifest.json', manifest_info)]
+
+                    def snapshot(fd, leaf, *, sync=False):
+                        data, info = _qualification_read(fd, leaf, maximum)
+                        if fd == parent and (data != raw or _qualification_stamp(info) != _qualification_stamp(before)):
+                            raise CommitError('live env no longer matches the read descriptor')
+                        reads.append((fd, leaf, info))
+                        return dict(identity=_identity(info), mode=stat.S_IMODE(info.st_mode),
+                                    uid=info.st_uid, gid=info.st_gid, links=info.st_nlink,
+                                    sha256=hashlib.sha256(data).hexdigest())
+
+                    if _inspect(target, target, parent, opfd, body, durable=False, snapshot=snapshot) != 'accepted':
+                        raise CommitError('env postimage is not accepted')
+                    for fd, leaf, info in reads:
+                        if _qualification_stamp(os.stat(leaf, dir_fd=fd, follow_symlinks=False)) != _qualification_stamp(info):
+                            raise CommitError('retained env evidence changed')
+                    if _qualification_stamp(os.fstat(handle)) != _qualification_stamp(before):
+                        raise CommitError('live env descriptor changed')
+                    return
+            raise CommitError('no qualified env candidate anchor')
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError):
+        # Do not leak private paths, manifest contents, hashes or env bytes.
+        raise CommitError('unqualified retained env link') from None
 
 
 def _check_prepared(body: dict, original_sha256: str, candidate_sha256: str) -> None:

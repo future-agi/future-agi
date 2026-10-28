@@ -21,7 +21,12 @@ import subprocess
 import sys
 import tempfile
 import threading
-import tomllib
+# images-ci uses Python 3.11's stdlib parser. Full deploy discovery also
+# supports the updater's Python 3.9 floor with test-only tomli==2.2.1.
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
 import types
 import unittest
 from pathlib import Path
@@ -1446,6 +1451,11 @@ class NginxCaching(unittest.TestCase):
         """Each location's matcher -> its expires, Cache-Control and Pragma."""
         (server,) = nginx_blocks(nginx_config(name), "server")
         matchers = re.findall(r"(?m)^\s*location\b([^{;]*)\{", server)
+        locations = nginx_blocks(server, "location")
+        # Preserve zip(strict=True)'s guard on Python 3.9, where that keyword
+        # does not exist; do not silently truncate a malformed parsed config.
+        if len(matchers) != len(locations):
+            raise ValueError("nginx location matchers and bodies differ in length")
         return {
             " ".join(matcher.split()): [
                 " ".join(directive.split())
@@ -1454,9 +1464,7 @@ class NginxCaching(unittest.TestCase):
                     body,
                 )
             ]
-            for matcher, body in zip(
-                matchers, nginx_blocks(server, "location"), strict=True
-            )
+            for matcher, body in zip(matchers, locations)
         }
 
     def test_standalone_and_the_chart_cache_as_the_frontend_image_does(self):

@@ -994,6 +994,39 @@ always with your values file (never `--reuse-values` across versions);
 the bootstrap Job migrates before any Deployment is rolled. See the
 [chart README](deploy/helm/futureagi/README.md#upgrading).
 
+**Optional one-time automatic updates (Standalone).** Automation stays off unless you opt in after a supported
+published installation is ready:
+
+```bash
+./bin/install --auto-update apply        # one explicit choice; setup runs after readiness
+# Or on an existing installation:
+./bin/update setup --mode apply          # displays details and asks once
+```
+
+For unattended setup, add `--yes` to `bin/update setup`. `bin/install -y` alone does **not** opt in.
+Defaults are stable/minor releases, six-hour checks, a five-minute scheduler opportunity and a 02:00–06:00 UTC
+maintenance window. Cold backups cause downtime before replacement and are retained in a private HOME directory,
+not the checkout or app mounts. Customize once with `--window`, `--timezone`, `--check-interval`,
+`--backup-destination`, `--docker-context` and `--scheduler cron|systemd`. Notify/download modes are available
+without automatic replacement. A running supported scheduler, host Python 3.9+, Compose v2, cosign v3+, actual
+signed running image/digests, fixed state probes and qualified local storage/backup layout are prerequisites;
+setup never installs packages or changes global Docker/host permissions. Missing prerequisites return
+**incomplete**, not a successful activation. Existing optional status overlays/custom mounts and older images
+without the fixed state-probe contract are not currently qualified. Distributed (`--production`) retains its
+manual initialization boundary.
+
+Setup handles absent/`latest` pins only by matching actual images to authenticated release A, preserving unrelated
+env bytes and generating the private baseline itself. Later supported releases require no new customer evidence,
+backup scripts, re-enrollment or per-release command. Only genuinely certified compatible releases may apply;
+migrations/incompatible releases remain manual. The real product-image A→B→C and OS-manager qualification gates
+are separate from setup component tests.
+
+Use `./bin/update disable` or `pause --indefinite` to keep the owned schedule; `enable --yes`/`resume` do not
+re-enroll. Explicit `setup --deactivate --yes` disables first and removes only the owned schedule, preserving
+backups/audit records. That teardown retains a terminal removed ledger, not a silently reinstallable timer.
+See [one-time setup](deploy/update/README.md#one-time-automatic-update-setup) for limitations, immutable host policy,
+HTTPS trust choices, crash ordering and control semantics.
+
 **Signed updates with rollback.** `./bin/update` applies a signed release to
 a Docker Compose install. It backs up first, verifies every image digest
 against the release's Sigstore-signed manifest, waits for the stack the way

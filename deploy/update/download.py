@@ -59,7 +59,8 @@ def identity(prepared):
 
 class Downloader:
     def __init__(self, installation, state, *, space_available: Optional[Callable[[], int]] = None,
-                 clock=lambda: datetime.now(timezone.utc)):
+                 clock=lambda: datetime.now(timezone.utc), deployment_authorization=None):
+        self.deployment_authorization = deployment_authorization
         self.installation, self.state = installation, state
         # Must observe capacity on the REGISTERED daemon's image filesystem,
         # not shutil.disk_usage(checkout) on the client host/another VM.
@@ -73,7 +74,7 @@ class Downloader:
         require(self.state.read_journal() is None, ReasonCode.RECOVERY_REQUIRED)
         fresh = self.installation.fresh()
         check_binding(fresh, prepared.binding)
-        check_deployment(fresh, prepared.manifest)
+        check_deployment(fresh, prepared.manifest, self.deployment_authorization, prepared.raw_manifest)
         require(fingerprints(fresh) == (prepared.config_fingerprint, prepared.profile_fingerprint,
                                        prepared.deployment_fingerprint), ReasonCode.CONFIGURATION_CHANGED)
         require(not prepared.plan.get('deployment_drift') and not prepared.plan.get('missing_env_keys')

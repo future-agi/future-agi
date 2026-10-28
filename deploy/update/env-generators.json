@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "generators": [
+    {
+      "variables": ["SECRET_KEY", "PG_PASSWORD", "MINIO_ROOT_PASSWORD", "AGENTCC_INTERNAL_API_KEY", "AGENTCC_ADMIN_TOKEN", "CH_PASSWORD"],
+      "path": "bin/lib/secrets.sh",
+      "language": "shell",
+      "symbol": "gen_secret",
+      "entrypoint": "write_secrets",
+      "availability": "fresh_install",
+      "reason": "The installer generates these only for a fresh installation; retained credentials must not be rotated on update."
+    },
+    {
+      "variables": ["INTEGRATION_ENCRYPTION_KEY"],
+      "path": "bin/lib/secrets.sh",
+      "language": "shell",
+      "symbol": "gen_fernet_key",
+      "entrypoint": "write_secrets",
+      "availability": "every_install",
+      "reason": "The installer fills an absent Fernet key without replacing an existing key."
+    },
+    {
+      "variables": ["AGENTCC_WEBHOOK_SECRET", "REDIS_PASSWORD"],
+      "path": "bin/lib/secrets.sh",
+      "language": "shell",
+      "symbol": "gen_secret",
+      "entrypoint": "write_secrets",
+      "availability": "every_install",
+      "reason": "The installer fills absent webhook and Standalone Redis credentials; existing values are retained."
+    }
+  ]
+}

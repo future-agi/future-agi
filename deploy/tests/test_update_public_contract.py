@@ -47,8 +47,8 @@ if FORMATS is not None:
 VALIDATORS = ({key: Draft202012Validator(schema, format_checker=FORMATS) for key, schema in SCHEMAS.items()}
               if Draft202012Validator is not None else {})
 # Canonical hashes of the *agreed contract sections*, not regenerated from code.
-SCHEMA_HASHES = {"status": "ce4c725b0b87a89de8c96a31653c7544ed0e118521d366780ccdf5f9bb105886",
-                 "api": "e524db6567e2c4d0832b99bb77d37c193831a1de89e7ca784512ac2f150684b3"}
+SCHEMA_HASHES = {"status": "9d652e3dfc0340f05bc24586a1c156eada9c5abbfcdf4621f5d991927bbe67dc",
+                 "api": "89e8fb18a177c93e05a69f881a3512477955338d8d7683c7b1d9ac27e2802ed3"}
 
 
 def wire(value):
@@ -137,7 +137,16 @@ class GoldenContractTests(unittest.TestCase):
         def visit(schema):
             if schema.get("type") == "object":
                 self.assertIs(schema["additionalProperties"], False)
-                self.assertEqual(set(schema["required"]), set(schema["properties"]))
+                if set(schema['required']) != set(schema['properties']):
+                    # Restore additions are a complete optional group. Every
+                    # reader also checks the exact legacy/full alternatives.
+                    self.assertTrue('anyOf' in schema or schema.get('maxProperties') == len(schema['required']))
+                    if 'anyOf' in schema:
+                        self.assertEqual(len(schema['anyOf']), 2)
+                        self.assertEqual(schema['anyOf'][0]['maxProperties'], len(schema['required']))
+                        self.assertEqual(set(schema['anyOf'][1]['required']), set(schema['properties']))
+                else:
+                    self.assertEqual(set(schema['required']), set(schema['properties']))
             if schema.get("type") == "string":
                 self.assertTrue("enum" in schema or "const" in schema or "maxLength" in schema)
             if schema.get("type") == "array":

@@ -13,14 +13,26 @@ from tfc.host_updates.status import RESPONSE_SCHEMA, StatusUnavailable, _shape
 
 
 def _swagger_shape(schema):
-    """Swagger 2 uses x-nullable, and cannot describe a native oneOf.
+    """Document unions without leaking branch-local constraints.
 
-    The two maintenance-window variants are documented as a discriminated
-    object with conditional fields. x-oneOf retains their exact shapes for the
-    repository generator; Swagger 2 tooling can use the flattened description.
+    Swagger 2 uses vendor extensions for nullability and exact alternatives.
+    Grouped legacy/restore objects already carry a shared outer object shape;
+    keep that envelope and preserve the alternatives in x-anyOf. In particular,
+    the legacy branch's maxProperties must never constrain the complete object.
     """
     if "anyOf" in schema:
-        return {**_swagger_shape(schema["anyOf"][0]), "x-nullable": True}
+        variants = schema["anyOf"]
+        nonnull = [variant for variant in variants if variant.get("type") != "null"]
+        nullable = len(nonnull) != len(variants)
+        if nullable and len(nonnull) == 1:
+            return {**_swagger_shape(nonnull[0]), "x-nullable": True}
+        result = _swagger_shape(
+            {key: value for key, value in schema.items() if key != "anyOf"}
+        )
+        result["x-anyOf"] = [_swagger_shape(variant) for variant in nonnull]
+        if nullable:
+            result["x-nullable"] = True
+        return result
     if "oneOf" in schema:
         variants = schema["oneOf"]
         properties = {}
@@ -72,9 +84,13 @@ class _ClosedSerializer(serializers.Serializer):
 def _field(schema, name):
     kwargs = {"required": True}
     if "anyOf" in schema:
-        schema = schema["anyOf"][0]
-        kwargs["allow_null"] = True
-    if "oneOf" in schema:
+        variants = schema["anyOf"]
+        nonnull = [variant for variant in variants if variant.get("type") != "null"]
+        if len(nonnull) != len(variants):
+            kwargs["allow_null"] = True
+            if len(nonnull) == 1:
+                schema = nonnull[0]
+    if "oneOf" in schema or ("anyOf" in schema and "type" not in schema):
         # The enclosing closed serializer validates exact variant semantics.
         return serializers.DictField(**kwargs)
     if schema["type"] == "object":

@@ -305,6 +305,9 @@ def validate_manifest(value: Any) -> Dict[str, Any]:
         if not _matches(_HEX_DIGEST_RE, digest):
             raise ManifestError(f"manifest.deployment.files[{path!r}] must be a sha256 hex digest")
 
+    # Frozen manual metadata: automatic migration admission is row-local v2
+    # standalone_bootstrap evidence, NOT requires_bootstrap=False. Never rewrite
+    # these signed legacy fields to make a migration release appear stateless.
     migration = _exact_keys(manifest["migration"], "manifest.migration", ("requires_bootstrap", "rollback"))
     if not isinstance(migration["requires_bootstrap"], bool):
         raise ManifestError("manifest.migration.requires_bootstrap must be true or false")

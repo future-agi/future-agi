@@ -10,7 +10,8 @@ import unittest
 from unittest import mock
 from zoneinfo import ZoneInfoNotFoundError
 
-from deploy.update.contracts import AutomationPolicy, ContractError, MaintenanceWindowSpec, POLICY_BOUNDS
+from deploy.update.contracts import (AUTOMATIC_POLICY_BOUNDS, QUALIFICATION_POLICY, AutomationPolicy,
+                                     ContractError, MaintenanceWindowSpec, POLICY_BOUNDS)
 from deploy.update.settings import AUTOMATION_DEFAULTS, DEFAULTS, SettingsError, load_settings
 
 PREFIX = "FUTURE_AGI_UPDATE_"
@@ -31,6 +32,16 @@ LAYERS = {
     "PROBE_TIMEOUT_SECONDS": ("10", "20", "30"),
     "PULL_TIMEOUT_SECONDS": ("1000", "1100", "1200"),
     "TICK_TIMEOUT_SECONDS": ("15000", "16000", "17000"),
+    "QUALIFICATION_POLICY": ("", QUALIFICATION_POLICY, ""),
+    "RESTORE_TIMEOUT_SECONDS": ("3500", "3600", "3700"),
+    "RECOVERY_STARTUP_TIMEOUT_SECONDS": ("1200", "1300", "1400"),
+    "STABILITY_PERIOD_SECONDS": ("30", "60", "90"),
+    "QUIESCENCE_RESERVE_SECONDS": ("300", "310", "320"),
+    "METADATA_RESERVE_SECONDS": ("300", "310", "320"),
+    "ESTIMATE_SAFETY_FACTOR": ("2", "3", "4"),
+    "MIGRATION_TIMEOUT_SECONDS": ("1200", "1300", "1400"),
+    "MIGRATION_STALL_TIMEOUT_SECONDS": ("200", "300", "400"),
+    "DISK_WATERMARK_RESERVE_BYTES": ("1073741824", "2147483648", "3221225472"),
 }
 
 
@@ -52,6 +63,11 @@ class AutomationSettingsTests(unittest.TestCase):
             "BACKUP_MAX_AGE_SECONDS": "3600", "STAGE_MAX_AGE_SECONDS": "86400",
             "AUTOMATIC_ROLLBACK": "false", "PROBE_TIMEOUT_SECONDS": "60",
             "PULL_TIMEOUT_SECONDS": "1800", "TICK_TIMEOUT_SECONDS": "14400",
+            "QUALIFICATION_POLICY": "", "RESTORE_TIMEOUT_SECONDS": "3600",
+            "RECOVERY_STARTUP_TIMEOUT_SECONDS": "1200", "STABILITY_PERIOD_SECONDS": "60",
+            "QUIESCENCE_RESERVE_SECONDS": "300", "METADATA_RESERVE_SECONDS": "300",
+            "ESTIMATE_SAFETY_FACTOR": "2", "MIGRATION_TIMEOUT_SECONDS": "1200",
+            "MIGRATION_STALL_TIMEOUT_SECONDS": "300", "DISK_WATERMARK_RESERVE_BYTES": "1073741824",
         }
         self.assertEqual(AUTOMATION_DEFAULTS, {PREFIX + key: value for key, value in expected.items()})
         loaded = self.load()
@@ -123,6 +139,28 @@ class AutomationSettingsTests(unittest.TestCase):
                         "300\n", "1e3", "١٢٣", "9" * 5000):
                 with self.subTest(field=field, bad=bad[:15]), self.assertRaises(SettingsError):
                     self.load(**dict(companion, **{name: bad}))
+
+    def test_restore_policy_budget_and_legacy_rollback_cannot_remove_reserve(self):
+        for rollback in ('true', 'false'):
+            policy = self.load(AUTOMATION_MODE='apply', QUALIFICATION_POLICY=QUALIFICATION_POLICY,
+                               AUTOMATIC_ROLLBACK=rollback, TICK_TIMEOUT_SECONDS='13920').automation_policy
+            self.assertEqual(policy.required_tick_budget_seconds, 13920)
+            self.assertEqual(policy.required_recovery_budget_seconds, 5460)
+            with self.assertRaisesRegex(SettingsError, 'TICK_TIMEOUT_SECONDS'):
+                self.load(AUTOMATION_MODE='apply', QUALIFICATION_POLICY=QUALIFICATION_POLICY,
+                          AUTOMATIC_ROLLBACK=rollback, TICK_TIMEOUT_SECONDS='13919')
+        with self.assertRaisesRegex(SettingsError, 'MIGRATION_STALL_TIMEOUT_SECONDS'):
+            self.load(QUALIFICATION_POLICY=QUALIFICATION_POLICY, MIGRATION_TIMEOUT_SECONDS='10')
+        with self.assertRaises(SettingsError):
+            self.load(QUALIFICATION_POLICY='unknown-policy')
+
+    def test_all_automatic_integer_boundaries_are_strict(self):
+        for field, (lower, upper) in AUTOMATIC_POLICY_BOUNDS.items():
+            for value in (str(lower), str(upper)):
+                self.assertEqual(getattr(self.load(**{field.upper(): value}).automation_policy, field), int(value))
+            for bad in (str(lower - 1), str(upper + 1), '1.0', '1e9', '-1', 'true', '9' * 5000):
+                with self.subTest(field=field, bad=bad[:20]), self.assertRaises(SettingsError):
+                    self.load(**{field.upper(): bad})
 
     def test_backoff_cannot_be_less_than_interval(self):
         with self.assertRaisesRegex(SettingsError, "MAX_BACKOFF_SECONDS"):

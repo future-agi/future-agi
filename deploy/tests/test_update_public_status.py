@@ -183,6 +183,128 @@ class ProjectionTests(PublisherCase):
         self.assertEqual(snap['safety']['operator_action'], 'inspect_host')
 
 
+class RestoreProjectionTests(PublisherCase):
+    def setUp(self):
+        super().setUp()
+        self.policy = replace(self.policy, mode='apply', qualification_policy='standalone-cold-restore-v1')
+
+    def operation(self, state='restoring', phase='restoring_volumes'):
+        return dict(state=state, kind='restore', stage='restore', phase=phase, started_at=stamp(NOW),
+                    finished_at=None, reported_at=stamp(NOW), reason_codes=[])
+
+    def test_restore_progress_hides_stale_live_version_and_preserves_phase(self):
+        old = self.snapshot()
+        current = self.snapshot(previous=old, operation=self.operation())
+        self.assertEqual(current['versions']['runtime_state'], 'unknown')
+        self.assertIsNone(current['versions']['running_release'])
+        self.assertEqual(current['operation']['phase'], 'restoring_volumes')
+        self.assertEqual(current['safety']['fallback_strategy'], 'restore_backup')
+        check = self.operation(state='succeeded', phase=None)
+        check['kind'] = 'check'
+        self.assertEqual(self.snapshot(previous=current, operation=check)['operation'], current['operation'])
+
+    def test_forward_and_restore_outcomes_remain_separate_and_private_data_drops(self):
+        safety = dict(backup_required=True, backup_state='sealed', readiness='passed', automatic_rollback='disabled',
+                      operator_action='none', fallback_strategy='restore_backup', restore_state='verified',
+                      snapshot_at=stamp(NOW), loss_window_start=stamp(NOW), loss_window_end=stamp(NOW),
+                      loss_window_qualification='bounded', guidance_id='none', archive_path='/secret')
+        run = dict(kind='apply', automatic=True, outcome='failed_during_rollout', from_version='v1.51.0',
+                   target_version='v1.52.0', finished_at=stamp(NOW), fallback_outcome='none',
+                   forward_result='failed', restore_result='verified', effective_version='v1.51.0',
+                   failed_target_version='v1.52.0', proof_sha256='secret')
+        snapshot = self.snapshot(operation=self.operation('restored', 'restored'), safety=safety, last_run=run)
+        self.assertEqual(snapshot['last_run']['forward_result'], 'failed')
+        self.assertEqual(snapshot['last_run']['restore_result'], 'verified')
+        self.assertEqual(snapshot['last_run']['effective_version'], 'v1.51.0')
+        self.assertNotIn('secret', json.dumps(snapshot))
+        VALIDATORS['status'].validate(snapshot)
+        legacy_forward = {key: value for key, value in run.items() if key not in
+                          ('forward_result', 'restore_result', 'effective_version', 'failed_target_version', 'proof_sha256')}
+        later = self.snapshot(previous=snapshot, observation=replace(self.observation, last_run=legacy_forward))
+        self.assertEqual(later['last_run']['restore_result'], 'verified')
+
+    def test_preflight_absent_admission_refusal_outranks_completed_restore(self):
+        from deploy.tests.test_update_compatibility import restore_context
+        from deploy.update.contracts import RestorationResult
+        from deploy.update.public_status import restoration_projection
+        prepared, obs, _, _ = restore_context()
+        result = RestorationResult(obs.attempt_id, 'restored', obs.runtime_observation.release_version,
+            prepared.manifest['version'], 'restored', obs.backup_seal, obs.runtime_observation)
+        previous = self.snapshot(**restoration_projection(result, now=NOW, started_at=NOW))
+        for reason in (ReasonCode.RESTORE_NOT_CERTIFIED, ReasonCode.TRANSITION_NOT_REHEARSED):
+            operation = dict(state='blocked', kind='check', stage=None, started_at=stamp(NOW),
+                finished_at=stamp(NOW), reported_at=stamp(NOW), reason_codes=[reason.value])
+            current = self.snapshot(previous=previous, operation=operation, reason_codes=(reason,))
+            self.assertEqual(current['operation']['state'], 'blocked')
+            self.assertEqual(current['operation']['reason_codes'], [reason.value])
+            self.assertEqual(current['discovery']['state'], 'blocked')
+            self.assertEqual(current['discovery']['reason_codes'], [reason.value])
+            self.assertEqual(current['last_run']['restore_result'], 'verified')
+            VALIDATORS['status'].validate(current)
+
+    def test_recovery_required_is_unknown_even_with_previous_healthy_observation(self):
+        current = self.snapshot(operation=self.operation('recovery_required'), reason_codes=(ReasonCode.RECOVERY_REQUIRED,))
+        self.assertIsNone(current['versions']['running_release'])
+        self.assertEqual(current['safety']['guidance_id'], 'review_recovery')
+
+    def test_typed_estimate_projection_carries_only_closed_scalars(self):
+        from deploy.update.contracts import AutomaticUpdateDecision, AutomaticUpdateEstimate
+        from deploy.update.public_status import ESTIMATE_FIELDS, project_estimate
+        estimate = AutomaticUpdateEstimate(**{name: 10 for name in ESTIMATE_FIELDS})
+        decision = AutomaticUpdateDecision(False, (ReasonCode.MIGRATION_EXCEEDS_WINDOW,), estimate)
+        snapshot = self.snapshot(automatic_decision=decision)
+        self.assertEqual(snapshot['safety']['estimates']['migration_seconds'], 10)
+        self.assertEqual(snapshot['automation']['state'], 'blocked')
+        VALIDATORS['status'].validate(snapshot)
+        with self.assertRaises(ValueError):
+            project_estimate({'estimate': {'secret': '/private'}})
+
+    def test_success_decision_not_rewritten_by_same_operation_reporting_error(self):
+        old = self.operation('succeeded', 'success_decided')
+        old['kind'] = 'apply'
+        run = dict(kind='apply', automatic=True, outcome='succeeded', from_version='v1.51.0',
+                   target_version='v1.52.0', finished_at=stamp(NOW), fallback_outcome='none',
+                   forward_result='succeeded', restore_result='not_needed', effective_version='v1.52.0', failed_target_version=None)
+        snapshot = self.snapshot(operation=old, last_run=run)
+        failure = dict(old, state='failed')
+        later = self.snapshot(previous=snapshot, operation=failure,
+                              last_run=dict(run, forward_result='failed', restore_result='running'))
+        self.assertEqual(later['operation'], snapshot['operation'])
+        self.assertEqual(later['last_run']['forward_result'], 'succeeded')
+        self.assertEqual(later['safety']['restore_state'], 'not_needed')
+
+    def test_typed_runner_projection_never_serializes_evidence_or_tokens(self):
+        from deploy.tests.test_update_compatibility import restore_context
+        from deploy.update.contracts import OperationEvent, RestorationResult
+        from deploy.update.public_status import operation_projection, restoration_projection
+        prepared, obs, _, _ = restore_context()
+        result = RestorationResult(obs.attempt_id, 'restored', obs.runtime_observation.release_version,
+            prepared.manifest['version'], 'restored', obs.backup_seal, obs.runtime_observation)
+        kwargs = restoration_projection(result, now=NOW, started_at=NOW - timedelta(seconds=100))
+        snapshot = self.snapshot(observation=None, **kwargs)
+        self.assertEqual(snapshot['versions']['running_release'], obs.runtime_observation.release_version)
+        self.assertEqual(snapshot['last_run']['forward_result'], 'failed')
+        self.assertEqual(snapshot['last_run']['restore_result'], 'verified')
+        event = OperationEvent('restoring', 'restore', 'restore', NOW, 'PRIVATE-TOKEN', phase='restoring_volumes')
+        projected = operation_projection(event, started_at=NOW)
+        self.assertNotIn('PRIVATE-TOKEN', json.dumps(projected))
+        for private in ('proof_sha256', 'inventory_sha256', 'attempt_id', 'operation_token', 'storage_sha256'):
+            self.assertNotIn(private, json.dumps(snapshot))
+        with self.assertRaises(ValueError):
+            restoration_projection({'outcome': 'restored'}, now=NOW)
+
+    def test_phase_and_new_reason_vocab_matches_shared_types(self):
+        from typing import get_args
+        from deploy.update.contracts import AutomaticPhase
+        phases = VALIDATORS['status'].schema['properties']['operation']['properties']['phase']['anyOf'][0]['enum']
+        self.assertEqual(phases, list(get_args(AutomaticPhase)))
+        for reason in (ReasonCode.MIGRATION_EXCEEDS_WINDOW, ReasonCode.INSUFFICIENT_DISK_FOR_MIGRATION,
+                       ReasonCode.BACKUP_EXCEEDS_WINDOW, ReasonCode.INSUFFICIENT_DISK_FOR_BACKUP,
+                       ReasonCode.MIGRATION_STALLED, ReasonCode.DISK_WATERMARK_ABORT):
+            snapshot = self.snapshot(reason_codes=(reason,))
+            self.assertEqual(snapshot['automation']['state'], 'blocked')
+
+
 class PublisherTests(PublisherCase):
     def test_atomic_replacement_and_modes(self):
         first = self.publish()

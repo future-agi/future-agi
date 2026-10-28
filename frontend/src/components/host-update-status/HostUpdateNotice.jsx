@@ -6,8 +6,8 @@ import { paths } from "src/routes/paths";
 import { noticeForStatus } from "src/sections/settings/Updates/explainer-sections";
 
 export default function HostUpdateNotice() {
-  const { data } = useHostUpdateStatus();
-  const notice = noticeForStatus(data);
+  const { data, automaticNotice } = useHostUpdateStatus();
+  const notice = automaticNotice || noticeForStatus(data);
   if (!notice) return null;
 
   return (

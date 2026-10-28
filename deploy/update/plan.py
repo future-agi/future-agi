@@ -612,6 +612,23 @@ def _settled_rollback(record: Mapping[str, Any], services: Sequence[Mapping[str,
     return all((env.get(str(key)) or "") == (value or "") for key, value in changes.items())
 
 
+def execution_files(manifest, authorization=None, raw_manifest=None):
+    """Manual: published target bytes. Automatic: one authenticated retained-layout row."""
+    if authorization is None:
+        return manifest['deployment']['files']
+    import hashlib
+    from .compatibility import DeploymentAuthorization, decode_document, plain, require
+    from .contracts import AuthorisedTransition, ReasonCode
+    require(isinstance(authorization, (DeploymentAuthorization, AuthorisedTransition)) and type(raw_manifest) is bytes,
+            ReasonCode.DEPLOYMENT_FILES_MISMATCH)
+    expected_hash = (authorization.prepared.manifest_sha256 if isinstance(authorization, AuthorisedTransition)
+                     else authorization.target_manifest_sha256)
+    require(hashlib.sha256(raw_manifest).hexdigest() == expected_hash
+            and manifest_hash(decode_document(raw_manifest, 1024 * 1024)) == manifest_hash(plain(manifest)),
+            ReasonCode.IMMUTABLE_RELEASE_CHANGED)
+    return authorization.execution_deployment['files']
+
+
 def build_plan(manifest: Mapping[str, Any], verification: Verification, installation: Installation,
                settings: Settings, *, manifest_source: str = "",
                last_receipt: Optional[Mapping[str, Any]] = None,
@@ -619,7 +636,8 @@ def build_plan(manifest: Mapping[str, Any], verification: Verification, installa
                fallback_note: Optional[str] = None,
                journal_reason: Optional[str] = None,
                newer_release: Optional[str] = None,
-               command_options: Sequence[str] = ()) -> Dict[str, Any]:
+               command_options: Sequence[str] = (), deployment_authorization=None,
+               raw_manifest: Optional[bytes] = None) -> Dict[str, Any]:
     """The plan for moving `installation` to `manifest`'s release.
 
     `history` is this install's receipts, oldest first (StateDir.history);
@@ -1150,8 +1168,9 @@ def build_plan(manifest: Mapping[str, Any], verification: Verification, installa
                 "tag it selects now), then check again")
 
     drift = []
-    local = deployment_hashes(installation.root, manifest["deployment"]["files"])
-    for path, expected in sorted(manifest["deployment"]["files"].items()):
+    files = execution_files(manifest, deployment_authorization, raw_manifest)
+    local = deployment_hashes(installation.root, files)
+    for path, expected in sorted(files.items()):
         if local.get(path) != expected:
             drift.append(path)
     if drift and not ahead:

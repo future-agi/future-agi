@@ -20,7 +20,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from .contracts import ACTIVE_OPERATION_STATES, ReasonCode, validate_public_status
+from .contracts import (ACTIVE_OPERATION_STATES, QUALIFICATION_POLICY, AutomaticUpdateDecision,
+                        AutomaticUpdateEstimate, ContractError, OperationEvent, ReasonCode, RestorationResult, validate_public_status)
 from .receipt import StateDir
 from .runner_state import StaleGeneration, StoreBusy, StoreError
 from .schedule import utc
@@ -69,13 +70,93 @@ def _versions(value):
     return result
 
 
+ESTIMATE_FIELDS = (
+    'backup_seconds', 'migration_seconds', 'restore_seconds', 'extra_disk_bytes',
+    'backup_required_free_bytes', 'docker_required_free_bytes', 'protected_restore_reserve_bytes',
+    'forward_seconds', 'recovery_seconds', 'total_seconds', 'migration_deadline_seconds',
+    'migration_stall_timeout_seconds',
+)
+RESTORE_SAFETY_DEFAULTS = dict(
+    fallback_strategy='restore_backup', restore_state='not_needed', snapshot_at=None,
+    loss_window_start=None, loss_window_end=None, loss_window_qualification='not_applicable',
+    guidance_id='none', estimates=None, failed_target_version=None,
+)
+
+
 def _last_run(value):
-    return None if value is None else _pick(value, 'kind automatic outcome from_version target_version finished_at fallback_outcome')
+    if value is None:
+        return None
+    result = _pick(value, 'kind automatic outcome from_version target_version finished_at fallback_outcome')
+    fields = 'forward_result restore_result effective_version failed_target_version'.split()
+    if any(key in value for key in fields):
+        result.update(forward_result='not_started', restore_result='not_needed',
+                      effective_version=None, failed_target_version=None)
+        result.update({key: copy.deepcopy(value[key]) for key in fields if key in value})
+    return result
+
+
+def operation_projection(event, *, started_at=None, finished_at=None):
+    """Typed runner event -> public fields; tokens/contexts never cross the wire."""
+    if not isinstance(event, OperationEvent):
+        raise ValueError('typed operation event required')
+    return dict(state=event.state, kind=event.kind, stage=event.stage, phase=event.phase,
+                started_at=stamp(started_at), finished_at=stamp(finished_at),
+                reported_at=stamp(event.reported_at), reason_codes=_reasons(event.reason_codes))
+
+
+def project_estimate(decision):
+    """Only measured scalar budgets, never table names, hashes or proof details."""
+    if not isinstance(decision, AutomaticUpdateDecision):
+        raise ValueError('typed automatic update decision required')
+    estimate = decision.estimate
+    if estimate is None:
+        return None
+    if not isinstance(estimate, AutomaticUpdateEstimate):
+        raise ValueError('typed automatic update estimate required')
+    result = {name: getattr(estimate, name) for name in ESTIMATE_FIELDS}
+    if any(type(value) is not int or not 0 <= value <= MAX_SEQUENCE for value in result.values()):
+        raise ValueError('automatic update estimate out of public bounds')
+    return result
+
+
+def restoration_projection(result, *, now, started_at=None, forward_result='failed'):
+    """Runner-only typed completion projection; no private evidence is serialized.
+
+    Supply these returned operation/last_run/safety kwargs to build_status, plus
+    the independently collected live observation. This function does not publish,
+    recover, finalize an attempt or turn status into admission evidence.
+    """
+    if not isinstance(result, RestorationResult) or forward_result not in ('failed', 'interrupted'):
+        raise ValueError('typed restoration result required')
+    verified = result.outcome == 'restored'
+    restore_state = 'verified' if verified else 'not_needed' if result.outcome == 'failed_available' else 'recovery_required'
+    observation = result.observation
+    effective = (observation.release_version if observation is not None and observation.ready and observation.stable
+                 and result.outcome != 'recovery_required' else None)
+    snapshot_at = None if result.backup_seal is None else stamp(result.backup_seal.snapshot_at)
+    return dict(
+        operation=dict(state='restored' if verified else 'recovery_required' if restore_state == 'recovery_required' else 'failed',
+                       kind='restore' if verified or restore_state == 'recovery_required' else 'apply',
+                       stage='restore', phase=result.last_verified_phase, started_at=stamp(started_at),
+                       finished_at=stamp(now) if started_at is not None else None,
+                       reported_at=stamp(now), reason_codes=_reasons(result.reason_codes)),
+        last_run=dict(kind='apply', automatic=True, outcome='failed_during_rollout' if result.backup_seal else 'failed_before_rollout',
+                      from_version=result.source_version, target_version=result.target_version, finished_at=stamp(now),
+                      fallback_outcome='none', forward_result=forward_result, restore_result=restore_state,
+                      effective_version=effective, failed_target_version=result.target_version),
+        safety=dict(backup_required=True, backup_state='sealed' if result.backup_seal else 'not_evaluated',
+                    readiness='passed' if effective else 'unknown', automatic_rollback='ineligible',
+                    operator_action='review_recovery' if restore_state == 'recovery_required' else 'none',
+                    **{**RESTORE_SAFETY_DEFAULTS, 'restore_state': restore_state, 'snapshot_at': snapshot_at,
+                       'loss_window_start': snapshot_at, 'loss_window_end': None,
+                       'loss_window_qualification': 'conservative' if snapshot_at else 'unknown',
+                       'guidance_id': result.guidance_id, 'failed_target_version': result.target_version}),
+    )
 
 
 def build_status(binding, policy, control, state, *, now, previous=None, observation=None,
                  discovery=None, download=None, operation=None, last_run=None,
-                 reason_codes=(), next_action_at=None, safety=None):
+                 reason_codes=(), next_action_at=None, safety=None, automatic_decision=None):
     """Project only named fields, then validate; never dump a private dataclass.
 
     ``discovery`` is a DiscoveryResult from THIS tick. Failed checks retain the
@@ -99,7 +180,17 @@ def build_status(binding, policy, control, state, *, now, previous=None, observa
         if observation.versions['observed_at'] is not None:
             versions = _versions(observation.versions)
         if observation.last_run is not None:
-            run = _last_run(observation.last_run)
+            observed_run = _last_run(observation.last_run)
+            # A later read of the original failed forward receipt must not erase
+            # its richer, newer restore completion. A genuinely new manual or
+            # automatic attempt has a different finish time/pair and can replace it.
+            richer_restore = (run is not None and run.get('restore_result') == 'verified'
+                and 'forward_result' not in observed_run
+                and all(run[key] == observed_run[key] for key in ('kind', 'automatic', 'from_version', 'target_version'))
+                and run['finished_at'] is not None and observed_run['finished_at'] is not None
+                and observed_run['finished_at'] <= run['finished_at'])
+            if not richer_restore:
+                run = observed_run
     if discovery is not None:
         old_discovery['last_attempt_at'] = stamp(state.last_attempt_at)
         old_discovery['reason_codes'] = _reasons(discovery.reason_codes)
@@ -123,7 +214,16 @@ def build_status(binding, policy, control, state, *, now, previous=None, observa
         cached = {'state': 'downloaded', 'target_version': old_discovery['candidate_version'],
                   'completed_at': download.completed_at,
                   'verified_components': sorted({image.component for image in download.images}), 'reason_codes': []}
-    reasons = _reasons(reason_codes)
+    estimates = project_estimate(automatic_decision) if automatic_decision is not None else None
+    reasons = _reasons(tuple(reason_codes) + (() if automatic_decision is None else automatic_decision.reason_codes))
+    if automatic_decision is not None and not automatic_decision.allowed:
+        old_discovery.update(state='blocked', reason_codes=_reasons(automatic_decision.reason_codes))
+    elif (operation is not None and operation['state'] == 'blocked'
+          and operation['kind'] == 'check' and operation.get('reason_codes')
+          and old_discovery['state'] == 'available'):
+        # Selection/authorization may refuse before size preflight exists.
+        # Completed restoration remains history, not the current admission result.
+        old_discovery.update(state='blocked', reason_codes=_reasons(operation['reason_codes']))
     if ReasonCode.CONFIGURATION_CHANGED.value in reasons or ReasonCode.SIGNATURE_REJECTED.value in reasons:
         cached = {'state': 'unknown', 'target_version': None, 'completed_at': None,
                   'verified_components': [], 'reason_codes': reasons}
@@ -148,17 +248,40 @@ def build_status(binding, policy, control, state, *, now, previous=None, observa
         next_check = next_action_at = pause_until if effective == 'paused' else None
     op = ({'state': 'idle', 'kind': None, 'stage': None, 'started_at': None, 'finished_at': None,
            'reported_at': None, 'reason_codes': []} if previous is None else copy.deepcopy(previous['operation']))
+    same_success_decision = False
     if operation is not None:
         # A read-only check/download cannot turn a live or failed apply into a
         # green check result. This is presentation precedence, not authorization.
-        preserve = (op['kind'] in ('apply', 'rollback')
-                    and op['state'] in ACTIVE_OPERATION_STATES | {'failed', 'interrupted'}
+        preserve = (op['kind'] in ('apply', 'rollback', 'restore')
+                    and op['state'] in ACTIVE_OPERATION_STATES | {'failed', 'interrupted', 'recovery_required'}
                     and operation['kind'] in ('check', 'download'))
+        # A metadata/status failure after the durable success boundary cannot
+        # rewrite that SAME operation into a failed update or authorize restore.
+        same_success_decision = (op.get('phase') in ('success_decided', 'success_metadata_committed', 'succeeded')
+            and op['started_at'] is not None and op['started_at'] == operation['started_at']
+            and operation['kind'] in ('apply', 'restore')
+            and operation['state'] in ('failed', 'interrupted', 'restoring', 'recovery_required'))
+        preserve = preserve or same_success_decision
         if not preserve:
             op = _pick(operation, 'state kind stage started_at finished_at reported_at reason_codes')
+            if 'phase' in operation:
+                op['phase'] = copy.deepcopy(operation['phase'])
     if last_run is not None:
         run = _last_run(last_run)
-    recovery = ReasonCode.RECOVERY_REQUIRED.value in reasons or ReasonCode.OPERATION_INTERRUPTED.value in reasons
+    if same_success_decision:
+        run = _last_run(previous['last_run'])
+        safety = copy.deepcopy(previous['safety'])
+    if (safety is not None and safety.get('restore_state') == 'verified' and run is not None
+            and run.get('restore_result') == 'verified' and run.get('effective_version') is not None):
+        # An engine RestoreSeal is fresh source-runtime evidence. The legacy
+        # status observer may have run BEFORE the recovery or not run at all.
+        # Project only the signed release scalar, never its private inventory.
+        version = run['effective_version']
+        versions = {'observed_at': stamp(now), 'runtime_state': 'consistent', 'selected_release': version,
+                    'running_release': version, 'components': [{'component': 'standalone',
+                    'selected_version': version, 'observed_versions': [version], 'observation': 'known'}]}
+    recovery = (any(reason in reasons for reason in ('recovery_required', 'operation_interrupted', 'automatic_recovery_pending'))
+                or op['state'] == 'recovery_required')
     # A prior blocked recovery check is not fresh evidence of an unfinished
     # transaction. Keep failed apply history, but drop a resolved recovery block.
     if not recovery and operation is None and op['state'] == 'blocked' and any(
@@ -181,14 +304,79 @@ def build_status(binding, policy, control, state, *, now, previous=None, observa
     }
     if safety is not None:
         snapshot['safety'] = _pick(safety, 'backup_required backup_state readiness automatic_rollback operator_action')
+        if 'fallback_strategy' in safety or policy.qualification_policy == QUALIFICATION_POLICY:
+            snapshot['safety'].update(RESTORE_SAFETY_DEFAULTS)
+            snapshot['safety'].update({key: copy.deepcopy(safety[key]) for key in RESTORE_SAFETY_DEFAULTS if key in safety})
     elif previous is not None and not reasons and operation is None:
         action = snapshot['safety']['operator_action']
         snapshot['safety'] = copy.deepcopy(previous['safety'])
         if snapshot['safety']['operator_action'] == 'review_recovery':
             snapshot['safety']['operator_action'] = action
         snapshot['safety']['automatic_rollback'] = 'ineligible' if policy.automatic_rollback else 'disabled'
+    if policy.qualification_policy == QUALIFICATION_POLICY or automatic_decision is not None:
+        for key, value in RESTORE_SAFETY_DEFAULTS.items():
+            snapshot['safety'].setdefault(key, value)
+        # Mandatory restoration is not controlled by the legacy optional flag.
+        snapshot['safety']['fallback_strategy'] = 'restore_backup'
+        snapshot['safety']['automatic_rollback'] = 'ineligible'  # No image-only fallback eligibility claim.
+        latch = state.failed_target_latch
+        snapshot['safety']['failed_target_version'] = None if latch is None else latch.version
+        if automatic_decision is not None:
+            snapshot['safety']['estimates'] = estimates
+        if safety is None and type(op.get('phase')) is str:
+            phase = op['phase']
+            if phase == 'quiescing':
+                snapshot['safety']['backup_state'] = 'quiescing'
+            elif phase in ('quiesced', 'archiving'):
+                snapshot['safety']['backup_state'] = 'pending'
+            elif phase in ('backup_sealed', 'env_commit_pending', 'env_selected', 'target_create_pending',
+                           'target_created', 'target_starting', 'target_verifying', 'success_decided',
+                           'success_metadata_committed', 'succeeded') or phase.startswith(('restore_', 'restoring_', 'previous_')):
+                snapshot['safety']['backup_state'] = 'sealed'
+            if op['state'] == 'recovery_required':
+                snapshot['safety']['restore_state'] = 'recovery_required'
+            elif op['state'] == 'restoring':
+                snapshot['safety']['restore_state'] = 'running'
+            elif phase in ('restore_verified', 'restore_metadata_committed', 'restored'):
+                snapshot['safety']['restore_state'] = 'verified'
+    if snapshot['safety'].get('restore_state') in ('running', 'recovery_required', 'failed') or op['state'] in ('restoring', 'recovery_required'):
+        # Old healthy A (or failed B) is not a live version observation while
+        # stores are cold/unverified. Do not advertise availability from history.
+        snapshot['versions'] = {'observed_at': None, 'runtime_state': 'unknown', 'selected_release': None,
+                                'running_release': None, 'components': []}
+        if run is not None and 'effective_version' in run:
+            run['effective_version'] = None
+    if 'restore_state' in snapshot['safety']:
+        if recovery:
+            snapshot['safety'].update(guidance_id='review_recovery', operator_action='review_recovery')
+        elif blocked and snapshot['safety']['guidance_id'] == 'none':
+            snapshot['safety']['guidance_id'] = 'inspect_host'
     validate_public_status(snapshot, expected_installation=identity, now=now, previous=previous)
+    restoration_semantics(snapshot)
     return snapshot
+
+
+def restoration_semantics(snapshot):
+    """Extra cross-field checks for the additive restore group, after shape validation."""
+    safety = snapshot['safety']
+    if 'restore_state' not in safety:
+        return
+    start, end = safety['loss_window_start'], safety['loss_window_end']
+    if (end is not None and (start is None or end < start)
+            or safety['loss_window_qualification'] == 'bounded' and (start is None or end is None)):
+        raise ContractError()
+    def parse(value):
+        return datetime.strptime(value, '%Y-%m-%dT%H:%M:%SZ')
+    generated = parse(snapshot['generated_at'])
+    if any(value is not None and (parse(value) - generated).total_seconds() > 300
+           for value in (safety['snapshot_at'], start, end)):
+        raise ContractError()
+    if (safety['restore_state'] in ('running', 'failed', 'recovery_required')
+            or snapshot['operation']['state'] in ('restoring', 'recovery_required')):
+        run = snapshot['last_run']
+        if (snapshot['versions']['runtime_state'] != 'unknown' or snapshot['versions']['running_release'] is not None
+                or run is not None and run.get('effective_version') is not None):
+            raise ContractError()
 
 
 @dataclass(frozen=True)
@@ -252,6 +440,7 @@ class PublicStatusPublisher:
                  and type(epoch) is int and 0 <= epoch <= generation
                  and type(token) is str and len(token) <= 128)
         validate_public_status(snapshot, expected_installation=installation_identity(self.binding))
+        restoration_semantics(snapshot)
         _require(snapshot['sequence'] == generation)
         return PublicationTicket(generation, token, epoch), snapshot
 
@@ -382,6 +571,7 @@ class PublicStatusPublisher:
                  and len(operation_token) <= 128)
         snapshot = copy.deepcopy(snapshot)
         validate_public_status(snapshot, expected_installation=installation_identity(self.binding))
+        restoration_semantics(snapshot)
         try:
             with self.store._lock('public.lock'):
                 ticket, previous = self._read()

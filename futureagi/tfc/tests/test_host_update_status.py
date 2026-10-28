@@ -50,6 +50,64 @@ class ReaderTests(unittest.TestCase):
         api["properties"]["result"]["properties"]["snapshot"]["anyOf"][0] = public
         self.assertEqual(status.RESPONSE_SCHEMA, api)
 
+    def test_restore_groups_are_closed_and_do_not_hide_forward_failure(self):
+        snapshot = self.snapshot
+        snapshot["operation"]["phase"] = "restored"
+        snapshot["safety"].update(
+            fallback_strategy="restore_backup",
+            restore_state="verified",
+            snapshot_at=snapshot["generated_at"],
+            loss_window_start=snapshot["generated_at"],
+            loss_window_end=snapshot["generated_at"],
+            loss_window_qualification="bounded",
+            guidance_id="none",
+            estimates=None,
+            failed_target_version="v1.52.0",
+        )
+        snapshot["last_run"] = {
+            "kind": "apply",
+            "automatic": True,
+            "outcome": "failed_during_rollout",
+            "from_version": "v1.51.0",
+            "target_version": "v1.52.0",
+            "finished_at": snapshot["generated_at"],
+            "fallback_outcome": "none",
+            "forward_result": "failed",
+            "restore_result": "verified",
+            "effective_version": "v1.51.0",
+            "failed_target_version": "v1.52.0",
+        }
+        self.assertEqual(decode(snapshot), snapshot)
+        for mutate in (
+            lambda s: s["safety"].pop("guidance_id"),
+            lambda s: s["safety"].update(archive_path="/private/backup"),
+            lambda s: s["operation"].update(phase="guess"),
+            lambda s: s["last_run"].update(restore_result="pretend_success"),
+            lambda s: s["safety"].update(loss_window_end="2026-10-23T00:00:00Z"),
+            lambda s: s["safety"].update(restore_state="running"),
+        ):
+            changed = copy.deepcopy(snapshot)
+            mutate(changed)
+            with self.assertRaises(status.StatusUnavailable):
+                decode(changed)
+
+    def test_a6_estimates_are_only_bounded_integers_and_reasons_are_closed(self):
+        public = json.loads((CONTRACTS / "public-status.v1.schema.json").read_text())
+        reasons = public["properties"]["discovery"]["properties"]["reason_codes"][
+            "items"
+        ]["enum"]
+        self.assertEqual(status.REASONS, tuple(reasons))
+        shape = status.PUBLIC_SCHEMA["properties"]["safety"]["properties"]["estimates"][
+            "anyOf"
+        ][0]
+        value = dict.fromkeys(status.ESTIMATE_FIELDS, 10)
+        self.assertEqual(status._shape(value, shape), value)
+        for bad in (-1, 1.0, True, float("inf"), 9007199254740992):
+            with self.assertRaises(status.StatusUnavailable):
+                status._shape(dict(value, total_seconds=bad), shape)
+        with self.assertRaises(status.StatusUnavailable):
+            status._shape(dict(value, private_table="secret"), shape)
+
     def test_all_valid_status_fixtures(self):
         for row in FIXTURES["valid_status"]:
             with self.subTest(row["name"]):
@@ -408,6 +466,108 @@ class FileTests(unittest.TestCase):
 
 
 class SerializerTests(unittest.TestCase):
+    def test_checkedin_host_swagger_definition_matches_actual_serializer(self):
+        from tfc.host_updates.serializers import HostUpdateStatusResponseSerializer
+
+        swagger = json.loads((ROOT / "api_contracts/openapi/swagger.json").read_text())
+        self.assertEqual(
+            swagger["definitions"]["HostUpdateStatusResponse"],
+            HostUpdateStatusResponseSerializer.Meta.swagger_schema_fields,
+        )
+
+    def test_swagger_accepts_complete_restore_objects_and_retains_exact_unions(self):
+        from jsonschema import Draft4Validator
+
+        from tfc.host_updates.serializers import HostUpdateStatusResponseSerializer
+
+        swagger = json.loads((ROOT / "api_contracts/openapi/swagger.json").read_text())
+        schema = swagger["definitions"]["HostUpdateStatusResponse"]
+        response = copy.deepcopy(FIXTURES["valid_api"][0]["response"])
+        snapshot = response["result"]["snapshot"]
+        snapshot["operation"].update(
+            state="restored",
+            kind="restore",
+            stage="restore",
+            phase="restored",
+            started_at=snapshot["generated_at"],
+            finished_at=snapshot["generated_at"],
+            reported_at=snapshot["generated_at"],
+        )
+        snapshot["safety"].update(
+            backup_state="sealed",
+            fallback_strategy="restore_backup",
+            restore_state="verified",
+            snapshot_at=snapshot["generated_at"],
+            loss_window_start=snapshot["generated_at"],
+            loss_window_end=snapshot["generated_at"],
+            loss_window_qualification="bounded",
+            guidance_id="none",
+            estimates=dict.fromkeys(status.ESTIMATE_FIELDS, 10),
+            failed_target_version="v1.52.0",
+        )
+        snapshot["last_run"] = {
+            "kind": "apply",
+            "automatic": True,
+            "outcome": "failed_during_rollout",
+            "from_version": "v1.51.0",
+            "target_version": "v1.52.0",
+            "finished_at": snapshot["generated_at"],
+            "fallback_outcome": "none",
+            "forward_result": "failed",
+            "restore_result": "verified",
+            "effective_version": "v1.51.0",
+            "failed_target_version": "v1.52.0",
+        }
+        self.assertEqual(status._shape(response, status.RESPONSE_SCHEMA), response)
+        serializer = HostUpdateStatusResponseSerializer(data=response)
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        documented = schema["properties"]["result"]["properties"]["snapshot"]
+        # Reviewer's raw Draft4 reproduction: no complete object can inherit the
+        # legacy maxProperties. No nulls in operation; even extension-unaware
+        # Swagger 2 tools must accept its eight fields.
+        Draft4Validator(documented["properties"]["operation"]).validate(
+            snapshot["operation"]
+        )
+        for name in ("operation", "safety", "last_run"):
+            with self.subTest(name=name):
+                group = documented["properties"][name]
+                self.assertNotIn("maxProperties", group)
+                self.assertEqual(len(group["x-anyOf"]), 2)
+                self.assertIn("maxProperties", group["x-anyOf"][0])
+        for name in ("operation", "safety"):
+            self.assertNotIn("x-nullable", documented["properties"][name])
+
+        def native(value):
+            if isinstance(value, list):
+                return [native(item) for item in value]
+            if not isinstance(value, dict):
+                return value
+            converted = {
+                key: native(item) for key, item in value.items() if key != "x-nullable"
+            }
+            for vendor, keyword in (("x-anyOf", "anyOf"), ("x-oneOf", "oneOf")):
+                if vendor in converted:
+                    converted[keyword] = converted.pop(vendor)
+            return (
+                {"anyOf": [converted, {"type": "null"}]}
+                if value.get("x-nullable")
+                else converted
+            )
+
+        validator = Draft4Validator(native(schema))
+        validator.validate(response)
+        for row in FIXTURES["valid_api"]:
+            with self.subTest(legacy=row["name"]):
+                validator.validate(row["response"])
+        for name in ("operation", "safety"):
+            changed = copy.deepcopy(response)
+            changed["result"]["snapshot"][name] = None
+            self.assertFalse(validator.is_valid(changed))
+        for name, key in (("safety", "guidance_id"), ("last_run", "restore_result")):
+            changed = copy.deepcopy(response)
+            del changed["result"]["snapshot"][name][key]
+            self.assertFalse(validator.is_valid(changed))
+
     def test_response_nullable_roundtrip_and_unknown_rejection(self):
         from tfc.host_updates.serializers import HostUpdateStatusResponseSerializer
 

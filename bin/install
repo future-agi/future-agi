@@ -28,6 +28,10 @@
 #                                      # from env if you want a user created.
 #   ./bin/install --host-status-help  # optional read-only status overlay instructions
 #   ./bin/install --prepare-host-status # prepare a NEW public slot only; no install
+#   ./bin/install --auto-update apply # explicit one-time opt-in AFTER readiness
+#                                      # notify/download also supported; default off
+#                                      # apply: 6-hour checks, 02:00-06:00 UTC,
+#                                      # cold-backup downtime; host tools required
 #   ./bin/install --no-telemetry       # turn deployment telemetry off
 #                                      # (FUTURE_AGI_TELEMETRY_DISABLED=true
 #                                      # in .env;
@@ -238,6 +242,7 @@ NON_INTERACTIVE=0
 WIPE_VOLUMES_FLAG=0
 NEW_INSTANCE_FLAG=0
 NO_TELEMETRY=0
+AUTO_UPDATE_MODE=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --distributed|--full) DISTRIBUTED=1 ;;
@@ -248,14 +253,22 @@ while [[ $# -gt 0 ]]; do
     --wipe-volumes) WIPE_VOLUMES_FLAG=1 ;;
     --new-instance) NEW_INSTANCE_FLAG=1 ;;
     --no-telemetry) NO_TELEMETRY=1 ;;
+    --auto-update)
+      [[ $# -ge 2 ]] || die "--auto-update requires notify, download or apply"
+      case "$2" in notify|download|apply) AUTO_UPDATE_MODE="$2" ;; *) die "--auto-update requires notify, download or apply" ;; esac
+      shift ;;
     -y|--non-interactive) NON_INTERACTIVE=1 ;;
     -h|--help)
-      sed -n '2,/^# =\{20,\}$/p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '4,/^# =\{20,\}$/p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *) die "unknown flag: $1 (try --help)" ;;
   esac
   shift
 done
+
+if [[ -n "$AUTO_UPDATE_MODE" ]] && (( NO_UP == 1 || FROM_SOURCE == 1 || DISTRIBUTED == 1 )); then
+  die "--auto-update requires a running published Standalone install; not --no-up, --from-source or --distributed"
+fi
 
 if (( WIPE_VOLUMES_FLAG == 1 && NEW_INSTANCE_FLAG == 1 )); then
   die "--wipe-volumes and --new-instance are mutually exclusive"
@@ -1321,8 +1334,32 @@ if [[ -n "$USER_EMAIL" ]]; then
   fi
 fi
 
+# ---------------- one-time automatic-update opt-in ----------------
+# Only after the actual readiness loop. -y does NOT imply update consent.
+# An existing registration is never automatically enabled on installer reruns.
+AUTO_UPDATE_RC=0
+if [[ -z "$AUTO_UPDATE_MODE" ]] && (( NON_INTERACTIVE == 0 && DISTRIBUTED == 0 && FROM_SOURCE == 0 )) \
+   && [[ ! -d "$ROOT/.futureagi-updates/automation" ]]; then
+  say "Optional automatic updates: 6-hour checks, stable/minor, 02:00-06:00 UTC."
+  say "Apply includes cold-backup downtime and container replacement. Private backups under HOME are retained."
+  say "Uses the current Docker context and your host user; requires Python 3.9+, Compose v2, cosign v3+ and running cron."
+  say "No packages/global permissions/migrations are installed. Disable later with ./bin/update disable."
+  read -r -p "Opt in once to supported automatic updates? [y/N] " auto_update_answer || auto_update_answer=""
+  case "$auto_update_answer" in y|Y|yes|YES) AUTO_UPDATE_MODE=apply ;; esac
+fi
+if [[ -n "$AUTO_UPDATE_MODE" ]]; then
+  # The flag or preceding prompt is the real consent. Setup must not ask twice.
+  # It uses this checkout's .env/profiles and the original Docker context/user.
+  if "$ROOT/bin/update" setup --mode "$AUTO_UPDATE_MODE" --yes; then
+    ok "Automatic-update setup completed; see the verified scheduler/policy state above"
+  else
+    AUTO_UPDATE_RC=3
+    warn "Installation is ready, but automatic-update setup is INCOMPLETE. No active-update claim; inspect the prerequisite above."
+  fi
+fi
+
 # ---------------- done ----------------
 print_summary "$frontend_port" "$backend_port"
 
 [[ "$ACCOUNT_STATE" == "$ACCOUNT_FAILED" ]] && exit 1
-exit 0
+exit "$AUTO_UPDATE_RC"

@@ -47,6 +47,9 @@ export const LABELS = {
     interrupted: "Operation interrupted",
     rolling_back: "Restoring prior images",
     rolled_back: "Prior images restored; review readiness",
+    restoring: "Restoring the cold backup and previous version",
+    restored: "Cold backup and previous version restored",
+    recovery_required: "Manual recovery required; installed version unverified",
     blocked: "Operation blocked",
     unknown: "Operation state unknown",
   },
@@ -60,12 +63,78 @@ export const LABELS = {
     rollout: "Service replacement",
     readiness: "Readiness checks",
     recovery: "Recovery",
+    quiescence: "Stopping services for a cold backup",
+    restore: "Cold-backup restoration",
+    stability: "Readiness stability checks",
+  },
+  phase: {
+    attempt_reserved: "Attempt reserved",
+    quiescing: "Stopping services",
+    quiesced: "Services stopped",
+    archiving: "Creating the cold backup",
+    backup_sealed: "Cold backup sealed",
+    env_commit_pending: "Preparing version selection",
+    env_selected: "Target version selected",
+    target_create_pending: "Preparing target services",
+    target_created: "Target services created",
+    target_starting: "Starting target services",
+    target_verifying: "Checking target readiness and stability",
+    success_decided: "Target acceptance recorded",
+    success_metadata_committed: "Target acceptance finalized",
+    succeeded: "Update succeeded",
+    restore_decided: "Automatic restoration selected",
+    restore_quiescing: "Stopping failed-target services",
+    restore_quiesced: "Failed-target services stopped",
+    restore_inputs_verified: "Restoration inputs verified",
+    restoring_volumes: "Restoring persistent data",
+    restore_files_verified: "Restored files verified",
+    config_revert_pending: "Preparing previous configuration",
+    config_reverted: "Previous configuration restored",
+    restore_data_committed: "Restored data verified before startup",
+    previous_create_pending: "Preparing previous-version services",
+    previous_created: "Previous-version services created",
+    previous_start_armed:
+      "Previous-version startup authorized; no more data extraction",
+    previous_starting: "Starting the previous version",
+    previous_verifying: "Checking previous-version readiness",
+    restore_verified: "Previous version and restored data verified",
+    restore_metadata_committed: "Restoration finalized",
+    restored: "Cold backup and previous version restored",
+    abort_quiescence: "Resuming the unchanged previous version before backup",
+    failed_available:
+      "Update failed before mutation; previous version available",
   },
   kind: {
     check: "Check",
     download: "Download",
     apply: "Apply",
     rollback: "Rollback",
+    restore: "Cold-backup restoration",
+  },
+  strategy: {
+    none: "No automatic restoration reported",
+    restore_backup:
+      "Restore the cold backup and previous version automatically",
+  },
+  restore: {
+    not_needed: "Not needed",
+    running: "Restoration running; installed version unverified",
+    verified: "Cold backup and previous version verified",
+    failed: "Restoration failed; installed version unverified",
+    recovery_required: "Manual recovery required; installed version unverified",
+  },
+  forward: {
+    not_started: "Not started",
+    running: "Running",
+    succeeded: "Succeeded",
+    failed: "Failed",
+    interrupted: "Interrupted",
+  },
+  loss_window: {
+    not_applicable: "Not applicable",
+    bounded: "Bounded by the reported timestamps",
+    conservative: "Conservative bounds; exact exposure is unknown",
+    unknown: "Unknown; no zero-loss guarantee",
   },
   runtime: {
     consistent: "Consistent observations",
@@ -100,6 +169,9 @@ export const LABELS = {
     reported_complete: "Backup hook reported completion",
     failed: "Backup failed",
     explicitly_skipped: "Explicitly skipped on the host",
+    pending: "Cold backup pending",
+    quiescing: "Stopping services for the cold backup",
+    sealed: "Cold backup sealed for this attempt",
   },
   readiness: {
     unknown: "Unknown",
@@ -222,6 +294,37 @@ export const REASON_TEXT = {
   unsupported_installation: "Installation unsupported",
   control_invalid: "Host automation controls invalid",
   process_failed: "Host update process failed",
+  restore_not_certified:
+    "Automatic restoration is not certified for this release",
+  transition_not_rehearsed: "This release transition has not been rehearsed",
+  platform_not_rehearsed: "This platform has not been rehearsed",
+  restore_procedure_unsupported: "Restoration procedure unsupported",
+  migration_inventory_unsupported: "Migration inventory layout unsupported",
+  migration_inventory_mismatch:
+    "Applied migrations do not match the expected inventory",
+  backup_inventory_mismatch: "Cold-backup inventory mismatch",
+  restore_capacity_unknown: "Restoration capacity could not be verified",
+  restore_capacity_insufficient: "Insufficient capacity for restoration",
+  restore_child_ambiguous:
+    "A restoration process could not be safely reconciled",
+  restore_verification_failed:
+    "Restored data or previous-version verification failed",
+  automatic_recovery_pending:
+    "Automatic recovery is pending; keep the backup and safety scheduler",
+  restored_after_update_failure:
+    "Update failed; the cold backup and previous version were restored",
+  migration_exceeds_window:
+    "Notify-only: migration exceeds the maintenance window or update budget",
+  insufficient_disk_for_migration:
+    "Notify-only: insufficient disk space for migration and protected restoration",
+  backup_exceeds_window:
+    "Notify-only: cold backup or restoration exceeds the maintenance window or update budget",
+  insufficient_disk_for_backup:
+    "Notify-only: insufficient disk space for the cold backup and restoration",
+  migration_stalled:
+    "Migration stopped making progress; automatic restoration is required after backup",
+  disk_watermark_abort:
+    "Protected restoration disk reserve reached; update aborted",
 };
 
 export const ACTIVE_STATES = [
@@ -231,6 +334,7 @@ export const ACTIVE_STATES = [
   "applying",
   "verifying",
   "rolling_back",
+  "restoring",
 ];
 
 export function noticeForStatus(data) {
@@ -240,9 +344,13 @@ export function noticeForStatus(data) {
   let attention = false;
   if (
     safety.operator_action !== "none" ||
-    ["failed", "interrupted", "blocked", "rolled_back"].includes(
-      operation.state,
-    )
+    [
+      "failed",
+      "interrupted",
+      "blocked",
+      "rolled_back",
+      "recovery_required",
+    ].includes(operation.state)
   ) {
     text = "Update needs host operator attention.";
     attention = true;
@@ -298,14 +406,14 @@ export const EXPLAINER_SECTIONS = [
     title: "Automation stays on the host",
     text: "Manual does no unattended work. Notify checks and reports. Download caches verified images without restarting services. Apply requires explicit host opt-in and every safety prerequisite. The reported effective state, not the configured mode alone, tells you whether automation is enabled.",
     mechanism:
-      "Settings, runner_state and schedule manage host controls. A maintenance window permits a start, not a promise to finish before its end. Pause affects future automatic work; explicit host commands remain possible. Not implemented or unregistered means automation must not be assumed to be running.",
+      "Settings, runner_state and schedule manage host controls. A maintenance window permits a start, not a promise to finish before its end. Pause and disable prevent new automatic attempts, not required safety recovery; explicit host commands remain possible. Not implemented or unregistered means automation must not be assumed to be running.",
   },
   {
     id: "backup",
-    title: "Backup completion is not restore proof",
-    text: "Backups are configured and verified by the host operator. A successful backup hook reports completion; it does not prove that the backup contents can be restored. Keep the backup through staging, initialization and rollout.",
+    title: "Cold backups protect enrolled automatic updates",
+    text: "After explicit host opt-in, qualified Standalone automatic updates stop the app, seal a cold backup and keep the old version stopped while the new version starts and may migrate the database. A legacy manual backup-hook completion alone is not restore proof. Backups and recovery evidence are retained, not automatically pruned.",
     mechanism:
-      "Updater runs the host backup hook; compatibility and backup_proof guard eligible changes. Hook commands, output and backup locations never appear in this page.",
+      "The host checks signed transition evidence, the backup seal and installation identities. Large databases or volumes that cannot fit the time or disk budgets stay notify-only. Hook commands, output and backup locations never appear in this page.",
   },
   {
     id: "production",
@@ -316,17 +424,17 @@ export const EXPLAINER_SECTIONS = [
   },
   {
     id: "readiness",
-    title: "An update can briefly interrupt the app",
-    text: "During service replacement, this page may temporarily lose its connection. Reconnecting does not prove success or rollback. Read the host readiness result and its observation time; no percentage is estimated here.",
+    title: "Updates require an outage and health checks",
+    text: "Automatic updates make the app unavailable during the cold backup and new-version startup, usually for several minutes and longer for large databases. This page may disconnect. Reconnecting does not prove success or restoration. Read the host readiness and stability result and its observation time; no percentage is estimated here.",
     mechanism:
       "Readiness checks the Standalone app or the Distributed API and service rollout. A liveness response alone is not proof of migration compatibility or every service being ready.",
   },
   {
     id: "recovery",
-    title: "Image rollback does not restore data",
-    text: "A failed or interrupted update needs host review. Prior images may be restored only when eligible; the forward failure and fallback result remain separate. A failed target may be quarantined. Database restore is never automatic.",
+    title: "Automatic restoration is not image-only rollback",
+    text: "For enrolled, qualified automatic updates, a failure after the cold backup restores that backup and the previous version automatically, including after database migrations. The forward update remains failed even when restoration succeeds, and the failed target will not be retried automatically. Anything written to the new version before rollback is discarded; in-flight jobs and Redis cache are reset, and outside calls such as webhooks or model-provider requests cannot be undone. Some failures require manual recovery: the updater stops rather than guessing, and the installed version stays unverified.",
     mechanism:
-      "Updater, StateDir, envcommit and recovery validation protect host transaction state. Private recovery evidence remains on the host, not in this report.",
+      "The recovery ledger, backup seal, envcommit and verified storage identities control restoration. Keep the backup and safety scheduler until recovery is resolved; pause or disable does not cancel required recovery. Legacy manual image rollback does not restore databases. Private recovery evidence remains on the host.",
   },
   {
     id: "privacy",
@@ -354,6 +462,6 @@ export const EXPLAINER_SECTIONS = [
     title: "Status is not release approval",
     text: "A report describes observations, not permission to bypass release validation. If required checkout files, configuration, dependencies, backup or compatibility evidence are missing, the operator must resolve them on the host before applying.",
     mechanism:
-      "The host does not automatically check out code, merge environment files, install dependencies or restore databases. Release and deployment validation remain separate gates.",
+      "The host does not automatically check out code, merge environment files or install dependencies. Only a qualifying signed, rehearsed transition permits restore-backed automatic apply; missing proof stays notify-only. Release and deployment validation remain separate gates.",
   },
 ];

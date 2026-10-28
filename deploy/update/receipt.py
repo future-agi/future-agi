@@ -54,6 +54,11 @@ class StateError(RuntimeError):
     """Update state cannot be read, written or locked."""
 
 
+class AutomaticRecoveryPending(StateError):
+    """Unreadable enrolled authority is distinct from a corrupt manual journal."""
+    reason_code = 'automatic_recovery_pending'
+
+
 class StateBusy(StateError):
     """Typed update.lock contention; manual error text and behavior are unchanged."""
 
@@ -344,6 +349,79 @@ class StateDir:
         if not isinstance(value, dict):
             raise StateError(f"{self.journal_path} is not a JSON object")
         return value
+
+    def automatic_pending(self, installation) -> bool:
+        """Read the enrolled authority, including the pre-env-journal cold gap.
+
+        Manual commands must not interpret an automatic env journal as an
+        image-only recovery. Absence remains the ordinary legacy/manual path.
+        Corrupt/symlinked enrolled authority is not equivalent to no attempt.
+        """
+        journal = self.read_journal()
+        if journal and journal.get('automatic_transaction'):
+            return True
+        import hashlib
+        from .runner_state import RunnerStateStore, RunnerState, Registration
+        # Selection hashes contain the RESOLVED env target. A fresh discovery
+        # after alias drift computes a different hash; absence there says nothing
+        # about a stopped installation's previously enrolled authority. Inspect
+        # all retained selections in this checkout without resolving their aliases
+        # or adopting them as valid execution bindings. One checkout has one env
+        # journal/update lock, so any outstanding restore-backed attempt interlocks
+        # manual mutation. Inactive, valid enrollments do not block legacy use.
+        automation = None
+        try:
+            with self.private_directory() as directory:
+                try:
+                    automation = os.open('automation', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW |
+                                         os.O_CLOEXEC, dir_fd=directory)
+                except FileNotFoundError:
+                    return False
+                info = os.fstat(automation)
+                if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
+                    raise StateError('untrusted automatic authority')
+                names = os.listdir(automation)
+                if len(names) > 1024:
+                    raise StateError('automatic authority exceeds inspection bound')
+                for name in names:
+                    # The global runner lock is the only non-selection leaf.
+                    if name == 'runner.lock':
+                        continue
+                    if re.fullmatch(r'[0-9a-f]{64}', name) is None:
+                        raise StateError('unrecognized automatic authority')
+                    child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                                    dir_fd=automation)
+                    try:
+                        info = os.fstat(child)
+                        if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
+                            raise StateError('untrusted automatic authority')
+                        current = RunnerStateStore._read(child, 'state.json', RunnerState)
+                        registration = RunnerStateStore._read(child, 'registration.json', Registration)
+                        binding = registration.binding
+                        if (binding.checkout != installation.root.resolve(strict=True)
+                                or binding.host_uid != os.geteuid()
+                                or binding.selection_hash != name
+                                or hashlib.sha256(json.dumps([str(binding.checkout), str(binding.env_target),
+                                    binding.production, binding.topology], ensure_ascii=True,
+                                    separators=(',', ':')).encode()).hexdigest() != name
+                                or current.installation_fingerprint != binding.installation_fingerprint):
+                            raise StateError('conflicting automatic authority')
+                        if current.active_attempt_id is not None and current.baseline_head is not None:
+                            return True
+                    finally:
+                        os.close(child)
+                return False
+        except FileNotFoundError as exc:
+            # No state directory is the normal never-enrolled path. Missing
+            # records INSIDE an existing authority are incomplete, not absent.
+            if automation is None:
+                return False
+            raise AutomaticRecoveryPending('automatic_recovery_pending') from exc
+        except Exception as exc:
+            raise AutomaticRecoveryPending('automatic_recovery_pending') from exc
+        finally:
+            if automation is not None:
+                os.close(automation)
 
     def write_journal(self, record: Mapping[str, Any]) -> None:
         self.ensure()

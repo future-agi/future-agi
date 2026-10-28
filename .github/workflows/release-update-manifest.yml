@@ -271,16 +271,9 @@ jobs:
             echo "${line%%=*}: $reference was built from $commit"
           done 3< "$RUNNER_TEMP/components.txt"
 
-      # Optional same-run, real rehearsal evidence only. No arbitrary run ID,
-      # external URL or fixture artifact is accepted. The default policy has no
-      # eligible rows; merely publishing a release never certifies compatibility.
-      - name: Same-run compatibility evidence
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: update-compatibility-evidence
-          path: ${{ runner.temp }}/evidence
-          merge-multiple: true
-
+      # Freeze ONE resolved candidate. The called rehearsal job reads this
+      # artifact; it never resolves target tags again or accepts evidence from
+      # an external run. The default candidate is deliberately uncertified.
       - name: Generate the manifest
         id: manifest
         env:
@@ -294,12 +287,8 @@ jobs:
           components=()
           while IFS= read -r line; do components+=(--component "$line"); done < "$RUNNER_TEMP/components.txt"
           mkdir -p "$RUNNER_TEMP/out"
-          # An affirmative reviewed policy cannot be generated without proof.
-          # Resolve a legacy-shaped candidate first; the producer applies that
-          # policy, validates all real evidence and emits the final v2 manifest.
-          schema=$(python3 -c 'import json; p=json.load(open("deploy/update/release-policy.json")); print(1 if p["compatibility"]["automatic_apply"] else 2)')
           python3 scripts/generate_update_manifest.py \
-            --schema-version "$schema" \
+            --schema-version 2 \
             --version "$VERSION" --channel "$channel" \
             --source-sha "$(git rev-parse HEAD)" \
             --published-at "$(TZ=UTC git show -s --format=%cd --date=format-local:%Y-%m-%dT%H:%M:%SZ HEAD)" \
@@ -309,39 +298,29 @@ jobs:
             --signature-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release-update-manifest.yml@refs/tags/${VERSION}" \
             --signature-issuer "$OIDC_ISSUER" \
             --output "$RUNNER_TEMP/out/future-agi-update-manifest.json"
-          if [ "$schema" = 1 ]; then
-            python3 scripts/build_update_compatibility_proof.py \
-              --target "$RUNNER_TEMP/out/future-agi-update-manifest.json" \
-              --policy deploy/update/release-policy.json \
-              --evidence "$RUNNER_TEMP/evidence" --run-id "$GITHUB_RUN_ID" \
-              --repository "$GITHUB_REPOSITORY" \
-              --output "$RUNNER_TEMP/out/future-agi-update-compatibility.json" \
-              --manifest-output "$RUNNER_TEMP/certified.json"
-            mv "$RUNNER_TEMP/certified.json" "$RUNNER_TEMP/out/future-agi-update-manifest.json"
-            echo 'certified=true' >> "$GITHUB_OUTPUT"
-          fi
           cat "$RUNNER_TEMP/out/future-agi-update-manifest.json"
-
-      - name: Retain compatibility proof
-        if: steps.manifest.outputs.certified == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: update-compatibility-proof
-          path: ${{ runner.temp }}/out/future-agi-update-compatibility.json
-          if-no-files-found: error
-          retention-days: 30
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: update-manifest
+          name: update-candidate
           path: ${{ runner.temp }}/out/future-agi-update-manifest.json
           if-no-files-found: error
           # Matches release-images.yml: a failed sign-and-attach can be rerun for 30 days.
           retention-days: 30
 
+  rehearse:
+    name: exact-image compatibility rehearsal
+    needs: generate
+    if: github.repository == 'future-agi/future-agi'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/update-compatibility-proof.yml
+    with:
+      produce: true
+
   publish:
     name: sign and attach
-    needs: generate
+    needs: [generate, rehearse]
     if: github.repository == 'future-agi/future-agi'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -390,7 +369,9 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             .github/actions
+            bin/update
             deploy/update
+            deploy/standalone
             scripts
 
       - name: Install cosign
@@ -402,6 +383,12 @@ jobs:
         with:
           name: update-manifest
           path: ${{ runner.temp }}/new
+
+      - name: Original frozen candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: update-candidate
+          path: ${{ runner.temp }}/frozen
 
       - name: Compatibility proof from generation
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -419,14 +406,24 @@ jobs:
           from pathlib import Path
           from deploy.update.compatibility import PROOF_ASSET, decode_document, validate_release_proof
           from deploy.update.manifest import validate_manifest
-          from scripts.build_update_compatibility_proof import read_bytes
+          from scripts.build_update_compatibility_proof import read_bytes, implementation_inventory, inventory_hash
           root = Path(os.environ["RUNNER_TEMP"]) / "new"
           target = validate_manifest(decode_document(read_bytes(root / os.environ["MANIFEST"])))
+          frozen = validate_manifest(decode_document(read_bytes(root.parent / "frozen" / os.environ["MANIFEST"])))
+          # Qualification derives only eligibility, NEVER legacy migration or image inputs.
+          derived = {"compatibility"}
+          assert {k: v for k, v in target.items() if k not in derived} == {k: v for k, v in frozen.items() if k not in derived}
+          assert target["source_sha"] == os.environ["GITHUB_SHA"]
+          assert target["version"] == os.environ["VERSION"]
+          assert os.environ["GITHUB_REF"] == "refs/tags/" + target["version"]
           proof = root / PROOF_ASSET
           validation = target.get("compatibility", {}).get("validation")
           if validation is not None:
               assert validation["run_id"] == int(os.environ["GITHUB_RUN_ID"])
-              validate_release_proof(read_bytes(proof), target, repository=os.environ["GITHUB_REPOSITORY"])
+              validated = validate_release_proof(read_bytes(proof), target, repository=os.environ["GITHUB_REPOSITORY"])
+              if validated['schema_version'] == 2:
+                  expected_executor = inventory_hash(implementation_inventory())
+                  assert all(row['executor_sha256'] == expected_executor for row in validated['predecessors'])
           else:
               assert not proof.exists(), "unexpected proof on uncertified release"
           PY

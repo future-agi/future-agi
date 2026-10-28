@@ -10,7 +10,10 @@ import { stripVTControlCharacters } from 'node:util';
 export const SPEC = 'flows/settings/host-update-status.spec.ts';
 export const TITLE = 'SET-E2E-002: admin reads fresh host update reports and missing reporting stays unknown';
 // Deliberately fail closed on flow drift; review this driver again if the approved flow changes.
-export const ORIGINAL_SHA256 = '4b64fc5bb295a01ecfef935faf0b6f4714442666e493a336193cfa8c084424ed';
+// Reviewed restore-state wire/text update: all five checks and all six one-sided
+// mutation anchors are unchanged. This pin permits proof execution, not a claim
+// that the managed browser flow or its assertion-fallibility proof has passed.
+export const ORIGINAL_SHA256 = '46c81c9b7c1ac234ba797145de3e6b8bcc7c7ccb05acd3dbb9f7abce4d6271c7';
 export const BUDGET = Object.freeze({ childMs: 360_000, overallMs: 1_200_000, termGraceMs: 5_000, killGraceMs: 2_000 });
 export const STEPS = [
   '1 API: fresh sanitized projection contains the first minted candidate',
@@ -238,7 +241,8 @@ export function validateReport(report, { mutation = null, original, e2eDir, outp
     !report.suites[0].suites && Array.isArray(report.suites[0].specs) && report.suites[0].specs.length === 1,
   'Expected exactly the original file and test, no extra/missing/nested suites');
   const spec = report.suites[0].specs[0];
-  requireThat(spec.title === TITLE && spec.file === SPEC && spec.line === 60 && same(spec.tags, ['flow']) &&
+  const titleLine = original.slice(0, unique(original, `test('${TITLE}', {`)).split('\n').length;
+  requireThat(spec.title === TITLE && spec.file === SPEC && spec.line === titleLine && same(spec.tags, ['flow']) &&
     typeof spec.id === 'string' && spec.id.length > 0 && Array.isArray(spec.tests) && spec.tests.length === 1, 'Wrong original test identity/tags');
   const test = spec.tests[0];
   const expectedStatus = mutation ? 'failed' : 'passed';

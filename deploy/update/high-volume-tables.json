@@ -1,0 +1,704 @@
+{
+  "schema_version": 1,
+  "table_identity": "database:unqualified_table_name; runtime resolves configured database/schema",
+  "tables": [
+    {
+      "database": "clickhouse",
+      "table": "trace_session",
+      "source": "futureagi/tracer/services/clickhouse/schema.py",
+      "reason": "Legacy per-conversation session facts retained across upgrades"
+    },
+    {
+      "database": "clickhouse",
+      "table": "trace_annotation",
+      "source": "futureagi/tracer/services/clickhouse/schema.py",
+      "reason": "Legacy per-observation annotation history"
+    },
+    {
+      "database": "clickhouse",
+      "table": "model_hub_score",
+      "source": "futureagi/tracer/services/clickhouse/schema.py",
+      "reason": "Legacy per-label score facts replicated from PostgreSQL"
+    },
+    {
+      "database": "clickhouse",
+      "table": "tracer_enduser",
+      "source": "futureagi/tracer/services/clickhouse/schema.py",
+      "reason": "One user identity record per ingested end user"
+    },
+    {
+      "database": "clickhouse",
+      "table": "span_metrics_hourly",
+      "source": "futureagi/tracer/services/clickhouse/schema.py",
+      "reason": "Legacy span metrics retain project/dimension/hour history"
+    },
+    {
+      "database": "clickhouse",
+      "table": "eval_metrics_hourly",
+      "source": "futureagi/tracer/services/clickhouse/schema.py",
+      "reason": "Legacy evaluation metrics retain configuration/dimension/hour history"
+    },
+    {
+      "database": "clickhouse",
+      "table": "simulate_test_execution",
+      "source": "futureagi/tracer/services/clickhouse/schema.py",
+      "reason": "Retained replicated simulation run history"
+    },
+    {
+      "database": "clickhouse",
+      "table": "simulate_call_execution",
+      "source": "futureagi/tracer/services/clickhouse/schema.py",
+      "reason": "Retained replicated per-trial call results and payloads"
+    },
+    {
+      "database": "clickhouse",
+      "table": "usage_apicalllog",
+      "source": "futureagi/tracer/services/clickhouse/schema.py",
+      "reason": "One metering fact per API action replicated for analytics"
+    },
+    {
+      "database": "clickhouse",
+      "table": "dashboard_attr_rollup",
+      "source": "futureagi/tracer/services/clickhouse/v2/schema/021_dashboard_attr_rollup.sql",
+      "reason": "Per-span/trace/user ingestion, attribute fan-out or evaluation/rollup history grows with product traffic"
+    },
+    {
+      "database": "clickhouse",
+      "table": "end_user_id_remap",
+      "source": "futureagi/tracer/services/clickhouse/v2/schema/019_id_remap.sql",
+      "reason": "Per-span/trace/user ingestion, attribute fan-out or evaluation/rollup history grows with product traffic"
+    },
+    {
+      "database": "clickhouse",
+      "table": "end_users",
+      "source": "futureagi/tracer/services/clickhouse/v2/schema/017_end_users.sql",
+      "reason": "Per-span/trace/user ingestion, attribute fan-out or evaluation/rollup history grows with product traffic"
+    },
+    {
+      "database": "clickhouse",
+      "table": "eval_per_config",
+      "source": "futureagi/tracer/services/clickhouse/v2/schema/009_per_eval_rollup.sql",
+      "reason": "Per-span/trace/user ingestion, attribute fan-out or evaluation/rollup history grows with product traffic"
+    },
+    {
+      "database": "clickhouse",
+      "table": "model_hub_cell",
+      "source": "futureagi/tracer/services/clickhouse/schema.py",
+      "reason": "Legacy CDC copy of high-volume observation, dataset or evaluation rows remains on retained installations"
+    },
+    {
+      "database": "clickhouse",
+      "table": "model_hub_row",
+      "source": "futureagi/tracer/services/clickhouse/schema.py",
+      "reason": "Legacy CDC copy of high-volume observation, dataset or evaluation rows remains on retained installations"
+    },
+    {
+      "database": "clickhouse",
+      "table": "observed_attribute_keys",
+      "source": "futureagi/tracer/services/clickhouse/v2/observed_catalog/schema.sql",
+      "reason": "Per-span/trace/user ingestion, attribute fan-out or evaluation/rollup history grows with product traffic"
+    },
+    {
+      "database": "clickhouse",
+      "table": "observed_attribute_values",
+      "source": "futureagi/tracer/services/clickhouse/v2/observed_catalog/schema.sql",
+      "reason": "Per-span/trace/user ingestion, attribute fan-out or evaluation/rollup history grows with product traffic"
+    },
+    {
+      "database": "clickhouse",
+      "table": "property_catalog_deliveries",
+      "source": "futureagi/tracer/services/clickhouse/v2/schema/027_property_catalog_delivery.sql",
+      "reason": "Per-span/trace/user ingestion, attribute fan-out or evaluation/rollup history grows with product traffic"
+    },
+    {
+      "database": "clickhouse",
+      "table": "property_definition_catalog",
+      "source": "futureagi/tracer/services/clickhouse/v2/schema/025_property_catalog_data.sql",
+      "reason": "Per-span/trace/user ingestion, attribute fan-out or evaluation/rollup history grows with product traffic"
+    },
+    {
+      "database": "clickhouse",
+      "table": "span_attribute_value_catalog",
+      "source": "futureagi/tracer/services/clickhouse/v2/schema/025_property_catalog_data.sql",
+      "reason": "Per-span/trace/user ingestion, attribute fan-out or evaluation/rollup history grows with product traffic"
+    },
+    {
+      "database": "clickhouse",
+      "table": "span_user_rollup",
+      "source": "futureagi/tracer/services/clickhouse/v2/schema/016_span_user_rollup.sql",
+      "reason": "Per-span/trace/user ingestion, attribute fan-out or evaluation/rollup history grows with product traffic"
+    },
+    {
+      "database": "clickhouse",
+      "table": "spans",
+      "source": "futureagi/tracer/services/clickhouse/v2/schema/002_spans_v2.sql",
+      "reason": "Per-span/trace/user ingestion, attribute fan-out or evaluation/rollup history grows with product traffic"
+    },
+    {
+      "database": "clickhouse",
+      "table": "spans_hourly_rollup",
+      "source": "futureagi/tracer/services/clickhouse/v2/schema/010_hourly_downsample.sql",
+      "reason": "Per-span/trace/user ingestion, attribute fan-out or evaluation/rollup history grows with product traffic"
+    },
+    {
+      "database": "clickhouse",
+      "table": "spans_per_session",
+      "source": "futureagi/tracer/services/clickhouse/v2/schema/008_per_session_rollup.sql",
+      "reason": "Per-span/trace/user ingestion, attribute fan-out or evaluation/rollup history grows with product traffic"
+    },
+    {
+      "database": "clickhouse",
+      "table": "spans_v2_dead_letter",
+      "source": "futureagi/tracer/services/clickhouse/v2/schema/003_dead_letter.sql",
+      "reason": "Per-span/trace/user ingestion, attribute fan-out or evaluation/rollup history grows with product traffic"
+    },
+    {
+      "database": "clickhouse",
+      "table": "trace_count_rollup",
+      "source": "futureagi/tracer/services/clickhouse/v2/schema/012_trace_name_and_count_rollup.sql",
+      "reason": "Per-span/trace/user ingestion, attribute fan-out or evaluation/rollup history grows with product traffic"
+    },
+    {
+      "database": "clickhouse",
+      "table": "trace_session_id_remap",
+      "source": "futureagi/tracer/services/clickhouse/v2/schema/019_id_remap.sql",
+      "reason": "Per-span/trace/user ingestion, attribute fan-out or evaluation/rollup history grows with product traffic"
+    },
+    {
+      "database": "clickhouse",
+      "table": "trace_sessions",
+      "source": "futureagi/tracer/services/clickhouse/v2/schema/018_trace_sessions.sql",
+      "reason": "Per-span/trace/user ingestion, attribute fan-out or evaluation/rollup history grows with product traffic"
+    },
+    {
+      "database": "clickhouse",
+      "table": "tracer_eval_logger",
+      "source": "futureagi/tracer/services/clickhouse/schema.py",
+      "reason": "Legacy CDC copy of high-volume observation, dataset or evaluation rows remains on retained installations"
+    },
+    {
+      "database": "clickhouse",
+      "table": "tracer_eval_logger_v2",
+      "source": "futureagi/tracer/services/clickhouse/v2/schema/011_eval_logger_v2.sql",
+      "reason": "Per-span/trace/user ingestion, attribute fan-out or evaluation/rollup history grows with product traffic"
+    },
+    {
+      "database": "clickhouse",
+      "table": "tracer_observation_span",
+      "source": "futureagi/tracer/services/clickhouse/schema.py",
+      "reason": "Legacy CDC copy of high-volume observation, dataset or evaluation rows remains on retained installations"
+    },
+    {
+      "database": "clickhouse",
+      "table": "tracer_trace",
+      "source": "futureagi/tracer/services/clickhouse/schema.py",
+      "reason": "Legacy CDC copy of high-volume observation, dataset or evaluation rows remains on retained installations"
+    },
+    {
+      "database": "clickhouse",
+      "table": "traces",
+      "source": "futureagi/tracer/services/clickhouse/v2/schema/015_traces_and_trace_dict.sql",
+      "reason": "Per-span/trace/user ingestion, attribute fan-out or evaluation/rollup history grows with product traffic"
+    },
+    {
+      "database": "postgres",
+      "table": "agentcc_request_log",
+      "app_label": "prism",
+      "model": "AgentccRequestLog",
+      "source": "futureagi/agentcc/models/request_log.py",
+      "reason": "One gateway request/completion log per inference"
+    },
+    {
+      "database": "postgres",
+      "table": "agentcc_shadow_result",
+      "app_label": "prism",
+      "model": "AgentccShadowResult",
+      "source": "futureagi/agentcc/models/shadow_result.py",
+      "reason": "One result per shadow inference"
+    },
+    {
+      "database": "postgres",
+      "table": "agentcc_webhook_event",
+      "app_label": "prism",
+      "model": "AgentccWebhookEvent",
+      "source": "futureagi/agentcc/models/webhook.py",
+      "reason": "One delivery log per outgoing gateway webhook"
+    },
+    {
+      "database": "postgres",
+      "table": "fi_cdc_outbox",
+      "source": "futureagi/tracer/services/clickhouse/oss_outbox_cdc.py",
+      "reason": "One change-capture event per relational write; backlog grows while drain is behind"
+    },
+    {
+      "database": "postgres",
+      "table": "fi_cdc_deadletter",
+      "source": "futureagi/tracer/services/clickhouse/oss_outbox_cdc.py",
+      "reason": "Failed change-capture deliveries accumulate per event until repaired"
+    },
+    {
+      "database": "postgres",
+      "table": "simulate_test_execution",
+      "app_label": "simulate",
+      "model": "TestExecution",
+      "source": "futureagi/simulate/models/test_execution.py",
+      "reason": "One execution per submitted simulation run"
+    },
+    {
+      "database": "postgres",
+      "table": "simulate_call_execution",
+      "app_label": "simulate",
+      "model": "CallExecution",
+      "source": "futureagi/simulate/models/test_execution.py",
+      "reason": "One call execution per simulation scenario and trial"
+    },
+    {
+      "database": "postgres",
+      "table": "simulate_call_transcript",
+      "app_label": "simulate",
+      "model": "CallTranscript",
+      "source": "futureagi/simulate/models/test_execution.py",
+      "reason": "Full transcript payloads per simulated call"
+    },
+    {
+      "database": "postgres",
+      "table": "simulate_call_execution_snapshot",
+      "app_label": "simulate",
+      "model": "CallExecutionSnapshot",
+      "source": "futureagi/simulate/models/test_execution.py",
+      "reason": "Retained result and configuration snapshots per executed call"
+    },
+    {
+      "database": "postgres",
+      "table": "model_hub_cell",
+      "app_label": "model_hub",
+      "model": "Cell",
+      "source": "futureagi/model_hub/models/develop_dataset.py",
+      "reason": "One cell per row and dataset column"
+    },
+    {
+      "database": "postgres",
+      "table": "model_hub_evaluation",
+      "app_label": "model_hub",
+      "model": "Evaluation",
+      "source": "futureagi/model_hub/models/evaluation.py",
+      "reason": "Per-row evaluation result history"
+    },
+    {
+      "database": "postgres",
+      "table": "model_hub_history",
+      "app_label": "model_hub",
+      "model": "History",
+      "source": "futureagi/model_hub/models/eval_groups.py",
+      "reason": "Per-evaluation run history"
+    },
+    {
+      "database": "postgres",
+      "table": "model_hub_score",
+      "app_label": "model_hub",
+      "model": "Score",
+      "source": "futureagi/model_hub/models/score.py",
+      "reason": "Per-observation per-label annotation scores and evaluation results"
+    },
+    {
+      "database": "postgres",
+      "table": "model_hub_queueitem",
+      "app_label": "model_hub",
+      "model": "QueueItem",
+      "source": "futureagi/model_hub/models/annotation_queues.py",
+      "reason": "Per-observation or dataset-row annotation task inventory"
+    },
+    {
+      "database": "postgres",
+      "table": "model_hub_queueitemassignment",
+      "app_label": "model_hub",
+      "model": "QueueItemAssignment",
+      "source": "futureagi/model_hub/models/annotation_queues.py",
+      "reason": "Per-task per-annotator assignment history"
+    },
+    {
+      "database": "postgres",
+      "table": "model_hub_row",
+      "app_label": "model_hub",
+      "model": "Row",
+      "source": "futureagi/model_hub/models/develop_dataset.py",
+      "reason": "One row per imported dataset sample"
+    },
+    {
+      "database": "postgres",
+      "table": "trace_annotation",
+      "app_label": "tracer",
+      "model": "TraceAnnotation",
+      "source": "futureagi/tracer/models/trace_annotation.py",
+      "reason": "Per-span/trace annotation history"
+    },
+    {
+      "database": "postgres",
+      "table": "trace_session",
+      "app_label": "tracer",
+      "model": "TraceSession",
+      "source": "futureagi/tracer/models/trace_session.py",
+      "reason": "One session per end-user conversation"
+    },
+    {
+      "database": "postgres",
+      "table": "trace_session_overlay",
+      "app_label": "tracer",
+      "model": "TraceSessionOverlay",
+      "source": "futureagi/tracer/models/trace_session.py",
+      "reason": "Session annotation/override history"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_analysis_error_group",
+      "app_label": "tracer",
+      "model": "AnalysisErrorGroup",
+      "source": "futureagi/tracer/models/trace_error_analysis.py",
+      "reason": "Per-trace grouping/investigation facts, work attempts or decision history accumulate with ingestion"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_error_cluster_traces",
+      "app_label": "tracer",
+      "model": "ErrorClusterTraces",
+      "source": "futureagi/tracer/models/trace_error_analysis.py",
+      "reason": "Per-trace grouping/investigation facts, work attempts or decision history accumulate with ingestion"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_error_feed_alert_delivery",
+      "app_label": "tracer",
+      "model": "ErrorFeedAlertDelivery",
+      "source": "futureagi/tracer/models/feed_alert.py",
+      "reason": "Per-channel delivery log"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_error_feed_issue_event",
+      "app_label": "tracer",
+      "model": "ErrorFeedIssueEvent",
+      "source": "futureagi/tracer/models/feed_alert.py",
+      "reason": "Per-issue change events"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_error_memory",
+      "app_label": "tracer",
+      "model": "ErrorMemory",
+      "source": "futureagi/tracer/models/trace_error_analysis.py",
+      "reason": "Per-trace grouping/investigation facts, work attempts or decision history accumulate with ingestion"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_error_pattern",
+      "app_label": "tracer",
+      "model": "ErrorPattern",
+      "source": "futureagi/tracer/models/trace_error_analysis.py",
+      "reason": "Per-trace grouping/investigation facts, work attempts or decision history accumulate with ingestion"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_eval_logger",
+      "app_label": "tracer",
+      "model": "EvalLogger",
+      "source": "futureagi/tracer/models/observation_span.py",
+      "reason": "One evaluation result per span/evaluator"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_eval_task",
+      "app_label": "tracer",
+      "model": "EvalTask",
+      "source": "futureagi/tracer/models/eval_task.py",
+      "reason": "Per-observation evaluation jobs"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_eval_task_logger",
+      "app_label": "tracer",
+      "model": "EvalTaskLogger",
+      "source": "futureagi/tracer/models/eval_task.py",
+      "reason": "Per-execution evaluation results"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_observation_span",
+      "app_label": "tracer",
+      "model": "ObservationSpan",
+      "source": "futureagi/tracer/models/observation_span.py",
+      "reason": "One relational span per ingested operation"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_trace",
+      "app_label": "tracer",
+      "model": "Trace",
+      "source": "futureagi/tracer/models/trace.py",
+      "reason": "One record per ingested trace"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_trace_error_analysis",
+      "app_label": "tracer",
+      "model": "TraceErrorAnalysis",
+      "source": "futureagi/tracer/models/trace_error_analysis.py",
+      "reason": "Per-trace grouping/investigation facts, work attempts or decision history accumulate with ingestion"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_trace_error_detail",
+      "app_label": "tracer",
+      "model": "TraceErrorDetail",
+      "source": "futureagi/tracer/models/trace_error_analysis.py",
+      "reason": "Per-trace grouping/investigation facts, work attempts or decision history accumulate with ingestion"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_trace_error_group",
+      "app_label": "tracer",
+      "model": "TraceErrorGroup",
+      "source": "futureagi/tracer/models/trace_error_analysis.py",
+      "reason": "Per-trace grouping/investigation facts, work attempts or decision history accumulate with ingestion"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_trace_grouping_attempt",
+      "app_label": "tracer",
+      "model": "TraceGroupingAttempt",
+      "source": "futureagi/tracer/models/trace_grouping.py",
+      "reason": "Per-trace grouping/investigation facts, work attempts or decision history accumulate with ingestion"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_trace_grouping_call",
+      "app_label": "tracer",
+      "model": "TraceGroupingCall",
+      "source": "futureagi/tracer/models/trace_grouping.py",
+      "reason": "Per-trace grouping/investigation facts, work attempts or decision history accumulate with ingestion"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_trace_grouping_constraint",
+      "app_label": "tracer",
+      "model": "TraceGroupingConstraint",
+      "source": "futureagi/tracer/models/trace_grouping.py",
+      "reason": "Per-trace grouping/investigation facts, work attempts or decision history accumulate with ingestion"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_trace_grouping_decision",
+      "app_label": "tracer",
+      "model": "TraceGroupingDecision",
+      "source": "futureagi/tracer/models/trace_grouping.py",
+      "reason": "Per-trace grouping/investigation facts, work attempts or decision history accumulate with ingestion"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_trace_grouping_feature",
+      "app_label": "tracer",
+      "model": "TraceGroupingFeature",
+      "source": "futureagi/tracer/models/trace_grouping.py",
+      "reason": "Per-trace grouping/investigation facts, work attempts or decision history accumulate with ingestion"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_trace_grouping_feature_job",
+      "app_label": "tracer",
+      "model": "TraceGroupingFeatureJob",
+      "source": "futureagi/tracer/models/trace_grouping.py",
+      "reason": "Per-trace grouping/investigation facts, work attempts or decision history accumulate with ingestion"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_trace_grouping_finding_state",
+      "app_label": "tracer",
+      "model": "TraceGroupingFindingState",
+      "source": "futureagi/tracer/models/trace_grouping.py",
+      "reason": "Per-trace grouping/investigation facts, work attempts or decision history accumulate with ingestion"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_trace_grouping_issue_state",
+      "app_label": "tracer",
+      "model": "TraceGroupingIssueState",
+      "source": "futureagi/tracer/models/trace_grouping.py",
+      "reason": "Per-trace grouping/investigation facts, work attempts or decision history accumulate with ingestion"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_trace_grouping_outbox",
+      "app_label": "tracer",
+      "model": "TraceGroupingOutbox",
+      "source": "futureagi/tracer/models/trace_grouping.py",
+      "reason": "Per-trace grouping/investigation facts, work attempts or decision history accumulate with ingestion"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_trace_grouping_scope",
+      "app_label": "tracer",
+      "model": "TraceGroupingScope",
+      "source": "futureagi/tracer/models/trace_grouping.py",
+      "reason": "Per-trace grouping/investigation facts, work attempts or decision history accumulate with ingestion"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_trace_grouping_severity_job",
+      "app_label": "tracer",
+      "model": "TraceGroupingSeverityJob",
+      "source": "futureagi/tracer/models/trace_grouping.py",
+      "reason": "Per-trace grouping/investigation facts, work attempts or decision history accumulate with ingestion"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_trace_grouping_work",
+      "app_label": "tracer",
+      "model": "TraceGroupingWork",
+      "source": "futureagi/tracer/models/trace_grouping.py",
+      "reason": "Per-trace grouping/investigation facts, work attempts or decision history accumulate with ingestion"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_trace_investigation_attempt",
+      "app_label": "tracer",
+      "model": "TraceInvestigationAttempt",
+      "source": "futureagi/tracer/models/trace_investigation.py",
+      "reason": "Per-trace grouping/investigation facts, work attempts or decision history accumulate with ingestion"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_trace_investigation_attribution",
+      "app_label": "tracer",
+      "model": "TraceInvestigationAttribution",
+      "source": "futureagi/tracer/models/trace_investigation.py",
+      "reason": "Per-trace grouping/investigation facts, work attempts or decision history accumulate with ingestion"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_trace_investigation_attribution_evidence",
+      "app_label": "tracer",
+      "model": "TraceInvestigationAttributionEvidence",
+      "source": "futureagi/tracer/models/trace_investigation.py",
+      "reason": "Per-trace grouping/investigation facts, work attempts or decision history accumulate with ingestion"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_trace_investigation_delivery",
+      "app_label": "tracer",
+      "model": "TraceInvestigationDelivery",
+      "source": "futureagi/tracer/models/trace_investigation.py",
+      "reason": "Per-trace grouping/investigation facts, work attempts or decision history accumulate with ingestion"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_trace_investigation_evidence_receipt",
+      "app_label": "tracer",
+      "model": "TraceInvestigationEvidenceReceipt",
+      "source": "futureagi/tracer/models/trace_investigation.py",
+      "reason": "Per-trace grouping/investigation facts, work attempts or decision history accumulate with ingestion"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_trace_investigation_finding",
+      "app_label": "tracer",
+      "model": "TraceInvestigationFinding",
+      "source": "futureagi/tracer/models/trace_investigation.py",
+      "reason": "Per-trace grouping/investigation facts, work attempts or decision history accumulate with ingestion"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_trace_investigation_finding_evidence",
+      "app_label": "tracer",
+      "model": "TraceInvestigationFindingEvidence",
+      "source": "futureagi/tracer/models/trace_investigation.py",
+      "reason": "Per-trace grouping/investigation facts, work attempts or decision history accumulate with ingestion"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_trace_investigation_gateway_call",
+      "app_label": "tracer",
+      "model": "TraceInvestigationGatewayCall",
+      "source": "futureagi/tracer/models/trace_investigation.py",
+      "reason": "Per-trace grouping/investigation facts, work attempts or decision history accumulate with ingestion"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_trace_investigation_job",
+      "app_label": "tracer",
+      "model": "TraceInvestigationJob",
+      "source": "futureagi/tracer/models/trace_investigation.py",
+      "reason": "Per-trace grouping/investigation facts, work attempts or decision history accumulate with ingestion"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_trace_investigation_key_moment",
+      "app_label": "tracer",
+      "model": "TraceInvestigationKeyMoment",
+      "source": "futureagi/tracer/models/trace_investigation.py",
+      "reason": "Per-trace grouping/investigation facts, work attempts or decision history accumulate with ingestion"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_trace_investigation_report",
+      "app_label": "tracer",
+      "model": "TraceInvestigationReport",
+      "source": "futureagi/tracer/models/trace_investigation.py",
+      "reason": "Per-trace grouping/investigation facts, work attempts or decision history accumulate with ingestion"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_trace_investigation_requirement_check",
+      "app_label": "tracer",
+      "model": "TraceInvestigationRequirementCheck",
+      "source": "futureagi/tracer/models/trace_investigation.py",
+      "reason": "Per-trace grouping/investigation facts, work attempts or decision history accumulate with ingestion"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_trace_investigation_requirement_evidence",
+      "app_label": "tracer",
+      "model": "TraceInvestigationRequirementEvidence",
+      "source": "futureagi/tracer/models/trace_investigation.py",
+      "reason": "Per-trace grouping/investigation facts, work attempts or decision history accumulate with ingestion"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_trace_investigation_tool",
+      "app_label": "tracer",
+      "model": "TraceInvestigationTool",
+      "source": "futureagi/tracer/models/trace_investigation.py",
+      "reason": "Per-trace grouping/investigation facts, work attempts or decision history accumulate with ingestion"
+    },
+    {
+      "database": "postgres",
+      "table": "tracer_trace_investigation_verification_receipt",
+      "app_label": "tracer",
+      "model": "TraceInvestigationVerificationReceipt",
+      "source": "futureagi/tracer/models/trace_investigation.py",
+      "reason": "Per-trace grouping/investigation facts, work attempts or decision history accumulate with ingestion"
+    },
+    {
+      "database": "postgres",
+      "table": "usage_apicalllog",
+      "app_label": "usage",
+      "model": "APICallLog",
+      "source": "futureagi/ee/usage/models/usage.py",
+      "reason": "One usage event per metered action"
+    },
+    {
+      "database": "postgres",
+      "table": "usage_usageeventlog",
+      "app_label": "usage",
+      "model": "UsageEventLog",
+      "source": "futureagi/ee/usage/models/usage.py",
+      "reason": "Raw idempotent metering ingestion log"
+    },
+    {
+      "database": "postgres",
+      "table": "usage_usagesummary",
+      "app_label": "usage",
+      "model": "UsageSummary",
+      "source": "futureagi/ee/usage/models/usage.py",
+      "reason": "Aggregated usage per organization/resource/time bucket"
+    }
+  ]
+}

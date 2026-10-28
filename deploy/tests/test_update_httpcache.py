@@ -66,6 +66,55 @@ class CacheTests(unittest.TestCase):
         value.update(kwargs)
         self.cache.store.write("http-" + self.key, value)
 
+    def test_transport_reads_only_proof_bound_plus_one_and_never_disables_tls(self):
+        from deploy.update.trust import _download, http_get
+        import ssl
+        reads = []
+        class Response:
+            headers = {}
+            status = 200
+            def __enter__(self):
+                return self
+            def __exit__(self, *_):
+                pass
+            def geturl(self):
+                return URL
+            def read(self, maximum):
+                reads.append(maximum)
+                return b"x" * maximum
+        with self.assertRaises(ManifestError):
+            _download(URL, opener=lambda *a, **k: Response(), max_bytes=256 * 1024)
+        self.assertEqual(reads, [256 * 1024 + 1])
+        insecure = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        insecure.check_hostname = False
+        insecure.verify_mode = ssl.CERT_NONE
+        with self.assertRaises(ManifestError):
+            http_get(URL, {}, ssl_context=insecure)
+
+    def test_proof_bound_applies_to_transport_and_304_cache_body(self):
+        self.seed(body=b"x" * (256 * 1024 + 1))
+        def bounded(url, headers, timeout, *, max_bytes):
+            self.assertEqual(max_bytes, 256 * 1024)
+            return HttpResponse(304, etag='"a"', final_url=url)
+        self.cache.transport = bounded
+        self.fail(R.CACHE_INVALID, self.cache.fetch, URL, max_bytes=256 * 1024)
+        def oversized(url, headers, timeout, *, max_bytes):
+            return HttpResponse(200, b"x" * (max_bytes + 1), final_url=url)
+        self.cache.transport = oversized
+        self.fail(R.CACHE_INVALID, self.cache.fetch, URL, max_bytes=256 * 1024)
+
+    def test_create_only_candidate_proof_rejects_corrupt_immutable_record(self):
+        args = dict(channel="stable", source_identity="host-source", manifest=b"signed-manifest", bundle=b"bundle",
+                    proof=b"proof", proof_sha256=hc.digest(b"proof"))
+        name = self.cache.accept_evidence(URL, **args)
+        self.assertEqual(self.cache.accept_evidence(URL, **args), name)
+        record = self.cache.store.read(name, strict=True)
+        record["body"] = base64.b64encode(b"changed").decode()
+        self.cache.store.write(name, record)
+        self.fail(R.IMMUTABLE_RELEASE_CHANGED, self.cache.accept_evidence, URL, **args)
+        with self.assertRaises(hc.DiscoveryError):
+            self.cache.accept_evidence(URL, **dict(args, proof=b"replay-other-target"))
+
     def test_200_304_reuses_exact_bytes_and_both_validators(self):
         first = self.seed()
         self.now += 15

@@ -74,6 +74,18 @@ class DiscoveryTests(unittest.TestCase):
         self.assertIsNone(result.checked_at)
         self.assertEqual(result.public_summary()["state"], "blocked")
 
+    def test_local_publisher_origins_are_explicit_host_inputs_not_asset_urls(self):
+        local = ds.ReleaseDiscovery(self.cache, self.verifier, api_origin="https://localhost:9443",
+                                    asset_origin="https://localhost:9443")
+        self.assertEqual(local.api, "https://localhost:9443/repos/future-agi/future-agi/releases")
+        self.assertEqual(local._url("v1.2.3"),
+                         "https://localhost:9443/future-agi/future-agi/releases/download/v1.2.3/" + MANIFEST_ASSET)
+        self.assertNotEqual(local.source_identity_sha256, self.discovery.source_identity_sha256)
+        self.assertEqual(self.discovery.api, "https://api.github.com/repos/future-agi/future-agi/releases")
+        for bad in ("http://localhost:9443", "https://localhost:9443/untrusted-path", "https://user:pw@localhost"):
+            with self.assertRaises(ValueError):
+                ds.ReleaseDiscovery(self.cache, self.verifier, asset_origin=bad)
+
     def test_highest_complete_semver_not_api_order(self):
         versions = ["v1.3.0", "v1.2.4", "v1.9.0", "v1.2.3"]
         self.listing([self.record(v) for v in versions])

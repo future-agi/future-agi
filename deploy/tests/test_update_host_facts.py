@@ -162,6 +162,36 @@ class SelectionTests(pub.PublisherCase):
         (self.root/'deploy/.env.production').write_text('X=1\n')
         self.assertTrue(facts.selected_store(self.root, production=True).production)
 
+    def test_executor_inventory_matches_producer_and_never_borrows_proof_digest(self):
+        from scripts.build_update_compatibility_proof import implementation_inventory, inventory_hash
+        names = ['scripts/rehearse_update_compatibility.py', 'scripts/build_update_compatibility_proof.py',
+            'scripts/generate_update_manifest.py', 'bin/update', 'deploy/standalone/bin/start',
+            'deploy/standalone/bin/bootstrap.py', 'deploy/standalone/nginx.conf',
+            'deploy/update/fixed.py', 'deploy/update/probes/fixed.py', 'deploy/update/mapping.json']
+        for name in names:
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('fixed installed data: ' + name)
+        digest = facts.executor_implementation_sha256(self.root)
+        self.assertEqual(digest, inventory_hash(implementation_inventory(self.root)))
+        ignored = self.root / 'deploy/update/__pycache__/untrusted.py'
+        ignored.parent.mkdir()
+        ignored.write_text('not part of shipped closure')
+        self.assertEqual(facts.executor_implementation_sha256(self.root), digest)
+        changed = self.root / 'deploy/update/probes/fixed.py'
+        changed.write_text('changed fixed observer')
+        self.assertNotEqual(facts.executor_implementation_sha256(self.root), digest)
+        self.assertEqual(facts.executor_implementation_sha256(self.root), inventory_hash(implementation_inventory(self.root)))
+        changed.unlink()
+        changed.symlink_to(self.env)
+        with self.assertRaises(GuardRefused):
+            facts.executor_implementation_sha256(self.root)
+        changed.unlink()
+        with changed.open('wb') as handle:
+            handle.truncate(16 * 1024 * 1024 + 1)
+        with self.assertRaises(GuardRefused):
+            facts.executor_implementation_sha256(self.root)
+
     def test_binding_reuses_public_token_but_never_repairs_corrupt_registration(self):
         installation = mock.Mock(root=self.root, env_file=self.env, env_alias=self.env, env={}, project='test')
         installation._ownership_files.return_value = [self.compose]

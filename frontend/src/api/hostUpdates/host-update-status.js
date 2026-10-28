@@ -170,7 +170,88 @@ export function normalizeHostUpdateStatus(data) {
   ) {
     return unavailable("malformed");
   }
-  const { discovery, download, versions } = snapshot;
+  const { discovery, download, versions, safety, last_run: run } = snapshot;
+  // These are required objects in both legacy and restore-backed reports.
+  if (safety == null || snapshot.operation == null)
+    return unavailable("malformed");
+  // Swagger 2 flattens the two exact legacy/restore object alternatives.
+  // Restore the complete-group constraint here; enums/scalars remain generated.
+  for (const [value, keys] of [
+    [
+      safety,
+      [
+        "fallback_strategy",
+        "restore_state",
+        "snapshot_at",
+        "loss_window_start",
+        "loss_window_end",
+        "loss_window_qualification",
+        "guidance_id",
+        "estimates",
+        "failed_target_version",
+      ],
+    ],
+    [
+      run,
+      [
+        "forward_result",
+        "restore_result",
+        "effective_version",
+        "failed_target_version",
+      ],
+    ],
+  ]) {
+    if (
+      value &&
+      keys.some((key) => Object.hasOwn(value, key)) &&
+      !keys.every((key) => Object.hasOwn(value, key))
+    )
+      return unavailable("malformed");
+  }
+  if (
+    (safety.loss_window_end != null &&
+      (safety.loss_window_start == null ||
+        safety.loss_window_end < safety.loss_window_start)) ||
+    (safety.loss_window_qualification === "bounded" &&
+      (!safety.loss_window_start || !safety.loss_window_end))
+  )
+    return unavailable("malformed");
+  if (
+    (["running", "failed", "recovery_required"].includes(
+      safety.restore_state,
+    ) ||
+      ["restoring", "recovery_required"].includes(snapshot.operation.state)) &&
+    (versions.running_release !== null ||
+      versions.runtime_state !== "unknown" ||
+      run?.effective_version != null)
+  )
+    return unavailable("malformed");
+  const components = versions.components;
+  const active = components.filter(
+    (item) => item.observation !== "not_deployed",
+  );
+  // Match the host reader: a release is consistent only when at least one active
+  // component was actually observed running that release, including after restore.
+  if (
+    new Set(components.map((item) => item.component)).size !==
+      components.length ||
+    components.some((item) =>
+      item.observation === "known"
+        ? item.observed_versions.length === 0
+        : item.observed_versions.length !== 0,
+    ) ||
+    (versions.runtime_state === "consistent" &&
+      (!versions.running_release ||
+        !versions.observed_at ||
+        active.length === 0 ||
+        active.some(
+          (item) =>
+            item.observation !== "known" ||
+            item.observed_versions.length !== 1 ||
+            item.observed_versions[0] !== versions.running_release,
+        )))
+  )
+    return unavailable("malformed");
   if (
     ((discovery.candidate_version ||
       ["current", "available"].includes(discovery.state)) &&
@@ -188,6 +269,121 @@ export function normalizeHostUpdateStatus(data) {
     return unavailable("malformed");
   }
   return result;
+}
+
+export function humanDuration(seconds) {
+  if (!Number.isSafeInteger(seconds) || seconds < 0) return "unknown";
+  if (seconds < 60) return `${seconds} s`;
+  if (seconds < 3600) return `${Math.ceil(seconds / 60)} min`;
+  return `${(seconds / 3600).toFixed(1)} h`;
+}
+
+export function humanBytes(bytes) {
+  if (!Number.isSafeInteger(bytes) || bytes < 0) return "unknown";
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KiB", "MiB", "GiB", "TiB", "PiB"];
+  let value = bytes / 1024;
+  let index = 0;
+  while (value >= 1024 && index < units.length - 1) {
+    value /= 1024;
+    index += 1;
+  }
+  return `${value.toFixed(1)} ${units[index]}`;
+}
+
+const automaticReasons = {
+  migration_exceeds_window:
+    "The migration cannot fit the maintenance window or time budget.",
+  insufficient_disk_for_migration:
+    "There is not enough disk space for migration growth and the protected restore reserve.",
+  backup_exceeds_window:
+    "The backup and recovery cannot fit the maintenance window or time budget.",
+  insufficient_disk_for_backup:
+    "There is not enough disk space for the cold backup and protected restore reserve.",
+  restore_capacity_unknown:
+    "Backup or restore capacity could not be measured safely.",
+};
+
+const automaticActivity = {
+  checking: "The host is checking releases.",
+  downloading: "The host is downloading images for the current operation.",
+  backing_up:
+    "The host is backing up the stopped installation for the current update.",
+  applying: "The host is applying the current update.",
+  verifying:
+    "The host is verifying readiness and stability of the current update.",
+  rolling_back: "The host is restoring prior images for the current operation.",
+};
+
+export function automaticNoticeForStatus(data) {
+  if (data?.availability !== "available" || !data.snapshot) return null;
+  const { operation, safety, last_run: run, discovery } = data.snapshot;
+  if (safety.fallback_strategy !== "restore_backup") return null;
+  let text = null;
+  let recoveryNotice = false;
+  let admissionNotice = false;
+  // last_run is history, not the current operation. Recovery comes first, then
+  // current forward activity and admission refusals, then the matching restore.
+  // Disabled scheduling never implies that an outstanding recovery has ended.
+  if (
+    operation.state === "recovery_required" ||
+    ["failed", "recovery_required"].includes(safety.restore_state)
+  ) {
+    recoveryNotice = true;
+    text = `Automatic recovery needs host operator attention. Installed version is unverified. Last phase: ${operation.phase || "unknown"}. Keep the backup and safety scheduler; inspect private host evidence instead of retrying blindly.`;
+  } else if (
+    operation.state === "restoring" ||
+    safety.restore_state === "running"
+  ) {
+    recoveryNotice = true;
+    text =
+      "The update failed; restoring the cold backup and previous images. Future AGI is unavailable until recovery health checks pass.";
+  } else if (automaticActivity[operation.state]) {
+    text = automaticActivity[operation.state];
+  } else {
+    const reasons = [
+      ...(discovery.reason_codes || []),
+      ...(operation.reason_codes || []),
+    ];
+    const explanations = [
+      ...new Set(reasons.filter((reason) => automaticReasons[reason])),
+    ].map((reason) => automaticReasons[reason]);
+    if (explanations.length) {
+      admissionNotice = true;
+      text = `Notify-only for this installation. ${explanations.join(" ")} Run a manual update at a time you choose; the updater will not run outside the window.`;
+    } else if (discovery.state === "blocked") {
+      admissionNotice = true;
+      text =
+        "Notify-only for this installation. The current release did not pass automatic-update admission; review the reported reasons before taking action on the host.";
+    } else if (
+      operation.state === "restored" &&
+      run?.restore_result === "verified" &&
+      run.forward_result !== "succeeded"
+    ) {
+      recoveryNotice = true;
+      text = `Update to ${run.failed_target_version || run.target_version || "the new version"} failed; restored ${run.effective_version || "the previous version"}; ${run.failed_target_version || run.target_version || "the failed target"} will not be retried automatically.`;
+    }
+  }
+  if (!text) return null;
+  const activeOperation =
+    automaticActivity[operation.state] || operation.state === "restoring";
+  const oldProgress =
+    data.progress_freshness === "stale" ||
+    (activeOperation && data.progress_freshness !== "fresh");
+  if (
+    data.freshness !== "fresh" ||
+    (admissionNotice ? data.discovery_freshness !== "fresh" : oldProgress)
+  ) {
+    text = `Last host report (stale; current state unknown): ${text}`;
+  }
+  const estimates = safety.estimates;
+  if (estimates) {
+    text += ` Estimates: backup ${humanDuration(estimates.backup_seconds)}, migration ${humanDuration(estimates.migration_seconds)}, restore ${humanDuration(estimates.restore_seconds)}, total ${humanDuration(estimates.total_seconds)}; backup free space ${humanBytes(estimates.backup_required_free_bytes)}, Docker free space ${humanBytes(estimates.docker_required_free_bytes)} (restore reserve ${humanBytes(estimates.protected_restore_reserve_bytes)}).`;
+  }
+  if (recoveryNotice && safety.loss_window_start) {
+    text += ` Restore discards new-version writes from ${safety.loss_window_start} to ${safety.loss_window_end || "the failure stop"} (${safety.loss_window_qualification || "unknown"} window). External service calls cannot be undone.`;
+  }
+  return { text };
 }
 
 export async function fetchHostUpdateStatus({ signal, organizationId }) {
@@ -249,6 +445,7 @@ export function useHostUpdateStatus() {
   return {
     ...access,
     data,
+    automaticNotice: automaticNoticeForStatus(data),
     isLoading: access.allowed && query.isPending,
     isFetching: access.allowed && query.isFetching,
     canRefresh: access.allowed && !terminal(data),

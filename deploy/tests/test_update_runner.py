@@ -15,10 +15,9 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from deploy.tests import test_update_public_status as pub  # noqa: E402
-from deploy.tests import test_update_automation_boundaries as boundaries  # noqa: E402
 from deploy.tests import test_update_download as downloads  # noqa: E402
 from deploy.tests.test_update_compatibility import NOW, prepare, default_v2  # noqa: E402
-from deploy.update.compatibility import Observations, RuntimeImage  # noqa: E402
+from deploy.update.compatibility import Observations  # noqa: E402
 from deploy.update.contracts import ReasonCode  # noqa: E402
 from deploy.update.discovery import DiscoveryResult  # noqa: E402
 from deploy.update.orchestrator import EngineResult, GuardRefused  # noqa: E402
@@ -523,7 +522,10 @@ class ApplyAndReportingTests(RunnerCase):
         self.store.change_control('disable', self.now)
         with mock.patch.object(self.store, 'read_registration', side_effect=StoreError()):
             result = self.runner().tick()
-        self.assertEqual(result.skip_reason, 'disabled')
+        # A corrupt registered identity cannot hide a potentially pending safety
+        # transaction behind disable. It refuses before touching the daemon.
+        self.assertEqual(result.disposition, 'blocked')
+        self.assertEqual(result.reason_codes, (ReasonCode.CONTROL_INVALID,))
         self.assertEqual(result.warnings, (ReasonCode.STATUS_REPORTING_UNAVAILABLE,))
 
     def test_local_selected_release_unknown_and_gpu_variant(self):
@@ -721,6 +723,162 @@ class RunnerConcurrencyTests(RunnerCase):
             self.assertEqual(runner.tick().reason_codes, (ReasonCode.INSUFFICIENT_WINDOW,))
 
 
+class PendingRecoveryOrderingTests(RunnerCase):
+    def pending(self):
+        attempt = self.store.reserve_attempt(self.target(), 'previous-window', NOW)
+        with self.store._lock('state.lock') as directory:
+            state = self.store.read_state()
+            self.store._write(directory, 'state.json', replace(state, baseline_head='b' * 64,
+                next_check_at=NOW + timedelta(days=2), retry_not_before=NOW + timedelta(days=1)))
+        return attempt
+
+    def test_pending_recovery_precedes_all_controls_modes_windows_and_current_pin(self):
+        import time
+        from deploy.update.contracts import RestorationResult
+        from deploy.update.receipt import StateDir
+        attempt = self.pending()
+        self.env.write_text('FUTURE_AGI_VERSION=v99.0.0\n')  # Not the source and never a discovery input.
+        life = mock.Mock()
+        life.resume.return_value = RestorationResult(attempt.attempt_id, 'recovery_required', 'v1.51.0',
+            self.target().version, 'previous_start_armed', reason_codes=(ReasonCode.RESTORE_CHILD_AMBIGUOUS,))
+        budgets = []
+        def recovery(store, settings, registration, supervisor, clock):
+            self.assertIsNotNone(StateDir(store.checkout).lock_holder(automation=True))
+            with self.assertRaises(StoreBusy), store.runner_lock():
+                self.fail('recovery escaped runner.lock')
+            budgets.append(supervisor.deadline - time.monotonic())
+            self.assertGreater(budgets[-1], 0)
+            self.assertLessEqual(budgets[-1], settings.automation_policy.required_recovery_budget_seconds)
+            return life
+        for mode in ('manual', 'notify', 'download', 'apply'):
+            for action in ('disable', 'pause', 'resume'):
+                with self.subTest(mode=mode, action=action):
+                    self.store.change_control('enable', NOW)
+                    self.store.change_control(action, NOW)
+                    settings = self.settings(mode, MAINTENANCE_WINDOW='23:00-23:30')
+                    result = self.runner(mode, settings=settings, recovery_factory=recovery).tick()
+                    self.assertEqual(result.disposition, 'recovery_required', result)
+                    self.assertEqual(result.reason_codes, (ReasonCode.RESTORE_CHILD_AMBIGUOUS,))
+                    self.assertEqual(self.store.read_state().active_attempt_id, attempt.attempt_id)
+                    self.assertEqual(self.store.read_state().baseline_head, 'b' * 64)
+                    self.assertIsNone(self.store.read_state().failed_target_latch)
+        self.assertEqual(life.resume.call_count, 12)
+        self.discovery_factory.assert_not_called()
+        self.preparer.assert_not_called()
+        self.executor.assert_not_called()
+        self.assertEqual(self.publisher.capture()[1]['operation']['phase'], 'previous_start_armed')
+        self.assertIsNone(self.publisher.capture()[1]['last_run']['effective_version'])
+
+    def test_immediate_engine_restore_preserves_forward_failure_and_projects_verified_A(self):
+        from types import SimpleNamespace
+        from deploy.tests.test_update_compatibility import restore_context
+        _, evidence, _, _ = restore_context()
+        runner = self.runner('apply')
+        def execute(engine, guard):
+            attempt = self.store.reserve_attempt(self.target(), 'restore-window', NOW)
+            guard.attempt = attempt
+            self.store.finish_attempt(replace(attempt, outcome='failed', finished_at=NOW))
+            seal = replace(evidence.backup_seal, attempt_id=attempt.attempt_id,
+                operation_token=attempt.operation_token, run_id=attempt.operation_token)
+            runner.automatic = SimpleNamespace(latest_restore_observation=SimpleNamespace(
+                facts=SimpleNamespace(runtime_observation=evidence.runtime_observation)), backup_seal=seal,
+                preflight_decision=None)
+            return EngineResult(5, (ReasonCode.RESTORED_AFTER_UPDATE_FAILURE,), True, True, 'failed',
+                restore_result='verified', effective_version='v1.51.0', phase='restored')
+        self.executor.side_effect = execute
+        result = runner.tick()
+        self.assertEqual(result.disposition, 'restored', result)
+        self.assertEqual(result.forward_result, 'failed')
+        self.assertEqual(result.restore_result, 'verified')
+        self.assertEqual(result.effective_version, 'v1.51.0')
+        self.assertEqual(result.fallback_result, 'none')
+        public = self.publisher.capture()[1]
+        self.assertEqual(public['operation']['state'], 'restored')
+        self.assertEqual(public['last_run']['forward_result'], 'failed')
+        self.assertEqual(public['last_run']['restore_result'], 'verified')
+        self.assertEqual(public['last_run']['effective_version'], 'v1.51.0')
+        self.assertEqual(public['safety']['fallback_strategy'], 'restore_backup')
+
+    def test_malformed_forward_settings_cannot_strand_recovery_with_retained_configuration(self):
+        from types import SimpleNamespace
+        from deploy.update.contracts import RestorationResult
+        attempt = self.pending()
+        retained = self.settings('apply', QUALIFICATION_POLICY='standalone-cold-restore-v1')
+        config = SimpleNamespace(policy=retained.automation_policy, as_settings=lambda: retained)
+        (self.root / 'update.conf').write_text('FUTURE_AGI_UPDATE_ENABLED=not-a-boolean\n')
+        life = mock.Mock()
+        life.resume.return_value = RestorationResult(attempt.attempt_id, 'recovery_required', 'v1.51.0',
+            self.target().version, 'previous_start_armed', reason_codes=(ReasonCode.RESTORE_CHILD_AMBIGUOUS,))
+        runner = self.runner(settings=None, recovery_factory=lambda *args: life)
+        with mock.patch('deploy.update.enrollment.read_setup_configuration', return_value=config):
+            result = runner.tick()
+        self.assertEqual(result.reason_codes, (ReasonCode.RESTORE_CHILD_AMBIGUOUS,))
+        self.assertEqual(result.disposition, 'recovery_required')
+        self.assertEqual(life.resume.call_args.args[2].automation_policy, config.policy)
+        self.discovery_factory.assert_not_called()
+        self.executor.assert_not_called()
+
+    def test_restore_progress_uses_restore_states_and_never_claims_image_only_fallback(self):
+        from deploy.update.contracts import QUALIFICATION_POLICY
+        runner = self.runner('apply', settings=self.settings('apply', QUALIFICATION_POLICY=QUALIFICATION_POLICY))
+        def execute(engine, guard):
+            guard.report('before_restore', proof_complete=True, phase='restore_quiescing')
+            public = self.publisher.capture()[1]
+            self.assertEqual(public['operation']['state'], 'restoring')
+            self.assertEqual(public['operation']['kind'], 'restore')
+            self.assertEqual(public['operation']['phase'], 'restore_quiescing')
+            self.assertEqual(public['safety']['fallback_strategy'], 'restore_backup')
+            self.assertEqual(public['safety']['restore_state'], 'running')
+            self.assertEqual(public['safety']['backup_state'], 'sealed')
+            return EngineResult(3, (ReasonCode.RECOVERY_REQUIRED,), True, True, 'failed')
+        self.executor.side_effect = execute
+        self.assertEqual(runner.tick().disposition, 'recovery_required')
+
+    def test_success_decision_metadata_error_keeps_forward_success_and_never_restores(self):
+        self.pending()
+        life = mock.Mock(success_decided=True, target=self.release)
+        life.resume.side_effect = StoreError(ReasonCode.CONFIGURATION_CHANGED)
+        result = self.runner('manual', recovery_factory=lambda *args: life).tick()
+        self.assertEqual(result.disposition, 'recovery_required')
+        self.assertEqual(result.forward_result, 'succeeded')
+        self.assertEqual(result.reason_codes, (ReasonCode.AUTOMATIC_RECOVERY_PENDING,))
+        self.assertIsNotNone(self.store.read_state().active_attempt_id)
+        self.executor.assert_not_called()
+        self.discovery_factory.assert_not_called()
+
+    def test_busy_publication_cannot_cancel_safety_recovery(self):
+        from deploy.update.contracts import RestorationResult
+        attempt = self.pending()
+        life = mock.Mock()
+        life.resume.return_value = RestorationResult(attempt.attempt_id, 'recovery_required', 'v1.51.0',
+            self.target().version, 'restore_quiescing', reason_codes=(ReasonCode.RECOVERY_REQUIRED,))
+        runner = self.runner('manual', recovery_factory=lambda *args: life)
+        with self.store._lock('public.lock'):
+            result = runner.tick()
+        self.assertEqual(result.disposition, 'recovery_required')
+        life.resume.assert_called_once()
+        self.discovery_factory.assert_not_called()
+        self.assertIn(ReasonCode.STATUS_REPORTING_UNAVAILABLE, result.warnings)
+
+    def test_A6_notify_only_projects_sanitized_estimates_without_an_attempt(self):
+        from deploy.update.contracts import AutomaticUpdateDecision, AutomaticUpdateEstimate
+        estimate = AutomaticUpdateEstimate(10, 100, 10, 300, 400, 500, 600, 200, 200, 400, 100, 60)
+        denied = AutomaticUpdateDecision(False, (ReasonCode.MIGRATION_EXCEEDS_WINDOW,), estimate)
+        runner = self.runner('apply')
+        def execute(engine, guard):
+            # This fixture exercises public projection only. No apply/backup
+            # authority is implied by an externally constructed estimate.
+            runner.automatic = mock.Mock(preflight_decision=denied)
+            return EngineResult(3, denied.reason_codes, False, False, 'failed')
+        self.executor.side_effect = execute
+        result = runner.tick()
+        self.assertEqual(result.preflight_decision, denied)
+        public = self.publisher.capture()[1]
+        self.assertEqual(public['safety']['estimates']['migration_seconds'], 100)
+        self.assertIn('migration_exceeds_window', public['discovery']['reason_codes'])
+        self.assertIsNone(self.store.read_state().active_attempt_id)
+
+
 class RealLayoutTests(unittest.TestCase):
     """Real env, private state, receipts and public files; only Docker is fake.
 
@@ -782,217 +940,223 @@ class RealLayoutTests(unittest.TestCase):
         self.assertEqual(public['versions']['running_release'], 'v1.0.0')
         self.assertEqual(len(store.read_events()), 2)
 
-    def run_certified(self, failure=None, fallback=True, facts_change=None, backup_change=None,
-                      window='always', rollout_change=None, publication_change=None):
-        fixture = boundaries.ScheduledGuardTests()
-        fixture.setUp()
-        self.fixture_in_use = fixture
-        self.addCleanup(fixture.doCleanups)
-        self.addCleanup(fixture.tearDown)
-        settings = load_settings(fixture.root, {'FUTURE_AGI_UPDATE_MAINTENANCE_WINDOW': window,
-                                                'FUTURE_AGI_UPDATE_BACKUP_COMMAND': boundaries.BACKUP}, environ={})
-        self.assertEqual(replace(settings.automation_policy, maintenance_window=None), fixture.controls.policy)
-        fixture.discovery.discover.return_value = DiscoveryResult(fixture.release, checked_at=NOW)
-        before = fixture.obs.product_images['app'][0]
-        prior_id = fixture.inst.running['app']['image_id']
-        fixture.obs = replace(fixture.obs, product_images={'app': (RuntimeImage(before.image, before.digest, prior_id),)})
-        fixture.inst.metadata[prior_id]['repo_digests'] = ['futureagi/standalone@' + before.digest]
-        publisher = PublicStatusPublisher(fixture.store, fixture.root / 'public')
-        original_publish = publisher.publish
-        def publish(snapshot, **kwargs):
-            result = original_publish(snapshot, **kwargs)
-            if publication_change:
-                publication_change(fixture, snapshot)
-            return result
-        publisher.publish = publish
-        def facts(installation, boundary):
-            if boundary != 'before_fallback':
-                from deploy.update.receipt import StateBusy
-                with self.assertRaises(StateBusy), fixture.state.lock(automation=True):
-                    self.fail('guard facts were requested without update.lock')
-            obs = fixture.obs
-            if boundary == 'before_fallback' or fixture.guard.fallback is not None:
-                target = fixture.prepared.manifest['components']['standalone']
-                target_id = fixture.inst.running['app']['image_id']
-                obs = replace(obs, product_images={'app': (RuntimeImage(target['image'], target['digest'], target_id),)})
-            return facts_change(obs, boundary) if facts_change else obs
-        original_backup = fixture.engine.hook_runner
-        def factory(installation, settings, state, guard, supervisor):
-            with self.assertRaises(StoreBusy), fixture.store.runner_lock():
-                self.fail('engine factory was entered without runner.lock')
-            fixture.guard = guard
-            fixture.engine.automation_guard = guard
-            fixture.engine.guard_context = guard.context
-            fixture.engine.settings = settings
-            fixture.inst.runner = supervisor
-            def backup(argv, **kwargs):
-                result = original_backup(argv, **kwargs)
-                if backup_change:
-                    backup_change(fixture)
-                return result
-            fixture.engine.hook_runner = backup
-            if failure:
-                from deploy.update.readiness import NotReady
-                calls = [0]
-                original_wait = fixture.ready.wait_standalone
-                def wait(*args, **kwargs):
-                    calls[0] += 1
-                    if calls[0] == 1 or failure == 'fallback':
-                        if calls[0] == 1 and rollout_change:
-                            rollout_change(fixture)
-                        if failure == 'interrupt':
-                            raise KeyboardInterrupt()
-                        if not fallback:
-                            supervisor.uncertain = True
-                        raise NotReady('CANARY /private/path')
-                    return original_wait(*args, **kwargs)
-                fixture.ready.wait_standalone = wait
-            return fixture.engine
-        runner = HostRunner(fixture.store, settings=settings, publisher=publisher,
-                            clock=Clock(lambda: fixture.now, lambda: 0), facts=facts,
-                            discovery_factory=lambda *args: fixture.discovery,
-                            installation_factory=lambda *args, **kwargs: fixture.inst)
-        with mock.patch('deploy.update.runner.prepare_update', return_value=fixture.prepared), \
-                mock.patch('deploy.update.runner.build_plan', side_effect=lambda *args, **kwargs: copy.deepcopy(fixture.plan_value)), \
-                mock.patch('deploy.update.runner.check_deployment'), \
-                mock.patch('deploy.update.runner.guarded_updater', side_effect=factory):
-            result = runner.tick()
-        return fixture, runner, result, publisher
+    @classmethod
+    def setUpClass(cls):
+        from deploy.tests.test_update_automatic_integration import AutomaticIntegrationTests
+        AutomaticIntegrationTests.setUpClass.__func__(cls)
+
+    def run_certified(self, *, fault='', facts=None, before_facts=None, backup=None, readiness=None,
+                      report=None, window='always'):
+        """Real shipping v2 engine, signatures, cold archives and in-place restore.
+
+        Only Docker/storage/runtime reads are finite synthetic models. Unlike
+        the old image-fallback fixture, no affirmative v1 admission is invented.
+        """
+        from deploy.tests import test_update_automatic_integration as component
+        prior_clock = (component.FIXTURE_WALL, component.FIXTURE_MONOTONIC, component.CLOCK_SHIFT)
+        def restore_clock():
+            component.FIXTURE_WALL, component.FIXTURE_MONOTONIC, component.CLOCK_SHIFT = prior_clock
+        self.addCleanup(restore_clock)
+        stack = component.AutomaticIntegrationTests()
+        stack.artifacts = self.artifacts
+        stack.setUp(window=window)
+        self.addCleanup(stack.doCleanups)
+        self.fixture_in_use = stack
+        hooks = {}
+        def locked_facts(life, boundary, value):
+            from deploy.update.receipt import StateBusy, StateDir
+            with self.assertRaises(StateBusy), StateDir(stack.root).lock(automation=True):
+                self.fail('facts escaped update.lock')
+            with self.assertRaises(StoreBusy), life.store.runner_lock():
+                self.fail('facts escaped runner.lock')
+            return facts(life, boundary, value) if facts else value
+        hooks['facts'] = locked_facts
+        if before_facts: hooks['before_facts'] = before_facts
+        if backup: hooks['backup'] = backup
+        if readiness: hooks['readiness'] = readiness
+        def configure(runner):
+            if report:
+                original = runner.publisher.publish
+                def publish(snapshot, **kwargs):
+                    result = original(snapshot, **kwargs)
+                    report(runner, snapshot)
+                    return result
+                runner.publisher.publish = publish
+        hooks['runner'] = configure
+        context = component.process_tick(stack.root, self.artifacts, fault=fault, hooks=hooks)
+        return stack, context
+
+    @staticmethod
+    def shift(seconds):
+        from deploy.tests import test_update_automatic_integration as component
+        component.CLOCK_SHIFT += seconds
+
+    @staticmethod
+    def window():
+        # Component publication advances seven hours. Leave ample admission
+        # budget; individual boundary tests consume it AFTER preflight.
+        from datetime import datetime, timezone
+        at = datetime.now(timezone.utc) + timedelta(hours=7)
+        return (at-timedelta(minutes=1)).strftime('%H:%M')+'-'+(at+timedelta(minutes=70)).strftime('%H:%M')
+
+    def assert_restored(self, stack, context):
+        result = context.result
+        self.assertEqual(result['disposition'], 'restored', result)
+        self.assertIn(result['forward'], ('failed','interrupted'))
+        self.assertEqual(context.inst.env['FUTURE_AGI_VERSION'], 'v1.51.0')
+        state = context.store.read_state()
+        self.assertEqual(state.baseline_head, stack.initial)
+        self.assertIsNone(state.active_attempt_id)
+        self.assertEqual(state.failed_target_latch.version, 'v1.52.0')
+        self.assertEqual(len(list((stack.root/'backups').glob('*/inventory.json'))),1)
+        public = context.publisher.capture()[1]
+        self.assertEqual(public['last_run']['forward_result'], result['forward'])
+        self.assertEqual(public['last_run']['restore_result'],'verified')
+        self.assertEqual(public['last_run']['effective_version'],'v1.51.0')
+        self.assertEqual(public['safety']['fallback_strategy'],'restore_backup')
+        self.assertEqual(public['safety']['restore_state'],'verified')
+        self.assertNotIn('CANARY',(context.publisher.path/'status.json').read_text())
 
     def test_whole_certified_apply_uses_real_guard_engine_and_lock_order(self):
-        fixture, runner, result, publisher = self.run_certified()
-        self.assertEqual(result.disposition, 'applied', result)
-        self.assertFalse(result.warnings)
-        self.assertEqual(fixture.env_value('FUTURE_AGI_VERSION'), 'v1.52.0')
-        self.assertIsNone(fixture.store.read_state().active_attempt_id)
-        self.assertEqual(len(fixture.hook.calls), 1)
-        self.assertIsNotNone(result.receipt)
-        self.assertEqual(publisher.capture()[1]['last_run']['outcome'], 'succeeded')
-        self.assertEqual(publisher.capture()[1]['safety']['backup_state'], 'reported_complete')
-        self.assertEqual(publisher.capture()[1]['safety']['readiness'], 'passed')
+        stack, context = self.run_certified()
+        self.assertEqual(context.result['disposition'],'applied',context.result)
+        self.assertEqual(context.inst.env['FUTURE_AGI_VERSION'],'v1.52.0')
+        self.assertIsNone(context.store.read_state().active_attempt_id)
+        self.assertEqual(len(list((stack.root/'backups').glob('*/inventory.json'))),1)
+        self.assertEqual(len(list((stack.root/'backups').glob('*/*.tar'))),3)
+        public = context.publisher.capture()[1]
+        self.assertEqual(public['last_run']['outcome'],'succeeded')
+        self.assertEqual(public['safety']['backup_state'],'sealed')
+        self.assertEqual(public['safety']['readiness'],'passed')
+        helpers = [c for c in context.daemon.calls if c[0] == 'create']
+        self.assertTrue(helpers)
+        self.assertTrue(all('--pull' in c and 'never' in c and '--name' in c for c in helpers))
 
-    def test_one_certified_fallback_keeps_forward_failure_and_latches_target(self):
-        fixture, runner, result, publisher = self.run_certified(failure='forward')
-        self.assertEqual((result.code, result.fallback_result), (5, 'succeeded'), result)
-        self.assertEqual(fixture.env_value('FUTURE_AGI_VERSION'), 'v1.51.0')
-        self.assertIsNotNone(fixture.store.read_state().failed_target_latch)
-        self.assertEqual(len(fixture.hook.calls), 1)
-        self.assertEqual(publisher.capture()[1]['last_run']['outcome'], 'failed_during_rollout')
-        self.assertEqual(runner.tick().reason_codes, (ReasonCode.FAILED_TARGET_LATCHED,))
+    def test_one_certified_restore_keeps_forward_failure_and_latches_target(self):
+        stack, context = self.run_certified(fault='readiness_failed')
+        self.assert_restored(stack,context)
+        self.assertEqual(context.result['forward'],'failed')
+        self.assertEqual(context.runner.tick().reason_codes,(ReasonCode.FAILED_TARGET_LATCHED,))
 
-    def test_authorized_fallback_finishes_after_pause_and_window_close(self):
-        def close_and_pause(fixture):
-            fixture.now += timedelta(hours=2)
-            fixture.store.change_control('pause', fixture.now)
-        fixture, _, result, publisher = self.run_certified(failure='forward', window='12:00-13:00',
-                                                          rollout_change=close_and_pause)
-        self.assertEqual((result.code, result.fallback_result), (5, 'succeeded'), result)
-        self.assertEqual(fixture.env_value('FUTURE_AGI_VERSION'), 'v1.51.0')
-        self.assertEqual(publisher.capture()[1]['automation']['state'], 'paused')
-        self.assertIsNone(result.next_due)
-        self.assertIsNotNone(fixture.store.read_state().failed_target_latch)
+    def test_authorized_restore_finishes_after_pause_and_window_close(self):
+        def close(life,ledger,daemon):
+            self.shift(3*3600)
+            life.store.change_control('pause',life.clock())
+            from deploy.update.readiness import NotReady
+            raise NotReady('CANARY /private/path')
+        stack,context=self.run_certified(readiness=close,window=self.window())
+        self.assert_restored(stack,context)
+        self.assertEqual(context.publisher.capture()[1]['automation']['state'],'paused')
 
-    def test_uncertain_and_interrupted_and_failed_fallback_never_retry(self):
-        for failure, fallback, expected in (('forward', False, 'none'), ('interrupt', True, 'none'),
-                                             ('fallback', True, 'failed')):
+    def test_uncertain_interrupted_and_failed_restore_never_retry(self):
+        from deploy.update.readiness import NotReady
+        for failure in ('uncertain','interrupt','restore'):
             with self.subTest(failure=failure):
-                fixture, runner, result, publisher = self.run_certified(failure=failure, fallback=fallback)
-                self.assertEqual(result.fallback_result, expected, result)
-                self.assertIsNotNone(fixture.store.read_state().failed_target_latch)
-                self.assertNotIn('CANARY', (publisher.path / 'status.json').read_text())
-                self.assertNotEqual(runner.tick().disposition, 'applied')
+                def fail(life,ledger,daemon):
+                    if failure == 'uncertain': daemon.uncertain=True
+                    if failure == 'interrupt': raise KeyboardInterrupt()
+                    if failure == 'restore':
+                        # A replaced volume is not adopted or cleared.
+                        daemon.volumes['test-backup_app-data']['CreatedAt']='foreign-object'
+                    raise NotReady('CANARY /private/path')
+                stack,context=self.run_certified(readiness=fail)
+                if failure == 'interrupt':
+                    self.assert_restored(stack,context)
+                    self.assertEqual(context.result['forward'],'interrupted')
+                else:
+                    self.assertEqual(context.result['disposition'],'recovery_required',context.result)
+                    self.assertIsNotNone(context.store.read_state().active_attempt_id)
+                    self.assertIsNone(context.store.read_state().failed_target_latch)
+                    self.assertFalse(any(e[:2]==['helper','clear'] for e in context.daemon.events))
+                self.assertNotIn('CANARY',(context.publisher.path/'status.json').read_text())
+                before=[e for e in context.daemon.events if e[0]=='up']
+                context.runner.tick()
+                self.assertEqual([e for e in context.daemon.events if e[0]=='up'],before)
 
-    def test_backup_pause_disable_and_window_close_never_rollout(self):
-        for action in ('pause', 'disable'):
-            fixture, _, result, _ = self.run_certified(backup_change=lambda f: f.store.change_control(action, NOW))
-            self.assertEqual(result.reason_codes, (ReasonCode.CONTROL_INVALID,), result)
-            self.assertEqual(fixture.env_write_count, 0)
-            self.assertFalse(any(call[0] == 'up' for call in fixture.compose_calls()))
-        def close_window(fixture):
-            fixture.now += timedelta(minutes=31)
-        fixture, _, result, _ = self.run_certified(backup_change=close_window, window='12:00-12:30')
-        self.assertEqual(result.reason_codes, (ReasonCode.OUTSIDE_WINDOW,), result)
-        self.assertEqual(fixture.env_write_count, 0)
-        self.assertEqual(len(fixture.hook.calls), 1)
+    def test_backup_pause_disable_and_window_close_never_rollout_target(self):
+        for action in ('pause','disable','window'):
+            with self.subTest(action=action):
+                def close(engine):
+                    if action == 'window': self.shift(3*3600)
+                    else: engine.automation_guard.store.change_control(action,engine.automation_guard.clock())
+                stack,context=self.run_certified(backup=close,window=self.window())
+                self.assert_restored(stack,context)
+                self.assertFalse(any(e==['up','v1.52.0'] for e in context.daemon.events))
+                self.assertIsNone(context.runner.engine_state.read_journal())
+                self.assertEqual((stack.root/'.env').read_text(),'FUTURE_AGI_VERSION=v1.51.0\nSECRET=unchanged\n')
 
     def test_slow_progress_publication_cannot_authorize_late_backup(self):
-        def slow_status(fixture, snapshot):
-            if snapshot['operation']['state'] == 'backing_up':
-                fixture.now += timedelta(minutes=31)
-        fixture, _, result, _ = self.run_certified(window='12:00-12:30', publication_change=slow_status)
-        self.assertEqual(result.reason_codes, (ReasonCode.OUTSIDE_WINDOW,), result)
-        self.assertEqual(fixture.hook.calls, [])
-        self.assertEqual(fixture.env_write_count, 0)
+        def slow(runner,snapshot):
+            if snapshot['operation']['state']=='backing_up': self.shift(3*3600)
+        stack,context=self.run_certified(report=slow,window=self.window())
+        self.assertEqual(context.result['reasons'],['backup_exceeds_window'],context.result)
+        self.assertFalse(list((stack.root/'backups').glob('*/inventory.json')))
+        self.assertFalse(any(e[0]=='up' for e in context.daemon.events))
+        self.assertEqual(context.inst.env['FUTURE_AGI_VERSION'],'v1.51.0')
 
-    def test_expired_backup_with_new_online_verification_never_mutates(self):
-        def age_proof(fixture):
-            fixture.now += timedelta(seconds=3601)
-            release = replace(fixture.release, verification=replace(fixture.release.verification, checked_at=fixture.now))
-            fixture.discovery.refresh.return_value = DiscoveryResult(release, checked_at=fixture.now)
-        fixture, _, result, _ = self.run_certified(backup_change=age_proof)
-        self.assertEqual(result.reason_codes, (ReasonCode.BACKUP_EXPIRED,), result)
-        self.assertEqual(fixture.env_write_count, 0)
-        self.assertIsNone(fixture.state.read_journal())
+    def test_expired_backup_with_new_online_verification_never_mutates_target(self):
+        stack,context=self.run_certified(backup=lambda engine:self.shift(3601))
+        self.assert_restored(stack,context)
+        self.assertFalse(any(e==['up','v1.52.0'] for e in context.daemon.events))
+        self.assertIsNone(context.runner.engine_state.read_journal())
+        self.assertEqual(context.inst.env['FUTURE_AGI_VERSION'],'v1.51.0')
 
-    # Review round 2 (F3): the maintenance budget is judged after a boundary's own (slow) observations.
-    def slow_final_observation(self, seconds, window='12:00-12:16'):
-        from collections import Counter
-        counts = Counter()
+    def slow_final_observation(self, remaining, boundary='before_rollout'):
+        from deploy.update.schedule import remaining_seconds
+        counts={}
+        def before(life,name):
+            counts[name]=counts.get(name,0)+1
+            if name==boundary and counts[name]==1:
+                # Spend the earlier outage time BEFORE collecting fresh trust
+                # facts; the final slow observation itself stays within trust's
+                # independent freshness bound, exactly as in the old 60/61s test.
+                runner_policy=load_settings(life.store.checkout,environ={}).automation_policy
+                self.shift(remaining_seconds(runner_policy.maintenance_window,life.clock())-961)
+        def slow(life,name,value):
+            if name==boundary and counts[name]==2: self.shift(961-remaining)
+            return value
+        return self.run_certified(facts=slow,before_facts=before,window=self.window())
 
-        def facts_change(obs, boundary):
-            counts[boundary] += 1
-            if boundary == 'before_rollout' and counts[boundary] == 2:  # the final observation before rollout
-                self.fixture_in_use.now += timedelta(seconds=seconds)
-            return obs
-
-        return self.run_certified(window=window, facts_change=facts_change)
-
-    def test_slow_final_facts_that_cross_the_start_budget_refuse_before_compose_up(self):
-        fixture, _, result, _ = self.slow_final_observation(61)  # 960s at 12:00:00, 899s left afterwards
-        self.assertEqual(result.reason_codes, (ReasonCode.INSUFFICIENT_WINDOW,), result)
-        self.assertFalse(result.rollout_started)
-        self.assertFalse(any(call[0] == 'up' for call in fixture.compose_calls()))
-        self.assertEqual(fixture.env_bytes(), fixture.original)
-        self.assertIsNone(fixture.state.read_journal())
+    def test_slow_final_facts_that_cross_the_start_budget_refuse_before_compose_create(self):
+        stack,context=self.slow_final_observation(899)
+        self.assert_restored(stack,context)
+        self.assertFalse(any(e==['up','v1.52.0'] for e in context.daemon.events))
+        self.assertIsNone(context.runner.engine_state.read_journal())
 
     def test_fast_final_facts_inside_the_start_budget_proceed(self):
-        fixture, _, result, _ = self.slow_final_observation(60)  # exactly the 900 seconds required remain
-        self.assertEqual(result.disposition, 'applied', result)
-        self.assertEqual(sum(call[0] == 'up' for call in fixture.compose_calls()), 1)
-        self.assertEqual(fixture.env_value('FUTURE_AGI_VERSION'), 'v1.52.0')
+        # Leave 30 seconds for real offline signature verification/fsync after
+        # the slow sample; the 899-second case still pins strict refusal.
+        stack,context=self.slow_final_observation(930)
+        self.assertEqual(context.result['disposition'],'applied',context.result)
+        self.assertEqual(sum(e==['up','v1.52.0'] for e in context.daemon.events),1)
+        self.assertEqual(context.inst.env['FUTURE_AGI_VERSION'],'v1.52.0')
 
-    def test_slow_facts_at_every_earlier_forward_boundary_also_refuse_without_mutation(self):
-        from collections import Counter
-        for boundary in ('before_backup', 'after_backup', 'before_env_commit'):
+    def test_slow_facts_at_every_earlier_forward_boundary_refuse_without_target_mutation(self):
+        for boundary in ('before_backup','after_backup','before_env_commit'):
             with self.subTest(boundary=boundary):
-                counts = Counter()
+                stack,context=self.slow_final_observation(899,boundary)
+                self.assertFalse(any(e==['up','v1.52.0'] for e in context.daemon.events))
+                self.assertEqual(context.inst.env['FUTURE_AGI_VERSION'],'v1.51.0')
+                if list((stack.root/'backups').glob('*/inventory.json')):
+                    self.assert_restored(stack,context)
+                else:
+                    self.assertEqual(context.result['reasons'],['backup_exceeds_window'],context.result)
+                    self.assertIsNone(context.store.read_state().active_attempt_id)
 
-                def facts_change(obs, name, boundary=boundary, counts=counts):
-                    counts[name] += 1
-                    if name == boundary and counts[name] == 2:
-                        self.fixture_in_use.now += timedelta(seconds=61)
-                    return obs
-
-                fixture, _, result, _ = self.run_certified(window='12:00-12:16', facts_change=facts_change)
-                self.assertEqual(result.reason_codes, (ReasonCode.INSUFFICIENT_WINDOW,), result)
-                self.assertEqual(fixture.env_write_count, 0)
-                self.assertFalse(any(call[0] == 'up' for call in fixture.compose_calls()))
-
-    def test_fallback_whose_own_facts_outlast_the_window_still_proceeds(self):
-        def facts_change(obs, boundary):
-            fixture = self.fixture_in_use
-            if boundary == 'before_fallback' and fixture.guard.fallback is None:
-                fixture.now += timedelta(hours=2)  # the window closes while the fallback is being authorized
-            return obs
-
-        fixture, _, result, _ = self.run_certified(failure='forward', window='12:00-13:00', facts_change=facts_change)
-        self.assertEqual((result.code, result.fallback_result), (5, 'succeeded'), result)
-        self.assertEqual(fixture.env_value('FUTURE_AGI_VERSION'), 'v1.51.0')
+    def test_restore_whose_own_observations_outlast_the_window_still_proceeds(self):
+        def outlast(life,ledger,daemon):
+            self.shift(3*3600)
+            raise NotReady('CANARY /private/path')
+        from deploy.update.readiness import NotReady
+        stack,context=self.run_certified(readiness=outlast,window=self.window())
+        self.assert_restored(stack,context)
 
     def test_uncertified_baseline_does_not_take_backup(self):
-        fixture, _, result, _ = self.run_certified(facts_change=lambda obs, boundary: replace(obs, baseline_attested=False))
-        self.assertEqual(result.reason_codes, (ReasonCode.INITIALIZATION_REQUIRED,))
-        self.assertEqual(fixture.hook.calls, [])
+        stack,context=self.run_certified(facts=lambda life,boundary,value:replace(value,baseline_attested=False))
+        self.assertEqual(context.result['reasons'],['ownership_unconfirmed'],context.result)
+        self.assertFalse(list((stack.root/'backups').glob('*/inventory.json')))
+        self.assertFalse(any(e[0]=='up' for e in context.daemon.events))
+        self.assertIsNone(context.store.read_state().active_attempt_id)
 
 
 if __name__ == '__main__':

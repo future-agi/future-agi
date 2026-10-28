@@ -10,14 +10,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
+from fractions import Fraction
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Mapping, Optional, Tuple
 
-from .contracts import AutomationPolicy, PreparedUpdate, ReasonCode, VerificationSnapshot
+from .contracts import (AutomationPolicy, PreparedUpdate, ReasonCode, VerificationSnapshot, AuthorisedTransition,
+                        BackupSeal, ColdHold, RuntimeObservationV2, RuntimeImage, MigrationEvidence, ContractError,
+                        QUALIFICATION_POLICY, PERSISTENT_DOMAINS, installation_binding_hash,
+                        TransitionMeasurements, HostSizeObservation, AutomaticUpdateEstimate, AutomaticUpdateDecision)
 from .manifest import ManifestError, canonical_json, manifest_hash, parse_image_ref, parse_version, validate_manifest
 from .settings import DEFAULT_TRUSTED_IDENTITY, DEFAULT_TRUSTED_ISSUER
 
@@ -25,8 +30,10 @@ PROOF_ASSET = "future-agi-update-compatibility.json"
 MAX_PROOF_BYTES = 256 * 1024
 MAX_BACKUP_BYTES = 16 * 1024
 MAX_DEPTH = 24
-SUITES = ("no_migrations", "bidirectional_read_write", "interruption_fallback",
+LEGACY_SUITES = ("no_migrations", "bidirectional_read_write", "interruption_fallback",
           "readiness_failure_fallback", "backup_restore")
+SUITES = ("source_snapshot", "migration_forward", "target_readiness", "failure_restore",
+          "interruption_restore", "backup_integrity")
 
 
 class CompatibilityError(ManifestError):
@@ -60,6 +67,8 @@ def _depth(value: Any, level: int = 0) -> None:
     elif isinstance(value, list):
         for item in value:
             _depth(item, level + 1)
+    elif type(value) is float:
+        require(math.isfinite(value))  # Includes overflowed JSON exponent literals.
 
 
 def decode_document(raw: bytes, limit: int = MAX_PROOF_BYTES) -> dict:
@@ -109,53 +118,98 @@ def aware(value: datetime) -> datetime:
 
 
 def shape(value: Any, spec: Mapping[str, Any]) -> None:
+    """Validate a document without changing legacy integer-token semantics.
+
+    Unreleased v2 uses mathematical JSON integers. Legacy backup/manual readers
+    intentionally retain their strict integer-token checks, including 1.0 refusal.
+    """
+    version = value.get("schema_version", value.get("contract_version")) if isinstance(value, dict) else None
+    _shape(value, spec, json_integers=type(version) in (int, float) and version == 2)
+
+
+def _shape(value: Any, spec: Mapping[str, Any], *, json_integers: bool) -> None:
     """Validate just the closed subset used by S02 proof/extension schemas.
 
     No external refs or optional jsonschema dependency. Semantic binding checks
     are separate; tests compare this subset to Draft202012Validator.
     """
-    if "anyOf" in spec:
-        for option in spec["anyOf"]:
-            try:
-                shape(value, option)
-                return
-            except CompatibilityError:
-                pass
-        raise CompatibilityError()
+    for union in ("anyOf", "oneOf"):
+        if union in spec:
+            matches = 0
+            for option in spec[union]:
+                try:
+                    _shape(value, option, json_integers=json_integers)
+                    matches += 1
+                except CompatibilityError:
+                    pass
+            require(matches == 1 if union == "oneOf" else matches > 0)
+    for option in spec.get("allOf", ()):
+        _shape(value, option, json_integers=json_integers)
+    if "not" in spec:
+        try:
+            _shape(value, spec["not"], json_integers=json_integers)
+        except CompatibilityError:
+            pass
+        else:
+            raise CompatibilityError()
+    if "if" in spec:
+        try:
+            _shape(value, spec["if"], json_integers=json_integers)
+            branch = "then"
+        except CompatibilityError:
+            branch = "else"
+        _shape(value, spec.get(branch, {}), json_integers=json_integers)
+    if type(value) is float:
+        require(math.isfinite(value))
     if "type" in spec:
-        require(type(value) is {"object": dict, "array": list, "string": str, "integer": int,
-                                "boolean": bool, "null": type(None)}[spec["type"]])
+        kind = spec["type"]
+        if kind == "integer":
+            # JSON Schema defines integer by value, not JSON/Python spelling.
+            require(type(value) is int or (json_integers and type(value) is float and value.is_integer()))
+        elif kind == "number":
+            require(type(value) in (int, float))
+        else:
+            require(type(value) is {"object": dict, "array": list, "string": str,
+                                    "boolean": bool, "null": type(None)}[kind])
     if "const" in spec:
-        require(type(value) is type(spec["const"]) and value == spec["const"])
+        expected = spec["const"]
+        numeric = json_integers and type(value) in (int, float) and type(expected) in (int, float)
+        require((numeric or type(value) is type(expected)) and value == expected)
     if "enum" in spec:
-        require(value in spec["enum"])
-    if isinstance(value, dict):
+        require(any((type(value) is type(item) or (type(value) in (int, float) and type(item) in (int, float)))
+                    and value == item for item in spec["enum"]))
+    if isinstance(value, dict) and any(k in spec for k in ("properties", "required", "additionalProperties", "propertyNames", "minProperties", "maxProperties")):
         require(set(spec.get("required", ())) <= set(value))
         require(spec.get("minProperties", 0) <= len(value) <= spec.get("maxProperties", 4096))
         properties = spec.get("properties", {})
         for key, item in value.items():
             if "propertyNames" in spec:
-                shape(key, spec["propertyNames"])
+                _shape(key, spec["propertyNames"], json_integers=json_integers)
             if key in properties:
-                shape(item, properties[key])
+                _shape(item, properties[key], json_integers=json_integers)
             else:
-                additional = spec.get("additionalProperties", False)
-                require(isinstance(additional, dict))
-                shape(item, additional)
+                additional = spec.get("additionalProperties", True)
+                require(additional is not False)
+                if isinstance(additional, dict):
+                    _shape(item, additional, json_integers=json_integers)
     elif isinstance(value, list):
         require(spec.get("minItems", 0) <= len(value) <= spec.get("maxItems", 4096))
         if spec.get("uniqueItems"):
             require(len({canonical_json(item) for item in value}) == len(value))
         for item in value:
-            shape(item, spec["items"])
+            _shape(item, spec.get("items", {}), json_integers=json_integers)
     elif isinstance(value, str):
         require(spec.get("minLength", 0) <= len(value) <= spec.get("maxLength", MAX_PROOF_BYTES))
         if "pattern" in spec:
             require(re.fullmatch(spec["pattern"], value) is not None)
         if spec.get("format") == "date-time":
             timestamp(value)
-    elif type(value) is int:
+    elif type(value) in (int, float):
         require(spec.get("minimum", value) <= value <= spec.get("maximum", value))
+        if "exclusiveMinimum" in spec:
+            require(value > spec["exclusiveMinimum"])
+        if "exclusiveMaximum" in spec:
+            require(value < spec["exclusiveMaximum"])
 
 
 @dataclass(frozen=True)
@@ -244,20 +298,26 @@ def inputs_hash(manifest: Mapping[str, Any]) -> str:
     compatibility.pop("validation", None)
     value = {key: source[key] for key in ("version", "source_sha", "components", "helm", "deployment")}
     value["compatibility"] = compatibility
+    if compatibility["contract_version"] == 2:
+        # The frozen migration object is qualification input, never rewritten to
+        # hide requires_bootstrap. Legacy hashes retain their original meaning.
+        value["migration"] = source["migration"]
     return manifest_hash(value)
 
 
 def _row_key(row: Mapping[str, Any]) -> tuple:
-    return row["version"], row["mode"], row["platform"], tuple(sorted(row["profiles"]))
+    return (row["version"], row["mode"], row["platform"], tuple(sorted(row["profiles"])),
+            row.get("execution_deployment_hash"))
 
 
-def validate_compatibility(manifest: Mapping[str, Any]) -> None:
+def _validate_legacy_compatibility(manifest: Mapping[str, Any]) -> None:
     """Validate v2 metadata, not proof availability or signature authenticity."""
     compatibility = plain(manifest["compatibility"])
     shape(compatibility, schema("release-manifest.schema.json")["$defs"]["compatibility"])
     domains, rows, env = (compatibility[key] for key in ("state_domains", "predecessors", "required_env"))
     require(len({row["domain"] for row in domains}) == len(domains))
     require(len({_row_key(row) for row in rows}) == len(rows))
+    require(all(("execution_deployment_hash" in row) == (compatibility["contract_version"] == 2) for row in rows))
     require(len({row["name"] for row in env}) == len(env))
     affirmative = compatibility["automatic_apply"] or compatibility["automatic_rollback"]["strategy"] == "images_only"
     if affirmative:
@@ -296,30 +356,46 @@ def validate_release_proof(raw: bytes, manifest: Mapping[str, Any], *, repositor
     target = plain(manifest)
     validate_compatibility(target)
     compatibility = target["compatibility"]
+    require(value["schema_version"] == compatibility["contract_version"])
     validation = compatibility["validation"]
     require(validation is not None and hashlib.sha256(raw).hexdigest() == validation["sha256"])
     require(value["inputs_hash"] == inputs_hash(target) == validation["inputs_hash"])
     require(value["run_id"] == validation["run_id"] and value["repository"] == repository)
     require(value["tag"] == target["version"] and value["source_sha"] == target["source_sha"])
     require(value["components"] == target["components"] and value["deployment"] == target["deployment"])
-    require(value["state_domains"] == compatibility["state_domains"])
+    if value["schema_version"] == 1:
+        require(value["state_domains"] == compatibility["state_domains"])
+    else:
+        for key in ("qualification_policy", "restore_procedure_id", "backup_inventory_version",
+                    "host_observation_contract", "runtime_activation_contract"):
+            require(value[key] == compatibility[key])
     rows = value["predecessors"]
     require(len(rows) == len(compatibility["predecessors"]))
+    require(len({_row_key(row["predecessor"]) for row in rows}) == len(rows))
     require({canonical_json(row["predecessor"]) for row in rows}
             == {canonical_json(row) for row in compatibility["predecessors"]})
     for row in rows:
         previous = row["predecessor"]
         layout = topology_profile(previous["mode"], previous["profiles"])
         require(row["persistence"] == dict(layout.persistence))
-        require(set(row["suites"]) == set(SUITES) and all(result == "passed" for result in row["suites"].values()))
+        require(set(row["suites"]) == set(SUITES if value["schema_version"] == 2 else LEGACY_SUITES) and all(result == "passed" for result in row["suites"].values()))
         dependencies = row["dependencies"]
         require(len(dependencies) == len(layout.dependencies)
                 and {item["service"] for item in dependencies} == set(layout.dependencies))
         for item in dependencies:
             ref = parse_image_ref(item["image"])
             require(str(ref) == item["image"] and ref.tag is not None and ref.digest is None)
-        # No deployment replacement is supported by the bounded images-only path.
-        require(row["predecessor_deployment"] == target["deployment"])
+        # Contract 2 certifies exact retained physical bytes, not a checkout swap.
+        require(("execution_deployment" in row) == (value["schema_version"] == 2))
+        if value["schema_version"] == 2:
+            require(manifest_hash(row["execution_deployment"]) == previous["execution_deployment_hash"],
+                    ReasonCode.DEPLOYMENT_FILES_MISMATCH)
+            require(previous["restore_certified"] is True, ReasonCode.RESTORE_NOT_CERTIFIED)
+            require(previous["mode"] == "standalone" and previous["profiles"] == [], ReasonCode.UNSUPPORTED_INSTALLATION)
+            require(set(row["persistent_coverage"]) == set(layout.backup_domains), ReasonCode.BACKUP_INVENTORY_MISMATCH)
+            transition_measurements(row)  # A6: exact pending-plan coverage and finite measured rates.
+        else:
+            require(row["predecessor_deployment"] == target["deployment"])
         for name, component in row["predecessor_components"].items():
             old = parse_image_ref(component["image"])
             new = parse_image_ref(target["components"][name]["image"])
@@ -329,12 +405,46 @@ def validate_release_proof(raw: bytes, manifest: Mapping[str, Any], *, repositor
     return value
 
 
+@dataclass(frozen=True, repr=False)
+class DeploymentAuthorization:
+    """Exact signed execution row for later planner integration, never skip-drift."""
+    target_manifest_sha256: str
+    predecessor_raw_sha256: str
+    execution_deployment: Mapping[str, Any]
+    row: Mapping[str, Any]
+
+    def __post_init__(self):
+        from .contracts import _freeze
+        object.__setattr__(self, "execution_deployment", _freeze(self.execution_deployment))
+        object.__setattr__(self, "row", _freeze(self.row))
+
+
+def authorize_execution(target_raw: bytes, predecessor_raw: bytes, proof_raw: bytes, *, repository: str,
+                        mode: str, profiles: tuple, platform: str,
+                        deployment_files: Mapping[str, str]) -> DeploymentAuthorization:
+    """Caller authenticates both manifests. Select one exact, fully bound row."""
+    target = validate_manifest(decode_document(target_raw, 1024 * 1024))
+    previous = validate_manifest(decode_document(predecessor_raw, 1024 * 1024))
+    proof = validate_release_proof(proof_raw, target, repository=repository)
+    execution = {"files": dict(deployment_files)}
+    row = _select_row(proof, previous, mode=mode, profiles=profiles, platform=platform, deployment_files=deployment_files)
+    predecessor = row["predecessor"]
+    require(predecessor["manifest_hash"] == manifest_hash(previous)
+            and predecessor["raw_manifest_sha256"] == hashlib.sha256(predecessor_raw).hexdigest()
+            and predecessor["source_sha"] == previous["source_sha"], ReasonCode.IMMUTABLE_RELEASE_CHANGED)
+    require(row["predecessor_components"] == previous["components"], ReasonCode.IMAGE_DIGEST_MISMATCH)
+    require(row["predecessor_deployment"] == previous["deployment"], ReasonCode.DEPLOYMENT_FILES_MISMATCH)
+    return DeploymentAuthorization(hashlib.sha256(target_raw).hexdigest(), hashlib.sha256(predecessor_raw).hexdigest(),
+                                   execution, row)
+
+
 @dataclass(frozen=True)
 class Eligibility:
     allowed: bool
     reason_codes: Tuple[ReasonCode, ...] = ()
     backup_pending: bool = False
     fingerprint: Optional[str] = field(default=None, repr=False)
+    transition: Optional[AuthorisedTransition] = field(default=None, repr=False)
 
     def public_summary(self) -> dict:
         return {"eligible": self.allowed, "reason_codes": [code.value for code in self.reason_codes]}
@@ -352,13 +462,8 @@ class Controls:
     start_budget_available: bool = False
     trusted_identity: str = DEFAULT_TRUSTED_IDENTITY
     trusted_issuer: str = DEFAULT_TRUSTED_ISSUER
-
-
-@dataclass(frozen=True)
-class RuntimeImage:
-    image: str
-    digest: str
-    image_id: str
+    public_key_sha256: str = ""
+    repository: str = "future-agi/future-agi"
 
 
 @dataclass(frozen=True, repr=False)
@@ -400,15 +505,21 @@ class Observations:
     no_failed_target: bool = False
     env_unchanged: bool = False
     no_source_build: bool = False
-    no_pending_migrations: bool = False
+    no_pending_migrations: bool = False  # Legacy observation field, not a v2 admission predicate.
+    runtime_observation: Optional[RuntimeObservationV2] = None
+    cold_hold: Optional[ColdHold] = None
+    backup_seal: Optional[BackupSeal] = None
+    executor_sha256: str = ""
+    binding_sha256: str = ""
+    operation_token: str = ""
+    run_id: str = ""
 
 
 @dataclass(frozen=True, repr=False)
 class Attempt:
-    """The SAME live scheduled attempt, not an arbitrary historical receipt.
+    """Deprecated inert import compatibility for the old orchestrator only.
 
-    Runner must CAS-reserve fallback with Eligibility.fingerprint and recheck
-    under update.lock. This pure evaluator cannot enforce a reservation itself.
+    No instance authorizes automatic image rollback. Remove with its consumers.
     """
 
     prepared: PreparedUpdate
@@ -434,14 +545,19 @@ def _verified(verification: Optional[VerificationSnapshot], version: str, contro
             ReasonCode.SIGNATURE_REJECTED)
     # Verifier owns certificate repository/ref/issuer checks. Never accept a
     # self-declared manifest.signature or a public status verification string.
-    require(verification.method == "keyless" and verification.signer == controls.trusted_identity.format(version=version)
-            and verification.issuer == controls.trusted_issuer and bool(verification.tool), ReasonCode.SIGNATURE_REJECTED)
+    from .trust import matches_trust
+    require(matches_trust(verification, version, identity=controls.trusted_identity, issuer=controls.trusted_issuer,
+                          public_key_sha256=controls.public_key_sha256), ReasonCode.SIGNATURE_REJECTED)
     age = (aware(now) - aware(verification.checked_at)).total_seconds()
     require(age >= 0, ReasonCode.CLOCK_SKEW)
     require(not fresh or age <= 300, ReasonCode.SIGNATURE_REJECTED)
 
 
 def _repository(controls: Controls, version: str) -> str:
+    if controls.public_key_sha256:
+        require(re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", controls.repository) is not None,
+                ReasonCode.SIGNATURE_REJECTED)
+        return controls.repository
     match = re.fullmatch(r"https://github.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/\.github/workflows/[^/]+@refs/tags/"
                          + re.escape(version), controls.trusted_identity.format(version=version))
     require(match is not None, ReasonCode.SIGNATURE_REJECTED)
@@ -462,23 +578,180 @@ def _images(observed: Mapping[str, Tuple[RuntimeImage, ...]], expected: Mapping[
                     ReasonCode.IMAGE_DIGEST_MISMATCH)
 
 
-def _common(prepared: PreparedUpdate, obs: Observations, controls: Controls, *, rollback: bool = False):
+def validate_compatibility(manifest: Mapping[str, Any]) -> None:
+    """Readable v1; closed restore-backed v2. Metadata alone is not admission."""
+    compatibility = plain(manifest["compatibility"])
+    shape(compatibility, schema("release-manifest.schema.json")["$defs"]["compatibility"])
+    if compatibility["contract_version"] == 1:
+        return _validate_legacy_compatibility(manifest)
+    rows, env = compatibility["predecessors"], compatibility["required_env"]
+    require(len({_row_key(row) for row in rows}) == len(rows))
+    require(len({row["name"] for row in env}) == len(env))
+    affirmative = compatibility["automatic_apply"]
+    require(compatibility["automatic_rollback"]["strategy"] == ("restore_backup" if affirmative else "never"),
+            ReasonCode.RESTORE_NOT_CERTIFIED)
+    if affirmative:
+        require(not compatibility["requires_operator_initialization"], ReasonCode.INITIALIZATION_REQUIRED)
+        require(bool(rows) and compatibility["validation"] is not None, ReasonCode.RESTORE_NOT_CERTIFIED)
+    for row in rows:
+        require(row["restore_certified"] is affirmative, ReasonCode.RESTORE_NOT_CERTIFIED)
+        require(row["mode"] == "standalone" and row["profiles"] == []
+                and row["active_components"] == ["standalone"], ReasonCode.UNSUPPORTED_INSTALLATION)
+        require(parse_version(manifest["minimum_version"]) <= parse_version(row["version"])
+                < parse_version(manifest["version"]))
+        require(row["platform"] in manifest["components"]["standalone"].get("platforms", ()),
+                ReasonCode.PLATFORM_NOT_REHEARSED)
+    if compatibility["validation"] is not None:
+        require(compatibility["validation"]["inputs_hash"] == inputs_hash(manifest))
+
+
+def _migration_evidence(row: Mapping[str, Any]) -> MigrationEvidence:
+    return MigrationEvidence(**row["migration_evidence"])
+
+
+def transition_measurements(row: Mapping[str, Any]) -> TransitionMeasurements:
+    """Extract a row's A6 data; callers must authenticate/validate the proof first.
+
+    This constructor alone is NOT release authentication or host admission.
+    """
+    try:
+        return TransitionMeasurements(**{key: row[key] for key in (
+            "migration_evidence", "migration_measurements", "backup_measurement", "restore_measurement")})
+    except (ValueError, TypeError, KeyError):
+        raise CompatibilityError() from None
+
+
+def estimate_automatic_update(measurements: TransitionMeasurements, host_sizes: HostSizeObservation,
+                              policy: AutomationPolicy, *, window_remaining_seconds: float,
+                              tick_remaining_seconds: float) -> AutomaticUpdateDecision:
+    """A6 pure preflight, before stopping A. No I/O, clocks, SQL or mutation.
+
+    Rates must come from the authenticated selected row, sizes from fixed host
+    probes, and remaining budgets from the runner's real clocks. Missing facts
+    refuse; this result neither reserves capacity nor authorizes execution.
+    Fraction arithmetic avoids overflow and rounds all estimates UP. The safety
+    factor is applied once to every measured duration/growth and transfer size.
+    Migration measurements certify a reference workload, not a scaling law:
+    every touched table's host rows AND bytes must fit its reference inputs.
+    """
+    try:
+        require(isinstance(policy, AutomationPolicy) and policy.qualification_policy == QUALIFICATION_POLICY,
+                ReasonCode.RESTORE_NOT_CERTIFIED)
+        require(isinstance(measurements, TransitionMeasurements))
+        require(isinstance(host_sizes, HostSizeObservation), ReasonCode.RESTORE_CAPACITY_UNKNOWN)
+        for budget in (window_remaining_seconds, tick_remaining_seconds):
+            require(type(budget) in (int, float) and budget >= 0
+                    and (type(budget) is int or math.isfinite(budget)), ReasonCode.INSUFFICIENT_WINDOW)
+        f = policy.estimate_safety_factor
+        sizes = {(item.engine, item.table): item for item in host_sizes.table_sizes}
+        volume_bytes = sum(host_sizes.volume_bytes.values())
+        for transfer in (measurements.backup_measurement, measurements.restore_measurement):
+            require(all(not size or transfer.reference_volume_bytes[volume] > 0
+                        for volume, size in host_sizes.volume_bytes.items()), ReasonCode.RESTORE_CAPACITY_UNKNOWN)
+
+        def ceiling(value):
+            return -(-value.numerator // value.denominator)
+
+        def transfer_seconds(transfer):
+            # Aggregate throughput hides differences between volume roles. Scale
+            # the whole reference duration by the largest role ratio, so every
+            # role's contribution is covered even when the data mix changes.
+            scale = max([Fraction(1)] + [Fraction(host_sizes.volume_bytes[role], reference)
+                        for role, reference in transfer.reference_volume_bytes.items() if reference])
+            reference_duration = (Fraction(sum(transfer.reference_volume_bytes.values()))
+                                  / Fraction(transfer.throughput_bytes_per_second))
+            return ceiling(f * reference_duration * scale)
+
+        migration_seconds, extra_disk = Fraction(0), Fraction(0)
+        touched_tables = set()
+        for migration in measurements.migration_measurements:
+            actual_work, reference_bytes = 0, 0
+            for table in migration.tables:
+                key = (migration.engine, table.table)
+                # Host sizes describe A, not intermediate migration outputs.
+                # The current proof measures input rows/bytes and peak allocation,
+                # but supplies no retained output-row bound. Even amplification=1
+                # cannot prove rows unchanged (a backfill may insert narrow rows).
+                # Reusing A's input or inferring output rows from disk is unsafe.
+                require(key not in touched_tables, ReasonCode.RESTORE_CAPACITY_UNKNOWN)
+                touched_tables.add(key)
+                actual = sizes.get(key)
+                require(actual is not None, ReasonCode.RESTORE_CAPACITY_UNKNOWN)
+                # A measured rate/amplification and a risk label do not bound
+                # growth above the reference (e.g. joins scale multiplicatively).
+                # The current signed contract has no reviewed scaling bound, so
+                # fail closed on EITHER dimension of ANY table, not an aggregate
+                # or the throughput unit alone. A safety factor is not a bound.
+                for count, reference in ((actual.rows, table.reference_rows), (actual.bytes, table.reference_bytes)):
+                    require(count <= reference, ReasonCode.RESTORE_CAPACITY_UNKNOWN)
+                actual_work += actual.rows if migration.throughput.unit == "rows_per_second" else actual.bytes
+                reference_bytes += table.reference_bytes
+            migration_seconds += f * max(Fraction(migration.duration_seconds),
+                                           Fraction(actual_work) / Fraction(migration.throughput.value))
+            # Within reference inputs keep ALL measured reference allocation;
+            # never downscale row-driven growth, WAL or temp by host bytes/rows.
+            # Retain every peak without assuming cross-migration reclamation.
+            extra_disk += f * ((Fraction(migration.peak_disk_amplification_factor) - 1) * reference_bytes
+                               + migration.wal_bytes + migration.temp_bytes)
+        backup, restore = (transfer_seconds(t) for t in (measurements.backup_measurement, measurements.restore_measurement))
+        migration, growth = ceiling(migration_seconds), ceiling(extra_disk)
+        reserve = volume_bytes * f + policy.disk_watermark_reserve_bytes
+        backup_required = volume_bytes * f + policy.disk_watermark_reserve_bytes
+        docker_base = reserve + (backup_required if host_sizes.backup_shares_docker_filesystem else 0)
+        overhead = policy.stability_period_seconds + policy.quiescence_reserve_seconds + policy.metadata_reserve_seconds
+        forward = backup + migration + policy.wait_timeout_seconds + overhead
+        recovery = restore + policy.recovery_startup_timeout_seconds + overhead
+        estimate = AutomaticUpdateEstimate(backup, migration, restore, growth, backup_required, docker_base + growth,
+            reserve, forward, recovery, forward + recovery, min(migration, policy.migration_timeout_seconds),
+            policy.migration_stall_timeout_seconds)
+        reasons = []
+        budget = min(Fraction(window_remaining_seconds), Fraction(tick_remaining_seconds))
+        if (backup > policy.backup_timeout_seconds or restore > policy.restore_timeout_seconds
+                or forward + recovery - migration > budget):
+            reasons.append(ReasonCode.BACKUP_EXCEEDS_WINDOW)
+        if migration > policy.migration_timeout_seconds or (migration and forward + recovery > budget):
+            reasons.append(ReasonCode.MIGRATION_EXCEEDS_WINDOW)
+        if host_sizes.backup_free_bytes < backup_required or host_sizes.docker_free_bytes < docker_base:
+            reasons.append(ReasonCode.INSUFFICIENT_DISK_FOR_BACKUP)
+        if growth and host_sizes.docker_free_bytes < docker_base + growth:
+            reasons.append(ReasonCode.INSUFFICIENT_DISK_FOR_MIGRATION)
+        return AutomaticUpdateDecision(not reasons, tuple(reasons), estimate)
+    except (ValueError, TypeError, KeyError, AttributeError, OverflowError) as exc:
+        result = _result_error(exc)
+        return AutomaticUpdateDecision(False, result.reason_codes)
+
+
+def _select_row(proof: Mapping[str, Any], previous: Mapping[str, Any], *, mode: str,
+                profiles: tuple, platform: str, deployment_files: Mapping[str, str]) -> dict:
+    rows = [r for r in proof["predecessors"] if r["predecessor"]["version"] == previous["version"]
+            and r["predecessor"]["mode"] == mode and set(r["predecessor"]["profiles"]) == set(profiles)]
+    require(bool(rows), ReasonCode.TRANSITION_NOT_REHEARSED)
+    rows = [r for r in rows if r["predecessor"]["platform"] == platform]
+    require(bool(rows), ReasonCode.PLATFORM_NOT_REHEARSED)
+    execution = {"files": dict(deployment_files)}
+    rows = [r for r in rows if r.get("execution_deployment", proof["deployment"]) == execution]
+    require(len(rows) == 1, ReasonCode.DEPLOYMENT_FILES_MISMATCH)
+    return rows[0]
+
+
+def _common(prepared: PreparedUpdate, obs: Observations, controls: Controls):
     require(isinstance(prepared, PreparedUpdate) and isinstance(obs, Observations) and isinstance(controls, Controls))
     target = validate_manifest(decode_document(prepared.raw_manifest, 1024 * 1024))
     require(target == plain(prepared.manifest), ReasonCode.IMMUTABLE_RELEASE_CHANGED)
     require(hashlib.sha256(prepared.raw_manifest).hexdigest() == prepared.manifest_sha256
             and hashlib.sha256(prepared.raw_bundle).hexdigest() == prepared.bundle_sha256, ReasonCode.IMMUTABLE_RELEASE_CHANGED)
-    require(target["schema_version"] == 2, ReasonCode.UNCERTIFIED_RELEASE)
-    _verified(prepared.verification, target["version"], controls, obs.now, fresh=not rollback)
-    require(obs.online_verified is True or rollback, ReasonCode.SIGNATURE_REJECTED)
+    require(target["schema_version"] == 2 and target["compatibility"]["contract_version"] == 2,
+            ReasonCode.RESTORE_NOT_CERTIFIED)
+    _verified(prepared.verification, target["version"], controls, obs.now, fresh=True)
+    require(obs.online_verified is True, ReasonCode.SIGNATURE_REJECTED)
     previous = validate_manifest(decode_document(obs.predecessor_raw, 1024 * 1024))
     _verified(obs.predecessor_verification, previous["version"], controls, obs.now, fresh=False)
     require(obs.owner_confirmed is True and controls.registered is True, ReasonCode.OWNERSHIP_UNCONFIRMED)
-    require(not prepared.binding.production, ReasonCode.INITIALIZATION_REQUIRED)
-    require(obs.topology_qualified is True and obs.no_source_build is True, ReasonCode.UNSUPPORTED_INSTALLATION)
-    require(obs.no_pending_transaction is True, ReasonCode.RECOVERY_REQUIRED)
-    require(obs.baseline_attested is True and obs.state_unchanged is True and obs.no_pending_migrations is True,
-            ReasonCode.INITIALIZATION_REQUIRED)
+    require(prepared.binding.topology == "standalone" and not prepared.binding.production
+            and not prepared.binding.profiles and obs.topology_qualified is True and obs.no_source_build is True,
+            ReasonCode.UNSUPPORTED_INSTALLATION)
+    require(obs.no_pending_transaction is True, ReasonCode.AUTOMATIC_RECOVERY_PENDING)
+    require(obs.baseline_attested is True, ReasonCode.OWNERSHIP_UNCONFIRMED)
     require(obs.graph_unchanged is True and obs.env_unchanged is True, ReasonCode.CONFIGURATION_CHANGED)
     for observed, expected in ((obs.installation_fingerprint, prepared.binding.installation_fingerprint),
                                (obs.config_fingerprint, prepared.config_fingerprint),
@@ -486,35 +759,57 @@ def _common(prepared: PreparedUpdate, obs: Observations, controls: Controls, *, 
                                (obs.trust_fingerprint, prepared.trust_fingerprint)):
         require(bool(observed) and observed == expected, ReasonCode.CONFIGURATION_CHANGED)
     compatibility = target["compatibility"]
-    require(compatibility["automatic_apply"] is True, ReasonCode.UNCERTIFIED_RELEASE)
-    require(not compatibility["requires_operator_initialization"] and not target["migration"]["requires_bootstrap"],
-            ReasonCode.INITIALIZATION_REQUIRED)
-    layout = topology_profile(prepared.binding.topology, prepared.binding.profiles)
+    require(compatibility["automatic_apply"] is True
+            and compatibility["automatic_rollback"]["strategy"] == "restore_backup", ReasonCode.RESTORE_NOT_CERTIFIED)
+    require(not compatibility["requires_operator_initialization"], ReasonCode.INITIALIZATION_REQUIRED)
+    layout = topology_profile("standalone", ())
     require(obs.runtime_complete is True, ReasonCode.RUNNING_VERSIONS_UNKNOWN)
     proof = validate_release_proof(obs.release_proof, target, repository=_repository(controls, target["version"]))
-    matches = [row for row in proof["predecessors"] if (
-        row["predecessor"]["version"] == previous["version"]
-        and row["predecessor"]["mode"] == prepared.binding.topology
-        and row["predecessor"]["platform"] == obs.platform
-        and set(row["predecessor"]["profiles"]) == set(prepared.binding.profiles))]
-    require(len(matches) == 1)
-    row = matches[0]
+    row = _select_row(proof, previous, mode="standalone", profiles=(), platform=obs.platform,
+                      deployment_files=obs.deployment_files)
     predecessor = row["predecessor"]
+    require(predecessor["restore_certified"] is True, ReasonCode.RESTORE_NOT_CERTIFIED)
     require(predecessor["manifest_hash"] == manifest_hash(previous)
             and predecessor["raw_manifest_sha256"] == hashlib.sha256(obs.predecessor_raw).hexdigest()
             and predecessor["source_sha"] == previous["source_sha"], ReasonCode.IMMUTABLE_RELEASE_CHANGED)
     require(row["predecessor_components"] == previous["components"], ReasonCode.IMAGE_DIGEST_MISMATCH)
-    require(row["predecessor_deployment"] == previous["deployment"] == target["deployment"]
-            and dict(obs.deployment_files) == target["deployment"]["files"], ReasonCode.DEPLOYMENT_FILES_MISMATCH)
+    require(row["predecessor_deployment"] == previous["deployment"], ReasonCode.DEPLOYMENT_FILES_MISMATCH)
     require(dict(obs.persistence) == row["persistence"], ReasonCode.UNSUPPORTED_INSTALLATION)
-    expected_epochs = {item["domain"]: item["from_epoch"] for item in compatibility["state_domains"]
-                       if item["domain"] in layout.domains}
-    require(all(type(v) is int for v in obs.state_epochs.values()) and dict(obs.state_epochs) == expected_epochs,
-            ReasonCode.INITIALIZATION_REQUIRED)
-    deps = {item["service"]: item for item in row["dependencies"]}
-    _images(obs.dependency_images, deps)
-    _images(obs.product_images, {service: (target if rollback else previous)["components"][component]
-                                for service, component in layout.products})
+    require(bool(obs.executor_sha256) and obs.executor_sha256 == row["executor_sha256"],
+            ReasonCode.TRANSITION_NOT_REHEARSED)
+    require(obs.binding_sha256 == installation_binding_hash(prepared.binding), ReasonCode.CONFIGURATION_CHANGED)
+    source = obs.runtime_observation
+    require(isinstance(source, RuntimeObservationV2), ReasonCode.MIGRATION_INVENTORY_UNSUPPORTED)
+    require(source.release_version == previous["version"]
+            and source.manifest_sha256 == hashlib.sha256(obs.predecessor_raw).hexdigest()
+            and source.platform == obs.platform and source.binding_sha256 == obs.binding_sha256,
+            ReasonCode.IMMUTABLE_RELEASE_CHANGED)
+    require(source.ready is True and source.stable is True, ReasonCode.READINESS_FAILED)
+    require(source.deployment_sha256 == manifest_hash(row["execution_deployment"]), ReasonCode.DEPLOYMENT_FILES_MISMATCH)
+    migration = _migration_evidence(row)
+    require(source.migration_inventory_sha256 == migration.source_inventory_sha256
+            and source.applied_migrations_sha256 == migration.source_applied_set_sha256
+            and source.active_app_mapping_sha256 == migration.active_app_mapping_sha256,
+            ReasonCode.MIGRATION_INVENTORY_MISMATCH)
+    require(aware(source.observed_at) <= aware(obs.now), ReasonCode.CLOCK_SKEW)
+    # A stopped installation cannot yield a fresh healthy-A observation. The
+    # retained pre-quiescence observation is bound to a freshly verified hold.
+    if obs.boundary == "before_backup":
+        require((aware(obs.now) - aware(source.observed_at)).total_seconds() <= 300, ReasonCode.READINESS_FAILED)
+    else:
+        hold = obs.cold_hold
+        require(isinstance(hold, ColdHold), ReasonCode.BACKUP_PROOF_INVALID)
+        require(hold.attempt_id == obs.attempt_id and hold.operation_token == obs.operation_token
+                and hold.run_id == obs.run_id and hold.binding_sha256 == obs.binding_sha256
+                and hold.source_observation_sha256 == source.sha256 and hold.storage_sha256 == source.storage_sha256
+                and hold.daemon_identity == prepared.binding.daemon_identity,
+                ReasonCode.BACKUP_INVENTORY_MISMATCH)
+        require(aware(source.observed_at) <= aware(hold.snapshot_at) <= aware(hold.verified_at) <= aware(obs.now)
+                and (aware(obs.now) - aware(hold.verified_at)).total_seconds() <= 300, ReasonCode.BACKUP_PROOF_INVALID)
+        require(dict(hold.restart_counts) == dict(source.restart_counts)
+                and dict(hold.restart_policies) == dict(source.restart_policies), ReasonCode.UNSUPPORTED_INSTALLATION)
+    _images(source.dependency_images, {item["service"]: item for item in row["dependencies"]})
+    _images(source.product_images, {service: previous["components"][component] for service, component in layout.products})
     for env in compatibility["required_env"]:
         if set(env["components"]) & set(layout.active_components):
             require(env["name"] in obs.env and type(obs.env[env["name"]]) is str
@@ -522,47 +817,78 @@ def _common(prepared: PreparedUpdate, obs: Observations, controls: Controls, *, 
     return target, previous, layout, row
 
 
-def _fingerprint(prepared: PreparedUpdate, obs: Observations, backup: Optional[bytes], *, prior_images=None) -> str:
-    def images(values):
-        # Inspection order is not identity. Explicit fields also prevent a
-        # future private RuntimeImage field from silently entering this binding.
-        return {service: [{"image": image.image, "digest": image.digest, "image_id": image.image_id}
-                          for image in sorted(replicas, key=lambda item: (item.image, item.digest, item.image_id))]
-                for service, replicas in values.items()}
-
+def _fingerprint(prepared: PreparedUpdate, obs: Observations, backup: Optional[bytes]) -> str:
+    source = obs.runtime_observation
     return manifest_hash({
-        "attempt": obs.attempt_id, "target": prepared.manifest_sha256, "bundle": prepared.bundle_sha256,
+        "attempt": obs.attempt_id, "operation_token": obs.operation_token, "run_id": obs.run_id,
+        "target": prepared.manifest_sha256, "bundle": prepared.bundle_sha256,
         "previous": hashlib.sha256(obs.predecessor_raw).hexdigest(),
         "release_proof": hashlib.sha256(obs.release_proof).hexdigest(),
         "backup": None if backup is None else hashlib.sha256(backup).hexdigest(),
-        "installation": obs.installation_fingerprint, "config": obs.config_fingerprint,
-        "profile": obs.profile_fingerprint, "trust": obs.trust_fingerprint,
-        "epochs": dict(obs.state_epochs), "persistence": dict(obs.persistence),
-        "products": images(obs.product_images), "dependencies": images(obs.dependency_images),
-        "prior_images": None if prior_images is None else images(prior_images),
+        "installation": obs.installation_fingerprint, "binding": obs.binding_sha256,
+        "config": obs.config_fingerprint, "profile": obs.profile_fingerprint, "trust": obs.trust_fingerprint,
+        "source_observation": None if source is None else source.sha256, "executor": obs.executor_sha256,
+        "persistence": dict(obs.persistence), "deployment_files": dict(obs.deployment_files),
     })
 
 
+def _validate_automatic_backup(raw: bytes, prepared: PreparedUpdate, obs: Observations,
+                               controls: Controls, previous: Mapping[str, Any], layout: TopologyProfile) -> None:
+    from .backup_proof import BackupExpectation, validate_backup_proof
+    require(obs.boundary != "before_backup", ReasonCode.BACKUP_REQUIRED)
+    expected = BackupExpectation(obs.attempt_id, obs.installation_fingerprint,
+                                 manifest_hash(plain(prepared.manifest)), previous["version"], obs.reserved_at,
+                                 layout.backup_domains)
+    validate_backup_proof(raw, expected, now=obs.now, max_age_seconds=controls.policy.backup_max_age_seconds)
+    value = decode_document(raw, MAX_BACKUP_BYTES)
+    require(value["schema_version"] == 2, ReasonCode.BACKUP_PROOF_INVALID)
+    shape(value, schema("backup-proof.schema.json"))
+    seal, hold, source = obs.backup_seal, obs.cold_hold, obs.runtime_observation
+    require(isinstance(seal, BackupSeal) and isinstance(hold, ColdHold) and isinstance(source, RuntimeObservationV2),
+            ReasonCode.BACKUP_PROOF_INVALID)
+    require(set(value["covered_domains"]) == set(PERSISTENT_DOMAINS), ReasonCode.BACKUP_INVENTORY_MISMATCH)
+    require(value["binding_sha256"] == seal.binding_sha256 == obs.binding_sha256
+            and value["inventory_sha256"] == seal.inventory_sha256
+            and value["source_observation_sha256"] == seal.source_observation_sha256 == source.sha256
+            and value["quiescence_evidence_sha256"] == seal.quiescence_evidence_sha256 == hold.quiescence_evidence_sha256
+            and hashlib.sha256(raw).hexdigest() == seal.proof_sha256
+            and seal.attempt_id == obs.attempt_id and seal.operation_token == obs.operation_token
+            and seal.run_id == obs.run_id and seal.target_manifest_hash == expected.target_manifest_hash
+            and seal.source_version == previous["version"], ReasonCode.BACKUP_INVENTORY_MISMATCH)
+    snapshot = timestamp(value["snapshot_at"])
+    require(timestamp(value["started_at"]) <= snapshot <= timestamp(value["completed_at"])
+            and snapshot == seal.snapshot_at == hold.snapshot_at
+            and snapshot <= aware(seal.authorised_at) <= aware(obs.now), ReasonCode.BACKUP_PROOF_INVALID)
+    require((aware(obs.now) - snapshot).total_seconds() <= controls.policy.backup_max_age_seconds,
+            ReasonCode.BACKUP_EXPIRED)
+
+
 def _result_error(exc: Exception) -> Eligibility:
-    reason = exc.reason_code if isinstance(exc, CompatibilityError) else ReasonCode.UNCERTIFIED_RELEASE
+    if isinstance(exc, CompatibilityError):
+        reason = exc.reason_code
+    elif isinstance(exc, ContractError) and exc.reason_code in {r.value for r in ReasonCode}:
+        reason = ReasonCode(exc.reason_code)
+    else:
+        reason = ReasonCode.UNCERTIFIED_RELEASE
     return Eligibility(False, (reason,))
 
 
 def evaluate_automatic_apply(prepared: PreparedUpdate, observations: Observations, controls: Controls,
                              proof: Any) -> Eligibility:
-    """All-of assessment; proof='pending' ONLY before_backup, bytes otherwise.
+    """Restore-backed all-of assessment. Pending grants BACKUP ONLY, not rollout.
 
-    Pending means eligible to take a backup, NEVER eligible to mutate env/images.
-    This does not replace the ordinary core plan, manual backup requirements or
-    guarded filesystem qualification. No raw exception text escapes.
+    Pure values do not reserve attempts, verify signatures, establish locks or
+    reconcile Docker writers. The automatic executor must revalidate each hold
+    and own durable direction/seals under update.lock; manual callers are unchanged.
     """
     try:
         require(controls.policy.mode == "apply" and controls.enabled is True and controls.paused is False,
                 ReasonCode.CONTROL_INVALID)
+        require(controls.policy.qualification_policy == QUALIFICATION_POLICY, ReasonCode.RESTORE_NOT_CERTIFIED)
         require(controls.window_open is True, ReasonCode.OUTSIDE_WINDOW)
         require(controls.start_budget_available is True, ReasonCode.INSUFFICIENT_WINDOW)
         require(observations.no_failed_target is True, ReasonCode.FAILED_TARGET_LATCHED)
-        target, previous, layout, _ = _common(prepared, observations, controls)
+        target, previous, layout, row = _common(prepared, observations, controls)
         plan = prepared.plan
         require(plan.get("decision") == "update_available" and plan.get("resume") is False
                 and plan.get("target_version") == target["version"] and plan.get("manifest_hash") == manifest_hash(target)
@@ -574,51 +900,35 @@ def evaluate_automatic_apply(prepared: PreparedUpdate, observations: Observation
         require(controls.policy.version_policy == "major" or old[0] == new[0], ReasonCode.VERSION_POLICY_BLOCKED)
         require(controls.policy.version_policy != "patch" or old[:2] == new[:2], ReasonCode.VERSION_POLICY_BLOCKED)
         pending = type(proof) is str and proof == "pending"
+        require(observations.boundary in ("before_backup", "after_backup", "before_env_commit", "before_rollout"))
         if pending:
             require(observations.boundary == "before_backup", ReasonCode.BACKUP_REQUIRED)
         else:
-            from .backup_proof import BackupExpectation, validate_backup_proof
-            expected = BackupExpectation(observations.attempt_id, observations.installation_fingerprint,
-                                         manifest_hash(target), previous["version"], observations.reserved_at,
-                                         layout.backup_domains)
-            validate_backup_proof(proof, expected, now=observations.now,
-                                  max_age_seconds=controls.policy.backup_max_age_seconds)
-        require(observations.boundary in ("before_backup", "after_backup", "before_env_commit", "before_rollout"))
-        return Eligibility(True, backup_pending=pending,
-                           fingerprint=_fingerprint(prepared, observations, None if pending else proof))
+            _validate_automatic_backup(proof, prepared, observations, controls, previous, layout)
+        fingerprint = _fingerprint(prepared, observations, None if pending else proof)
+        transition = AuthorisedTransition(prepared, observations.runtime_observation, _migration_evidence(row),
+            hashlib.sha256(observations.predecessor_raw).hexdigest(), hashlib.sha256(observations.release_proof).hexdigest(),
+            row["execution_deployment"], row["executor_sha256"], manifest_hash(row), observations.now, fingerprint,
+            measurements=transition_measurements(row))
+        return Eligibility(True, backup_pending=pending, fingerprint=fingerprint, transition=transition)
     except (ValueError, TypeError, KeyError, AttributeError, RecursionError) as exc:
         return _result_error(exc)
+
+
+def authorise_transition(prepared: PreparedUpdate, observations: Observations, controls: Controls,
+                         proof: Any) -> AuthorisedTransition:
+    """Raising interface to the same evaluator, NOT a second/bypass admission path."""
+    result = evaluate_automatic_apply(prepared, observations, controls, proof)
+    require(result.allowed and result.transition is not None,
+            result.reason_codes[0] if result.reason_codes else ReasonCode.RESTORE_NOT_CERTIFIED)
+    return result.transition
 
 
 def evaluate_automatic_rollback(attempt: Attempt, observations: Observations, controls: Controls) -> Eligibility:
-    """One exact completed forward failure, images only; NEVER database restore.
+    """Deprecated import tombstone until orchestrator removes its eager imports.
 
-    Pause/window closure after rollout does not cancel the already-authorized
-    safety action. Unknown child state/interruption/timeouts never qualify.
-    Original proof is checked at first mutation, not relabeled after migration.
+    The image-only evaluator has been removed. No automatic image rollback can
+    be authorized, including with readable legacy data. Manual Updater.rollback
+    does not call this API and retains its behavior.
     """
-    try:
-        require(isinstance(attempt, Attempt) and observations.boundary == "before_fallback", ReasonCode.ROLLBACK_INELIGIBLE)
-        require(attempt.automatic is True and attempt.live is True and attempt.rollback_enabled_before_start is True
-                and controls.policy.automatic_rollback is True, ReasonCode.ROLLBACK_INELIGIBLE)
-        require(attempt.attempt_id == attempt.latest_attempt_id == observations.attempt_id
-                and attempt.reserved_at == observations.reserved_at
-                and attempt.receipt_matches is True and attempt.prior_images_available is True,
-                ReasonCode.ROLLBACK_INELIGIBLE)
-        require(type(attempt.fallback_count) is int and attempt.fallback_count == 0
-                and attempt.failure_kind in ("rollout_failed", "readiness_failed") and attempt.child_state_known is True,
-                ReasonCode.ROLLBACK_INELIGIBLE)
-        target, previous, layout, row = _common(attempt.prepared, observations, controls, rollback=True)
-        require(target["compatibility"]["automatic_rollback"]["strategy"] == "images_only"
-                and row["predecessor"]["rollback_certified"] is True, ReasonCode.ROLLBACK_INELIGIBLE)
-        _images(attempt.prior_images, {service: previous["components"][component] for service, component in layout.products})
-        require(aware(attempt.reserved_at) <= aware(attempt.first_mutation_at) <= aware(observations.now), ReasonCode.CLOCK_SKEW)
-        from .backup_proof import BackupExpectation, validate_backup_proof
-        expected = BackupExpectation(attempt.attempt_id, observations.installation_fingerprint, manifest_hash(target),
-                                     previous["version"], attempt.reserved_at, layout.backup_domains)
-        validate_backup_proof(attempt.backup_raw, expected, now=attempt.first_mutation_at,
-                              max_age_seconds=controls.policy.backup_max_age_seconds)
-        return Eligibility(True, fingerprint=_fingerprint(attempt.prepared, observations, attempt.backup_raw,
-                                                         prior_images=attempt.prior_images))
-    except (ValueError, TypeError, KeyError, AttributeError, RecursionError) as exc:
-        return _result_error(exc)
+    return Eligibility(False, (ReasonCode.ROLLBACK_INELIGIBLE,))

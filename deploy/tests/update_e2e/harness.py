@@ -994,6 +994,38 @@ class Harness:
         self._started = False
         self._stopped = False
 
+    def automatic_publisher(self, *, lane, versions, retained_layout, candidates,
+                            deployment_dirs, platform="linux/amd64", run_id=42):
+        """Real acceptance is independent of start(), registry and fake images.
+
+        Immutable candidates and retained tag files are explicit inputs. The
+        product factory is deliberately not new_checkout(), which creates the
+        synthetic CLI fixtures used by the legacy/manual suites.
+        """
+        from .automatic_publisher import AutomaticPublisher
+        from .real_automatic import ProductHarness, CONTEXT, home_path
+        if lane != "product" or self._started:
+            raise ValueError("automatic acceptance requires a fresh real-product harness")
+        base = home_path(self.base)
+        base.mkdir(mode=0o700, parents=True, exist_ok=True)
+        directory = base / ("fagi-upd-e2e-real-publisher-" + uuid.uuid4().hex)
+
+        def product_factory(publisher, name):
+            if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,40}", name):
+                raise ValueError("unsafe product checkout name")
+            evidence = base / ("fagi-upd-e2e-real-" + name + "-" + uuid.uuid4().hex[:12])
+            evidence.mkdir(mode=0o700)
+            checkout = ProductHarness(evidence, update_source(), evidence.name, context=CONTEXT,
+                                      compose=compose_command())
+            checkout.retain_deployment(publisher.deployment_dirs[retained_layout],
+                                       publisher._prepared[retained_layout]['manifest'])
+            return checkout
+
+        return AutomaticPublisher(directory, lane=lane, versions=versions, retained_layout=retained_layout,
+            candidates=candidates, deployment_dirs=deployment_dirs, product_factory=product_factory,
+            docker_context=CONTEXT, platform=platform, run_id=run_id,
+            cosign=os.environ.get('FUTURE_AGI_TEST_COSIGN') or shutil.which('cosign') or 'cosign')
+
     # ------------------------------------------------------------ lifecycle --
     @property
     def registry(self) -> str:

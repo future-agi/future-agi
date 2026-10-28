@@ -1,4 +1,5 @@
 import PropTypes from "prop-types";
+import { ApiHostUpdateStatusListResponse } from "src/generated/api-contracts/api.zod";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import {
@@ -9,13 +10,22 @@ import {
   useQuery,
 } from "@tanstack/react-query";
 import {
+  automaticNoticeForStatus,
+  humanBytes,
+  humanDuration,
   canReadHostUpdates,
   fetchHostUpdateStatus,
   normalizeHostUpdateStatus,
   STATUS_POLL_MS,
   useHostUpdateStatus,
 } from "../host-update-status";
-import { fixtures, responseFixture, statusFixture } from "./fixtures";
+import {
+  fixtures,
+  projectedStatusFixtures,
+  responseFixture,
+  restoreResponse,
+  statusFixture,
+} from "./fixtures";
 
 const mocks = vi.hoisted(() => ({
   get: vi.fn(),
@@ -143,6 +153,12 @@ describe("closed host report client", () => {
     (r) => {
       r.result.snapshot.private_path = "/secret";
     },
+    (r) => {
+      r.result.snapshot.safety = null;
+    },
+    (r) => {
+      r.result.snapshot.operation = null;
+    },
   ])("does not expose malformed or unsafe fields %#", (modify) => {
     const data = responseFixture();
     modify(data);
@@ -185,6 +201,407 @@ describe("closed host report client", () => {
       expect(JSON.stringify(data)).not.toMatch(/secret|private/);
     },
   );
+});
+
+describe("restore-backed read-only notices", () => {
+  it.each(projectedStatusFixtures)(
+    "keeps producer/reader $name above prior restoration in the shipping client",
+    ({ name, response }) => {
+      const result = normalizeHostUpdateStatus(response);
+      expect(result).toEqual(response.result);
+      expect(ApiHostUpdateStatusListResponse.parse(response)).toEqual(response);
+      expect(result.snapshot.last_run.restore_result).toBe("verified");
+      const text = automaticNoticeForStatus(result).text;
+      expect(text).toMatch(
+        name === "verifying"
+          ? /verifying readiness and stability/
+          : /^Notify-only for this installation\./,
+      );
+      expect(text).not.toMatch(
+        /Update to .* failed; restored|Restore discards/,
+      );
+    },
+  );
+  it("accepts the complete additive wire without losing the failed forward outcome", () => {
+    const data = restoreResponse();
+    expect(normalizeHostUpdateStatus(data)).toEqual(data.result);
+    expect(automaticNoticeForStatus(data.result).text).toContain(
+      "Update to v1.52.0 failed; restored v1.51.0; v1.52.0 will not be retried automatically.",
+    );
+  });
+  it("does not treat terminal restoration's deliberately unknown progress freshness as stale", () => {
+    const data = restoreResponse();
+    data.result.progress_freshness = "unknown";
+    expect(
+      automaticNoticeForStatus(normalizeHostUpdateStatus(data)).text,
+    ).toMatch(/^Update to v1\.52\.0 failed; restored v1\.51\.0/);
+  });
+  it.each([
+    ["restoring", "running", "restoring_volumes"],
+    ["restored", "verified", "restored"],
+    ["recovery_required", "recovery_required", "restore_quiescing"],
+  ])(
+    "accepts a complete %s operation through the shipping generated contract",
+    (state, restore, phase) => {
+      const data = restoreResponse();
+      const s = data.result.snapshot;
+      Object.assign(s.operation, { state, phase });
+      s.safety.restore_state = restore;
+      s.last_run.restore_result = restore;
+      if (restore !== "verified") {
+        Object.assign(s.versions, {
+          running_release: null,
+          runtime_state: "unknown",
+        });
+        s.last_run.effective_version = null;
+      }
+      expect(ApiHostUpdateStatusListResponse.safeParse(data).success).toBe(
+        true,
+      );
+      expect(normalizeHostUpdateStatus(data)).toEqual(data.result);
+    },
+  );
+  it.each(["safety", "last_run"])(
+    "generated Zod rejects every partial %s restore group without stripping it into legacy data",
+    (section) => {
+      const complete = restoreResponse();
+      const legacy = responseFixture().result.snapshot[section];
+      const additions = Object.keys(complete.result.snapshot[section]).filter(
+        (key) => !Object.hasOwn(legacy || {}, key),
+      );
+      // last_run is null in the legacy fixture; these seven fields are the
+      // frozen legacy run, not part of the additive recovery group.
+      const keys =
+        section === "last_run"
+          ? additions.filter(
+              (key) =>
+                ![
+                  "kind",
+                  "automatic",
+                  "outcome",
+                  "from_version",
+                  "target_version",
+                  "finished_at",
+                  "fallback_outcome",
+                ].includes(key),
+            )
+          : additions;
+      expect(keys.length).toBe(section === "safety" ? 9 : 4);
+      expect(ApiHostUpdateStatusListResponse.parse(complete)).toEqual(complete);
+      for (let mask = 1; mask < (1 << keys.length) - 1; mask += 1) {
+        const partial = structuredClone(complete);
+        keys.forEach((key, index) => {
+          if (!(mask & (1 << index)))
+            delete partial.result.snapshot[section][key];
+        });
+        expect(
+          ApiHostUpdateStatusListResponse.safeParse(partial).success,
+          `${section} partial restore mask ${mask}`,
+        ).toBe(false);
+        expect(normalizeHostUpdateStatus(partial).reason_code).toBe(
+          "malformed",
+        );
+      }
+      const withoutGroup = structuredClone(complete);
+      keys.forEach((key) => {
+        delete withoutGroup.result.snapshot[section][key];
+      });
+      expect(ApiHostUpdateStatusListResponse.parse(withoutGroup)).toEqual(
+        withoutGroup,
+      );
+    },
+  );
+  it.each(["safety", "last_run", "operation", "versions"])(
+    "generated Zod rejects unknown %s fields instead of silently stripping them",
+    (section) => {
+      const data = restoreResponse();
+      data.result.snapshot[section].private_path = "/private/never-public";
+      expect(ApiHostUpdateStatusListResponse.safeParse(data).success).toBe(
+        false,
+      );
+    },
+  );
+  it("shows recovery even while disabled, and never claims an installed version", () => {
+    const data = restoreResponse();
+    Object.assign(data.result.snapshot.automation, {
+      enabled: false,
+      state: "disabled",
+      next_check_at: null,
+      next_action_at: null,
+    });
+    data.result.snapshot.operation.state = "recovery_required";
+    data.result.snapshot.safety.restore_state = "recovery_required";
+    const text = automaticNoticeForStatus(data.result).text;
+    expect(text).toContain("Installed version is unverified");
+    expect(text).toContain("Keep the backup and safety scheduler");
+    expect(normalizeHostUpdateStatus(data).reason_code).toBe("malformed");
+    Object.assign(data.result.snapshot.versions, {
+      running_release: null,
+      runtime_state: "unknown",
+      components: [],
+    });
+    data.result.snapshot.last_run.effective_version = null;
+    expect(normalizeHostUpdateStatus(data)).toEqual(data.result);
+  });
+  it("keeps failed restoration actionable instead of describing an image-only rollback", () => {
+    const data = restoreResponse();
+    data.result.snapshot.safety.restore_state = "failed";
+    expect(automaticNoticeForStatus(data.result).text).toContain(
+      "Installed version is unverified",
+    );
+  });
+  it("labels stale recovery progress as historical rather than current availability", () => {
+    const data = restoreResponse();
+    data.result.progress_freshness = "stale";
+    data.result.snapshot.safety.restore_state = "running";
+    expect(automaticNoticeForStatus(data.result).text).toMatch(
+      /^Last host report \(stale; current state unknown\):/,
+    );
+  });
+  it.each([
+    "migration_exceeds_window",
+    "insufficient_disk_for_migration",
+    "backup_exceeds_window",
+    "insufficient_disk_for_backup",
+  ])("explains %s with time and disk estimates", (reason) => {
+    const data = restoreResponse();
+    data.result.snapshot.last_run = null;
+    Object.assign(data.result.snapshot.discovery, {
+      state: "blocked",
+      reason_codes: [reason],
+    });
+    data.result.snapshot.safety.estimates = {
+      backup_seconds: 120,
+      migration_seconds: 3600,
+      restore_seconds: 180,
+      total_seconds: 7200,
+      extra_disk_bytes: 1024,
+      backup_required_free_bytes: 1073741824,
+      docker_required_free_bytes: 2147483648,
+      protected_restore_reserve_bytes: 1073741824,
+      forward_seconds: 5000,
+      recovery_seconds: 2200,
+      migration_deadline_seconds: 3600,
+      migration_stall_timeout_seconds: 300,
+    };
+    expect(normalizeHostUpdateStatus(data)).toEqual(data.result);
+    const text = automaticNoticeForStatus(data.result).text;
+    expect(text).toContain("Notify-only for this installation");
+    expect(text).toContain("backup 2 min, migration 1.0 h, restore 3 min");
+    expect(text).toContain("Docker free space 2.0 GiB");
+  });
+  it.each([
+    "checking",
+    "downloading",
+    "backing_up",
+    "applying",
+    "verifying",
+    "rolling_back",
+  ])(
+    "prioritizes current %s activity over a historical restoration",
+    (state) => {
+      const data = restoreResponse();
+      const snapshot = data.result.snapshot;
+      Object.assign(snapshot.operation, {
+        state,
+        kind: "apply",
+        phase: "target_verifying",
+      });
+      snapshot.discovery.candidate_version = "v1.53.0";
+      // A prior admission refusal must not hide the operation now in progress.
+      snapshot.discovery.reason_codes = ["migration_exceeds_window"];
+      const result = normalizeHostUpdateStatus(data);
+      expect(result).toEqual(data.result);
+      const text = automaticNoticeForStatus(result).text;
+      expect(text.toLowerCase()).toContain(
+        state === "rolling_back" ? "prior images" : state.replaceAll("_", " "),
+      );
+      expect(text).not.toMatch(
+        /Update to v1\.52\.0 failed|Notify-only|Restore discards/,
+      );
+    },
+  );
+  it.each([
+    "migration_exceeds_window",
+    "insufficient_disk_for_migration",
+    "backup_exceeds_window",
+    "insufficient_disk_for_backup",
+    "restore_capacity_unknown",
+  ])(
+    "prioritizes a new release's %s refusal over a historical restoration",
+    (reason) => {
+      const data = restoreResponse();
+      Object.assign(data.result.snapshot.discovery, {
+        state: "blocked",
+        candidate_version: "v1.53.0",
+        reason_codes: [reason],
+      });
+      const result = normalizeHostUpdateStatus(data);
+      expect(result).toEqual(data.result);
+      const text = automaticNoticeForStatus(result).text;
+      expect(text).toMatch(/^Notify-only for this installation\./);
+      expect(text).not.toMatch(/Update to v1\.52\.0 failed|Restore discards/);
+      expect(result.snapshot.last_run.restore_result).toBe("verified");
+    },
+  );
+  it.each([
+    "restore_not_certified",
+    "transition_not_rehearsed",
+    "signature_rejected",
+  ])(
+    "does not let restoration history hide current blocked admission %s",
+    (reason) => {
+      const data = restoreResponse();
+      Object.assign(data.result.snapshot.discovery, {
+        state: "blocked",
+        candidate_version: "v1.53.0",
+        reason_codes: [reason],
+      });
+      const text = automaticNoticeForStatus(
+        normalizeHostUpdateStatus(data),
+      ).text;
+      expect(text).toMatch(/^Notify-only for this installation\./);
+      expect(text).not.toMatch(
+        /Update to v1\.52\.0 failed|Run a manual update/,
+      );
+    },
+  );
+  it.each(["restoring", "recovery_required"])(
+    "keeps current %s recovery above discovery refusal and historical success",
+    (state) => {
+      const data = restoreResponse();
+      const s = data.result.snapshot;
+      s.operation.state = state;
+      s.safety.restore_state =
+        state === "restoring" ? "running" : "recovery_required";
+      Object.assign(s.versions, {
+        running_release: null,
+        runtime_state: "unknown",
+        components: [],
+      });
+      s.last_run.effective_version = null;
+      Object.assign(s.discovery, {
+        state: "blocked",
+        reason_codes: ["migration_exceeds_window"],
+      });
+      const text = automaticNoticeForStatus(
+        normalizeHostUpdateStatus(data),
+      ).text;
+      expect(text).toMatch(
+        state === "restoring"
+          ? /restoring the cold backup/
+          : /operator attention/,
+      );
+      expect(text).not.toMatch(/Notify-only|restored v1\.51\.0/);
+    },
+  );
+  it.each(["migration_stalled", "disk_watermark_abort"])(
+    "keeps the completed restoration honest after runtime failure %s",
+    (reason) => {
+      const data = restoreResponse();
+      data.result.snapshot.operation.reason_codes = [reason];
+      const text = automaticNoticeForStatus(
+        normalizeHostUpdateStatus(data),
+      ).text;
+      expect(text).toContain("Update to v1.52.0 failed; restored v1.51.0");
+      expect(text).not.toContain("Notify-only");
+    },
+  );
+  it("uses discovery freshness for admission and progress freshness for forward activity", () => {
+    const data = restoreResponse();
+    Object.assign(data.result.snapshot.discovery, {
+      state: "blocked",
+      reason_codes: ["migration_exceeds_window"],
+    });
+    data.result.progress_freshness = "unknown";
+    expect(
+      automaticNoticeForStatus(normalizeHostUpdateStatus(data)).text,
+    ).toMatch(/^Notify-only/);
+    data.result.discovery_freshness = "stale";
+    expect(
+      automaticNoticeForStatus(normalizeHostUpdateStatus(data)).text,
+    ).toMatch(/^Last host report \(stale; current state unknown\):/);
+    data.result.snapshot.operation.state = "verifying";
+    expect(
+      automaticNoticeForStatus(normalizeHostUpdateStatus(data)).text,
+    ).toMatch(/^Last host report \(stale; current state unknown\):/);
+  });
+  it.each(["idle", "succeeded"])(
+    "does not describe a prior restoration as the current %s operation",
+    (state) => {
+      const data = restoreResponse();
+      Object.assign(data.result.snapshot.operation, { state, phase: null });
+      expect(
+        automaticNoticeForStatus(normalizeHostUpdateStatus(data)),
+      ).toBeNull();
+    },
+  );
+  it.each([
+    (versions) => {
+      versions.components = [];
+    },
+    (versions) => {
+      versions.observed_at = null;
+    },
+    (versions) => {
+      versions.components[0].observation = "unknown";
+      versions.components[0].observed_versions = [];
+    },
+    (versions) => {
+      versions.components[0].observation = "not_deployed";
+      versions.components[0].observed_versions = [];
+    },
+    (versions) => {
+      versions.components[0].observed_versions = ["v1.50.0"];
+    },
+    (versions) => {
+      versions.components.push(structuredClone(versions.components[0]));
+    },
+  ])(
+    "rejects a consistent restored runtime without valid active observations %#",
+    (mutate) => {
+      const data = restoreResponse();
+      mutate(data.result.snapshot.versions);
+      expect(normalizeHostUpdateStatus(data)).toMatchObject({
+        availability: "unavailable",
+        reason_code: "malformed",
+        snapshot: null,
+      });
+    },
+  );
+  it("rejects incomplete groups, secrets, unknown phase and nonfinite estimates", () => {
+    for (const mutate of [
+      (s) => {
+        delete s.safety.guidance_id;
+      },
+      (s) => {
+        s.safety.archive_path = "/secret";
+      },
+      (s) => {
+        s.operation.phase = "guess_recovery";
+      },
+      (s) => {
+        s.last_run.effective_version = "/private";
+      },
+      (s) => {
+        s.safety.estimates = { total_seconds: Infinity };
+      },
+    ]) {
+      const data = restoreResponse();
+      mutate(data.result.snapshot);
+      expect(normalizeHostUpdateStatus(data)).toMatchObject({
+        availability: "unavailable",
+        reason_code: "malformed",
+        snapshot: null,
+      });
+    }
+  });
+  it("formats conservative human-readable budgets without coercion", () => {
+    expect(humanDuration(61)).toBe("2 min");
+    expect(humanDuration("61")).toBe("unknown");
+    expect(humanBytes(1024)).toBe("1.0 KiB");
+    expect(humanBytes(-1)).toBe("unknown");
+  });
 });
 
 describe("role and deployment gate", () => {

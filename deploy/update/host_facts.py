@@ -1,7 +1,8 @@
 """Read-only host adapters. Enrollment is identity, NEVER state approval.
 
-An operator-supplied, private facts.json attestation and exact release evidence
-are required for stateful automation. Missing evidence is a refusal. Capacity
+Legacy EnrolledFacts reads operator attestations. EvidenceFacts instead compares
+fixed typed probes with the machine-owned baseline and fetched target evidence;
+new automatic enrollment must use that adapter. Missing evidence is a refusal. Capacity
 is observable only for a directly connected native Linux dockerd; remote/VM
 contexts intentionally return unknown, without SSH, containers or client-disk
 substitution.
@@ -221,6 +222,50 @@ def daemon_space_available(installation, binding):
         return None
 
 
+def executor_implementation_sha256(root):
+    """Independently hash the producer's fixed complete implementation closure.
+
+    This matches scripts.build_update_compatibility_proof.implementation_inventory;
+    no file list or expected digest is taken from a downloaded proof. Installed
+    source is read as bounded data, never imported/executed for this measurement.
+    """
+    root = safe_path(Path(root), directory=True)
+    paths = [root / 'scripts' / name for name in ('rehearse_update_compatibility.py',
+        'build_update_compatibility_proof.py', 'generate_update_manifest.py')]
+    paths.extend(root / name for name in ('bin/update', 'deploy/standalone/bin/start',
+        'deploy/standalone/bin/bootstrap.py', 'deploy/standalone/nginx.conf'))
+    base = safe_path(root / 'deploy/update', directory=True)
+    def unreadable(error):
+        raise error
+    for directory, dirs, files in os.walk(base, followlinks=False, onerror=unreadable):
+        dirs[:] = sorted(d for d in dirs if d != '__pycache__')
+        require(not any((Path(directory) / d).is_symlink() for d in dirs), ReasonCode.TRANSITION_NOT_REHEARSED)
+        paths.extend(Path(directory) / name for name in sorted(files)
+            if Path(name).suffix in ('.py', '.json', '.txt', '.toml', '.in') or name == 'upgrade-floor')
+        require(len(paths) <= 4096, ReasonCode.TRANSITION_NOT_REHEARSED)
+    inventory = {}
+    for path in sorted(paths):
+        safe_path(path)
+        fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+        with os.fdopen(fd, 'rb') as handle:
+            before = os.fstat(handle.fileno())
+            require(stat.S_ISREG(before.st_mode) and before.st_size <= 16 * 1024 * 1024,
+                    ReasonCode.TRANSITION_NOT_REHEARSED)
+            digest, size = hashlib.sha256(), 0
+            while True:
+                chunk = handle.read(65536)
+                if not chunk:
+                    break
+                size += len(chunk)
+                require(size <= 16 * 1024 * 1024, ReasonCode.TRANSITION_NOT_REHEARSED)
+                digest.update(chunk)
+            after = os.fstat(handle.fileno())
+            require(all(getattr(before, k) == getattr(after, k) for k in
+                ('st_dev', 'st_ino', 'st_size', 'st_mtime_ns', 'st_ctime_ns')), ReasonCode.TRANSITION_NOT_REHEARSED)
+        inventory[path.relative_to(root).as_posix()] = digest.hexdigest()
+    return manifest_hash(inventory)
+
+
 def _private_bytes(directory, name, limit):
     fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
     try:
@@ -234,6 +279,51 @@ def _private_bytes(directory, name, limit):
         return raw
     finally:
         os.close(fd)
+
+
+class EvidenceFacts:
+    """New enrollment adapter. Fixed structural probe is REQUIRED, never inferred.
+
+    probe(installation, boundary) returns baseline.StructuralObservation with
+    actual readiness, runtime, schema/format/protocol and volume observations.
+    This adapter rechecks host identity/config/physical bytes independently; it
+    never reads facts.json or imports probes/commands from release assets.
+    """
+    def __init__(self, baseline, target_evidence, *, probe, intent=None, cold_hold=None, backup_seal=None):
+        self.baseline, self.target_evidence, self.probe = baseline, target_evidence, probe
+        self.intent = intent  # optional exact prepared-postimage provider, never a drift waiver
+        self.cold_hold, self.backup_seal = cold_hold, backup_seal
+
+    def __call__(self, installation, boundary):
+        from .baseline import StructuralObservation, normalise_observation
+        try:
+            binding = self.baseline.store.read_registration().binding
+            check_binding(installation, binding)
+            observation = normalise_observation(self.probe(installation, boundary))
+            config, profile, _ = fingerprints(installation)
+            intent = self.intent(boundary) if self.intent is not None else None
+            hold = self.cold_hold() if self.cold_hold is not None else None
+            seal = self.backup_seal() if self.backup_seal is not None else None
+            if hold is not None:
+                self.baseline.validate_hold(observation, hold)
+                head = self.baseline.current()
+                expected_config = intent.expected_config_fingerprint if intent is not None else head.config_fingerprint
+                expected_env = intent.expected_env_sha256 if intent is not None else head.env_sha256
+                require((config, profile) == (expected_config, head.profile_fingerprint)
+                        and hashlib.sha256(self.baseline._env_bytes()).hexdigest() == expected_env,
+                        ReasonCode.CONFIGURATION_CHANGED)
+            else:
+                require((config, profile) == (observation.facts.config_fingerprint, observation.facts.profile_fingerprint)
+                        and self.baseline._env_bytes() == observation.env_bytes, ReasonCode.CONFIGURATION_CHANGED)
+            execution = decode_document(self.baseline.blob(self.baseline.current().execution_deployment))["files"]
+            require(all(hash_path(installation.root, name) == value for name, value in execution.items()),
+                    ReasonCode.DEPLOYMENT_FILES_MISMATCH)
+            return replace(self.baseline.observe(observation, self.target_evidence, intent=intent,
+                                                cold_hold=hold, backup_seal=seal), boundary=boundary)
+        except GuardRefused:
+            raise
+        except (OSError, ValueError, TypeError, KeyError, StoreError) as exc:
+            raise GuardRefused(getattr(exc, 'reason_code', ReasonCode.INITIALIZATION_REQUIRED)) from None
 
 
 class EnrolledFacts:
@@ -324,7 +414,8 @@ class EnrolledFacts:
         platform = observed['OSType'] + '/' + architecture
         return Observations(self.clock(), predecessor_raw=raw,
             predecessor_verification=VerificationSnapshot(verified.verified, verified.method, verified.signer,
-                                                          verified.issuer, verified.tool, self.clock()),
+                                                          verified.issuer, verified.tool, self.clock(),
+                                                          verified.public_key_sha256),
             release_proof=proof, platform=platform,
             product_images={s: tuple(images[s]) for s, _ in layout.products},
             dependency_images={s: tuple(images[s]) for s in layout.dependencies},

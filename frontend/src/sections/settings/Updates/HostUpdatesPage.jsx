@@ -11,7 +11,11 @@ import {
   Typography,
 } from "@mui/material";
 
-import { useHostUpdateStatus } from "src/api/hostUpdates/host-update-status";
+import {
+  humanBytes,
+  humanDuration,
+  useHostUpdateStatus,
+} from "src/api/hostUpdates/host-update-status";
 import {
   ACTIVE_STATES,
   EXPLAINER_SECTIONS,
@@ -182,7 +186,10 @@ export default function HostUpdatesPage() {
         {query.isLoading && "Reading the host report…"}
         {!query.isLoading && !snapshot && (
           <>
-            <Typography variant="subtitle2" data-testid="host-updates-unavailable">
+            <Typography
+              variant="subtitle2"
+              data-testid="host-updates-unavailable"
+            >
               {data?.availability === "unsupported"
                 ? "Reporting unsupported"
                 : "Reporting unavailable"}
@@ -207,6 +214,11 @@ export default function HostUpdatesPage() {
               As of <ReportTime value={snapshot.generated_at} />. Report age
               when read: {data.age_seconds} seconds.
             </Typography>
+            {query.automaticNotice && (
+              <Typography variant="body2">
+                {query.automaticNotice.text}
+              </Typography>
+            )}
             {old && (
               <Typography variant="body2">
                 The values below are historical observations, not a current
@@ -228,7 +240,10 @@ export default function HostUpdatesPage() {
               <Field label="Selected release">
                 {snapshot.versions.selected_release || "Unknown"}
               </Field>
-              <Field label="Running release (last observed)" testId="host-updates-installed-version">
+              <Field
+                label="Running release (last observed)"
+                testId="host-updates-installed-version"
+              >
                 {snapshot.versions.running_release || "Unknown"}
               </Field>
               <Field label="Runtime observations">
@@ -237,7 +252,10 @@ export default function HostUpdatesPage() {
               <Field label="Versions observed at">
                 <ReportTime value={snapshot.versions.observed_at} />
               </Field>
-              <Field label="Version freshness" testId="host-updates-version-freshness">
+              <Field
+                label="Version freshness"
+                testId="host-updates-version-freshness"
+              >
                 {LABELS.freshness[data.versions_freshness]}
               </Field>
               <Field label="Deployment">
@@ -288,7 +306,10 @@ export default function HostUpdatesPage() {
                   ? "Previously current at the last verified check; availability now unknown"
                   : LABELS.discovery[snapshot.discovery.state]}
               </Field>
-              <Field label="Verified candidate (last check)" testId="host-updates-available-version">
+              <Field
+                label="Verified candidate (last check)"
+                testId="host-updates-available-version"
+              >
                 {snapshot.discovery.candidate_version ||
                   "No verified candidate reported"}
               </Field>
@@ -301,7 +322,10 @@ export default function HostUpdatesPage() {
               <Field label="Last check attempt">
                 <ReportTime value={snapshot.discovery.last_attempt_at} />
               </Field>
-              <Field label="Check freshness" testId="host-updates-check-freshness">
+              <Field
+                label="Check freshness"
+                testId="host-updates-check-freshness"
+              >
                 {LABELS.freshness[data.discovery_freshness]}
               </Field>
               <Field label="Channel and policy">
@@ -355,8 +379,9 @@ export default function HostUpdatesPage() {
             </Box>
             <Typography variant="body2" color="text.secondary">
               A window permits starting work, not a guaranteed finish time.
-              Pause affects future automatic work; explicit host commands remain
-              possible.
+              Pause and disable prevent new automatic attempts, not required
+              safety recovery. Keep the backup and safety scheduler until
+              recovery is resolved. Explicit host commands remain possible.
             </Typography>
           </ReportSection>
 
@@ -385,6 +410,11 @@ export default function HostUpdatesPage() {
               <Field label="Stage">
                 {LABELS.stage[snapshot.operation.stage] || "Not reported"}
               </Field>
+              {Object.hasOwn(snapshot.operation, "phase") && (
+                <Field label="Last verified phase">
+                  {LABELS.phase[snapshot.operation.phase] || "Not reported"}
+                </Field>
+              )}
               <Field label="Started">
                 <ReportTime value={snapshot.operation.started_at} />
               </Field>
@@ -434,14 +464,109 @@ export default function HostUpdatesPage() {
               <Field label="Readiness">
                 {LABELS.readiness[snapshot.safety.readiness]}
               </Field>
-              <Field label="Automatic image rollback">
-                {LABELS.rollback[snapshot.safety.automatic_rollback]}
-              </Field>
+              {snapshot.safety.fallback_strategy ? (
+                <>
+                  <Field label="Automatic recovery strategy">
+                    {LABELS.strategy[snapshot.safety.fallback_strategy]}
+                  </Field>
+                  <Field label="Restoration (last reported)">
+                    {LABELS.restore[snapshot.safety.restore_state]}
+                  </Field>
+                  <Field label="Snapshot taken at">
+                    <ReportTime value={snapshot.safety.snapshot_at} />
+                  </Field>
+                  <Field label="Loss window start">
+                    <ReportTime value={snapshot.safety.loss_window_start} />
+                  </Field>
+                  <Field label="Loss window end">
+                    <ReportTime value={snapshot.safety.loss_window_end} />
+                  </Field>
+                  <Field label="Loss window qualification">
+                    {
+                      LABELS.loss_window[
+                        snapshot.safety.loss_window_qualification
+                      ]
+                    }
+                  </Field>
+                  <Field label="Failed target (not automatically retried)">
+                    {snapshot.safety.failed_target_version || "None reported"}
+                  </Field>
+                  <Field label="Recovery guidance">
+                    {OPERATOR_ACTIONS[snapshot.safety.guidance_id]}
+                  </Field>
+                </>
+              ) : (
+                <Field label="Automatic image rollback">
+                  {LABELS.rollback[snapshot.safety.automatic_rollback]}
+                </Field>
+              )}
             </Box>
             <Typography variant="body2" color="text.secondary">
-              Backup hook completion does not prove a successful restore. Image
-              rollback does not restore databases or undo migrations.
+              {snapshot.safety.fallback_strategy === "restore_backup" ? (
+                <>
+                  After a failed update, automatic restoration discards writes
+                  to the new version, resets in-flight jobs and Redis cache, and
+                  cannot undo calls to outside services. A sealed backup is not
+                  a completed restore: check the separate restoration result.
+                  Manual recovery may still be required.
+                </>
+              ) : (
+                <>
+                  Backup hook completion does not prove a successful restore.
+                  Image rollback does not restore databases or undo migrations.
+                </>
+              )}
             </Typography>
+            {snapshot.safety.estimates && (
+              <>
+                <Typography component="h3" variant="subtitle2" sx={{ mt: 2 }}>
+                  Host preflight estimates
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Estimates are admission budgets, not live progress or a
+                  finish-time guarantee. Releases too large for the time or disk
+                  budget stay notify-only for this installation.
+                </Typography>
+                <Box component="dl" sx={{ m: 0 }}>
+                  {[
+                    ["backup_seconds", "Estimated cold backup"],
+                    ["migration_seconds", "Estimated migrations"],
+                    ["restore_seconds", "Estimated restoration"],
+                    ["forward_seconds", "Estimated forward budget"],
+                    ["recovery_seconds", "Protected recovery budget"],
+                    ["total_seconds", "Estimated total budget"],
+                    ["migration_deadline_seconds", "Migration deadline"],
+                    [
+                      "migration_stall_timeout_seconds",
+                      "Migration no-progress timeout",
+                    ],
+                  ].map(([key, label]) => (
+                    <Field key={key} label={label}>
+                      {humanDuration(snapshot.safety.estimates[key])}
+                    </Field>
+                  ))}
+                  {[
+                    ["extra_disk_bytes", "Estimated extra migration disk"],
+                    [
+                      "backup_required_free_bytes",
+                      "Required backup free space",
+                    ],
+                    [
+                      "docker_required_free_bytes",
+                      "Required Docker free space",
+                    ],
+                    [
+                      "protected_restore_reserve_bytes",
+                      "Protected restoration disk reserve",
+                    ],
+                  ].map(([key, label]) => (
+                    <Field key={key} label={label}>
+                      {humanBytes(snapshot.safety.estimates[key])}
+                    </Field>
+                  ))}
+                </Box>
+              </>
+            )}
             <Divider sx={{ my: 2 }} />
             <Typography component="h3" variant="subtitle2">
               Last run
@@ -470,9 +595,27 @@ export default function HostUpdatesPage() {
                 <Field label="Run finished">
                   <ReportTime value={snapshot.last_run.finished_at} />
                 </Field>
-                <Field label="Fallback result">
-                  {LABELS.fallback[snapshot.last_run.fallback_outcome]}
-                </Field>
+                {snapshot.last_run.forward_result ? (
+                  <>
+                    <Field label="Forward result">
+                      {LABELS.forward[snapshot.last_run.forward_result]}
+                    </Field>
+                    <Field label="Restoration result">
+                      {LABELS.restore[snapshot.last_run.restore_result]}
+                    </Field>
+                    <Field label="Effective release after this run">
+                      {snapshot.last_run.effective_version || "Unverified"}
+                    </Field>
+                    <Field label="Failed target after this run">
+                      {snapshot.last_run.failed_target_version ||
+                        "None reported"}
+                    </Field>
+                  </>
+                ) : (
+                  <Field label="Fallback result">
+                    {LABELS.fallback[snapshot.last_run.fallback_outcome]}
+                  </Field>
+                )}
               </Box>
             )}
           </ReportSection>

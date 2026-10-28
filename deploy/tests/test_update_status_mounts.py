@@ -337,6 +337,9 @@ class StatusEnvironmentSemanticsTests(unittest.TestCase):
     def check_overlay_fixture(self, *, as_list, change=None, profiled=False):
         """Feed synthetic JSON through the real render helper and overlay assertions."""
         case = StatusOverlayComposeTests()
+        # Rendering is mocked below; supply the explicit command normally
+        # resolved by setUp without probing any host Docker installation.
+        case.compose = ['docker', 'compose']
         temporary = tempfile.TemporaryDirectory(prefix="fagi-compose-fixture-")
         self.addCleanup(temporary.cleanup)
         case.source = Path(temporary.name) / SLOT
@@ -411,6 +414,10 @@ class StatusOverlayComposeTests(StatusMountAssertions, unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.directory = Path(temporary.name).resolve()
         self.source = self.directory / SLOT
+        from deploy.update.install import resolve_compose_command
+        def probe(command, **kwargs):
+            return subprocess.run(self.context_command(command), timeout=30, **kwargs)
+        self.compose = list(resolve_compose_command(runner=probe))
         self.environment = clean_environment()
         # Supply only test data for production's explicit interpolation requirements.
         production = (ROOT / "deploy/docker-compose.production.yml").read_text()
@@ -421,10 +428,15 @@ class StatusOverlayComposeTests(StatusMountAssertions, unittest.TestCase):
             "FI_HOST_UPDATE_STATUS_SLOT": SLOT,
         })
 
+    @staticmethod
+    def context_command(command):
+        context = os.environ.get('DOCKER_CONTEXT')
+        return [command[0], '--context', context, *command[1:]] if context else list(command)
+
     def render(self, topology, *, production=False, overlay=False, missing=None,
                extra_env=None, env_file=None, clear_keys=()):
         base = "docker-compose.yml" if topology == "standalone" else "docker-compose.distributed.yml"
-        args = ["docker", "compose", "--env-file", str(env_file or os.devnull), "-f", str(ROOT / base)]
+        args = self.context_command(self.compose) + ["--env-file", str(env_file or os.devnull), "-f", str(ROOT / base)]
         if production:
             args += ["-f", str(ROOT / "deploy/docker-compose.production.yml")]
         if overlay:

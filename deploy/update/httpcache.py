@@ -108,7 +108,7 @@ class PrivateCache:
         require(info.st_uid == os.getuid() and stat.S_IMODE(info.st_mode) == 0o700)
 
     def _path(self, name):
-        require(re.fullmatch(r"(?:http|pair|rate)-[a-f0-9]{64}", name) is not None)
+        require(re.fullmatch(r"(?:http|pair|proof|rate)-[a-f0-9]{64}", name) is not None)
         self._check_directory()
         return self.directory / (name + ".json")
 
@@ -209,7 +209,8 @@ class HttpCache:
         return value, raw
 
     def fetch(self, url, *, channel="stable", source_identity="", representation="application/json", deadline=None,
-              validate_link=None):
+              validate_link=None, max_bytes=MAX_DOWNLOAD_BYTES):
+        require(type(max_bytes) is int and 0 < max_bytes <= MAX_DOWNLOAD_BYTES)
         validator(representation)
         key = self.key(url, channel=channel, source_identity=source_identity, representation=representation)
         now = timestamp(self.clock())
@@ -235,10 +236,11 @@ class HttpCache:
             timeout = 30.0 if deadline is None else min(30.0, deadline - self.monotonic())
             require(timeout > 0, ReasonCode.DISCOVERY_INCOMPLETE)
             try:
-                response = self.transport(url, headers, timeout)
+                response = (self.transport(url, headers, timeout) if max_bytes == MAX_DOWNLOAD_BYTES else
+                            self.transport(url, headers, timeout, max_bytes=max_bytes))
                 require(isinstance(response, HttpResponse))
                 https_url(response.final_url)
-                require(type(response.body) is bytes and len(response.body) <= MAX_DOWNLOAD_BYTES)
+                require(type(response.body) is bytes and len(response.body) <= max_bytes)
                 validator(response.etag)
                 validator(response.last_modified)
                 require(response.link is None or (type(response.link) is str and len(response.link) <= 8192
@@ -268,6 +270,7 @@ class HttpCache:
                     matched = (response.etag in (None, value["etag"])
                                and response.last_modified in (None, value["last_modified"]))
                 if matched:
+                    require(len(raw) <= max_bytes)
                     value["checked_at"] = checked
                     self.store.write("http-" + key, value)
                     return CacheResponse(raw, checked, True, value["link"])
@@ -311,6 +314,23 @@ class HttpCache:
             raise
         except (ValueError, KeyError, TypeError, RecursionError):
             raise DiscoveryError(ReasonCode.CACHE_INVALID) from None
+
+    def accept_evidence(self, url, *, channel, source_identity, manifest, bundle, proof, proof_sha256):
+        """Create-only exact-pair proof identity AFTER signed proof validation.
+
+        Neither a 304 nor a new trust root permits replacing accepted bytes.
+        The caller revalidates repository/tag/source/predecessor/input bindings.
+        """
+        require(type(proof) is bytes and len(proof) <= 256 * 1024 and digest(proof) == proof_sha256)
+        pair = self.key(url, channel=channel, source_identity=source_identity, representation="signed-pair")
+        identity = {"pair": pair, "manifest": digest(manifest), "bundle": digest(bundle), "sha256": proof_sha256}
+        name = "proof-" + digest(canonical_json(identity))
+        value = dict(identity, body=base64.b64encode(proof).decode("ascii"))
+        if self.store.read(name, strict=True) is None:
+            self.store.write(name, value, exclusive=True)
+        saved = self.store.read(name, strict=True)
+        require(saved == dict(value, schema=1), ReasonCode.IMMUTABLE_RELEASE_CHANGED)
+        return name
 
     def accept_pair(self, url, *, channel, source_identity, manifest, bundle, manifest_hash, trust_fingerprint):
         """Called ONLY after current-trust verification and exact tag/channel checks.

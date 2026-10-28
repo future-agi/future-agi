@@ -1,6 +1,7 @@
 """Real child-process tests; no Docker and no inherited terminal/environment."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -111,6 +112,55 @@ class ProcessTests(unittest.TestCase):
                          runner.policy.backup_timeout_seconds)
         self.assertEqual(runner._budget(['docker', 'compose', 'pull'], 0.1), 0.1)
 
+    def test_attached_storage_start_uses_explicit_budget_not_probe_or_startup_cap(self):
+        from dataclasses import replace
+        runner = self.supervisor()
+        runner.policy = replace(runner.policy, probe_timeout_seconds=90, wait_timeout_seconds=600,
+                                backup_timeout_seconds=3600, restore_timeout_seconds=86400, tick_timeout_seconds=172800)
+        runner.deadline = time.monotonic() + runner.policy.tick_timeout_seconds
+        for flag in ('-a', '--attach', '-ai', '-ia'):
+            args = ['docker', '--context', 'test-context', 'start', flag, 'a' * 64]
+            for budget in (runner.policy.backup_timeout_seconds, runner.policy.restore_timeout_seconds):
+                with self.subTest(flag=flag, budget=budget):
+                    self.assertEqual(runner._budget(args, budget), budget)
+            self.assertEqual(runner._budget(args, None), runner.policy.probe_timeout_seconds)
+            self.assertEqual(runner._budget(args, 1), 1)
+            with mock.patch('deploy.update.processes.time.monotonic', return_value=100):
+                runner.deadline = 107.25
+                self.assertEqual(runner._budget(args, 3600), 7.25)
+            runner.deadline = time.monotonic() + runner.policy.tick_timeout_seconds
+        self.assertEqual(runner._budget(['docker', 'start', 'a' * 64], 3600), 90)
+        self.assertEqual(runner._budget(['docker', 'inspect', 'a' * 64], 3600), 90)
+        self.assertEqual(runner._budget(['docker', 'compose', 'start', '-a', 'app'], 3600), 90)
+
+    def test_real_attached_helper_outlives_probe_for_capture_archive_and_extraction(self):
+        from dataclasses import replace
+        import shlex
+        with tempfile.TemporaryDirectory() as temporary:
+            docker = Path(temporary) / 'docker'
+            code = 'import sys,time; time.sleep(6); sys.stdout.buffer.write(sys.stdin.buffer.read() or b"archive")'
+            docker.write_text('#!/bin/sh\nexec ' + shlex.quote(sys.executable) + ' -I -c ' + shlex.quote(code) + '\n')
+            docker.chmod(0o700)
+            for mode in ('capture', 'archive', 'extract'):
+                with self.subTest(mode=mode):
+                    runner = self.supervisor()
+                    runner.policy = replace(runner.policy, probe_timeout_seconds=5, wait_timeout_seconds=60)
+                    args = [str(docker), 'start', '-a', 'a' * 64]
+                    with tempfile.NamedTemporaryFile() as stream:
+                        if mode == 'archive':
+                            result = runner.stream_to(args, stream.fileno(), max_bytes=1024, reserve_bytes=1, timeout=30)
+                            self.assertEqual(result.sha256, hashlib.sha256(b'archive').hexdigest())
+                        elif mode == 'extract':
+                            stream.write(b'verified-archive')
+                            stream.flush()
+                            result = runner.stream_from(args, stream.fileno(), max_bytes=1024, timeout=30)
+                            self.assertEqual(result.stdout, b'verified-archive')
+                        else:
+                            result = runner(args, timeout=30)
+                            self.assertEqual(result.stdout, b'archive')
+                        self.assertEqual(result.returncode, 0)
+                        self.assertFalse(runner.uncertain)
+
     def test_total_budget_and_context_override_fail_closed(self):
         from deploy.update.processes import ProcessError
         runner = self.supervisor()
@@ -119,6 +169,175 @@ class ProcessTests(unittest.TestCase):
         runner.deadline = time.monotonic() - 1
         with self.assertRaises(ProcessError):
             runner([sys.executable, '-I', '-c', 'raise AssertionError()'])
+
+
+class StreamingTests(unittest.TestCase):
+    """Same validation/deadlines, bounded stdout-to-private-fd instead of RAM."""
+
+    supervisor = ProcessTests.supervisor
+
+    def test_large_stream_is_hashed_without_retaining_stdout(self):
+        import hashlib
+        runner = self.supervisor(output_limit=128)
+        with tempfile.NamedTemporaryFile() as output:
+            result = runner.stream_to([sys.executable, '-I', '-c',
+                                       'import os; [os.write(1,b"x"*65536) for _ in range(128)]'],
+                                      output.fileno(), max_bytes=8 * 1024 * 1024, reserve_bytes=1)
+            self.assertEqual(result.size, 8 * 1024 * 1024)
+            self.assertEqual(result.sha256, hashlib.sha256(b'x' * result.size).hexdigest())
+            self.assertEqual(os.fstat(output.fileno()).st_size, result.size)
+            self.assertEqual(result.stderr, b'')
+            self.assertFalse(hasattr(result, 'stdout'))
+
+    def test_stream_size_capacity_and_stderr_failures_keep_partial_files_unproven(self):
+        from deploy.update.processes import ProcessError
+        for mode in ('size', 'capacity', 'stderr'):
+            runner = self.supervisor(output_limit=64)
+            code = 'import os; os.write(1,b"x"*65536)'
+            if mode == 'stderr':
+                code += '; os.write(2,b"private"*1024)'
+            with self.subTest(mode=mode), tempfile.NamedTemporaryFile() as output:
+                with self.assertRaises(ProcessError):
+                    runner.stream_to([sys.executable, '-I', '-c', code], output.fileno(),
+                                     max_bytes=1024 if mode == 'size' else 100000,
+                                     reserve_bytes=2 ** 62 if mode == 'capacity' else 1)
+                self.assertTrue(runner.uncertain)
+                self.assertLessEqual(os.fstat(output.fileno()).st_size, 65536)
+
+    def test_initial_term_denial_still_attempts_kill_and_reaps_owned_child(self):
+        import signal
+        import subprocess
+        runner = self.supervisor()
+        child = subprocess.Popen([sys.executable, '-I', '-c', 'import time; time.sleep(30)'], start_new_session=True)
+        self.addCleanup(lambda: child.poll() is None and child.kill())
+        real = os.killpg
+        sent = []
+
+        def killpg(pid, sig):
+            sent.append(sig)
+            if sig == signal.SIGTERM:
+                raise PermissionError
+            return real(pid, sig)
+
+        with mock.patch('deploy.update.processes.os.killpg', killpg):
+            runner._stop(child)
+        self.assertEqual(sent[0], signal.SIGTERM)
+        self.assertIn(signal.SIGKILL, sent)
+        self.assertIsNotNone(child.poll())
+
+    def test_stream_timeout_and_context_mismatch_preserve_existing_safety(self):
+        from deploy.update.processes import ProcessError
+        runner = self.supervisor()
+        with tempfile.NamedTemporaryFile() as output:
+            with self.assertRaises(ProcessError):
+                runner.stream_to(['docker', '--context', 'other', 'ps'], output.fileno(), max_bytes=100)
+            self.assertEqual(os.fstat(output.fileno()).st_size, 0)
+            with self.assertRaises(ProcessError):
+                runner.stream_to([sys.executable, '-I', '-c', 'import time; time.sleep(10)'],
+                                 output.fileno(), max_bytes=100, timeout=0.05)
+            self.assertTrue(runner.uncertain)
+
+    def test_nonempty_public_or_hardlinked_output_is_not_adopted(self):
+        from deploy.update.processes import ProcessError
+        runner = self.supervisor()
+        with tempfile.NamedTemporaryFile() as output:
+            os.write(output.fileno(), b'existing')
+            with self.assertRaises(ProcessError):
+                runner.stream_to([sys.executable, '-I', '-c', 'print("new")'], output.fileno(), max_bytes=100)
+            self.assertEqual(Path(output.name).read_bytes(), b'existing')
+            os.ftruncate(output.fileno(), 0)
+            os.lseek(output.fileno(), 0, os.SEEK_SET)
+            os.fchmod(output.fileno(), 0o644)
+            with self.assertRaises(ProcessError):
+                runner.stream_to([sys.executable, '-I', '-c', 'print("new")'], output.fileno(), max_bytes=100)
+            os.fchmod(output.fileno(), 0o600)
+            alias = output.name + '-link'
+            os.link(output.name, alias)
+            try:
+                with self.assertRaises(ProcessError):
+                    runner.stream_to([sys.executable, '-I', '-c', 'print("new")'], output.fileno(), max_bytes=100)
+            finally:
+                os.unlink(alias)
+
+
+class InputStreamingTests(unittest.TestCase):
+    supervisor = ProcessTests.supervisor
+
+    def test_large_archive_stdin_is_streamed_with_short_pipe_writes_and_hash_matches(self):
+        import hashlib
+        runner = self.supervisor(output_limit=256)
+        payload = b'archive-fixture-' * (512 * 1024)
+        with tempfile.NamedTemporaryFile() as source:
+            source.write(payload)
+            source.flush()
+            real_write = os.write
+            with mock.patch('deploy.update.processes.os.write', lambda fd, data: real_write(fd, data[:137])):
+                result = runner.stream_from([sys.executable, '-I', '-c',
+                    'import sys,hashlib; h=hashlib.sha256(); '
+                    '[h.update(c) for c in iter(lambda:sys.stdin.buffer.read(65536),b"")]; print(h.hexdigest())'],
+                    source.fileno(), max_bytes=len(payload), timeout=20)
+            self.assertEqual(result.stdout.decode().strip(), hashlib.sha256(payload).hexdigest())
+            self.assertFalse(runner.uncertain)
+
+    def test_fixed_input_bytes_and_text_are_bounded_and_do_not_inherit_stdin(self):
+        from deploy.update.processes import ProcessError
+        runner = self.supervisor(output_limit=64)
+        cmd = [sys.executable, '-I', '-c', 'import sys; sys.stdout.buffer.write(sys.stdin.buffer.read())']
+        self.assertEqual(runner(cmd, input=b'fixed model').stdout, b'fixed model')
+        self.assertEqual(runner(cmd, input='fixed model', text=True).stdout, 'fixed model')
+        for value in (b'x' * 65, 'not bytes without text', 1):
+            with self.assertRaises(ProcessError):
+                runner(cmd, input=value)
+
+    def test_stream_from_rejects_nonprivate_nonregular_and_oversize_inputs(self):
+        from deploy.update.processes import ProcessError
+        runner = self.supervisor()
+        with tempfile.NamedTemporaryFile() as source:
+            source.write(b'x' * 1024)
+            source.flush()
+            with self.assertRaises(ProcessError):
+                runner.stream_from(['true'], source.fileno(), max_bytes=1023)
+            os.fchmod(source.fileno(), 0o644)
+            with self.assertRaises(ProcessError):
+                runner.stream_from(['true'], source.fileno(), max_bytes=1024)
+            os.fchmod(source.fileno(), 0o600)
+            alias = source.name + '.link'
+            os.link(source.name, alias)
+            try:
+                with self.assertRaises(ProcessError):
+                    runner.stream_from(['true'], source.fileno(), max_bytes=1024)
+            finally:
+                os.unlink(alias)
+
+    def test_slow_reader_deadline_early_close_and_excess_output_are_uncertain(self):
+        from deploy.update.processes import ProcessError
+        for code in ('import time; time.sleep(30)', 'import os; os.close(0)',
+                     'import os,time; os.write(2,b"x"*4096); time.sleep(30)'):
+            runner = self.supervisor(output_limit=64)
+            with tempfile.NamedTemporaryFile() as source:
+                source.write(b'x' * 1024 * 1024)
+                source.flush()
+                with self.assertRaises(ProcessError):
+                    runner.stream_from([sys.executable, '-I', '-c', code], source.fileno(), max_bytes=1024*1024, timeout=0.15)
+                self.assertTrue(runner.uncertain)
+
+    def test_archive_mutation_after_read_is_not_accepted(self):
+        from deploy.update.processes import ProcessError
+        import threading
+        runner = self.supervisor()
+        with tempfile.NamedTemporaryFile() as source:
+            source.write(b'x' * 4096)
+            source.flush()
+            timer = threading.Timer(0.15, lambda: os.pwrite(source.fileno(), b'y', 0))
+            timer.start()
+            try:
+                with self.assertRaises(ProcessError):
+                    runner.stream_from([sys.executable, '-I', '-c', 'import sys,time; sys.stdin.buffer.read(); time.sleep(.4)'],
+                                       source.fileno(), max_bytes=4096)
+            finally:
+                timer.cancel()
+                timer.join()
+            self.assertTrue(runner.uncertain)
 
 
 class RegisteredContextProbeTests(unittest.TestCase):

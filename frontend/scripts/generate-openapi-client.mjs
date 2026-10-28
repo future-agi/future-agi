@@ -86,10 +86,29 @@ function normalizeHostStatusSchema(schema) {
       normalizeHostStatusSchema(value),
     ]),
   );
+  // The legacy alternative exposes additive properties for Swagger tooling,
+  // but maxProperties == required.length forbids every optional property.
+  // Orval drops maxProperties, so express that same closed branch structurally
+  // before generation. Otherwise a partial restore group matches the legacy
+  // branch and is silently accepted (or stripped) by the generated parser.
+  if (
+    result.type === "object" &&
+    result.additionalProperties === false &&
+    Array.isArray(result.required) &&
+    result.maxProperties === result.required.length
+  ) {
+    result.properties = Object.fromEntries(
+      Object.entries(result.properties || {}).filter(([key]) =>
+        result.required.includes(key),
+      ),
+    );
+  }
   const nullable = result["x-nullable"] === true;
   delete result["x-nullable"];
   if (result["x-oneOf"]) {
     result = { description: result.description, oneOf: result["x-oneOf"] };
+  } else if (result["x-anyOf"]) {
+    result = { description: result.description, anyOf: result["x-anyOf"] };
   }
   return nullable ? { anyOf: [result, { type: "null" }] } : result;
 }
@@ -262,6 +281,14 @@ async function runGeneration(schemaPath) {
       override: {
         header: baseOverride.header,
         components: baseOverride.components,
+        // This endpoint is a closed public report, including both exact legacy
+        // and complete restore alternatives. Do not change the permissive
+        // generation semantics of unrelated, established API operations.
+        operations: {
+          "api_host-update-status_list": {
+            zod: { strict: { response: true } },
+          },
+        },
         zod: {
           generate: {
             body: true,

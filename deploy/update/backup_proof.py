@@ -1,9 +1,9 @@
-"""Attempt-bound operator backup attestations, not a restore guarantee.
+"""Attempt-bound backup proofs; legacy attestations never authorize v2 restore.
 
 No hooks, commands, credentials, backup locations or stdout are accepted here.
-The engine's ordinary manual backup behavior is unchanged. Automation adapters
-must reserve a fresh attempt and private proof filename before invoking a hook;
-only exit=0 PLUS this independently validated evidence can qualify automation.
+Manual hook behavior is unchanged. Restore-backed automation requires the v2
+cold-snapshot proof and its exact independently retained inventory/seal; a v1
+operator attestation or successful hook exit does not grant automatic permission.
 """
 from __future__ import annotations
 
@@ -13,11 +13,11 @@ import re
 import stat
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Tuple
+from typing import Optional, Tuple
 
 from .compatibility import (MAX_BACKUP_BYTES, CompatibilityError, aware, decode_document, require,
                             schema, shape, timestamp)
-from .contracts import ReasonCode
+from .contracts import BackupSeal, ReasonCode, PERSISTENT_DOMAINS
 from .manifest import is_version
 
 
@@ -60,6 +60,13 @@ class BackupProof:
     restore_procedure_id: str
     sha256: str
     raw: bytes = field(repr=False)
+    schema_version: int = 1
+    binding_sha256: str = ''
+    inventory_sha256: str = ''
+    source_observation_sha256: str = ''
+    quiescence_evidence_sha256: str = ''
+    snapshot_at: Optional[datetime] = None
+    inventory_version: int = 1
 
     def public_summary(self) -> dict:
         # A successful attestation is not a statement about restore guarantees.
@@ -67,7 +74,8 @@ class BackupProof:
 
 
 def validate_backup_proof(raw: bytes, expected: BackupExpectation, *, now: datetime,
-                          max_age_seconds: int = 3600) -> BackupProof:
+                          max_age_seconds: int = 3600, seal: BackupSeal = None,
+                          for_recovery: bool = False) -> BackupProof:
     """Check exact attempt, target, source, coverage and inclusive freshness.
 
     No future tolerance: a backup from the future cannot precede mutation.
@@ -88,11 +96,32 @@ def validate_backup_proof(raw: bytes, expected: BackupExpectation, *, now: datet
         require(now >= reserved and started <= now and completed <= now, ReasonCode.CLOCK_SKEW)
         require(reserved <= started <= completed, ReasonCode.BACKUP_PROOF_INVALID)
         require(set(expected.covered_domains) <= set(value["covered_domains"]), ReasonCode.BACKUP_PROOF_INVALID)
-        require((now - completed).total_seconds() <= max_age_seconds, ReasonCode.BACKUP_EXPIRED)
+        require(type(for_recovery) is bool and (not for_recovery or isinstance(seal, BackupSeal)),
+                ReasonCode.BACKUP_PROOF_INVALID)
+        v2 = value['schema_version'] == 2
+        snapshot = timestamp(value['snapshot_at']) if v2 else None
+        if v2:
+            require(set(value['covered_domains']) == set(PERSISTENT_DOMAINS)
+                    == set(expected.covered_domains) and started <= snapshot <= completed,
+                    ReasonCode.BACKUP_PROOF_INVALID)
+        if not for_recovery:
+            require((now - completed).total_seconds() <= max_age_seconds
+                    and (not v2 or (now - snapshot).total_seconds() <= max_age_seconds), ReasonCode.BACKUP_EXPIRED)
+        if seal is not None:
+            require(v2 and isinstance(seal, BackupSeal), ReasonCode.BACKUP_PROOF_INVALID)
+            for key in ('attempt_id', 'target_manifest_hash', 'source_version', 'binding_sha256',
+                        'inventory_sha256', 'source_observation_sha256', 'quiescence_evidence_sha256',
+                        'inventory_version', 'restore_procedure_id'):
+                require(value[key] == getattr(seal, key), ReasonCode.BACKUP_PROOF_INVALID)
+            require(seal.proof_sha256 == hashlib.sha256(raw).hexdigest() and seal.snapshot_at == snapshot
+                    and completed <= aware(seal.authorised_at) <= now, ReasonCode.BACKUP_PROOF_INVALID)
         return BackupProof(value["attempt_id"], value["installation_fingerprint"], value["target_manifest_hash"],
                            value["source_version"], value["backup_id"], started, completed,
                            tuple(value["covered_domains"]), value["restore_procedure_id"],
-                           hashlib.sha256(raw).hexdigest(), raw)
+                           hashlib.sha256(raw).hexdigest(), raw, value['schema_version'],
+                           value.get('binding_sha256', ''), value.get('inventory_sha256', ''),
+                           value.get('source_observation_sha256', ''), value.get('quiescence_evidence_sha256', ''),
+                           snapshot, value.get('inventory_version', 1))
     except CompatibilityError as exc:
         reason = exc.reason_code if exc.reason_code in (ReasonCode.CLOCK_SKEW, ReasonCode.BACKUP_EXPIRED) else ReasonCode.BACKUP_PROOF_INVALID
         raise CompatibilityError(reason) from None

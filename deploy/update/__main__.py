@@ -29,6 +29,7 @@ from .apply import JOURNAL_NOTE  # noqa: F401  (part of this module's interface)
 from .apply import (FINISHED_STATUSES, Blocked, Interrupted, InterruptedRun, UpdateError, Updater, finished_run,
                     preview_recovery, recover_elsewhere, signals_as_interrupt, validate_journal_header,
                     validate_recovery)
+from .enrollment import SETUP_POLICY_OPTIONS
 from .envfile import EnvFileError
 from .install import COMPONENT_VARIABLES, PRODUCTION_ENV, VERSION_VARIABLES, InstallError
 from .manifest import ManifestError
@@ -56,7 +57,7 @@ from .status import observe_status
 
 SUPPRESS = argparse.SUPPRESS
 COMMANDS = ("check", "apply", "rollback", "status")
-AUTOMATION_COMMANDS = ("run", "download", "enable", "disable", "pause", "resume", "retry", "schedule", "reporting")
+AUTOMATION_COMMANDS = ("run", "download", "enable", "disable", "pause", "resume", "retry", "schedule", "reporting", "setup")
 ALL_COMMANDS = COMMANDS + AUTOMATION_COMMANDS
 # The commands that verify a manifest's signature (load_settings checks the cosign settings for them only).
 VERIFYING_COMMANDS = ("check", "apply", "download")
@@ -77,10 +78,10 @@ OPTIONS: Tuple[Tuple[Tuple[str, ...], Optional[str], str, Dict[str, Any]], ...] 
         "help": "release manifest (default: FUTURE_AGI_UPDATE_MANIFEST_URL, the latest GitHub release)"}),
     (("check", "apply", "download"), "release", "--bundle", {
         "metavar": "PATH_OR_URL", "help": "its signature bundle (default: next to the manifest)"}),
-    (("check", "apply", "download"), "release", "--policy", {
+    (("check", "apply", "download", "setup"), "release", "--policy", {
         "choices": ("patch", "minor", "major"),
         "help": "largest version jump to allow (default: FUTURE_AGI_UPDATE_POLICY or minor)"}),
-    (("check", "apply", "download"), "release", "--channel", {
+    (("check", "apply", "download", "setup"), "release", "--channel", {
         "choices": ("stable", "beta"),
         "help": "release channel to follow (default: FUTURE_AGI_UPDATE_CHANNEL or stable). Releases publish "
                 "stable manifests only: beta needs --manifest naming a beta manifest"}),
@@ -96,19 +97,45 @@ OPTIONS: Tuple[Tuple[Tuple[str, ...], Optional[str], str, Dict[str, Any]], ...] 
                 "finishes it (production: run the release's initialization jobs in between)"}),
     (("rollback",), None, "--receipt", {
         "metavar": "PATH", "help": "receipt of the update to undo (default: the last update)"}),
-    (("rollback", "enable", "retry"), None, "--yes", {"action": "store_true", "help": "confirm this explicit action"}),
+    (("rollback", "enable", "retry", "setup"), None, "--yes", {"action": "store_true", "help": "confirm this explicit action"}),
     (("apply",), None, "--acknowledge-stale-stage", {"action": "store_true", "help": "acknowledge an actual stale staged resume; not a new backup"}),
     (("status",), None, "--export-public", {"action": "store_true", "help": "export to the registered public slot"}),
     (("pause",), None, "--until", {"metavar": "RFC3339", "help": "pause until a future timestamp with UTC offset"}),
     (("pause",), None, "--indefinite", {"action": "store_true", "help": "pause until explicit resume"}),
     (("retry",), None, "--target", {"metavar": "VERSION", "help": "exact failed target"}),
     (("retry",), None, "--manifest-hash", {"metavar": "HEX", "help": "exact failed manifest SHA256"}),
-    (("schedule",), None, "--docker-context", {"metavar": "NAME", "help": "explicit context to register, never set globally"}),
+    (("schedule", "setup"), None, "--docker-context", {"metavar": "NAME", "help": "explicit context to register, never set globally"}),
     (("schedule",), None, "--backend", {"choices": ("cron", "systemd"), "help": "render only; never install"}),
     (("schedule",), None, "--status-overlay", {"action": "store_true",
         "help": "production init only: enroll the fixed signed Distributed host-status overlay; no path"}),
     (("reporting",), None, "--directory", {"metavar": "ABSOLUTE_PATH", "help": "dedicated public parent directory"}),
+    (("setup",), None, "--mode", {"choices": ("manual", "notify", "download", "apply"),
+        "help": "one-time opt-in; manual disables without installing a schedule"}),
+    (("setup",), None, "--deactivate", {"action": "store_true",
+        "help": "disable first, then remove only the owned scheduler; preserve backups and audit records"}),
+    (("setup",), None, "--window", {"metavar": "HH:MM-HH:MM_OR_ALWAYS",
+        "help": "apply window (default: 02:00-06:00); never an empty apply window"}),
+    (("setup",), None, "--timezone", {"metavar": "IANA_ZONE", "help": "window timezone (default: UTC)"}),
+    (("setup",), None, "--check-interval", {"metavar": "SECONDS", "type": int,
+        "help": "discovery interval, at least 300 seconds (default: 21600)"}),
+    (("setup",), None, "--scheduler", {"choices": ("cron", "systemd"),
+        "help": "install and verify this scheduler (default: current-user cron)"}),
+    (("setup",), None, "--scheduler-scope", {"choices": ("system", "user"),
+        "help": "systemd scope; user requires preconfigured linger (default: system)"}),
+    (("setup",), None, "--cron-service", {"choices": ("cron.service", "crond.service", "cron", "crond", "com.vix.cron"),
+        "help": "existing cron daemon to verify; never started by setup"}),
+    (("setup",), None, "--backup-destination", {"metavar": "ABSOLUTE_PATH",
+        "help": "private local directory OUTSIDE checkout/build contexts (default: named directory under HOME)"}),
+    (("setup",), None, "--release-source", {"metavar": "HTTPS_ORIGIN",
+        "help": "pin host-controlled HTTPS release API/assets origin once (default: canonical GitHub repository)"}),
+    (("setup",), None, "--public-key", {"metavar": "PATH", "help": "pin this host public key once; default remains keyless"}),
+    (("setup",), None, "--ca-file", {"metavar": "PATH", "help": "pin an additional HTTPS CA; hostname/certificate validation stays on"}),
 )
+# Explicit setup-only budget options. Older manual flag abbreviations remain
+# governed by LEGACY_FLAGS, and these never affect manual apply/rollback.
+OPTIONS += tuple((("setup",), None, "--" + name.replace('_', '-'), {
+    'metavar': 'INTEGER', 'type': int, 'help': 'pin host-only ' + name.replace('_', ' ') + ' once',
+}) for name in SETUP_POLICY_OPTIONS)
 # The options (and hidden top-level ones) bin/update accepted before the automation commands existed. argparse
 # lets an unambiguous prefix stand for an option (`--sta`, `--ba`, `--man`), and scripts use them: a prefix that
 # named exactly one of these must keep naming it, whatever options the automation commands added since.
@@ -235,6 +262,23 @@ class _Parser(_Abbreviations, argparse.ArgumentParser):
                     error('init requires only --docker-context; render requires only --backend')
                 if present('status_overlay') and (namespace.action != 'init' or not getattr(namespace, 'production', False)):
                     error('--status-overlay requires --production schedule init; it takes no path')
+            if command == 'setup':
+                if present('mode') == present('deactivate'):
+                    error('choose exactly one of --mode or --deactivate')
+                if present('deactivate'):
+                    forbidden = ('policy', 'channel', 'window', 'timezone', 'check_interval', 'docker_context',
+                                 'scheduler', 'scheduler_scope', 'cron_service', 'backup_destination',
+                                 'release_source', 'public_key', 'ca_file') + SETUP_POLICY_OPTIONS
+                    if any(present(name) for name in forbidden):
+                        error('--deactivate uses the existing configuration; setup choices cannot accompany it')
+                if present('window') and not namespace.window:
+                    error('--window must not be empty')
+                if present('check_interval') and not 300 <= namespace.check_interval <= 604800:
+                    error('--check-interval must be between 300 and 604800 seconds')
+                if present('scheduler_scope') and getattr(namespace, 'scheduler', None) != 'systemd':
+                    error('--scheduler-scope requires --scheduler systemd')
+                if present('cron_service') and getattr(namespace, 'scheduler', 'cron') != 'cron':
+                    error('--cron-service requires --scheduler cron')
             if command == 'reporting' and not present('directory'):
                 error('--directory is required')
             if command == 'status' and present('export_public') and present('format'):
@@ -261,6 +305,8 @@ def _add_options(parser: argparse.ArgumentParser, command: Optional[str]) -> Non
                 groups[group] = parser.add_argument_group(group)
             target = groups[group]
         keywords = dict(keywords, default=SUPPRESS)
+        if command == 'setup' and flag == '--channel':
+            keywords['help'] = 'channel to follow after setup (default: host update.conf or stable); source is pinned once'
         if not shown:
             keywords["help"] = SUPPRESS
         target.add_argument(flag, **keywords)
@@ -292,6 +338,7 @@ def build_parser() -> argparse.ArgumentParser:
         "retry": "clear the exact failed-target latch after confirmation",
         "schedule": "register identity or render scheduler assets",
         "reporting": "bind a dedicated read-only public status slot",
+        "setup": "opt in once: verify current installation, configure backups and activate an owned scheduler",
     }
     parser.commands = {}
     for command in ALL_COMMANDS:
@@ -795,8 +842,64 @@ def _enroll(store, context, settings, *, status_overlay=False):
     _retry_busy(lambda: store.register(registration))
 
 
+def _setup(args, store):
+    from .enrollment import setup_automation, setup_summary
+    from .standalone_backup import BackupError
+    from .envcommit import CommitError
+    from .httpcache import DiscoveryError
+    print('Disable automation and remove only its owned scheduler; preserve private evidence.'
+          if getattr(args, 'deactivate', False) else setup_summary(store, args))
+    if not args.yes:
+        confirmed = False
+        if sys.stdin.isatty():
+            try:
+                prompt = ('Acknowledge the disclosure and authorize automatic migration updates with mandatory restore? [y/N] '
+                          if getattr(args, 'mode', None) == 'apply' else 'Authorize this one-time host action? [y/N] ')
+                confirmed = input(prompt).strip().lower() in ('y', 'yes')
+            except EOFError:
+                pass
+        if not confirmed:
+            print('Setup declined; no configuration or scheduler changed.')
+            return 3
+        args.yes = True
+    try:
+        result = setup_automation(store, args)
+    except (StoreError, GuardRefused, ProcessError, SettingsError, InstallError, EnvFileError, StateError,
+            VerificationError, DiscoveryError, BackupError, CommitError, OSError, ValueError) as exc:
+        reason = getattr(exc, 'reason_code', 'setup_prerequisite_unavailable')
+        reason = reason.value if isinstance(reason, ReasonCode) else str(reason)
+        print('Setup incomplete: ' + reason + '. Unattended work was not activated by this action.')
+        print('Check host Python 3.9+, Compose v2, host cosign v3+, signed current image/digest, fixed state probes, '
+              'local Docker storage and private backup destination. Extra mounts/status overlays, source builds '
+              'and unsupported profiles require manual updates. Keep all private evidence; retry the same setup '
+              'after resolving the prerequisite. No packages or host permissions were changed.')
+        return 3
+    print('Setup ' + result.state + '; scheduler=' + result.scheduler + '; policy=' + result.policy_state + '.')
+    if result.reason:
+        print('Reason: ' + result.reason)
+    if result.action:
+        print(result.action)
+    if result.next_window is not None:
+        print('Next apply window: ' + result.next_window.isoformat())
+    try:
+        binding = store.read_registration().binding
+        print('Verified Docker target: ' + binding.docker_context + '; daemon=' + binding.daemon_identity
+              + '; scheduler owner UID=' + str(binding.host_uid))
+    except StoreError:
+        pass
+    return result.code
+
+
 def _automation(args, root, env_file):
     store = selected_store(root, production=getattr(args, 'production', False), env_file=env_file)
+    if args.command == 'setup':
+        if hasattr(args, 'root'):
+            safe_path(Path(args.root), directory=True)
+        for name in ('public_key', 'ca_file'):
+            if hasattr(args, name):
+                path = Path(getattr(args, name)).expanduser()
+                setattr(args, name, str(path if path.is_absolute() else Path(getattr(args, 'cwd', os.getcwd())) / path))
+        return _setup(args, store)
     if args.command == 'run':
         status_overlay = registered_status_overlay(store)
         reporting_failed = False
@@ -805,9 +908,16 @@ def _automation(args, root, env_file):
         except Exception:
             publisher = None
             reporting_failed = True
-        result = HostRunner(store, publisher=publisher, facts=EnrolledFacts(store), status_overlay=status_overlay,
-                            **({'discovery_factory': overlay_discovery} if status_overlay is not None else {}),
-                            space_available=lambda install: daemon_space_available(install, store.read_registration().binding)).tick()
+        from .enrollment import load_setup_configuration, configured_capacity, configured_discovery
+        configured = load_setup_configuration(store)
+        if configured is not None:
+            result = HostRunner(store, settings=configured.as_settings(), publisher=publisher,
+                discovery_factory=configured_discovery,
+                space_available=lambda install: configured_capacity(store, install)).tick()
+        else:
+            result = HostRunner(store, publisher=publisher, facts=EnrolledFacts(store), status_overlay=status_overlay,
+                                **({'discovery_factory': overlay_discovery} if status_overlay is not None else {}),
+                                space_available=lambda install: daemon_space_available(install, store.read_registration().binding)).tick()
         warnings = list(result.warnings)
         if reporting_failed:
             warnings.append(ReasonCode.STATUS_REPORTING_UNAVAILABLE)
@@ -845,6 +955,24 @@ def _automation(args, root, env_file):
                              'the refusal; do not remove foreign content or rebind\n')
             raise
         return 0
+    # Disable/pause must remain available even if setup metadata is damaged.
+    # Enable cannot make an incomplete/removed setup appear operational.
+    from .enrollment import read_setup_configuration, load_setup_configuration
+    if args.command == 'enable':
+        configured = read_setup_configuration(store)
+        if configured is not None:
+            from .scheduler_install import inspect_activation
+            configured = load_setup_configuration(store)
+            require(inspect_activation(store, configured.policy, **configured.scheduler_options).active,
+                    ReasonCode.SCHEDULER_UNREGISTERED)
+            settings = configured.as_settings()
+    else:
+        try:
+            configured = read_setup_configuration(store)
+            if configured is not None:
+                settings = configured.as_settings()
+        except (StoreError, OSError, ValueError):
+            pass  # Do not prevent an operator's stop control.
     publication = _Publication(store, settings, controls=True)
     if args.command in ('enable', 'retry'):
         require(args.yes, ReasonCode.CONTROL_INVALID)
@@ -1132,6 +1260,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     except (Blocked, InterruptedRun, UpdateError) as exc:
         return fail(str(exc), exc.exit_code)
     except (KeyboardInterrupt, Interrupted):
+        if args.command == 'setup':
+            return fail('setup interrupted; retain partial setup/activation evidence and inspect durable control '
+                        'and scheduler before retrying; no rollback or cleanup was attempted', 130)
         return fail(_interrupted(state, before, installation, command_options), 130)
     except (ManifestError, SettingsError, InstallError, EnvFileError, StateError, VerificationError,
             NotReady) as exc:

@@ -6075,5 +6075,35 @@ class MutationCornerTests(PlanTestCase):
         self.assertIn("git update-index --no-assume-unchanged -- x", reason)
 
 
+class RestoreExecutionContractTests(unittest.TestCase):
+    """Pure authorization/planner boundary; fixtures do not qualify a release."""
+
+    def test_manual_still_uses_published_deployment_without_automatic_authority(self):
+        from deploy.update.plan import execution_files
+        from deploy.tests.test_update_compatibility import default_v2, synthetic_release
+        for manifest in (default_v2(), synthetic_release()[0]):
+            self.assertEqual(execution_files(manifest), manifest["deployment"]["files"])
+
+    def test_typed_transition_selects_only_its_exact_retained_files(self):
+        from deploy.tests.test_update_compatibility import restore_context
+        from deploy.update.compatibility import authorise_transition, plain
+        from deploy.update.plan import execution_files
+        prepared, obs, controls, backup = restore_context()
+        transition = authorise_transition(prepared, obs, controls, backup)
+        self.assertEqual(dict(execution_files(plain(prepared.manifest), transition, prepared.raw_manifest)),
+                         dict(obs.deployment_files))
+
+    def test_no_untyped_or_other_manifest_can_select_execution_files(self):
+        from deploy.tests.test_update_compatibility import restore_context
+        from deploy.update.compatibility import CompatibilityError, authorise_transition, plain
+        from deploy.update.plan import execution_files
+        prepared, obs, controls, backup = restore_context()
+        transition = authorise_transition(prepared, obs, controls, backup)
+        for authority, raw in ((object(), prepared.raw_manifest), (transition, prepared.raw_manifest + b"\n"),
+                               (transition, None)):
+            with self.subTest(authority=type(authority).__name__), self.assertRaises(CompatibilityError):
+                execution_files(plain(prepared.manifest), authority, raw)
+
+
 if __name__ == "__main__":
     unittest.main()

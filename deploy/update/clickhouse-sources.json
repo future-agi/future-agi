@@ -1,0 +1,349 @@
+{
+  "schema_version": 1,
+  "sources": [
+    {
+      "pattern": "futureagi/tracer/services/clickhouse/**",
+      "reason": "All legacy and v2 schemas, schema runners, imported helpers and client wrappers require explicit change review."
+    },
+    {
+      "pattern": "deploy/standalone/bin/**",
+      "reason": "Standalone entrypoints orchestrate bootstrap and schema execution before readiness."
+    },
+    {
+      "pattern": "futureagi/tracer/management/commands/ch25_*.py",
+      "reason": "Management entrypoints orchestrate schema, cutover and backfill helpers; changes cannot bypass review by delegating DDL."
+    },
+    {
+      "pattern": "fi-collector/pkg/chwriter/**",
+      "reason": "ClickHouse writer and its schema/client wrappers require explicit change review."
+    },
+    {
+      "pattern": "deploy/helm/futureagi/hack/kind-smoke.sh",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "deploy/update/probes/standalone.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "fi-collector/cmd/fi-observed-catalog-backfill/legacy.go",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "fi-collector/pkg/curatedwriter/curatedwriter.go",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/agentic_eval/core/database/ch_vector.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/agentic_eval/core/embeddings/embedding_manager.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/agentic_eval/core/llm/llm.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/agentic_eval/core_evals/fi_utils/sandbox.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/docker/runtime_smoke.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/ee/agenthub/eval_orchestrator/run_comprehensive_tests.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/ee/agenthub/eval_orchestrator/run_real_integration_tests.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/model_hub/management/commands/backfill_score_tracer_project.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/model_hub/management/commands/convert_vector_table_to_replicated.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/model_hub/management/commands/migrate_ch_vector_tables.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/model_hub/management/commands/migrate_legacy_default_tables_to_replicated.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/model_hub/selectors/eval_list_charts.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/model_hub/selectors/eval_usage.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/model_hub/serializers/dataset_properties.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/model_hub/services/legacy_ch_tables.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/model_hub/utils/clickhouse.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/model_hub/utils/insight.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/model_hub/utils/performance_ch.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/model_hub/views/optimize_dataset.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/model_hub/views/utils/evals.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/scripts/peerdb-bulk-copy.sh",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/scripts/peerdb-init.sh",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/scripts/property_catalog_oss/bootstrap_clickhouse.sh",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/simulate/services/run_traces_v3.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/tfc/deployment_telemetry/ch_counts.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/tfc/management/commands/bootstrap_install.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/tfc/telemetry/__init__.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/tfc/telemetry/instrumentation.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/tfc/utils/clickhouse.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/tfc/utils/functions.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/tracer/management/commands/backfill_eval_score.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/tracer/management/commands/drop_legacy_observation_span.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/tracer/management/commands/recreate_clickhouse_mv.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/tracer/queries/error_clustering.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/tracer/queries/scan_clustering.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/tracer/selectors/eval_tasks/row_resolver.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/tracer/serializers/health.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/tracer/services/annotation_label_source.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/tracer/services/grouping/control.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/tracer/services/grouping/feature_store.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/tracer/views/clickhouse_health.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/tracer/views/dashboard.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/tracer/views/span_attributes.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "futureagi/tracer/views/trace_session.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "scripts/qa/discover_observe_query_inputs.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "scripts/qa/observe_trace_id_reference.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "scripts/qa/probe_long_text_index_contract_readonly.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "scripts/qa/replay_observe_queries_readonly.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "scripts/qa/verify_annotation_mirror_readonly.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    },
+    {
+      "pattern": "scripts/update_rehearsal_shipping.py",
+      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
+    }
+  ],
+  "exclusions": [
+    {
+      "pattern": "**/tests/**",
+      "reason": "Test fixtures and assertions do not ship as schema/bootstrap entrypoints.",
+      "sha256": null
+    },
+    {
+      "pattern": "**/test/**",
+      "reason": "Test-only harness resources do not ship as product schema entrypoints.",
+      "sha256": null
+    },
+    {
+      "pattern": "**/testdata/**",
+      "reason": "Golden test payloads and fixtures are not product bootstrap sources.",
+      "sha256": null
+    },
+    {
+      "pattern": "**/migrations/*.py",
+      "reason": "Django MigrationLoader checks every added operation separately; arbitrary RunPython/RunSQL always needs review.",
+      "sha256": null
+    },
+    {
+      "pattern": "**/*_test.go",
+      "reason": "Go tests are not shipping schema/bootstrap programs.",
+      "sha256": null
+    },
+    {
+      "pattern": "**/test_*.py",
+      "reason": "Python test assertions and fixture SQL are not product bootstrap code.",
+      "sha256": null
+    },
+    {
+      "pattern": "**/*_test.py",
+      "reason": "Python test assertions and fixture SQL are not product bootstrap code.",
+      "sha256": null
+    },
+    {
+      "pattern": "**/conftest.py",
+      "reason": "Pytest fixture setup is not shipped automatic-update bootstrap.",
+      "sha256": null
+    },
+    {
+      "pattern": "futureagi/.test_durations",
+      "reason": "The test-duration cache contains test names, not executable schema code.",
+      "sha256": null
+    },
+    {
+      "pattern": "scripts/check_update_safety.py",
+      "reason": "The checker contains the discovery regular expression as data; it does not execute ClickHouse DDL.",
+      "sha256": "0ec5bbd970180788c8b7b64841b68f7d082e439d63ba8848928d5b1ab92da280"
+    },
+    {
+      "pattern": "futureagi/tfc/settings/test.py",
+      "reason": "Django test-only settings create disposable test databases, never product bootstrap databases.",
+      "sha256": "7d345e110e8f176a510cd9aa671732e9eb8d64015725562cc41b184efaabdaed"
+    },
+    {
+      "pattern": "agentcc-gateway/internal/plugins/quota/quota.go",
+      "reason": "Redis pipeline execution, not ClickHouse SQL; changes must retain this separation.",
+      "sha256": "418683783c1be7d4dd11c0b05ce1fa63dde4a7bbc54521aa3a026de503e9fee2"
+    },
+    {
+      "pattern": "agentcc-gateway/internal/redisstate/budget.go",
+      "reason": "Redis budget pipeline execution, not a ClickHouse schema runner.",
+      "sha256": "b3d6ed4d44418b2f61c831159785a0eb41346e3b93a5e83f3dc5e6fae5b47240"
+    },
+    {
+      "pattern": "agentcc-gateway/internal/redisstate/license.go",
+      "reason": "Redis license pipeline execution, not a ClickHouse schema runner.",
+      "sha256": "36651aa1792770ad90a648ab2fb4da89e55aa7fecb2660d080e724af5b236f57"
+    },
+    {
+      "pattern": "agentcc-gateway/internal/secrets/gcp.go",
+      "reason": "gcloud command execution, not a ClickHouse schema runner.",
+      "sha256": "d9b6cd73ae766c11e31ce430ffe4ad5aac5189206cd3d119cb912d12d3193355"
+    },
+    {
+      "pattern": "deploy/update/standalone_restore.py",
+      "reason": "The command adapter invokes Docker stop, inspect and archive helpers, not SQL.",
+      "sha256": "31e80f37bdfb635ff9750bcd8664c309f7a4847a628ce45ac499f98109061d99"
+    },
+    {
+      "pattern": "futureagi/bin/test-db-init.sql",
+      "reason": "PostgreSQL-only disposable test database initialization, never product ClickHouse bootstrap.",
+      "sha256": "e9ae5283a43d726d2d1be8dd63953e7046b7c6f98c1481618f0f33496542c6e6"
+    },
+    {
+      "pattern": "futureagi/model_serving/app/cli.py",
+      "reason": "Click CLI command decorators, not database client command calls.",
+      "sha256": "2740eada89f14bad74a56e237fcce5bf325f6fabe154b7af19e1b77ae8568660"
+    },
+    {
+      "pattern": "futureagi/scripts/setup_pg_replication.sql",
+      "reason": "PostgreSQL-only replication identity setup, covered separately by upgrade acceptance.",
+      "sha256": "7c3b563bda94cdb1d92d794b22c14b41b11514cd05bd71d3d40cf45d28cbc015"
+    },
+    {
+      "pattern": "futureagi/simulate/services/hosted_harness_diagnostics.py",
+      "reason": "Sandbox process execution, not ClickHouse database execution.",
+      "sha256": "87b6a3bf18aa53a34c95df151cfc7028b90538c92cf848281dc7fab9135f07e7"
+    },
+    {
+      "pattern": "futureagi/simulate/services/hosted_harness_gateway.py",
+      "reason": "Sandbox process execution and diagnostics, not ClickHouse DDL execution.",
+      "sha256": "ae6bd5400d99ad4fb9c8e61afdeeb3a858effe6fceed5cc21054c8249d4d859a"
+    },
+    {
+      "pattern": "futureagi/simulate/services/hosted_sandbox/e2b.py",
+      "reason": "Sandbox command adapter, not ClickHouse database execution.",
+      "sha256": "21749e44ad033a5a92b45cdd6db293356b3404c2d5e69502d6168e824693f6ee"
+    }
+  ]
+}

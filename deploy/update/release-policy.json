@@ -5,15 +5,19 @@
     "rollback": "manual"
   },
   "compatibility": {
-    "contract_version": 1,
+    "contract_version": 2,
     "automatic_apply": false,
     "requires_operator_initialization": true,
     "required_env": [],
-    "state_domains": [],
     "predecessors": [],
     "automatic_rollback": {
       "strategy": "never"
     },
-    "validation": null
+    "validation": null,
+    "qualification_policy": "standalone-cold-restore-v1",
+    "restore_procedure_id": "standalone-inplace-cold-restore-v1",
+    "backup_inventory_version": 2,
+    "host_observation_contract": "standalone-runtime-v2",
+    "runtime_activation_contract": "standalone-compose-direct-v1"
   }
 }

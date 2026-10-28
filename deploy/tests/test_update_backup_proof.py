@@ -179,6 +179,64 @@ class BackupProofTests(unittest.TestCase):
                 shape(bad, spec)
 
 
+class BackupProofV2Tests(unittest.TestCase):
+    def fixture(self):
+        from deploy.update.contracts import BackupSeal, RESTORE_PROCEDURE_ID, PERSISTENT_DOMAINS
+        import hashlib
+        value, _, expected = fixture()
+        expected = replace(expected, covered_domains=PERSISTENT_DOMAINS)
+        value.update(schema_version=2, covered_domains=list(PERSISTENT_DOMAINS), inventory_version=2,
+            binding_sha256='a' * 64, inventory_sha256='b' * 64, source_observation_sha256='c' * 64,
+            quiescence_evidence_sha256='d' * 64, snapshot_at=value['started_at'],
+            restore_procedure_id=RESTORE_PROCEDURE_ID)
+        raw = canonical_json(value)
+        from deploy.update.compatibility import timestamp
+        seal = BackupSeal(expected.attempt_id, 'operation-token', 'local-run', 'a' * 64,
+            expected.target_manifest_hash, expected.source_version, hashlib.sha256(raw).hexdigest(),
+            'b' * 64, 'c' * 64, 'd' * 64, timestamp(value['snapshot_at']), NOW)
+        return value, raw, expected, seal
+
+    def test_v2_binds_inventory_snapshot_and_original_seal_without_hash_cycle(self):
+        value, raw, expected, seal = self.fixture()
+        proof = validate_backup_proof(raw, expected, now=NOW, seal=seal)
+        self.assertEqual(proof.inventory_sha256, seal.inventory_sha256)
+        self.assertEqual(proof.snapshot_at, seal.snapshot_at)
+        self.assertEqual(proof.schema_version, 2)
+        self.assertNotIn('operation-token', repr(proof))
+        for name in ('binding_sha256', 'inventory_sha256', 'source_observation_sha256', 'quiescence_evidence_sha256'):
+            with self.subTest(name=name), self.assertRaises(CompatibilityError):
+                validate_backup_proof(canonical_json(dict(value, **{name: 'f' * 64})), expected, now=NOW, seal=seal)
+
+    def test_forward_snapshot_freshness_is_not_completion_freshness(self):
+        value, _, expected, _ = self.fixture()
+        value['completed_at'] = stamp(NOW)
+        raw = canonical_json(value)
+        with self.assertRaises(CompatibilityError) as caught:
+            validate_backup_proof(raw, expected, now=NOW + timedelta(seconds=3600))
+        self.assertEqual(caught.exception.reason_code, ReasonCode.BACKUP_EXPIRED)
+
+    def test_old_genuine_snapshot_recovers_only_with_original_seal_and_times_unchanged(self):
+        value, raw, expected, seal = self.fixture()
+        old_now = NOW + timedelta(days=365)
+        with self.assertRaises(CompatibilityError):
+            validate_backup_proof(raw, expected, now=old_now)
+        with self.assertRaises(CompatibilityError):
+            validate_backup_proof(raw, expected, now=old_now, for_recovery=True)
+        proof = validate_backup_proof(raw, expected, now=old_now, seal=seal, for_recovery=True)
+        self.assertEqual(proof.raw, raw)
+        self.assertEqual(proof.snapshot_at, seal.snapshot_at)
+        with self.assertRaises(CompatibilityError):
+            validate_backup_proof(raw, expected, now=old_now, seal=replace(seal, proof_sha256='0' * 64), for_recovery=True)
+
+    def test_v2_requires_exact_domains_and_snapshot_order(self):
+        value, _, expected, _ = self.fixture()
+        for changes in ({'covered_domains': list(expected.covered_domains) + ['redis']},
+                        {'snapshot_at': stamp(RESERVED - timedelta(seconds=1))},
+                        {'snapshot_at': stamp(NOW)}, {'inventory_version': True}):
+            with self.subTest(changes=changes), self.assertRaises(CompatibilityError):
+                validate_backup_proof(canonical_json(dict(value, **changes)), expected, now=NOW)
+
+
 class BackupProofFileTests(unittest.TestCase):
     def setUp(self):
         # Real local filesystem I/O, not mocked APFS/ext4 qualification.

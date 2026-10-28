@@ -468,6 +468,38 @@ class AttemptTests(StateFixture):
         with self.assertRaises(StoreError):
             self.store.retry_target(TARGET)
 
+    def test_exact_terminal_replay_after_record_before_state_is_idempotent(self):
+        attempt = self.store.reserve_attempt(TARGET, 'one', NOW)
+        terminal = dataclasses.replace(attempt, outcome='failed', finished_at=NOW,
+            backup_proof_identity='c' * 64, receipt_identity='d' * 64)
+        original = self.store._write
+        def crash(directory, name, value):
+            if name == 'state.json':
+                raise OSError('crash after terminal publication')
+            original(directory, name, value)
+        with mock.patch.object(self.store, '_write', side_effect=crash), self.assertRaises(StoreError):
+            self.store.finish_attempt(terminal)
+        fresh = RunnerStateStore(self.root, self.root / '.env')
+        state = fresh.finish_attempt(terminal)
+        self.assertIsNone(state.active_attempt_id)
+        self.assertEqual(state.failed_target_latch, TARGET)
+        self.assertEqual(fresh.finish_attempt(terminal), state)
+        for changed in (dataclasses.replace(terminal, outcome='interrupted'),
+                        dataclasses.replace(terminal, receipt_identity='e' * 64),
+                        dataclasses.replace(terminal, backup_proof_identity='e' * 64),
+                        dataclasses.replace(terminal, finished_at=NOW + timedelta(seconds=1)),
+                        dataclasses.replace(terminal, operation_token='another-token')):
+            with self.subTest(changed=changed), self.assertRaises(StoreError):
+                fresh.finish_attempt(changed)
+        fresh.retry_target(TARGET)
+        after_retry = fresh.read_state()
+        self.assertEqual(fresh.finish_attempt(terminal), after_retry)
+        self.assertIsNone(fresh.read_state().failed_target_latch)
+        newer = fresh.reserve_attempt(TargetIdentity('v1.55.0', 'e' * 64), 'two', NOW)
+        with self.assertRaises(StoreError):
+            fresh.finish_attempt(terminal)
+        self.assertEqual(fresh.read_state().active_attempt_id, newer.attempt_id)
+
     def test_foreign_or_late_terminal_cannot_clear_active_operation(self):
         attempt = self.store.reserve_attempt(TARGET, "one", NOW)
         for patch in ({"operation_token": "wrong"}, {"target": TargetIdentity("v1.55.0", "b" * 64)}):

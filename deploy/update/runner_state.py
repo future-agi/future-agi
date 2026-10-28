@@ -17,6 +17,7 @@ import re
 import stat
 import uuid
 from contextlib import contextmanager
+from collections.abc import Mapping
 from dataclasses import dataclass, fields, replace
 from datetime import datetime, timezone
 from enum import Enum
@@ -158,6 +159,7 @@ class RunnerState:
     last_window_occurrence: Optional[str] = None
     next_event_sequence: int = 0
     last_good_observations: Tuple[Observation, ...] = ()
+    baseline_head: Optional[str] = None  # Private immutable generation, not registration identity.
 
     def __post_init__(self) -> None:
         _require(type(self.schema_version) is int and self.schema_version == 1)
@@ -165,6 +167,8 @@ class RunnerState:
             _counter(value)
         if self.installation_fingerprint is not None:
             _hash(self.installation_fingerprint)
+        if self.baseline_head is not None:
+            _hash(self.baseline_head)
         for name in ("last_tick_at", "last_attempt_at", "last_successful_check_at", "next_check_at", "retry_not_before"):
             if getattr(self, name) is not None:
                 utc(getattr(self, name))
@@ -224,8 +228,9 @@ class Registration:
 class AttemptRecord:
     """Private correlation only; proof/receipt bytes live in their owning stores.
 
-    A reserved/incomplete attempt is never automatically resumed. Terminal
-    records are retained even after explicit retry, including failed fallback.
+    An incomplete forward attempt is never reapplied. Restore-backed attempts
+    resume the same ledger's safety recovery; legacy ambiguity remains blocked.
+    Terminal records survive explicit retry, including failed restoration.
     """
     schema_version: int
     attempt_id: str
@@ -246,7 +251,7 @@ class AttemptRecord:
         _require(isinstance(self.binding, InstallationBinding) and isinstance(self.target, TargetIdentity))
         _text(self.window_occurrence)
         utc(self.reserved_at)
-        _require(self.outcome in ("reserved", "succeeded", "failed", "interrupted", "rolled_back"))
+        _require(self.outcome in ("reserved", "succeeded", "failed", "interrupted", "rolled_back", "restored", "failed_available"))
         _require((self.outcome == "reserved") == (self.finished_at is None))
         if self.finished_at is not None:
             _require(utc(self.finished_at) >= utc(self.reserved_at))
@@ -277,6 +282,9 @@ def _wire(value: Any) -> Any:
         return utc(value).isoformat(timespec="microseconds").replace("+00:00", "Z")
     if isinstance(value, (Path, Enum)):
         return value.value if isinstance(value, Enum) else str(value)
+    if isinstance(value, Mapping):
+        _require(all(type(key) is str for key in value))
+        return {key: _wire(item) for key, item in value.items()}
     if isinstance(value, tuple):
         return [_wire(item) for item in value]
     _require(value is None or type(value) in (int, str, bool))
@@ -327,8 +335,11 @@ def _pairs(pairs):
 def _decode(kind, raw):
     try:
         _require(len(raw) <= MAX_DOCUMENT_BYTES)
-        return _typed(kind, json.loads(raw, object_pairs_hook=_pairs,
-                                     parse_constant=lambda _: (_require(False))))
+        value = json.loads(raw, object_pairs_hook=_pairs, parse_constant=lambda _: (_require(False)))
+        # Exact legacy v1 state remains readable. No other missing field is defaulted.
+        if kind is RunnerState and type(value) is dict and "baseline_head" not in value:
+            value["baseline_head"] = None
+        return _typed(kind, value)
     except (ValueError, TypeError, KeyError, RecursionError, OverflowError):
         raise StoreError() from None
 
@@ -361,7 +372,7 @@ class RunnerStateStore:
             if not global_lock:
                 parts.append(self.selection_hash)
             if child is not None:
-                _require(child in ("events", "attempts"))
+                _require(child in ("events", "attempts", "evidence", "baselines", "transitions"))
                 parts.append(child)
             for part in parts:
                 if create:
@@ -421,6 +432,30 @@ class RunnerStateStore:
     def _write(directory: int, name: str, value: Any) -> None:
         raw = (json.dumps(_wire(value), sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
         _decode(type(value), raw)  # Validate writes too, including nested S01 objects.
+        RunnerStateStore._write_raw(directory, name, raw)
+
+    @staticmethod
+    def _read_raw(directory: int, name: str, limit: int) -> bytes:
+        _token(name)
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=directory)
+        try:
+            _check_file(fd)
+            before = os.fstat(fd)
+            _require(before.st_size <= limit)
+            with os.fdopen(os.dup(fd), "rb") as handle:
+                raw = handle.read(limit + 1)
+            after = os.fstat(fd)
+            stable = ('st_dev', 'st_ino', 'st_size', 'st_mode', 'st_uid', 'st_nlink', 'st_mtime_ns', 'st_ctime_ns')
+            _require(len(raw) <= limit and all(getattr(before, key) == getattr(after, key) for key in stable))
+            return raw
+        finally:
+            os.close(fd)
+
+    @staticmethod
+    def _write_raw(directory: int, name: str, raw: bytes) -> None:
+        """Bounded private atomic writer. Caller serializes with state.lock."""
+        _token(name)
+        _require(type(raw) is bytes and len(raw) <= 4 * 1024 * 1024)
         try:
             existing = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
         except FileNotFoundError:
@@ -547,6 +582,7 @@ class RunnerStateStore:
             if old.generation != expected_generation or state.generation != expected_generation:
                 raise StaleGeneration()
             _require(state.installation_fingerprint == old.installation_fingerprint
+                     and state.baseline_head == old.baseline_head
                      and state.next_event_sequence >= old.next_event_sequence)
             new = replace(state, generation=_increment(old.generation))
             self._write(directory, "state.json", new)
@@ -591,7 +627,7 @@ class RunnerStateStore:
             return new
 
     def reserve_attempt(self, target: TargetIdentity, window: str, now: datetime) -> AttemptRecord:
-        """Under engine update.lock, after guards, BEFORE backup. No auto recovery.
+        """Under engine update.lock, after guards, BEFORE backup or any stop.
 
         State is committed before its record. A crash in between leaves a live
         intent which blocks all further work rather than allowing a duplicate.
@@ -630,16 +666,26 @@ class RunnerStateStore:
         _require(terminal.outcome != "reserved")
         with self._lock("state.lock") as directory:
             old = self.read_state()
-            _require((old.active_attempt_id, old.active_operation_token) == (terminal.attempt_id, terminal.operation_token))
+            # Enrolled automatic success MUST use the successor-head transaction.
+            _require(old.baseline_head is None or terminal.outcome not in ("succeeded", "restored"))
             original = self.read_attempt(terminal.attempt_id)
-            _require(original.outcome == "reserved")
-            _require(replace(terminal, outcome=original.outcome, finished_at=original.finished_at,
-                             backup_proof_identity=original.backup_proof_identity,
-                             receipt_identity=original.receipt_identity) == original)
-            # Evidence first, clear active intent last. Failure anywhere remains
-            # operator-required; success never clears an older failed target.
-            with self._directory(child="attempts") as attempts:
-                self._write(attempts, terminal.attempt_id + ".json", terminal)
+            if original.outcome != "reserved":
+                # A crash may have published the terminal record but not state.
+                # Only byte-equivalent typed replay (including token/evidence)
+                # can finish that same transaction. Never re-latch after retry.
+                _require(original == terminal)
+                if old.active_attempt_id is None:
+                    return old
+            else:
+                _require(replace(terminal, outcome=original.outcome, finished_at=original.finished_at,
+                                 backup_proof_identity=original.backup_proof_identity,
+                                 receipt_identity=original.receipt_identity) == original)
+            _require((old.active_attempt_id, old.active_operation_token) == (terminal.attempt_id, terminal.operation_token))
+            # Evidence first, clear active intent and publish the latch together.
+            # An exact terminal replay does not rewrite immutable evidence.
+            if original != terminal:
+                with self._directory(child="attempts") as attempts:
+                    self._write(attempts, terminal.attempt_id + ".json", terminal)
             new = replace(old, generation=_increment(old.generation), active_attempt_id=None, active_operation_token=None,
                           failed_target_latch=terminal.target if terminal.outcome != "succeeded" else old.failed_target_latch)
             self._write(directory, "state.json", new)

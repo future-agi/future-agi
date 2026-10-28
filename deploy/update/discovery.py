@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
 
+from .compatibility import MAX_PROOF_BYTES, PROOF_ASSET, CompatibilityError, validate_release_proof
 from .contracts import ReasonCode, VerificationSnapshot
 from .httpcache import DiscoveryError, HttpCache, digest, require, timestamp
 from .manifest import (BUNDLE_ASSET, MANIFEST_ASSET, SUPPORTED_SCHEMA_VERSIONS, ManifestError,
@@ -39,6 +40,10 @@ class DiscoveredRelease:
     manifest_hash: str
     trust_fingerprint: str
     verification: VerificationSnapshot
+    release_proof: bytes = b""
+    proof_reason_codes: Tuple[ReasonCode, ...] = ()
+    repository: str = "future-agi/future-agi"
+    source_identity_sha256: str = ""
 
     @property
     def manifest(self):
@@ -78,13 +83,22 @@ class DiscoveryResult:
 
 class ReleaseDiscovery:
     def __init__(self, cache: HttpCache, verifier: Verifier, *, repository="future-agi/future-agi",
-                 source_identity="", monotonic=time.monotonic):
+                 source_identity="", monotonic=time.monotonic,
+                 api_origin="https://api.github.com", asset_origin="https://github.com"):
         require(isinstance(repository, str) and re.fullmatch(
             r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?/[A-Za-z0-9][A-Za-z0-9._-]*", repository) is not None,
             ReasonCode.MANIFEST_UNAVAILABLE)
         self.cache, self.verifier = cache, verifier
         self.repository, self.source_identity, self.monotonic = repository, source_identity, monotonic
-        self.api = f"https://api.github.com/repos/{repository}/releases"
+        # Explicit host-controlled origin injection supports a local TLS publisher.
+        # No origin, CA, key, redirect or asset URL is taken from a release document.
+        for origin in (api_origin, asset_origin):
+            require(https_url(origin) == origin + "/" and urlsplit(origin).path == "",
+                    ReasonCode.MANIFEST_UNAVAILABLE)
+        self.api = f"{api_origin}/repos/{repository}/releases"
+        self.asset_origin = asset_origin
+        self.source_identity_sha256 = digest(json.dumps([api_origin, asset_origin, repository,
+                                                        source_identity], separators=(",", ":")).encode())
 
     def _remaining(self, deadline):
         require(self.monotonic() < deadline, ReasonCode.DISCOVERY_INCOMPLETE)
@@ -167,7 +181,7 @@ class ReleaseDiscovery:
         raise DiscoveryError(ReasonCode.DISCOVERY_INCOMPLETE)
 
     def _url(self, version):
-        return f"https://github.com/{self.repository}/releases/download/{version}/{MANIFEST_ASSET}"
+        return f"{self.asset_origin}/{self.repository}/releases/download/{version}/{MANIFEST_ASSET}"
 
     def _pair(self, version, channel, deadline):
         self._remaining(deadline)
@@ -217,9 +231,29 @@ class ReleaseDiscovery:
             self.cache.accept_pair(url, channel=channel, source_identity=self.source_identity,
                                    manifest=fetched.raw, bundle=bundle, manifest_hash=canonical,
                                    trust_fingerprint=fingerprint)
+            proof, reasons = b"", ()
+            validation = fetched.data.get("compatibility", {}).get("validation")
+            if validation is not None:
+                try:
+                    require(validation["asset"] == PROOF_ASSET, ReasonCode.UNCERTIFIED_RELEASE)
+                    proof_url = url.rsplit("/", 1)[0] + "/" + PROOF_ASSET
+                    response = self.cache.fetch(proof_url, channel=channel, source_identity=self.source_identity,
+                                                deadline=deadline, max_bytes=MAX_PROOF_BYTES)
+                    validate_release_proof(response.body, fetched.data, repository=self.repository)
+                    self.cache.accept_evidence(url, channel=channel, source_identity=self.source_identity,
+                                               manifest=fetched.raw, bundle=bundle, proof=response.body,
+                                               proof_sha256=validation["sha256"])
+                    proof = response.body
+                except (DiscoveryError, CompatibilityError) as exc:
+                    reasons = (exc.reason_code,)
+                except ManifestError:
+                    reasons = (ReasonCode.UNCERTIFIED_RELEASE,)
+            else:
+                reasons = (ReasonCode.UNCERTIFIED_RELEASE,)
             checked = self._checked_at(deadline)
             return DiscoveredRelease(fetched.raw, bundle, canonical, fingerprint, VerificationSnapshot(
-                True, verification.method, verification.signer, verification.issuer, verification.tool, checked))
+                True, verification.method, verification.signer, verification.issuer, verification.tool, checked,
+                verification.public_key_sha256), proof, reasons, self.repository, self.source_identity_sha256)
 
     @staticmethod
     def _failure(exc):
@@ -272,6 +306,24 @@ class ReleaseDiscovery:
             return DiscoveryResult(checked_at=self._checked_at(deadline))
         except (ManifestError, VerificationError, OSError, ValueError) as exc:
             return self._failure(exc)
+
+    def evidence(self, candidate: DiscoveredRelease) -> DiscoveredRelease:
+        """Fresh automatic evidence; notify/manual may use a pair without proof.
+
+        No predecessor is inferred here. The baseline/evaluator selects the exact
+        signed predecessor + execution-layout row under the engine lock.
+        """
+        result = self.refresh(candidate.version, channel=candidate.manifest["channel"])
+        require(result.complete and result.candidate is not None,
+                result.reason_codes[0] if result.reason_codes else ReasonCode.RELEASE_INCOMPLETE)
+        fresh = result.candidate
+        require((fresh.manifest_sha256, fresh.bundle_sha256, fresh.trust_fingerprint,
+                 fresh.repository, fresh.source_identity_sha256) ==
+                (candidate.manifest_sha256, candidate.bundle_sha256, candidate.trust_fingerprint,
+                 candidate.repository, candidate.source_identity_sha256), ReasonCode.IMMUTABLE_RELEASE_CHANGED)
+        require(bool(fresh.release_proof) and not fresh.proof_reason_codes,
+                fresh.proof_reason_codes[0] if fresh.proof_reason_codes else ReasonCode.UNCERTIFIED_RELEASE)
+        return fresh
 
     def refresh(self, version, *, channel="stable") -> DiscoveryResult:
         """Fresh exact-pair verification for an in-lock apply/fallback boundary.

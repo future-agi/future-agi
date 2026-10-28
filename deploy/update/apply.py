@@ -50,6 +50,7 @@ import tempfile
 import time
 import uuid
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path, PurePosixPath
 from typing import (Any, Callable, Collection, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, TextIO,
                     Tuple)
@@ -523,6 +524,9 @@ def preview_recovery(installation: Installation, journal: Mapping[str, Any],
     record, and recovery only removes the journal.
     """
 
+    if journal.get('automatic_transaction'):
+        from .orchestrator import GuardRefused
+        raise GuardRefused(ReasonCode.AUTOMATIC_RECOVERY_PENDING)
     finished = validate_recovery(installation, journal, history or [], check_provenance=True)
     if finished is not None:
         # Only a final receipt is a run that finished; another one records how the run stopped (Updater.recover).
@@ -552,13 +556,19 @@ class Updater:
                  out: TextIO = sys.stderr, readiness: Optional[Readiness] = None,
                  hook_runner: Callable[..., Any] = run_hook, command_options: Sequence[str] = (),
                  automation_guard: Optional[AutomationGuard] = None,
-                 guard_context: Optional[Callable[["Updater"], LockedContext]] = None) -> None:
+                 guard_context: Optional[Callable[["Updater"], LockedContext]] = None,
+                 built_in_backup=None) -> None:
         self.installation = installation
         self.settings = settings
         self.state = state
         self.out = out
         self.readiness = readiness or Readiness(installation, out)
         self.hook_runner = hook_runner
+        if built_in_backup is not None:
+            from .standalone_backup import StandaloneBackup
+            if not isinstance(built_in_backup, StandaloneBackup) or getattr(automation_guard, 'automatic', None) is None:
+                raise ValueError('built-in backup requires an enrolled automatic lifecycle')
+        self.built_in_backup = built_in_backup
         if (automation_guard is None) != (guard_context is None):
             raise ValueError("automation guard and locked context must be supplied together")
         self.automation_guard = automation_guard
@@ -566,7 +576,9 @@ class Updater:
         self._automation_context: Optional[LockedContext] = None
         self.active_record: Optional[Dict[str, Any]] = None
         self.active_plan: Optional[Dict[str, Any]] = None
-        self.automatic_fallback = False
+        self.automatic_ledger = None
+        self.automatic_outcome = None
+        self.automatic_receipt = None
         # The release options this run was given (--manifest, --bundle, --policy, --channel), as argv words:
         # every apply (or check) command it prints carries them, so it plans with the same release.
         self.command_options = list(command_options)
@@ -602,11 +614,7 @@ class Updater:
     def _automation_metadata(self) -> Dict[str, Any]:
         if self.automation_guard is None:
             return {}
-        metadata = dict(getattr(self._automation_context, 'receipt_metadata', {}))
-        if self.automatic_fallback and self.active_record is not None:
-            metadata['forward_run_id'] = metadata.get('run_id')
-            metadata['run_id'] = self.active_record['run_id']
-        return metadata
+        return dict(getattr(self._automation_context, 'receipt_metadata', {}))
 
     def say(self, text: str) -> None:
         self.out.write(text.rstrip("\n") + "\n")
@@ -642,6 +650,17 @@ class Updater:
                                          "keep any journal and retained files, and reconcile the alias manually")
         return path
 
+    def _refuse_automatic_pending(self):
+        if self.automation_guard is None:
+            from .orchestrator import GuardRefused
+            from .receipt import AutomaticRecoveryPending
+            try:
+                pending = self.state.automatic_pending(self.installation)
+            except AutomaticRecoveryPending as exc:
+                raise GuardRefused(ReasonCode.AUTOMATIC_RECOVERY_PENDING) from exc
+            if pending:
+                raise GuardRefused(ReasonCode.AUTOMATIC_RECOVERY_PENDING)
+
     # ------------------------------------------------------------- recovery --
     def recover(self, again: str = "") -> Optional[Dict[str, Any]]:
         """Turn a journal left by a killed run into a receipt.
@@ -652,6 +671,7 @@ class Updater:
 
         # A true no-op needs neither Docker nor a new state directory. Re-read
         # after taking the lock: another updater may have finished meanwhile.
+        self._refuse_automatic_pending()
         if self.state.read_journal() is None:
             return None
         with self.state.lock(**({'automation': True} if self.automation_guard is not None else {})):
@@ -659,6 +679,7 @@ class Updater:
             return self._recover_locked(again)
 
     def _recover_locked(self, again: str = "") -> Optional[Dict[str, Any]]:
+        self._refuse_automatic_pending()
         journal = self.state.read_journal()
         if journal is None:
             return None
@@ -778,7 +799,34 @@ class Updater:
             raise Blocked(f"{BACKUP_SETTING} is empty")
         return argv
 
+    def _backup_preflight(self, command, allow_no_backup):
+        if self.built_in_backup is None:
+            return self._backup_argv(command, allow_no_backup)
+        from .orchestrator import require
+        require(not command and not allow_no_backup,
+                ReasonCode.CONTROL_INVALID)
+        require(self.settings.automation_policy.probe_timeout_seconds >= 70, ReasonCode.BACKUP_REQUIRED)
+        return None
+
     def _backup(self, command: Optional[str], allow_no_backup: bool, context: Mapping[str, str]) -> Dict[str, Any]:
+        if self.built_in_backup is not None:
+            from .standalone_backup import BackupError
+            from .orchestrator import GuardRefused
+            self._backup_preflight(command, allow_no_backup)
+            guard = self.automation_guard
+            started = time.monotonic()
+            try:
+                artifact = self.built_in_backup.run_quiesced(guard.expectation, self.automatic_ledger,
+                    guard.automatic.source_observation.facts.runtime_observation,
+                    proof_directory_fd=guard.proof_directory)
+                guard.proof = artifact.proof
+                guard.automatic.retain_cold_hold(artifact, self.automatic_ledger)
+            except BackupError as exc:
+                guard.recovery_required = exc.recovery_required
+                raise GuardRefused(ReasonCode.RECOVERY_REQUIRED if exc.recovery_required
+                                   else ReasonCode.BACKUP_FAILED) from exc
+            return {'ran': True, 'command': 'standalone-cold-restore-v1',
+                    'seconds': round(time.monotonic() - started, 1)}
         argv = self._backup_argv(command, allow_no_backup)
         if argv is None:
             self.say("Skipping the backup: --allow-no-backup was given.")
@@ -823,9 +871,10 @@ class Updater:
     def _check_config(self, expected_tags: Mapping[str, str]) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
         """Every Future AGI service must now resolve to exactly its expected tag; returns the model and them."""
 
-        self.installation.compose_run("config", "--quiet")
-        config = self.installation.config(refresh=True)
-        services = self.installation.futureagi_services(config)
+        inst = self._automatic_inspection_installation()
+        inst.compose_run("config", "--quiet")
+        config = inst.config(refresh=True)
+        services = inst.futureagi_services(config)
         for service in services:
             variable = COMPONENT_VARIABLES[service["component"]]
             want = expected_tags.get(variable)
@@ -961,7 +1010,7 @@ class Updater:
         if certified is None:
             return
         observed = {name: [] for name in certified}
-        for container in self.installation.containers():
+        for container in self._automatic_inspection_installation().containers():
             if not container.get("oneoff") and container["service"] in observed:
                 observed[container["service"]].append(container.get("image_id"))
         replaced = sorted(name for name, ids in observed.items()
@@ -1444,11 +1493,11 @@ class Updater:
                     if allow_no_backup:
                         raise GuardRefused(ReasonCode.BACKUP_REQUIRED)
                     try:
-                        self._backup_argv(backup_command, False)
+                        self._backup_preflight(backup_command, False)
                     except Blocked:
                         raise GuardRefused(ReasonCode.BACKUP_REQUIRED) from None
                 else:
-                    self._backup_argv(backup_command, allow_no_backup)
+                    self._backup_preflight(backup_command, allow_no_backup)
         except Blocked as exc:
             return exc
         return None
@@ -1589,6 +1638,421 @@ class Updater:
         if stale and not acknowledge:
             raise GuardRefused(ReasonCode.STALE_STAGE)
 
+    def _automatic_inspection_installation(self):
+        """Automatic pure config/image/container reads have no late-writer risk."""
+        if getattr(self.automation_guard, 'automatic', None) is None:
+            return self.installation  # Unchanged legacy/manual supervision.
+        from .docker_host import bounded_installation
+        return bounded_installation(self.installation, min(30, self.settings.automation_policy.probe_timeout_seconds))
+
+    def _automatic_runtime(self, lifecycle, ledger, backup):
+        from .automatic_runtime import AutomaticRuntime, HostRuntimeObserver
+        observer = HostRuntimeObserver(self.installation, lifecycle.registration, backup.b,
+            timeout=min(30, self.settings.automation_policy.probe_timeout_seconds))
+        return AutomaticRuntime(self.installation, ledger, backup.b, observer=observer)
+
+    def _open_automatic_ledger(self, ledger):
+        from .recovery import RecoveryLedger
+        from .backup_proof import BackupExpectation
+        from datetime import datetime
+        doc = ledger.snapshot
+        expected = dict(doc['expectation'])
+        expected['reserved_at'] = datetime.fromisoformat(expected['reserved_at'])
+        expected['covered_domains'] = tuple(expected['covered_domains'])
+        return RecoveryLedger.open(ledger.directory, expected=BackupExpectation(**expected),
+            operation_token=doc['operation_token'], run_id=doc['run_id'], binding_sha256=doc['binding_sha256'])
+
+    def _automatic_receipt_locked(self, record, ledger, key):
+        """Exact idempotent receipt replay after namespace/fsync interruption."""
+        from .orchestrator import require
+        matches = [row for row in self._history() if row.get('run_id') == record['run_id']
+                   and row.get('kind') == record['kind']]
+        require(len(matches) <= 1, ReasonCode.RECOVERY_REQUIRED)
+        if matches:
+            saved = matches[0]
+            from .receipt import _PUBLIC_RECEIPT_FIELDS
+            require(all(saved.get(k) == v for k, v in record.items() if k in _PUBLIC_RECEIPT_FIELDS),
+                    ReasonCode.RECOVERY_REQUIRED)
+            path = Path(saved['_path'])
+        else:
+            path = self.state.write_receipt(record)
+        self.state.sync_finished(record, path)
+        ledger.checkpoint(**{key: path.name})
+        self.automatic_receipt = path
+        return path
+
+    def finalize_automatic_success_locked(self, *, lifecycle, ledger) -> Path:
+        """Metadata-only completion of a durable success decision.
+
+        Caller holds runner.lock -> update.lock and hydrates lifecycle.intent,
+        target and original attempt authority from retained baseline records.
+        A succeeded receipt is deliberately NOT a precondition. Returns its
+        exact Path (also on replay); the baseline runner may project it as
+        (path, lifecycle.target.version). Never starts, pulls, re-extracts or
+        chooses restoration, including on callback/receipt/CAS failure.
+        """
+        from .orchestrator import require
+        require(self.state.lock_holder(automation=True) is not None, ReasonCode.RECOVERY_REQUIRED)
+        ledger = self._open_automatic_ledger(ledger)
+        self.automatic_ledger = lifecycle.ledger = ledger
+        lifecycle.backup_seal = ledger.backup_seal
+        require(ledger.direction == 'success_decided' and ledger.snapshot['pending'] is None,
+                ReasonCode.RECOVERY_REQUIRED)
+        from .baseline import identity
+        require(ledger.snapshot['success_seal'].get('successor_intent_sha256') == identity(lifecycle.intent),
+                ReasonCode.RECOVERY_REQUIRED)
+        return self._finalize_automatic_success_locked(lifecycle, ledger)
+
+    def _finalize_automatic_success_locked(self, lifecycle, ledger):
+        from .orchestrator import require
+        require(ledger.direction == 'success_decided', ReasonCode.RECOVERY_REQUIRED)
+        seal = ledger.snapshot['success_seal']
+        require(isinstance(seal, dict) and seal.get('run_id') == ledger.snapshot['run_id'],
+                ReasonCode.RECOVERY_REQUIRED)
+        record = seal['record']
+        self.active_record = record
+        path = self._automatic_receipt_locked(record, ledger, 'success_receipt')
+        journal = self.state.read_journal()
+        if journal is not None:
+            require(journal.get('run_id') == record['run_id'] and journal.get('automatic_transaction'),
+                    ReasonCode.RECOVERY_REQUIRED)
+            self.state.clear_journal()  # immutable decision/record now owns replay
+        lifecycle.complete_success(self, path)
+        ledger.checkpoint('success_metadata_committed')
+        ledger.checkpoint('succeeded')
+        self.automatic_outcome = 'succeeded'
+        return path
+
+    def _reconcile_automatic_env_locked(self, ledger):
+        """Only native envcommit can resolve an interrupted env exchange."""
+        from .orchestrator import require
+        pending = ledger.snapshot['pending']
+        if pending is None or pending['kind'] != 'env_commit':
+            return
+        record = self.state.read_journal()
+        require(record is not None and record.get('run_id') == ledger.snapshot['run_id']
+                and record.get('automatic_transaction'), ReasonCode.RECOVERY_REQUIRED)
+        recovery = record['env_recovery']
+        outcome = envfile.check_commit(self._env_path(), recovery, durable=True)
+        import hashlib
+        actual = hashlib.sha256(self._env_path().read_bytes()).hexdigest()
+        require(outcome in ('accepted', 'absent') and actual in
+                (recovery['before_sha256'], recovery['after_sha256']), ReasonCode.ENV_CONFLICT)
+        ledger.complete(pending['sequence'], {'env_sha256': actual, 'native_commit': outcome})
+
+    def restore_backup_locked(self, *, lifecycle, ledger):
+        """The ONLY automatic failure path, called without releasing update.lock.
+
+        Storage restoration is the snapshot lane's StandaloneRestore. This
+        method owns env-journal correlation, exact previous startup and receipt
+        callbacks; it never changes runner state itself or pulls an image.
+        """
+        from .backup_proof import BackupExpectation
+        from .orchestrator import require
+        from .standalone_restore import StandaloneRestore
+        from datetime import datetime
+        require(ledger.direction == 'restore_decided', ReasonCode.RECOVERY_REQUIRED)
+        self._reconcile_automatic_env_locked(ledger)
+        backup = lifecycle.backup(self.installation)
+        doc = ledger.snapshot
+        expected = dict(doc['expectation'])
+        expected['reserved_at'] = datetime.fromisoformat(expected['reserved_at'])
+        expected['covered_domains'] = tuple(expected['covered_domains'])
+        expected = BackupExpectation(**expected)
+        record = self.state.read_journal() or doc.get('forward_record')
+        if record is not None:
+            require(record.get('run_id') == doc['run_id'] and record.get('automatic_transaction'),
+                    ReasonCode.RECOVERY_REQUIRED)
+        self.active_record = record
+        inverse = record.get('env_recovery') if record else None
+        lifecycle.ledger, lifecycle.backup_seal = ledger, ledger.backup_seal
+        lifecycle.prepare_restore(self)
+        runtime = self._automatic_runtime(lifecycle, ledger, backup)
+        # Once armed, do NOT call any storage method, including a revalidation
+        # that could clear/re-extract. Source startup itself may have written.
+        if not doc['previous_start_armed']:
+            runtime.retain_failed_logs()
+            restore_policy = replace(backup.policy,
+                timeout_seconds=self.settings.automation_policy.restore_timeout_seconds)
+            restore = StandaloneRestore(self.installation, backup.binding, backup.destination,
+                policy=restore_policy, clock=lifecycle.clock)
+            try:
+                restore.resume(expected, ledger, proof_raw=lifecycle.backup_raw, env_recovery=inverse)
+                ledger.checkpoint(loss_window_start=ledger.backup_seal.snapshot_at.isoformat(),
+                    loss_window_end=lifecycle.clock().isoformat(), loss_window_qualification='conservative')
+            finally:
+                restore.close()
+            self.installation.reload_env()
+            # Previous images are already on this host; the unchanged normal
+            # Compose model must resolve to their exact retained immutable IDs.
+            roster = ledger.snapshot.get('previous_roster')
+            if roster is None:
+                roster = runtime.create(dict(backup.b['images']), previous=True)
+        else:
+            roster = doc.get('previous_roster')
+            require(isinstance(roster, dict) and set(roster) == {'app', 'postgres', 'clickhouse'},
+                    ReasonCode.RECOVERY_REQUIRED)
+        # Restore I/O and previous-container creation may outlast discovery's
+        # short verification window. Reverify the retained signed source under
+        # a new bounded window, still capped by the ORIGINAL recovery deadline.
+        # Never turn an expired forward probe into permission to start unsigned A.
+        lifecycle._verification_window(self.installation)
+        with runtime.observation_session(lifecycle,
+                lifecycle.baseline.evidence(lifecycle.head.release), 'restored',
+                self.settings.automation_policy, previous=True) as session:
+            runtime.start_and_wait(roster, self.settings.automation_policy, previous=True,
+                ready_callback=lambda: session.ready(roster))
+            session.check()
+            return self._complete_automatic_restore_locked(lifecycle, ledger, expected, record, session.result)
+
+    def _complete_automatic_restore_locked(self, lifecycle, ledger, expected, record, observation):
+        from .contracts import RestorationResult
+        from .schedule import utc
+        doc = ledger.snapshot
+        ledger.checkpoint('restore_verified', loss_window_start=ledger.backup_seal.snapshot_at.isoformat(),
+            loss_window_end=ledger.snapshot.get('loss_window_end', lifecycle.clock().isoformat()),
+            loss_window_qualification='conservative')
+        failure_record = ledger.snapshot.get('failure_record')
+        if failure_record is None and record is not None:
+            failure = ledger.snapshot.get('forward_failure', {})
+            stage = failure.get('stage', record.get('stage', 'prepare'))
+            interrupted = failure.get('interrupted', not bool(failure))
+            failure_record = dict(record, stage=stage,
+                status=('interrupted_' if interrupted else 'failed_') +
+                    ('during_rollout' if stage == 'rollout' else 'before_rollout'),
+                finished_at=failure.get('failed_at', _now()))
+            ledger.checkpoint(failure_record=failure_record)
+        if failure_record is not None:
+            self._automatic_receipt_locked(failure_record, ledger, 'forward_receipt')
+        saved = ledger.snapshot.get('restore_record')
+        if saved is None:
+            saved = dict(kind='restore', status='restored', stage='rollout', run_id=doc['run_id'],
+                # This receipt certifies the completed readiness boundary, not
+                # the later time spent materializing metadata. The observation
+                # is genuine validated evidence from the held runtime session.
+                started_at=doc['expectation']['reserved_at'], finished_at=utc(observation.facts.now).strftime('%Y-%m-%dT%H:%M:%SZ'),
+                from_version=expected.source_version, target_version=lifecycle.target.version,
+                manifest_hash=expected.target_manifest_hash, **self._identity(),
+                target_image_ids={'app': doc['previous_roster']['app']['Image']})
+            ledger.checkpoint(restore_record=saved)
+        path = self._automatic_receipt_locked(saved, ledger, 'restore_receipt')
+        if self.state.read_journal() is not None:
+            self.state.clear_journal()  # inverse retained in ledger + RestoreIntent
+        lifecycle.complete_restore(self, path)
+        ledger.checkpoint('restore_metadata_committed')
+        ledger.checkpoint('restored')
+        self.automatic_outcome = 'restored'
+        return RestorationResult(expected.attempt_id, 'restored', expected.source_version,
+            lifecycle.target.version, 'restored', ledger.backup_seal, observation.facts.runtime_observation,
+            reason_codes=(ReasonCode.RESTORED_AFTER_UPDATE_FAILURE,))
+
+    def resume_automatic_locked(self, *, lifecycle, ledger):
+        """Resume retained authority ONLY. Caller holds runner.lock -> update.lock.
+
+        No release discovery, controls/window test, forward apply or pull. A
+        sealed interrupted forward attempt chooses restore; an accepted target
+        can only finish metadata. Never reset a supervisor's uncertainty flag.
+        """
+        from .orchestrator import require
+        from .contracts import RestorationResult
+        require(self.state.lock_holder(automation=True) is not None, ReasonCode.RECOVERY_REQUIRED)
+        policy = self.settings.automation_policy
+        supervisor = self.installation.runner
+        original_deadline = supervisor.deadline
+        supervisor.deadline = min(original_deadline, time.monotonic() + policy.required_recovery_budget_seconds)
+        try:
+            ledger = self._open_automatic_ledger(ledger)
+            self.automatic_ledger = ledger
+            lifecycle.ledger, lifecycle.backup_seal = ledger, ledger.backup_seal
+            if ledger.backup_seal is not None:
+                # Sealing precedes publication into the engine's proof leaf.
+                # An interruption in that gap still owns a genuine snapshot.
+                import hashlib
+                from .standalone_backup import _directory, _read
+                with _directory(ledger.directory) as directory:
+                    proof_raw = _read(directory, 'proof.json')
+                require(hashlib.sha256(proof_raw).hexdigest() == ledger.backup_seal.proof_sha256,
+                        ReasonCode.BACKUP_INVENTORY_MISMATCH)
+                lifecycle.backup_raw = proof_raw
+            if ledger.direction == 'success_decided':
+                return self.finalize_automatic_success_locked(lifecycle=lifecycle, ledger=ledger)
+            if ledger.backup_seal is None:
+                backup = lifecycle.backup(self.installation)
+                from .backup_proof import BackupExpectation
+                from datetime import datetime
+                e = dict(ledger.snapshot['expectation'])
+                e['reserved_at'] = datetime.fromisoformat(e['reserved_at'])
+                e['covered_domains'] = tuple(e['covered_domains'])
+                backup.abort_quiescence(BackupExpectation(**e), ledger)
+                observation = lifecycle.verify_current(self.installation)
+                self.automatic_outcome = 'failed_available'
+                return RestorationResult(e['attempt_id'], 'failed_available', e['source_version'],
+                    lifecycle.target.version, 'failed_available', observation=observation.facts.runtime_observation)
+            ledger.resume_direction()
+            return self.restore_backup_locked(lifecycle=lifecycle, ledger=ledger)
+        except (Exception, Interrupted, KeyboardInterrupt) as exc:
+            self.automatic_outcome = 'recovery_required'
+            if self.automation_guard is not None:
+                self.automation_guard.recovery_required = True
+            # A poisoned checkpoint must be re-opened; never replace its last
+            # verified phase or erase an unresolved remote operation.
+            try:
+                self._open_automatic_ledger(ledger).block()
+            except (Exception, Interrupted, KeyboardInterrupt):
+                pass
+            from .orchestrator import GuardRefused
+            raise GuardRefused(ReasonCode.RECOVERY_REQUIRED) from exc
+        finally:
+            supervisor.deadline = original_deadline
+
+    def _apply_automatic_scope_locked(self, make_plan, manifest):
+        """Reservation through success OR recovery inside the same update.lock."""
+        from .orchestrator import require, GuardRefused
+        from .contracts import AutomaticUpdateEstimate
+        import hashlib
+        guard, lifecycle = self.automation_guard, self.automation_guard.automatic
+        supervisor, policy = self.installation.runner, self.settings.automation_policy
+        original_deadline = supervisor.deadline
+        try:
+            self._guard('before_recovery')
+            require(self.state.read_journal() is None, ReasonCode.AUTOMATIC_RECOVERY_PENDING)
+            self.installation.check_ownership()
+            plan = make_plan(self._history())
+            self.active_plan = plan
+            require(not plan.get('resume') and not plan.get('reasons'), ReasonCode.CONFIGURATION_CHANGED)
+            if plan['decision'] == UP_TO_DATE:
+                return None
+            refusal = self._refusal(plan, manifest, None, None, stage=False, dry_run=False,
+                backup_command=None, allow_no_backup=False)
+            if refusal is not None:
+                raise refusal
+            require(original_deadline - time.monotonic() >= policy.required_cold_budget_seconds,
+                    ReasonCode.INSUFFICIENT_WINDOW)
+            changes = dict(plan['env_changes'])
+            containers = self.installation.containers()
+            record = dict(kind='apply', started_at=_now(), run_id=_run_id(), **self._identity(),
+                target_version=plan['target_version'], from_versions=plan['current_versions'],
+                manifest_hash=plan['manifest_hash'], manifest_source=plan['manifest_source'],
+                channel=plan.get('channel'), signature=plan['signature'],
+                components=self._component_records(plan['components'], None), env_changes=changes,
+                found_values={k: self.installation.env.get(k) for k in changes},
+                previous_values={k: self.installation.env.get(k) for k in changes},
+                previous_images=self._snapshot_images(['app'], containers),
+                automatic_transaction=True, stage='prepare', status='running')
+            self.active_record = record
+            self._guard('before_backup')  # reserves attempt + run + ledger BEFORE any stop
+            ledger = self.automatic_ledger
+            require(ledger is not None and ledger.snapshot['run_id'] == record['run_id'], ReasonCode.RECOVERY_REQUIRED)
+            decision = lifecycle.preflight_decision
+            require(decision is not None and decision.allowed and isinstance(decision.estimate, AutomaticUpdateEstimate),
+                    ReasonCode.RESTORE_CAPACITY_UNKNOWN)
+            # Slow signature/facts work and reservation do not preserve the
+            # earlier tick allowance. Recheck immediately before the first stop.
+            require(original_deadline - time.monotonic() >= max(policy.required_cold_budget_seconds,
+                    decision.estimate.total_seconds), ReasonCode.INSUFFICIENT_WINDOW)
+            # Independent protected reserve. Forward timeout never spends it.
+            supervisor.deadline = original_deadline - policy.required_recovery_budget_seconds
+            record['backup'] = self._backup(None, False, {})
+            self.built_in_backup.retire_helpers(ledger)
+            self._guard('after_backup')
+            self._guard('before_env_commit')
+            try:
+                inverse = envfile.recovery_record(self._env_path(), changes,
+                    expected_before_sha256=guard.approved_env_sha256)
+            except envfile.EnvPreimageError:
+                raise GuardRefused(ReasonCode.ENV_CONFLICT) from None
+            record.update(journal_version=2, automation=self._automation_metadata(), env_recovery=inverse)
+            self.state.write_journal(record)
+            ledger.checkpoint('env_commit_pending', forward_record=record)
+            op = ledger.begin('env_commit', identity={'run_id': record['run_id']},
+                preconditions={'env_sha256': record['env_recovery']['before_sha256']},
+                postconditions={'env_sha256': record['env_recovery']['after_sha256']})
+            envfile.write_changes(self._env_path(), changes, recovery=record['env_recovery'])
+            self.installation.reload_env()
+            record['stage'] = 'env_written'
+            self.state.write_journal(record)
+            actual = hashlib.sha256(self._env_path().read_bytes()).hexdigest()
+            require(actual == record['env_recovery']['after_sha256'], ReasonCode.ENV_CONFLICT)
+            ledger.complete(op, {'env_sha256': actual})
+            ledger.checkpoint('env_selected', forward_record=record)
+            expected = {i['variable']: i['target_tag'] for i in plan['components']}
+            config, services = self._check_config(expected)
+            ids = dict(self.built_in_backup.b['images'])
+            inspector = self._automatic_inspection_installation()
+            for service in services:
+                local = inspector.image(service['image'])
+                item = next(i for i in plan['components'] if i['component'] == service['component'])
+                require(local is not None and (parse_image_ref(item['target_image']).name,
+                    item['target_digest']) in _digest_set(local['repo_digests']), ReasonCode.IMAGE_DIGEST_MISMATCH)
+                ids[service['service']] = local['id']
+            record['target_image_ids'] = {s['service']: ids[s['service']] for s in services}
+            record['stage'] = 'pulled'  # prefetched, reverified, NEVER pulled cold
+            self.state.write_journal(record)
+            ledger.checkpoint(target_model=config)
+            self._guard('before_rollout')
+            record['stage'] = 'rollout'
+            self.state.write_journal(record)
+            ledger.checkpoint(forward_record=record)
+            runtime = self._automatic_runtime(lifecycle, ledger, self.built_in_backup)
+            roster = runtime.create(ids)
+            with runtime.observation_session(lifecycle,
+                    lifecycle.baseline.evidence(lifecycle.intent.target), 'success', policy,
+                    decision.estimate) as session:
+                runtime.start_and_wait(roster, policy, decision.estimate,
+                    ready_callback=lambda: session.ready(roster))
+                self._dependencies_unchanged()
+                observation = session.result
+                lifecycle.baseline.validate_success_observation(lifecycle.intent, observation)
+                # Retain the FULL validated observation before acceptance. A6
+                # continues through slow validation/capture, not only startup.
+                session.check()
+                lifecycle.retain_success(self.installation, observation)
+                session.check()
+                record.update(status='succeeded', finished_at=_now())
+                from .baseline import identity
+                ledger.decide_success({'run_id': record['run_id'], 'record': record,
+                    'observation_sha256': observation.facts.runtime_observation.sha256,
+                    'successor_intent_sha256': identity(lifecycle.intent),
+                    'env_sha256': observation.facts.runtime_observation.env_sha256,
+                    'config_sha256': observation.facts.runtime_observation.config_sha256,
+                    'storage_sha256': observation.facts.runtime_observation.storage_sha256})
+            return self._finalize_automatic_success_locked(lifecycle, ledger)
+        except (Exception, Interrupted, KeyboardInterrupt) as exc:
+            ledger = self.automatic_ledger
+            if ledger is not None:
+                # Re-open authoritative immutable decisions even if a signal hit
+                # between their fsync and replacement of the current checkpoint.
+                supervisor.deadline = original_deadline
+                try:
+                    authority = self._open_automatic_ledger(ledger)
+                    if authority.backup_seal is not None and authority.direction != 'success_decided':
+                        reason = getattr(exc, 'reason_code', ReasonCode.READINESS_FAILED if isinstance(exc, NotReady)
+                                         else ReasonCode.OPERATION_INTERRUPTED if isinstance(exc, (Interrupted, KeyboardInterrupt))
+                                         else ReasonCode.PROCESS_FAILED)
+                        try:
+                            reason = ReasonCode(reason)
+                        except (ValueError, TypeError):
+                            reason = ReasonCode.PROCESS_FAILED
+                        authority.decide_restore(reason.value)
+                        authority.checkpoint(forward_failure={'reason_code': reason.value, 'failed_at': _now(),
+                            'interrupted': isinstance(exc, (Interrupted, KeyboardInterrupt)),
+                            'stage': (self.active_record or {}).get('stage', 'prepare')})
+                    ledger = authority
+                except (Exception, Interrupted, KeyboardInterrupt):
+                    # Diagnostic/checkpoint failure cannot turn the safety
+                    # action into env-only cleanup or erase the original seal.
+                    pass
+                try:
+                    self.resume_automatic_locked(lifecycle=lifecycle, ledger=ledger)
+                    if self.automatic_outcome == 'succeeded':
+                        return self.automatic_receipt
+                except (Exception, Interrupted, KeyboardInterrupt) as recovery_exc:
+                    guard.recovery_required = True
+                    raise GuardRefused(ReasonCode.RECOVERY_REQUIRED) from recovery_exc
+            raise
+        finally:
+            supervisor.deadline = original_deadline
+
     def apply(self, make_plan: Callable[[List[Dict[str, Any]]], Dict[str, Any]], manifest: Mapping[str, Any],
               *, allow_no_backup: bool = False, backup_command: Optional[str] = None,
               dry_run: bool = False, stage: bool = False,
@@ -1605,6 +2069,12 @@ class Updater:
                  + (["--allow-no-backup"] if allow_no_backup else []))
         again = self._command(" ".join(_quote(word) for word in words))
         with self.state.lock(**({'automation': True} if self.automation_guard is not None else {})):
+            self._refuse_automatic_pending()
+            if getattr(self.automation_guard, 'automatic', None) is not None:
+                from .orchestrator import require
+                require(not stage and not dry_run and not allow_no_backup and backup_command is None,
+                        ReasonCode.CONTROL_INVALID)
+                return self._apply_automatic_scope_locked(make_plan, manifest)
             notes: List[str] = []
             if not dry_run:
                 self._guard('before_recovery')
@@ -2504,10 +2974,11 @@ class Updater:
                  + (["--yes"] if yes else []))
         again = self._command(" ".join(_quote(word) for word in words))
         with self.state.lock(**({'automation': True} if self.automation_guard is not None else {})):
-            self.active_rollback_receipt = receipt_path
-            self.automatic_fallback = self.automation_guard is not None
+            self._refuse_automatic_pending()
+            if self.automation_guard is not None:
+                from .orchestrator import GuardRefused
+                raise GuardRefused(ReasonCode.ROLLBACK_INELIGIBLE)
             self._guard('before_recovery')
-            self._guard('before_fallback')
             self.installation.check_ownership()
             # A journal whose run already wrote its receipt: recovering only removes it (recover). Another install's
             # journal is refused first, as recover refuses it.

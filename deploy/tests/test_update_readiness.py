@@ -116,6 +116,120 @@ class ReadinessCase(unittest.TestCase):
 
 # ------------------------------------------------------------------ bounded --
 
+class AutomaticReadinessTests(unittest.TestCase):
+    """Synthetic guard samples, NOT product or large-volume qualification."""
+    def setUp(self):
+        from dataclasses import replace
+        from deploy.update.contracts import AutomationPolicy, AutomaticUpdateEstimate
+        from deploy.update.readiness import AutomaticReadiness, RuntimeSample
+        self.clock = Clock()
+        self.policy = AutomationPolicy(stability_period_seconds=10, migration_timeout_seconds=100,
+            migration_stall_timeout_seconds=15, wait_timeout_seconds=60, disk_watermark_reserve_bytes=10)
+        self.estimate = AutomaticUpdateEstimate(1, 30, 1, 0, 100, 100, 100, 100, 100, 200, 30, 15)
+        self.sample_type = RuntimeSample
+        self.waiter = AutomaticReadiness(clock=self.clock, sleep=self.clock.sleep, interval=5)
+        self.observe = lambda t: RuntimeSample('ready', '', '', 1000, {'a': (True, True, 0, 'start')})
+
+    def wait(self, *, previous=False):
+        return self.waiter.wait(lambda: self.observe(self.clock.elapsed), policy=self.policy,
+            estimate=self.estimate, deadline=START + 200, previous=previous, expected_ids={'a'})
+
+    def failure(self, reason):
+        from deploy.update.readiness import AutomaticNotReady
+        with self.assertRaises(AutomaticNotReady) as caught:
+            self.wait()
+        self.assertEqual(caught.exception.reason_code.value, reason)
+
+    def test_health_and_every_restart_count_remain_stable_for_the_full_period(self):
+        self.wait()
+        self.assertEqual(self.clock.elapsed, 10)
+        for change in ('health', 'restart', 'replacement', 'started'):
+            with self.subTest(change=change):
+                self.setUp()
+                def observe(t):
+                    rows = {'a': (True, not(t >= 5 and change == 'health'),
+                        int(t >= 5 and change == 'restart'), 'new' if t >= 5 and change == 'started' else 'start')}
+                    if t >= 5 and change == 'replacement':
+                        rows = {'b': (True, True, 0, 'start')}
+                    return self.sample_type('ready', '', '', 1000, rows)
+                self.observe = observe
+                self.failure('readiness_failed')
+
+    def test_unchanged_phase_name_and_pg_views_stall_at_the_bounded_timeout(self):
+        self.observe = lambda t: self.sample_type('migrating', 'tfc.0002', 'fixed-view', 1000,
+                                                  {'a': (True, False, 0, 'start')})
+        self.failure('migration_stalled')
+        self.assertEqual(self.clock.elapsed, 15)
+
+    def test_each_real_progress_source_resets_the_stall_timer_but_not_the_hard_deadline(self):
+        for source in ('phase', 'migration', 'pg'):
+            with self.subTest(source=source):
+                self.setUp()
+                self.observe = lambda t: self.sample_type('p' + str(t) if source == 'phase' else 'migrating',
+                    str(t) if source == 'migration' else 'tfc.0002', str(t) if source == 'pg' else 'fixed',
+                    1000, {'a': (True, False, 0, 'start')})
+                self.failure('migration_exceeds_window')
+                self.assertEqual(self.clock.elapsed, 30)  # estimate already includes 2x; NOT 60
+
+    def test_migration_completion_gets_a_separate_startup_budget(self):
+        self.observe = lambda t: self.sample_type('migrating' if t < 25 else 'api', str(t), str(t), 1000,
+                                                  {'a': (True, t >= 70, 0, 'start')})
+        self.wait()
+        self.assertEqual(self.clock.elapsed, 80)
+
+    def test_disk_watermark_is_independent_of_progress_and_health(self):
+        self.observe = lambda t: self.sample_type('ready', '', '', 99, {'a': (True, True, 0, 'start')})
+        self.failure('disk_watermark_abort')
+        self.assertEqual(self.clock.elapsed, 0)
+
+    def test_missing_estimates_sizes_and_ids_fail_closed(self):
+        self.estimate = None
+        self.failure('restore_capacity_unknown')
+        self.setUp()
+        self.observe = lambda t: self.sample_type('ready', '', '', None, {'a': (True, True, 0, 'start')})
+        self.failure('restore_capacity_unknown')
+
+    def test_slow_probe_cannot_cross_a_deadline_and_succeed(self):
+        def slow(t):
+            self.clock.now += 200
+            return self.sample_type('ready', '', '', 1000, {'a': (True, True, 0, 'start')})
+        self.observe = slow
+        self.failure('readiness_failed')
+
+    def test_late_ready_or_healthy_sample_cannot_erase_migration_deadline(self):
+        # Reviewer's slow-observation reproduction, plus both independent ways
+        # completion can be inferred and the exact deadline boundary.
+        for phase, healthy in (('ready', False), ('migrating', True), ('api', True)):
+            for arrived in (30, 31):
+                with self.subTest(phase=phase, healthy=healthy, arrived=arrived):
+                    self.setUp()
+                    calls = []
+                    def observe(t):
+                        calls.append(t)
+                        if len(calls) == 1:
+                            return self.sample_type('migrating', 'tfc.0002', 'fixed', 1000,
+                                                    {'a': (True, False, 0, 'start')})
+                        self.clock.now = START + arrived
+                        return self.sample_type(phase, '', '', 1000, {'a': (True, healthy, 0, 'start')})
+                    self.observe = observe
+                    self.failure('migration_exceeds_window')
+                    self.assertEqual(len(calls), 2)
+                    self.assertEqual(self.clock.elapsed, arrived)
+
+    def test_zero_plan_has_no_hidden_migration_allocation(self):
+        from dataclasses import replace
+        self.estimate = replace(self.estimate, migration_seconds=0, migration_deadline_seconds=0)
+        self.observe = lambda t: self.sample_type('migrating', 'tfc.0002', 'pg', 1000,
+                                                  {'a': (True, False, 0, 'start')})
+        self.failure('readiness_failed')
+        self.assertEqual(self.clock.elapsed, 60)
+
+    def test_source_start_reconciliation_has_no_migration_or_reextract_authority(self):
+        self.observe = lambda t: self.sample_type('ready', '', '', 1000, {'a': (True, True, 3, 'start')})
+        self.wait(previous=True)
+        self.assertEqual(self.clock.elapsed, 10)
+
+
 class BoundedTests(unittest.TestCase):
     def test_default_when_missing_or_empty(self):
         self.assertEqual(bounded({}, "K", 600, 60, 1800), 600)

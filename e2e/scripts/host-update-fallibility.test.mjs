@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { expect } from '@playwright/test';
 import { parse as parseYaml } from 'yaml';
+import ts from 'typescript';
 import {
   BACKEND_CHECKS, BUDGET, ORIGINAL_SHA256, SPEC, STEPS, TITLE,
   buildMutants, childCommand, parseArgs, runChild, runProof, sha256, validateEnvironment, validateReport,
@@ -14,6 +15,7 @@ import {
 
 const e2e = fileURLToPath(new URL('../', import.meta.url)).replace(/\/$/, '');
 const original = await readFile(join(e2e, SPEC), 'utf8');
+const titleLine = original.slice(0, original.indexOf(`test('${TITLE}', {`)).split('\n').length;
 const mutations = buildMutants(original);
 const playwrightVersion = JSON.parse(await readFile(join(e2e, 'node_modules/@playwright/test/package.json'), 'utf8')).version;
 const flow = {
@@ -54,7 +56,7 @@ function messageFor(mutation, seed) {
 }
 function fixture(mutation = null, ctx = context) {
   const seed = seedFor(ctx.statusDirectory);
-  const location = { file: join(ctx.e2eDir, SPEC), line: mutation?.assertionLine ?? 60, column: 63 };
+  const location = { file: join(ctx.e2eDir, SPEC), line: mutation?.assertionLine ?? titleLine, column: 63 };
   const error = mutation ? { message: messageFor(mutation, seed), stack: `Error\n    at ${location.file}:${location.line}:${location.column}` } : undefined;
   const steps = STEPS.slice(0, mutation?.check ?? 5).map(title => ({ title, duration: 15 }));
   if (mutation) steps.at(-1).error = structuredClone(error);
@@ -67,7 +69,7 @@ function fixture(mutation = null, ctx = context) {
   return {
     config: { rootDir: ctx.e2eDir, workers: 1, forbidOnly: true, version: ctx.playwrightVersion, reporter: [['json']],
       projects: [{ outputDir: ctx.outputDir, repeatEach: 1, retries: 0, id: '', name: '', testDir: ctx.e2eDir, timeout: 120_000 }] },
-    suites: [{ title: SPEC, file: SPEC, line: 0, column: 0, specs: [{ title: TITLE, file: SPEC, line: 60, column: 1,
+    suites: [{ title: SPEC, file: SPEC, line: 0, column: 0, specs: [{ title: TITLE, file: SPEC, line: titleLine, column: 1,
       ok: !mutation, id: 'b1e79397b0d1cf97c454-0d3127ee98e23492f07e', tags: ['flow'],
       tests: [{ timeout: 240_000, annotations: structuredClone(annotations), expectedStatus: 'passed', projectId: '', projectName: '',
         results: [result], status: mutation ? 'unexpected' : 'expected' }] }] }],
@@ -114,6 +116,39 @@ async function fakeChild(command) {
   await writeFile(join(runDir, 'result.json'), JSON.stringify(report), { flag: 'wx' });
   return successfulProcess(mutation ? 1 : 0);
 }
+
+// Execute the actual pinned flow's fixture-construction fragments, not a second
+// handwritten snapshot. No browser, updater, host publication or qualification.
+test('restored wire fixture recovers known active component observations before claiming consistency', async () => {
+  const start = original.indexOf('  const now = Date.now();');
+  const setupEnd = original.indexOf('  const headers =');
+  const replacementStart = original.indexOf('      snapshot.sequence += 1;');
+  const replacementEnd = original.indexOf('      await writeFile(temporary, JSON.stringify(snapshot)', replacementStart);
+  assert.ok(start > 0 && setupEnd > start && replacementStart > setupEnd && replacementEnd > replacementStart);
+  const source = original.slice(start, setupEnd) +
+    '\nconst restoring = structuredClone(snapshot);\n' +
+    original.slice(replacementStart, replacementEnd) +
+    '\nreturn { restoring, restored: snapshot, installedVersion };';
+  const javascript = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const result = await new AsyncFunction('join', 'directory', 'testInfo', 'readFile', 'CONTRACT', javascript)(
+    join, '/unit-fixture-not-a-host-slot', { workerIndex: 3 }, readFile,
+    new URL('../../api_contracts/host-update/', import.meta.url));
+  assert.equal(result.restoring.versions.runtime_state, 'unknown');
+  assert.equal(result.restoring.versions.running_release, null);
+  assert.equal(result.restoring.last_run.effective_version, null);
+  assert.deepEqual(result.restoring.versions.components, []);
+  assert.equal(result.restored.versions.runtime_state, 'consistent');
+  assert.equal(result.restored.versions.running_release, result.installedVersion);
+  assert.equal(result.restored.last_run.effective_version, result.installedVersion);
+  assert.equal(result.restored.last_run.forward_result, 'failed');
+  const active = result.restored.versions.components.filter(c => c.observation !== 'not_deployed');
+  assert.ok(active.length > 0, 'A consistent restored runtime needs an active observed component');
+  for (const component of active) {
+    assert.equal(component.observation, 'known');
+    assert.deepEqual(component.observed_versions, [result.installedVersion]);
+  }
+});
 
 // Mutation integrity, including a frozen spec whose seed/actual cannot silently drift.
 test('six independent mutants preserve the original five-check contract and all other bytes', () => {
@@ -170,7 +205,7 @@ const invalidReports = [
   ['wrong test', r => { r.suites[0].specs[0].title = 'other test'; }],
   ['wrong file', r => { r.suites[0].specs[0].file = 'other.spec.ts'; }],
   ['wrong tags', r => { r.suites[0].specs[0].tags = ['@flow']; }],
-  ['wrong source location', r => { r.suites[0].specs[0].line = 61; }],
+  ['wrong source location', r => { r.suites[0].specs[0].line = titleLine + 1; }],
   ['retries configured', r => { r.config.projects[0].retries = 1; }],
   ['multiple workers', r => { r.config.workers = 2; }],
   ['wrong output', r => { r.config.projects[0].outputDir = '/ordinary/test-results'; }],

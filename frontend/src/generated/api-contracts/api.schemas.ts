@@ -4290,6 +4290,25 @@ export type HostUpdateStatusResponseApiResultSnapshot = {
       | "unsupported_installation"
       | "control_invalid"
       | "process_failed"
+      | "restore_not_certified"
+      | "transition_not_rehearsed"
+      | "platform_not_rehearsed"
+      | "restore_procedure_unsupported"
+      | "migration_inventory_unsupported"
+      | "migration_inventory_mismatch"
+      | "backup_inventory_mismatch"
+      | "restore_capacity_unknown"
+      | "restore_capacity_insufficient"
+      | "restore_child_ambiguous"
+      | "restore_verification_failed"
+      | "automatic_recovery_pending"
+      | "restored_after_update_failure"
+      | "migration_exceeds_window"
+      | "insufficient_disk_for_migration"
+      | "backup_exceeds_window"
+      | "insufficient_disk_for_backup"
+      | "migration_stalled"
+      | "disk_watermark_abort"
     )[];
   };
   download: {
@@ -4366,127 +4385,461 @@ export type HostUpdateStatusResponseApiResultSnapshot = {
       | "unsupported_installation"
       | "control_invalid"
       | "process_failed"
+      | "restore_not_certified"
+      | "transition_not_rehearsed"
+      | "platform_not_rehearsed"
+      | "restore_procedure_unsupported"
+      | "migration_inventory_unsupported"
+      | "migration_inventory_mismatch"
+      | "backup_inventory_mismatch"
+      | "restore_capacity_unknown"
+      | "restore_capacity_insufficient"
+      | "restore_child_ambiguous"
+      | "restore_verification_failed"
+      | "automatic_recovery_pending"
+      | "restored_after_update_failure"
+      | "migration_exceeds_window"
+      | "insufficient_disk_for_migration"
+      | "backup_exceeds_window"
+      | "insufficient_disk_for_backup"
+      | "migration_stalled"
+      | "disk_watermark_abort"
     )[];
   };
-  operation: {
-    state:
-      | "idle"
-      | "checking"
-      | "downloading"
-      | "backing_up"
-      | "staged"
-      | "awaiting_initialization"
-      | "applying"
-      | "verifying"
-      | "succeeded"
-      | "failed"
-      | "interrupted"
-      | "rolling_back"
-      | "rolled_back"
-      | "blocked"
-      | "unknown";
-    kind: "check" | "download" | "apply" | "rollback" | null;
-    stage:
-      | "planning"
-      | "backup"
-      | "image_fetch"
-      | "image_verification"
-      | "env_selection"
-      | "production_initialization"
-      | "rollout"
-      | "readiness"
-      | "recovery"
-      | null;
-    started_at: string | null;
-    finished_at: string | null;
-    reported_at: string | null;
-    /**
-     * @minItems 0
-     * @maxItems 12
-     */
-    reason_codes: (
-      | "manifest_unavailable"
-      | "signature_rejected"
-      | "channel_mismatch"
-      | "version_policy_blocked"
-      | "release_incomplete"
-      | "discovery_incomplete"
-      | "immutable_release_changed"
-      | "network_unavailable"
-      | "rate_limited"
-      | "cache_invalid"
-      | "ownership_unconfirmed"
-      | "deployment_files_mismatch"
-      | "required_env_missing"
-      | "unsupported_contract"
-      | "uncertified_release"
-      | "configuration_changed"
-      | "backup_required"
-      | "backup_failed"
-      | "backup_proof_invalid"
-      | "backup_expired"
-      | "stale_stage"
-      | "env_conflict"
-      | "initialization_required"
-      | "manual_stage_present"
-      | "recovery_required"
-      | "readiness_failed"
-      | "operation_interrupted"
-      | "operation_timeout"
-      | "rollback_ineligible"
-      | "rollback_failed"
-      | "failed_target_latched"
-      | "running_versions_unknown"
-      | "mixed_running_versions"
-      | "outside_window"
-      | "insufficient_window"
-      | "clock_skew"
-      | "timezone_unavailable"
-      | "host_verifier_required"
-      | "image_digest_mismatch"
-      | "disk_space_insufficient"
-      | "status_reporting_unavailable"
-      | "scheduler_unregistered"
-      | "unsupported_installation"
-      | "control_invalid"
-      | "process_failed"
-    )[];
-  };
-  last_run: {
-    kind: "apply" | "rollback";
-    automatic: boolean;
-    outcome:
-      | "succeeded"
-      | "staged"
-      | "rolled_back"
-      | "failed_before_rollout"
-      | "failed_during_rollout"
-      | "interrupted_before_rollout"
-      | "interrupted_during_rollout"
-      | "blocked";
-    from_version: string | null;
-    target_version: string | null;
-    finished_at: string | null;
-    fallback_outcome: "none" | "succeeded" | "failed" | "ineligible";
-  } | null;
-  safety: {
-    backup_required: boolean;
-    backup_state:
-      | "not_evaluated"
-      | "required"
-      | "reported_complete"
-      | "failed"
-      | "explicitly_skipped";
-    readiness: "unknown" | "pending" | "passed" | "failed";
-    automatic_rollback: "unsupported" | "disabled" | "eligible" | "ineligible";
-    operator_action:
-      | "none"
-      | "inspect_host"
-      | "prepare_installation"
-      | "initialize_then_apply"
-      | "review_recovery"
-      | "repair_status_reporting";
-  };
+  operation:
+    | {
+        state:
+          | "idle"
+          | "checking"
+          | "downloading"
+          | "backing_up"
+          | "staged"
+          | "awaiting_initialization"
+          | "applying"
+          | "verifying"
+          | "succeeded"
+          | "failed"
+          | "interrupted"
+          | "rolling_back"
+          | "rolled_back"
+          | "blocked"
+          | "unknown"
+          | "restoring"
+          | "restored"
+          | "recovery_required";
+        kind: "check" | "download" | "apply" | "rollback" | "restore" | null;
+        stage:
+          | "planning"
+          | "backup"
+          | "image_fetch"
+          | "image_verification"
+          | "env_selection"
+          | "production_initialization"
+          | "rollout"
+          | "readiness"
+          | "recovery"
+          | "quiescence"
+          | "restore"
+          | "stability"
+          | null;
+        started_at: string | null;
+        finished_at: string | null;
+        reported_at: string | null;
+        /**
+         * @minItems 0
+         * @maxItems 12
+         */
+        reason_codes: (
+          | "manifest_unavailable"
+          | "signature_rejected"
+          | "channel_mismatch"
+          | "version_policy_blocked"
+          | "release_incomplete"
+          | "discovery_incomplete"
+          | "immutable_release_changed"
+          | "network_unavailable"
+          | "rate_limited"
+          | "cache_invalid"
+          | "ownership_unconfirmed"
+          | "deployment_files_mismatch"
+          | "required_env_missing"
+          | "unsupported_contract"
+          | "uncertified_release"
+          | "configuration_changed"
+          | "backup_required"
+          | "backup_failed"
+          | "backup_proof_invalid"
+          | "backup_expired"
+          | "stale_stage"
+          | "env_conflict"
+          | "initialization_required"
+          | "manual_stage_present"
+          | "recovery_required"
+          | "readiness_failed"
+          | "operation_interrupted"
+          | "operation_timeout"
+          | "rollback_ineligible"
+          | "rollback_failed"
+          | "failed_target_latched"
+          | "running_versions_unknown"
+          | "mixed_running_versions"
+          | "outside_window"
+          | "insufficient_window"
+          | "clock_skew"
+          | "timezone_unavailable"
+          | "host_verifier_required"
+          | "image_digest_mismatch"
+          | "disk_space_insufficient"
+          | "status_reporting_unavailable"
+          | "scheduler_unregistered"
+          | "unsupported_installation"
+          | "control_invalid"
+          | "process_failed"
+          | "restore_not_certified"
+          | "transition_not_rehearsed"
+          | "platform_not_rehearsed"
+          | "restore_procedure_unsupported"
+          | "migration_inventory_unsupported"
+          | "migration_inventory_mismatch"
+          | "backup_inventory_mismatch"
+          | "restore_capacity_unknown"
+          | "restore_capacity_insufficient"
+          | "restore_child_ambiguous"
+          | "restore_verification_failed"
+          | "automatic_recovery_pending"
+          | "restored_after_update_failure"
+          | "migration_exceeds_window"
+          | "insufficient_disk_for_migration"
+          | "backup_exceeds_window"
+          | "insufficient_disk_for_backup"
+          | "migration_stalled"
+          | "disk_watermark_abort"
+        )[];
+      }
+    | {
+        state:
+          | "idle"
+          | "checking"
+          | "downloading"
+          | "backing_up"
+          | "staged"
+          | "awaiting_initialization"
+          | "applying"
+          | "verifying"
+          | "succeeded"
+          | "failed"
+          | "interrupted"
+          | "rolling_back"
+          | "rolled_back"
+          | "blocked"
+          | "unknown"
+          | "restoring"
+          | "restored"
+          | "recovery_required";
+        kind: "check" | "download" | "apply" | "rollback" | "restore" | null;
+        stage:
+          | "planning"
+          | "backup"
+          | "image_fetch"
+          | "image_verification"
+          | "env_selection"
+          | "production_initialization"
+          | "rollout"
+          | "readiness"
+          | "recovery"
+          | "quiescence"
+          | "restore"
+          | "stability"
+          | null;
+        started_at: string | null;
+        finished_at: string | null;
+        reported_at: string | null;
+        /**
+         * @minItems 0
+         * @maxItems 12
+         */
+        reason_codes: (
+          | "manifest_unavailable"
+          | "signature_rejected"
+          | "channel_mismatch"
+          | "version_policy_blocked"
+          | "release_incomplete"
+          | "discovery_incomplete"
+          | "immutable_release_changed"
+          | "network_unavailable"
+          | "rate_limited"
+          | "cache_invalid"
+          | "ownership_unconfirmed"
+          | "deployment_files_mismatch"
+          | "required_env_missing"
+          | "unsupported_contract"
+          | "uncertified_release"
+          | "configuration_changed"
+          | "backup_required"
+          | "backup_failed"
+          | "backup_proof_invalid"
+          | "backup_expired"
+          | "stale_stage"
+          | "env_conflict"
+          | "initialization_required"
+          | "manual_stage_present"
+          | "recovery_required"
+          | "readiness_failed"
+          | "operation_interrupted"
+          | "operation_timeout"
+          | "rollback_ineligible"
+          | "rollback_failed"
+          | "failed_target_latched"
+          | "running_versions_unknown"
+          | "mixed_running_versions"
+          | "outside_window"
+          | "insufficient_window"
+          | "clock_skew"
+          | "timezone_unavailable"
+          | "host_verifier_required"
+          | "image_digest_mismatch"
+          | "disk_space_insufficient"
+          | "status_reporting_unavailable"
+          | "scheduler_unregistered"
+          | "unsupported_installation"
+          | "control_invalid"
+          | "process_failed"
+          | "restore_not_certified"
+          | "transition_not_rehearsed"
+          | "platform_not_rehearsed"
+          | "restore_procedure_unsupported"
+          | "migration_inventory_unsupported"
+          | "migration_inventory_mismatch"
+          | "backup_inventory_mismatch"
+          | "restore_capacity_unknown"
+          | "restore_capacity_insufficient"
+          | "restore_child_ambiguous"
+          | "restore_verification_failed"
+          | "automatic_recovery_pending"
+          | "restored_after_update_failure"
+          | "migration_exceeds_window"
+          | "insufficient_disk_for_migration"
+          | "backup_exceeds_window"
+          | "insufficient_disk_for_backup"
+          | "migration_stalled"
+          | "disk_watermark_abort"
+        )[];
+        phase:
+          | "attempt_reserved"
+          | "quiescing"
+          | "quiesced"
+          | "archiving"
+          | "backup_sealed"
+          | "env_commit_pending"
+          | "env_selected"
+          | "target_create_pending"
+          | "target_created"
+          | "target_starting"
+          | "target_verifying"
+          | "success_decided"
+          | "success_metadata_committed"
+          | "succeeded"
+          | "restore_decided"
+          | "restore_quiescing"
+          | "restore_quiesced"
+          | "restore_inputs_verified"
+          | "restoring_volumes"
+          | "restore_files_verified"
+          | "config_revert_pending"
+          | "config_reverted"
+          | "restore_data_committed"
+          | "previous_create_pending"
+          | "previous_created"
+          | "previous_start_armed"
+          | "previous_starting"
+          | "previous_verifying"
+          | "restore_verified"
+          | "restore_metadata_committed"
+          | "restored"
+          | "abort_quiescence"
+          | "failed_available"
+          | null;
+      };
+  last_run:
+    | {
+        kind: "apply" | "rollback";
+        automatic: boolean;
+        outcome:
+          | "succeeded"
+          | "staged"
+          | "rolled_back"
+          | "failed_before_rollout"
+          | "failed_during_rollout"
+          | "interrupted_before_rollout"
+          | "interrupted_during_rollout"
+          | "blocked";
+        from_version: string | null;
+        target_version: string | null;
+        finished_at: string | null;
+        fallback_outcome: "none" | "succeeded" | "failed" | "ineligible";
+      }
+    | {
+        kind: "apply" | "rollback";
+        automatic: boolean;
+        outcome:
+          | "succeeded"
+          | "staged"
+          | "rolled_back"
+          | "failed_before_rollout"
+          | "failed_during_rollout"
+          | "interrupted_before_rollout"
+          | "interrupted_during_rollout"
+          | "blocked";
+        from_version: string | null;
+        target_version: string | null;
+        finished_at: string | null;
+        fallback_outcome: "none" | "succeeded" | "failed" | "ineligible";
+        forward_result:
+          | "not_started"
+          | "running"
+          | "succeeded"
+          | "failed"
+          | "interrupted";
+        restore_result:
+          | "not_needed"
+          | "running"
+          | "verified"
+          | "failed"
+          | "recovery_required";
+        effective_version: string | null;
+        failed_target_version: string | null;
+      }
+    | null;
+  safety:
+    | {
+        backup_required: boolean;
+        backup_state:
+          | "not_evaluated"
+          | "required"
+          | "reported_complete"
+          | "failed"
+          | "explicitly_skipped"
+          | "pending"
+          | "quiescing"
+          | "sealed";
+        readiness: "unknown" | "pending" | "passed" | "failed";
+        automatic_rollback:
+          | "unsupported"
+          | "disabled"
+          | "eligible"
+          | "ineligible";
+        operator_action:
+          | "none"
+          | "inspect_host"
+          | "prepare_installation"
+          | "initialize_then_apply"
+          | "review_recovery"
+          | "repair_status_reporting";
+      }
+    | {
+        backup_required: boolean;
+        backup_state:
+          | "not_evaluated"
+          | "required"
+          | "reported_complete"
+          | "failed"
+          | "explicitly_skipped"
+          | "pending"
+          | "quiescing"
+          | "sealed";
+        readiness: "unknown" | "pending" | "passed" | "failed";
+        automatic_rollback:
+          | "unsupported"
+          | "disabled"
+          | "eligible"
+          | "ineligible";
+        operator_action:
+          | "none"
+          | "inspect_host"
+          | "prepare_installation"
+          | "initialize_then_apply"
+          | "review_recovery"
+          | "repair_status_reporting";
+        fallback_strategy: "restore_backup" | "none";
+        restore_state:
+          | "not_needed"
+          | "running"
+          | "verified"
+          | "failed"
+          | "recovery_required";
+        snapshot_at: string | null;
+        loss_window_start: string | null;
+        loss_window_end: string | null;
+        loss_window_qualification:
+          | "not_applicable"
+          | "bounded"
+          | "conservative"
+          | "unknown";
+        guidance_id: "none" | "inspect_host" | "review_recovery";
+        estimates: {
+          /**
+           * @minimum 0
+           * @maximum 9007199254740991
+           */
+          backup_seconds: number;
+          /**
+           * @minimum 0
+           * @maximum 9007199254740991
+           */
+          migration_seconds: number;
+          /**
+           * @minimum 0
+           * @maximum 9007199254740991
+           */
+          restore_seconds: number;
+          /**
+           * @minimum 0
+           * @maximum 9007199254740991
+           */
+          extra_disk_bytes: number;
+          /**
+           * @minimum 0
+           * @maximum 9007199254740991
+           */
+          backup_required_free_bytes: number;
+          /**
+           * @minimum 0
+           * @maximum 9007199254740991
+           */
+          docker_required_free_bytes: number;
+          /**
+           * @minimum 0
+           * @maximum 9007199254740991
+           */
+          protected_restore_reserve_bytes: number;
+          /**
+           * @minimum 0
+           * @maximum 9007199254740991
+           */
+          forward_seconds: number;
+          /**
+           * @minimum 0
+           * @maximum 9007199254740991
+           */
+          recovery_seconds: number;
+          /**
+           * @minimum 0
+           * @maximum 9007199254740991
+           */
+          total_seconds: number;
+          /**
+           * @minimum 0
+           * @maximum 9007199254740991
+           */
+          migration_deadline_seconds: number;
+          /**
+           * @minimum 0
+           * @maximum 9007199254740991
+           */
+          migration_stall_timeout_seconds: number;
+        } | null;
+        failed_target_version: string | null;
+      };
 } | null;
 
 export type HostUpdateStatusResponseApiResult = {

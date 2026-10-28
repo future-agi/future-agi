@@ -13,7 +13,8 @@ import re
 from pathlib import Path
 from typing import Dict, Mapping, Optional
 
-from .contracts import AutomationPolicy, ContractError, MaintenanceWindowSpec, POLICY_BOUNDS
+from .contracts import (AUTOMATIC_POLICY_BOUNDS, QUALIFICATION_POLICY, AutomationPolicy,
+                        ContractError, MaintenanceWindowSpec, POLICY_BOUNDS)
 from .manifest import CHANNELS
 
 CONFIG_FILE = "update.conf"
@@ -60,6 +61,16 @@ AUTOMATION_DEFAULTS: Dict[str, str] = {
     "FUTURE_AGI_UPDATE_PROBE_TIMEOUT_SECONDS": "60",
     "FUTURE_AGI_UPDATE_PULL_TIMEOUT_SECONDS": "1800",
     "FUTURE_AGI_UPDATE_TICK_TIMEOUT_SECONDS": "14400",
+    "FUTURE_AGI_UPDATE_QUALIFICATION_POLICY": "",
+    "FUTURE_AGI_UPDATE_RESTORE_TIMEOUT_SECONDS": "3600",
+    "FUTURE_AGI_UPDATE_RECOVERY_STARTUP_TIMEOUT_SECONDS": "1200",
+    "FUTURE_AGI_UPDATE_STABILITY_PERIOD_SECONDS": "60",
+    "FUTURE_AGI_UPDATE_QUIESCENCE_RESERVE_SECONDS": "300",
+    "FUTURE_AGI_UPDATE_METADATA_RESERVE_SECONDS": "300",
+    "FUTURE_AGI_UPDATE_ESTIMATE_SAFETY_FACTOR": "2",
+    "FUTURE_AGI_UPDATE_MIGRATION_TIMEOUT_SECONDS": "1200",
+    "FUTURE_AGI_UPDATE_MIGRATION_STALL_TIMEOUT_SECONDS": "300",
+    "FUTURE_AGI_UPDATE_DISK_WATERMARK_RESERVE_BYTES": "1073741824",
 }
 _WEEKDAYS = ("MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN")
 _WINDOW_RE = re.compile(r"((?:[01][0-9]|2[0-3]):[0-5][0-9])-((?:[01][0-9]|2[0-3]):[0-5][0-9])")
@@ -175,6 +186,14 @@ class Settings:
         if mode not in ("manual", "notify", "download", "apply"):
             raise SettingsError(f"{mode_key} must be manual, notify, download or apply{self.origin(mode_key)}")
         numbers = {name: self.integer(key, *POLICY_BOUNDS[name]) for name, key in _POLICY_KEYS.items()}
+        qualification = self.get('FUTURE_AGI_UPDATE_QUALIFICATION_POLICY')
+        if qualification not in ('', QUALIFICATION_POLICY):
+            raise SettingsError('FUTURE_AGI_UPDATE_QUALIFICATION_POLICY must be empty or ' + QUALIFICATION_POLICY)
+        numbers.update({name: self.integer('FUTURE_AGI_UPDATE_' + name.upper(), *bounds)
+                        for name, bounds in AUTOMATIC_POLICY_BOUNDS.items()})
+        if qualification and numbers['migration_stall_timeout_seconds'] > numbers['migration_timeout_seconds']:
+            raise SettingsError('FUTURE_AGI_UPDATE_MIGRATION_STALL_TIMEOUT_SECONDS must not exceed '
+                                'FUTURE_AGI_UPDATE_MIGRATION_TIMEOUT_SECONDS')
         if numbers["max_backoff_seconds"] < numbers["check_interval_seconds"]:
             key = "FUTURE_AGI_UPDATE_MAX_BACKOFF_SECONDS"
             raise SettingsError(f"{key} must be >= FUTURE_AGI_UPDATE_INTERVAL_SECONDS{self.origin(key)}")
@@ -207,10 +226,15 @@ class Settings:
             return AutomationPolicy(
                 mode=mode, enabled=self.boolean("FUTURE_AGI_UPDATE_ENABLED"), channel=self.channel,
                 version_policy=self.policy, timezone=zone, maintenance_window=window,
-                automatic_rollback=self.boolean("FUTURE_AGI_UPDATE_AUTOMATIC_ROLLBACK"), **numbers,
+                automatic_rollback=self.boolean("FUTURE_AGI_UPDATE_AUTOMATIC_ROLLBACK"),
+                qualification_policy=qualification or None, **numbers,
             )
         except ContractError:
             key = "FUTURE_AGI_UPDATE_TICK_TIMEOUT_SECONDS"
+            if qualification:
+                raise SettingsError(f'{key} must cover pull + backup + migration + target startup + '
+                                    'restore + recovery startup + 2*(stability + quiescence + metadata)'
+                                    f'{self.origin(key)}') from None
             raise SettingsError(f"{key} is too small for scheduled apply: require backup + pull + 2*wait + 600;"
                                 " with automatic rollback require backup + 2*pull + 4*wait + 1200"
                                 f"{self.origin(key)}") from None

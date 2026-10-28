@@ -820,7 +820,9 @@ class UpdateManifestWorkflowTests(unittest.TestCase):
             self.assertIsNone(regex.search(value), value)
 
     def test_the_publish_job_cannot_run_without_the_generate_job(self):
-        self.assertEqual(needs_of(self.publish), ["generate"])
+        self.assertEqual(needs_of(self.publish), ["generate", "rehearse"])
+        self.assertEqual(needs_of(self.jobs["rehearse"]), ["generate"])
+        self.assertEqual(self.jobs["rehearse"]["uses"], "./.github/workflows/update-compatibility-proof.yml")
         self.assertEqual(needs_of(self.generate), [])
 
     # ---- permissions
@@ -866,7 +868,7 @@ class UpdateManifestWorkflowTests(unittest.TestCase):
 
     def test_checkouts_never_persist_the_token(self):
         for name, job in self.jobs.items():
-            for step in job["steps"]:
+            for step in job.get("steps", []):
                 if str(step.get("uses", "")).startswith("actions/checkout@"):
                     with self.subTest(job=name):
                         self.assertEqual(step.get("with", {}).get("persist-credentials"), "false")
@@ -874,7 +876,7 @@ class UpdateManifestWorkflowTests(unittest.TestCase):
     def test_local_actions_are_checked_out_before_use(self):
         for name, job in self.jobs.items():
             checked_out: Optional[List[str]] = None
-            for step in job["steps"]:
+            for step in job.get("steps", []):
                 uses = str(step.get("uses", ""))
                 if uses.startswith("actions/checkout@"):
                     sparse = step.get("with", {}).get("sparse-checkout")
@@ -888,7 +890,7 @@ class UpdateManifestWorkflowTests(unittest.TestCase):
 
     def test_no_expression_is_interpolated_into_a_script(self):
         for name, job in self.jobs.items():
-            for step in job["steps"]:
+            for step in job.get("steps", []):
                 if "run" in step:
                     with self.subTest(job=name, step=step.get("name")):
                         self.assertNotIn("${{", step["run"])
@@ -973,12 +975,17 @@ class UpdateManifestWorkflowTests(unittest.TestCase):
         generate_run = one_step(self.generate, runs_containing("scripts/generate_update_manifest.py"))["run"]
         output = re.search(r'--output "([^"]+)"', generate_run).group(1)
         self.assertEqual(output.rsplit("/", 1)[-1], MANIFEST_ASSET)
-        upload = one_step(self.generate, lambda s: s.get("with", {}).get("name") == "update-manifest")
+        upload = one_step(self.generate, lambda s: s.get("with", {}).get("name") == "update-candidate")
         self.assertEqual(upload["with"]["path"].rsplit("/", 1)[-1], MANIFEST_ASSET)
         self.assertEqual(upload["with"]["if-no-files-found"], "error")
         self.assertEqual(output.replace("$RUNNER_TEMP", "${{ runner.temp }}"), upload["with"]["path"])
         download = one_step(self.publish, lambda s: s.get("with", {}).get("name") == "update-manifest")
-        self.assertEqual(download["with"]["name"], upload["with"]["name"])
+        self.assertEqual(download["with"]["name"], "update-manifest")
+        rehearsal = load(WORKFLOWS / "update-compatibility-proof.yml")["jobs"]["proof"]
+        candidate = one_step(rehearsal, lambda s: str(s.get("uses", "")).startswith("actions/download-artifact@"))
+        self.assertEqual(candidate["with"]["name"], upload["with"]["name"])
+        qualified = one_step(rehearsal, lambda s: s.get("with", {}).get("name") == "update-manifest")
+        self.assertEqual(qualified["with"]["if-no-files-found"], "error")
         self.assertEqual(download["with"]["path"], "${{ runner.temp }}/new")
         sign = one_step(self.publish, runs_containing("gh release upload"))["run"]
         self.assertIn('cd "$RUNNER_TEMP"', sign)
@@ -1375,10 +1382,10 @@ class GeneratedManifestTests(unittest.TestCase):
 
     def test_workflow_generation_never_certifies_by_default(self):
         self.assertEqual(self.manifest["schema_version"], 2)
-        self.assertEqual(self.manifest["compatibility"], uncertified_compatibility())
+        self.assertEqual(self.manifest["compatibility"], uncertified_compatibility(2))
         self.assertEqual(self.manifest["migration"], {"requires_bootstrap": True, "rollback": "manual"})
         policy = json.loads((UPDATE_DIR / "release-policy.json").read_text(encoding="utf-8"))
-        self.assertEqual(policy, {"schema_version": 1, "compatibility": uncertified_compatibility(),
+        self.assertEqual(policy, {"schema_version": 1, "compatibility": uncertified_compatibility(2),
                                   "migration": {"requires_bootstrap": True, "rollback": "manual"}})
         # This executes the ordinary workflow invocation, not just an isolated
         # policy fixture: publishing a release is not itself certification.
@@ -1629,13 +1636,19 @@ class ReleaseProofWiringTests(unittest.TestCase):
     def test_proof_is_built_after_digests_and_before_manifest_artifact(self):
         steps = self.generate["steps"]
         resolve = one_step(self.generate, runs_containing("declare -A images"))
-        build = one_step(self.generate, runs_containing("scripts/build_update_compatibility_proof.py"))
-        upload = one_step(self.generate, lambda s: s.get("with", {}).get("name") == "update-manifest")
-        self.assertLess(steps.index(resolve), steps.index(build))
-        self.assertLess(steps.index(build), steps.index(upload))
-        self.assertIn("--policy deploy/update/release-policy.json", build["run"])
+        upload = one_step(self.generate, lambda s: s.get("with", {}).get("name") == "update-candidate")
+        self.assertLess(steps.index(resolve), steps.index(upload))
+        self.assertEqual(needs_of(self.doc["jobs"]["rehearse"]), ["generate"])
+        self.assertEqual(needs_of(self.publish), ["generate", "rehearse"])
+        job = load(WORKFLOWS / "update-compatibility-proof.yml")["jobs"]["proof"]
+        build = one_step(job, runs_containing("scripts/build_update_compatibility_proof.py"))
+        self.assertLess(build["run"].index("scripts/rehearse_update_compatibility.py"),
+                        build["run"].index("scripts/build_update_compatibility_proof.py"))
+        self.assertIn('--policy "$RUNNER_TEMP/evidence/policy.json"', build["run"])
         self.assertIn('--run-id "$GITHUB_RUN_ID"', build["run"])
         self.assertNotIn("continue-on-error", build)
+        self.assertLess(job["steps"].index(build), job["steps"].index(one_step(
+            job, lambda s: s.get("with", {}).get("name") == "update-manifest")))
 
     def test_signing_validates_proof_against_manifest_before_any_signature(self):
         verify = one_step(self.publish, lambda s: s.get("name") == "Validate proof before signing")
@@ -1646,9 +1659,23 @@ class ReleaseProofWiringTests(unittest.TestCase):
         self.assertIn("assert not proof.exists()", verify["run"])
         self.assertNotIn("continue-on-error", verify)
 
+    def test_qualification_preserves_frozen_migration_and_uses_native_measured_budgets(self):
+        verify = one_step(self.publish, lambda s: s.get('name') == 'Validate proof before signing')['run']
+        self.assertIn('derived = {"compatibility"}', verify)
+        job = load(WORKFLOWS/'update-compatibility-proof.yml')['jobs']['proof']
+        self.assertEqual(job['runs-on'],'ubuntu-24.04')
+        self.assertEqual(job['timeout-minutes'],'360')
+        run = one_step(job,runs_containing('scripts/rehearse_update_compatibility.py'))['run']
+        self.assertIn('test "$RUNNER_ARCH" = X64',run)
+        self.assertIn('--docker-context default --platform linux/amd64 --purpose product',run)
+        self.assertIn('--startup-timeout-seconds 4200 --rehearsal-timeout-seconds 19800',run)
+        self.assertIn('eligible=false',run)
+        self.assertIn('--manual-decision',run)
+        self.assertNotIn('test_update_image_descriptors',(WORKFLOWS/'update-compatibility-proof.yml').read_text())
+
     def test_proof_downloads_cannot_select_other_runs_or_unreviewed_inputs(self):
         for job in (self.generate, self.publish):
-            for step in job["steps"]:
+            for step in job.get("steps", []):
                 if str(step.get("uses", "")).startswith("actions/download-artifact@"):
                     self.assertLessEqual(set(step["with"]), {"name", "pattern", "path", "merge-multiple"})
         for trigger in ("workflow_call", "workflow_dispatch"):
@@ -1736,14 +1763,29 @@ class ReleaseImagesWiringTests(unittest.TestCase):
 
     def test_no_other_workflow_uploads_an_artifact_named_like_the_manifests(self):
         # A called workflow shares the caller's run, and with it the artifact names.
-        name = one_step(load(UPDATE_WORKFLOW)["jobs"]["generate"],
-                        lambda s: s.get("with", {}).get("name") == "update-manifest")["with"]["name"]
+        proof_workflow = WORKFLOWS / "update-compatibility-proof.yml"
+        expected = {(UPDATE_WORKFLOW.name, "generate", "update-candidate"),
+                    (proof_workflow.name, "proof", "update-manifest"),
+                    (proof_workflow.name, "proof", "update-compatibility-proof")}
+        actual = set()
+        reserved = {row[2] for row in expected}
         for path in sorted(WORKFLOWS.glob("*.y*ml")):
-            if path == UPDATE_WORKFLOW:
+            if path not in (UPDATE_WORKFLOW, proof_workflow):
+                for name in reserved:
+                    with self.subTest(workflow=path.name, artifact=name):
+                        self.assertIsNone(re.search(rf"^\s*name:\s*[\"']?{re.escape(name)}[\"']?\s*$",
+                                                    path.read_text(encoding="utf-8"), re.M))
                 continue
-            with self.subTest(workflow=path.name):
-                self.assertIsNone(re.search(rf"^\s*name:\s*[\"']?{re.escape(name)}[\"']?\s*$",
-                                            path.read_text(encoding="utf-8"), re.M))
+            for job_name, job in load(path).get("jobs", {}).items():
+                for step in job.get("steps", []):
+                    if str(step.get("uses", "")).startswith("actions/upload-artifact@"):
+                        name = step.get("with", {}).get("name")
+                        if name in reserved:
+                            actual.add((path.name, job_name, name))
+        self.assertEqual(actual, expected)
+        jobs = load(UPDATE_WORKFLOW)["jobs"]
+        self.assertEqual(jobs["rehearse"]["uses"], "./.github/workflows/update-compatibility-proof.yml")
+        self.assertEqual(set(needs_of(jobs["publish"])), {"generate", "rehearse"})
 
     def test_no_other_workflow_touches_the_manifest_assets(self):
         for path in sorted(WORKFLOWS.glob("*.y*ml")):
@@ -1751,8 +1793,20 @@ class ReleaseImagesWiringTests(unittest.TestCase):
                 continue
             with self.subTest(workflow=path.name):
                 text = path.read_text(encoding="utf-8")
-                self.assertNotIn(MANIFEST_ASSET, text)
-                self.assertNotIn(BUNDLE_ASSET, text)
+                if path.name == "update-compatibility-proof.yml":
+                    # The same-run nonpublishing producer must handle the frozen
+                    # manifest, but it can neither sign nor attach release assets.
+                    doc = load(path)
+                    self.assertEqual(doc["permissions"], {"contents": "read"})
+                    self.assertTrue(all(job.get("permissions", {}).get("contents", "read") == "read"
+                                        and "id-token" not in job.get("permissions", {})
+                                        for job in doc["jobs"].values()))
+                    self.assertNotIn("gh release upload", text)
+                    self.assertNotIn("cosign sign", text)
+                    self.assertNotIn(BUNDLE_ASSET, text)
+                else:
+                    self.assertNotIn(MANIFEST_ASSET, text)
+                    self.assertNotIn(BUNDLE_ASSET, text)
 
 
 class ReleaseImagesGuardStepTests(_StepHarness):
@@ -2070,18 +2124,26 @@ def schema_errors(instance: Any, schema: Optional[Dict[str, Any]] = None, root: 
     return errors
 
 
-def uncertified_compatibility() -> Dict[str, Any]:
-    # An independent expectation, not copied from the policy under test.
-    return {
-        "contract_version": 1,
+def uncertified_compatibility(contract_version: int = 1) -> Dict[str, Any]:
+    # Independent expectations. The default retains historical parser fixtures;
+    # the generator's shipping default is explicitly the new restore contract.
+    result = {
+        "contract_version": contract_version,
         "automatic_apply": False,
         "requires_operator_initialization": True,
         "required_env": [],
-        "state_domains": [],
         "predecessors": [],
         "automatic_rollback": {"strategy": "never"},
         "validation": None,
     }
+    if contract_version == 1:
+        result['state_domains'] = []
+    else:
+        assert contract_version == 2
+        result.update(qualification_policy='standalone-cold-restore-v1',
+            restore_procedure_id='standalone-inplace-cold-restore-v1', backup_inventory_version=2,
+            host_observation_contract='standalone-runtime-v2', runtime_activation_contract='standalone-compose-direct-v1')
+    return result
 
 
 def sample_manifest(version: str = "v1.60.0", *, schema_version: int = SCHEMA_VERSION) -> Dict[str, Any]:
@@ -2158,29 +2220,44 @@ class SchemaTests(unittest.TestCase):
         self.assertEqual(properties["channel"], {"enum": list(CHANNELS)})
 
     def test_every_required_key_is_required_by_the_validator_too(self):
-        def nested(path: Tuple[str, ...]) -> Dict[str, Any]:
-            node = self.schema
-            for key in path:
-                if "$ref" in node:
-                    node = _resolve_ref(self.schema, node["$ref"])
-                node = node["properties"][key]
-            return _resolve_ref(self.schema, node["$ref"]) if "$ref" in node else node
+        def resolve(node, value):
+            if '$ref' in node:
+                node = _resolve_ref(self.schema,node['$ref'])
+            if 'anyOf' in node:
+                choices = [choice for choice in node['anyOf'] if not schema_errors(value,choice,self.schema)]
+                self.assertEqual(len(choices),1,'fixture must select exactly one closed contract branch')
+                node = choices[0]
+            return node
 
-        objects = [(), ("signature",), ("helm",), ("deployment",), ("migration",),
-                   ("compatibility",), ("compatibility", "automatic_rollback")]
-        objects += [("components", name) for name in COMPONENT_REPOSITORIES]
-        for path in objects:
-            spec = nested(path)
-            for key in spec["properties"]:
-                with self.subTest(path=".".join(path + (key,))):
-                    # The root's allOf requires compatibility conditionally
-                    # for v2; it is forbidden, not optional, in v1.
-                    required = key in spec.get("required", []) or (path == () and key == "compatibility")
-                    self.assertEqual(_accepted(_mutated(path + (key,), _DELETE)), not required)
-                    self.assertEqual(schema_errors(_mutated(path + (key,), _DELETE)) == [], not required)
-            with self.subTest(path=".".join(path) + ".<unknown>"):
-                self.assertFalse(_accepted(_mutated(path + ("unexpected",), "x")))
-                self.assertNotEqual(schema_errors(_mutated(path + ("unexpected",), "x")), [])
+        objects = [(), ('signature',), ('helm',), ('deployment',), ('migration',),
+                   ('compatibility',), ('compatibility','automatic_rollback')]
+        objects += [('components',name) for name in COMPONENT_REPOSITORIES]
+        for version in (1,2):
+            document = sample_manifest()
+            document['compatibility'] = uncertified_compatibility(version)
+            def mutate(path,value):
+                result = copy.deepcopy(document)
+                node = result
+                for key in path[:-1]: node = node[key]
+                if value is _DELETE: del node[path[-1]]
+                else: node[path[-1]] = value
+                return result
+            for path in objects:
+                spec, value = self.schema, document
+                for key in path:
+                    spec = resolve(spec,value)['properties'][key]
+                    value = value[key]
+                spec = resolve(spec,value)
+                for key in spec['properties']:
+                    with self.subTest(contract=version,path='.'.join(path+(key,))):
+                        required = key in spec.get('required',[]) or (path == () and key == 'compatibility')
+                        changed = mutate(path+(key,),_DELETE)
+                        self.assertEqual(_accepted(changed),not required)
+                        self.assertEqual(schema_errors(changed)==[],not required)
+                with self.subTest(contract=version,path='.'.join(path)+'.<unknown>'):
+                    changed = mutate(path+('unexpected',),'x')
+                    self.assertFalse(_accepted(changed))
+                    self.assertNotEqual(schema_errors(changed),[])
 
     def test_the_sample_manifest_is_valid_both_ways(self):
         self.assertTrue(_accepted(sample_manifest()))
@@ -2454,7 +2531,7 @@ class ReleaseCompatibilityStaticTests(unittest.TestCase):
         self.fixtures = fixtures
 
     def test_uncertified_v2_and_manual_v1_cannot_automatically_apply(self):
-        prepared, observations, controls, backup = self.fixtures.synthetic_context()
+        prepared, observations, controls, backup = self.fixtures.restore_context()
         positive = evaluate_automatic_apply(prepared, observations, controls, backup)
         self.assertTrue(positive.allowed, positive.reason_codes)
         self.assertFalse(positive.backup_pending)
@@ -2469,10 +2546,10 @@ class ReleaseCompatibilityStaticTests(unittest.TestCase):
                                                           boundary=boundary), controls, evidence)
                         self.assertFalse(result.allowed)
                         self.assertFalse(result.backup_pending)
-                        self.assertEqual(result.reason_codes, (ReasonCode.UNCERTIFIED_RELEASE,))
+                        self.assertEqual(result.reason_codes, (ReasonCode.RESTORE_NOT_CERTIFIED,))
 
     def test_forged_or_mismatched_proof_never_authorizes_automatic_apply(self):
-        prepared, observations, controls, backup = self.fixtures.synthetic_context()
+        prepared, observations, controls, backup = self.fixtures.restore_context()
         self.assertTrue(evaluate_automatic_apply(prepared, observations, controls, backup).allowed)
         for raw in (b"", b'{}', observations.release_proof + b"\n"):
             with self.subTest(proof=raw[:20]):
@@ -2486,7 +2563,7 @@ class ReleaseCompatibilityStaticTests(unittest.TestCase):
         from argparse import Namespace
         from scripts.generate_update_manifest import apply_release_policy
 
-        target, _, proof, raw = self.fixtures.synthetic_release()
+        target, _, proof, raw = self.fixtures.restore_release()
         self.assertEqual(schema_errors(target), [])
         self.assertEqual(validate_release_proof(raw, target, repository=CANONICAL_REPOSITORY), proof)
         policy = {"schema_version": 1, "migration": copy.deepcopy(target["migration"]),
@@ -2507,8 +2584,8 @@ class ReleaseCompatibilityStaticTests(unittest.TestCase):
                 (("tag",), "v1.99.0"), (("source_sha",), "f" * 40), (("inputs_hash",), "f" * 64),
                 (("components", "backend", "digest"), fake_digest("forged")),
                 (("predecessors", 0, "predecessor", "manifest_hash"), "f" * 64),
-                (("predecessors", 0, "suites", "backup_restore"), "failed"),
-                (("predecessors", 0, "suites", "no_migrations"), "skipped"),
+                (("predecessors", 0, "suites", "failure_restore"), "failed"),
+                (("predecessors", 0, "suites", "migration_forward"), "skipped"),
             ]
             for path, value in mutations:
                 with self.subTest(field=path):
@@ -2689,7 +2766,11 @@ class TrustWorkflowGuardAdditions(unittest.TestCase):
         self.assertEqual(self.claims, (CANONICAL_REPOSITORY, "refs/tags/v1.60.0"))
 
     def test_both_jobs_run_only_in_the_repository_hosts_pin(self):
-        self.assertEqual(sorted(self.jobs), ["generate", "publish"])
+        self.assertEqual(sorted(self.jobs), ["generate", "publish", "rehearse"])
+        rehearsal = self.jobs["rehearse"]
+        self.assertEqual(rehearsal["uses"], "./.github/workflows/update-compatibility-proof.yml")
+        self.assertEqual(needs_of(rehearsal), ["generate"])
+        self.assertEqual(rehearsal["permissions"], {"contents": "read"})
         for name, job in self.jobs.items():
             with self.subTest(job=name):
                 self.assertEqual(job.get("if"), f"github.repository == '{self.claims[0]}'")
@@ -2697,7 +2778,7 @@ class TrustWorkflowGuardAdditions(unittest.TestCase):
     def test_every_checkout_takes_this_repository_at_the_release_tag(self):
         checkouts = 0
         for name, job in self.jobs.items():
-            for step in job["steps"]:
+            for step in job.get("steps", []):
                 if str(step.get("uses", "")).startswith("actions/checkout@"):
                     checkouts += 1
                     with self.subTest(job=name):
@@ -3613,7 +3694,7 @@ class TrustRound6RevisionCheckTests(TrustRound6RevisionCase):
         check = trust_round6_revision_step(self.doc)
         resolve = one_step(job, runs_containing("declare -A images"))
         generate = one_step(job, runs_containing("scripts/generate_update_manifest.py"))
-        upload = one_step(job, lambda s: s.get("with", {}).get("name") == "update-manifest")
+        upload = one_step(job, lambda s: s.get("with", {}).get("name") == "update-candidate")
         self.assertLess(steps.index(resolve), steps.index(check))
         self.assertLess(steps.index(check), steps.index(generate))
         self.assertLess(steps.index(generate), steps.index(upload))
@@ -3633,7 +3714,7 @@ class TrustRound6RevisionCheckTests(TrustRound6RevisionCase):
         self.assertIn('done 3< "$RUNNER_TEMP/components.txt"', check["run"])
         self.assertIn('printf \'%s=%s@%s\\n\' "$name" "$image" "$digest" >> "$RUNNER_TEMP/components.txt"',
                       resolve["run"])
-        self.assertEqual(needs_of(self.doc["jobs"]["publish"]), ["generate"])
+        self.assertEqual(needs_of(self.doc["jobs"]["publish"]), ["generate", "rehearse"])
 
     def test_images_built_from_the_tags_commit_pass(self):
         result = self.run_check()

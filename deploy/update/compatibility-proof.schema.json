@@ -1,921 +1,2207 @@
 {
-  "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "schema_version",
-    "inputs_hash",
-    "tag",
-    "source_sha",
-    "repository",
-    "run_id",
-    "components",
-    "deployment",
-    "state_domains",
-    "predecessors"
-  ],
-  "properties": {
-    "schema_version": {
-      "type": "integer",
-      "const": 1
-    },
-    "inputs_hash": {
-      "type": "string",
-      "pattern": "^[0-9a-f]{64}$"
-    },
-    "tag": {
-      "type": "string",
-      "pattern": "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$"
-    },
-    "source_sha": {
-      "type": "string",
-      "pattern": "^[0-9a-f]{40}$"
-    },
-    "repository": {
-      "type": "string",
-      "minLength": 3,
-      "maxLength": 200,
-      "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
-    },
-    "run_id": {
-      "type": "integer",
-      "minimum": 1,
-      "maximum": 9007199254740991
-    },
-    "components": {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:futureagi:update-compatibility-proof:1-2",
+  "description": "At most 256 KiB; authenticated by exact hash in the signed manifest, not a standalone signature. No inherited qualification between rows.",
+  "anyOf": [
+    {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "standalone",
-        "backend",
-        "frontend",
-        "fi_collector",
-        "agentcc_gateway",
-        "serving",
-        "serving_gpu",
-        "code_executor",
-        "simulation_runner"
+        "schema_version",
+        "inputs_hash",
+        "tag",
+        "source_sha",
+        "repository",
+        "run_id",
+        "components",
+        "deployment",
+        "state_domains",
+        "predecessors"
       ],
       "properties": {
-        "standalone": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "image",
-            "digest"
-          ],
-          "properties": {
-            "image": {
-              "type": "string",
-              "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"
-            },
-            "digest": {
-              "type": "string",
-              "pattern": "^sha256:[0-9a-f]{64}$"
-            },
-            "platforms": {
-              "type": "array",
-              "minItems": 1,
-              "uniqueItems": true,
-              "items": {
-                "enum": [
-                  "linux/amd64",
-                  "linux/arm64"
-                ]
-              }
-            }
-          }
+        "schema_version": {
+          "type": "integer",
+          "const": 1
         },
-        "backend": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "image",
-            "digest"
-          ],
-          "properties": {
-            "image": {
-              "type": "string",
-              "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"
-            },
-            "digest": {
-              "type": "string",
-              "pattern": "^sha256:[0-9a-f]{64}$"
-            },
-            "platforms": {
-              "type": "array",
-              "minItems": 1,
-              "uniqueItems": true,
-              "items": {
-                "enum": [
-                  "linux/amd64",
-                  "linux/arm64"
-                ]
-              }
-            }
-          }
+        "inputs_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
         },
-        "frontend": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "image",
-            "digest"
-          ],
-          "properties": {
-            "image": {
-              "type": "string",
-              "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"
-            },
-            "digest": {
-              "type": "string",
-              "pattern": "^sha256:[0-9a-f]{64}$"
-            },
-            "platforms": {
-              "type": "array",
-              "minItems": 1,
-              "uniqueItems": true,
-              "items": {
-                "enum": [
-                  "linux/amd64",
-                  "linux/arm64"
-                ]
-              }
-            }
-          }
+        "tag": {
+          "type": "string",
+          "pattern": "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?(?![\\s\\S])$"
         },
-        "fi_collector": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "image",
-            "digest"
-          ],
-          "properties": {
-            "image": {
-              "type": "string",
-              "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"
-            },
-            "digest": {
-              "type": "string",
-              "pattern": "^sha256:[0-9a-f]{64}$"
-            },
-            "platforms": {
-              "type": "array",
-              "minItems": 1,
-              "uniqueItems": true,
-              "items": {
-                "enum": [
-                  "linux/amd64",
-                  "linux/arm64"
-                ]
-              }
-            }
-          }
+        "source_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}(?![\\s\\S])$"
         },
-        "agentcc_gateway": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "image",
-            "digest"
-          ],
-          "properties": {
-            "image": {
-              "type": "string",
-              "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"
-            },
-            "digest": {
-              "type": "string",
-              "pattern": "^sha256:[0-9a-f]{64}$"
-            },
-            "platforms": {
-              "type": "array",
-              "minItems": 1,
-              "uniqueItems": true,
-              "items": {
-                "enum": [
-                  "linux/amd64",
-                  "linux/arm64"
-                ]
-              }
-            }
-          }
+        "repository": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 200,
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?![\\s\\S])$"
         },
-        "serving": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "image",
-            "digest"
-          ],
-          "properties": {
-            "image": {
-              "type": "string",
-              "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"
-            },
-            "digest": {
-              "type": "string",
-              "pattern": "^sha256:[0-9a-f]{64}$"
-            },
-            "platforms": {
-              "type": "array",
-              "minItems": 1,
-              "uniqueItems": true,
-              "items": {
-                "enum": [
-                  "linux/amd64",
-                  "linux/arm64"
-                ]
-              }
-            }
-          }
+        "run_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
         },
-        "serving_gpu": {
+        "components": {
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "image",
-            "digest"
+            "standalone",
+            "backend",
+            "frontend",
+            "fi_collector",
+            "agentcc_gateway",
+            "serving",
+            "serving_gpu",
+            "code_executor",
+            "simulation_runner"
           ],
           "properties": {
-            "image": {
-              "type": "string",
-              "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"
-            },
-            "digest": {
-              "type": "string",
-              "pattern": "^sha256:[0-9a-f]{64}$"
-            },
-            "platforms": {
-              "type": "array",
-              "minItems": 1,
-              "uniqueItems": true,
-              "items": {
-                "enum": [
-                  "linux/amd64",
-                  "linux/arm64"
-                ]
-              }
-            }
-          }
-        },
-        "code_executor": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "image",
-            "digest"
-          ],
-          "properties": {
-            "image": {
-              "type": "string",
-              "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"
-            },
-            "digest": {
-              "type": "string",
-              "pattern": "^sha256:[0-9a-f]{64}$"
-            },
-            "platforms": {
-              "type": "array",
-              "minItems": 1,
-              "uniqueItems": true,
-              "items": {
-                "enum": [
-                  "linux/amd64",
-                  "linux/arm64"
-                ]
-              }
-            }
-          }
-        },
-        "simulation_runner": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "image",
-            "digest"
-          ],
-          "properties": {
-            "image": {
-              "type": "string",
-              "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"
-            },
-            "digest": {
-              "type": "string",
-              "pattern": "^sha256:[0-9a-f]{64}$"
-            },
-            "platforms": {
-              "type": "array",
-              "minItems": 1,
-              "uniqueItems": true,
-              "items": {
-                "enum": [
-                  "linux/amd64",
-                  "linux/arm64"
-                ]
-              }
-            }
-          }
-        }
-      }
-    },
-    "deployment": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "files"
-      ],
-      "properties": {
-        "files": {
-          "type": "object",
-          "minProperties": 1,
-          "propertyNames": {
-            "description": "A normalized path relative to the checkout: no leading /, no backslash, no empty, . or .. segment, no surrounding whitespace.",
-            "pattern": "^(?=\\S)(?:(?!\\.\\.?/)[^/\\\\]+/)*(?!\\.\\.?$)[^/\\\\]*[^/\\\\\\s]$"
-          },
-          "additionalProperties": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}$"
-          },
-          "maxProperties": 1024
-        }
-      }
-    },
-    "state_domains": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "domain",
-          "from_epoch",
-          "to_epoch",
-          "backward_read",
-          "backward_write"
-        ],
-        "properties": {
-          "domain": {
-            "type": "string",
-            "enum": [
-              "postgres_app",
-              "clickhouse",
-              "object_store",
-              "temporal",
-              "peerdb_catalog",
-              "peerdb_temporal",
-              "peerdb_objects",
-              "redis",
-              "kafka_catalog",
-              "shared_files",
-              "component_protocols"
-            ]
-          },
-          "from_epoch": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 2147483647
-          },
-          "to_epoch": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 2147483647
-          },
-          "backward_read": {
-            "type": "boolean"
-          },
-          "backward_write": {
-            "type": "boolean"
-          }
-        }
-      },
-      "minItems": 0,
-      "maxItems": 11
-    },
-    "predecessors": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "predecessor",
-          "predecessor_components",
-          "predecessor_deployment",
-          "persistence",
-          "dependencies",
-          "suites"
-        ],
-        "properties": {
-          "predecessor": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "version",
-              "manifest_hash",
-              "raw_manifest_sha256",
-              "source_sha",
-              "mode",
-              "platform",
-              "profiles",
-              "active_components",
-              "rollback_certified"
-            ],
-            "properties": {
-              "version": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 128,
-                "pattern": "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$"
-              },
-              "manifest_hash": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 64,
-                "pattern": "^[0-9a-f]{64}$"
-              },
-              "raw_manifest_sha256": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 64,
-                "pattern": "^[0-9a-f]{64}$"
-              },
-              "source_sha": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 40,
-                "pattern": "^[0-9a-f]{40}$"
-              },
-              "mode": {
-                "type": "string",
-                "enum": [
-                  "standalone",
-                  "distributed"
-                ]
-              },
-              "platform": {
-                "type": "string",
-                "enum": [
-                  "linux/amd64",
-                  "linux/arm64"
-                ]
-              },
-              "profiles": {
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 64,
-                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
-                },
-                "minItems": 0,
-                "maxItems": 32,
-                "uniqueItems": true
-              },
-              "active_components": {
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "enum": [
-                    "standalone",
-                    "backend",
-                    "frontend",
-                    "fi_collector",
-                    "agentcc_gateway",
-                    "serving",
-                    "serving_gpu",
-                    "code_executor",
-                    "simulation_runner"
-                  ]
-                },
-                "minItems": 1,
-                "maxItems": 9,
-                "uniqueItems": true
-              },
-              "rollback_certified": {
-                "type": "boolean"
-              }
-            }
-          },
-          "predecessor_components": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "standalone",
-              "backend",
-              "frontend",
-              "fi_collector",
-              "agentcc_gateway",
-              "serving",
-              "serving_gpu",
-              "code_executor",
-              "simulation_runner"
-            ],
-            "properties": {
-              "standalone": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "image",
-                  "digest"
-                ],
-                "properties": {
-                  "image": {
-                    "type": "string",
-                    "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"
-                  },
-                  "digest": {
-                    "type": "string",
-                    "pattern": "^sha256:[0-9a-f]{64}$"
-                  },
-                  "platforms": {
-                    "type": "array",
-                    "minItems": 1,
-                    "uniqueItems": true,
-                    "items": {
-                      "enum": [
-                        "linux/amd64",
-                        "linux/arm64"
-                      ]
-                    }
-                  }
-                }
-              },
-              "backend": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "image",
-                  "digest"
-                ],
-                "properties": {
-                  "image": {
-                    "type": "string",
-                    "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"
-                  },
-                  "digest": {
-                    "type": "string",
-                    "pattern": "^sha256:[0-9a-f]{64}$"
-                  },
-                  "platforms": {
-                    "type": "array",
-                    "minItems": 1,
-                    "uniqueItems": true,
-                    "items": {
-                      "enum": [
-                        "linux/amd64",
-                        "linux/arm64"
-                      ]
-                    }
-                  }
-                }
-              },
-              "frontend": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "image",
-                  "digest"
-                ],
-                "properties": {
-                  "image": {
-                    "type": "string",
-                    "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"
-                  },
-                  "digest": {
-                    "type": "string",
-                    "pattern": "^sha256:[0-9a-f]{64}$"
-                  },
-                  "platforms": {
-                    "type": "array",
-                    "minItems": 1,
-                    "uniqueItems": true,
-                    "items": {
-                      "enum": [
-                        "linux/amd64",
-                        "linux/arm64"
-                      ]
-                    }
-                  }
-                }
-              },
-              "fi_collector": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "image",
-                  "digest"
-                ],
-                "properties": {
-                  "image": {
-                    "type": "string",
-                    "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"
-                  },
-                  "digest": {
-                    "type": "string",
-                    "pattern": "^sha256:[0-9a-f]{64}$"
-                  },
-                  "platforms": {
-                    "type": "array",
-                    "minItems": 1,
-                    "uniqueItems": true,
-                    "items": {
-                      "enum": [
-                        "linux/amd64",
-                        "linux/arm64"
-                      ]
-                    }
-                  }
-                }
-              },
-              "agentcc_gateway": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "image",
-                  "digest"
-                ],
-                "properties": {
-                  "image": {
-                    "type": "string",
-                    "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"
-                  },
-                  "digest": {
-                    "type": "string",
-                    "pattern": "^sha256:[0-9a-f]{64}$"
-                  },
-                  "platforms": {
-                    "type": "array",
-                    "minItems": 1,
-                    "uniqueItems": true,
-                    "items": {
-                      "enum": [
-                        "linux/amd64",
-                        "linux/arm64"
-                      ]
-                    }
-                  }
-                }
-              },
-              "serving": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "image",
-                  "digest"
-                ],
-                "properties": {
-                  "image": {
-                    "type": "string",
-                    "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"
-                  },
-                  "digest": {
-                    "type": "string",
-                    "pattern": "^sha256:[0-9a-f]{64}$"
-                  },
-                  "platforms": {
-                    "type": "array",
-                    "minItems": 1,
-                    "uniqueItems": true,
-                    "items": {
-                      "enum": [
-                        "linux/amd64",
-                        "linux/arm64"
-                      ]
-                    }
-                  }
-                }
-              },
-              "serving_gpu": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "image",
-                  "digest"
-                ],
-                "properties": {
-                  "image": {
-                    "type": "string",
-                    "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"
-                  },
-                  "digest": {
-                    "type": "string",
-                    "pattern": "^sha256:[0-9a-f]{64}$"
-                  },
-                  "platforms": {
-                    "type": "array",
-                    "minItems": 1,
-                    "uniqueItems": true,
-                    "items": {
-                      "enum": [
-                        "linux/amd64",
-                        "linux/arm64"
-                      ]
-                    }
-                  }
-                }
-              },
-              "code_executor": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "image",
-                  "digest"
-                ],
-                "properties": {
-                  "image": {
-                    "type": "string",
-                    "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"
-                  },
-                  "digest": {
-                    "type": "string",
-                    "pattern": "^sha256:[0-9a-f]{64}$"
-                  },
-                  "platforms": {
-                    "type": "array",
-                    "minItems": 1,
-                    "uniqueItems": true,
-                    "items": {
-                      "enum": [
-                        "linux/amd64",
-                        "linux/arm64"
-                      ]
-                    }
-                  }
-                }
-              },
-              "simulation_runner": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "image",
-                  "digest"
-                ],
-                "properties": {
-                  "image": {
-                    "type": "string",
-                    "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"
-                  },
-                  "digest": {
-                    "type": "string",
-                    "pattern": "^sha256:[0-9a-f]{64}$"
-                  },
-                  "platforms": {
-                    "type": "array",
-                    "minItems": 1,
-                    "uniqueItems": true,
-                    "items": {
-                      "enum": [
-                        "linux/amd64",
-                        "linux/arm64"
-                      ]
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "predecessor_deployment": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "files"
-            ],
-            "properties": {
-              "files": {
-                "type": "object",
-                "minProperties": 1,
-                "propertyNames": {
-                  "description": "A normalized path relative to the checkout: no leading /, no backslash, no empty, . or .. segment, no surrounding whitespace.",
-                  "pattern": "^(?=\\S)(?:(?!\\.\\.?/)[^/\\\\]+/)*(?!\\.\\.?$)[^/\\\\]*[^/\\\\\\s]$"
-                },
-                "additionalProperties": {
-                  "type": "string",
-                  "pattern": "^[0-9a-f]{64}$"
-                },
-                "maxProperties": 1024
-              }
-            }
-          },
-          "persistence": {
-            "type": "object",
-            "minProperties": 1,
-            "maxProperties": 10,
-            "propertyNames": {
-              "enum": [
-                "postgres_app",
-                "clickhouse",
-                "object_store",
-                "temporal",
-                "peerdb_catalog",
-                "peerdb_temporal",
-                "peerdb_objects",
-                "redis",
-                "kafka_catalog",
-                "shared_files"
-              ]
-            },
-            "additionalProperties": {
-              "type": "boolean"
-            }
-          },
-          "dependencies": {
-            "type": "array",
-            "items": {
+            "standalone": {
               "type": "object",
               "additionalProperties": false,
               "required": [
-                "service",
                 "image",
                 "digest"
               ],
               "properties": {
-                "service": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 64,
-                  "pattern": "^[a-z][a-z0-9-]*$"
-                },
                 "image": {
                   "type": "string",
-                  "minLength": 1,
-                  "maxLength": 512,
-                  "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"
+                  "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
                 },
                 "digest": {
                   "type": "string",
-                  "pattern": "^sha256:[0-9a-f]{64}$"
+                  "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                },
+                "platforms": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {
+                    "enum": [
+                      "linux/amd64",
+                      "linux/arm64"
+                    ]
+                  }
                 }
               }
             },
-            "minItems": 1,
-            "maxItems": 64,
-            "uniqueItems": true
-          },
-          "suites": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "no_migrations",
-              "bidirectional_read_write",
-              "interruption_fallback",
-              "readiness_failure_fallback",
-              "backup_restore"
-            ],
-            "properties": {
-              "no_migrations": {
-                "type": "string",
-                "enum": [
-                  "passed",
-                  "failed",
-                  "skipped",
-                  "unknown"
-                ]
-              },
-              "bidirectional_read_write": {
-                "type": "string",
-                "enum": [
-                  "passed",
-                  "failed",
-                  "skipped",
-                  "unknown"
-                ]
-              },
-              "interruption_fallback": {
-                "type": "string",
-                "enum": [
-                  "passed",
-                  "failed",
-                  "skipped",
-                  "unknown"
-                ]
-              },
-              "readiness_failure_fallback": {
-                "type": "string",
-                "enum": [
-                  "passed",
-                  "failed",
-                  "skipped",
-                  "unknown"
-                ]
-              },
-              "backup_restore": {
-                "type": "string",
-                "enum": [
-                  "passed",
-                  "failed",
-                  "skipped",
-                  "unknown"
-                ]
+            "backend": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "image",
+                "digest"
+              ],
+              "properties": {
+                "image": {
+                  "type": "string",
+                  "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                },
+                "platforms": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {
+                    "enum": [
+                      "linux/amd64",
+                      "linux/arm64"
+                    ]
+                  }
+                }
+              }
+            },
+            "frontend": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "image",
+                "digest"
+              ],
+              "properties": {
+                "image": {
+                  "type": "string",
+                  "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                },
+                "platforms": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {
+                    "enum": [
+                      "linux/amd64",
+                      "linux/arm64"
+                    ]
+                  }
+                }
+              }
+            },
+            "fi_collector": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "image",
+                "digest"
+              ],
+              "properties": {
+                "image": {
+                  "type": "string",
+                  "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                },
+                "platforms": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {
+                    "enum": [
+                      "linux/amd64",
+                      "linux/arm64"
+                    ]
+                  }
+                }
+              }
+            },
+            "agentcc_gateway": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "image",
+                "digest"
+              ],
+              "properties": {
+                "image": {
+                  "type": "string",
+                  "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                },
+                "platforms": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {
+                    "enum": [
+                      "linux/amd64",
+                      "linux/arm64"
+                    ]
+                  }
+                }
+              }
+            },
+            "serving": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "image",
+                "digest"
+              ],
+              "properties": {
+                "image": {
+                  "type": "string",
+                  "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                },
+                "platforms": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {
+                    "enum": [
+                      "linux/amd64",
+                      "linux/arm64"
+                    ]
+                  }
+                }
+              }
+            },
+            "serving_gpu": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "image",
+                "digest"
+              ],
+              "properties": {
+                "image": {
+                  "type": "string",
+                  "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                },
+                "platforms": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {
+                    "enum": [
+                      "linux/amd64",
+                      "linux/arm64"
+                    ]
+                  }
+                }
+              }
+            },
+            "code_executor": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "image",
+                "digest"
+              ],
+              "properties": {
+                "image": {
+                  "type": "string",
+                  "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                },
+                "platforms": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {
+                    "enum": [
+                      "linux/amd64",
+                      "linux/arm64"
+                    ]
+                  }
+                }
+              }
+            },
+            "simulation_runner": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "image",
+                "digest"
+              ],
+              "properties": {
+                "image": {
+                  "type": "string",
+                  "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                },
+                "platforms": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {
+                    "enum": [
+                      "linux/amd64",
+                      "linux/arm64"
+                    ]
+                  }
+                }
               }
             }
           }
+        },
+        "deployment": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "files"
+          ],
+          "properties": {
+            "files": {
+              "type": "object",
+              "minProperties": 1,
+              "propertyNames": {
+                "description": "A normalized path relative to the checkout: no leading /, no backslash, no empty, . or .. segment, no surrounding whitespace.",
+                "pattern": "^(?=\\S)(?:(?!\\.\\.?/)[^/\\\\]+/)*(?!\\.\\.?$)[^/\\\\]*[^/\\\\\\s](?![\\s\\S])$"
+              },
+              "additionalProperties": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+              },
+              "maxProperties": 1024
+            }
+          }
+        },
+        "state_domains": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "domain",
+              "from_epoch",
+              "to_epoch",
+              "backward_read",
+              "backward_write"
+            ],
+            "properties": {
+              "domain": {
+                "type": "string",
+                "enum": [
+                  "postgres_app",
+                  "clickhouse",
+                  "object_store",
+                  "temporal",
+                  "peerdb_catalog",
+                  "peerdb_temporal",
+                  "peerdb_objects",
+                  "redis",
+                  "kafka_catalog",
+                  "shared_files",
+                  "component_protocols"
+                ]
+              },
+              "from_epoch": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 2147483647
+              },
+              "to_epoch": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 2147483647
+              },
+              "backward_read": {
+                "type": "boolean"
+              },
+              "backward_write": {
+                "type": "boolean"
+              }
+            }
+          },
+          "minItems": 0,
+          "maxItems": 11
+        },
+        "predecessors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "predecessor",
+              "predecessor_components",
+              "predecessor_deployment",
+              "persistence",
+              "dependencies",
+              "suites"
+            ],
+            "properties": {
+              "predecessor": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "version",
+                  "manifest_hash",
+                  "raw_manifest_sha256",
+                  "source_sha",
+                  "mode",
+                  "platform",
+                  "profiles",
+                  "active_components",
+                  "rollback_certified"
+                ],
+                "properties": {
+                  "version": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?(?![\\s\\S])$"
+                  },
+                  "manifest_hash": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+                  },
+                  "raw_manifest_sha256": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+                  },
+                  "source_sha": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 40,
+                    "pattern": "^[0-9a-f]{40}(?![\\s\\S])$"
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "standalone",
+                      "distributed"
+                    ]
+                  },
+                  "platform": {
+                    "type": "string",
+                    "enum": [
+                      "linux/amd64",
+                      "linux/arm64"
+                    ]
+                  },
+                  "profiles": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*(?![\\s\\S])$"
+                    },
+                    "minItems": 0,
+                    "maxItems": 32,
+                    "uniqueItems": true
+                  },
+                  "active_components": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "standalone",
+                        "backend",
+                        "frontend",
+                        "fi_collector",
+                        "agentcc_gateway",
+                        "serving",
+                        "serving_gpu",
+                        "code_executor",
+                        "simulation_runner"
+                      ]
+                    },
+                    "minItems": 1,
+                    "maxItems": 9,
+                    "uniqueItems": true
+                  },
+                  "rollback_certified": {
+                    "type": "boolean"
+                  }
+                }
+              },
+              "predecessor_components": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "standalone",
+                  "backend",
+                  "frontend",
+                  "fi_collector",
+                  "agentcc_gateway",
+                  "serving",
+                  "serving_gpu",
+                  "code_executor",
+                  "simulation_runner"
+                ],
+                "properties": {
+                  "standalone": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "image",
+                      "digest"
+                    ],
+                    "properties": {
+                      "image": {
+                        "type": "string",
+                        "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                      },
+                      "digest": {
+                        "type": "string",
+                        "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                      },
+                      "platforms": {
+                        "type": "array",
+                        "minItems": 1,
+                        "uniqueItems": true,
+                        "items": {
+                          "enum": [
+                            "linux/amd64",
+                            "linux/arm64"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "backend": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "image",
+                      "digest"
+                    ],
+                    "properties": {
+                      "image": {
+                        "type": "string",
+                        "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                      },
+                      "digest": {
+                        "type": "string",
+                        "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                      },
+                      "platforms": {
+                        "type": "array",
+                        "minItems": 1,
+                        "uniqueItems": true,
+                        "items": {
+                          "enum": [
+                            "linux/amd64",
+                            "linux/arm64"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "frontend": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "image",
+                      "digest"
+                    ],
+                    "properties": {
+                      "image": {
+                        "type": "string",
+                        "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                      },
+                      "digest": {
+                        "type": "string",
+                        "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                      },
+                      "platforms": {
+                        "type": "array",
+                        "minItems": 1,
+                        "uniqueItems": true,
+                        "items": {
+                          "enum": [
+                            "linux/amd64",
+                            "linux/arm64"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "fi_collector": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "image",
+                      "digest"
+                    ],
+                    "properties": {
+                      "image": {
+                        "type": "string",
+                        "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                      },
+                      "digest": {
+                        "type": "string",
+                        "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                      },
+                      "platforms": {
+                        "type": "array",
+                        "minItems": 1,
+                        "uniqueItems": true,
+                        "items": {
+                          "enum": [
+                            "linux/amd64",
+                            "linux/arm64"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "agentcc_gateway": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "image",
+                      "digest"
+                    ],
+                    "properties": {
+                      "image": {
+                        "type": "string",
+                        "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                      },
+                      "digest": {
+                        "type": "string",
+                        "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                      },
+                      "platforms": {
+                        "type": "array",
+                        "minItems": 1,
+                        "uniqueItems": true,
+                        "items": {
+                          "enum": [
+                            "linux/amd64",
+                            "linux/arm64"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "serving": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "image",
+                      "digest"
+                    ],
+                    "properties": {
+                      "image": {
+                        "type": "string",
+                        "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                      },
+                      "digest": {
+                        "type": "string",
+                        "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                      },
+                      "platforms": {
+                        "type": "array",
+                        "minItems": 1,
+                        "uniqueItems": true,
+                        "items": {
+                          "enum": [
+                            "linux/amd64",
+                            "linux/arm64"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "serving_gpu": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "image",
+                      "digest"
+                    ],
+                    "properties": {
+                      "image": {
+                        "type": "string",
+                        "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                      },
+                      "digest": {
+                        "type": "string",
+                        "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                      },
+                      "platforms": {
+                        "type": "array",
+                        "minItems": 1,
+                        "uniqueItems": true,
+                        "items": {
+                          "enum": [
+                            "linux/amd64",
+                            "linux/arm64"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "code_executor": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "image",
+                      "digest"
+                    ],
+                    "properties": {
+                      "image": {
+                        "type": "string",
+                        "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                      },
+                      "digest": {
+                        "type": "string",
+                        "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                      },
+                      "platforms": {
+                        "type": "array",
+                        "minItems": 1,
+                        "uniqueItems": true,
+                        "items": {
+                          "enum": [
+                            "linux/amd64",
+                            "linux/arm64"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "simulation_runner": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "image",
+                      "digest"
+                    ],
+                    "properties": {
+                      "image": {
+                        "type": "string",
+                        "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                      },
+                      "digest": {
+                        "type": "string",
+                        "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                      },
+                      "platforms": {
+                        "type": "array",
+                        "minItems": 1,
+                        "uniqueItems": true,
+                        "items": {
+                          "enum": [
+                            "linux/amd64",
+                            "linux/arm64"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "predecessor_deployment": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "files"
+                ],
+                "properties": {
+                  "files": {
+                    "type": "object",
+                    "minProperties": 1,
+                    "propertyNames": {
+                      "description": "A normalized path relative to the checkout: no leading /, no backslash, no empty, . or .. segment, no surrounding whitespace.",
+                      "pattern": "^(?=\\S)(?:(?!\\.\\.?/)[^/\\\\]+/)*(?!\\.\\.?$)[^/\\\\]*[^/\\\\\\s](?![\\s\\S])$"
+                    },
+                    "additionalProperties": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+                    },
+                    "maxProperties": 1024
+                  }
+                }
+              },
+              "persistence": {
+                "type": "object",
+                "minProperties": 1,
+                "maxProperties": 10,
+                "propertyNames": {
+                  "enum": [
+                    "postgres_app",
+                    "clickhouse",
+                    "object_store",
+                    "temporal",
+                    "peerdb_catalog",
+                    "peerdb_temporal",
+                    "peerdb_objects",
+                    "redis",
+                    "kafka_catalog",
+                    "shared_files"
+                  ]
+                },
+                "additionalProperties": {
+                  "type": "boolean"
+                }
+              },
+              "dependencies": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "service",
+                    "image",
+                    "digest"
+                  ],
+                  "properties": {
+                    "service": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[a-z][a-z0-9-]*(?![\\s\\S])$"
+                    },
+                    "image": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512,
+                      "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                    },
+                    "digest": {
+                      "type": "string",
+                      "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                    }
+                  }
+                },
+                "minItems": 1,
+                "maxItems": 64,
+                "uniqueItems": true
+              },
+              "suites": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "no_migrations",
+                  "bidirectional_read_write",
+                  "interruption_fallback",
+                  "readiness_failure_fallback",
+                  "backup_restore"
+                ],
+                "properties": {
+                  "no_migrations": {
+                    "type": "string",
+                    "enum": [
+                      "passed",
+                      "failed",
+                      "skipped",
+                      "unknown"
+                    ]
+                  },
+                  "bidirectional_read_write": {
+                    "type": "string",
+                    "enum": [
+                      "passed",
+                      "failed",
+                      "skipped",
+                      "unknown"
+                    ]
+                  },
+                  "interruption_fallback": {
+                    "type": "string",
+                    "enum": [
+                      "passed",
+                      "failed",
+                      "skipped",
+                      "unknown"
+                    ]
+                  },
+                  "readiness_failure_fallback": {
+                    "type": "string",
+                    "enum": [
+                      "passed",
+                      "failed",
+                      "skipped",
+                      "unknown"
+                    ]
+                  },
+                  "backup_restore": {
+                    "type": "string",
+                    "enum": [
+                      "passed",
+                      "failed",
+                      "skipped",
+                      "unknown"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true
         }
-      },
-      "minItems": 1,
-      "maxItems": 64,
-      "uniqueItems": true
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "inputs_hash",
+        "tag",
+        "source_sha",
+        "repository",
+        "run_id",
+        "components",
+        "deployment",
+        "predecessors",
+        "qualification_policy",
+        "restore_procedure_id",
+        "backup_inventory_version",
+        "host_observation_contract",
+        "runtime_activation_contract"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "integer",
+          "const": 2
+        },
+        "inputs_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+        },
+        "tag": {
+          "type": "string",
+          "pattern": "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?(?![\\s\\S])$"
+        },
+        "source_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}(?![\\s\\S])$"
+        },
+        "repository": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 200,
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?![\\s\\S])$"
+        },
+        "run_id": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "components": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "standalone",
+            "backend",
+            "frontend",
+            "fi_collector",
+            "agentcc_gateway",
+            "serving",
+            "serving_gpu",
+            "code_executor",
+            "simulation_runner"
+          ],
+          "properties": {
+            "standalone": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "image",
+                "digest"
+              ],
+              "properties": {
+                "image": {
+                  "type": "string",
+                  "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                },
+                "platforms": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {
+                    "enum": [
+                      "linux/amd64",
+                      "linux/arm64"
+                    ]
+                  }
+                }
+              }
+            },
+            "backend": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "image",
+                "digest"
+              ],
+              "properties": {
+                "image": {
+                  "type": "string",
+                  "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                },
+                "platforms": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {
+                    "enum": [
+                      "linux/amd64",
+                      "linux/arm64"
+                    ]
+                  }
+                }
+              }
+            },
+            "frontend": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "image",
+                "digest"
+              ],
+              "properties": {
+                "image": {
+                  "type": "string",
+                  "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                },
+                "platforms": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {
+                    "enum": [
+                      "linux/amd64",
+                      "linux/arm64"
+                    ]
+                  }
+                }
+              }
+            },
+            "fi_collector": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "image",
+                "digest"
+              ],
+              "properties": {
+                "image": {
+                  "type": "string",
+                  "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                },
+                "platforms": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {
+                    "enum": [
+                      "linux/amd64",
+                      "linux/arm64"
+                    ]
+                  }
+                }
+              }
+            },
+            "agentcc_gateway": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "image",
+                "digest"
+              ],
+              "properties": {
+                "image": {
+                  "type": "string",
+                  "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                },
+                "platforms": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {
+                    "enum": [
+                      "linux/amd64",
+                      "linux/arm64"
+                    ]
+                  }
+                }
+              }
+            },
+            "serving": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "image",
+                "digest"
+              ],
+              "properties": {
+                "image": {
+                  "type": "string",
+                  "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                },
+                "platforms": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {
+                    "enum": [
+                      "linux/amd64",
+                      "linux/arm64"
+                    ]
+                  }
+                }
+              }
+            },
+            "serving_gpu": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "image",
+                "digest"
+              ],
+              "properties": {
+                "image": {
+                  "type": "string",
+                  "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                },
+                "platforms": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {
+                    "enum": [
+                      "linux/amd64",
+                      "linux/arm64"
+                    ]
+                  }
+                }
+              }
+            },
+            "code_executor": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "image",
+                "digest"
+              ],
+              "properties": {
+                "image": {
+                  "type": "string",
+                  "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                },
+                "platforms": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {
+                    "enum": [
+                      "linux/amd64",
+                      "linux/arm64"
+                    ]
+                  }
+                }
+              }
+            },
+            "simulation_runner": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "image",
+                "digest"
+              ],
+              "properties": {
+                "image": {
+                  "type": "string",
+                  "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                },
+                "platforms": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {
+                    "enum": [
+                      "linux/amd64",
+                      "linux/arm64"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "deployment": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "files"
+          ],
+          "properties": {
+            "files": {
+              "type": "object",
+              "minProperties": 1,
+              "propertyNames": {
+                "description": "A normalized path relative to the checkout: no leading /, no backslash, no empty, . or .. segment, no surrounding whitespace.",
+                "pattern": "^(?=\\S)(?:(?!\\.\\.?/)[^/\\\\]+/)*(?!\\.\\.?$)[^/\\\\]*[^/\\\\\\s](?![\\s\\S])$"
+              },
+              "additionalProperties": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+              },
+              "maxProperties": 1024
+            }
+          }
+        },
+        "predecessors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "predecessor",
+              "predecessor_components",
+              "predecessor_deployment",
+              "persistence",
+              "dependencies",
+              "suites",
+              "execution_deployment",
+              "migration_evidence",
+              "persistent_coverage",
+              "executor_sha256",
+              "evidence_inventory_sha256",
+              "migration_measurements",
+              "backup_measurement",
+              "restore_measurement"
+            ],
+            "properties": {
+              "predecessor": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "version",
+                  "manifest_hash",
+                  "raw_manifest_sha256",
+                  "source_sha",
+                  "mode",
+                  "platform",
+                  "profiles",
+                  "active_components",
+                  "restore_certified",
+                  "execution_deployment_hash"
+                ],
+                "properties": {
+                  "version": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?(?![\\s\\S])$"
+                  },
+                  "manifest_hash": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+                  },
+                  "raw_manifest_sha256": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+                  },
+                  "source_sha": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 40,
+                    "pattern": "^[0-9a-f]{40}(?![\\s\\S])$"
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "standalone",
+                      "distributed"
+                    ]
+                  },
+                  "platform": {
+                    "type": "string",
+                    "enum": [
+                      "linux/amd64",
+                      "linux/arm64"
+                    ]
+                  },
+                  "profiles": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*(?![\\s\\S])$"
+                    },
+                    "minItems": 0,
+                    "maxItems": 32,
+                    "uniqueItems": true
+                  },
+                  "active_components": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "standalone",
+                        "backend",
+                        "frontend",
+                        "fi_collector",
+                        "agentcc_gateway",
+                        "serving",
+                        "serving_gpu",
+                        "code_executor",
+                        "simulation_runner"
+                      ]
+                    },
+                    "minItems": 1,
+                    "maxItems": 9,
+                    "uniqueItems": true
+                  },
+                  "restore_certified": {
+                    "type": "boolean"
+                  },
+                  "execution_deployment_hash": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+                  }
+                }
+              },
+              "predecessor_components": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "standalone",
+                  "backend",
+                  "frontend",
+                  "fi_collector",
+                  "agentcc_gateway",
+                  "serving",
+                  "serving_gpu",
+                  "code_executor",
+                  "simulation_runner"
+                ],
+                "properties": {
+                  "standalone": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "image",
+                      "digest"
+                    ],
+                    "properties": {
+                      "image": {
+                        "type": "string",
+                        "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                      },
+                      "digest": {
+                        "type": "string",
+                        "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                      },
+                      "platforms": {
+                        "type": "array",
+                        "minItems": 1,
+                        "uniqueItems": true,
+                        "items": {
+                          "enum": [
+                            "linux/amd64",
+                            "linux/arm64"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "backend": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "image",
+                      "digest"
+                    ],
+                    "properties": {
+                      "image": {
+                        "type": "string",
+                        "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                      },
+                      "digest": {
+                        "type": "string",
+                        "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                      },
+                      "platforms": {
+                        "type": "array",
+                        "minItems": 1,
+                        "uniqueItems": true,
+                        "items": {
+                          "enum": [
+                            "linux/amd64",
+                            "linux/arm64"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "frontend": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "image",
+                      "digest"
+                    ],
+                    "properties": {
+                      "image": {
+                        "type": "string",
+                        "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                      },
+                      "digest": {
+                        "type": "string",
+                        "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                      },
+                      "platforms": {
+                        "type": "array",
+                        "minItems": 1,
+                        "uniqueItems": true,
+                        "items": {
+                          "enum": [
+                            "linux/amd64",
+                            "linux/arm64"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "fi_collector": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "image",
+                      "digest"
+                    ],
+                    "properties": {
+                      "image": {
+                        "type": "string",
+                        "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                      },
+                      "digest": {
+                        "type": "string",
+                        "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                      },
+                      "platforms": {
+                        "type": "array",
+                        "minItems": 1,
+                        "uniqueItems": true,
+                        "items": {
+                          "enum": [
+                            "linux/amd64",
+                            "linux/arm64"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "agentcc_gateway": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "image",
+                      "digest"
+                    ],
+                    "properties": {
+                      "image": {
+                        "type": "string",
+                        "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                      },
+                      "digest": {
+                        "type": "string",
+                        "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                      },
+                      "platforms": {
+                        "type": "array",
+                        "minItems": 1,
+                        "uniqueItems": true,
+                        "items": {
+                          "enum": [
+                            "linux/amd64",
+                            "linux/arm64"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "serving": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "image",
+                      "digest"
+                    ],
+                    "properties": {
+                      "image": {
+                        "type": "string",
+                        "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                      },
+                      "digest": {
+                        "type": "string",
+                        "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                      },
+                      "platforms": {
+                        "type": "array",
+                        "minItems": 1,
+                        "uniqueItems": true,
+                        "items": {
+                          "enum": [
+                            "linux/amd64",
+                            "linux/arm64"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "serving_gpu": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "image",
+                      "digest"
+                    ],
+                    "properties": {
+                      "image": {
+                        "type": "string",
+                        "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                      },
+                      "digest": {
+                        "type": "string",
+                        "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                      },
+                      "platforms": {
+                        "type": "array",
+                        "minItems": 1,
+                        "uniqueItems": true,
+                        "items": {
+                          "enum": [
+                            "linux/amd64",
+                            "linux/arm64"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "code_executor": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "image",
+                      "digest"
+                    ],
+                    "properties": {
+                      "image": {
+                        "type": "string",
+                        "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                      },
+                      "digest": {
+                        "type": "string",
+                        "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                      },
+                      "platforms": {
+                        "type": "array",
+                        "minItems": 1,
+                        "uniqueItems": true,
+                        "items": {
+                          "enum": [
+                            "linux/amd64",
+                            "linux/arm64"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "simulation_runner": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "image",
+                      "digest"
+                    ],
+                    "properties": {
+                      "image": {
+                        "type": "string",
+                        "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                      },
+                      "digest": {
+                        "type": "string",
+                        "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                      },
+                      "platforms": {
+                        "type": "array",
+                        "minItems": 1,
+                        "uniqueItems": true,
+                        "items": {
+                          "enum": [
+                            "linux/amd64",
+                            "linux/arm64"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "predecessor_deployment": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "files"
+                ],
+                "properties": {
+                  "files": {
+                    "type": "object",
+                    "minProperties": 1,
+                    "propertyNames": {
+                      "description": "A normalized path relative to the checkout: no leading /, no backslash, no empty, . or .. segment, no surrounding whitespace.",
+                      "pattern": "^(?=\\S)(?:(?!\\.\\.?/)[^/\\\\]+/)*(?!\\.\\.?$)[^/\\\\]*[^/\\\\\\s](?![\\s\\S])$"
+                    },
+                    "additionalProperties": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+                    },
+                    "maxProperties": 1024
+                  }
+                }
+              },
+              "persistence": {
+                "type": "object",
+                "minProperties": 1,
+                "maxProperties": 10,
+                "propertyNames": {
+                  "enum": [
+                    "postgres_app",
+                    "clickhouse",
+                    "object_store",
+                    "temporal",
+                    "peerdb_catalog",
+                    "peerdb_temporal",
+                    "peerdb_objects",
+                    "redis",
+                    "kafka_catalog",
+                    "shared_files"
+                  ]
+                },
+                "additionalProperties": {
+                  "type": "boolean"
+                }
+              },
+              "dependencies": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "service",
+                    "image",
+                    "digest"
+                  ],
+                  "properties": {
+                    "service": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[a-z][a-z0-9-]*(?![\\s\\S])$"
+                    },
+                    "image": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512,
+                      "pattern": "^[^@\\s]+:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?![\\s\\S])$"
+                    },
+                    "digest": {
+                      "type": "string",
+                      "pattern": "^sha256:[0-9a-f]{64}(?![\\s\\S])$"
+                    }
+                  }
+                },
+                "minItems": 1,
+                "maxItems": 64,
+                "uniqueItems": true
+              },
+              "suites": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "source_snapshot",
+                  "migration_forward",
+                  "target_readiness",
+                  "failure_restore",
+                  "interruption_restore",
+                  "backup_integrity"
+                ],
+                "properties": {
+                  "source_snapshot": {
+                    "type": "string",
+                    "enum": [
+                      "passed",
+                      "failed",
+                      "skipped",
+                      "unknown"
+                    ]
+                  },
+                  "migration_forward": {
+                    "type": "string",
+                    "enum": [
+                      "passed",
+                      "failed",
+                      "skipped",
+                      "unknown"
+                    ]
+                  },
+                  "target_readiness": {
+                    "type": "string",
+                    "enum": [
+                      "passed",
+                      "failed",
+                      "skipped",
+                      "unknown"
+                    ]
+                  },
+                  "failure_restore": {
+                    "type": "string",
+                    "enum": [
+                      "passed",
+                      "failed",
+                      "skipped",
+                      "unknown"
+                    ]
+                  },
+                  "interruption_restore": {
+                    "type": "string",
+                    "enum": [
+                      "passed",
+                      "failed",
+                      "skipped",
+                      "unknown"
+                    ]
+                  },
+                  "backup_integrity": {
+                    "type": "string",
+                    "enum": [
+                      "passed",
+                      "failed",
+                      "skipped",
+                      "unknown"
+                    ]
+                  }
+                }
+              },
+              "execution_deployment": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "files"
+                ],
+                "properties": {
+                  "files": {
+                    "type": "object",
+                    "minProperties": 1,
+                    "propertyNames": {
+                      "description": "A normalized path relative to the checkout: no leading /, no backslash, no empty, . or .. segment, no surrounding whitespace.",
+                      "pattern": "^(?=\\S)(?:(?!\\.\\.?/)[^/\\\\]+/)*(?!\\.\\.?$)[^/\\\\]*[^/\\\\\\s](?![\\s\\S])$"
+                    },
+                    "additionalProperties": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+                    },
+                    "maxProperties": 1024
+                  }
+                }
+              },
+              "migration_evidence": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "source_inventory_sha256",
+                  "target_inventory_sha256",
+                  "source_applied_set_sha256",
+                  "target_applied_set_sha256",
+                  "active_app_mapping_sha256",
+                  "target_pending_plan_sha256",
+                  "target_pending_plan_count",
+                  "migration_handling"
+                ],
+                "properties": {
+                  "source_inventory_sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+                  },
+                  "target_inventory_sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+                  },
+                  "source_applied_set_sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+                  },
+                  "target_applied_set_sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+                  },
+                  "active_app_mapping_sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+                  },
+                  "target_pending_plan_sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+                  },
+                  "target_pending_plan_count": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100000
+                  },
+                  "migration_handling": {
+                    "type": "string",
+                    "const": "standalone_bootstrap"
+                  }
+                }
+              },
+              "persistent_coverage": {
+                "type": "array",
+                "items": {
+                  "enum": [
+                    "postgres_app",
+                    "clickhouse",
+                    "object_store",
+                    "temporal",
+                    "shared_files"
+                  ]
+                },
+                "minItems": 5,
+                "maxItems": 5,
+                "uniqueItems": true
+              },
+              "executor_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+              },
+              "evidence_inventory_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+              },
+              "migration_measurements": {
+                "type": "array",
+                "minItems": 0,
+                "maxItems": 100000,
+                "uniqueItems": true,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "app_label",
+                    "name",
+                    "engine",
+                    "tables",
+                    "risk_class",
+                    "duration_seconds",
+                    "throughput",
+                    "peak_disk_amplification_factor",
+                    "wal_bytes",
+                    "temp_bytes"
+                  ],
+                  "properties": {
+                    "app_label": {
+                      "type": "string",
+                      "maxLength": 128,
+                      "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}(?![\\s\\S])$"
+                    },
+                    "name": {
+                      "type": "string",
+                      "maxLength": 128,
+                      "pattern": "^[A-Za-z0-9_]{1,128}(?![\\s\\S])$"
+                    },
+                    "engine": {
+                      "enum": [
+                        "postgres",
+                        "clickhouse"
+                      ]
+                    },
+                    "tables": {
+                      "type": "array",
+                      "maxItems": 256,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "table",
+                          "reference_rows",
+                          "reference_bytes"
+                        ],
+                        "properties": {
+                          "table": {
+                            "type": "string",
+                            "maxLength": 129,
+                            "pattern": "^[a-z_][a-z0-9_]{0,63}\\.[a-z_][a-z0-9_]{0,63}(?![\\s\\S])$"
+                          },
+                          "reference_rows": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "reference_bytes": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        }
+                      }
+                    },
+                    "risk_class": {
+                      "enum": [
+                        "metadata_only",
+                        "scan",
+                        "rewrite",
+                        "index_build",
+                        "data_backfill",
+                        "other"
+                      ]
+                    },
+                    "duration_seconds": {
+                      "type": "number",
+                      "exclusiveMinimum": 0,
+                      "maximum": 1e+18
+                    },
+                    "throughput": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "unit",
+                        "value"
+                      ],
+                      "properties": {
+                        "unit": {
+                          "enum": [
+                            "rows_per_second",
+                            "bytes_per_second"
+                          ]
+                        },
+                        "value": {
+                          "type": "number",
+                          "exclusiveMinimum": 0,
+                          "maximum": 1e+18
+                        }
+                      }
+                    },
+                    "peak_disk_amplification_factor": {
+                      "type": "number",
+                      "minimum": 1,
+                      "maximum": 1000000.0
+                    },
+                    "wal_bytes": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "temp_bytes": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "allOf": [
+                    {
+                      "if": {
+                        "properties": {
+                          "risk_class": {
+                            "enum": [
+                              "scan",
+                              "rewrite",
+                              "index_build",
+                              "data_backfill"
+                            ]
+                          }
+                        }
+                      },
+                      "then": {
+                        "properties": {
+                          "tables": {
+                            "minItems": 1
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "backup_measurement": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "reference_volume_bytes",
+                  "throughput_bytes_per_second"
+                ],
+                "properties": {
+                  "reference_volume_bytes": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "app-data",
+                      "postgres-data",
+                      "clickhouse-data"
+                    ],
+                    "properties": {
+                      "app-data": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "postgres-data": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "clickhouse-data": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "anyOf": [
+                      {
+                        "properties": {
+                          "app-data": {
+                            "minimum": 1
+                          }
+                        }
+                      },
+                      {
+                        "properties": {
+                          "postgres-data": {
+                            "minimum": 1
+                          }
+                        }
+                      },
+                      {
+                        "properties": {
+                          "clickhouse-data": {
+                            "minimum": 1
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "throughput_bytes_per_second": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 1e+18
+                  }
+                }
+              },
+              "restore_measurement": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "reference_volume_bytes",
+                  "throughput_bytes_per_second"
+                ],
+                "properties": {
+                  "reference_volume_bytes": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "app-data",
+                      "postgres-data",
+                      "clickhouse-data"
+                    ],
+                    "properties": {
+                      "app-data": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "postgres-data": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "clickhouse-data": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "anyOf": [
+                      {
+                        "properties": {
+                          "app-data": {
+                            "minimum": 1
+                          }
+                        }
+                      },
+                      {
+                        "properties": {
+                          "postgres-data": {
+                            "minimum": 1
+                          }
+                        }
+                      },
+                      {
+                        "properties": {
+                          "clickhouse-data": {
+                            "minimum": 1
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "throughput_bytes_per_second": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 1e+18
+                  }
+                }
+              }
+            }
+          },
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true
+        },
+        "qualification_policy": {
+          "type": "string",
+          "const": "standalone-cold-restore-v1"
+        },
+        "restore_procedure_id": {
+          "type": "string",
+          "const": "standalone-inplace-cold-restore-v1"
+        },
+        "backup_inventory_version": {
+          "type": "integer",
+          "const": 2
+        },
+        "host_observation_contract": {
+          "type": "string",
+          "const": "standalone-runtime-v2"
+        },
+        "runtime_activation_contract": {
+          "type": "string",
+          "const": "standalone-compose-direct-v1"
+        }
+      }
     }
-  },
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:futureagi:update-compatibility-proof:1",
-  "description": "Bounded 256KiB evidence pinned by signed manifest bytes; not a signature or certification by itself. Exact inputs, row coverage and passing suites are checked at runtime."
+  ]
 }

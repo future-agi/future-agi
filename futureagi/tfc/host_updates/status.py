@@ -32,6 +32,7 @@ ACTIVE_STATES = frozenset(
         "applying",
         "verifying",
         "rolling_back",
+        "restoring",
     }
 )
 COMPONENTS = (
@@ -91,6 +92,25 @@ REASONS = (
     "unsupported_installation",
     "control_invalid",
     "process_failed",
+    "restore_not_certified",
+    "transition_not_rehearsed",
+    "platform_not_rehearsed",
+    "restore_procedure_unsupported",
+    "migration_inventory_unsupported",
+    "migration_inventory_mismatch",
+    "backup_inventory_mismatch",
+    "restore_capacity_unknown",
+    "restore_capacity_insufficient",
+    "restore_child_ambiguous",
+    "restore_verification_failed",
+    "automatic_recovery_pending",
+    "restored_after_update_failure",
+    "migration_exceeds_window",
+    "insufficient_disk_for_migration",
+    "backup_exceeds_window",
+    "insufficient_disk_for_backup",
+    "migration_stalled",
+    "disk_watermark_abort",
 )
 API_REASONS = (
     "not_configured",
@@ -306,6 +326,115 @@ PUBLIC_SCHEMA = _object(
         ),
     ),
 )
+
+
+# Optional additions travel as a complete group. The first branch preserves
+# legacy/manual snapshots; the outer envelope documents all possible fields in
+# Swagger 2, with exact alternatives retained in x-anyOf by the serializer.
+# Both readers validate the complete branches and reject partial/unknown fields.
+def _extend(schema, **additions):
+    properties = {**schema["properties"], **additions}
+    legacy = {
+        **schema,
+        "properties": properties,
+        "maxProperties": len(schema["required"]),
+    }
+    complete = _object(**properties)
+    return {**complete, "required": schema["required"], "anyOf": [legacy, complete]}
+
+
+AUTOMATIC_PHASES = (
+    "attempt_reserved",
+    "quiescing",
+    "quiesced",
+    "archiving",
+    "backup_sealed",
+    "env_commit_pending",
+    "env_selected",
+    "target_create_pending",
+    "target_created",
+    "target_starting",
+    "target_verifying",
+    "success_decided",
+    "success_metadata_committed",
+    "succeeded",
+    "restore_decided",
+    "restore_quiescing",
+    "restore_quiesced",
+    "restore_inputs_verified",
+    "restoring_volumes",
+    "restore_files_verified",
+    "config_revert_pending",
+    "config_reverted",
+    "restore_data_committed",
+    "previous_create_pending",
+    "previous_created",
+    "previous_start_armed",
+    "previous_starting",
+    "previous_verifying",
+    "restore_verified",
+    "restore_metadata_committed",
+    "restored",
+    "abort_quiescence",
+    "failed_available",
+)
+RESTORE_STATES = ("not_needed", "running", "verified", "failed", "recovery_required")
+ESTIMATE_FIELDS = (
+    "backup_seconds",
+    "migration_seconds",
+    "restore_seconds",
+    "extra_disk_bytes",
+    "backup_required_free_bytes",
+    "docker_required_free_bytes",
+    "protected_restore_reserve_bytes",
+    "forward_seconds",
+    "recovery_seconds",
+    "total_seconds",
+    "migration_deadline_seconds",
+    "migration_stall_timeout_seconds",
+)
+properties = PUBLIC_SCHEMA["properties"]
+operation = properties["operation"]
+operation["properties"]["state"]["enum"] += [
+    "restoring",
+    "restored",
+    "recovery_required",
+]
+operation["properties"]["kind"]["anyOf"][0]["enum"].append("restore")
+operation["properties"]["stage"]["anyOf"][0]["enum"] += [
+    "quiescence",
+    "restore",
+    "stability",
+]
+properties["operation"] = _extend(operation, phase=_nullable(_enum(*AUTOMATIC_PHASES)))
+run = properties["last_run"]["anyOf"][0]
+properties["last_run"] = _nullable(
+    _extend(
+        run,
+        forward_result=_enum(
+            "not_started", "running", "succeeded", "failed", "interrupted"
+        ),
+        restore_result=_enum(*RESTORE_STATES),
+        effective_version=_nullable(VERSION),
+        failed_target_version=_nullable(VERSION),
+    )
+)
+safety = properties["safety"]
+safety["properties"]["backup_state"]["enum"] += ["pending", "quiescing", "sealed"]
+properties["safety"] = _extend(
+    safety,
+    fallback_strategy=_enum("restore_backup", "none"),
+    restore_state=_enum(*RESTORE_STATES),
+    snapshot_at=_nullable(TIME),
+    loss_window_start=_nullable(TIME),
+    loss_window_end=_nullable(TIME),
+    loss_window_qualification=_enum(
+        "not_applicable", "bounded", "conservative", "unknown"
+    ),
+    guidance_id=_enum("none", "inspect_host", "review_recovery"),
+    estimates=_nullable(_object(**dict.fromkeys(ESTIMATE_FIELDS, INTEGER))),
+    failed_target_version=_nullable(VERSION),
+)
 FRESHNESS = _enum("fresh", "stale", "unknown")
 RESPONSE_SCHEMA = _object(
     status={"type": "boolean", "const": True},
@@ -370,9 +499,7 @@ def _shape(value, schema):
         _require(value in schema["enum"])
     if kind == "object":
         _require(set(value) == set(schema["required"]))
-        return {
-            key: _shape(value[key], item) for key, item in schema["properties"].items()
-        }
+        return {key: _shape(value[key], schema["properties"][key]) for key in value}
     if kind == "array":
         _require(schema["minItems"] <= len(value) <= schema["maxItems"])
         if schema.get("uniqueItems"):
@@ -550,6 +677,26 @@ def _semantics(snapshot, expected_installation, now):
         )
     if operation["state"] in ACTIVE_STATES:
         _require(operation["reported_at"] is not None)
+    safety = snapshot["safety"]
+    run = snapshot["last_run"]
+    if "restore_state" in safety:
+        if safety["restore_state"] in (
+            "running",
+            "failed",
+            "recovery_required",
+        ) or operation["state"] in ("restoring", "recovery_required"):
+            _require(
+                versions["runtime_state"] == "unknown"
+                and versions["running_release"] is None
+            )
+            _require(run is None or run.get("effective_version") is None)
+        start, end = safety["loss_window_start"], safety["loss_window_end"]
+        _require(end is None or start is not None and _time(start) <= _time(end))
+        _require(
+            safety["loss_window_qualification"] != "bounded"
+            or start is not None
+            and end is not None
+        )
     observed = [
         versions["observed_at"],
         discovery["checked_at"],
@@ -562,6 +709,11 @@ def _semantics(snapshot, expected_installation, now):
     ]
     if snapshot["last_run"] is not None:
         observed.append(snapshot["last_run"]["finished_at"])
+    if "restore_state" in safety:
+        observed.extend(
+            safety[key]
+            for key in ("snapshot_at", "loss_window_start", "loss_window_end")
+        )
     _require(
         all(
             value is None or (_time(value) - generated).total_seconds() <= 300

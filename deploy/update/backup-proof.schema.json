@@ -1,68 +1,7 @@
 {
-  "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "schema_version",
-    "attempt_id",
-    "installation_fingerprint",
-    "target_manifest_hash",
-    "source_version",
-    "backup_id",
-    "started_at",
-    "completed_at",
-    "covered_domains",
-    "verification",
-    "restore_procedure_id"
-  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:futureagi:update-backup-proof:1-2",
   "properties": {
-    "schema_version": {
-      "type": "integer",
-      "const": 1
-    },
-    "attempt_id": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 32,
-      "pattern": "^[0-9a-f]{32}$"
-    },
-    "installation_fingerprint": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 64,
-      "pattern": "^[0-9a-f]{64}$"
-    },
-    "target_manifest_hash": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 64,
-      "pattern": "^[0-9a-f]{64}$"
-    },
-    "source_version": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 128,
-      "pattern": "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?$"
-    },
-    "backup_id": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 128,
-      "pattern": "^[A-Za-z0-9._-]+$"
-    },
-    "started_at": {
-      "type": "string",
-      "minLength": 20,
-      "maxLength": 20,
-      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
-      "format": "date-time"
-    },
-    "completed_at": {
-      "type": "string",
-      "minLength": 20,
-      "maxLength": 20,
-      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
-      "format": "date-time"
-    },
     "covered_domains": {
       "type": "array",
       "items": {
@@ -83,20 +22,233 @@
       "minItems": 1,
       "maxItems": 10,
       "uniqueItems": true
-    },
-    "verification": {
-      "type": "string",
-      "enum": [
-        "passed"
-      ]
-    },
-    "restore_procedure_id": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 128,
-      "pattern": "^[A-Za-z0-9._-]+$"
     }
   },
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:futureagi:update-backup-proof:1"
+  "anyOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "attempt_id",
+        "installation_fingerprint",
+        "target_manifest_hash",
+        "source_version",
+        "backup_id",
+        "started_at",
+        "completed_at",
+        "covered_domains",
+        "verification",
+        "restore_procedure_id"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "integer",
+          "const": 1
+        },
+        "attempt_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "pattern": "^[0-9a-f]{32}(?![\\s\\S])$"
+        },
+        "installation_fingerprint": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+        },
+        "target_manifest_hash": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+        },
+        "source_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?(?![\\s\\S])$"
+        },
+        "backup_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._-]+(?![\\s\\S])$"
+        },
+        "started_at": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 20,
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z(?![\\s\\S])$",
+          "format": "date-time"
+        },
+        "completed_at": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 20,
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z(?![\\s\\S])$",
+          "format": "date-time"
+        },
+        "covered_domains": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "postgres_app",
+              "clickhouse",
+              "object_store",
+              "temporal",
+              "peerdb_catalog",
+              "peerdb_temporal",
+              "peerdb_objects",
+              "redis",
+              "kafka_catalog",
+              "shared_files"
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 10,
+          "uniqueItems": true
+        },
+        "verification": {
+          "type": "string",
+          "enum": [
+            "passed"
+          ]
+        },
+        "restore_procedure_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._-]+(?![\\s\\S])$"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "attempt_id",
+        "installation_fingerprint",
+        "target_manifest_hash",
+        "source_version",
+        "backup_id",
+        "started_at",
+        "completed_at",
+        "covered_domains",
+        "verification",
+        "restore_procedure_id",
+        "binding_sha256",
+        "inventory_sha256",
+        "source_observation_sha256",
+        "quiescence_evidence_sha256",
+        "snapshot_at",
+        "inventory_version"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "integer",
+          "const": 2
+        },
+        "attempt_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "pattern": "^[0-9a-f]{32}(?![\\s\\S])$"
+        },
+        "installation_fingerprint": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+        },
+        "target_manifest_hash": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+        },
+        "source_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^v(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})\\.(0|[1-9][0-9]{0,17})(-(beta|rc)\\.(0|[1-9][0-9]{0,17}))?(?![\\s\\S])$"
+        },
+        "backup_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._-]+(?![\\s\\S])$"
+        },
+        "started_at": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 20,
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z(?![\\s\\S])$",
+          "format": "date-time"
+        },
+        "completed_at": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 20,
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z(?![\\s\\S])$",
+          "format": "date-time"
+        },
+        "covered_domains": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "postgres_app",
+              "clickhouse",
+              "object_store",
+              "temporal",
+              "shared_files"
+            ]
+          },
+          "minItems": 5,
+          "maxItems": 5,
+          "uniqueItems": true
+        },
+        "verification": {
+          "type": "string",
+          "enum": [
+            "passed"
+          ]
+        },
+        "restore_procedure_id": {
+          "type": "string",
+          "const": "standalone-inplace-cold-restore-v1"
+        },
+        "binding_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+        },
+        "inventory_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+        },
+        "source_observation_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+        },
+        "quiescence_evidence_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
+        },
+        "snapshot_at": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 20,
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z(?![\\s\\S])$",
+          "format": "date-time"
+        },
+        "inventory_version": {
+          "type": "integer",
+          "const": 2
+        }
+      }
+    }
+  ]
 }

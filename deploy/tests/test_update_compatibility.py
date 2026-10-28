@@ -14,6 +14,7 @@ import sys
 import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from fractions import Fraction
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -22,13 +23,16 @@ if str(ROOT) not in sys.path:
 
 from deploy.tests.test_update_manifest import valid_manifest  # noqa: E402
 from deploy.update.compatibility import (  # noqa: E402
-    MAX_PROOF_BYTES, PROOF_ASSET, SUITES, Attempt, CompatibilityError, Controls,
+    MAX_PROOF_BYTES, PROOF_ASSET, LEGACY_SUITES as SUITES, SUITES as RESTORE_SUITES, CompatibilityError, Controls,
     Observations, RuntimeImage, decode_document, evaluate_automatic_apply,
-    evaluate_automatic_rollback, inputs_hash, schema, shape, topology_profile,
-    validate_release_proof,
+    inputs_hash, schema, shape, topology_profile,
+    validate_release_proof, transition_measurements, estimate_automatic_update,
 )
 from deploy.update.contracts import (  # noqa: E402
     AutomationPolicy, InstallationBinding, PreparedUpdate, ReasonCode, VerificationSnapshot,
+    AuthorisedTransition, BackupSeal, ColdHold, RuntimeObservationV2, RestorationResult, ContractError,
+    installation_binding_hash, pending_migration_plan_hash, HostSizeObservation, HostTableSize,
+    TransitionMeasurements, AUTOMATIC_VOLUMES, AUTOMATIC_POLICY_BOUNDS, OperationEvent,
 )
 from deploy.update.manifest import ManifestError, canonical_json, manifest_hash, validate_manifest  # noqa: E402
 from deploy.update.settings import DEFAULT_TRUSTED_IDENTITY, DEFAULT_TRUSTED_ISSUER  # noqa: E402
@@ -62,6 +66,10 @@ def bind_proof(target, proof):
 
 def synthetic_release(mode="standalone", profiles=(), platform="linux/amd64"):
     old, target = valid_manifest("v1.51.0"), default_v2()
+    # Readable historical contract-v1 fixture retained for legacy consumer tests.
+    target["compatibility"] = {"contract_version": 1, "automatic_apply": False,
+        "requires_operator_initialization": True, "required_env": [], "state_domains": [], "predecessors": [],
+        "automatic_rollback": {"strategy": "never"}, "validation": None}
     old["source_sha"] = "b" * 40
     old_raw = canonical_json(old)
     target["migration"]["requires_bootstrap"] = False
@@ -434,242 +442,1087 @@ class ReleaseProofTests(unittest.TestCase):
                 shape(bad, spec)
 
 
-class ApplyEligibilityTests(unittest.TestCase):
-    def test_positive_all_of_synthetic_fixture(self):
-        for mode, profiles in (("standalone", ()), ("standalone", ("ml", "sandbox")), ("distributed", ("full",))):
-            prepared, obs, controls, proof = synthetic_context(mode, profiles)
-            result = evaluate_automatic_apply(prepared, obs, controls, proof)
-            self.assertTrue(result.allowed, result.reason_codes)
-            self.assertFalse(result.backup_pending)
-            self.assertRegex(result.fingerprint, r"^[0-9a-f]{64}$")
+def restore_release(pending_count=3):
+    """Synthetic v2 contract fixture only, NOT product qualification."""
+    legacy, old_raw, legacy_proof, _ = synthetic_release()
+    target = default_v2()
+    target["migration"]["requires_bootstrap"] = True  # Frozen legacy metadata survives.
+    predecessor = copy.deepcopy(legacy["compatibility"]["predecessors"][0])
+    predecessor.pop("rollback_certified")
+    predecessor.update(restore_certified=True, execution_deployment_hash=manifest_hash(target["deployment"]))
+    target["compatibility"].update(automatic_apply=True, requires_operator_initialization=False,
+                                    predecessors=[predecessor], automatic_rollback={"strategy": "restore_backup"})
+    row = copy.deepcopy(legacy_proof["predecessors"][0])
+    row.update(predecessor=copy.deepcopy(predecessor), execution_deployment=copy.deepcopy(target["deployment"]),
+               migration_evidence={"source_inventory_sha256": "1" * 64, "target_inventory_sha256": "2" * 64,
+                   "source_applied_set_sha256": "3" * 64, "target_applied_set_sha256": "4" * 64,
+                   "active_app_mapping_sha256": "5" * 64, "target_pending_plan_sha256": "6" * 64,
+                   "target_pending_plan_count": pending_count, "migration_handling": "standalone_bootstrap"},
+               persistent_coverage=list(topology_profile("standalone", ()).backup_domains),
+               executor_sha256="7" * 64, evidence_inventory_sha256="8" * 64,
+               suites={name: "passed" for name in RESTORE_SUITES})
+    # Keep adversarial huge-count fixtures small: counts > 10 intentionally lack
+    # full measurements and must refuse, rather than allocate huge fake proofs.
+    row["migration_measurements"] = [{"app_label": "synthetic_app", "name": "%04d_synthetic_migration" % i,
+        "engine": "postgres", "tables": [{"table": "public.synthetic_table", "reference_rows": 100, "reference_bytes": 1000}],
+        "risk_class": "rewrite", "duration_seconds": 5, "throughput": {"unit": "rows_per_second", "value": 20},
+        "peak_disk_amplification_factor": 2, "wal_bytes": 100, "temp_bytes": 50}
+        for i in range(min(pending_count, 10))]
+    row["migration_evidence"]["target_pending_plan_sha256"] = pending_migration_plan_hash(
+        [{"app_label": m["app_label"], "name": m["name"]} for m in row["migration_measurements"]])
+    row["backup_measurement"] = {"reference_volume_bytes": {name: 1000 for name in AUTOMATIC_VOLUMES},
+                                 "throughput_bytes_per_second": 1000}
+    row["restore_measurement"] = copy.deepcopy(row["backup_measurement"])
+    proof = {key: copy.deepcopy(legacy_proof[key]) for key in legacy_proof if key != "state_domains"}
+    proof.update(schema_version=2, predecessors=[row])
+    for key in ("qualification_policy", "restore_procedure_id", "backup_inventory_version",
+                "host_observation_contract", "runtime_activation_contract"):
+        proof[key] = target["compatibility"][key]
+    raw = bind_proof(target, proof)
+    return target, old_raw, proof, raw
 
-    def test_v1_and_default_v2_never_authorize_mutation(self):
-        _, obs, controls, backup = synthetic_context()
-        for target in (valid_manifest(), default_v2()):
+
+def restore_context(pending_count=3):
+    target, old_raw, proof, raw = restore_release(pending_count)
+    prepared = prepare(target)
+    _, obs, controls, backup_raw = synthetic_context()
+    cid = "9" * 64
+    source = RuntimeObservationV2(
+        release_version=json.loads(old_raw)["version"], manifest_sha256=hashlib.sha256(old_raw).hexdigest(),
+        observed_at=RESERVED, binding_sha256=installation_binding_hash(prepared.binding), platform="linux/amd64",
+        product_images=obs.product_images, dependency_images=obs.dependency_images,
+        migration_inventory_sha256="1" * 64, applied_migrations_sha256="3" * 64,
+        active_app_mapping_sha256="5" * 64, deployment_sha256=manifest_hash(target["deployment"]),
+        env_sha256="b" * 64, config_sha256="c" * 64, storage_sha256="d" * 64, container_roster_sha256="e" * 64,
+        restart_counts={cid: 0}, restart_policies={cid: "unless-stopped"}, ready=True, stable=True)
+    snapshot = RESERVED + timedelta(seconds=1)
+    hold = ColdHold(obs.attempt_id, "synthetic-token", "synthetic-run", source.binding_sha256,
+                    source.sha256, "f" * 64, snapshot, NOW, prepared.binding.daemon_identity,
+                    source.storage_sha256, (cid,), source.restart_counts, source.restart_policies)
+    backup = json.loads(backup_raw)
+    backup.update(schema_version=2, target_manifest_hash=manifest_hash(target),
+                  binding_sha256=source.binding_sha256, inventory_sha256="b" * 64,
+                  source_observation_sha256=source.sha256, quiescence_evidence_sha256=hold.quiescence_evidence_sha256,
+                  snapshot_at=stamp(snapshot), inventory_version=2,
+                  restore_procedure_id="standalone-inplace-cold-restore-v1")
+    backup_raw = canonical_json(backup)
+    seal = BackupSeal(obs.attempt_id, hold.operation_token, hold.run_id, source.binding_sha256,
+                      manifest_hash(target), source.release_version, hashlib.sha256(backup_raw).hexdigest(),
+                      backup["inventory_sha256"], source.sha256, hold.quiescence_evidence_sha256, snapshot, NOW)
+    obs = replace(obs, predecessor_raw=old_raw, release_proof=raw, runtime_observation=source,
+                  cold_hold=hold, backup_seal=seal, executor_sha256="7" * 64, binding_sha256=source.binding_sha256,
+                  operation_token=hold.operation_token, run_id=hold.run_id)
+    policy = replace(controls.policy, qualification_policy="standalone-cold-restore-v1", automatic_rollback=False)
+    return prepared, obs, replace(controls, policy=policy), backup_raw
+
+
+class RestoreContractTests(unittest.TestCase):
+    def test_nonzero_and_zero_plans_preserve_legacy_bootstrap(self):
+        for count in (0, 3):
+            target, _, proof, raw = restore_release(count)
+            validate_manifest(target)
+            validate_release_proof(raw, target, repository="future-agi/future-agi")
+            self.assertTrue(target["migration"]["requires_bootstrap"])
+            self.assertNotIn("state_domains", target["compatibility"])
+            self.assertEqual(proof["predecessors"][0]["migration_evidence"]["target_pending_plan_count"], count)
+
+    def test_policy_markers_closed_and_obsolete_predicates_rejected(self):
+        target, _, _, _ = restore_release()
+        for key, value in (("qualification_policy", "wrong"), ("runtime_activation_contract", "standalone-unpublished-trial-v1"),
+                           ("host_observation_contract", "standalone-runtime-v1"), ("backup_inventory_version", 1),
+                           ("state_domains", []), ("automatic_rollback", {"strategy": "images_only"})):
+            bad = copy.deepcopy(target)
+            bad["compatibility"][key] = value
+            with self.subTest(key=key), self.assertRaises(ManifestError):
+                validate_manifest(bad)
+        for field in ("rollback_certified", "from_epoch", "backward_read", "backward_write"):
+            bad = copy.deepcopy(target)
+            bad["compatibility"]["predecessors"][0][field] = True
+            with self.subTest(field=field), self.assertRaises(ManifestError):
+                validate_manifest(bad)
+
+    def test_operator_initialization_cannot_be_waived(self):
+        target, _, _, _ = restore_release()
+        target["compatibility"]["requires_operator_initialization"] = True
+        target["compatibility"]["validation"]["inputs_hash"] = inputs_hash(target)
+        with self.assertRaises(ManifestError):
+            validate_manifest(target)
+
+    def test_v2_hash_binds_migration_and_omits_only_validation(self):
+        target, _, _, _ = restore_release()
+        digest = inputs_hash(target)
+        target["compatibility"]["validation"]["sha256"] = "f" * 64
+        self.assertEqual(digest, inputs_hash(target))
+        target["migration"]["requires_bootstrap"] = False
+        self.assertNotEqual(digest, inputs_hash(target))
+
+    def test_every_row_has_complete_suite_and_migration_evidence(self):
+        for field in ("migration_evidence", "executor_sha256", "evidence_inventory_sha256", "persistent_coverage", "execution_deployment"):
+            target, _, proof, _ = restore_release()
+            del proof["predecessors"][0][field]
+            raw = bind_proof(target, proof)
+            with self.subTest(field=field), self.assertRaises(ManifestError):
+                validate_release_proof(raw, target, repository="future-agi/future-agi")
+        for suite in RESTORE_SUITES:
+            for result in ("skipped", "unknown", "failed"):
+                target, _, proof, _ = restore_release()
+                proof["predecessors"][0]["suites"][suite] = result
+                raw = bind_proof(target, proof)
+                with self.subTest(suite=suite, result=result), self.assertRaises(ManifestError):
+                    validate_release_proof(raw, target, repository="future-agi/future-agi")
+
+    def test_migration_plan_hash_count_and_handling_are_typed_and_required(self):
+        for field, value in (("target_pending_plan_count", -1), ("target_pending_plan_count", True),
+                             ("target_pending_plan_sha256", "unknown"), ("migration_handling", "operator_command"),
+                             ("source_inventory_sha256", None)):
+            target, _, proof, _ = restore_release()
+            proof["predecessors"][0]["migration_evidence"][field] = value
+            raw = bind_proof(target, proof)
+            with self.subTest(field=field, value=value), self.assertRaises(ManifestError):
+                validate_release_proof(raw, target, repository="future-agi/future-agi")
+
+    def test_v2_schema_runtime_parity_for_every_closed_object(self):
+        from jsonschema import Draft202012Validator
+        target, _, proof, _ = restore_release()
+        backup = json.loads(restore_context()[3])
+        for name, value in (("release-manifest.schema.json", target), ("compatibility-proof.schema.json", proof),
+                            ("backup-proof.schema.json", backup)):
+            spec = schema(name)
+            Draft202012Validator.check_schema(spec)
+            validator = Draft202012Validator(spec)
+            validator.validate(value)
+            if name != "release-manifest.schema.json":
+                shape(value, spec)
+            for key in value:
+                bad = copy.deepcopy(value)
+                del bad[key]
+                if key == "release_notes":
+                    continue
+                self.assertFalse(validator.is_valid(bad), (name, key))
+                with self.assertRaises(ManifestError):
+                    validate_manifest(bad) if name == "release-manifest.schema.json" else shape(bad, spec)
+
+    def test_backup_v1_shape_stays_readable_but_not_v2_authority(self):
+        from deploy.update.backup_proof import BackupExpectation, validate_backup_proof
+        prepared, obs, controls, backup = synthetic_context()
+        expected = BackupExpectation(obs.attempt_id, obs.installation_fingerprint, manifest_hash(json.loads(prepared.raw_manifest)),
+                                     json.loads(obs.predecessor_raw)["version"], obs.reserved_at,
+                                     topology_profile("standalone", ()).backup_domains)
+        validate_backup_proof(backup, expected, now=NOW)
+        prepared, obs, controls, _ = restore_context()
+        value = json.loads(backup)
+        value["target_manifest_hash"] = manifest_hash(json.loads(prepared.raw_manifest))
+        self.assertFalse(evaluate_automatic_apply(prepared, obs, controls, canonical_json(value)).allowed)
+
+
+class RestoreAdmissionTests(unittest.TestCase):
+    def test_positive_restore_is_mandatory_even_with_rollback_false(self):
+        for count in (0, 3):
+            prepared, obs, controls, backup = restore_context(count)
+            self.assertFalse(controls.policy.automatic_rollback)
+            result = evaluate_automatic_apply(prepared, obs, controls, backup)
+            self.assertTrue(result.allowed, result.reason_codes)
+            self.assertIsInstance(result.transition, AuthorisedTransition)
+            self.assertEqual(result.transition.migration_evidence.target_pending_plan_count, count)
+
+    def test_legacy_readable_is_never_automatic(self):
+        prepared, obs, controls, backup = restore_context()
+        for target in (valid_manifest(), synthetic_release()[0], default_v2()):
             result = evaluate_automatic_apply(prepare(target), obs, controls, backup)
             self.assertFalse(result.allowed)
-            self.assertEqual(result.reason_codes, (ReasonCode.UNCERTIFIED_RELEASE,))
+            self.assertEqual(result.reason_codes, (ReasonCode.RESTORE_NOT_CERTIFIED,))
 
-    def test_pending_only_authorizes_backup_not_mutation(self):
-        prepared, obs, controls, _ = synthetic_context()
+    def test_pending_only_before_backup_and_cold_hold_needed_afterwards(self):
+        prepared, obs, controls, backup = restore_context()
         for boundary in ("before_backup", "after_backup", "before_env_commit", "before_rollout", "unknown"):
             result = evaluate_automatic_apply(prepared, replace(obs, boundary=boundary), controls, "pending")
-            self.assertEqual(result.allowed, boundary == "before_backup")
+            self.assertEqual(result.allowed, boundary == "before_backup", result.reason_codes)
             self.assertEqual(result.backup_pending, boundary == "before_backup")
+        self.assertFalse(evaluate_automatic_apply(prepared, replace(obs, cold_hold=None), controls, backup).allowed)
+        self.assertFalse(evaluate_automatic_apply(prepared, replace(obs, backup_seal=None), controls, backup).allowed)
 
-    def test_missing_backup_or_legacy_hook_success_never_qualifies(self):
-        prepared, obs, controls, _ = synthetic_context()
-        for backup in (None, b"", {"exit": 0}, True, "completed"):
-            result = evaluate_automatic_apply(prepared, obs, controls, backup)
-            self.assertFalse(result.allowed)
-            self.assertEqual(result.reason_codes, (ReasonCode.BACKUP_PROOF_INVALID,))
+    def test_no_epoch_or_target_no_migrations_gate(self):
+        prepared, obs, controls, backup = restore_context()
+        obs = replace(obs, state_epochs={}, state_unchanged=False, no_pending_migrations=False)
+        self.assertTrue(evaluate_automatic_apply(prepared, obs, controls, backup).allowed)
 
-    def test_every_missing_host_fact_refuses(self):
-        prepared, obs, controls, proof = synthetic_context()
-        facts = ("online_verified", "owner_confirmed", "topology_qualified", "runtime_complete", "baseline_attested",
-                 "state_unchanged", "graph_unchanged", "no_pending_transaction", "no_failed_target", "env_unchanged",
-                 "no_source_build", "no_pending_migrations")
-        for key in facts:
-            with self.subTest(key=key):
-                self.assertFalse(evaluate_automatic_apply(prepared, replace(obs, **{key: False}), controls, proof).allowed)
+    def test_source_migrations_compare_to_source_not_target(self):
+        prepared, obs, controls, backup = restore_context()
+        for field, value in (("migration_inventory_sha256", "2" * 64), ("applied_migrations_sha256", "4" * 64),
+                             ("active_app_mapping_sha256", "a" * 64)):
+            source = replace(obs.runtime_observation, **{field: value})
+            candidate = replace(obs, runtime_observation=source, boundary="before_backup")
+            result = evaluate_automatic_apply(prepared, candidate, controls, "pending")
+            self.assertEqual(result.reason_codes, (ReasonCode.MIGRATION_INVENTORY_MISMATCH,))
 
-    def test_every_effective_control_refuses(self):
-        prepared, obs, controls, proof = synthetic_context()
-        for key, value in (("enabled", False), ("paused", True), ("registered", False),
-                           ("window_open", False), ("start_budget_available", False)):
-            with self.subTest(key=key):
-                self.assertFalse(evaluate_automatic_apply(prepared, obs, replace(controls, **{key: value}), proof).allowed)
-        for mode in ("manual", "notify", "download"):
-            policy = replace(controls.policy, mode=mode)
-            self.assertFalse(evaluate_automatic_apply(prepared, obs, replace(controls, policy=policy), proof).allowed)
+    def test_unknown_missing_and_changed_inputs_refuse(self):
+        prepared, obs, controls, backup = restore_context()
+        for field, value in (("runtime_observation", None), ("executor_sha256", "f" * 64), ("release_proof", b""),
+                             ("platform", "linux/arm64"), ("deployment_files", {}), ("no_pending_transaction", False),
+                             ("predecessor_raw", obs.predecessor_raw + b"\n"), ("binding_sha256", "f" * 64),
+                             ("baseline_attested", False), ("owner_confirmed", False), ("topology_qualified", False),
+                             ("online_verified", False), ("graph_unchanged", False), ("env_unchanged", False),
+                             ("runtime_complete", False), ("no_failed_target", False)):
+            with self.subTest(field=field):
+                self.assertFalse(evaluate_automatic_apply(prepared, replace(obs, **{field: value}), controls, backup).allowed)
+        result = evaluate_automatic_apply(prepared, replace(obs, no_pending_transaction=False), controls, backup)
+        self.assertEqual(result.reason_codes, (ReasonCode.AUTOMATIC_RECOVERY_PENDING,))
 
-    def test_production_and_core_plan_blocks(self):
-        prepared, obs, controls, proof = synthetic_context("distributed")
-        production = replace(prepared, binding=replace(prepared.binding, production=True))
-        self.assertEqual(evaluate_automatic_apply(production, obs, controls, proof).reason_codes,
-                         (ReasonCode.INITIALIZATION_REQUIRED,))
-        for change in ({"decision": "blocked"}, {"resume": True}, {"manifest_hash": "a" * 64},
-                       {"staged_version": "v1.52.0"}, {"stopped_version": "v1.52.0"}, {"missing_env_keys": ["SECRET"]}):
-            plan = dict(prepared.plan)
-            plan.update(change)
-            self.assertFalse(evaluate_automatic_apply(replace(prepared, plan=plan), obs, controls, proof).allowed)
-
-    def test_false_verification_signer_issuer_method_and_freshness(self):
-        prepared, obs, controls, proof = synthetic_context()
-        for change in ({"verified": False}, {"signer": "https://github.com/evil/fork/workflow"},
-                       {"issuer": "evil"}, {"method": "public-key"}, {"tool": ""},
-                       {"checked_at": NOW - timedelta(seconds=301)}, {"checked_at": NOW + timedelta(seconds=1)}):
+    def test_effective_controls_and_signatures_still_required(self):
+        prepared, obs, controls, backup = restore_context()
+        for key, value in (("enabled", False), ("paused", True), ("registered", False), ("window_open", False),
+                           ("start_budget_available", False)):
+            self.assertFalse(evaluate_automatic_apply(prepared, obs, replace(controls, **{key: value}), backup).allowed)
+        for change in ({"verified": False}, {"signer": "wrong"}, {"issuer": "wrong"},
+                       {"checked_at": NOW - timedelta(seconds=301)}):
             bad = replace(prepared, verification=replace(prepared.verification, **change))
-            self.assertFalse(evaluate_automatic_apply(bad, obs, controls, proof).allowed)
-        self.assertFalse(evaluate_automatic_apply(prepared, replace(obs, predecessor_verification=None), controls, proof).allowed)
+            self.assertFalse(evaluate_automatic_apply(bad, obs, controls, backup).allowed)
+        self.assertFalse(evaluate_automatic_apply(prepared, replace(obs, predecessor_verification=None), controls, backup).allowed)
 
-    def test_same_version_different_raw_bytes_or_source_are_refused(self):
-        prepared, obs, controls, proof = synthetic_context()
-        variants = [obs.predecessor_raw + b"\n"]
-        for key, value in (("source_sha", "a" * 40), ("published_at", "2026-10-20T00:00:00Z")):
-            previous = json.loads(obs.predecessor_raw)
-            previous[key] = value
-            variants.append(canonical_json(previous))
-        for raw in variants:
-            self.assertFalse(evaluate_automatic_apply(prepared, replace(obs, predecessor_raw=raw), controls, proof).allowed)
-        # S01 validates hashes, not equality of raw bytes and parsed value. S02 does.
-        changed = json.loads(prepared.raw_manifest)
-        changed["release_notes"] = "https://example.com/changed"
-        mismatch = replace(prepared, manifest=changed)
-        self.assertFalse(evaluate_automatic_apply(mismatch, obs, controls, proof).allowed)
+    def test_no_missing_platform_or_layout_row_can_borrow_evidence(self):
+        prepared, obs, controls, backup = restore_context()
+        for field, value, reason in (("platform", "linux/arm64", ReasonCode.PLATFORM_NOT_REHEARSED),
+                                      ("deployment_files", {}, ReasonCode.DEPLOYMENT_FILES_MISMATCH)):
+            result = evaluate_automatic_apply(prepared, replace(obs, **{field: value}), controls, backup)
+            self.assertEqual(result.reason_codes, (reason,))
 
-    def test_predecessor_digest_binding_checked_against_actual_verified_manifest(self):
-        target, _, release_proof, _ = synthetic_release()
-        release_proof["predecessors"][0]["predecessor_components"]["standalone"]["digest"] = "sha256:" + "f" * 64
-        raw = bind_proof(target, release_proof)
-        _, obs, controls, backup = synthetic_context()
-        self.assertFalse(evaluate_automatic_apply(prepare(target), replace(obs, release_proof=raw), controls, backup).allowed)
+    def test_seal_binds_every_backup_byte_and_hold_identity(self):
+        prepared, obs, controls, backup = restore_context()
+        for key, value in (("inventory_sha256", "c" * 64), ("source_observation_sha256", "c" * 64),
+                           ("binding_sha256", "c" * 64), ("quiescence_evidence_sha256", "c" * 64),
+                           ("covered_domains", ["postgres_app"]), ("inventory_version", 1),
+                           ("restore_procedure_id", "other")):
+            bad = json.loads(backup)
+            bad[key] = value
+            with self.subTest(key=key):
+                self.assertFalse(evaluate_automatic_apply(prepared, obs, controls, canonical_json(bad)).allowed)
+        self.assertFalse(evaluate_automatic_apply(prepared, obs, controls, backup + b"\n").allowed)
+        hold = replace(obs.cold_hold, operation_token="wrong")
+        self.assertFalse(evaluate_automatic_apply(prepared, replace(obs, cold_hold=hold), controls, backup).allowed)
 
-    def test_live_images_ids_missing_replicas_and_dependency_changes_refuse(self):
-        prepared, obs, controls, proof = synthetic_context()
+    def test_stale_snapshot_refuses_forward_but_seal_has_no_recovery_expiry(self):
+        prepared, obs, controls, backup = restore_context()
+        late = NOW + timedelta(hours=2)
+        # Shape/identity seal remains valid for recovery. Forward freshness is
+        # independently enforced and no new snapshot timestamp is manufactured.
+        self.assertEqual(obs.backup_seal.snapshot_at, obs.cold_hold.snapshot_at)
+        candidate = replace(obs, now=late, cold_hold=replace(obs.cold_hold, verified_at=late))
+        refreshed = replace(prepared, verification=replace(prepared.verification, checked_at=late))
+        self.assertEqual(evaluate_automatic_apply(refreshed, candidate, controls, backup).reason_codes,
+                         (ReasonCode.BACKUP_EXPIRED,))
+
+    def test_restart_policy_rejection_uses_unsupported_installation(self):
+        _, obs, _, _ = restore_context()
+        for policy in ("always", "on-failure", "on-failure:3"):
+            with self.assertRaises(ContractError) as caught:
+                replace(obs.runtime_observation, restart_policies={"9" * 64: policy})
+            self.assertEqual(caught.exception.reason_code, "unsupported_installation")
+        replace(obs.runtime_observation, restart_policies={"9" * 64: "no"})
+
+    def test_private_interfaces_defensively_freeze_and_reject_bad_values(self):
+        import dataclasses
+        prepared, obs, controls, backup = restore_context()
+        result = evaluate_automatic_apply(prepared, obs, controls, backup)
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            result.transition.fingerprint = "f" * 64
+        with self.assertRaises(TypeError):
+            obs.runtime_observation.restart_counts["9" * 64] = 1
+        with self.assertRaises(TypeError):
+            result.transition.execution_deployment["files"]["x"] = "f" * 64
+        counts = {"9" * 64: 0}
+        runtime = replace(obs.runtime_observation, restart_counts=counts)
+        counts["9" * 64] = 1
+        self.assertEqual(runtime.restart_counts["9" * 64], 0)
+        with self.assertRaises(ContractError):
+            replace(obs.backup_seal, inventory_version=True)
+        with self.assertRaises(ContractError):
+            RestorationResult(obs.attempt_id, "restored", "v1.51.0", "v1.52.0", "restored")
+        RestorationResult(obs.attempt_id, "restored", "v1.51.0", "v1.52.0", "restored", obs.backup_seal,
+                          obs.runtime_observation, (ReasonCode.RESTORED_AFTER_UPDATE_FAILURE,))
+
+    def test_image_ids_digests_replicas_and_dependencies_remain_exact(self):
+        prepared, obs, controls, _ = restore_context()
         for field in ("product_images", "dependency_images"):
-            original = getattr(obs, field)
+            original = getattr(obs.runtime_observation, field)
             service = next(iter(original))
-            for kind in ("missing", "empty", "digest", "id", "image", "extra"):
+            for change in ("digest", "id", "image", "missing", "extra"):
                 images = dict(original)
-                if kind == "missing":
+                if change == "missing":
                     del images[service]
-                elif kind == "empty":
-                    images[service] = ()
-                elif kind == "extra":
-                    images["custom"] = images[service]
+                elif change == "extra":
+                    images["unexpected"] = images[service]
                 else:
-                    key, value = {"digest": ("digest", "sha256:" + "f" * 64), "id": ("image_id", "unknown"),
-                                  "image": ("image", "evil/fork:latest")}[kind]
+                    key, value = {"digest": ("digest", "sha256:" + "f" * 64),
+                                  "id": ("image_id", "unknown"), "image": ("image", "attacker/fork:1")}[change]
                     images[service] = images[service] + (replace(images[service][0], **{key: value}),)
-                with self.subTest(field=field, kind=kind):
-                    self.assertFalse(evaluate_automatic_apply(prepared, replace(obs, **{field: images}), controls, proof).allowed)
+                # Empty complete maps are structurally invalid, as well as ineligible.
+                if not images:
+                    with self.assertRaises(ContractError):
+                        replace(obs.runtime_observation, **{field: images})
+                    continue
+                runtime = replace(obs.runtime_observation, **{field: images})
+                candidate = replace(obs, runtime_observation=runtime, boundary="before_backup")
+                with self.subTest(field=field, change=change):
+                    self.assertFalse(evaluate_automatic_apply(prepared, candidate, controls, "pending").allowed)
 
-    def test_fingerprint_ignores_replica_order_but_binds_image_ids(self):
-        prepared, obs, controls, proof = synthetic_context()
-        first = obs.product_images["app"][0]
+    def test_current_runtime_readiness_and_restart_counts_cannot_be_assumed(self):
+        prepared, obs, controls, backup = restore_context()
+        for field in ("ready", "stable"):
+            runtime = replace(obs.runtime_observation, **{field: False})
+            self.assertFalse(evaluate_automatic_apply(prepared, replace(obs, runtime_observation=runtime), controls, backup).allowed)
+        hold = replace(obs.cold_hold, restart_counts={"9" * 64: 1})
+        self.assertFalse(evaluate_automatic_apply(prepared, replace(obs, cold_hold=hold), controls, backup).allowed)
+        # This value predates snapshot_at and is structurally invalid before admission.
+        with self.assertRaises(ContractError):
+            replace(obs.cold_hold, verified_at=NOW - timedelta(seconds=301))
+
+    def test_fingerprint_is_order_independent_but_binds_actual_source_image_ids(self):
+        prepared, obs, controls, _ = restore_context()
+        first = obs.runtime_observation.product_images["app"][0]
         second = replace(first, image_id="sha256:" + "f" * 64)
-        forward = replace(obs, product_images={"app": (first, second)})
-        reverse = replace(obs, product_images={"app": (second, first)})
-        a = evaluate_automatic_apply(prepared, forward, controls, proof)
-        b = evaluate_automatic_apply(prepared, reverse, controls, proof)
-        self.assertTrue(a.allowed and b.allowed)
-        self.assertEqual(a.fingerprint, b.fingerprint)
-        changed = replace(obs, product_images={"app": (first, replace(second, image_id="sha256:" + "e" * 64))})
-        c = evaluate_automatic_apply(prepared, changed, controls, proof)
-        self.assertTrue(c.allowed)
-        self.assertNotEqual(a.fingerprint, c.fingerprint)
+        fingerprints = []
+        for replicas in ((first, second), (second, first), (first,)):
+            runtime = replace(obs.runtime_observation, product_images={"app": replicas})
+            result = evaluate_automatic_apply(prepared, replace(obs, runtime_observation=runtime, boundary="before_backup"), controls, "pending")
+            self.assertTrue(result.allowed, result.reason_codes)
+            fingerprints.append(result.fingerprint)
+        self.assertEqual(fingerprints[0], fingerprints[1])
+        self.assertNotEqual(fingerprints[0], fingerprints[2])
 
-    def test_all_epoch_and_configuration_bindings(self):
-        prepared, obs, controls, proof = synthetic_context()
-        for key in obs.state_epochs:
-            epochs = dict(obs.state_epochs)
-            epochs[key] += 1
-            self.assertFalse(evaluate_automatic_apply(prepared, replace(obs, state_epochs=epochs), controls, proof).allowed)
-        for key, value in (("installation_fingerprint", "a" * 64), ("config_fingerprint", "changed"),
-                           ("profile_fingerprint", "changed"), ("trust_fingerprint", "changed"),
-                           ("persistence", {}), ("deployment_files", {}), ("platform", "linux/arm64")):
-            self.assertFalse(evaluate_automatic_apply(prepared, replace(obs, **{key: value}), controls, proof).allowed)
-
-    def test_required_env_present_nonempty_scoped_and_redacted(self):
-        target, _, release, _ = synthetic_release()
-        target["compatibility"]["required_env"] = [
-            {"name": "SYNTHETIC_SECRET", "rule": "nonempty", "components": ["standalone"]},
-            {"name": "UNDEPLOYED_SECRET", "rule": "nonempty", "components": ["backend"]}]
-        raw = bind_proof(target, release)
-        prepared = prepare(target)
-        _, obs, controls, backup = synthetic_context()
-        obs = replace(obs, release_proof=raw)
-        backup_value = json.loads(backup)
-        backup_value["target_manifest_hash"] = manifest_hash(target)
-        backup = canonical_json(backup_value)
-        for env in ({}, {"SYNTHETIC_SECRET": ""}, {"SYNTHETIC_SECRET": "  "}):
-            result = evaluate_automatic_apply(prepared, replace(obs, env=env), controls, backup)
-            self.assertEqual(result.reason_codes, (ReasonCode.REQUIRED_ENV_MISSING,))
-            self.assertNotIn("SECRET", json.dumps(result.public_summary()))
-        self.assertTrue(evaluate_automatic_apply(prepared, replace(obs, env={"SYNTHETIC_SECRET": "private-value"}), controls, backup).allowed)
-
-    def test_version_policy_and_channel_never_inferred_from_certificate(self):
-        prepared, obs, controls, proof = synthetic_context()
-        policy = replace(controls.policy, version_policy="patch")
-        self.assertEqual(evaluate_automatic_apply(prepared, obs, replace(controls, policy=policy), proof).reason_codes,
-                         (ReasonCode.VERSION_POLICY_BLOCKED,))
-        policy = replace(controls.policy, channel="beta")
-        self.assertEqual(evaluate_automatic_apply(prepared, obs, replace(controls, policy=policy), proof).reason_codes,
-                         (ReasonCode.CHANNEL_MISMATCH,))
-
-    def test_backup_stale_wrong_attempt_and_incomplete_are_not_eligible(self):
-        prepared, obs, controls, backup = synthetic_context()
-        for key, value in (("attempt_id", "b" * 32), ("covered_domains", ["postgres_app"]),
-                           ("verification", "failed"), ("completed_at", stamp(NOW + timedelta(seconds=1)))):
-            proof = json.loads(backup)
-            proof[key] = value
-            self.assertFalse(evaluate_automatic_apply(prepared, obs, controls, canonical_json(proof)).allowed)
-
-    def test_untrusted_errors_do_not_escape_or_echo_private_data(self):
-        prepared, obs, controls, backup = synthetic_context()
-        bad = replace(obs, release_proof=b'{"secret":"/private/path password=secret"}')
-        result = evaluate_automatic_apply(prepared, bad, controls, backup)
-        self.assertEqual(result.public_summary(), {"eligible": False, "reason_codes": ["uncertified_release"]})
+    def test_image_only_compatibility_import_is_inert(self):
+        from deploy.update.compatibility import evaluate_automatic_rollback
+        _, obs, controls, _ = restore_context()
+        self.assertFalse(evaluate_automatic_rollback(None, obs, controls).allowed)
 
 
-class RollbackEligibilityTests(unittest.TestCase):
-    def context(self):
-        prepared, obs, controls, backup = synthetic_context()
-        prior_images = obs.product_images
-        layout = topology_profile(prepared.binding.topology, prepared.binding.profiles)
-        obs = replace(obs, boundary="before_fallback",
-                      product_images=runtime_images(json.loads(prepared.raw_manifest)["components"], layout))
-        attempt = Attempt(prepared, obs.attempt_id, RESERVED, backup, NOW - timedelta(seconds=30),
-                          rollback_enabled_before_start=True, automatic=True, live=True, latest_attempt_id=obs.attempt_id,
-                          failure_kind="readiness_failed", child_state_known=True, prior_images=prior_images,
-                          prior_images_available=True, receipt_matches=True)
-        return attempt, obs, controls
+class RestoreBudgetTests(unittest.TestCase):
+    def test_one_target_startup_and_protected_recovery_reserve(self):
+        policy = AutomationPolicy(mode="apply", qualification_policy="standalone-cold-restore-v1")
+        forward = policy.backup_timeout_seconds + policy.migration_timeout_seconds + policy.wait_timeout_seconds + policy.stability_period_seconds + 600
+        recovery = policy.restore_timeout_seconds + policy.recovery_startup_timeout_seconds + policy.stability_period_seconds + 600
+        self.assertEqual(policy.required_forward_budget_seconds, forward)
+        self.assertEqual(policy.required_recovery_budget_seconds, recovery)
+        self.assertEqual(policy.required_cold_budget_seconds, forward + recovery)
+        self.assertEqual(policy.required_tick_budget_seconds, policy.pull_timeout_seconds + forward + recovery)
+        self.assertEqual(replace(policy, automatic_rollback=True).required_tick_budget_seconds, policy.required_tick_budget_seconds)
+        threshold = policy.required_tick_budget_seconds
+        replace(policy, tick_timeout_seconds=threshold)
+        with self.assertRaises(ContractError):
+            replace(policy, tick_timeout_seconds=threshold - 1)
 
-    def test_one_exact_qualified_images_only_fallback(self):
-        attempt, obs, controls = self.context()
-        result = evaluate_automatic_rollback(attempt, obs, controls)
+    def test_native_long_startups_and_independent_restore_budget(self):
+        policy = AutomationPolicy(mode="apply", qualification_policy="standalone-cold-restore-v1",
+                                  wait_timeout_seconds=4200, recovery_startup_timeout_seconds=4200,
+                                  restore_timeout_seconds=7200, tick_timeout_seconds=30000)
+        self.assertEqual(policy.required_tick_budget_seconds, 23520)
+        self.assertEqual(replace(policy, restore_timeout_seconds=7201).required_tick_budget_seconds, 23521)
+        self.assertEqual(replace(policy, wait_timeout_seconds=4201).required_tick_budget_seconds, 23521)
+
+
+def a6_context():
+    # Independent tables at their measured reference inputs give a positive
+    # workload. Same-table chains and above-reference hosts are tested below.
+    target, _, proof, _ = restore_release()
+    row = proof["predecessors"][0]
+    for i, migration in enumerate(row["migration_measurements"]):
+        migration["tables"][0]["table"] += "_%d" % i if i else ""
+    measured = transition_measurements(row)
+    host = HostSizeObservation(tuple(HostTableSize(m.engine, m.tables[0].table, 100, 1000)
+        for m in measured.migration_measurements),
+        {name: 1000 for name in AUTOMATIC_VOLUMES}, 10**12, 10**12, False)
+    policy = AutomationPolicy(mode="apply", qualification_policy="standalone-cold-restore-v1")
+    return measured, host, policy
+
+
+class AmendmentA6Tests(unittest.TestCase):
+    def estimate(self, measured=None, host=None, policy=None, window=14400, tick=14400):
+        defaults = a6_context()
+        return estimate_automatic_update(measured or defaults[0], host or defaults[1], policy or defaults[2],
+                                         window_remaining_seconds=window, tick_remaining_seconds=tick)
+
+    def test_review_probe_large_unmeasured_plan_cannot_be_admitted(self):
+        prepared, obs, controls, backup = restore_context(100000)
+        self.assertFalse(evaluate_automatic_apply(prepared, obs, controls, backup).allowed)
+        prepared, obs, controls, backup = restore_context()
+        admitted = evaluate_automatic_apply(prepared, obs, controls, backup)
+        self.assertTrue(admitted.allowed)
+        self.assertIsInstance(admitted.transition.measurements, TransitionMeasurements)
+
+    def test_all_six_reason_codes_are_shared_event_vocabulary(self):
+        for reason in ("migration_exceeds_window", "insufficient_disk_for_migration", "backup_exceeds_window",
+                       "insufficient_disk_for_backup", "migration_stalled", "disk_watermark_abort"):
+            self.assertEqual(ReasonCode(reason).name, reason.upper())
+            event = OperationEvent("blocked", "apply", "planning", NOW, "synthetic-token", (reason,))
+            self.assertEqual(event.reason_codes, (ReasonCode(reason),))
+
+    def test_exact_measured_time_growth_and_protected_recovery_arithmetic(self):
+        measured, host, policy = a6_context()
+        result = self.estimate(measured, host, policy)
         self.assertTrue(result.allowed, result.reason_codes)
-        self.assertIsNotNone(result.fingerprint)
+        e = result.estimate
+        self.assertEqual((e.backup_seconds, e.migration_seconds, e.restore_seconds, e.extra_disk_bytes), (6, 30, 6, 6900))
+        self.assertEqual(e.protected_restore_reserve_bytes, 6000 + policy.disk_watermark_reserve_bytes)
+        self.assertEqual(e.backup_required_free_bytes, e.protected_restore_reserve_bytes)
+        self.assertEqual(e.docker_required_free_bytes, e.protected_restore_reserve_bytes + 6900)
+        self.assertEqual((e.forward_seconds, e.recovery_seconds, e.total_seconds), (1896, 1866, 3762))
+        self.assertEqual(e.migration_deadline_seconds, 30)
+        self.assertEqual(e.migration_stall_timeout_seconds, policy.migration_stall_timeout_seconds)
 
-    def test_default_off_and_every_attempt_predicate_refuses(self):
-        attempt, obs, controls = self.context()
-        changes = ({"rollback_enabled_before_start": False}, {"automatic": False}, {"live": False},
-                   {"latest_attempt_id": "b" * 32}, {"child_state_known": False}, {"fallback_count": 1},
-                   {"fallback_count": False}, {"prior_images_available": False}, {"receipt_matches": False})
-        for change in changes:
-            with self.subTest(change=change):
-                self.assertFalse(evaluate_automatic_rollback(replace(attempt, **change), obs, controls).allowed)
-        self.assertFalse(evaluate_automatic_rollback(attempt, obs, replace(controls, policy=replace(controls.policy, automatic_rollback=False))).allowed)
+    def test_each_actual_table_dimension_above_reference_refuses_without_a_scaling_bound(self):
+        measured, host, _ = a6_context()
+        # A larger row or byte dimension is unsupported, not a linear workload
+        # certified by a risk class. Preserve all three original growth cases.
+        for dimensions in ({"rows": 200, "bytes": 2000}, {"rows": 200}, {"bytes": 2000}):
+            larger = replace(host, table_sizes=tuple(replace(t, **dimensions) for t in host.table_sizes))
+            with self.subTest(dimensions=dimensions):
+                result = self.estimate(measured, larger)
+                self.assertFalse(result.allowed)
+                self.assertEqual(result.reason_codes, (ReasonCode.RESTORE_CAPACITY_UNKNOWN,))
+                self.assertIsNone(result.estimate)
 
-    def test_interruption_timeout_download_and_pre_rollout_never_fallback(self):
-        attempt, obs, controls = self.context()
-        for kind in ("interrupted", "timeout", "download_failed", "verification_failed", "pre_rollout_failed", "unknown", "succeeded"):
-            with self.subTest(kind=kind):
-                self.assertFalse(evaluate_automatic_rollback(replace(attempt, failure_kind=kind), obs, controls).allowed)
-        self.assertTrue(evaluate_automatic_rollback(replace(attempt, failure_kind="rollout_failed"), obs, controls).allowed)
+    def test_window_and_remaining_tick_include_the_full_restore_reserve(self):
+        total = self.estimate().estimate.total_seconds
+        self.assertTrue(self.estimate(window=total, tick=total).allowed)
+        for budgets in ({"window": total - 1}, {"tick": total - 1}):
+            result = self.estimate(**budgets)
+            self.assertIn(ReasonCode.MIGRATION_EXCEEDS_WINDOW, result.reason_codes)
+        result = self.estimate(window=total - 31)
+        self.assertIn(ReasonCode.BACKUP_EXCEEDS_WINDOW, result.reason_codes)
+        self.assertIn(ReasonCode.MIGRATION_EXCEEDS_WINDOW, result.reason_codes)
 
-    def test_post_rollout_pause_or_window_closure_does_not_cancel_safety_action(self):
-        attempt, obs, controls = self.context()
-        self.assertTrue(evaluate_automatic_rollback(attempt, obs, replace(controls, enabled=False, paused=True, window_open=False)).allowed)
+    def test_configured_migration_backup_and_restore_deadlines_cannot_be_borrowed(self):
+        measured, host, policy = a6_context()
+        result = self.estimate(policy=replace(policy, migration_timeout_seconds=29, migration_stall_timeout_seconds=10))
+        self.assertIn(ReasonCode.MIGRATION_EXCEEDS_WINDOW, result.reason_codes)
+        for field in ("backup_measurement", "restore_measurement"):
+            slower = replace(measured, **{field: replace(getattr(measured, field), throughput_bytes_per_second=1)})
+            self.assertIn(ReasonCode.BACKUP_EXCEEDS_WINDOW, self.estimate(slower, host).reason_codes)
 
-    def test_original_proof_is_checked_at_first_mutation_not_refreshed(self):
-        attempt, obs, controls = self.context()
-        # Same live attempt can be slow; pre-migration proof remains the recovery point.
-        self.assertTrue(evaluate_automatic_rollback(attempt, replace(obs, now=NOW + timedelta(hours=2)), controls).allowed)
-        proof = json.loads(attempt.backup_raw)
-        proof["started_at"] = stamp(NOW)
-        proof["completed_at"] = stamp(NOW)
-        self.assertFalse(evaluate_automatic_rollback(replace(attempt, backup_raw=canonical_json(proof)), obs, controls).allowed)
-        self.assertFalse(evaluate_automatic_rollback(replace(attempt, first_mutation_at=NOW + timedelta(hours=2)),
-                                                    replace(obs, now=NOW + timedelta(hours=2)), controls).allowed)
+    def test_each_filesystem_is_admitted_independently_at_exact_byte_threshold(self):
+        measured, host, _ = a6_context()
+        e = self.estimate().estimate
+        fit = replace(host, docker_free_bytes=e.docker_required_free_bytes, backup_free_bytes=e.backup_required_free_bytes)
+        self.assertTrue(self.estimate(measured, fit).allowed)
+        self.assertEqual(self.estimate(measured, replace(fit, backup_free_bytes=fit.backup_free_bytes - 1)).reason_codes,
+                         (ReasonCode.INSUFFICIENT_DISK_FOR_BACKUP,))
+        self.assertEqual(self.estimate(measured, replace(fit, docker_free_bytes=fit.docker_free_bytes - 1)).reason_codes,
+                         (ReasonCode.INSUFFICIENT_DISK_FOR_MIGRATION,))
+        reasons = self.estimate(measured, replace(fit, docker_free_bytes=e.protected_restore_reserve_bytes - 1)).reason_codes
+        self.assertIn(ReasonCode.INSUFFICIENT_DISK_FOR_BACKUP, reasons)
+        self.assertIn(ReasonCode.INSUFFICIENT_DISK_FOR_MIGRATION, reasons)
 
-    def test_prior_images_and_current_state_are_not_assumed_healthy(self):
-        attempt, obs, controls = self.context()
-        self.assertFalse(evaluate_automatic_rollback(replace(attempt, prior_images={}), obs, controls).allowed)
-        self.assertFalse(evaluate_automatic_rollback(attempt, replace(obs, state_unchanged=False), controls).allowed)
-        self.assertFalse(evaluate_automatic_rollback(attempt, replace(obs, dependency_images={}), controls).allowed)
-        self.assertFalse(evaluate_automatic_rollback(attempt, replace(obs, no_pending_transaction=False), controls).allowed)
+    def test_colocated_or_unknown_backup_filesystem_accounts_for_both_consumers(self):
+        measured, host, _ = a6_context()
+        separate = self.estimate(measured, host).estimate
+        same = self.estimate(measured, replace(host, backup_shares_docker_filesystem=True)).estimate
+        self.assertEqual(same.docker_required_free_bytes, separate.docker_required_free_bytes + same.backup_required_free_bytes)
+        unknown = HostSizeObservation(host.table_sizes, host.volume_bytes, host.docker_free_bytes, host.backup_free_bytes)
+        self.assertEqual(self.estimate(measured, unknown).estimate, same)
+
+    def test_missing_table_unknown_engine_and_unmeasured_reference_capacity_refuse(self):
+        measured, host, _ = a6_context()
+        for tables in ((), (HostTableSize("clickhouse", "public.synthetic_table", 100, 1000),)):
+            self.assertEqual(self.estimate(measured, replace(host, table_sizes=tables)).reason_codes,
+                             (ReasonCode.RESTORE_CAPACITY_UNKNOWN,))
+        m = measured.migration_measurements[0]
+        no_reference = replace(m, tables=(replace(m.tables[0], reference_rows=0),))
+        candidate = replace(measured, migration_measurements=(no_reference,) + measured.migration_measurements[1:])
+        self.assertEqual(self.estimate(candidate, host).reason_codes, (ReasonCode.RESTORE_CAPACITY_UNKNOWN,))
+        sizes = dict(measured.backup_measurement.reference_volume_bytes)
+        sizes["app-data"] = 0
+        transfer = replace(measured.backup_measurement, reference_volume_bytes=sizes)
+        candidate = replace(measured, backup_measurement=transfer, restore_measurement=transfer)
+        self.assertEqual(self.estimate(candidate, host).reason_codes, (ReasonCode.RESTORE_CAPACITY_UNKNOWN,))
+
+    def test_both_engines_risks_and_throughput_units_have_positive_contract_examples(self):
+        from deploy.update.contracts import MigrationMeasurement
+        target, _, proof, _ = restore_release(1)
+        for engine in ("postgres", "clickhouse"):
+            for risk in ("metadata_only", "scan", "rewrite", "index_build", "data_backfill", "other"):
+                for unit in ("rows_per_second", "bytes_per_second"):
+                    row = copy.deepcopy(proof["predecessors"][0])
+                    row["migration_measurements"][0].update(engine=engine, risk_class=risk)
+                    row["migration_measurements"][0]["throughput"]["unit"] = unit
+                    measured = transition_measurements(row)
+                    self.assertIsInstance(measured.migration_measurements[0], MigrationMeasurement)
+                    host = replace(a6_context()[1], table_sizes=(HostTableSize(engine, "public.synthetic_table", 100, 1000),))
+                    self.assertTrue(self.estimate(measured, host).allowed)
+
+    def test_no_table_metadata_operation_still_budgets_measured_duration_wal_and_temp(self):
+        target, _, proof, _ = restore_release(1)
+        proof["predecessors"][0]["migration_measurements"][0].update(tables=[], risk_class="metadata_only")
+        measured = transition_measurements(proof["predecessors"][0])
+        result = self.estimate(measured, replace(a6_context()[1], table_sizes=()))
+        self.assertTrue(result.allowed)
+        self.assertEqual((result.estimate.migration_seconds, result.estimate.extra_disk_bytes), (10, 300))
+
+    def test_zero_pending_plan_requires_measured_backup_and_restore(self):
+        target, _, proof, raw = restore_release(0)
+        measured = transition_measurements(proof["predecessors"][0])
+        self.assertEqual(self.estimate(measured).estimate.migration_seconds, 0)
+        for field in ("backup_measurement", "restore_measurement"):
+            bad = copy.deepcopy(proof)
+            del bad["predecessors"][0][field]
+            raw = bind_proof(target, bad)
+            with self.assertRaises(ValueError):
+                validate_release_proof(raw, target, repository="future-agi/future-agi")
+
+    def test_exact_plan_count_identity_order_and_hash_are_all_bound(self):
+        for change in ("missing", "extra", "duplicate", "reordered", "renamed", "hash", "count"):
+            target, _, proof, _ = restore_release()
+            row = proof["predecessors"][0]
+            migrations = row["migration_measurements"]
+            if change == "missing": migrations.pop()
+            elif change == "extra": migrations.append(copy.deepcopy(migrations[0]))
+            elif change == "duplicate": migrations[1] = copy.deepcopy(migrations[0])
+            elif change == "reordered": migrations.reverse()
+            elif change == "renamed": migrations[0]["name"] = "different"
+            elif change == "hash": row["migration_evidence"]["target_pending_plan_sha256"] = "f" * 64
+            else: row["migration_evidence"]["target_pending_plan_count"] += 1
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                validate_release_proof(bind_proof(target, proof), target, repository="future-agi/future-agi")
+
+    def test_measurements_are_covered_by_the_signed_exact_proof_bytes(self):
+        target, _, proof, raw = restore_release()
+        proof["predecessors"][0]["migration_measurements"][0]["duration_seconds"] += 1
+        with self.assertRaises(ValueError):
+            validate_release_proof(canonical_json(proof), target, repository="future-agi/future-agi")
+        validate_release_proof(raw, target, repository="future-agi/future-agi")
+
+    def test_measurement_inputs_are_deeply_immutable_and_defensively_copied(self):
+        target, _, proof, raw = restore_release()
+        row = proof["predecessors"][0]
+        measured = transition_measurements(row)
+        row["backup_measurement"]["reference_volume_bytes"]["app-data"] = 1
+        row["migration_measurements"][0]["tables"][0]["reference_rows"] = 1
+        self.assertEqual(measured.backup_measurement.reference_volume_bytes["app-data"], 1000)
+        self.assertEqual(measured.migration_measurements[0].tables[0].reference_rows, 100)
+        with self.assertRaises(TypeError): measured.restore_measurement.reference_volume_bytes["app-data"] = 1
+        measured, host, _ = a6_context()
+        values = dict(host.volume_bytes)
+        copied = replace(host, volume_bytes=values)
+        values["app-data"] = 1
+        self.assertEqual(copied.volume_bytes["app-data"], 1000)
+
+    def test_every_new_policy_bound_and_legacy_budgets(self):
+        policy = a6_context()[2]
+        for field in ("estimate_safety_factor", "migration_timeout_seconds", "migration_stall_timeout_seconds", "disk_watermark_reserve_bytes"):
+            lo, hi = AUTOMATIC_POLICY_BOUNDS[field]
+            for value in (True, float("nan"), float("inf"), lo - 1, hi + 1):
+                with self.subTest(field=field, value=value), self.assertRaises(ContractError):
+                    replace(policy, **{field: value})
+        with self.assertRaises(ContractError): replace(policy, migration_stall_timeout_seconds=1201)
+        self.assertEqual(replace(policy, migration_timeout_seconds=1201).required_tick_budget_seconds,
+                         policy.required_tick_budget_seconds + 1)
+        legacy = AutomationPolicy(mode="apply")
+        self.assertEqual(replace(legacy, migration_timeout_seconds=7200).required_tick_budget_seconds,
+                         legacy.required_tick_budget_seconds)
+        self.assertEqual(replace(policy, estimate_safety_factor=3).required_tick_budget_seconds, policy.required_tick_budget_seconds)
+        self.assertEqual(self.estimate(policy=replace(policy, estimate_safety_factor=3)).estimate.migration_seconds, 45)
+
+    def test_missing_and_nonfinite_host_sizes_and_remaining_budgets_refuse(self):
+        measured, host, policy = a6_context()
+        self.assertFalse(estimate_automatic_update(measured, None, policy, window_remaining_seconds=10, tick_remaining_seconds=10).allowed)
+        for field in ("docker_free_bytes", "backup_free_bytes"):
+            for value in (None, True, -1, float("inf"), float("nan"), 1.5):
+                with self.subTest(field=field, value=value), self.assertRaises(ContractError):
+                    replace(host, **{field: value})
+        for field in ("rows", "bytes"):
+            with self.assertRaises(ContractError): replace(host.table_sizes[0], **{field: float("nan")})
+        for value in (None, True, -1, float("inf"), float("nan")):
+            self.assertFalse(self.estimate(window=value).allowed)
+            self.assertFalse(self.estimate(tick=value).allowed)
+        for missing in AUTOMATIC_VOLUMES:
+            with self.assertRaises(ContractError):
+                replace(host, volume_bytes={k: v for k, v in host.volume_bytes.items() if k != missing})
+
+    def test_fractional_rounding_and_extreme_finite_rates_never_overflow_or_round_down(self):
+        measured, host, _ = a6_context()
+        transfer = replace(measured.backup_measurement, throughput_bytes_per_second=4000)
+        measured = replace(measured, backup_measurement=transfer, restore_measurement=transfer)
+        self.assertEqual(self.estimate(measured, host).estimate.backup_seconds, 2)
+        transfer = replace(transfer, throughput_bytes_per_second=5e-324)
+        measured = replace(measured, backup_measurement=transfer, restore_measurement=transfer)
+        result = self.estimate(measured, host)
+        self.assertFalse(result.allowed)
+        self.assertIsInstance(result.estimate.backup_seconds, int)
+        self.assertIn(ReasonCode.BACKUP_EXCEEDS_WINDOW, result.reason_codes)
+
+
+class ReviewerA6RegressionTests(unittest.TestCase):
+    """Pure synthetic counterexamples, never product qualification."""
+
+    estimate = AmendmentA6Tests.estimate
+
+    def measured_row(self, target, proof):
+        raw = bind_proof(target, proof)
+        validate_release_proof(raw, target, repository="future-agi/future-agi")
+        from jsonschema import Draft202012Validator
+        Draft202012Validator(schema("compatibility-proof.schema.json")).validate(proof)
+        return transition_measurements(proof["predecessors"][0])
+
+    def test_reviewer_chained_tenfold_backfills_refuse_unbounded_intermediate_inputs(self):
+        target, _, proof, _ = restore_release(2)
+        for i, migration in enumerate(proof["predecessors"][0]["migration_measurements"]):
+            reference = 1000 * 10**i
+            migration.update(tables=[{"table": "public.synthetic_table", "reference_rows": reference // 10,
+                                     "reference_bytes": reference}], duration_seconds=reference // 1000,
+                throughput={"unit": "bytes_per_second", "value": 1000},
+                peak_disk_amplification_factor=10, wal_bytes=0, temp_bytes=0, risk_class="data_backfill")
+        measured = self.measured_row(target, proof)
+        policy = replace(a6_context()[2], disk_watermark_reserve_bytes=1)
+        host = HostSizeObservation((HostTableSize("postgres", "public.synthetic_table", 1000, 10000),),
+            {"app-data": 1, "postgres-data": 10000, "clickhouse-data": 1}, 380005, 10**9, False)
+        for free in (380005, 10**12):
+            result = self.estimate(measured, replace(host, docker_free_bytes=free), policy)
+            self.assertFalse(result.allowed)
+            self.assertEqual(result.reason_codes, (ReasonCode.RESTORE_CAPACITY_UNKNOWN,))
+            self.assertIsNone(result.estimate)
+
+    def test_repeat_tables_refuse_even_with_no_measured_disk_growth_or_nonadjacent_use(self):
+        for engine in ("postgres", "clickhouse"):
+            for risk in ("metadata_only", "scan", "rewrite", "index_build", "data_backfill", "other"):
+                for separation in (0, 1):
+                    target, _, proof, _ = restore_release(2 + separation)
+                    migrations = proof["predecessors"][0]["migration_measurements"]
+                    for migration in migrations:
+                        migration.update(engine=engine, risk_class=risk, peak_disk_amplification_factor=1)
+                    if separation:
+                        migrations[1]["tables"][0]["table"] = "public.unrelated_table"
+                    measured = self.measured_row(target, proof)
+                    host = HostSizeObservation(tuple(HostTableSize(engine, name, 100, 1000)
+                        for name in ("public.synthetic_table", "public.unrelated_table")),
+                        {name: 1000 for name in AUTOMATIC_VOLUMES}, 10**12, 10**12, False)
+                    with self.subTest(engine=engine, risk=risk, separation=separation):
+                        result = self.estimate(measured, host)
+                        self.assertFalse(result.allowed)
+                        self.assertEqual(result.reason_codes, (ReasonCode.RESTORE_CAPACITY_UNKNOWN,))
+
+    def test_independent_tables_and_engine_namespaces_remain_estimable(self):
+        for same_engine in (True, False):
+            target, _, proof, _ = restore_release(2)
+            second = proof["predecessors"][0]["migration_measurements"][1]
+            if same_engine:
+                second["tables"][0]["table"] = "public.independent_table"
+            else:
+                second["engine"] = "clickhouse"
+            measured = self.measured_row(target, proof)
+            host = HostSizeObservation(tuple(HostTableSize(m.engine, m.tables[0].table, 100, 1000)
+                for m in measured.migration_measurements),
+                {name: 1000 for name in AUTOMATIC_VOLUMES}, 10**12, 10**12, False)
+            result = self.estimate(measured, host)
+            self.assertTrue(result.allowed, result.reason_codes)
+            self.assertEqual((result.estimate.migration_seconds, result.estimate.extra_disk_bytes), (20, 4600))
+
+    def test_reviewer_row_scaled_index_preserves_restore_reserve(self):
+        target, _, proof, _ = restore_release(1)
+        proof["predecessors"][0]["migration_measurements"][0].update(
+            tables=[{"table": "public.synthetic_table", "reference_rows": 100, "reference_bytes": 100000}],
+            duration_seconds=1, throughput={"unit": "rows_per_second", "value": 100},
+            peak_disk_amplification_factor=1.1, wal_bytes=0, temp_bytes=0, risk_class="index_build")
+        measured = self.measured_row(target, proof)
+        host = HostSizeObservation((HostTableSize("postgres", "public.synthetic_table", 1000, 100000),),
+            {"app-data": 1, "postgres-data": 100000, "clickhouse-data": 1}, 220006, 10**9, False)
+        policy = replace(a6_context()[2], disk_watermark_reserve_bytes=1)
+        # The current contract has no scaling bound, including for index_build.
+        # Refusal is required even if the host offers ample time and disk.
+        for free in (220006, 10**12):
+            result = self.estimate(measured, replace(host, docker_free_bytes=free), policy)
+            self.assertFalse(result.allowed)
+            self.assertEqual(result.reason_codes, (ReasonCode.RESTORE_CAPACITY_UNKNOWN,))
+            self.assertIsNone(result.estimate)
+        # An independent synthetic reference run at the host row cardinality
+        # would measure 100,000 index bytes; test that reference's capacity too.
+        migration = proof["predecessors"][0]["migration_measurements"][0]
+        migration["tables"][0]["reference_rows"] = 1000
+        migration.update(duration_seconds=10, peak_disk_amplification_factor=2)
+        measured = self.measured_row(target, proof)
+        result = self.estimate(measured, host, policy)
+        self.assertFalse(result.allowed)
+        self.assertIn(ReasonCode.INSUFFICIENT_DISK_FOR_MIGRATION, result.reason_codes)
+        self.assertEqual(result.estimate.extra_disk_bytes, 2 * 100000)
+        self.assertEqual(result.estimate.docker_required_free_bytes,
+                         result.estimate.protected_restore_reserve_bytes + 2 * 100000)
+        fit = replace(host, docker_free_bytes=result.estimate.docker_required_free_bytes)
+        self.assertTrue(self.estimate(measured, fit, policy).allowed)
+        self.assertFalse(self.estimate(measured, replace(fit, docker_free_bytes=fit.docker_free_bytes - 1), policy).allowed)
+
+    def test_all_allocation_keeps_reference_floor_or_refuses_unbounded_scaling(self):
+        target, _, proof, _ = restore_release(1)
+        measured = self.measured_row(target, proof)
+        original = measured.migration_measurements[0]
+        for engine in ("postgres", "clickhouse"):
+            for unit in ("rows_per_second", "bytes_per_second"):
+                for rows in (1, 100, 1000):
+                    for byte_count in (1, 1000, 10000):
+                        for amplification in (1, 1.1, 10):
+                            migration = replace(original, engine=engine, peak_disk_amplification_factor=amplification,
+                                                throughput=replace(original.throughput, unit=unit))
+                            candidate = replace(measured, migration_measurements=(migration,))
+                            host = HostSizeObservation((HostTableSize(engine, "public.synthetic_table", rows, byte_count),),
+                                {name: 1000 for name in AUTOMATIC_VOLUMES}, 10**12, 10**12, False)
+                            result = self.estimate(candidate, host)
+                            with self.subTest(engine=engine, unit=unit, rows=rows, bytes=byte_count, amplification=amplification):
+                                if rows > 100 or byte_count > 1000:
+                                    self.assertFalse(result.allowed)
+                                    self.assertEqual(result.reason_codes, (ReasonCode.RESTORE_CAPACITY_UNKNOWN,))
+                                    self.assertIsNone(result.estimate)
+                                else:
+                                    required = 2 * ((Fraction(amplification) - 1) * 1000 + 150)
+                                    self.assertTrue(result.allowed, result.reason_codes)
+                                    self.assertGreaterEqual(result.estimate.extra_disk_bytes, required)
+                                    self.assertLess(result.estimate.extra_disk_bytes - required, 1)
+
+    def test_multi_table_allocation_keeps_reference_floor_and_refuses_larger_inputs(self):
+        target, _, proof, _ = restore_release(1)
+        proof["predecessors"][0]["migration_measurements"][0]["tables"].append(
+            {"table": "public.second_table", "reference_rows": 100, "reference_bytes": 5000})
+        measured = self.measured_row(target, proof)
+        host = HostSizeObservation((HostTableSize("postgres", "public.synthetic_table", 1000, 1000),
+                                   HostTableSize("postgres", "public.second_table", 100, 5000)),
+            {name: 1000 for name in AUTOMATIC_VOLUMES}, 10**12, 10**12, False)
+        result = self.estimate(measured, host)
+        self.assertFalse(result.allowed)
+        self.assertEqual(result.reason_codes, (ReasonCode.RESTORE_CAPACITY_UNKNOWN,))
+        self.assertIsNone(result.estimate)
+        for rows in (0, 100):
+            within_reference = replace(host, table_sizes=(replace(host.table_sizes[0], rows=rows), host.table_sizes[1]))
+            result = self.estimate(measured, within_reference)
+            self.assertTrue(result.allowed, result.reason_codes)
+            self.assertEqual(result.estimate.extra_disk_bytes, 2 * (6000 + 150))
+
+    def test_reviewer_role_mix_transfer_refuses_both_sixty_second_timeouts(self):
+        target, _, proof, _ = restore_release(0)
+        mib = 1024**2
+        reference = {"app-data": mib, "postgres-data": 9998 * mib, "clickhouse-data": mib}
+        reference_duration = Fraction(1) + Fraction(9998, 1000) + Fraction(1, 1000)
+        rate = float(Fraction(sum(reference.values())) / reference_duration)
+        for field in ("backup_measurement", "restore_measurement"):
+            proof["predecessors"][0][field] = {"reference_volume_bytes": reference,
+                                             "throughput_bytes_per_second": rate}
+        measured = self.measured_row(target, proof)
+        host = HostSizeObservation((), {"app-data": 9998 * mib, "postgres-data": mib, "clickhouse-data": mib},
+                                   10**12, 10**12, False)
+        policy = replace(a6_context()[2], backup_timeout_seconds=60, restore_timeout_seconds=60)
+        result = self.estimate(measured, host, policy)
+        actual_duration = Fraction(9998) + Fraction(2, 1000)
+        self.assertFalse(result.allowed)
+        self.assertIn(ReasonCode.BACKUP_EXCEEDS_WINDOW, result.reason_codes)
+        self.assertGreaterEqual(result.estimate.backup_seconds, 2 * actual_duration)
+        self.assertGreaterEqual(result.estimate.restore_seconds, 2 * actual_duration)
+
+    def test_transfer_scales_by_each_role_and_keeps_measured_reference_floor(self):
+        target, _, proof, _ = restore_release(0)
+        measured = self.measured_row(target, proof)
+        reference = {"app-data": 2, "postgres-data": 1000, "clickhouse-data": 5}
+        transfer = replace(measured.backup_measurement, reference_volume_bytes=reference,
+                           throughput_bytes_per_second=100)
+        measured = replace(measured, backup_measurement=transfer, restore_measurement=transfer)
+        for growing_role in AUTOMATIC_VOLUMES:
+            previous = 0
+            for multiple in (0, 1, 2, 10, 1000):
+                sizes = {role: value if role != growing_role else value * multiple for role, value in reference.items()}
+                host = HostSizeObservation((), sizes, 10**12, 10**12, False)
+                result = self.estimate(measured, host)
+                expected = Fraction(2 * sum(reference.values()) * max(1, multiple), 100)
+                self.assertGreaterEqual(result.estimate.backup_seconds, expected)
+                self.assertLess(result.estimate.backup_seconds - expected, 1)
+                self.assertEqual(result.estimate.backup_seconds, result.estimate.restore_seconds)
+                self.assertGreaterEqual(result.estimate.backup_seconds, previous)
+                previous = result.estimate.backup_seconds
+
+    def test_nonempty_host_role_with_zero_reference_still_refuses(self):
+        target, _, proof, _ = restore_release(0)
+        measured = self.measured_row(target, proof)
+        for missing_role in AUTOMATIC_VOLUMES:
+            reference = {role: 0 if role == missing_role else 1000 for role in AUTOMATIC_VOLUMES}
+            transfer = replace(measured.backup_measurement, reference_volume_bytes=reference)
+            candidate = replace(measured, backup_measurement=transfer, restore_measurement=transfer)
+            host = HostSizeObservation((), {role: 1000 for role in AUTOMATIC_VOLUMES}, 10**12, 10**12, False)
+            result = self.estimate(candidate, host)
+            self.assertFalse(result.allowed)
+            self.assertEqual(result.reason_codes, (ReasonCode.RESTORE_CAPACITY_UNKNOWN,))
+            host = replace(host, volume_bytes=reference)
+            self.assertTrue(self.estimate(candidate, host).allowed)
+
+
+class NonlinearA6RegressionTests(unittest.TestCase):
+    """Reference measurements are not a certified nonlinear scaling bound."""
+
+    estimate = AmendmentA6Tests.estimate
+    measured_row = ReviewerA6RegressionTests.measured_row
+
+    def test_reviewer_cartesian_backfill_refuses_extrapolation_with_disjoint_tables(self):
+        target, _, proof, _ = restore_release(1)
+        proof["predecessors"][0]["migration_measurements"][0].update(
+            risk_class="data_backfill", tables=[
+                {"table": "public.left_input", "reference_rows": 100, "reference_bytes": 1000},
+                {"table": "public.right_input", "reference_rows": 100, "reference_bytes": 1000},
+                {"table": "public.pairs", "reference_rows": 0, "reference_bytes": 0}],
+            duration_seconds=10, throughput={"unit": "rows_per_second", "value": 20},
+            peak_disk_amplification_factor=51, wal_bytes=0, temp_bytes=0)
+        measured = self.measured_row(target, proof)
+        host = HostSizeObservation((HostTableSize("postgres", "public.left_input", 1000, 10000),
+                                   HostTableSize("postgres", "public.right_input", 1000, 10000),
+                                   HostTableSize("postgres", "public.pairs", 0, 0)),
+            {"app-data": 1, "postgres-data": 20000, "clickhouse-data": 1}, 2040005, 10**12, False)
+        policy = replace(a6_context()[2], disk_watermark_reserve_bytes=1)
+        for free in (2040005, 10**12):
+            with self.subTest(docker_free_bytes=free):
+                result = self.estimate(measured, replace(host, docker_free_bytes=free), policy)
+                self.assertFalse(result.allowed)
+                self.assertEqual(result.reason_codes, (ReasonCode.RESTORE_CAPACITY_UNKNOWN,))
+                self.assertIsNone(result.estimate)
+
+    def test_no_engine_risk_or_throughput_label_certifies_extrapolation(self):
+        target, _, proof, _ = restore_release(1)
+        measured = self.measured_row(target, proof)
+        original = measured.migration_measurements[0]
+        for engine in ("postgres", "clickhouse"):
+            for risk in ("metadata_only", "scan", "rewrite", "index_build", "data_backfill", "other"):
+                for unit in ("rows_per_second", "bytes_per_second"):
+                    migration = replace(original, engine=engine, risk_class=risk, peak_disk_amplification_factor=1,
+                                        throughput=replace(original.throughput, unit=unit), wal_bytes=0, temp_bytes=0)
+                    candidate = replace(measured, migration_measurements=(migration,))
+                    for rows, byte_count in ((101, 1000), (100, 1001), (101, 1001), (101, 1), (1, 1001)):
+                        host = replace(a6_context()[1], table_sizes=(
+                            HostTableSize(engine, "public.synthetic_table", rows, byte_count),))
+                        with self.subTest(engine=engine, risk=risk, unit=unit, rows=rows, bytes=byte_count):
+                            result = self.estimate(candidate, host)
+                            self.assertFalse(result.allowed)
+                            self.assertEqual(result.reason_codes, (ReasonCode.RESTORE_CAPACITY_UNKNOWN,))
+                            self.assertIsNone(result.estimate)
+
+    def test_equal_aggregate_work_cannot_hide_one_table_above_its_reference(self):
+        target, _, proof, _ = restore_release(1)
+        proof["predecessors"][0]["migration_measurements"][0]["tables"].append(
+            {"table": "public.other_input", "reference_rows": 100, "reference_bytes": 1000})
+        measured = self.measured_row(target, proof)
+        host = replace(a6_context()[1], table_sizes=(HostTableSize("postgres", "public.synthetic_table", 101, 1000),
+                                                  HostTableSize("postgres", "public.other_input", 99, 1000)))
+        for tables in (host.table_sizes, tuple(reversed(host.table_sizes))):
+            result = self.estimate(measured, replace(host, table_sizes=tables))
+            self.assertFalse(result.allowed)
+            self.assertEqual(result.reason_codes, (ReasonCode.RESTORE_CAPACITY_UNKNOWN,))
+            self.assertIsNone(result.estimate)
+
+    def test_equal_and_smaller_inputs_keep_full_reference_time_and_allocation(self):
+        target, _, proof, _ = restore_release(1)
+        measured = self.measured_row(target, proof)
+        for rows, byte_count in ((100, 1000), (99, 999), (0, 0), (1, 1000), (100, 1)):
+            host = replace(a6_context()[1], table_sizes=(HostTableSize("postgres", "public.synthetic_table", rows, byte_count),))
+            with self.subTest(rows=rows, bytes=byte_count):
+                result = self.estimate(measured, host)
+                self.assertTrue(result.allowed, result.reason_codes)
+                self.assertEqual(result.estimate.migration_seconds, 10)
+                self.assertEqual(result.estimate.extra_disk_bytes, 2300)
+
+    def test_reference_comparison_is_exact_at_largest_supported_integer(self):
+        target, _, proof, _ = restore_release(1)
+        measured = self.measured_row(target, proof)
+        original = measured.migration_measurements[0]
+        maximum = 9007199254740991
+        for field, host_field in (("reference_rows", "rows"), ("reference_bytes", "bytes")):
+            table = replace(original.tables[0], **{field: maximum - 1})
+            migration = replace(original, tables=(table,), peak_disk_amplification_factor=1, wal_bytes=0, temp_bytes=0,
+                                throughput=replace(original.throughput, value=1e18))
+            candidate = replace(measured, migration_measurements=(migration,))
+            actual = HostTableSize("postgres", table.table, table.reference_rows, table.reference_bytes)
+            host = replace(a6_context()[1], table_sizes=(actual,))
+            self.assertTrue(self.estimate(candidate, host).allowed)
+            result = self.estimate(candidate, replace(host, table_sizes=(replace(actual, **{host_field: maximum}),)))
+            self.assertFalse(result.allowed)
+            self.assertEqual(result.reason_codes, (ReasonCode.RESTORE_CAPACITY_UNKNOWN,))
+            self.assertIsNone(result.estimate)
+
+    def test_unrelated_observed_tables_do_not_require_migration_reference_coverage(self):
+        measured, host, _ = a6_context()
+        larger_unrelated = HostTableSize("postgres", "public.not_in_pending_plan", 9007199254740991, 9007199254740991)
+        result = self.estimate(measured, replace(host, table_sizes=host.table_sizes + (larger_unrelated,)))
+        self.assertTrue(result.allowed, result.reason_codes)
+        self.assertEqual(result.estimate, self.estimate(measured, host).estimate)
+
+    def test_larger_safety_factor_does_not_authorize_unbounded_extrapolation(self):
+        measured, host, policy = a6_context()
+        host = replace(host, table_sizes=(replace(host.table_sizes[0], rows=101),) + host.table_sizes[1:])
+        for factor in (2, 100):
+            result = self.estimate(measured, host, replace(policy, estimate_safety_factor=factor))
+            self.assertFalse(result.allowed)
+            self.assertEqual(result.reason_codes, (ReasonCode.RESTORE_CAPACITY_UNKNOWN,))
+            self.assertIsNone(result.estimate)
+
+
+class ReviewParityTests(unittest.TestCase):
+    def test_mathematical_integer_parity_does_not_change_legacy_manual_or_backup_tokens(self):
+        # A6 is unreleased v2 only; do not broaden existing backup-v1/manual parsing.
+        backup = json.loads(synthetic_context()[3])
+        backup["schema_version"] = 1.0
+        with self.assertRaises(CompatibilityError):
+            shape(backup, schema("backup-proof.schema.json"))
+        target, _, proof, _ = synthetic_release()
+        proof["run_id"] = 42.0
+        with self.assertRaises(CompatibilityError):
+            validate_release_proof(bind_proof(target, proof), target, repository="future-agi/future-agi")
+
+    def test_integer_valued_float_counts_run_ids_and_constants_match_wire_schema(self):
+        from jsonschema import Draft202012Validator
+        spec = schema("compatibility-proof.schema.json")
+        paths = [("schema_version",), ("run_id",), ("backup_inventory_version",),
+                 ("predecessors", 0, "migration_evidence", "target_pending_plan_count"),
+                 ("predecessors", 0, "migration_measurements", 0, "wal_bytes"),
+                 ("predecessors", 0, "migration_measurements", 0, "tables", 0, "reference_rows")]
+        for path in paths:
+            target, _, proof, _ = restore_release()
+            node = proof
+            for key in path[:-1]: node = node[key]
+            node[path[-1]] = float(node[path[-1]])
+            raw = bind_proof(target, proof)
+            self.assertTrue(Draft202012Validator(spec).is_valid(proof), path)
+            shape(proof, spec)
+            validate_release_proof(raw, target, repository="future-agi/future-agi")
+            typed = transition_measurements(proof["predecessors"][0])
+            self.assertIs(type(typed.migration_evidence.target_pending_plan_count), int)
+        for value in (True, 3.5, float("inf"), float("nan")):
+            target, _, proof, _ = restore_release()
+            proof["predecessors"][0]["migration_evidence"]["target_pending_plan_count"] = value
+            self.assertFalse(Draft202012Validator(spec).is_valid(proof))
+            with self.assertRaises(ValueError): shape(proof, spec)
+
+    def test_every_proof_digest_rejects_a_final_newline_in_schema_and_python(self):
+        from jsonschema import Draft202012Validator
+        target, _, proof, _ = restore_release()
+        paths = []
+        def walk(value, path=()):
+            if isinstance(value, dict):
+                for key, item in value.items(): walk(item, path + (key,))
+            elif isinstance(value, list):
+                for key, item in enumerate(value): walk(item, path + (key,))
+            elif isinstance(value, str) and (len(value) == 64 or value.startswith("sha256:") or len(value) == 40):
+                paths.append(path)
+        walk(proof)
+        self.assertGreater(len(paths), 20)
+        spec = schema("compatibility-proof.schema.json")
+        validator = Draft202012Validator(spec)
+        for path in paths:
+            bad = copy.deepcopy(proof)
+            node = bad
+            for key in path[:-1]: node = node[key]
+            node[path[-1]] += "\n"
+            self.assertFalse(validator.is_valid(bad), path)
+            with self.assertRaises(ValueError): shape(bad, spec)
+
+    def test_notify_only_else_branch_matches_runtime_for_strategy_and_certification(self):
+        from jsonschema import Draft202012Validator
+        spec = schema("release-manifest.schema.json")
+        validator = Draft202012Validator(spec)
+        target = default_v2()
+        target["compatibility"]["automatic_rollback"]["strategy"] = "restore_backup"
+        self.assertFalse(validator.is_valid(target))
+        with self.assertRaises(ValueError): validate_manifest(target)
+        for certified in (False, True):
+            target, _, _, _ = restore_release()
+            compatibility = target["compatibility"]
+            compatibility.update(automatic_apply=False, automatic_rollback={"strategy": "never"})
+            compatibility["predecessors"][0]["restore_certified"] = certified
+            compatibility["validation"] = None
+            self.assertEqual(validator.is_valid(target), not certified)
+            if certified:
+                with self.assertRaises(ValueError): validate_manifest(target)
+            else: validate_manifest(target)
+
+    def test_all_new_closed_objects_fields_and_wire_bounds_match_schema(self):
+        from jsonschema import Draft202012Validator
+        spec = schema("compatibility-proof.schema.json")
+        validator = Draft202012Validator(spec)
+        target, _, proof, _ = restore_release()
+        row = proof["predecessors"][0]
+        objects = []
+        def visit(value, path):
+            if isinstance(value, dict):
+                objects.append((path, value))
+                for key, item in value.items(): visit(item, path + (key,))
+            elif isinstance(value, list):
+                for key, item in enumerate(value): visit(item, path + (key,))
+        for field in ("migration_measurements", "backup_measurement", "restore_measurement"):
+            visit(row[field], (field,))
+        for path, obj in objects:
+            for field in list(obj) + ["unexpected"]:
+                bad = copy.deepcopy(proof)
+                node = bad["predecessors"][0]
+                for key in path: node = node[key]
+                if field == "unexpected": node[field] = "not evidence"
+                else: del node[field]
+                self.assertFalse(validator.is_valid(bad), (path, field))
+                with self.assertRaises(ValueError): shape(bad, spec)
+        for field in ("migration_measurements", "backup_measurement", "restore_measurement"):
+            bad = copy.deepcopy(proof)
+            del bad["predecessors"][0][field]
+            self.assertFalse(validator.is_valid(bad), field)
+            with self.assertRaises(ValueError):
+                validate_release_proof(bind_proof(target, bad), target, repository="future-agi/future-agi")
+
+    def test_every_new_leaf_field_has_schema_python_rejection_and_boundary_parity(self):
+        from jsonschema import Draft202012Validator
+        spec = schema("compatibility-proof.schema.json")
+        validator = Draft202012Validator(spec)
+        cases = {
+            ("migration_measurements", 0, "app_label"): ["", "0bad_app", "has.space", "x" * 129],
+            ("migration_measurements", 0, "name"): ["", "has/segment", "has.space", "x" * 129],
+            ("migration_measurements", 0, "engine"): ["mysql", "Postgres", None],
+            ("migration_measurements", 0, "risk_class"): ["unknown", "images_only", None],
+            ("migration_measurements", 0, "duration_seconds"): [0, -1, True, "5", 1e19],
+            ("migration_measurements", 0, "peak_disk_amplification_factor"): [0, 0.5, 1000001, True, "2"],
+            ("migration_measurements", 0, "wal_bytes"): [-1, 1.5, True, 9007199254740992],
+            ("migration_measurements", 0, "temp_bytes"): [-1, 1.5, True, 9007199254740992],
+            ("migration_measurements", 0, "throughput", "unit"): ["rows/s", "unknown", None],
+            ("migration_measurements", 0, "throughput", "value"): [0, -1, True, "20", 1e19],
+            ("migration_measurements", 0, "tables", 0, "table"): ["unqualified", "a.b.c", "public.bad;DROP", "public.has-space", "public.table\n"],
+            ("migration_measurements", 0, "tables", 0, "reference_rows"): [-1, 1.5, True, 9007199254740992],
+            ("migration_measurements", 0, "tables", 0, "reference_bytes"): [-1, 1.5, True, 9007199254740992],
+        }
+        for transfer in ("backup_measurement", "restore_measurement"):
+            cases[(transfer, "throughput_bytes_per_second")] = [0, -1, True, "1000", 1e19]
+            for volume in AUTOMATIC_VOLUMES:
+                cases[(transfer, "reference_volume_bytes", volume)] = [-1, 1.5, True, 9007199254740992]
+        for path, invalid_values in cases.items():
+            for value in invalid_values:
+                target, _, proof, _ = restore_release()
+                node = proof["predecessors"][0]
+                for key in path[:-1]: node = node[key]
+                node[path[-1]] = value
+                self.assertFalse(validator.is_valid(proof), (path, value))
+                with self.assertRaises(ValueError): shape(proof, spec)
+                with self.assertRaises(ValueError):
+                    validate_release_proof(bind_proof(target, proof), target, repository="future-agi/future-agi")
+        # Zero-length reference runs do not count as measured backup/restore.
+        for transfer in ("backup_measurement", "restore_measurement"):
+            target, _, proof, _ = restore_release()
+            proof["predecessors"][0][transfer]["reference_volume_bytes"] = {name: 0 for name in AUTOMATIC_VOLUMES}
+            self.assertFalse(validator.is_valid(proof))
+            with self.assertRaises(ValueError):
+                validate_release_proof(bind_proof(target, proof), target, repository="future-agi/future-agi")
+
+    def test_nonfinite_measurements_including_overflow_exponents_are_never_evidence(self):
+        target, _, proof, _ = restore_release()
+        paths = [("duration_seconds",), ("peak_disk_amplification_factor",), ("wal_bytes",), ("temp_bytes",),
+                 ("throughput", "value"), ("tables", 0, "reference_rows"), ("tables", 0, "reference_bytes")]
+        for path in paths:
+            for value in (float("nan"), float("inf"), -float("inf")):
+                bad = copy.deepcopy(proof)
+                node = bad["predecessors"][0]["migration_measurements"][0]
+                for key in path[:-1]: node = node[key]
+                node[path[-1]] = value
+                with self.subTest(path=path, value=value), self.assertRaises(ValueError):
+                    validate_release_proof(bind_proof(target, bad), target, repository="future-agi/future-agi")
+        for field in ("backup_measurement", "restore_measurement"):
+            for subfield in ("throughput_bytes_per_second", "reference_volume_bytes"):
+                for value in (float("nan"), float("inf")):
+                    bad = copy.deepcopy(proof)
+                    if subfield == "reference_volume_bytes": bad["predecessors"][0][field][subfield]["app-data"] = value
+                    else: bad["predecessors"][0][field][subfield] = value
+                    with self.assertRaises(ValueError):
+                        validate_release_proof(bind_proof(target, bad), target, repository="future-agi/future-agi")
+        with self.assertRaises(ValueError): decode_document(b'{"finite_json_syntax": 1e400}')
 
 
 if __name__ == "__main__":

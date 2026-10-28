@@ -29,6 +29,20 @@ on:
       - "deploy/tests/test_update_*.py"
       - "deploy/tests/update_e2e/**"
       - "scripts/generate_update_manifest.py"
+      - "scripts/check_update_safety.py"
+      - "**/*.py"
+      - "**/*.go"
+      - "**/*.sql"
+      - "**/*.sh"
+      - "bin/**"
+      - "scripts/**"
+      - "deploy/**"
+      - "fi-collector/**"
+      - "agentcc-gateway/**"
+      - "docker-compose*.yml"
+      - "futureagi/**"
+      - "bin/lib/**"
+      - ".github/workflows/backend-ci.yml"
       - "docker-compose.yml"
       - "docker-compose.distributed.yml"
       - "deploy/docker-compose.production.yml"
@@ -68,6 +82,20 @@ on:
       - "deploy/tests/test_update_*.py"
       - "deploy/tests/update_e2e/**"
       - "scripts/generate_update_manifest.py"
+      - "scripts/check_update_safety.py"
+      - "**/*.py"
+      - "**/*.go"
+      - "**/*.sql"
+      - "**/*.sh"
+      - "bin/**"
+      - "scripts/**"
+      - "deploy/**"
+      - "fi-collector/**"
+      - "agentcc-gateway/**"
+      - "docker-compose*.yml"
+      - "futureagi/**"
+      - "bin/lib/**"
+      - ".github/workflows/backend-ci.yml"
       - "docker-compose.yml"
       - "docker-compose.distributed.yml"
       - "deploy/docker-compose.production.yml"
@@ -101,6 +129,8 @@ on:
       - ".gitattributes"
   merge_group:
   workflow_dispatch:
+  schedule:
+    - cron: "23 3 * * *"
 
 permissions:
   contents: read
@@ -110,6 +140,40 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  safety:
+    name: Unattended update layout and environment
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Resolve explicit PR base
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+          DEFAULT_BASE: origin/dev
+        run: |
+          base="${PR_BASE:-${BEFORE:-$DEFAULT_BASE}}"
+          if [[ "$base" =~ ^0+$ ]]; then base="$DEFAULT_BASE"; fi
+          git rev-parse --verify "${base}^{commit}"
+          echo "UPDATE_SAFETY_BASE=$base" >> "$GITHUB_ENV"
+      - name: Daemon-free safety fixtures
+        run: python -I -m unittest discover -s deploy/tests -p test_update_safety_gate.py -v
+      - name: Compose layout, complete backup coverage, unattended env and ClickHouse risk
+        run: |
+          python -I scripts/check_update_safety.py --static --base "$UPDATE_SAFETY_BASE" --json \
+            > "$RUNNER_TEMP/update-safety-layout.json"
+      - name: Retain large-volume rehearsal requirements
+        uses: actions/upload-artifact@v4
+        with:
+          name: update-safety-layout-requirements
+          path: ${{ runner.temp }}/update-safety-layout.json
+          if-no-files-found: error
+
   unit:
     name: unit (Python ${{ matrix.python }})
     # Python 3.9 (the oldest bin/update supports) has setup-python builds for
@@ -126,8 +190,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - name: Schema validator
-        if: matrix.python == '3.12'
+      - name: Install host test verifier
+        uses: ./.github/actions/setup-helm-tools
+        with:
+          cosign: "true"
+      - name: Schema validator on both supported interpreters
         run: python -m pip install --quiet jsonschema==4.23.0
       - name: deploy/tests/test_update_*.py
         # Positive host-ownership/reporting fixtures need trusted ancestry.
@@ -138,6 +205,11 @@ jobs:
           export TMPDIR
           trap 'rm -rf -- "$TMPDIR"' EXIT
           python -m unittest discover -s deploy/tests -p 'test_update_*.py' -v
+      - name: Daemon-free real harness, TLS publisher and native CI plans
+        run: |
+          python -m unittest discover -s deploy/tests/update_e2e -p 'test_real_automatic_harness.py' -v
+          python -m unittest discover -s deploy/tests/update_e2e -p 'test_automatic_publisher.py' -v
+          python -m unittest discover -s deploy/tests/update_e2e -p 'test_acceptance_ci.py' -v
 
   compose:
     name: compose versions
@@ -178,6 +250,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Real product and vendor backup fixtures have their own native jobs
+        # below, not this fake-image matrix or a mismatched opt-in variable.
         suite: [standalone, distributed, faults]
         # runner: the runner's own Compose. v2.24.7 ignores profiles in
         # `config --format json`, which bin/update must not depend on.
@@ -208,3 +282,133 @@ jobs:
           FUTURE_AGI_UPDATE_E2E_DIR: ${{ runner.temp }}/update-e2e
           FUTURE_AGI_UPDATE_E2E_FAULTS_SCOPE: state
         run: python -m unittest discover -s deploy/tests -p "test_update_e2e_${SUITE}.py" -v
+
+  automatic-upgrade:
+    name: Real automatic latest-stable to PR and cold restore
+    if: github.event_name != 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: ./.github/actions/setup-helm-tools
+        with:
+          cosign: "true"
+      - name: Explicit native daemon and private Compose launcher
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          docker context create colima-fagi-update --docker host=unix:///var/run/docker.sock
+          docker --context colima-fagi-update info
+          systemctl is-active --quiet cron.service
+          command -v crontab
+          dir="$(mktemp -d "$HOME/fagi-upd-e2e-real-tools.XXXXXX")"
+          printf '#!/bin/sh\nexec docker --context colima-fagi-update compose "$@"\n' > "$dir/docker-compose"
+          chmod 700 "$dir/docker-compose"
+          echo "$dir" >> "$GITHUB_PATH"
+      - uses: docker/setup-buildx-action@v3
+        with:
+          endpoint: colima-fagi-update
+      - name: Build PR OCI images without push, qualify, then installed-scheduler forward and restore
+        # Test-only cosign key and HTTPS CA are generated by AutomaticPublisher.
+        # No login, production environment/secrets, OIDC, registry upload or package write.
+        # The incomplete shipping driver MUST fail this job, never certify fixtures.
+        run: |
+          set -euo pipefail
+          umask 077
+          python -I deploy/tests/update_e2e/acceptance.py --mode upgrade \
+            --out "$HOME/fagi-upd-e2e-real-upgrade-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+      - name: Retain bounded public CI result only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: automatic-upgrade-result
+          path: |
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/summary.json
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/failure.json
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/test-output.log
+          if-no-files-found: warn
+          retention-days: 7
+
+  automatic-a-b-c:
+    name: Real one-opt-in v1.53.0 to v1.54.0 to v1.55.0
+    if: github.event_name != 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: ./.github/actions/setup-helm-tools
+        with:
+          cosign: "true"
+      - name: Explicit native daemon and private Compose launcher
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          docker context create colima-fagi-update --docker host=unix:///var/run/docker.sock
+          docker --context colima-fagi-update info
+          systemctl is-active --quiet cron.service
+          command -v crontab
+          dir="$(mktemp -d "$HOME/fagi-upd-e2e-real-tools.XXXXXX")"
+          printf '#!/bin/sh\nexec docker --context colima-fagi-update compose "$@"\n' > "$dir/docker-compose"
+          chmod 700 "$dir/docker-compose"
+          echo "$dir" >> "$GITHUB_PATH"
+      - name: Real published images, qualify/package with test key, installed-scheduler acceptance
+        run: |
+          set -euo pipefail
+          umask 077
+          python -I deploy/tests/update_e2e/acceptance.py --mode a-b-c \
+            --out "$HOME/fagi-upd-e2e-real-abc-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+      - name: Retain bounded public CI result only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: automatic-a-b-c-result
+          path: |
+            ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/summary.json
+            ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/failure.json
+            ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/test-output.log
+          if-no-files-found: warn
+          retention-days: 7
+
+  backup:
+    name: Native vendor cold backup and crash-restore matrices
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Explicit native fixture daemon and Compose launcher
+        run: |
+          set -euo pipefail
+          docker context create colima-fagi-update --docker host=unix:///var/run/docker.sock
+          dir="$(mktemp -d "$HOME/fagi-upd-e2e-real-backup-tools.XXXXXX")"
+          printf '#!/bin/sh\nexec docker --context colima-fagi-update compose "$@"\n' > "$dir/docker-compose"
+          chmod 700 "$dir/docker-compose"
+          echo "$dir" >> "$GITHUB_PATH"
+      - name: Execute actual opted-in vendor tests serially, not a skipped discovery
+        run: |
+          set -euo pipefail
+          umask 077
+          python -I deploy/tests/update_e2e/backup_ci.py \
+            --out "$HOME/fagi-upd-e2e-real-backup-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"

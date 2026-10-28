@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, FrozenSet, List, Mapping, Optional, Tuple
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse, urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener, urlopen
 
 try:
     import pwd
@@ -362,6 +362,7 @@ class Verification:
     tool: str = ""
     error: str = ""
     details: Dict[str, str] = field(default_factory=dict)
+    public_key_sha256: str = ""
 
     def as_dict(self) -> Dict[str, Any]:
         return {"verified": self.verified, "method": self.method, "signer": self.signer,
@@ -430,17 +431,26 @@ class _HTTPSRedirect(HTTPRedirectHandler):
         return redirected
 
 
-def http_get(url: str, headers: Mapping[str, str], timeout: float = 30.0) -> HttpResponse:
-    """Conditional transport; uses the same bounded downloader as explicit checks."""
+def http_get(url: str, headers: Mapping[str, str], timeout: float = 30.0, *,
+             max_bytes: int = MAX_DOWNLOAD_BYTES, ssl_context=None) -> HttpResponse:
+    """Conditional bounded HTTPS; an explicit host CA hook never disables TLS checks."""
     https_url(url)
     timeout = min(timeout, 30.0)
-    return _download(url, timeout, headers=headers, response_metadata=True,
-                     opener=build_opener(_HTTPSRedirect(time.monotonic() + timeout)).open)
+    handlers = [_HTTPSRedirect(time.monotonic() + timeout)]
+    if ssl_context is not None:
+        import ssl
+        if not isinstance(ssl_context, ssl.SSLContext) or not ssl_context.check_hostname or ssl_context.verify_mode != ssl.CERT_REQUIRED:
+            raise ManifestError("TLS verification required")
+        handlers.append(HTTPSHandler(context=ssl_context))
+    return _download(url, timeout, headers=headers, response_metadata=True, max_bytes=max_bytes,
+                     opener=build_opener(*handlers).open)
 
 
 def _download(url: str, timeout: float = 30.0, *, accept: str = "application/json",
               headers: Optional[Mapping[str, str]] = None, response_metadata: bool = False,
-              opener=None):
+              opener=None, max_bytes: int = MAX_DOWNLOAD_BYTES):
+    if type(max_bytes) is not int or not 0 < max_bytes <= MAX_DOWNLOAD_BYTES:
+        raise ManifestError("invalid download bound")
     if not url.startswith("https://"):
         raise ManifestError(f"refusing to download over a non-https URL: {url}")
     try:
@@ -451,7 +461,7 @@ def _download(url: str, timeout: float = 30.0, *, accept: str = "application/jso
                 raise ManifestError(f"{url} redirected to a non-https URL")
             if response_metadata:
                 https_url(final)
-            payload = response.read(MAX_DOWNLOAD_BYTES + 1)
+            payload = response.read(max_bytes + 1)
             metadata = getattr(response, "headers", {})
             length = metadata.get("Content-Length")
             if length is not None and (not length.isdigit() or int(length) != len(payload)):
@@ -475,8 +485,8 @@ def _download(url: str, timeout: float = 30.0, *, accept: str = "application/jso
         # HTTPException: a malformed URL (InvalidURL) or a body cut short
         # (IncompleteRead); ValueError: a URL urllib cannot parse at all.
         raise ManifestError(f"could not download {url}: {getattr(exc, 'reason', exc)}") from exc
-    if len(payload) > MAX_DOWNLOAD_BYTES:
-        raise ManifestError(f"{url} is larger than {MAX_DOWNLOAD_BYTES} bytes")
+    if len(payload) > max_bytes:
+        raise ManifestError(f"{url} is larger than {max_bytes} bytes")
     return result if response_metadata else payload
 
 
@@ -830,6 +840,11 @@ class Verifier:
                       minimum_cosign_major=MIN_COSIGN_MAJOR, host_only=self.host_only)
         return hashlib.sha256(json.dumps(fields, sort_keys=True).encode("utf-8")).hexdigest()
 
+    def public_key_sha256(self) -> str:
+        """Host-configured anchor for Controls, never sourced from a candidate."""
+        key = self.settings.get("FUTURE_AGI_UPDATE_COSIGN_PUBLIC_KEY")
+        return hashlib.sha256(_read_local(Path(key))).hexdigest() if key else ""
+
     def expected_signer(self, version: str) -> str:
         template = self.settings.get("FUTURE_AGI_UPDATE_TRUSTED_IDENTITY")
         return template.replace("{version}", version)
@@ -1067,7 +1082,26 @@ class Verifier:
                 error = proxy or "signature verification failed" + (f": {lines[-1]}" if lines else "")
             return Verification(False, method=method, signer=signer, issuer=issuer, tool=tool, error=error + why)
         return Verification(True, method=method, signer=signer, issuer=issuer, tool=tool,
+                            public_key_sha256=hashlib.sha256(_read_local(key_copy)).hexdigest() if key else "",
                             details={"note": run.note} if run.note else {})
+
+
+def matches_trust(verification, version: str, *, identity: str, issuer: str,
+                  public_key_sha256: str = "") -> bool:
+    """Evaluate actual verifier output; never turn a filename or boolean into trust.
+
+    Callers must also bind raw bytes and Verifier.trust_fingerprint(). Public-key
+    mode is explicit host configuration; an empty key keeps exact keyless defaults.
+    This predicate does not perform cryptography or establish freshness.
+    """
+    if not verification.verified or not verification.tool:
+        return False
+    if public_key_sha256:
+        return (re.fullmatch(r"[0-9a-f]{64}", public_key_sha256) is not None
+                and verification.method == "public key" and verification.issuer == ""
+                and verification.public_key_sha256 == public_key_sha256)
+    return (verification.method == "keyless" and verification.signer == identity.format(version=version)
+            and verification.issuer == issuer and not verification.public_key_sha256)
 
 
 def remove_workdir(workdir: Path) -> None:

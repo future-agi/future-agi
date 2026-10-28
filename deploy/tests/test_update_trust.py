@@ -1626,8 +1626,12 @@ class KeyVerificationTests(TrustTestCase):
         ])
         self.assertEqual(copy.read_bytes(), key.read_bytes())
         self.assertEqual(self.mode(copy), 0o644)
+        import hashlib
         self.assertEqual(verification, Verification(True, method="public key", signer=str(key), issuer="",
-                                                    tool=COSIGN))
+                                                    tool=COSIGN, public_key_sha256=hashlib.sha256(key.read_bytes()).hexdigest()))
+        self.assertEqual(self.verifier(FUTURE_AGI_UPDATE_COSIGN_PUBLIC_KEY=str(key)).public_key_sha256(),
+                         verification.public_key_sha256)
+        self.assertNotIn("public_key_sha256", verification.as_dict())
 
     def test_key_mode_online_keeps_the_transparency_log(self):
         key = self.write_key()

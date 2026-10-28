@@ -2825,7 +2825,8 @@ class IntegratorRound6SchemaVersionLengthTests(unittest.TestCase):
         schema = SCHEMA_PATH.read_text(encoding="utf-8")
         self.assertNotIn("[1-9][0-9]*", schema)
         # v2 adds the exact predecessor version (three numbers + prerelease).
-        self.assertEqual(schema.count("(0|[1-9][0-9]{0,17})"), 51)
+        # Four additional groups belong to the separate closed v2 predecessor branch.
+        self.assertEqual(schema.count("(0|[1-9][0-9]{0,17})"), 55)
 
 
 # ------------------------------------------------ hardening: small corners --
@@ -2940,7 +2941,10 @@ class GeneratorV2Tests(unittest.TestCase):
             self.assertTrue(compatibility["requires_operator_initialization"])
             self.assertEqual(compatibility["automatic_rollback"], {"strategy": "never"})
             self.assertEqual(compatibility["predecessors"], [])
-            self.assertEqual(compatibility["state_domains"], [])
+            self.assertNotIn("state_domains", compatibility)
+            self.assertEqual(compatibility["contract_version"], 2)
+            self.assertEqual(compatibility["qualification_policy"], "standalone-cold-restore-v1")
+            self.assertEqual(compatibility["runtime_activation_contract"], "standalone-compose-direct-v1")
             self.assertIsNone(compatibility["validation"])
 
     def test_affirmative_policy_requires_independent_matching_proof(self):

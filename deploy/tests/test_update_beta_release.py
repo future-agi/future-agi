@@ -24,7 +24,7 @@ if str(ROOT) not in sys.path:
 from deploy.tests import test_update_release_static as release  # noqa: E402
 from deploy.tests.test_update_compatibility import default_v2, synthetic_release  # noqa: E402
 from deploy.update.compatibility import (  # noqa: E402
-    PROOF_ASSET, SUITES, CompatibilityError, inputs_hash, topology_profile, validate_release_proof,
+    PROOF_ASSET, LEGACY_SUITES as SUITES, CompatibilityError, inputs_hash, topology_profile, validate_release_proof,
 )
 from deploy.update.manifest import canonical_json, is_version, manifest_hash, parse_version  # noqa: E402
 from scripts import build_update_compatibility_proof as producer  # noqa: E402
@@ -313,6 +313,9 @@ class ProofProducerTests(unittest.TestCase):
                        "compatibility": copy.deepcopy(target["compatibility"])}
         self.policy["compatibility"]["validation"] = None
         self.target = default_v2()
+        # Historical contract-v1 packaging fixture only. Never derive/clear the
+        # frozen migration metadata of a restore-backed contract-v2 candidate.
+        self.target['migration'] = copy.deepcopy(self.policy['migration'])
         self.evidence = self.tmp / (mode + platform.replace("/", "-") + "-".join(profiles))
         self.evidence.mkdir(exist_ok=True)
         row = proof["predecessors"][0]
@@ -343,7 +346,7 @@ class ProofProducerTests(unittest.TestCase):
         (self.evidence / "evidence.json").write_bytes(canonical_json(self.envelope))
 
     def build(self, **kwargs):
-        return producer.build(self.target, self.policy, self.evidence, **dict({"run_id": 42}, **kwargs))
+        return producer.build(self.target, self.policy, self.evidence, **dict({"run_id": 42, "lane": "synthetic"}, **kwargs))
 
     def test_complete_synthetic_evidence_round_trips_exactly(self):
         for mode, profiles, platform in (("standalone", (), "linux/amd64"), ("standalone", ("ml", "sandbox"), "linux/arm64"),
@@ -364,6 +367,10 @@ class ProofProducerTests(unittest.TestCase):
         raw, _ = self.build()
         schema = json.loads((release.UPDATE_DIR / "compatibility-proof.schema.json").read_text())
         jsonschema.Draft202012Validator(schema).validate(json.loads(raw))
+
+    def test_legacy_fixture_packaging_cannot_issue_new_product_qualification(self):
+        with self.assertRaises(CompatibilityError):
+            self.build(lane='product')
 
     def test_default_policy_cannot_be_certified_even_with_evidence(self):
         self.policy = json.loads((release.UPDATE_DIR / "release-policy.json").read_text())
@@ -479,6 +486,9 @@ class ProofProducerTests(unittest.TestCase):
         (directory / release.MANIFEST_ASSET).write_bytes(manifest)
         proof = directory / PROOF_ASSET
         proof.write_bytes(raw)
+        frozen = self.tmp / 'frozen'
+        frozen.mkdir()
+        (frozen / release.MANIFEST_ASSET).write_bytes(canonical_json(self.target))
         binary = self.tmp / "bin"
         binary.mkdir()
         release.write_fake(binary, "python3", "import os, sys; os.execv(sys.executable, [sys.executable] + sys.argv[1:])")
@@ -486,7 +496,8 @@ class ProofProducerTests(unittest.TestCase):
                                 lambda s: s.get("name") == "Validate proof before signing")
         env = {"PATH": str(binary) + ":" + os.environ.get("PATH", ""), "RUNNER_TEMP": str(self.tmp),
                "MANIFEST": release.MANIFEST_ASSET, "GITHUB_RUN_ID": "42", "PYTHONDONTWRITEBYTECODE": "1",
-               "GITHUB_REPOSITORY": producer.REPOSITORY}
+               "GITHUB_REPOSITORY": producer.REPOSITORY, "GITHUB_SHA": self.target['source_sha'],
+               "VERSION": self.target['version'], "GITHUB_REF": 'refs/tags/'+self.target['version']}
         result = release.run_step(step, env, ROOT, self.tmp)
         self.assertEqual(result.returncode, 0, result.stderr)
         for changed, run in ((raw + b" ", "42"), (raw, "43"), (None, "42")):
@@ -496,6 +507,15 @@ class ProofProducerTests(unittest.TestCase):
                 proof.write_bytes(changed)
             result = release.run_step(step, dict(env, GITHUB_RUN_ID=run), ROOT, self.tmp)
             self.assertNotEqual(result.returncode, 0)
+        proof.write_bytes(raw)
+        for changed_env in (dict(env,GITHUB_SHA='f'*40),dict(env,GITHUB_REF='refs/heads/dev')):
+            result = release.run_step(step, changed_env, ROOT, self.tmp)
+            self.assertNotEqual(result.returncode, 0)
+        changed_candidate = copy.deepcopy(self.target)
+        changed_candidate['published_at'] = '2026-10-21T00:00:00Z'
+        (frozen / release.MANIFEST_ASSET).write_bytes(canonical_json(changed_candidate))
+        result = release.run_step(step, env, ROOT, self.tmp)
+        self.assertNotEqual(result.returncode, 0)
 
     def test_cli_refuses_missing_evidence_without_creating_outputs(self):
         target, policy = self.tmp / "target.json", self.tmp / "policy.json"
@@ -619,16 +639,25 @@ class NonPublishingWorkflowTests(unittest.TestCase):
         self.assertIn("PUBLIC TRANSPARENCY", SMOKE.read_text())
         self.assertIn("CI-SMOKE-ONLY-NOT-A-RELEASE", SMOKE.read_text())
 
-    def test_proof_workflow_takes_only_same_run_evidence_and_reviewed_policy(self):
+    def test_proof_workflow_executes_rehearsal_on_same_frozen_candidate(self):
         doc = release.load(PROOF)
         job = doc["jobs"]["proof"]
         download = release.one_step(job, lambda s: str(s.get("uses", "")).startswith("actions/download-artifact@"))
-        self.assertEqual(download["with"], {"name": "update-compatibility-evidence", "path": "${{ runner.temp }}/evidence"})
+        self.assertEqual(download["with"], {"name": "update-candidate", "path": "${{ runner.temp }}/candidate"})
         run = release.one_step(job, release.runs_containing("scripts/build_update_compatibility_proof.py"))["run"]
         self.assertIn('--run-id "$GITHUB_RUN_ID"', run)
-        self.assertIn("--policy deploy/update/release-policy.json", run)
+        self.assertIn('--policy "$RUNNER_TEMP/evidence/policy.json"', run)
+        self.assertLess(run.index('scripts/rehearse_update_compatibility.py'),
+                        run.index('scripts/build_update_compatibility_proof.py'))
+        self.assertEqual(run.count('--target "$RUNNER_TEMP/candidate/future-agi-update-manifest.json"'), 2)
+        self.assertIn("github.event_name != 'pull_request'", job["if"])
         self.assertNotIn("continue-on-error", PROOF.read_text())
         self.assertNotIn("waiver:", PROOF.read_text())
+        contracts = doc['jobs']['contracts']
+        tests = release.one_step(contracts,release.runs_containing('python3 -m unittest discover'))
+        self.assertIn('python3 -m unittest deploy.tests.update_e2e.test_automatic_publisher -v',tests['run'])
+        verifier = release.one_step(contracts,lambda s:s.get('uses')=='./.github/actions/setup-helm-tools')
+        self.assertEqual(verifier['with']['cosign'],'true')
 
 
 class ProofPublishTests(release._StepHarness):

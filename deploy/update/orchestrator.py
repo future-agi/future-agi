@@ -16,9 +16,8 @@ from typing import Any, Callable, Mapping, Optional, Tuple
 
 from .apply import Blocked, Updater, _digest_set
 from .backup_proof import BackupExpectation, read_backup_proof
-from .compatibility import (Attempt, Controls, Observations, evaluate_automatic_apply,
-                            evaluate_automatic_rollback, plain, topology_profile)
-from .contracts import InstallationBinding, PreparedUpdate, ReasonCode
+from .compatibility import (Controls, Observations, evaluate_automatic_apply, plain, topology_profile)
+from .contracts import InstallationBinding, PreparedUpdate, ReasonCode, installation_binding_hash
 from .envfile import EnvFileError
 from .install import ComposeCommand, Installation, resolve_compose_command
 from .manifest import ManifestError, hash_path, manifest_hash, parse_image_ref
@@ -43,8 +42,24 @@ def profiles(installation):
     return tuple(sorted(filter(None, installation.env.get('COMPOSE_PROFILES', '').split(','))))
 
 
+def inspection_installation(installation):
+    """Separate pure scheduled reads from remote mutation authority.
+
+    A timed-out info/config/image client cannot leave a late installation
+    writer. Never clear the actual supervisor's uncertainty: start/create/stop
+    still use it and their durable pending operations still block restoration.
+    Legacy/manual callers keep their existing supervision.
+    """
+    from .processes import ProcessSupervisor
+    if isinstance(getattr(installation, 'runner', None), ProcessSupervisor):
+        from .docker_host import bounded_installation
+        return bounded_installation(installation, min(30, installation.runner.policy.probe_timeout_seconds))
+    return installation
+
+
 def fingerprints(installation):
     """Private fingerprints only. Never return resolved Compose config to the app."""
+    installation = inspection_installation(installation)
     files = {str(path): hash_path(path.parent, path.name) for path in installation._ownership_files()}
     from .settings import CONFIG_FILE
     try:
@@ -56,10 +71,11 @@ def fingerprints(installation):
             manifest_hash(list(profiles(installation))), manifest_hash(files))
 
 
-def check_deployment(installation, manifest):
+def check_deployment(installation, manifest, deployment_authorization=None, raw_manifest=None):
     """Reject drift before planning/printing can invoke optional manual git hints."""
     try:
-        files = manifest['deployment']['files']
+        from .plan import execution_files
+        files = execution_files(manifest, deployment_authorization, raw_manifest)
         require(bool(files), ReasonCode.DEPLOYMENT_FILES_MISMATCH)
         require(all(hash_path(installation.root, name) == digest for name, digest in files.items()),
                 ReasonCode.DEPLOYMENT_FILES_MISMATCH)
@@ -68,6 +84,7 @@ def check_deployment(installation, manifest):
 
 
 def check_binding(installation: Installation, binding: InstallationBinding):
+    installation = inspection_installation(installation)
     require(os.geteuid() == binding.host_uid, ReasonCode.OWNERSHIP_UNCONFIRMED)
     require(installation.root == binding.checkout.resolve()
             and installation.env_file.resolve() == binding.env_target
@@ -102,6 +119,7 @@ def check_dependency_images(installation, layout, certified):
     the topology, inspect it locally and require its image id AND signed digest to equal every certified running
     replica. Nothing is pulled, started or stopped here; any difference is refused before a container is touched.
     """
+    installation = inspection_installation(installation)
     services = installation.config(refresh=True).get('services') or {}
     expected = {}
     for name in layout.dependencies:
@@ -146,11 +164,11 @@ def registered_installation(binding, supervisor, *, status_overlay=None):
     return install
 
 
-def prepare_update(release, installation, binding, make_plan, history=()):
+def prepare_update(release, installation, binding, make_plan, history=(), *, deployment_authorization=None):
     """make_plan(fresh_installation, history) must call the ordinary build_plan."""
     fresh = installation.fresh()
     check_binding(fresh, binding)
-    check_deployment(fresh, release.manifest)
+    check_deployment(fresh, release.manifest, deployment_authorization, release.raw_manifest)
     config, profile, deployment = fingerprints(fresh)
     return PreparedUpdate(release.manifest, release.raw_manifest, release.raw_bundle,
                           release.manifest_sha256, release.bundle_sha256, release.verification, binding,
@@ -206,7 +224,9 @@ class ScheduledGuard:
     """
     def __init__(self, prepared: PreparedUpdate, *, discovery, store: RunnerStateStore,
                  facts: Callable, make_plan: Callable, control_generation: int,
-                 window_occurrence: str, clock=lambda: datetime.now(timezone.utc)):
+                 window_occurrence: str, clock=lambda: datetime.now(timezone.utc), automatic=None):
+        self.automatic = automatic
+        self.recovery_required = False
         self.prepared = prepared
         self.discovery, self.store = discovery, store
         self.facts, self.make_plan = facts, make_plan
@@ -217,17 +237,11 @@ class ScheduledGuard:
         self.proof_directory = None
         self.proof_path = None
         self.first_mutation_at = None
-        self.rollback_enabled = False
-        self.fallback = None
-        self.fallback_receipt = None
-        self.fallback_reserved = False
-        self.fallback_consumed = False
         self.metadata = {}
         self.backup_environment = {}
         # The exact env bytes (sha256) the latest successful before_env_commit approved: the engine binds its
         # transaction to them (see Updater._approved_env_sha256), and before_rollout rechecks them.
         self.approved_env_sha256 = None
-        self.fallback_env_sha256 = None
         # service -> image ids certified immediately before the latest rollout (see check_dependency_images).
         self.dependency_image_ids = None
 
@@ -256,7 +270,9 @@ class ScheduledGuard:
     def _fresh(self, engine, boundary):
         fresh = engine.installation.fresh()
         check_binding(fresh, self.prepared.binding)
-        check_deployment(fresh, self.prepared.manifest)
+        check_deployment(fresh, self.prepared.manifest,
+                         self.automatic.authorization if self.automatic is not None else None,
+                         self.prepared.raw_manifest)
         # Normalize ONLY this engine's proven pin change for config comparison.
         # Non-pin edits, project/profile changes, drift and alias swaps still fail.
         record = engine.active_record
@@ -273,17 +289,6 @@ class ScheduledGuard:
             require(self.approved_env_sha256 is not None
                     and record['env_recovery']['before_sha256'] == self.approved_env_sha256, ReasonCode.ENV_CONFLICT)
             fresh.overlay_env(record['found_values'])
-        if engine.automatic_fallback:
-            # Never hide operator pin edits while normalizing the known engine
-            # change. The original forward env hash is retained in this live
-            # attempt, not reconstructed from a public receipt's pin values.
-            expected_hash = (record['env_recovery']['after_sha256'] if boundary == 'before_rollout'
-                             else self.fallback_env_sha256)
-            require(hashlib.sha256(engine._env_path().read_bytes()).hexdigest() == expected_hash,
-                    ReasonCode.ENV_CONFLICT)
-            # Fallback compares against the original registered pre-update graph.
-            target = engine.state.load_receipt(self.fallback_receipt)
-            fresh.overlay_env(target['found_values'])
         config, profile, deployment = fingerprints(fresh)
         require((config, profile, deployment) == (self.prepared.config_fingerprint,
                                                  self.prepared.profile_fingerprint,
@@ -313,21 +318,9 @@ class ScheduledGuard:
         """
         if boundary == 'before_rollout':
             return engine.active_record['env_recovery']['after_sha256']
-        if engine.automatic_fallback:
-            return self.fallback_env_sha256
         return seen if boundary == 'before_env_commit' else None
 
     def _pending(self, engine):
-        if engine.automatic_fallback:
-            require(self.fallback is not None and not self.fallback_consumed
-                    and engine.active_rollback_receipt is not None
-                    and Path(engine.active_rollback_receipt).resolve() == self.fallback_receipt.resolve(),
-                    ReasonCode.ROLLBACK_INELIGIBLE)
-            latest = engine.state.latest_receipt()
-            require(latest is not None and Path(latest['_path']).resolve() == self.fallback_receipt.resolve()
-                    and latest.get('run_id') == self.metadata.get('run_id')
-                    and latest.get('status') == 'failed_during_rollout', ReasonCode.ROLLBACK_INELIGIBLE)
-            return
         latest = engine.state.latest_receipt()
         if latest and latest.get('status') == 'staged':
             raise GuardRefused(ReasonCode.MANUAL_STAGE_PRESENT)
@@ -371,8 +364,23 @@ class ScheduledGuard:
             'FUTURE_AGI_UPDATE_INSTALLATION_FINGERPRINT': self.expectation.installation_fingerprint,
             'FUTURE_AGI_UPDATE_MANIFEST_HASH': self.expectation.target_manifest_hash,
         })
-        self.rollback_enabled = controls.policy.automatic_rollback
-        self.prior_images = dict(obs.product_images)
+        if self.automatic is not None:
+            from .automatic import BackupConfiguration
+            from .recovery import RecoveryLedger
+            require(engine.active_record is not None, ReasonCode.RECOVERY_REQUIRED)
+            run_id = engine.active_record['run_id']
+            # Retain signed bytes + source observation before the first stop.
+            self.automatic.retain_attempt(self.attempt, run_id)
+            configuration = BackupConfiguration.load(self.automatic.baseline.backup_state(self.automatic.head))
+            ledger = RecoveryLedger.reserve(configuration.destination, self.expectation,
+                operation_token=self.attempt.operation_token, run_id=run_id,
+                binding_sha256=installation_binding_hash(self.prepared.binding),
+                old_head=self.automatic.head.identity,
+                source_observation_sha256=obs.runtime_observation.sha256)
+            engine.automatic_ledger = self.automatic.ledger = ledger
+            ledger.checkpoint(source_model=engine.installation.config(refresh=True), forward_record=engine.active_record)
+            self.metadata['run_id'] = run_id
+            self.metadata['recovery_strategy'] = 'restore_backup'
         self.metadata.update(schema_version=1, attempt_id=self.attempt.attempt_id,
                              manifest_sha256=self.prepared.manifest_sha256,
                              bundle_sha256=self.prepared.bundle_sha256,
@@ -401,8 +409,7 @@ class ScheduledGuard:
         require(not self.prepared.binding.production, ReasonCode.INITIALIZATION_REQUIRED)
         self.store.validate_binding(self.prepared.binding)
         control = self.store.read_control()
-        if not engine.automatic_fallback:
-            require(control.generation == self.control_generation, ReasonCode.CONTROL_INVALID)
+        require(control.generation == self.control_generation, ReasonCode.CONTROL_INVALID)
         if boundary == 'before_env_commit':
             self.approved_env_sha256 = None
         elif boundary == 'before_rollout':
@@ -413,9 +420,8 @@ class ScheduledGuard:
         obs, controls = self.facts(fresh, boundary)
         require(isinstance(obs, Observations) and isinstance(controls, Controls), ReasonCode.CONTROL_INVALID)
         require(controls.policy == engine.settings.automation_policy, ReasonCode.CONFIGURATION_CHANGED)
-        if not engine.automatic_fallback:
-            require(control.effective(controls.policy, self.clock()) == 'enabled', ReasonCode.CONTROL_INVALID)
-            self._refresh()  # real ReleaseDiscovery.refresh; no cached success as permission
+        require(control.effective(controls.policy, self.clock()) == 'enabled', ReasonCode.CONTROL_INVALID)
+        self._refresh()
         obs = replace(obs, now=self.clock(), boundary='before_backup' if boundary == 'before_recovery' else boundary,
                       online_verified=True, owner_confirmed=True, no_pending_transaction=True,
                       installation_fingerprint=self.prepared.binding.installation_fingerprint,
@@ -423,39 +429,13 @@ class ScheduledGuard:
                       profile_fingerprint=self.prepared.profile_fingerprint,
                       trust_fingerprint=self.prepared.trust_fingerprint,
                       attempt_id=self.attempt.attempt_id if self.attempt else '',
-                      reserved_at=self.attempt.reserved_at if self.attempt else None)
-        if not engine.automatic_fallback:
-            controls = self._controls_at(controls, obs.now)
-        if engine.automatic_fallback:
-            obs = replace(obs, boundary='before_fallback')
-            result = evaluate_automatic_rollback(self.fallback, obs, controls)
-            require(result.allowed, result.reason_codes[0] if result.reason_codes else ReasonCode.ROLLBACK_INELIGIBLE)
-            if boundary == 'before_rollout':
-                ids = engine.active_record.get('target_image_ids') or {}
-                require(set(ids) == set(self.fallback.prior_images) and all(
-                    ids[service] in {image.image_id for image in images}
-                    for service, images in self.fallback.prior_images.items()), ReasonCode.ROLLBACK_INELIGIBLE)
-            self._journal(engine, boundary)
-            self._pending(engine)
-            # The facts above may have been slow: the env must still be exactly what the forward transaction left
-            # (not only when this boundary began), or an edit made meanwhile would be overwritten by the rollback.
-            expected_env = self._expected_env(engine, boundary, None)
-            dependencies = self._certify_dependencies(engine, obs) if boundary == 'before_rollout' else None
-            require(env_sha256(engine) == expected_env, ReasonCode.ENV_CONFLICT)
-            if boundary == 'before_fallback':
-                require(not self.fallback_reserved, ReasonCode.ROLLBACK_INELIGIBLE)
-                key = self.attempt.attempt_id
-                require(engine.state.read_private('fallback', key) is None, ReasonCode.ROLLBACK_INELIGIBLE)
-                engine.state.write_private('fallback', key, {'schema_version': 1, 'attempt_id': key,
-                    'run_id': self.metadata['run_id'], 'eligibility_fingerprint': result.fingerprint})
-                self.fallback_reserved = True
-            if boundary == 'before_rollout':
-                self.dependency_image_ids = dependencies
-            if boundary == 'before_env_commit':
-                self.approved_env_sha256 = expected_env
-            return
+                      reserved_at=self.attempt.reserved_at if self.attempt else None,
+                      operation_token=self.attempt.operation_token if self.attempt else '',
+                      run_id=engine.active_record['run_id'] if engine.active_record else '',
+                      binding_sha256=installation_binding_hash(self.prepared.binding))
+        controls = self._controls_at(controls, obs.now)
         # Rebuild from current disk/daemon, not Installation.config's old cache.
-        plan = self.make_plan(fresh, engine._history())
+        plan = self.make_plan(inspection_installation(fresh), engine._history())
         require(plan.get('decision') == self.prepared.plan.get('decision')
                 and plan.get('manifest_hash') == self.prepared.plan.get('manifest_hash')
                 and not plan.get('resume') and not plan.get('reasons')
@@ -474,8 +454,6 @@ class ScheduledGuard:
             self.metadata['backup_proof'] = json.loads(proof)
         result = evaluate_automatic_apply(self.prepared, obs, controls, proof)
         require(result.allowed, result.reason_codes[0] if result.reason_codes else ReasonCode.UNCERTIFIED_RELEASE)
-        if boundary == 'before_backup':
-            self._reserve_backup(engine, obs, controls)
         # Slow online verification, plan building and proof IO cannot make an
         # earlier control/window/config observation authorize a later mutation.
         require(self.store.read_control().generation == self.control_generation, ReasonCode.CONTROL_INVALID)
@@ -496,7 +474,8 @@ class ScheduledGuard:
                             installation_fingerprint=obs.installation_fingerprint,
                             config_fingerprint=obs.config_fingerprint, profile_fingerprint=obs.profile_fingerprint,
                             trust_fingerprint=obs.trust_fingerprint, attempt_id=obs.attempt_id,
-                            reserved_at=obs.reserved_at)
+                            reserved_at=obs.reserved_at, operation_token=obs.operation_token, run_id=obs.run_id,
+                            binding_sha256=obs.binding_sha256)
         final_controls = self._controls_at(final_controls, final_obs.now)
         final_result = evaluate_automatic_apply(self.prepared, final_obs, final_controls, proof)
         require(final_result.allowed, final_result.reason_codes[0] if final_result.reason_codes
@@ -515,68 +494,32 @@ class ScheduledGuard:
             self.first_mutation_at = final_obs.now
             self.metadata['run_id'] = engine.active_record['run_id']
             self.metadata['first_mutation_at'] = final_obs.now.isoformat()
+            if self.automatic is not None:
+                self._certify_dependencies(engine, final_obs)
+                self.automatic.prepare(self, engine)
+                # Prediction and signature checks can be slow. They must not
+                # consume a window/control budget and still authorize mutation.
+                _, controls = self.facts(engine.installation.fresh(), boundary)
+                controls = self._controls_at(controls, self.clock())
+                require(controls.enabled and not controls.paused and controls.window_open,
+                        ReasonCode.OUTSIDE_WINDOW)
+                require(controls.start_budget_available, ReasonCode.INSUFFICIENT_WINDOW)
+                require(self.store.read_control().generation == self.control_generation, ReasonCode.CONTROL_INVALID)
+                require(env_sha256(engine) == expected_env, ReasonCode.ENV_CONFLICT)
+        if boundary == 'before_backup':
+            # Reserve the LAST healthy source observation, not the earlier
+            # sample that the final facts call replaced. Its timestamp/digest
+            # must remain identical in AttemptIntent, ledger and cold backup.
+            self._reserve_backup(engine, final_obs, final_controls)
 
-    def authorize_fallback(self, engine, receipt_path, *, prior_images, child_state_known):
-        """Only immediately after this live Updater's classified rollout failure.
+    def verify_success(self, engine):
+        if self.automatic is not None:
+            self.automatic.verify_success(engine)
 
-        No retries, no resumed attempt and no timeout. rollback() receives the
-        exact receipt path; its pre-recovery and all mutation guards revalidate.
-        S06 still finishes/latches the forward attempt even on successful fallback.
-        """
-        require(self.attempt is not None and self.proof is not None and self.first_mutation_at is not None,
-                ReasonCode.ROLLBACK_INELIGIBLE)
-        require(not self.fallback_reserved and self.fallback is None, ReasonCode.ROLLBACK_INELIGIBLE)
-        receipt = engine.state.load_receipt(receipt_path)
-        require(receipt.get('run_id') == self.metadata.get('run_id')
-                and receipt.get('status') == 'failed_during_rollout', ReasonCode.ROLLBACK_INELIGIBLE)
-        require(child_state_known is True and not getattr(engine.installation.runner, 'uncertain', True),
-                ReasonCode.ROLLBACK_INELIGIBLE)
-        from .apply import _digest_set
-        from .install import COMPONENT_VARIABLES
-        from .manifest import parse_image_ref
-        from .compatibility import decode_document
-        require(engine.active_record is not None and engine.active_record.get('run_id') == receipt['run_id']
-                and engine.active_record.get('status') == 'failed_during_rollout', ReasonCode.ROLLBACK_INELIGIBLE)
-        # The enrolled baseline describes the unchanged pre-update graph, and this engine has just changed its pins.
-        # Read the predecessor evidence from the same normalization validate() applies at this boundary: the env
-        # must still be exactly what the failed forward transaction left (by hash), and only its recorded
-        # found_values are put back for the comparison. Nothing else is excused.
-        fresh = engine.installation.fresh()
-        check_binding(fresh, self.prepared.binding)
-        expected_env = engine.active_record['env_recovery']['after_sha256']
-        require(env_sha256(engine) == expected_env, ReasonCode.ENV_CONFLICT)
-        fresh.overlay_env(receipt['found_values'])
-        require(fingerprints(fresh) == (self.prepared.config_fingerprint, self.prepared.profile_fingerprint,
-                                        self.prepared.deployment_fingerprint), ReasonCode.CONFIGURATION_CHANGED)
-        previous = decode_document(self.facts(fresh, 'before_fallback')[0].predecessor_raw, 1024 * 1024)
-        _, expected = engine._restore_values(receipt)
-        layout = topology_profile(self.prepared.binding.topology, self.prepared.binding.profiles)
-        require(all(expected.get(COMPONENT_VARIABLES[component]) == parse_image_ref(
-                    previous['components'][component]['image']).tag for _, component in layout.products),
-                ReasonCode.ROLLBACK_INELIGIBLE)
-        for images in prior_images.values():
-            for image in images:
-                info = engine.installation.image(image.image_id)
-                require(info is not None and info.get('id') == image.image_id
-                        and (parse_image_ref(image.image).name, image.digest)
-                        in _digest_set(info.get('repo_digests') or []), ReasonCode.ROLLBACK_INELIGIBLE)
-        # Neither slow predecessor facts nor local image inspection may authorize overwriting a later operator edit.
-        require(env_sha256(engine) == expected_env, ReasonCode.ENV_CONFLICT)
-        self.fallback_env_sha256 = expected_env
-        self.fallback_receipt = Path(receipt_path)
-        self.fallback = Attempt(self.prepared, self.attempt.attempt_id, self.attempt.reserved_at,
-                               self.proof.raw, self.first_mutation_at,
-                               rollback_enabled_before_start=self.rollback_enabled,
-                               automatic=True, live=True, latest_attempt_id=self.attempt.attempt_id,
-                               failure_kind='rollout_failed', child_state_known=True,
-                               prior_images=prior_images, prior_images_available=True, receipt_matches=True)
+    def complete_success(self, engine, receipt):
+        if self.automatic is not None:
+            self.automatic.complete_success(engine, receipt)
 
-    def rollback_once(self, engine):
-        require(self.fallback is not None and not self.fallback_consumed, ReasonCode.ROLLBACK_INELIGIBLE)
-        try:
-            return engine.rollback(self.fallback_receipt, yes=True)
-        finally:
-            self.fallback_consumed = True
 
 
 @dataclass(frozen=True)
@@ -589,6 +532,9 @@ class EngineResult:
     forward_result: str
     fallback_result: str = 'none'
     receipt: Optional[Path] = None
+    restore_result: str = 'not_needed'
+    effective_version: Optional[str] = None
+    phase: Optional[str] = None
 
 
 class SupervisedReadiness:
@@ -642,7 +588,8 @@ def guarded_updater(installation, settings, state, guard, supervisor, *, readine
     out = out if out is not None else io.StringIO()
     return Updater(installation, settings, state, out=out,
                    readiness=readiness or SupervisedReadiness(installation, supervisor, out), hook_runner=supervisor,
-                   automation_guard=guard, guard_context=guard.context)
+                   automation_guard=guard, guard_context=guard.context,
+                   built_in_backup=guard.automatic.backup(installation) if guard.automatic is not None else None)
 
 
 def execute_guarded(engine, guard) -> EngineResult:
@@ -653,16 +600,16 @@ def execute_guarded(engine, guard) -> EngineResult:
 
 
 def _execute_guarded(engine, guard) -> EngineResult:
-    """One live forward attempt and at most one certified fallback; never retry.
+    """Project the sole engine's outcome; never perform automatic recovery here.
 
-    S06 calls under runner.lock, then publishes the sanitized result. This
-    adapter durably finishes/latches its reservation even when fallback works.
-    Reporting is deliberately outside this function and cannot change its result.
+    The enrolled transaction and its baseline callbacks run inside update.lock.
+    Only the legacy non-generated adapter still finalizes its own reservation.
+    Reporting is outside this function and cannot reverse a success decision.
     """
-    from .apply import FailedDuringRollout, Interrupted, InterruptedRun
+    from .apply import Interrupted, InterruptedRun
     from .receipt import StateBusy
     from .processes import ProcessError
-    require(engine.automation_guard is guard and not engine.automatic_fallback, ReasonCode.CONTROL_INVALID)
+    require(engine.automation_guard is guard, ReasonCode.CONTROL_INVALID)
     path, fallback = None, 'none'
     forward_rollout_started = False
     code, reasons, forward = 0, (), 'succeeded'
@@ -692,28 +639,42 @@ def _execute_guarded(engine, guard) -> EngineResult:
             cause = cause.__cause__
         reasons = (reason,)
         forward = 'interrupted' if code == 130 else 'failed'
-        if isinstance(exc, FailedDuringRollout):
-            fallback = 'ineligible'
-            try:
-                latest = engine.state.latest_receipt()
-                require(latest is not None, ReasonCode.ROLLBACK_INELIGIBLE)
-                path = Path(latest['_path'])
-                guard.authorize_fallback(engine, path, prior_images=guard.prior_images,
-                                         child_state_known=not getattr(engine.installation.runner, 'uncertain', True))
-                path = guard.rollback_once(engine)
-                fallback = 'succeeded'
-            except (Exception, Interrupted, KeyboardInterrupt):
-                fallback = 'failed' if guard.fallback_reserved else 'ineligible'
-                if guard.fallback_reserved:
-                    reasons += (ReasonCode.ROLLBACK_FAILED, ReasonCode.RECOVERY_REQUIRED)
-        elif isinstance(exc, ProcessError):
+        if isinstance(exc, ProcessError):
             reasons = (exc.reason_code,)
     finally:
         guard.close()
     record = engine.active_record or {}
     transaction_started = guard.first_mutation_at is not None
     rollout_started = forward_rollout_started or record.get('stage') == 'rollout'
-    if guard.attempt is not None:
+    if getattr(guard, 'automatic', None) is not None:
+        # Projection only. All backup, env, runtime, restore and metadata actions
+        # have already run INSIDE Updater's lock. Never mutate runner state here.
+        outcome = getattr(engine, 'automatic_outcome', None)
+        ledger = getattr(engine, 'automatic_ledger', None)
+        phase = ledger.phase if ledger is not None else None
+        receipt = getattr(engine, 'automatic_receipt', None) or path
+        if outcome == 'restored':
+            return EngineResult(code or 5, reasons + (ReasonCode.RESTORED_AFTER_UPDATE_FAILURE,),
+                True, rollout_started, forward, 'none', receipt, 'verified',
+                guard.automatic.head.release.version, phase)
+        if outcome == 'succeeded':
+            return EngineResult(0, (), True, True, 'succeeded', 'none', receipt, 'not_needed',
+                guard.prepared.manifest['version'], phase)
+        if outcome == 'failed_available':
+            require(ledger is not None and ledger.phase == 'failed_available'
+                    and ledger.backup_seal is None and ledger.snapshot['pending'] is None
+                    and guard.store.read_state().active_attempt_id is None, ReasonCode.RECOVERY_REQUIRED)
+            return EngineResult(code or 5, reasons, transaction_started, rollout_started, forward,
+                'none', receipt, 'not_needed', guard.automatic.head.release.version, phase)
+        if ledger is not None or guard.attempt is not None:
+            # An unresolved success decision is never relabeled a forward
+            # failure; it needs metadata reconciliation, not restoration.
+            accepted = ledger is not None and ledger.direction == 'success_decided'
+            return EngineResult(3, (ReasonCode.RECOVERY_REQUIRED,), True, rollout_started,
+                'succeeded' if accepted else forward, 'none', receipt,
+                'not_needed' if accepted else 'recovery_required', None, phase)
+        return EngineResult(code, reasons, transaction_started, rollout_started, forward, receipt=receipt)
+    if guard.attempt is not None and not (getattr(guard, 'automatic', None) is not None and code == 0):
         terminal = 'succeeded' if code == 0 else 'interrupted' if code == 130 else 'failed'
         try:
             guard.store.finish_attempt(replace(guard.attempt, outcome=terminal, finished_at=guard.clock(),

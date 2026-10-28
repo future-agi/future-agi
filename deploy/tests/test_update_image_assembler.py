@@ -135,5 +135,96 @@ class ImageAssemblerTests(unittest.TestCase):
         self.assertIn('ENTRYPOINT ["/bin/sh", "/start.sh"]', dockerfile)
 
 
+class ReleaseImageAssemblyTests(unittest.TestCase):
+    """Static build-DAG regressions, not qualification of a product image."""
+
+    def setUp(self):
+        from deploy.tests.test_update_release_static import load
+
+        workflows = ROOT / ".github" / "workflows"
+        self.workflow = load(workflows / "build-image-multiarch.yml")
+        self.release = load(workflows / "release-images.yml")
+        self.steps = self.workflow["jobs"]["build"]["steps"]
+
+    def step(self, name):
+        matches = [step for step in self.steps if step.get("name") == name]
+        self.assertEqual(len(matches), 1, name)
+        return matches[0]
+
+    def test_the_single_build_digest_is_checked_and_exported_without_a_rebuild(self):
+        builds = [step for step in self.steps
+                  if step.get("uses", "").startswith("docker/build-push-action@")]
+        self.assertEqual(len(builds), 1)
+        build = builds[0]
+        self.assertEqual(build["id"], "build")
+        self.assertEqual(build["with"]["context"], "${{ inputs.context }}")
+        self.assertEqual(build["with"]["file"], "${{ inputs.dockerfile }}")
+        digest = "${{ steps.build.outputs.digest }}"
+        image = "docker.io/${{ inputs.image }}@" + digest
+        labels = self.step("OCI labels (linux/${{ matrix.arch }})")
+        verify = self.step("Verify the image on linux/${{ matrix.arch }}")
+        budget = self.step("Size budget (linux/${{ matrix.arch }})")
+        export = self.step("Export digest")
+        self.assertEqual(labels["env"]["IMAGE"], image)
+        self.assertEqual(verify["env"]["IMAGE"], image)
+        self.assertEqual(budget["env"]["NEW_REF"], image)
+        self.assertEqual(export["env"]["DIGEST"], digest)
+        ordered = [build, labels, verify, budget, export]
+        positions = [self.steps.index(step) for step in ordered]
+        self.assertEqual(positions, sorted(positions))
+        self.assertTrue(all("continue-on-error" not in step for step in ordered))
+
+    def test_native_legs_and_multiarch_publication_still_use_the_build_digests(self):
+        inputs = self.workflow["on"]["workflow_call"]["inputs"]
+        self.assertEqual(json.loads(inputs["arches"]["default"]), ["amd64", "arm64"])
+        self.assertNotIn("standalone-descriptors", inputs)
+        build = self.workflow["jobs"]["build"]
+        self.assertEqual(build["runs-on"],
+                         "${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}")
+        self.assertEqual(build["strategy"]["matrix"]["arch"], "${{ fromJSON(inputs.arches) }}")
+        exports = [step for step in self.steps
+                   if step.get("uses", "").startswith("actions/upload-artifact@")]
+        self.assertEqual(len(exports), 1)
+        self.assertEqual(exports[0]["with"]["name"],
+                         "digests_${{ inputs.cache-scope }}${{ inputs.tag-suffix }}_${{ matrix.arch }}")
+        self.assertEqual(exports[0]["with"]["if-no-files-found"], "error")
+        publish = self.workflow["jobs"]["publish"]
+        self.assertEqual(publish["needs"], ["prepare", "build"])
+        self.assertEqual(publish["outputs"]["digest"], "${{ steps.digest.outputs.digest }}")
+        self.assertEqual(self.workflow["on"]["workflow_call"]["outputs"]["digest"]["value"],
+                         "${{ jobs.publish.outputs.digest }}")
+
+    def test_release_standalone_keeps_pinned_components_and_binary_and_size_checks(self):
+        jobs = self.release["jobs"]
+        standalone = jobs["standalone"]
+        self.assertEqual(standalone["needs"], ["guard", "standalone-inputs"])
+        self.assertEqual(standalone["uses"], "./.github/workflows/build-image-multiarch.yml")
+        inputs = standalone["with"]
+        self.assertNotIn("standalone-descriptors", inputs)
+        self.assertEqual(inputs["context"], "./deploy/standalone")
+        self.assertEqual(inputs["dockerfile"], "./deploy/standalone/Dockerfile")
+        self.assertEqual(inputs["build-args"], "${{ needs.standalone-inputs.outputs.build-args }}")
+        self.assertEqual(inputs["verify-command"], "/opt/futureagi/bin/verify-binaries")
+        self.assertEqual(inputs["standalone-install-total"], "true")
+        self.assertIn("STANDALONE_SIZE_BUDGET_PERCENT", inputs["size-budget-percent"])
+        pin = next(step for step in jobs["standalone-inputs"]["steps"] if step.get("id") == "pin")
+        for arg in ("BACKEND_IMAGE", "FRONTEND_IMAGE", "FI_COLLECTOR_IMAGE", "AGENTCC_GATEWAY_IMAGE"):
+            self.assertIn("pin " + arg + " ", pin["run"])
+        self.assertIn("%s=docker.io/%s:%s@%s", pin["run"])
+
+    def test_standalone_context_keeps_only_runtime_copies_and_normal_startup(self):
+        directory = ROOT / "deploy" / "standalone"
+        dockerfile = (directory / "Dockerfile").read_text()
+        copies = [line.split()[1] for line in dockerfile.splitlines()
+                  if line.startswith("COPY ") and not line.startswith("COPY --from=")]
+        self.assertEqual(copies, ["nginx.conf", "starting.html", "supervisord.conf", "bin/"])
+        self.assertTrue(all((directory / source).exists() for source in copies))
+        self.assertIn('ENTRYPOINT ["/opt/futureagi/bin/start"]', dockerfile)
+        self.assertIn("HEALTHCHECK --interval=15s --timeout=10s --start-period=3600s --retries=5", dockerfile)
+        self.assertIn("/opt/futureagi/bin/bootstrap.py /opt/futureagi/bin/verify-binaries", dockerfile)
+        for label in ("version", "revision", "created"):
+            self.assertIn("org.opencontainers.image." + label + "=", dockerfile)
+
+
 if __name__ == "__main__":
     unittest.main()

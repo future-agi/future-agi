@@ -26,6 +26,7 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -56,7 +57,11 @@ DEFAULT_POLICY = ROOT / "deploy" / "update" / "release-policy.json"
 def read_evidence(path: Path) -> bytes:
     """Local release inputs only. Never download or execute a policy/proof."""
     try:
-        with path.open("rb") as stream:
+        fd = os.open(str(path), os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+        with os.fdopen(fd, "rb") as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_PROOF_BYTES:
+                raise ManifestError("release policy/proof must be a bounded regular file")
             raw = stream.read(MAX_PROOF_BYTES + 1)
     except OSError:
         raise ManifestError("release policy/proof is unreadable") from None
@@ -82,7 +87,12 @@ def apply_release_policy(manifest: dict, args: argparse.Namespace) -> dict:
             or type(policy["schema_version"]) is not int or policy["schema_version"] != 1):
         raise ManifestError("unsupported release policy")
     manifest["compatibility"] = policy["compatibility"]
-    manifest["migration"] = policy["migration"]
+    if isinstance(policy['compatibility'], dict) and policy['compatibility'].get('contract_version') == 2:
+        if policy['migration'] != manifest['migration']:
+            raise ManifestError('restore qualification cannot rewrite frozen legacy migration metadata')
+    else:
+        # Historical contract-v1 generation/manual semantics remain readable.
+        manifest["migration"] = policy["migration"]
     if not isinstance(policy["compatibility"], dict) or policy["compatibility"].get("validation") is not None:
         raise ManifestError("release policy validation must be null; supply independently checked proof")
     raw = None
@@ -211,7 +221,21 @@ def main(argv=None) -> int:
         return 2
     text = json.dumps(manifest, sort_keys=True, indent=2) + "\n"
     if args.output:
-        Path(args.output).write_text(text, encoding="utf-8")
+        # The resolved candidate is frozen before the rehearsal DAG starts.
+        # Exact retries are idempotent; neither stable nor beta bytes may move.
+        path, raw = Path(args.output), text.encode("utf-8")
+        try:
+            try:
+                with path.open("xb") as stream:
+                    stream.write(raw)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+            except FileExistsError:
+                if read_evidence(path) != raw:
+                    raise ManifestError("frozen manifest differs; refusing to replace")
+        except (OSError, ManifestError) as exc:
+            print(f"{PROG}: {exc}", file=sys.stderr)
+            return 2
     else:
         sys.stdout.write(text)
     return 0

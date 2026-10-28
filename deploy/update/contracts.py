@@ -32,33 +32,40 @@ __all__ = [
     "PublicDownload", "PublicOperation", "PublicLastRun", "PublicSafety", "PublicStatusV1", "PublicAPIResultV1",
     "PublicAPIResponseV1", "validate_timezone", "validate_public_status", "decode_public_status",
     "validate_api_response", "decode_api_response",
+    "AuthorisedTransition", "BackupSeal", "ColdHold", "RuntimeObservationV2", "RestorationResult",
+    "MigrationEvidence", "RuntimeImage", "AutomaticPhase", "RecoveryDirection", "RestoreState", "ForwardResult",
+    "QUALIFICATION_POLICY", "RESTORE_PROCEDURE_ID", "BACKUP_INVENTORY_VERSION", "HOST_OBSERVATION_CONTRACT",
+    "RUNTIME_ACTIVATION_CONTRACT", "PERSISTENT_DOMAINS", "AUTOMATIC_POLICY_BOUNDS", "installation_binding_hash",
+    "MigrationEngine", "MigrationRiskClass", "MigrationTableMeasurement", "MigrationThroughput", "MigrationMeasurement",
+    "VolumeTransferMeasurement", "TransitionMeasurements", "HostTableSize", "HostSizeObservation",
+    "AutomaticUpdateEstimate", "AutomaticUpdateDecision", "AUTOMATIC_VOLUMES", "pending_migration_plan_hash",
 ]
 
 AutomationMode = Literal["manual", "notify", "download", "apply"]
 Topology = Literal["standalone", "distributed"]
-OperationKind = Literal["check", "download", "apply", "rollback"]
+OperationKind = Literal["check", "download", "apply", "rollback", "restore"]
 OperationState = Literal[
     "idle", "checking", "downloading", "backing_up", "staged", "awaiting_initialization",
     "applying", "verifying", "succeeded", "failed", "interrupted", "rolling_back",
-    "rolled_back", "blocked", "unknown",
+    "rolled_back", "blocked", "unknown", "restoring", "restored", "recovery_required",
 ]
 OperationStage = Literal[
     "planning", "backup", "image_fetch", "image_verification", "env_selection",
-    "production_initialization", "rollout", "readiness", "recovery",
+    "production_initialization", "rollout", "readiness", "recovery", "quiescence", "restore", "stability",
 ]
 GuardBoundary = Literal[
     "before_recovery", "before_backup", "after_backup", "before_env_commit",
-    "before_rollout", "before_fallback",
+    "before_rollout", "before_fallback", "before_restore", "after_restore",
 ]
 RunDisposition = Literal[
     "skipped", "busy", "current", "available", "downloaded", "applied", "staged",
-    "rolled_back", "blocked", "recovery_required", "failed", "interrupted",
+    "rolled_back", "blocked", "recovery_required", "failed", "interrupted", "restored", "failed_available",
 ]
 JSONValue = Union[None, bool, int, float, str, Mapping[str, "JSONValue"], Tuple["JSONValue", ...]]
 MAX_PUBLIC_BYTES = 32768
 MAX_PUBLIC_DEPTH = 12
 ACTIVE_OPERATION_STATES = frozenset({
-    "checking", "downloading", "backing_up", "applying", "verifying", "rolling_back",
+    "checking", "downloading", "backing_up", "applying", "verifying", "rolling_back", "restoring",
 })
 
 
@@ -108,6 +115,25 @@ class ReasonCode(str, Enum):
     UNSUPPORTED_INSTALLATION = "unsupported_installation"
     CONTROL_INVALID = "control_invalid"
     PROCESS_FAILED = "process_failed"
+    RESTORE_NOT_CERTIFIED = "restore_not_certified"
+    TRANSITION_NOT_REHEARSED = "transition_not_rehearsed"
+    PLATFORM_NOT_REHEARSED = "platform_not_rehearsed"
+    RESTORE_PROCEDURE_UNSUPPORTED = "restore_procedure_unsupported"
+    MIGRATION_INVENTORY_UNSUPPORTED = "migration_inventory_unsupported"
+    MIGRATION_INVENTORY_MISMATCH = "migration_inventory_mismatch"
+    BACKUP_INVENTORY_MISMATCH = "backup_inventory_mismatch"
+    RESTORE_CAPACITY_UNKNOWN = "restore_capacity_unknown"
+    RESTORE_CAPACITY_INSUFFICIENT = "restore_capacity_insufficient"
+    RESTORE_CHILD_AMBIGUOUS = "restore_child_ambiguous"
+    RESTORE_VERIFICATION_FAILED = "restore_verification_failed"
+    AUTOMATIC_RECOVERY_PENDING = "automatic_recovery_pending"
+    RESTORED_AFTER_UPDATE_FAILURE = "restored_after_update_failure"
+    MIGRATION_EXCEEDS_WINDOW = "migration_exceeds_window"
+    INSUFFICIENT_DISK_FOR_MIGRATION = "insufficient_disk_for_migration"
+    BACKUP_EXCEEDS_WINDOW = "backup_exceeds_window"
+    INSUFFICIENT_DISK_FOR_BACKUP = "insufficient_disk_for_backup"
+    MIGRATION_STALLED = "migration_stalled"
+    DISK_WATERMARK_ABORT = "disk_watermark_abort"
 
 
 class ContractError(ValueError):
@@ -184,12 +210,28 @@ class AutomationPolicy:
     tick_timeout_seconds: int = 14400
     backup_timeout_seconds: int = 3600
     wait_timeout_seconds: int = 1200
+    # None retains legacy/manual configuration parsing and budgets. Enrollment
+    # must explicitly select the new policy; automatic_rollback is NOT an opt-out.
+    qualification_policy: Optional[Literal["standalone-cold-restore-v1"]] = None
+    restore_timeout_seconds: int = 3600
+    recovery_startup_timeout_seconds: int = 1200
+    stability_period_seconds: int = 60
+    quiescence_reserve_seconds: int = 300
+    metadata_reserve_seconds: int = 300
+    estimate_safety_factor: int = 2
+    migration_timeout_seconds: int = 1200
+    migration_stall_timeout_seconds: int = 300
+    disk_watermark_reserve_bytes: int = 1073741824
 
     def __post_init__(self) -> None:
         _require(type(self.mode) is str and self.mode in get_args(AutomationMode))
         _require(type(self.enabled) is bool and type(self.automatic_rollback) is bool)
         _require(self.channel in ("stable", "beta") and self.version_policy in ("patch", "minor", "major"))
         for name, (minimum, maximum) in POLICY_BOUNDS.items():
+            value = getattr(self, name)
+            _require(type(value) is int and minimum <= value <= maximum)
+        _require(self.qualification_policy in (None, "standalone-cold-restore-v1"))
+        for name, (minimum, maximum) in AUTOMATIC_POLICY_BOUNDS.items():
             value = getattr(self, name)
             _require(type(value) is int and minimum <= value <= maximum)
         _require(self.max_backoff_seconds >= self.check_interval_seconds)
@@ -200,14 +242,50 @@ class AutomationPolicy:
         # Validate even while configured disabled: a later durable enable must
         # not activate an inconsistent policy. No window is a valid blocked
         # configuration, not implicit permission to apply at any time.
+        if self.qualification_policy == "standalone-cold-restore-v1":
+            _require(self.migration_stall_timeout_seconds <= self.migration_timeout_seconds)
         if self.mode == "apply":
             _require(self.tick_timeout_seconds >= self.required_tick_budget_seconds)
 
     @property
     def required_tick_budget_seconds(self) -> int:
+        if self.qualification_policy == "standalone-cold-restore-v1":
+            return self.pull_timeout_seconds + self.required_forward_budget_seconds + self.required_recovery_budget_seconds
         if self.automatic_rollback:
             return self.backup_timeout_seconds + 2 * self.pull_timeout_seconds + 4 * self.wait_timeout_seconds + 1200
         return self.backup_timeout_seconds + self.pull_timeout_seconds + 2 * self.wait_timeout_seconds + 600
+
+
+    @property
+    def required_forward_budget_seconds(self) -> int:
+        """Cold budget; prefetch/pull completes BEFORE this clock starts."""
+        migration = self.migration_timeout_seconds if self.qualification_policy == "standalone-cold-restore-v1" else 0
+        return (self.backup_timeout_seconds + migration + self.wait_timeout_seconds + self.stability_period_seconds
+                + self.quiescence_reserve_seconds + self.metadata_reserve_seconds)
+
+    @property
+    def required_recovery_budget_seconds(self) -> int:
+        """Protected reserve, or the full budget of a fresh recovery-only tick."""
+        return (self.restore_timeout_seconds + self.recovery_startup_timeout_seconds + self.stability_period_seconds
+                + self.quiescence_reserve_seconds + self.metadata_reserve_seconds)
+
+    @property
+    def required_cold_budget_seconds(self) -> int:
+        return self.required_forward_budget_seconds + self.required_recovery_budget_seconds
+
+
+# Separate from legacy parser keys; setup-policy-status owns adding settings.
+AUTOMATIC_POLICY_BOUNDS: Mapping[str, Tuple[int, int]] = MappingProxyType({
+    "restore_timeout_seconds": (1, 86400),
+    "recovery_startup_timeout_seconds": (60, 7200),
+    "stability_period_seconds": (1, 3600),
+    "quiescence_reserve_seconds": (60, 3600),
+    "metadata_reserve_seconds": (60, 3600),
+    "estimate_safety_factor": (2, 100),
+    "migration_timeout_seconds": (1, 86400),
+    "migration_stall_timeout_seconds": (1, 7200),
+    "disk_watermark_reserve_bytes": (1, 9007199254740991),
+})
 
 
 POLICY_BOUNDS: Mapping[str, Tuple[int, int]] = MappingProxyType({
@@ -261,6 +339,19 @@ class InstallationBinding:
         object.__setattr__(self, "profiles", tuple(self.profiles))
 
 
+def installation_binding_hash(binding: InstallationBinding) -> str:
+    """Canonical private enrollment binding; no path resolution or host I/O."""
+    from .manifest import manifest_hash
+    _require(isinstance(binding, InstallationBinding))
+    value = {name: getattr(binding, name) for name in (
+        "slot_id", "selection_hash", "installation_fingerprint", "topology", "production",
+        "compose_project", "docker_context", "daemon_identity", "host_uid")}
+    value.update({name: str(getattr(binding, name)) for name in ("checkout", "env_alias", "env_target")})
+    value["compose_files"] = [str(path) for path in binding.compose_files]
+    value["profiles"] = sorted(binding.profiles)
+    return manifest_hash(value)
+
+
 @dataclass(frozen=True)
 class VerificationSnapshot:
     """Allowlisted immutable trust.Verification fields plus caller's aware clock.
@@ -275,8 +366,11 @@ class VerificationSnapshot:
     issuer: str
     tool: str
     checked_at: datetime
+    public_key_sha256: str = ""  # Exact configured key content, not its private filename.
 
     def __post_init__(self) -> None:
+        _require(type(self.public_key_sha256) is str and (self.public_key_sha256 == "" or
+                 re.fullmatch(r"[0-9a-f]{64}", self.public_key_sha256) is not None))
         _require(type(self.verified) is bool)
         _require(all(type(value) is str for value in (self.method, self.signer, self.issuer, self.tool)))
         _aware(self.checked_at)
@@ -316,6 +410,451 @@ class PreparedUpdate:
         object.__setattr__(self, "plan", _freeze(self.plan))
 
 
+# Private restore-backed interfaces. Values are immutable evidence, not authority
+# by construction: callers must obtain them from authenticated in-lock adapters.
+QUALIFICATION_POLICY = "standalone-cold-restore-v1"
+RESTORE_PROCEDURE_ID = "standalone-inplace-cold-restore-v1"
+BACKUP_INVENTORY_VERSION = 2
+HOST_OBSERVATION_CONTRACT = "standalone-runtime-v2"
+RUNTIME_ACTIVATION_CONTRACT = "standalone-compose-direct-v1"
+PERSISTENT_DOMAINS = ("clickhouse", "object_store", "postgres_app", "shared_files", "temporal")
+RecoveryDirection = Literal["forward_pending", "restore_decided", "success_decided"]
+RestoreState = Literal["not_needed", "running", "verified", "failed", "recovery_required"]
+ForwardResult = Literal["not_started", "running", "succeeded", "failed", "interrupted"]
+AutomaticPhase = Literal[
+    "attempt_reserved", "quiescing", "quiesced", "archiving", "backup_sealed",
+    "env_commit_pending", "env_selected", "target_create_pending", "target_created",
+    "target_starting", "target_verifying", "success_decided", "success_metadata_committed", "succeeded",
+    "restore_decided", "restore_quiescing", "restore_quiesced", "restore_inputs_verified",
+    "restoring_volumes", "restore_files_verified", "config_revert_pending", "config_reverted",
+    "restore_data_committed", "previous_create_pending", "previous_created", "previous_start_armed",
+    "previous_starting", "previous_verifying", "restore_verified", "restore_metadata_committed",
+    "restored", "abort_quiescence", "failed_available",
+]
+
+
+def _hex(value: Any, length: int = 64) -> None:
+    _require(type(value) is str and re.fullmatch(r"[0-9a-f]{" + str(length) + r"}", value) is not None)
+
+
+def _restart_evidence(counts: Mapping[str, int], policies: Mapping[str, str]) -> None:
+    _require(isinstance(counts, Mapping) and isinstance(policies, Mapping) and bool(counts))
+    _require(set(counts) == set(policies))
+    _require(all(type(k) is str and bool(k) and type(v) is int and v >= 0 for k, v in counts.items()))
+    _require(all(type(v) is str and v in ("unless-stopped", "no") for v in policies.values()),
+             "unsupported_installation")
+
+
+@dataclass(frozen=True)
+class MigrationEvidence:
+    source_inventory_sha256: str
+    target_inventory_sha256: str
+    source_applied_set_sha256: str
+    target_applied_set_sha256: str
+    active_app_mapping_sha256: str
+    target_pending_plan_sha256: str
+    target_pending_plan_count: int
+    migration_handling: Literal["standalone_bootstrap"] = "standalone_bootstrap"
+
+    def __post_init__(self) -> None:
+        for name in ("source_inventory_sha256", "target_inventory_sha256", "source_applied_set_sha256",
+                     "target_applied_set_sha256", "active_app_mapping_sha256", "target_pending_plan_sha256"):
+            _hex(getattr(self, name))
+        object.__setattr__(self, "target_pending_plan_count", _wire_integer(self.target_pending_plan_count, 100000))
+        _require(self.migration_handling == "standalone_bootstrap")
+
+
+# A6 uses logical volume roles, never downloaded Docker names or SQL identifiers.
+AUTOMATIC_VOLUMES = ("app-data", "postgres-data", "clickhouse-data")
+MAX_MEASUREMENT_INTEGER = 9007199254740991
+MigrationEngine = Literal["postgres", "clickhouse"]
+MigrationRiskClass = Literal["metadata_only", "scan", "rewrite", "index_build", "data_backfill", "other"]
+
+
+def _wire_integer(value: Any, maximum: int = MAX_MEASUREMENT_INTEGER) -> int:
+    """JSON Schema integers are mathematical integers: 3 and 3.0 are equivalent.
+
+    Normalize private typed values, NEVER the authenticated/raw wire bytes.
+    Booleans, fractional floats, nonfinite numbers and unsafe sizes are rejected.
+    """
+    import math
+    _require(type(value) is int or (type(value) is float and math.isfinite(value) and value.is_integer()))
+    _require(0 <= value <= maximum)
+    return int(value)
+
+
+def _measurement_number(value: Any, *, minimum: float = 0, exclusive: bool = False,
+                        maximum: float = 1e18) -> None:
+    import math
+    _require(type(value) in (int, float) and minimum <= value <= maximum)
+    _require(math.isfinite(value) and (not exclusive or value > minimum))
+
+
+def _table_name(value: Any) -> None:
+    # Unquoted schema-qualified names only. These are data, never SQL to execute.
+    _require(type(value) is str and len(value) <= 129
+             and re.fullmatch(r"[a-z_][a-z0-9_]{0,63}\.[a-z_][a-z0-9_]{0,63}", value) is not None)
+
+
+@dataclass(frozen=True)
+class MigrationTableMeasurement:
+    table: str
+    reference_rows: int
+    reference_bytes: int
+
+    def __post_init__(self) -> None:
+        _table_name(self.table)
+        for name in ("reference_rows", "reference_bytes"):
+            object.__setattr__(self, name, _wire_integer(getattr(self, name)))
+
+
+@dataclass(frozen=True)
+class MigrationThroughput:
+    unit: Literal["rows_per_second", "bytes_per_second"]
+    value: float
+
+    def __post_init__(self) -> None:
+        _require(self.unit in ("rows_per_second", "bytes_per_second"))
+        _measurement_number(self.value, exclusive=True)
+
+
+@dataclass(frozen=True)
+class MigrationMeasurement:
+    app_label: str
+    name: str
+    engine: MigrationEngine
+    tables: Tuple[MigrationTableMeasurement, ...]
+    risk_class: MigrationRiskClass
+    duration_seconds: float
+    throughput: MigrationThroughput
+    peak_disk_amplification_factor: float
+    wal_bytes: int
+    temp_bytes: int
+
+    def __post_init__(self) -> None:
+        _require(type(self.app_label) is str and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", self.app_label) is not None)
+        _require(type(self.name) is str and re.fullmatch(r"[A-Za-z0-9_]{1,128}", self.name) is not None)
+        _require(self.engine in get_args(MigrationEngine) and self.risk_class in get_args(MigrationRiskClass))
+        _require(isinstance(self.tables, (tuple, list)) and len(self.tables) <= 256)
+        tables = tuple(MigrationTableMeasurement(**item) if isinstance(item, Mapping) else item for item in self.tables)
+        _require(all(isinstance(item, MigrationTableMeasurement) for item in tables))
+        _require(len({item.table for item in tables}) == len(tables))
+        _require(bool(tables) or self.risk_class in ("metadata_only", "other"))
+        throughput = MigrationThroughput(**self.throughput) if isinstance(self.throughput, Mapping) else self.throughput
+        _require(isinstance(throughput, MigrationThroughput))
+        _measurement_number(self.duration_seconds, exclusive=True)
+        _measurement_number(self.peak_disk_amplification_factor, minimum=1, maximum=1e6)
+        for name in ("wal_bytes", "temp_bytes"):
+            object.__setattr__(self, name, _wire_integer(getattr(self, name)))
+        object.__setattr__(self, "tables", tables)
+        object.__setattr__(self, "throughput", throughput)
+
+
+@dataclass(frozen=True)
+class VolumeTransferMeasurement:
+    reference_volume_bytes: Mapping[str, int]
+    throughput_bytes_per_second: float
+
+    def __post_init__(self) -> None:
+        _require(isinstance(self.reference_volume_bytes, Mapping)
+                 and set(self.reference_volume_bytes) == set(AUTOMATIC_VOLUMES))
+        sizes = {name: _wire_integer(value) for name, value in self.reference_volume_bytes.items()}
+        _require(sum(sizes.values()) > 0)
+        _measurement_number(self.throughput_bytes_per_second, exclusive=True)
+        object.__setattr__(self, "reference_volume_bytes", MappingProxyType(sizes))
+
+
+def pending_migration_plan_hash(identities: Any) -> str:
+    """Canonical ordered plan: [{app_label, name}, ...], no SQL/engine/code."""
+    from .manifest import manifest_hash
+    _require(isinstance(identities, (list, tuple)))
+    plan = []
+    for identity in identities:
+        _require(isinstance(identity, Mapping) and set(identity) == {"app_label", "name"})
+        _require(type(identity["app_label"]) is str
+                 and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", identity["app_label"]) is not None)
+        _require(type(identity["name"]) is str and re.fullmatch(r"[A-Za-z0-9_]{1,128}", identity["name"]) is not None)
+        plan.append(dict(identity))
+    _require(len({(item["app_label"], item["name"]) for item in plan}) == len(plan))
+    return manifest_hash(plan)
+
+
+@dataclass(frozen=True)
+class TransitionMeasurements:
+    migration_evidence: MigrationEvidence
+    migration_measurements: Tuple[MigrationMeasurement, ...]
+    backup_measurement: VolumeTransferMeasurement
+    restore_measurement: VolumeTransferMeasurement
+
+    def __post_init__(self) -> None:
+        evidence = MigrationEvidence(**self.migration_evidence) if isinstance(self.migration_evidence, Mapping) else self.migration_evidence
+        _require(isinstance(evidence, MigrationEvidence))
+        _require(isinstance(self.migration_measurements, (tuple, list)))
+        measurements = tuple(MigrationMeasurement(**item) if isinstance(item, Mapping) else item
+                             for item in self.migration_measurements)
+        _require(all(isinstance(item, MigrationMeasurement) for item in measurements))
+        _require(len(measurements) == evidence.target_pending_plan_count)
+        _require(pending_migration_plan_hash([{"app_label": m.app_label, "name": m.name} for m in measurements])
+                 == evidence.target_pending_plan_sha256)
+        for name in ("backup_measurement", "restore_measurement"):
+            item = getattr(self, name)
+            item = VolumeTransferMeasurement(**item) if isinstance(item, Mapping) else item
+            _require(isinstance(item, VolumeTransferMeasurement))
+            object.__setattr__(self, name, item)
+        _require(dict(self.backup_measurement.reference_volume_bytes) == dict(self.restore_measurement.reference_volume_bytes))
+        object.__setattr__(self, "migration_evidence", evidence)
+        object.__setattr__(self, "migration_measurements", measurements)
+
+
+@dataclass(frozen=True)
+class HostTableSize:
+    engine: MigrationEngine
+    table: str
+    rows: int
+    bytes: int
+
+    def __post_init__(self) -> None:
+        _require(self.engine in get_args(MigrationEngine))
+        _table_name(self.table)
+        for name in ("rows", "bytes"):
+            object.__setattr__(self, name, _wire_integer(getattr(self, name)))
+
+
+@dataclass(frozen=True)
+class HostSizeObservation:
+    table_sizes: Tuple[HostTableSize, ...]
+    volume_bytes: Mapping[str, int]
+    docker_free_bytes: int
+    backup_free_bytes: int
+    # Unknown co-location must be treated conservatively as the SAME filesystem.
+    backup_shares_docker_filesystem: bool = True
+
+    def __post_init__(self) -> None:
+        _require(isinstance(self.table_sizes, (tuple, list)))
+        tables = tuple(HostTableSize(**item) if isinstance(item, Mapping) else item for item in self.table_sizes)
+        _require(all(isinstance(item, HostTableSize) for item in tables))
+        _require(len({(item.engine, item.table) for item in tables}) == len(tables))
+        _require(isinstance(self.volume_bytes, Mapping) and set(self.volume_bytes) == set(AUTOMATIC_VOLUMES))
+        object.__setattr__(self, "volume_bytes", MappingProxyType({k: _wire_integer(v) for k, v in self.volume_bytes.items()}))
+        for name in ("docker_free_bytes", "backup_free_bytes"):
+            object.__setattr__(self, name, _wire_integer(getattr(self, name)))
+        _require(type(self.backup_shares_docker_filesystem) is bool)
+        object.__setattr__(self, "table_sizes", tables)
+
+
+@dataclass(frozen=True)
+class AutomaticUpdateEstimate:
+    backup_seconds: int
+    migration_seconds: int
+    restore_seconds: int
+    extra_disk_bytes: int
+    backup_required_free_bytes: int
+    docker_required_free_bytes: int
+    protected_restore_reserve_bytes: int
+    forward_seconds: int
+    recovery_seconds: int
+    total_seconds: int
+    migration_deadline_seconds: int
+    migration_stall_timeout_seconds: int
+
+
+@dataclass(frozen=True)
+class AutomaticUpdateDecision:
+    allowed: bool
+    reason_codes: Tuple[ReasonCode, ...]
+    estimate: Optional[AutomaticUpdateEstimate] = None
+
+
+@dataclass(frozen=True)
+class RuntimeImage:
+    image: str
+    digest: str
+    image_id: str
+
+
+@dataclass(frozen=True, repr=False)
+class RuntimeObservationV2:
+    release_version: str
+    manifest_sha256: str
+    observed_at: datetime
+    binding_sha256: str
+    platform: Literal["linux/amd64", "linux/arm64"]
+    product_images: Mapping[str, Tuple[RuntimeImage, ...]]
+    dependency_images: Mapping[str, Tuple[RuntimeImage, ...]]
+    migration_inventory_sha256: str
+    applied_migrations_sha256: str
+    active_app_mapping_sha256: str
+    deployment_sha256: str
+    env_sha256: str
+    config_sha256: str
+    storage_sha256: str
+    container_roster_sha256: str
+    restart_counts: Mapping[str, int]
+    restart_policies: Mapping[str, str]
+    ready: bool
+    stable: bool
+    contract: Literal["standalone-runtime-v2"] = HOST_OBSERVATION_CONTRACT
+
+    def __post_init__(self) -> None:
+        parse_version(self.release_version)
+        _aware(self.observed_at)
+        _require(self.platform in ("linux/amd64", "linux/arm64") and self.contract == HOST_OBSERVATION_CONTRACT)
+        for name in ("manifest_sha256", "binding_sha256", "migration_inventory_sha256", "applied_migrations_sha256",
+                     "active_app_mapping_sha256", "deployment_sha256", "env_sha256", "config_sha256",
+                     "storage_sha256", "container_roster_sha256"):
+            _hex(getattr(self, name))
+        _require(type(self.ready) is bool and type(self.stable) is bool)
+        _restart_evidence(self.restart_counts, self.restart_policies)
+        for name in ("restart_counts", "restart_policies"):
+            object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
+        for name in ("product_images", "dependency_images"):
+            images = getattr(self, name)
+            _require(isinstance(images, Mapping) and bool(images))
+            for service, replicas in images.items():
+                _require(type(service) is str and bool(service) and isinstance(replicas, (tuple, list)) and bool(replicas))
+                _require(all(isinstance(image, RuntimeImage) for image in replicas))
+            object.__setattr__(self, name, MappingProxyType({s: tuple(v) for s, v in images.items()}))
+
+    @property
+    def sha256(self) -> str:
+        from .manifest import manifest_hash
+        value = {name: getattr(self, name) for name in (
+            "release_version", "manifest_sha256", "binding_sha256", "platform", "migration_inventory_sha256",
+            "applied_migrations_sha256", "active_app_mapping_sha256", "deployment_sha256", "env_sha256",
+            "config_sha256", "storage_sha256", "container_roster_sha256", "ready", "stable", "contract")}
+        value["observed_at"] = _aware(self.observed_at).isoformat()
+        for name in ("product_images", "dependency_images"):
+            value[name] = {s: [{"image": i.image, "digest": i.digest, "image_id": i.image_id}
+                               for i in sorted(v, key=lambda i: (i.image, i.digest, i.image_id))]
+                           for s, v in getattr(self, name).items()}
+        value["restart_counts"], value["restart_policies"] = dict(self.restart_counts), dict(self.restart_policies)
+        return manifest_hash(value)
+
+
+@dataclass(frozen=True, repr=False)
+class AuthorisedTransition:
+    prepared: PreparedUpdate
+    source_observation: RuntimeObservationV2
+    migration_evidence: MigrationEvidence
+    predecessor_raw_sha256: str
+    proof_sha256: str
+    execution_deployment: Mapping[str, JSONValue]
+    executor_sha256: str
+    row_sha256: str
+    verified_at: datetime
+    fingerprint: str
+    qualification_policy: Literal["standalone-cold-restore-v1"] = QUALIFICATION_POLICY
+    runtime_activation_contract: Literal["standalone-compose-direct-v1"] = RUNTIME_ACTIVATION_CONTRACT
+    measurements: Optional[TransitionMeasurements] = None
+
+    def __post_init__(self) -> None:
+        _require(self.measurements is None or (isinstance(self.measurements, TransitionMeasurements)
+                 and self.measurements.migration_evidence == self.migration_evidence))
+        _require(isinstance(self.prepared, PreparedUpdate) and isinstance(self.source_observation, RuntimeObservationV2)
+                 and isinstance(self.migration_evidence, MigrationEvidence))
+        for name in ("predecessor_raw_sha256", "proof_sha256", "executor_sha256", "row_sha256", "fingerprint"):
+            _hex(getattr(self, name))
+        _aware(self.verified_at)
+        _require(self.qualification_policy == QUALIFICATION_POLICY
+                 and self.runtime_activation_contract == RUNTIME_ACTIVATION_CONTRACT)
+        _require(isinstance(self.execution_deployment, Mapping))
+        object.__setattr__(self, "execution_deployment", _freeze(self.execution_deployment))
+
+
+@dataclass(frozen=True, repr=False)
+class BackupSeal:
+    attempt_id: str
+    operation_token: str
+    run_id: str
+    binding_sha256: str
+    target_manifest_hash: str
+    source_version: str
+    proof_sha256: str
+    inventory_sha256: str
+    source_observation_sha256: str
+    quiescence_evidence_sha256: str
+    snapshot_at: datetime
+    authorised_at: datetime
+    inventory_version: Literal[2] = BACKUP_INVENTORY_VERSION
+    restore_procedure_id: Literal["standalone-inplace-cold-restore-v1"] = RESTORE_PROCEDURE_ID
+
+    def __post_init__(self) -> None:
+        _hex(self.attempt_id, 32)
+        _require(type(self.operation_token) is str and bool(self.operation_token)
+                 and type(self.run_id) is str and bool(self.run_id))
+        parse_version(self.source_version)
+        for name in ("binding_sha256", "target_manifest_hash", "proof_sha256", "inventory_sha256",
+                     "source_observation_sha256", "quiescence_evidence_sha256"):
+            _hex(getattr(self, name))
+        _require(_aware(self.snapshot_at) <= _aware(self.authorised_at))
+        _require(type(self.inventory_version) is int and self.inventory_version == BACKUP_INVENTORY_VERSION
+                 and self.restore_procedure_id == RESTORE_PROCEDURE_ID)
+
+
+@dataclass(frozen=True, repr=False)
+class ColdHold:
+    attempt_id: str
+    operation_token: str
+    run_id: str
+    binding_sha256: str
+    source_observation_sha256: str
+    quiescence_evidence_sha256: str
+    snapshot_at: datetime
+    verified_at: datetime
+    daemon_identity: str
+    storage_sha256: str
+    stopped_container_ids: Tuple[str, ...]
+    restart_counts: Mapping[str, int]
+    restart_policies: Mapping[str, str]
+
+    def __post_init__(self) -> None:
+        _hex(self.attempt_id, 32)
+        _require(all(type(v) is str and bool(v) for v in (self.operation_token, self.run_id, self.daemon_identity)))
+        for name in ("binding_sha256", "source_observation_sha256", "quiescence_evidence_sha256", "storage_sha256"):
+            _hex(getattr(self, name))
+        _require(_aware(self.snapshot_at) <= _aware(self.verified_at))
+        _require(isinstance(self.stopped_container_ids, (tuple, list)) and bool(self.stopped_container_ids))
+        for cid in self.stopped_container_ids:
+            _hex(cid)
+        _require(len(set(self.stopped_container_ids)) == len(self.stopped_container_ids))
+        _restart_evidence(self.restart_counts, self.restart_policies)
+        _require(set(self.restart_counts) == set(self.stopped_container_ids))
+        object.__setattr__(self, "stopped_container_ids", tuple(self.stopped_container_ids))
+        object.__setattr__(self, "restart_counts", MappingProxyType(dict(self.restart_counts)))
+        object.__setattr__(self, "restart_policies", MappingProxyType(dict(self.restart_policies)))
+
+
+@dataclass(frozen=True, repr=False)
+class RestorationResult:
+    attempt_id: str
+    outcome: Literal["restored", "failed_available", "recovery_required"]
+    source_version: str
+    target_version: str
+    last_verified_phase: AutomaticPhase
+    backup_seal: Optional[BackupSeal] = None
+    observation: Optional[RuntimeObservationV2] = None
+    reason_codes: Tuple[ReasonCode, ...] = ()
+    guidance_id: Literal["none", "inspect_host", "review_recovery"] = "none"
+
+    def __post_init__(self) -> None:
+        _hex(self.attempt_id, 32)
+        _require(self.outcome in ("restored", "failed_available", "recovery_required"))
+        parse_version(self.source_version)
+        parse_version(self.target_version)
+        _require(self.last_verified_phase in get_args(AutomaticPhase))
+        _require(self.backup_seal is None or isinstance(self.backup_seal, BackupSeal))
+        _require(self.observation is None or isinstance(self.observation, RuntimeObservationV2))
+        if self.backup_seal is not None:
+            _require(self.backup_seal.attempt_id == self.attempt_id and self.backup_seal.source_version == self.source_version)
+        if self.outcome in ("restored", "failed_available"):
+            _require(self.observation is not None and self.observation.release_version == self.source_version
+                     and self.observation.ready and self.observation.stable)
+        if self.outcome == "restored":
+            _require(self.backup_seal is not None and self.last_verified_phase in ("restore_verified", "restore_metadata_committed", "restored"))
+        _require(self.guidance_id in ("none", "inspect_host", "review_recovery"))
+        object.__setattr__(self, "reason_codes", _reasons(self.reason_codes))
+
+
 @dataclass(frozen=True)
 class RunOutcome:
     disposition: RunDisposition
@@ -343,8 +882,10 @@ class OperationEvent:
     reported_at: datetime
     operation_token: str  # Private CAS identity, NOT a public status field.
     reason_codes: Tuple[ReasonCode, ...] = ()
+    phase: Optional[AutomaticPhase] = None
 
     def __post_init__(self) -> None:
+        _require(self.phase is None or self.phase in get_args(AutomaticPhase))
         _require(self.state in get_args(OperationState))
         _require(self.kind is None or self.kind in get_args(OperationKind))
         _require(self.stage is None or self.stage in get_args(OperationStage))
@@ -460,7 +1001,11 @@ class PublicDownload(TypedDict):
     reason_codes: List[str]  # ReasonCode.value; validator enforces the closed vocabulary.
 
 
-class PublicOperation(TypedDict):
+class _PublicRestoreOperation(TypedDict, total=False):
+    phase: Optional[AutomaticPhase]
+
+
+class PublicOperation(_PublicRestoreOperation):
     state: OperationState
     kind: Optional[OperationKind]
     stage: Optional[OperationStage]
@@ -470,7 +1015,14 @@ class PublicOperation(TypedDict):
     reason_codes: List[str]  # ReasonCode.value; validator enforces the closed vocabulary.
 
 
-class PublicLastRun(TypedDict):
+class _PublicRestoreLastRun(TypedDict, total=False):
+    forward_result: ForwardResult
+    restore_result: RestoreState
+    effective_version: Optional[str]
+    failed_target_version: Optional[str]
+
+
+class PublicLastRun(_PublicRestoreLastRun):
     kind: Literal["apply", "rollback"]
     automatic: bool
     outcome: Literal[
@@ -483,9 +1035,19 @@ class PublicLastRun(TypedDict):
     fallback_outcome: Literal["none", "succeeded", "failed", "ineligible"]
 
 
-class PublicSafety(TypedDict):
+class _PublicRestoreSafety(TypedDict, total=False):
+    fallback_strategy: Literal["restore_backup", "none"]
+    restore_state: RestoreState
+    snapshot_at: Optional[str]
+    loss_window_start: Optional[str]
+    loss_window_end: Optional[str]
+    loss_window_qualification: Literal["not_applicable", "bounded", "conservative", "unknown"]
+    guidance_id: Literal["none", "inspect_host", "review_recovery"]
+
+
+class PublicSafety(_PublicRestoreSafety):
     backup_required: bool
-    backup_state: Literal["not_evaluated", "required", "reported_complete", "failed", "explicitly_skipped"]
+    backup_state: Literal["not_evaluated", "required", "reported_complete", "failed", "explicitly_skipped", "pending", "quiescing", "sealed"]
     readiness: Literal["unknown", "pending", "passed", "failed"]
     automatic_rollback: Literal["unsupported", "disabled", "eligible", "ineligible"]
     operator_action: Literal[
