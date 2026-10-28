@@ -1679,8 +1679,20 @@ export default function RunResults({
         <Alert
           severity="info"
           icon={<Iconify icon="fagi:fix" width={16} />}
-          /* In the page's gutter, like the tabs under it — never edge to edge. */
-          sx={{ mx: 2, mt: 1.5, mb: 1, flexShrink: 0 }}
+          /* In the page's gutter, like the tabs under it — never edge to edge.
+             Neutral, not the blue info tint: it says what this run is for,
+             and blue here read as "already fixed". */
+          sx={{
+            mx: 2,
+            mt: 1.5,
+            mb: 1,
+            flexShrink: 0,
+            bgcolor: "background.neutral",
+            color: "text.primary",
+            border: "1px solid",
+            borderColor: "divider",
+            "& .MuiAlert-icon": { color: "text.secondary" },
+          }}
           action={
             failingScenarioIds.length > 0 ? (
               <Button

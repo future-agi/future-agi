@@ -67,6 +67,19 @@ function Row({ k, children }) {
 }
 Row.propTypes = { k: PropTypes.string, children: PropTypes.node };
 
+/* Fix again: what to change before this one, by how the last one ended —
+   the same fix on the same rules and scenarios would likely end the same way. */
+const LAST_NEXT = {
+  "no-fix":
+    "Every change it tried fixed too little or broke something. Loosen one of the agent's rules or edit the scenarios first — or hand it to your coding agent.",
+  "not-reproduced":
+    "The issue didn't show up on the agent as it was — it may already be gone. Add scenarios from newer traces first, or keep watching it.",
+  "over-budget":
+    "It stopped at its budget before trying a change. Pick a bigger budget below.",
+  reopened:
+    "It was released and the issue came back. This fix starts from the agent as it runs now.",
+};
+
 export default function FixStartDialog({
   open,
   onClose,
@@ -168,6 +181,16 @@ export default function FixStartDialog({
       ? agent.values?.liveTestConsent || null
       : null;
   const issueId = issue?.cluster_id;
+  /* The last fix, when this is Fix again: how it ended, what it tried, when. */
+  const lastStatus =
+    plan.status && LAST_NEXT[plan.status.key] ? plan.status : null;
+  const lastRecord = lastStatus
+    ? (plan.state?.byEnv?.[lastStatus.envId]?.optimizations || []).find(
+        (o) => o.id === lastStatus.optId,
+      )
+    : null;
+  const lastTrials = (lastRecord?.result || lastRecord?.pendingResult)?.trials
+    ?.length;
 
   /* Why it can't start from here — the full plan handles each one. */
   const held = !main
@@ -242,6 +265,44 @@ export default function FixStartDialog({
         </Typography>
       </Box>
       <Box sx={{ px: 2.5 }}>
+        {lastStatus && (
+          <Row k="Last fix">
+            <Typography sx={{ typography: "s2" }}>
+              {[
+                `${lastStatus.label}${lastStatus.detail ? ` · ${lastStatus.detail}` : ""}`,
+                lastTrials &&
+                  `${lastTrials} ${lastTrials === 1 ? "trial" : "trials"} tried`,
+                lastRecord?.createdAt &&
+                  new Date(lastRecord.createdAt).toLocaleDateString("en-GB", {
+                    day: "numeric",
+                    month: "short",
+                  }),
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+              <Box component="span" sx={{ color: "text.disabled" }}>
+                {" · "}
+              </Box>
+              <Link
+                component="button"
+                type="button"
+                underline="hover"
+                onClick={() => {
+                  onClose();
+                  navigate(...issueFixNav(lastStatus, issueId));
+                }}
+                sx={{ typography: "s2", verticalAlign: "baseline" }}
+              >
+                View last fix
+              </Link>
+            </Typography>
+            <Typography
+              sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
+            >
+              {LAST_NEXT[lastStatus.key]}
+            </Typography>
+          </Row>
+        )}
         {compact ? (
           <>
             <Row k="Agent">
