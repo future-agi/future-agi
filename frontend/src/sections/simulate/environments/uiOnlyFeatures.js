@@ -71,6 +71,10 @@ export const UI_ONLY_FEATURES = Object.freeze({
     label: "Required evaluation",
     ask: "a required flag per evaluation",
   },
+  evalHistory: {
+    label: "Evaluation history",
+    ask: "a change log per evaluation (added, edited, removed, with dates)",
+  },
   runBaseline: { label: "Baseline run", ask: "a baseline run per environment" },
   chooseWinner: {
     label: "Choose winner",

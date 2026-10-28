@@ -2,7 +2,8 @@ import PropTypes from "prop-types";
 import { useEffect, useRef, useState } from "react";
 import { enqueueSnackbar } from "notistack";
 import { useNavigate } from "react-router-dom";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { harnessEnvironmentQuery } from "src/api/simulate-environments/environment";
 import { alpha } from "@mui/material/styles";
 import {
   Box,
@@ -130,6 +131,10 @@ export default function RunDetail({
   // Keep the client bound: `useQueryClient().invalidateQueries` detached from
   // the client throws on `this.#queryCache` in react-query v5.
   const queryClient = useQueryClient();
+  // The environment's selected evals carry each eval's description and labelled
+  // inputs, which the All Evaluations drawer's expanded rows show.
+  const envDetail = useQuery(harnessEnvironmentQuery(env?.id, { enabled: allEvalsOpen }));
+  const appliedEvals = envDetail.data?.evaluations?.selected;
 
   // Analytics and an open call drawer don't poll for grading, so both are
   // refreshed once, when grading on this run finishes and the scores are
@@ -509,6 +514,7 @@ export default function RunDetail({
         <AllEvaluationsDrawer
           open={allEvalsOpen}
           onClose={() => setAllEvalsOpen(false)}
+          appliedEvals={appliedEvals}
           env={env}
           runTestId={testId}
           executionId={executionId}
