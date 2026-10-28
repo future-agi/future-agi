@@ -9,7 +9,7 @@ const MONO = "ui-monospace, Menlo, monospace";
 
 // A use case's id, derived from its text the way Vel's are (UC-xxxx), so the
 // same use case keeps its id wherever it's listed.
-export const useCaseId = (text) => {
+export const idOfUseCase = (text) => {
   let h = 0;
   for (const ch of String(text || "").slice(0, 40)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
   return `UC-${h.toString(36).slice(-4).padStart(4, "0")}`;
@@ -139,7 +139,7 @@ export function UseCasesSection({ useCases, onEdit }) {
     >
       <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
         {useCases.map((text, i) => {
-          const id = useCaseId(text);
+          const id = idOfUseCase(text);
           return (
             <Box
               key={`${id}:${i}`}

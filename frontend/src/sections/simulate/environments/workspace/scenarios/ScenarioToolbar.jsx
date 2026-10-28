@@ -115,6 +115,8 @@ export default function ScenarioToolbar({
 }
 
 ScenarioToolbar.propTypes = {
+  // Shown right after Filter: the Group by menu.
+  leading: PropTypes.node,
   query: PropTypes.string.isRequired,
   onQueryChange: PropTypes.func.isRequired,
   view: PropTypes.string.isRequired,

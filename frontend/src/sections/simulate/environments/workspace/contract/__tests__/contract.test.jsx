@@ -124,7 +124,7 @@ describe("Contract tab", () => {
   });
 
   it("leaves out a seed JSON has already rounded", () => {
-    renderPanel({ env: { ...voiceEnv, runSeed: 195790417783341077 } });
+    renderPanel({ env: { ...voiceEnv, runSeed: JSON.parse("195790417783341077") } });
     expect(screen.getByText("Same starting data every time")).toBeInTheDocument();
     expect(screen.queryByText(/Seed \d/)).toBeNull();
   });
