@@ -30,6 +30,7 @@ import MessagesView from "./MessagesView";
 import CallDetailsBar from "./CallDetailsBar";
 import ScenarioView from "./ScenarioView";
 import { isEmptyPersona } from "./persona.utils";
+import { LEFT_PANEL_TAB_SHAPE } from "./constants";
 
 const TABS = {
   ANALYTICS: "analytics",
@@ -40,6 +41,8 @@ const TABS = {
   ANNOTATIONS: "annotations",
   SCENARIO: "scenario",
 };
+
+const NO_EXTRA_TABS = [];
 
 const hasAttributeContent = (value) => {
   if (!value) return false;
@@ -56,6 +59,9 @@ const VoiceRightPanel = ({
   hideAnnotationTab,
   showFixWithFalcon = true,
   initialEvalFocus = false,
+  focusEvalName = null,
+  extraTabs = NO_EXTRA_TABS,
+  notice = null,
 }) => {
   const [currentTab, setCurrentTab] = useState(TABS.ANALYTICS);
   const evalFocusSeededRef = useRef(false);
@@ -178,8 +184,12 @@ const VoiceRightPanel = ({
         icon: "mdi:script-text-outline",
       });
     }
+    extraTabs.forEach(({ label, value, icon }) =>
+      t.push({ label, value, icon }),
+    );
     return t;
-  }, [hasLogs, hasScenarioData, hideAnnotationTab]);
+  }, [hasLogs, hasScenarioData, hideAnnotationTab, extraTabs]);
+  const activeExtraTab = extraTabs.find((tab) => tab.value === currentTab);
 
   const analyticsProps = useMemo(() => {
     // API-provided per-call metrics (prefer over client-computed values)
@@ -383,6 +393,8 @@ const VoiceRightPanel = ({
         hiddenActionIds={hiddenActionIds}
       />
 
+      {notice && <Box sx={{ px: 1.25, pb: 1, flexShrink: 0 }}>{notice}</Box>}
+
       <Stack
         direction="row"
         alignItems="center"
@@ -456,6 +468,7 @@ const VoiceRightPanel = ({
             <EvalsTabView
               evals={normalizedEvals}
               emptyMessage="No evaluations for this call"
+              focusEvalName={focusEvalName}
               showSpanColumn={false}
               // A host with no Falcon flow wired (environment runs) turns it off.
               showFixWithFalcon={showFixWithFalcon}
@@ -559,6 +572,8 @@ const VoiceRightPanel = ({
           >
             <ScenarioView data={data} />
           </ShowComponent>
+
+          {activeExtraTab?.content}
         </Box>
       </ShowComponent>
     </Stack>
@@ -573,6 +588,12 @@ VoiceRightPanel.propTypes = {
   hideAnnotationTab: PropTypes.bool,
   showFixWithFalcon: PropTypes.bool,
   initialEvalFocus: PropTypes.bool,
+  // The eval the panel opens on, expanded (with `initialEvalFocus`).
+  focusEvalName: PropTypes.string,
+  // Host tabs after the built-in ones, shaped like the left panel's.
+  extraTabs: PropTypes.arrayOf(LEFT_PANEL_TAB_SHAPE),
+  // Shown between the call details and the tabs.
+  notice: PropTypes.node,
 };
 
 export default VoiceRightPanel;
