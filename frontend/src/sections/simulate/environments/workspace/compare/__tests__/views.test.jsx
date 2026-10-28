@@ -141,7 +141,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.clearAllMocks();
-  window.localStorage.clear();
 });
 
 describe("Compare verdict", () => {

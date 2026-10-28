@@ -20,7 +20,7 @@ import {
 import Iconify from "src/components/iconify";
 import SortablePanel from "./SortablePanel";
 import SortableSection from "./SortableSection";
-import { SECTIONS, panelSpan } from "./panelRegistry";
+import { SECTIONS, defaultSpanOf } from "./panelRegistry";
 
 function DragGhost({ label }) {
   return (
@@ -161,13 +161,13 @@ export default function LayoutBody({
                   }}
                 >
                   {sectionIds.map((id) => {
-                    const custom = layout.customWidgets.some(
-                      (widget) => widget.id === id,
+                    const widget = layout.customWidgets.find(
+                      (item) => item.id === id,
                     );
                     // Measured in the section's slots: in a four-slot
                     // section 1 is a quarter, in a two-slot one a half.
                     const span = Math.min(
-                      layout.spans[id] || (custom ? columns : panelSpan(id)),
+                      layout.spans[id] || defaultSpanOf(id, widget, columns),
                       columns,
                     );
                     return (

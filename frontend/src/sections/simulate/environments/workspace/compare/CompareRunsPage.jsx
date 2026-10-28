@@ -50,14 +50,9 @@ import {
   applyQuick,
   bandRows,
   defaultView,
-  loadDefaultView,
-  loadSavedViews,
-  newViewId,
   searchRows,
   snapshotsEqual,
   sortRows,
-  storeDefaultView,
-  storeSavedViews,
   viewSnapshot,
 } from "./compareView";
 
@@ -156,12 +151,9 @@ function CompareRuns() {
     [callsLoading, comparedRows, comparedIds],
   );
 
-  // Saved views live in this browser, per environment; the active one rides
-  // in the URL, so a link carries the reading as well as the runs.
-  const [savedViews, setSavedViews] = useState(() => loadSavedViews(envId));
-  const [storedDefault, setStoredDefault] = useState(() =>
-    loadDefaultView(envId),
-  );
+  // Views can't be saved yet: the reading lasts for this visit, and a view
+  // named in the URL that isn't there opens the default reading.
+  const [savedViews, setSavedViews] = useState([]);
   const [viewOverride, setViewOverride] = useState(null);
   const activeViewId = params.get("view") || null;
   const activeView = savedViews.find((v) => v.id === activeViewId) || null;
@@ -169,10 +161,10 @@ function CompareRuns() {
     viewOverride ||
     (activeView
       ? { ...defaultView(), ...activeView.config.view }
-      : storedDefault);
+      : defaultView());
   const dirty = !snapshotsEqual(
     viewSnapshot(view),
-    activeView ? activeView.config : viewSnapshot(storedDefault),
+    activeView ? activeView.config : viewSnapshot(defaultView()),
   );
 
   const setActiveView = (id) => {
@@ -181,24 +173,13 @@ function CompareRuns() {
     else next.delete("view");
     setParams(next, { replace: true });
   };
-  const writeViews = (next) => {
-    setSavedViews(next);
-    storeSavedViews(envId, next);
-  };
   const applyView = (id) => {
     const v = savedViews.find((x) => x.id === id);
-    setViewOverride(v ? { ...defaultView(), ...v.config.view } : storedDefault);
+    setViewOverride(v ? { ...defaultView(), ...v.config.view } : defaultView());
     setActiveView(id);
-  };
-  const saveView = (name) => {
-    const id = newViewId(name, savedViews);
-    writeViews([...savedViews, { id, name, config: viewSnapshot(view) }]);
-    setViewOverride(view);
-    setActiveView(id);
-    enqueueSnackbar(`View "${name}" saved`, { variant: "success" });
   };
   const updateView = (id) => {
-    writeViews(
+    setSavedViews(
       savedViews.map((v) =>
         v.id === id ? { ...v, config: viewSnapshot(view) } : v,
       ),
@@ -206,9 +187,9 @@ function CompareRuns() {
     enqueueSnackbar("View updated", { variant: "success" });
   };
   const renameView = (id, name) =>
-    writeViews(savedViews.map((v) => (v.id === id ? { ...v, name } : v)));
+    setSavedViews(savedViews.map((v) => (v.id === id ? { ...v, name } : v)));
   const deleteView = (id) => {
-    writeViews(savedViews.filter((v) => v.id !== id));
+    setSavedViews(savedViews.filter((v) => v.id !== id));
     if (id === activeViewId) setActiveView(null);
   };
 
@@ -401,7 +382,6 @@ function CompareRuns() {
             activeId={activeView ? activeViewId : null}
             dirty={dirty}
             onApply={applyView}
-            onSave={saveView}
             onUpdate={updateView}
             onRename={renameView}
             onDelete={deleteView}
@@ -409,21 +389,7 @@ function CompareRuns() {
           <CompareActions
             view={view}
             onView={setViewOverride}
-            onSaveDefault={() => {
-              storeDefaultView(envId, view);
-              setStoredDefault(view);
-              enqueueSnackbar(
-                "Saved as the default view for this environment",
-                {
-                  variant: "success",
-                },
-              );
-            }}
-            onResetView={() => {
-              storeDefaultView(envId, null);
-              setStoredDefault(defaultView());
-              setViewOverride(defaultView());
-            }}
+            onResetView={() => setViewOverride(defaultView())}
             onExport={exportComparison}
             onCopyLink={copyLink}
           />

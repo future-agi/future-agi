@@ -36,11 +36,7 @@ import { useRunDetail } from "src/api/simulate-environments/runDetail";
 import WidgetDescriptionPopover from "src/sections/dashboards/WidgetDescriptionPopover";
 import TruncatedTooltipText from "src/sections/dashboards/TruncatedTooltipText";
 import { ALL_AGGREGATIONS } from "src/sections/dashboards/constants";
-import {
-  formatValueWithConfig,
-  getAggColumnLabel,
-  getUnitRendering,
-} from "src/sections/dashboards/widgetUtils";
+import { getAggColumnLabel } from "src/sections/dashboards/widgetUtils";
 import { AggregationPicker } from "src/sections/dashboards/WidgetEditorView";
 import {
   CHART_TYPES,
@@ -49,13 +45,14 @@ import {
   METRIC_TYPE_ICONS,
 } from "src/sections/dashboards/widgetEditorConstants";
 import SoonChip from "../../../../components/SoonChip";
+import UiOnlyFlag from "../../../../components/UiOnlyFlag";
 import { getPanelMeta, panelTitle } from "../analytics/panelRegistry";
 import {
   DEFAULT_VIEW_NAME,
   newId,
-  readStoredCustomWidget,
-  removeStoredCustomWidget,
-  saveStoredCustomWidget,
+  readLayoutWidget,
+  removeLayoutWidget,
+  saveLayoutWidget,
 } from "../analytics/useRunLayout";
 import { CALL_CAP } from "../../../compare/useComparison";
 import ChartAxisSettings, {
@@ -65,6 +62,7 @@ import ChartAxisSettings, {
 } from "./ChartAxisSettings";
 import RunQueryPicker, { RunFilterValuePicker } from "./RunQueryPicker";
 import RunWidgetChart, { chartKindOf, useSeriesColors } from "./RunWidgetChart";
+import { formatRunWidgetValue } from "./formatRunWidgetValue";
 import {
   MAX_DEFAULT_SERIES,
   RUN_ATTRIBUTES,
@@ -90,7 +88,7 @@ import { useRunWidgetCalls } from "./useRunWidgetCalls";
  * menu, Close, Save), controls row, chart over a series table, and the Query
  * and Chart panel. The query runs in the browser over the run's real calls;
  * Save puts the widget in the Custom widgets section of the analytics view it
- * was opened from, kept per environment in this browser like the layout.
+ * was opened from. Like the layout, it lasts for this visit only.
  */
 
 const MAX_METRICS = 5;
@@ -488,11 +486,7 @@ function SeriesTable({
     background: theme.palette.background.paper,
     borderBottom: `1px solid ${theme.palette.divider}`,
   };
-  const fmt = (value, unit) =>
-    formatValueWithConfig(
-      value,
-      unit && !leftY.unit ? { ...leftY, ...getUnitRendering(unit) } : leftY,
-    );
+  const fmt = (value, unit) => formatRunWidgetValue(value, leftY, unit);
   const cell = {
     textAlign: "right",
     padding: "8px 12px",
@@ -727,7 +721,7 @@ export default function RunWidgetEditorPage() {
   // built-in, or a blank new widget. A saved one is updated in place; a
   // built-in is never replaced, its edit is added as a new widget.
   const stored = useMemo(
-    () => (isNew ? null : readStoredCustomWidget(envId, widgetId, viewParam)),
+    () => (isNew ? null : readLayoutWidget(envId, widgetId, viewParam)),
     [isNew, envId, widgetId, viewParam],
   );
   const queryWidget = stored?.kind === "query" ? stored : null;
@@ -1005,21 +999,17 @@ export default function RunWidgetEditorPage() {
     if (!query.metrics.length) return;
     // A saved query or a copy is replaced in place; anything else is new.
     const id = stored ? stored.id : newId("query");
-    const view = saveStoredCustomWidget(
-      envId,
-      { id, ...snapshot() },
-      viewParam,
-    );
+    const view = saveLayoutWidget(envId, { id, ...snapshot() }, viewParam);
     navigate(analyticsUrl(view));
   };
 
   const handleDelete = () => {
-    if (stored) removeStoredCustomWidget(envId, stored.id, viewParam);
+    if (stored) removeLayoutWidget(envId, stored.id, viewParam);
     navigate(backUrl);
   };
 
   const handleDuplicate = () => {
-    saveStoredCustomWidget(
+    saveLayoutWidget(
       envId,
       {
         id: newId("query"),
@@ -1343,6 +1333,7 @@ export default function RunWidgetEditorPage() {
         >
           Close
         </Button>
+        <UiOnlyFlag feature="analyticsViews" />
         <CustomTooltip
           show={!query.metrics.length}
           title="Add at least one metric"

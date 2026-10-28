@@ -26,6 +26,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import FixedTab from "src/components/observe-tabs/FixedTab";
 import CustomViewTab from "src/components/observe-tabs/CustomViewTab";
@@ -33,7 +34,8 @@ import SaveViewPopover from "src/components/traceDetail/SaveViewDialog";
 
 // Analytics views as tabs: the Observe tab bar flow (fixed Default tab, saved
 // view tabs, Save view, drag reorder, 1-9 shortcuts, right-click menu) over
-// the browser-local layout store. A view is keyed by its name.
+// the in-memory layout. A view is keyed by its name. Without `onSave`, Save
+// view is shown disabled: views can't be saved yet.
 function SortableViewTab({ name, index, ...tabProps }) {
   const {
     attributes,
@@ -284,37 +286,53 @@ export default function ViewTabBar({
           </SortableContext>
         </DndContext>
       </Box>
-      <ButtonBase
-        onClick={(event) => setSaveAnchor(event.currentTarget)}
-        sx={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 0.5,
-          height: 26,
-          px: 1,
-          flexShrink: 0,
-          border: "1px solid",
-          borderColor: "divider",
-          borderRadius: 0.5,
-          bgcolor: "background.paper",
-          "&:hover": { bgcolor: "background.neutral" },
-        }}
+      <CustomTooltip
+        show={!onSave}
+        arrow
+        size="small"
+        title="Saving views isn't available yet."
       >
-        <Iconify icon="solar:add-linear" width={16} />
-        <Typography
-          typography="s1"
-          sx={{ fontWeight: 500, whiteSpace: "nowrap", color: "text.primary" }}
-        >
-          Save view
-        </Typography>
-      </ButtonBase>
-      <SaveViewPopover
-        anchorEl={saveAnchor}
-        open={Boolean(saveAnchor)}
-        onClose={() => setSaveAnchor(null)}
-        onSave={handleSave}
-        existingNames={viewNames}
-      />
+        <Box component="span" sx={{ display: "inline-flex", flexShrink: 0 }}>
+          <ButtonBase
+            disabled={!onSave}
+            onClick={(event) => setSaveAnchor(event.currentTarget)}
+            sx={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 0.5,
+              height: 26,
+              px: 1,
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: 0.5,
+              bgcolor: "background.paper",
+              "&:hover": { bgcolor: "background.neutral" },
+              "&.Mui-disabled": { color: "text.disabled" },
+            }}
+          >
+            <Iconify icon="solar:add-linear" width={16} />
+            <Typography
+              typography="s1"
+              sx={{
+                fontWeight: 500,
+                whiteSpace: "nowrap",
+                color: onSave ? "text.primary" : "inherit",
+              }}
+            >
+              Save view
+            </Typography>
+          </ButtonBase>
+        </Box>
+      </CustomTooltip>
+      {onSave && (
+        <SaveViewPopover
+          anchorEl={saveAnchor}
+          open={Boolean(saveAnchor)}
+          onClose={() => setSaveAnchor(null)}
+          onSave={handleSave}
+          existingNames={viewNames}
+        />
+      )}
       <ViewContextMenu
         anchor={menuAnchor}
         onClose={() => setMenuAnchor(null)}
@@ -330,7 +348,8 @@ ViewTabBar.propTypes = {
   viewNames: PropTypes.arrayOf(PropTypes.string).isRequired,
   defaultName: PropTypes.string.isRequired,
   onSwitch: PropTypes.func.isRequired,
-  onSave: PropTypes.func.isRequired,
+  // Leave out while views can't be saved: Save view shows disabled.
+  onSave: PropTypes.func,
   onRename: PropTypes.func.isRequired,
   onDuplicate: PropTypes.func.isRequired,
   onDelete: PropTypes.func.isRequired,

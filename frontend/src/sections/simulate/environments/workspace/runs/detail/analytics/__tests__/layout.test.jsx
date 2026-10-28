@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cloneElement } from "react";
 import {
+  act,
   fireEvent,
   render,
+  renderHook,
   renderWithRouter,
   screen,
   waitFor,
@@ -35,8 +37,11 @@ vi.mock("../csv", async (importOriginal) => ({
 
 const { default: RunAnalytics } = await import("../../RunAnalytics");
 const { toCsv } = await import("../csv");
+const { resetLayouts, useRunLayout } = await import("../useRunLayout");
 
-let storage;
+let setItem;
+const ownWrites = (spy) =>
+  spy.mock.calls.filter(([key]) => !String(key).startsWith("iconify"));
 const show = (data, { envId = "env-1", route } = {}) => {
   useRunAnalytics.mockReturnValue({ data, isPending: false, isError: false });
   const ui = <RunAnalytics executionId="execution-1" envId={envId} />;
@@ -49,18 +54,19 @@ const pick = (name) => fireEvent.click(screen.getByRole("menuitem", { name }));
 
 describe("analytics widget layout", () => {
   beforeEach(() => {
-    storage = new Map();
-    vi.stubGlobal("localStorage", {
-      getItem: (key) => storage.get(key) ?? null,
-      setItem: (key, value) => storage.set(key, value),
-      removeItem: (key) => storage.delete(key),
-    });
+    resetLayouts();
+    setItem = vi.spyOn(Storage.prototype, "setItem");
     window.history.replaceState({}, "", "/");
     useRunAnalytics.mockReset();
     downloadCsv.mockReset();
     enqueueSnackbar.mockReset();
   });
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    // Nothing about the layout is written to the browser (Iconify caches
+    // its icons there on its own).
+    expect(ownWrites(setItem)).toEqual([]);
+    setItem.mockRestore();
+  });
 
   it.each(AGENT_TYPES)(
     "widget menu offers Edit, Duplicate, Reset, Width, Download CSV, Delete (%s)",
@@ -90,16 +96,24 @@ describe("analytics widget layout", () => {
       expect(window.location.pathname).toMatch(/\/widgets\/risk$/);
       expect(enqueueSnackbar).not.toHaveBeenCalled();
 
+      // The copy lands right after its source, in the source's section,
+      // and is not a change to the layout.
       openMenu("Weakest scenarios");
       pick("Duplicate");
+      const source = region("Weakest scenarios");
+      const copy = region("Weakest scenarios (copy)");
+      const section = source.closest("[data-section-id]");
+      expect(section).toHaveAttribute("data-section-id", "failure_analysis");
+      const regions = within(section).getAllByRole("region");
+      expect(regions.indexOf(copy)).toBe(regions.indexOf(source) + 1);
       expect(
-        screen.getByRole("heading", { name: "Custom widgets" }),
-      ).toBeInTheDocument();
-      expect(region("Weakest scenarios (copy)")).toBeInTheDocument();
-      expect(region("Weakest scenarios")).toBeInTheDocument();
+        screen.queryByRole("heading", { name: "Custom widgets" }),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Modified")).not.toBeInTheDocument();
 
       openMenu("Weakest scenarios");
       pick("Half width");
+      expect(screen.getByLabelText("Modified")).toBeInTheDocument();
       openMenu("Weakest scenarios");
       expect(
         screen.getByRole("menuitem", { name: "Reset to default" }),
@@ -157,6 +171,43 @@ describe("analytics widget layout", () => {
       ).toHaveAttribute("aria-disabled", "true");
     },
   );
+
+  it("a width set back to its default is not a change", () => {
+    show(voiceAnalytics());
+    openMenu("Goal outcome breakdown");
+    pick("Half width");
+    expect(screen.getByLabelText("Modified")).toBeInTheDocument();
+
+    openMenu("Goal outcome breakdown");
+    pick("Quarter width");
+    expect(screen.queryByLabelText("Modified")).not.toBeInTheDocument();
+    openMenu("Goal outcome breakdown");
+    expect(
+      screen.getByRole("menuitem", { name: "Reset to default" }),
+    ).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("a widget moved back to its own section is not a change", () => {
+    const { result } = renderHook(() =>
+      useRunLayout({ envId: "env-1", surface: "voice" }),
+    );
+    act(() =>
+      result.current.reorderAndSection(
+        result.current.visibleIds,
+        "goal_outcome",
+        "reliability",
+      ),
+    );
+    expect(result.current.hasOverrides("goal_outcome")).toBe(true);
+    act(() =>
+      result.current.reorderAndSection(
+        result.current.visibleIds,
+        "goal_outcome",
+        "breakdowns",
+      ),
+    );
+    expect(result.current.hasOverrides("goal_outcome")).toBe(false);
+  });
 
   it("writes CSV with quoted cells", () => {
     expect(
@@ -219,50 +270,50 @@ describe("analytics widget layout", () => {
     await waitFor(() => expect(region("Slowest calls")).toBeInTheDocument());
   });
 
-  it("saved views persist per environment in localStorage and open with ?view=", async () => {
+  it("views can't be saved yet: Save view is disabled and flagged UI only", async () => {
+    show(chatAnalytics());
+    const save = screen.getByRole("button", { name: "Save view" });
+    expect(save).toBeDisabled();
+    fireEvent.mouseOver(save.parentElement);
+    expect(
+      await screen.findByText("Saving views isn't available yet."),
+    ).toBeInTheDocument();
+
+    fireEvent.mouseOver(screen.getByText("UI only"));
+    expect(
+      await screen.findByText(
+        /layout changes last until you reload\. Views can't be saved yet\./,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("the layout lasts for the visit and is back to default after a reload", () => {
     const first = show(chatAnalytics(), { envId: "env-a" });
-    fireEvent.click(screen.getByRole("button", { name: "Save view" }));
-    fireEvent.change(screen.getByPlaceholderText("Enter your view name"), {
-      target: { value: "Ops" },
-    });
-    fireEvent.click(
-      within(
-        screen
-          .getByPlaceholderText("Enter your view name")
-          .closest(".MuiPaper-root"),
-      ).getByRole("button", { name: "Save view" }),
-    );
-    await waitFor(() => expect(window.location.search).toBe("?view=Ops"));
     openMenu("Slowest chats");
     pick("Delete");
-
-    const saved = JSON.parse(
-      storage.get("simulate-env:run-analytics-layout:env-a"),
-    );
-    expect(saved.activeView).toBe("Ops");
-    expect(saved.views.Ops.order).not.toContain("slowest");
-    expect(saved.views.Default.order).toContain("slowest");
     first.unmount();
 
-    // Another environment has its own layouts.
-    const other = show(chatAnalytics(), { envId: "env-b", route: "/" });
-    expect(screen.queryByText("Ops")).not.toBeInTheDocument();
+    // Back on the page in the same visit: still hidden.
+    const again = show(chatAnalytics(), { envId: "env-a" });
+    expect(screen.queryByRole("region", { name: "Slowest chats" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Hidden (1)" })).toBeVisible();
+    again.unmount();
+
+    // Another environment has its own layout.
+    const other = show(chatAnalytics(), { envId: "env-b" });
     expect(region("Slowest chats")).toBeInTheDocument();
     other.unmount();
 
-    // A link opens the named view, even when another view was last active.
-    saved.activeView = "Default";
-    storage.set(
-      "simulate-env:run-analytics-layout:env-a",
-      JSON.stringify(saved),
-    );
-    show(chatAnalytics(), { envId: "env-a", route: "/?view=Ops" });
-    await waitFor(() =>
-      expect(
-        screen.queryByRole("region", { name: "Slowest chats" }),
-      ).not.toBeInTheDocument(),
-    );
-    expect(screen.getByText("Ops")).toBeVisible();
+    // A reload starts from the default layout.
+    resetLayouts();
+    show(chatAnalytics(), { envId: "env-a" });
+    expect(region("Slowest chats")).toBeInTheDocument();
+  });
+
+  it("a view named in the link that doesn't exist opens Default", async () => {
+    show(chatAnalytics(), { route: "/?view=Ops" });
+    await waitFor(() => expect(window.location.search).toBe(""));
+    expect(region("Slowest chats")).toBeInTheDocument();
   });
 
   it("keyboard Enter on a control inside a widget is not taken as a drag", () => {
@@ -282,21 +333,5 @@ describe("analytics widget layout", () => {
     expect(fireEvent.keyDown(button, { key: "Enter", code: "Enter" })).toBe(
       true,
     );
-  });
-
-  it("renders the default layout when storage is unavailable", () => {
-    vi.stubGlobal("localStorage", {
-      getItem: () => {
-        throw new Error("blocked");
-      },
-      setItem: () => {
-        throw new Error("blocked");
-      },
-    });
-    show(voiceAnalytics());
-    openMenu("Slowest calls");
-    pick("Delete");
-    expect(screen.queryByRole("region", { name: "Slowest calls" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Hidden (1)" })).toBeVisible();
   });
 });

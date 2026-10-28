@@ -43,10 +43,12 @@ const SECTION_TITLE_SX = {
   color: "text.subtitle",
 };
 
+const SAVE_UNAVAILABLE = "Saving views isn't available yet.";
+
 /**
  * Saved views: a switcher that names the view you're in, lists the saved
  * ones and offers to save the current reading. The dot says the reading has
- * changed since the view was saved.
+ * changed since the view was saved. Without `onSave`, saving shows disabled.
  */
 export function SavedViews({
   views,
@@ -203,16 +205,26 @@ export function SavedViews({
             {`Update "${active?.name}"`}
           </MenuItem>
         )}
-        <MenuItem
-          onClick={() => {
-            setNaming({ mode: "save", value: "" });
-            setAnchor(null);
-          }}
-          sx={{ typography: "s2", py: 0.875 }}
+        <CustomTooltip
+          show={!onSave}
+          arrow
+          size="small"
+          title={SAVE_UNAVAILABLE}
         >
-          {itemIcon(false, "solar:add-circle-linear")}
-          Save current as new view
-        </MenuItem>
+          <span>
+            <MenuItem
+              disabled={!onSave}
+              onClick={() => {
+                setNaming({ mode: "save", value: "" });
+                setAnchor(null);
+              }}
+              sx={{ typography: "s2", py: 0.875 }}
+            >
+              {itemIcon(false, "solar:add-circle-linear")}
+              Save current as new view
+            </MenuItem>
+          </span>
+        </CustomTooltip>
       </Menu>
 
       <Popover
@@ -284,7 +296,8 @@ SavedViews.propTypes = {
   activeId: PropTypes.string,
   dirty: PropTypes.bool,
   onApply: PropTypes.func.isRequired,
-  onSave: PropTypes.func.isRequired,
+  // Leave out while views can't be saved.
+  onSave: PropTypes.func,
   onUpdate: PropTypes.func.isRequired,
   onRename: PropTypes.func.isRequired,
   onDelete: PropTypes.func.isRequired,
@@ -449,7 +462,8 @@ export default function CompareActions({
 CompareActions.propTypes = {
   view: PropTypes.object.isRequired,
   onView: PropTypes.func.isRequired,
-  onSaveDefault: PropTypes.func.isRequired,
+  // Leave out while views can't be saved.
+  onSaveDefault: PropTypes.func,
   onResetView: PropTypes.func.isRequired,
   onExport: PropTypes.func.isRequired,
   onCopyLink: PropTypes.func.isRequired,
@@ -558,7 +572,8 @@ Check.propTypes = {
 };
 
 // What a row looks like. Ends with "Set as default view": the shape this
-// team likes reading, kept for every comparison in this environment.
+// team likes reading, kept for every comparison in this environment. Without
+// `onSaveDefault` it shows disabled, since views can't be saved yet.
 function DisplayPanel({
   anchor,
   onClose,
@@ -721,20 +736,30 @@ function DisplayPanel({
       <Divider />
 
       <Stack sx={{ px: 1, py: 0.75 }}>
-        <MenuItem
-          onClick={() => {
-            onSaveDefault();
-            onClose();
-          }}
-          sx={{ typography: "s2", borderRadius: "4px" }}
+        <CustomTooltip
+          show={!onSaveDefault}
+          arrow
+          size="small"
+          title={SAVE_UNAVAILABLE}
         >
-          <Iconify
-            icon="solar:eye-linear"
-            width={16}
-            sx={{ mr: 1.25, color: "text.subtitle" }}
-          />
-          Set as default view
-        </MenuItem>
+          <span>
+            <MenuItem
+              disabled={!onSaveDefault}
+              onClick={() => {
+                onSaveDefault();
+                onClose();
+              }}
+              sx={{ typography: "s2", borderRadius: "4px" }}
+            >
+              <Iconify
+                icon="solar:eye-linear"
+                width={16}
+                sx={{ mr: 1.25, color: "text.subtitle" }}
+              />
+              Set as default view
+            </MenuItem>
+          </span>
+        </CustomTooltip>
         <MenuItem
           onClick={() => {
             onResetView();
@@ -758,6 +783,7 @@ DisplayPanel.propTypes = {
   onClose: PropTypes.func.isRequired,
   view: PropTypes.object.isRequired,
   onView: PropTypes.func.isRequired,
-  onSaveDefault: PropTypes.func.isRequired,
+  // Leave out while views can't be saved.
+  onSaveDefault: PropTypes.func,
   onResetView: PropTypes.func.isRequired,
 };

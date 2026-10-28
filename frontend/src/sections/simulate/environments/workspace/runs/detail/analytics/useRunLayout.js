@@ -1,32 +1,26 @@
 import { useCallback, useMemo, useState } from "react";
-import { SECTIONS, eligibleIds } from "./panelRegistry";
+import {
+  SECTIONS,
+  defaultSectionOf,
+  defaultSpanOf,
+  eligibleIds,
+  sectionColumns,
+} from "./panelRegistry";
 
 // The run analytics layout, per environment: named views, each an ordered list
-// of visible widget ids plus widths, moved sections and widget copies. Kept in
-// this browser only (no backend for layouts); every storage call is guarded so
-// a blocked or full localStorage leaves the default layout working.
+// of visible widget ids plus widths, moved sections and widget copies. It lives
+// in memory for this visit, so it survives going to the widget editor and
+// back; nothing is saved, and a reload starts from the default layout.
 export const DEFAULT_VIEW_NAME = "Default";
 const DEFAULT_SECTION_ORDER = SECTIONS.map((section) => section.id);
 
-export const layoutStorageKey = (envId) =>
-  `simulate-env:run-analytics-layout:${envId || "generic"}`;
+const layouts = new Map();
+const layoutKey = (envId) => envId || "generic";
+const readLayout = (envId) => layouts.get(layoutKey(envId)) || null;
+const writeLayout = (envId, state) => layouts.set(layoutKey(envId), state);
 
-function readStorage(envId) {
-  try {
-    const raw = window.localStorage.getItem(layoutStorageKey(envId));
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeStorage(envId, state) {
-  try {
-    window.localStorage.setItem(layoutStorageKey(envId), JSON.stringify(state));
-  } catch {
-    // Storage blocked or full: the layout still works for this visit.
-  }
-}
+/** Forgets every layout, as a reload does. */
+export const resetLayouts = () => layouts.clear();
 
 function makeDefault(surface) {
   return {
@@ -80,7 +74,7 @@ function reconcile(view, surface) {
 }
 
 function hydrate(envId, surface, initialView) {
-  const stored = readStorage(envId);
+  const stored = readLayout(envId);
   const views = {};
   Object.entries(objectOr(stored?.views)).forEach(([name, view]) => {
     views[name] = reconcile(view, surface);
@@ -107,7 +101,7 @@ const omitKey = (object, key) => {
 export const newId = (prefix) =>
   `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
 
-// The widget editor is its own page, so it reads and writes the stored layout
+// The widget editor is its own page, so it reads and writes the layout
 // directly rather than through the hook. `viewName` is the view the editor
 // was opened from; without one it is the last active view.
 function storedViewName(stored, viewName) {
@@ -118,9 +112,9 @@ function storedViewName(stored, viewName) {
   );
 }
 
-/** A custom widget saved in the view, or in any view, by id. */
-export function readStoredCustomWidget(envId, widgetId, viewName) {
-  const stored = readStorage(envId);
+/** A custom widget in the view, or in any view, by id. */
+export function readLayoutWidget(envId, widgetId, viewName) {
+  const stored = readLayout(envId);
   const views = objectOr(stored?.views);
   const inView = (view) =>
     (Array.isArray(view?.custom) ? view.custom : []).find(
@@ -135,24 +129,31 @@ export function readStoredCustomWidget(envId, widgetId, viewName) {
 
 /**
  * Adds a widget to the view's Custom widgets section, or replaces the one
- * with its id. Returns the view it was saved in.
+ * with its id where it sits. Returns the view it was saved in.
  */
-export function saveStoredCustomWidget(envId, widget, viewName) {
-  const stored = readStorage(envId);
+export function saveLayoutWidget(envId, widget, viewName) {
+  const stored = readLayout(envId);
   const views = objectOr(stored?.views);
   const name = storedViewName(stored, viewName);
   const view = objectOr(views[name]);
   const custom = Array.isArray(view.custom) ? view.custom : [];
   const order = Array.isArray(view.order) ? view.order : [];
   const exists = custom.some((item) => item?.id === widget.id);
-  writeStorage(envId, {
+  // An edited copy stays in its source's section.
+  const replace = (item) =>
+    item?.section && !widget.section
+      ? { ...widget, section: item.section }
+      : widget;
+  writeLayout(envId, {
     activeView: stored?.activeView || name,
     views: {
       ...views,
       [name]: {
         ...view,
         custom: exists
-          ? custom.map((item) => (item?.id === widget.id ? widget : item))
+          ? custom.map((item) =>
+              item?.id === widget.id ? replace(item) : item,
+            )
           : [...custom, widget],
         order: order.includes(widget.id) ? order : [...order, widget.id],
       },
@@ -162,13 +163,13 @@ export function saveStoredCustomWidget(envId, widget, viewName) {
 }
 
 /** Removes a custom widget from the view. */
-export function removeStoredCustomWidget(envId, widgetId, viewName) {
-  const stored = readStorage(envId);
+export function removeLayoutWidget(envId, widgetId, viewName) {
+  const stored = readLayout(envId);
   if (!stored) return;
   const views = objectOr(stored.views);
   const name = storedViewName(stored, viewName);
   const view = objectOr(views[name]);
-  writeStorage(envId, {
+  writeLayout(envId, {
     ...stored,
     views: {
       ...views,
@@ -196,7 +197,7 @@ export function useRunLayout({ envId, surface, initialView }) {
     (update) =>
       setState((previous) => {
         const next = update(previous);
-        if (next !== previous) writeStorage(envId, next);
+        if (next !== previous) writeLayout(envId, next);
         return next;
       }),
     [envId],
@@ -221,6 +222,15 @@ export function useRunLayout({ envId, surface, initialView }) {
     ],
     [order, custom, surface],
   );
+
+  // The section a widget shows in: where it was moved, else its default.
+  const sectionIn = (current, id) =>
+    current.sectionOverrides[id] ||
+    defaultSectionOf(
+      id,
+      current.custom.find((item) => item.id === id),
+      surface,
+    );
 
   const moveTo = (id, index) =>
     patchView((current) => {
@@ -257,16 +267,23 @@ export function useRunLayout({ envId, surface, initialView }) {
     }));
 
   // A copy of a widget, drawn from the same real data, right after the source
-  // in the Custom widgets section.
+  // in the source's section. The copy's home is its own default, so it is not
+  // shown as modified.
   const duplicate = (id, title) =>
     patchView((current) => {
       const source = current.custom.find((widget) => widget.id === id);
       const copyTitle = `${source?.title || title} (copy)`;
+      const section = sectionIn(current, id);
       // A saved query copies whole; a built-in or its copy by reference.
       const copy =
         source?.kind === "query"
-          ? { ...source, id: newId("query"), title: copyTitle }
-          : { id: newId("copy"), of: source?.of || id, title: copyTitle };
+          ? { ...source, id: newId("query"), title: copyTitle, section }
+          : {
+              id: newId("copy"),
+              of: source?.of || id,
+              title: copyTitle,
+              section,
+            };
       const next = [...current.order];
       const at = next.indexOf(id);
       next.splice(at === -1 ? next.length : at + 1, 0, copy.id);
@@ -282,21 +299,35 @@ export function useRunLayout({ envId, surface, initialView }) {
       sectionOverrides: omitKey(current.sectionOverrides, id),
     }));
 
+  // A width or section equal to the widget's default is no change, so it is
+  // dropped rather than kept as one.
   const setSpan = (id, span) =>
-    patchView((current) => ({
-      ...current,
-      spans: { ...current.spans, [id]: span },
-    }));
+    patchView((current) => {
+      const widget = current.custom.find((item) => item.id === id);
+      const columns = sectionColumns(sectionIn(current, id));
+      return {
+        ...current,
+        spans:
+          span === defaultSpanOf(id, widget, columns)
+            ? omitKey(current.spans, id)
+            : { ...current.spans, [id]: span },
+      };
+    });
 
   // One drop: the new order and, when it landed in another section, that home.
   const reorderAndSection = (nextOrder, id, sectionId) =>
-    patchView((current) => ({
-      ...current,
-      order: nextOrder,
-      sectionOverrides: sectionId
-        ? { ...current.sectionOverrides, [id]: sectionId }
-        : current.sectionOverrides,
-    }));
+    patchView((current) => {
+      if (!sectionId) return { ...current, order: nextOrder };
+      const widget = current.custom.find((item) => item.id === id);
+      return {
+        ...current,
+        order: nextOrder,
+        sectionOverrides:
+          sectionId === defaultSectionOf(id, widget, surface)
+            ? omitKey(current.sectionOverrides, id)
+            : { ...current.sectionOverrides, [id]: sectionId },
+      };
+    });
 
   const reorderSections = (nextSectionOrder) =>
     patchView((current) => ({ ...current, sectionOrder: nextSectionOrder }));

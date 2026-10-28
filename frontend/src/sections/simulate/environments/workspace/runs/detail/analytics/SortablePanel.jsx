@@ -105,6 +105,7 @@ export default function SortablePanel({
           title="Modified. Reset to default from the menu to revert."
         >
           <Box
+            aria-label="Modified"
             className="analytics-no-print"
             onPointerDown={(event) => event.stopPropagation()}
             sx={{

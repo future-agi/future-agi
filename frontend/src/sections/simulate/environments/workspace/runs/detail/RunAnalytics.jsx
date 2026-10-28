@@ -22,6 +22,7 @@ import { useRunDetail } from "src/api/simulate-environments/runDetail";
 import { paths } from "src/routes/paths";
 import EmptyState from "../../../components/EmptyState";
 import SoonChip from "../../../components/SoonChip";
+import UiOnlyFlag from "../../../components/UiOnlyFlag";
 import {
   Bars,
   COLORS,
@@ -40,7 +41,7 @@ import HiddenWidgetsPopover from "./analytics/HiddenWidgetsPopover";
 import LayoutBody from "./analytics/LayoutBody";
 import RegressionBanner from "./analytics/RegressionBanner";
 import ViewTabBar from "./analytics/ViewTabBar";
-import { panelSection, panelTitle } from "./analytics/panelRegistry";
+import { defaultSectionOf, panelTitle } from "./analytics/panelRegistry";
 import { DEFAULT_VIEW_NAME, useRunLayout } from "./analytics/useRunLayout";
 import { widgetRows } from "./analytics/widgetRows";
 import RunQueryWidget from "./widgets/RunQueryWidget";
@@ -109,7 +110,7 @@ export default function RunAnalytics({
 }
 RunAnalytics.propTypes = {
   executionId: PropTypes.string.isRequired,
-  // Saved layouts are kept per environment; defaults to the route's envId.
+  // Layouts are kept per environment; defaults to the route's envId.
   envId: PropTypes.string,
   // Builds the widget editor link; defaults to the route's testId.
   testId: PropTypes.string,
@@ -849,8 +850,7 @@ function Dashboard({
   const { sectionOverrides } = layout;
   const sectionOf = useCallback(
     (id) =>
-      sectionOverrides[id] ||
-      (customById.has(id) ? "custom" : panelSection(id, surface)),
+      sectionOverrides[id] || defaultSectionOf(id, customById.get(id), surface),
     [sectionOverrides, customById, surface],
   );
   const rowsOf = (id) => widgetRows(sourceOf(id), { data, noun });
@@ -932,12 +932,12 @@ function Dashboard({
           viewNames={layout.viewNames}
           defaultName={DEFAULT_VIEW_NAME}
           onSwitch={layout.switchView}
-          onSave={layout.saveAsView}
           onRename={layout.renameView}
           onDuplicate={layout.duplicateView}
           onDelete={layout.deleteView}
           onReorder={layout.reorderViews}
         />
+        <UiOnlyFlag feature="analyticsViews" />
         <Button
           size="small"
           variant="text"

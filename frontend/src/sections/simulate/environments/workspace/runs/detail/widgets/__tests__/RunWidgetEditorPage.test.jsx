@@ -38,7 +38,8 @@ vi.mock("react-apexcharts", () => ({
 
 const { default: RunWidgetEditorPage } = await import("../RunWidgetEditorPage");
 const { default: RunWidgetChart } = await import("../RunWidgetChart");
-const { layoutStorageKey } = await import("../../analytics/useRunLayout");
+const { newId, readLayoutWidget, resetLayouts, saveLayoutWidget } =
+  await import("../../analytics/useRunLayout");
 
 const ENV_ID = "env-1";
 const RUN_URL = `/dashboard/simulate/environments/${ENV_ID}/runs/test-1/exec-1`;
@@ -94,14 +95,18 @@ const pickMetric = async (name) => {
   fireEvent.click(within(picker).getByRole("button", { name: name }));
 };
 
-let storage;
+// Pins the ids new widgets get, so a test can read the saved one back.
+const savedId = () => newId("query");
+
+let setItem;
+// Iconify caches its icons in localStorage on its own.
+const ownWrites = (spy) =>
+  spy.mock.calls.filter(([key]) => !String(key).startsWith("iconify"));
+let random;
 beforeEach(() => {
-  storage = new Map();
-  vi.stubGlobal("localStorage", {
-    getItem: (key) => storage.get(key) ?? null,
-    setItem: (key, value) => storage.set(key, value),
-    removeItem: (key) => storage.delete(key),
-  });
+  random = vi.spyOn(Math, "random").mockReturnValue(0.5);
+  resetLayouts();
+  setItem = vi.spyOn(Storage.prototype, "setItem");
   useEnvironment.mockReturnValue({
     env: { id: ENV_ID, name: "Refund desk" },
     isLoading: false,
@@ -120,8 +125,11 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // The editor keeps widgets in the page's memory, never in the browser.
+  expect(ownWrites(setItem)).toEqual([]);
+  setItem.mockRestore();
+  random.mockRestore();
   vi.clearAllMocks();
-  vi.unstubAllGlobals();
 });
 
 describe("Run widget editor", () => {
@@ -212,25 +220,26 @@ describe("Run widget editor", () => {
     });
   });
 
-  it("Save adds the widget to the Custom widgets section of the current view", async () => {
-    const view = (order) => ({
-      order,
-      custom: [],
-      spans: {},
-      sectionOverrides: {},
-      sectionOrder: [],
-      knownIds: order,
-    });
-    storage.set(
-      layoutStorageKey(ENV_ID),
-      JSON.stringify({
-        activeView: "Default",
-        views: {
-          Default: view(["goal_outcome", "csat"]),
-          Mine: view(["csat"]),
-        },
-      }),
-    );
+  it("Save sits beside a UI only flag: the widget isn't saved to an API", async () => {
+    renderEditor();
+    await screen.findByText("3 calls in this run");
+    const actions = screen
+      .getByRole("button", { name: "Save" })
+      .closest(".MuiStack-root");
+    expect(within(actions).getByText("UI only")).toBeInTheDocument();
+  });
+
+  it("the series table reads a duration in seconds and minutes, not K ms", async () => {
+    renderEditor();
+    await screen.findByText("3 calls in this run");
+    await pickMetric(/^Call duration(?! \(s\))/);
+    const table = screen.getByRole("table");
+    expect(table).toHaveTextContent("1m 1s");
+    expect(table).not.toHaveTextContent(/K ms/);
+  });
+
+  it("Save adds the widget to the Custom widgets section", async () => {
+    // Views can't be saved yet, so a stale ?view= falls back to Default.
     renderEditor("new", "?view=Mine");
     await screen.findByText("3 calls in this run");
 
@@ -242,9 +251,7 @@ describe("Run widget editor", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
-    const stored = JSON.parse(storage.get(layoutStorageKey(ENV_ID)));
-    const [widget] = stored.views.Mine.custom;
-    expect(widget).toMatchObject({
+    expect(readLayoutWidget(ENV_ID, savedId())).toMatchObject({
       kind: "query",
       title: "Calls by outcome",
       chart_type: "line",
@@ -253,11 +260,26 @@ describe("Run widget editor", () => {
         metrics: [expect.objectContaining({ id: "calls" })],
       },
     });
-    expect(stored.views.Mine.order).toEqual(["csat", widget.id]);
-    expect(stored.views.Default.custom).toEqual([]);
     expect(screen.getByTestId("location")).toHaveTextContent(
-      `${RUN_URL}?tab=analytics&view=Mine`,
+      `${RUN_URL}?tab=analytics`,
     );
+    expect(screen.getByTestId("location")).not.toHaveTextContent("view=");
+  });
+
+  it("saving an edited copy keeps it in its section", async () => {
+    saveLayoutWidget(ENV_ID, {
+      id: "copy-1",
+      of: "goal_outcome",
+      title: "Goal outcome breakdown (copy)",
+      section: "breakdowns",
+    });
+    renderEditor("copy-1");
+    await screen.findByText("3 calls in this run");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(readLayoutWidget(ENV_ID, "copy-1")).toMatchObject({
+      kind: "query",
+      section: "breakdowns",
+    });
   });
 
   it("opening a built-in starts from its query and saves a new custom widget", async () => {
@@ -269,14 +291,11 @@ describe("Run widget editor", () => {
     expect(screen.getByTestId("apex-chart")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    const stored = JSON.parse(storage.get(layoutStorageKey(ENV_ID)));
-    expect(stored.views.Default.custom).toEqual([
-      expect.objectContaining({
-        kind: "query",
-        title: "Goal outcome breakdown",
-        chart_type: "pie",
-      }),
-    ]);
+    expect(readLayoutWidget(ENV_ID, savedId())).toMatchObject({
+      kind: "query",
+      title: "Goal outcome breakdown",
+      chart_type: "pie",
+    });
     expect(screen.getByTestId("location")).toHaveTextContent(
       `${RUN_URL}?tab=analytics`,
     );

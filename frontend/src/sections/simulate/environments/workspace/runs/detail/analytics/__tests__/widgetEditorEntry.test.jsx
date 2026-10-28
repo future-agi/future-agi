@@ -1,6 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cloneElement } from "react";
-import { fireEvent, render, screen, within } from "src/utils/test-utils";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ThemeProvider, createTheme } from "@mui/material/styles";
+import { palette } from "src/theme/palette";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "src/utils/test-utils";
 import { voiceAnalytics } from "./analyticsFixture";
 
 const useRunAnalytics = vi.fn();
@@ -13,7 +23,9 @@ vi.mock("recharts", async (importOriginal) => ({
 vi.mock("react-apexcharts", () => ({
   default: ({ type, series }) => (
     <div data-testid="apex-chart" data-type={type}>
-      {series.map((item) => `${item.name}:${item.data.join("|")}`).join(",")}
+      {series
+        .map((item) => `${item.name}:${(item.data || []).join("|")}`)
+        .join(",")}
     </div>
   ),
 }));
@@ -26,9 +38,19 @@ vi.mock("src/api/simulate-environments/runDetail", () => ({
 vi.mock("../../widgets/useRunWidgetCalls", () => ({
   useRunWidgetCalls: (...args) => useRunWidgetCalls(...args),
 }));
+vi.mock("src/api/simulate-environments/environment", () => ({
+  useEnvironment: () => ({
+    env: { id: "env-1", name: "Refund desk" },
+    isLoading: false,
+    notFound: false,
+  }),
+}));
 
 const { default: RunAnalytics } = await import("../../RunAnalytics");
-const { layoutStorageKey } = await import("../useRunLayout");
+const { default: RunWidgetEditorPage } = await import(
+  "../../widgets/RunWidgetEditorPage"
+);
+const { resetLayouts, saveLayoutWidget } = await import("../useRunLayout");
 
 const EDITOR =
   "/dashboard/simulate/environments/env-1/runs/test-1/execution-1/widgets";
@@ -55,7 +77,10 @@ const QUERY_WIDGET = {
   },
 };
 
-let storage;
+let setItem;
+// Iconify caches its icons in localStorage on its own.
+const ownWrites = (spy) =>
+  spy.mock.calls.filter(([key]) => !String(key).startsWith("iconify"));
 const show = () => {
   useRunAnalytics.mockReturnValue({
     data: voiceAnalytics(),
@@ -72,12 +97,8 @@ const pick = (name) => fireEvent.click(screen.getByRole("menuitem", { name }));
 
 describe("analytics entry to the widget editor", () => {
   beforeEach(() => {
-    storage = new Map();
-    vi.stubGlobal("localStorage", {
-      getItem: (key) => storage.get(key) ?? null,
-      setItem: (key, value) => storage.set(key, value),
-      removeItem: (key) => storage.delete(key),
-    });
+    resetLayouts();
+    setItem = vi.spyOn(Storage.prototype, "setItem");
     window.history.replaceState({}, "", "/");
     useRunWidgetCalls.mockReturnValue({
       tasks: [
@@ -91,7 +112,10 @@ describe("analytics entry to the widget editor", () => {
       isError: false,
     });
   });
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    expect(ownWrites(setItem)).toEqual([]);
+    setItem.mockRestore();
+  });
 
   it("Edit opens the widget in the editor", () => {
     show();
@@ -100,25 +124,15 @@ describe("analytics entry to the widget editor", () => {
     expect(window.location.pathname).toBe(`${EDITOR}/risk`);
   });
 
-  it("Add widget opens a new widget in the editor, in the open view", () => {
-    storage.set(
-      layoutStorageKey("env-1"),
-      JSON.stringify({ activeView: "Ops", views: { Default: {}, Ops: {} } }),
-    );
+  it("Add widget opens a new widget in the editor", () => {
     show();
     fireEvent.click(screen.getByRole("button", { name: "Add widget" }));
     expect(window.location.pathname).toBe(`${EDITOR}/new`);
-    expect(window.location.search).toBe("?view=Ops");
+    expect(window.location.search).toBe("");
   });
 
   it("a saved widget draws from the run's calls under Custom widgets", () => {
-    storage.set(
-      layoutStorageKey("env-1"),
-      JSON.stringify({
-        activeView: "Default",
-        views: { Default: { order: ["query-1"], custom: [QUERY_WIDGET] } },
-      }),
-    );
+    saveLayoutWidget("env-1", QUERY_WIDGET);
     show();
     expect(
       screen.getByRole("heading", { name: "Custom widgets" }),
@@ -135,24 +149,70 @@ describe("analytics entry to the widget editor", () => {
   });
 
   it("Duplicate keeps a saved widget's query", () => {
-    storage.set(
-      layoutStorageKey("env-1"),
-      JSON.stringify({
-        activeView: "Default",
-        views: { Default: { order: ["query-1"], custom: [QUERY_WIDGET] } },
-      }),
-    );
+    saveLayoutWidget("env-1", QUERY_WIDGET);
     show();
     openMenu("Calls per outcome");
     pick("Duplicate");
-    expect(
-      screen.getByRole("region", { name: "Calls per outcome (copy)" }),
-    ).toBeInTheDocument();
-    const saved = JSON.parse(storage.get(layoutStorageKey("env-1")));
-    expect(saved.views.Default.custom[1]).toMatchObject({
-      kind: "query",
-      query: QUERY_WIDGET.query,
-      title: "Calls per outcome (copy)",
+    const copy = screen.getByRole("region", {
+      name: "Calls per outcome (copy)",
     });
+    expect(within(copy).getByTestId("apex-chart")).toHaveTextContent(
+      "Calls / Failed (count):1,Calls / Passed (count):2",
+    );
+  });
+
+  it("an editor save shows on the analytics page for the visit, not after a reload", async () => {
+    const RUN =
+      "/dashboard/simulate/environments/env-1/runs/test-1/execution-1";
+    useRunAnalytics.mockReturnValue({
+      data: voiceAnalytics(),
+      isPending: false,
+      isError: false,
+    });
+    const visit = () =>
+      render(
+        <QueryClientProvider client={new QueryClient()}>
+          <MemoryRouter initialEntries={[`${RUN}/widgets/goal_outcome`]}>
+            <Routes>
+              <Route
+                path="/dashboard/simulate/environments/:envId/runs/:testId/:executionId/widgets/:widgetId"
+                element={<RunWidgetEditorPage />}
+              />
+              <Route
+                path="/dashboard/simulate/environments/:envId/runs/:testId/:executionId"
+                element={<RunAnalytics executionId="execution-1" />}
+              />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+        {
+          wrapper: ({ children }) => (
+            <ThemeProvider theme={createTheme({ palette: palette("light") })}>
+              {children}
+            </ThemeProvider>
+          ),
+        },
+      );
+
+    const first = visit();
+    fireEvent.click(await screen.findByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Custom widgets" }),
+      ).toBeInTheDocument(),
+    );
+    const custom = screen
+      .getByRole("heading", { name: "Custom widgets" })
+      .closest("[data-section-id]");
+    expect(
+      within(custom).getByRole("region", { name: "Goal outcome breakdown" }),
+    ).toBeInTheDocument();
+    first.unmount();
+
+    resetLayouts();
+    render(<RunAnalytics executionId="execution-1" envId="env-1" />);
+    expect(
+      screen.queryByRole("heading", { name: "Custom widgets" }),
+    ).not.toBeInTheDocument();
   });
 });

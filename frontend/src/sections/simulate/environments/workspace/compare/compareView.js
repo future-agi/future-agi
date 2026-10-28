@@ -1,7 +1,6 @@
 /**
- * Reading a comparison: searching, ordering and grouping its rows, the
- * display settings, and the views saved for an environment. The rows
- * themselves come from `useComparison`.
+ * Reading a comparison: searching, ordering and grouping its rows and the
+ * display settings. The rows themselves come from `useComparison`.
  */
 import { NONE } from "./compareFormat";
 
@@ -377,64 +376,7 @@ export const bandRows = (rows, { group, sort, runIds }) => {
   ];
 };
 
-// Saved views store the reading (the display), never the runs: a team asks
-// the same question of every new pair of runs.
-const viewsKey = (envId) => `simulate.compare.views.${envId}`;
-const defaultKey = (envId) => `simulate.compare.default.${envId}`;
-
-const readJson = (key, fallback) => {
-  try {
-    const raw = window.localStorage.getItem(key);
-    return raw == null ? fallback : JSON.parse(raw);
-  } catch {
-    return fallback;
-  }
-};
-
-const writeJson = (key, value) => {
-  try {
-    if (value == null) window.localStorage.removeItem(key);
-    else window.localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // Storage full or blocked: the view lives for this session only.
-  }
-};
-
-export const loadSavedViews = (envId) => {
-  const views = readJson(viewsKey(envId), []);
-  return Array.isArray(views)
-    ? views.filter((v) => v && v.id && v.name && v.config?.view)
-    : [];
-};
-export const storeSavedViews = (envId, views) =>
-  writeJson(viewsKey(envId), views);
-
-export const loadDefaultView = (envId) => {
-  const stored = readJson(defaultKey(envId), null);
-  return stored && typeof stored === "object"
-    ? { ...defaultView(), ...stored }
-    : defaultView();
-};
-export const storeDefaultView = (envId, view) =>
-  writeJson(defaultKey(envId), view);
-
 export const viewSnapshot = (view) => ({ view: { ...view } });
 
 export const snapshotsEqual = (a, b) =>
   !!a && !!b && JSON.stringify(a.view) === JSON.stringify(b.view);
-
-export const newViewId = (name, existing = []) => {
-  const base =
-    name
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-|-$/g, "") || "view";
-  let id = base;
-  let n = 2;
-  while (existing.some((v) => v.id === id)) {
-    id = `${base}-${n}`;
-    n += 1;
-  }
-  return id;
-};

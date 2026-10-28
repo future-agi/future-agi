@@ -51,6 +51,11 @@ export const UI_ONLY_FEATURES = Object.freeze({
     ask: "a run comparison endpoint that pairs scenarios, flips and eval scores across runs",
     note: "UI only: the numbers are real, but the comparison is put together in the browser from each run's calls, not by the API.",
   },
+  analyticsViews: {
+    label: "Analytics views and layout",
+    ask: "saving analytics views and widget layouts",
+    note: "UI only: layout changes last until you reload. Views can't be saved yet.",
+  },
   scenarioBatches: {
     label: "Scenario batches",
     ask: "who added which scenarios, how and when (batches with an author)",

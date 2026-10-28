@@ -150,6 +150,23 @@ export function panelSection(id, surface) {
 
 export const panelSpan = (id) => getPanelMeta(id)?.defaultSpan || 1;
 
+// Where a widget sits until it is moved: a built-in in its own section, a
+// copy in its source's section, a query widget under Custom widgets.
+// `widget` is the custom widget with this id, if it is one.
+export const defaultSectionOf = (id, widget, surface) =>
+  widget ? widget.section || "custom" : panelSection(id, surface);
+
+// A widget's width until it is changed, in its section's `columns`: a
+// built-in or a copy of one takes the built-in's width, a query widget the
+// whole row.
+export const defaultSpanOf = (id, widget, columns) =>
+  Math.min(
+    widget && !widget.of ? columns : panelSpan(widget?.of || id),
+    columns,
+  );
+
+export const sectionColumns = (id) => sectionMeta(id)?.columns || 2;
+
 // Every built-in a run of this surface can show, in page order.
 export const eligibleIds = (surface) =>
   PANELS.filter((panel) => !panel.voiceOnly || surface !== "chat").map(

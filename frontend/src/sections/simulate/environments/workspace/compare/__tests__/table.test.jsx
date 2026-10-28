@@ -47,16 +47,21 @@ vi.mock("notistack", async (importOriginal) => ({
   enqueueSnackbar: (...args) => enqueueSnackbar(...args),
 }));
 
-const VIEWS_KEY = `simulate.compare.views.${ENV.id}`;
-
+let setItem;
 beforeEach(() => {
-  window.localStorage.clear();
+  setItem = vi.spyOn(Storage.prototype, "setItem");
   useEnvironment.mockReturnValue(environmentResult());
   useEnvironmentRuns.mockReturnValue(runsResult());
   fetchRunCalls.mockImplementation(fetchCallsFrom());
 });
 
 afterEach(() => {
+  // Nothing about the comparison is written to the browser (Iconify caches
+  // its icons there on its own).
+  expect(
+    setItem.mock.calls.filter(([key]) => !String(key).startsWith("iconify")),
+  ).toEqual([]);
+  setItem.mockRestore();
   vi.clearAllMocks();
 });
 
@@ -78,8 +83,9 @@ const rowTitles = () =>
     .map((row) => within(row).getByTestId("compare-row-title").textContent);
 
 async function openPage(search) {
-  renderComparePage(search);
+  const page = renderComparePage(search);
   await screen.findAllByTestId("compare-row");
+  return page;
 }
 
 describe("useComparison", () => {
@@ -212,44 +218,39 @@ describe("Compare table", () => {
     ).toBe(true);
   });
 
-  it("saved views persist in localStorage", async () => {
-    const { unmount } = renderComparePage("?runs=r1,r3");
-    await screen.findAllByTestId("compare-row");
+  it("views can't be saved yet: Save as new view and Set as default view are disabled", async () => {
+    await openPage("?runs=r1,r3");
 
+    fireEvent.click(screen.getByRole("button", { name: /All scenarios/ }));
+    const saveNew = screen.getByRole("menuitem", {
+      name: "Save current as new view",
+    });
+    expect(saveNew).toHaveAttribute("aria-disabled", "true");
+    fireEvent.mouseOver(saveNew.parentElement);
+    expect(
+      await screen.findByText("Saving views isn't available yet."),
+    ).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Display" }));
+    expect(
+      screen.getByRole("menuitem", { name: "Set as default view" }),
+    ).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("the reading lasts for the visit only", async () => {
+    const { unmount } = await openPage("?runs=r1,r3");
     fireEvent.click(screen.getByRole("button", { name: "Display" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "Passed → failed" }));
     fireEvent.keyDown(screen.getByRole("presentation"), { key: "Escape" });
-
-    fireEvent.click(screen.getByRole("button", { name: /All scenarios/ }));
-    fireEvent.click(screen.getByText("Save current as new view"));
-    fireEvent.change(screen.getByPlaceholderText("Enter your view name"), {
-      target: { value: "Regressions" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Save view" }));
-
-    const stored = JSON.parse(window.localStorage.getItem(VIEWS_KEY));
-    expect(stored).toEqual([
-      expect.objectContaining({ id: "regressions", name: "Regressions" }),
-    ]);
-    expect(stored[0].config.view.quick).toEqual(["regressions"]);
-    expect(screen.getByTestId("location")).toHaveTextContent(
-      "view=regressions",
-    );
+    expect(rowTitles()).toEqual(["address"]);
     unmount();
 
-    renderComparePage("?runs=r1,r3&view=regressions");
-    await screen.findAllByTestId("compare-row");
-    expect(
-      screen.getByRole("button", { name: /Regressions/ }),
-    ).toBeInTheDocument();
-    expect(rowTitles()).toEqual(["address"]);
-  });
-
-  it("a broken saved-views entry falls back to none", async () => {
-    window.localStorage.setItem(VIEWS_KEY, "{not json");
-    await openPage("?runs=r1,r3");
+    // A view named in the link that isn't there opens the default reading.
+    await openPage("?runs=r1,r3&view=regressions");
     expect(
       screen.getByRole("button", { name: /All scenarios/ }),
     ).toBeInTheDocument();
+    expect(rowTitles()).not.toEqual(["address"]);
   });
 });
