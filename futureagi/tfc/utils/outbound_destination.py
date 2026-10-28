@@ -114,7 +114,7 @@ def _resolve(host, port):
     try:
         literal = ipaddress.ip_address(host)
     except ValueError:
-        # Exactly one resolver invocation; check ALL answers before choosing one.
+        # Exactly one resolver invocation; check ALL answers before connecting.
         records = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
         addresses = [record[4][0] for record in records]
     else:
@@ -122,7 +122,7 @@ def _resolve(host, port):
     if not addresses:
         raise DestinationError("dns_empty")
     checked = [_require_public(address) for address in addresses]
-    return checked[0]
+    return tuple(checked)
 
 
 def _connect(address, port, timeout):
@@ -138,7 +138,22 @@ def _connect(address, port, timeout):
         raise
 
 
+def _connect_checked(addresses, port, deadline):
+    # Retry only TCP setup, before any HTTP request bytes can have been sent.
+    last_error = OSError("connection_failed")
+    for address in addresses:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise DestinationError("deadline")
+        try:
+            return _connect(address, port, remaining)
+        except OSError as exc:
+            last_error = exc
+    raise last_error
+
+
 def _exchange(payload):
+    deadline = time.monotonic() + payload["timeout"]
     _parse_url(payload["url"])
     # Request.prepare() alone does not merge the defaults of requests.request().
     headers = requests.utils.default_headers()
@@ -153,7 +168,7 @@ def _exchange(payload):
         data=payload.get("data"),
     ).prepare()
     parsed, host, port = _parse_url(prepared.url)
-    address = _resolve(host, port)
+    addresses = _resolve(host, port)
     if prepared.method not in {
         "GET",
         "HEAD",
@@ -191,8 +206,8 @@ def _exchange(payload):
     else:
         connection = http.client.HTTPConnection(host, port, timeout=payload["timeout"])
     # HTTPSConnection still verifies the certificate and sends SNI for `host`.
-    connection._create_connection = lambda *args, **kwargs: _connect(
-        address, port, payload["timeout"]
+    connection._create_connection = lambda *args, **kwargs: _connect_checked(
+        addresses, port, deadline
     )
     try:
         path = parsed.path or "/"
