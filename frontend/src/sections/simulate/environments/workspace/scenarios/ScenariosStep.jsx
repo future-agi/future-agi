@@ -3,6 +3,7 @@ import { Alert, Box, Stack, Typography, Button, IconButton } from "@mui/material
 import { useSnackbar } from "notistack";
 
 import Iconify from "src/components/iconify";
+import SoonChip from "../../components/SoonChip";
 import CustomTooltip from "src/components/tooltip";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { resolveScenarioSelection } from "src/api/simulate-environments/scenarioSelection";
@@ -414,31 +415,6 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
         <RoutePlaceholder onAdd={() => setAdding(true)} locked={locked} />
       ) : (
         <>
-          {noRuns && (
-            <Stack
-              direction="row"
-              alignItems="center"
-              spacing={1.5}
-              sx={{ mb: 1.5, px: 2, py: 1.25, border: "1px solid", borderColor: "divider", borderRadius: 1, flexShrink: 0 }}
-            >
-              <Iconify icon="solar:flag-linear" width={18} sx={{ color: "text.subtitle", flexShrink: 0 }} />
-              <Box flex={1} minWidth={0}>
-                <Typography sx={{ typography: "s2", fontWeight: 600 }}>No baseline yet</Typography>
-                <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                  Run every scenario once. Improvements are measured against that run.
-                </Typography>
-              </Box>
-              <Button
-                size="small"
-                variant="outlined"
-                disabled={!canRun || !onStartRun}
-                onClick={() => onStartRun?.(undefined, trials)}
-                sx={{ flexShrink: 0, color: "text.primary", borderColor: "divider" }}
-              >
-                Run baseline
-              </Button>
-            </Stack>
-          )}
           {loadFailed && (
             <Alert
               severity="error"
@@ -530,6 +506,45 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
               )}
             </Box>
 
+            {noRuns && (
+              <Stack
+                direction="row"
+                alignItems="center"
+                spacing={1.5}
+                sx={{ mb: 1.5, px: 2, py: 1.25, border: "1px solid", borderColor: "divider", borderRadius: 1, flexShrink: 0 }}
+              >
+                <Iconify icon="solar:flag-linear" width={18} sx={{ color: "text.subtitle", flexShrink: 0 }} />
+                <Box flex={1} minWidth={0}>
+                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>No baseline yet</Typography>
+                  <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                    Run every scenario once. Improvements are measured against that run.
+                  </Typography>
+                </Box>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  disabled={!canRun || !onStartRun}
+                  onClick={() => onStartRun?.(undefined, trials)}
+                  sx={{ flexShrink: 0, color: "text.primary", borderColor: "divider" }}
+                >
+                  Run baseline
+                </Button>
+              </Stack>
+            )}
+            {/* Vel's protection line: how much of the set an improvement may
+                not break. Must-pass and regression memory aren't in the API. */}
+            <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 0.25, mb: 1.25, flexShrink: 0 }}>
+              <Iconify icon="solar:shield-check-linear" width={16} sx={{ color: "text.subtitle", flexShrink: 0 }} />
+              <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                What improvements can&apos;t break
+              </Typography>
+              <SoonChip
+                label="Protection"
+                detail="How many scenarios an improvement may not break: the ones marked must-pass, remembered as past regressions, or passing every repeat in the latest run."
+                what="Must-pass and regression protection"
+                size="tiny"
+              />
+            </Stack>
             {groupFellBack && (
               <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 1, flexShrink: 0 }}>
                 {`Grouping by ${labelOfGroup(groupBy)} isn't available yet. Showing ${labelOfGroup(pageData.groupBy)}.`}

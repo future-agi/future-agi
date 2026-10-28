@@ -97,6 +97,13 @@ describe("Scenarios toolbar and footer in Vel's layout", () => {
     expect(onStartRun).toHaveBeenCalledWith(undefined, expect.any(Number));
   });
 
+  it("says what improvements can't break, with the count still to come", async () => {
+    renderStep();
+    await screen.findByRole("table");
+    expect(screen.getByText("What improvements can't break")).toBeInTheDocument();
+    expect(screen.getByText("Protection soon")).toBeInTheDocument();
+  });
+
   it("hides the banner once there are runs", async () => {
     renderStep({ noRuns: false });
     await screen.findByRole("table");
