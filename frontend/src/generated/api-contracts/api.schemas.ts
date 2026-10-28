@@ -16853,6 +16853,208 @@ export interface FetchAssistantResponseApi {
   readonly commit_message?: string;
 }
 
+export interface AgentFixCandidateCreatedApi {
+  candidate_id: string;
+  agent_version_id: string;
+  /** @minLength 1 */
+  preflight_status: string;
+}
+
+export interface AgentFixCheckRunRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  label: string;
+  agent_version_id: string;
+  /** @minItems 1 */
+  scenario_keys: string[];
+  /**
+   * @minimum 1
+   * @maximum 20
+   */
+  trials: number;
+}
+
+export interface AgentFixCheckRunCreatedApi {
+  run_id: string;
+}
+
+export type AgentFixEngineReportApiEnding =
+  (typeof AgentFixEngineReportApiEnding)[keyof typeof AgentFixEngineReportApiEnding];
+
+export const AgentFixEngineReportApiEnding = {
+  ready: "ready",
+  no_improvement: "no_improvement",
+  not_reproduced: "not_reproduced",
+  out_of_budget: "out_of_budget",
+  failed: "failed",
+} as const;
+
+export type AgentFixCandidateUpdateApiOutcome =
+  (typeof AgentFixCandidateUpdateApiOutcome)[keyof typeof AgentFixCandidateUpdateApiOutcome];
+
+export const AgentFixCandidateUpdateApiOutcome = {
+  pending: "pending",
+  rejected: "rejected",
+  finalist: "finalist",
+  winner: "winner",
+} as const;
+
+export interface AgentFixVerdictApi {
+  accepted: boolean;
+  /** @minLength 1 */
+  reason: string;
+  target_pass_rate?: number[];
+  held_back_pass_rate?: number[];
+  must_pass_regressions: string[];
+  must_pass_within_noise?: string[];
+}
+
+export interface AgentFixCandidateUpdateApi {
+  candidate_id: string;
+  outcome: AgentFixCandidateUpdateApiOutcome;
+  verdict?: AgentFixVerdictApi;
+}
+
+export interface AgentFixEngineReportApi {
+  /**
+   * @minLength 1
+   * @maxLength 32
+   */
+  stage: string;
+  /** @minimum 0 */
+  spent_usd: number;
+  candidates?: AgentFixCandidateUpdateApi[];
+  ending?: AgentFixEngineReportApiEnding;
+  summary?: string;
+  winner_candidate_id?: string;
+}
+
+export interface AgentFixEngineStateApi {
+  /** @minLength 1 */
+  state: string;
+}
+
+export type AgentFixRunApiState =
+  (typeof AgentFixRunApiState)[keyof typeof AgentFixRunApiState];
+
+export const AgentFixRunApiState = {
+  queued: "queued",
+  running: "running",
+  stopping: "stopping",
+  ready: "ready",
+  no_improvement: "no_improvement",
+  not_reproduced: "not_reproduced",
+  out_of_budget: "out_of_budget",
+  stopped: "stopped",
+  failed: "failed",
+} as const;
+
+export interface AgentFixRequestApi {
+  target_scenario_keys: string[];
+  failing_sub_goals: string[];
+  surfaces: string[];
+  locked_paths: string[];
+  budget_usd: number;
+  max_minutes: number;
+}
+
+export interface AgentFixReportApi {
+  /** @minLength 1 */
+  ending: string;
+  summary: string;
+  /** @minLength 1 */
+  winner_candidate_id: string;
+}
+
+export interface AgentFixFailureApi {
+  /** @minLength 1 */
+  code: string;
+  /** @minLength 1 */
+  message: string;
+}
+
+export type AgentFixCandidateApiOutcome =
+  (typeof AgentFixCandidateApiOutcome)[keyof typeof AgentFixCandidateApiOutcome];
+
+export const AgentFixCandidateApiOutcome = {
+  pending: "pending",
+  rejected: "rejected",
+  finalist: "finalist",
+  winner: "winner",
+} as const;
+
+export interface AgentFixCandidateApi {
+  readonly id?: string;
+  /**
+   * @minimum 0
+   * @maximum 32767
+   */
+  attempt: number;
+  agent_version_id: string;
+  version_number: number;
+  summary?: string;
+  outcome?: AgentFixCandidateApiOutcome;
+  verdict: AgentFixVerdictApi;
+  readonly created_at?: string;
+}
+
+export interface AgentFixRunApi {
+  readonly id?: string;
+  environment_id: string;
+  source_run_id: string;
+  base_agent_version_id: string;
+  state?: AgentFixRunApiState;
+  /** @maxLength 32 */
+  stage?: string;
+  request: AgentFixRequestApi;
+  spent_usd: string;
+  report: AgentFixReportApi;
+  failure: AgentFixFailureApi;
+  candidates: AgentFixCandidateApi[];
+  started_at?: string;
+  finished_at?: string;
+  readonly created_at?: string;
+}
+
+export type AgentFixLaunchApiSurfacesItem =
+  (typeof AgentFixLaunchApiSurfacesItem)[keyof typeof AgentFixLaunchApiSurfacesItem];
+
+export const AgentFixLaunchApiSurfacesItem = {
+  prompt: "prompt",
+  tools: "tools",
+  settings: "settings",
+  code: "code",
+} as const;
+
+export interface AgentFixLaunchApi {
+  source_run_id: string;
+  /**
+   * @minItems 1
+   * @maxItems 200
+   */
+  target_scenario_keys: string[];
+  /** @minItems 1 */
+  surfaces: AgentFixLaunchApiSurfacesItem[];
+  locked_paths?: string[];
+  /**
+   * @minimum 0.01
+   * @maximum 500
+   */
+  budget_usd: number;
+  /**
+   * @minimum 1
+   * @maximum 1440
+   */
+  max_minutes: number;
+}
+
+export interface AgentFixMakeDefaultApi {
+  /** @minLength 1 */
+  outcome: string;
+}
+
 export type AgentPromptOptimiserRunListApiOptimiserType =
   (typeof AgentPromptOptimiserRunListApiOptimiserType)[keyof typeof AgentPromptOptimiserRunListApiOptimiserType];
 
@@ -36188,6 +36390,24 @@ export type SimulateApiAgentDefinitionOperationsList200 = {
   next?: string;
   previous?: string;
   results: AgentDefinitionResponseApi[];
+};
+
+export type SimulateApiAgentFixEngineCandidatesBodyOne = {
+  attempt: number;
+  summary?: string;
+  tree: Blob;
+  patch: Blob;
+};
+
+export type SimulateApiAgentFixEngineCandidatesBodyTwo = {
+  attempt: number;
+  summary?: string;
+  tree: Blob;
+  patch: Blob;
+};
+
+export type SimulateApiAgentFixRunsListParams = {
+  environment_id: string;
 };
 
 export type SimulateApiAgentPromptOptimiserListParams = {

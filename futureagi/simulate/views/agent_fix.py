@@ -1,6 +1,8 @@
 """HTTP surface of "Fix my agent": the user's runs, and the engine's calls from its sandbox."""
 
 from django.http import HttpResponse
+from drf_yasg import openapi
+from drf_yasg.utils import swagger_auto_schema
 from pydantic import ValidationError as PydanticValidationError
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -21,6 +23,12 @@ from simulate.selectors.agent_fix import (
     fix_runs_for_environment,
 )
 from simulate.serializers.agent_fix import (
+    AgentFixCandidateCreatedSerializer,
+    AgentFixCandidateUploadSerializer,
+    AgentFixCheckRunCreatedSerializer,
+    AgentFixCheckRunRequestSerializer,
+    AgentFixEngineReportSerializer,
+    AgentFixEngineStateSerializer,
     AgentFixLaunchSerializer,
     AgentFixListQuerySerializer,
     AgentFixMakeDefaultSerializer,
@@ -223,27 +231,20 @@ class AgentFixEngineViewSet(viewsets.ViewSet):
         body = agent_fix_engine.source_archive(self._fix_run)
         return HttpResponse(body, content_type="application/gzip")
 
+    @validated_request(
+        request_serializer=AgentFixCandidateUploadSerializer,
+        responses={201: AgentFixCandidateCreatedSerializer},
+        reject_unknown_fields=True,
+    )
     @action(detail=True, methods=["post"], parser_classes=[MultiPartParser, FormParser])
     def candidates(self, request, pk=None):
-        tree, patch = request.FILES.get("tree"), request.FILES.get("patch")
-        if tree is None or patch is None:
-            raise HostedHarnessError(
-                "fix_candidate_incomplete", "send the candidate's tree and patch"
-            )
-        try:
-            attempt = int(request.data.get("attempt", ""))
-        except (TypeError, ValueError):
-            attempt = 0
-        if not 1 <= attempt <= 32767:
-            raise HostedHarnessError(
-                "fix_candidate_invalid", "attempt must be a whole number from 1"
-            )
+        data = request.validated_data
         candidate, status_ = agent_fix_engine.add_candidate(
             self._fix_run,
-            attempt=attempt,
-            summary=str(request.data.get("summary", "")),
-            tree=tree.read(),
-            patch=patch.read(),
+            attempt=data["attempt"],
+            summary=data["summary"],
+            tree=data["tree"].read(),
+            patch=data["patch"].read(),
         )
         created = CandidateCreated(
             candidate_id=str(candidate.id),
@@ -252,10 +253,15 @@ class AgentFixEngineViewSet(viewsets.ViewSet):
         )
         return Response(created.model_dump(mode="json"), status=status.HTTP_201_CREATED)
 
+    @validated_request(
+        request_serializer=AgentFixCheckRunRequestSerializer,
+        responses={202: AgentFixCheckRunCreatedSerializer},
+        reject_unknown_fields=True,
+    )
     @action(detail=True, methods=["post"], url_path="check-runs")
     def check_runs(self, request, pk=None):
         run = agent_fix_engine.start_check_run(
-            self._fix_run, CheckRunRequest.model_validate(request.data)
+            self._fix_run, CheckRunRequest.model_validate(request.validated_data)
         )
         return Response({"run_id": str(run.id)}, status=status.HTTP_202_ACCEPTED)
 
@@ -272,13 +278,25 @@ class AgentFixEngineViewSet(viewsets.ViewSet):
             return _not_found()
         return Response(check_run_status(run).model_dump(mode="json"))
 
+    @validated_request(
+        request_serializer=AgentFixEngineReportSerializer,
+        responses={200: AgentFixEngineStateSerializer},
+        reject_unknown_fields=True,
+    )
     @action(detail=True, methods=["post"])
     def report(self, request, pk=None):
         fix_run = agent_fix_engine.apply_report(
-            self._fix_run, EngineReport.model_validate(request.data)
+            self._fix_run, EngineReport.model_validate(request.validated_data)
         )
         return Response({"state": fix_run.state})
 
+    @swagger_auto_schema(
+        method="put",
+        # The engine's own record, stored as sent: size is checked in the service.
+        request_body=openapi.Schema(type=openapi.TYPE_STRING, format="binary"),
+        runtime_request_validation=True,
+        responses={204: "stored"},
+    )
     @action(detail=True, methods=["get", "put"])
     def checkpoint(self, request, pk=None):
         if request.method == "PUT":

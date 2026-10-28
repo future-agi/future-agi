@@ -220,15 +220,15 @@ class TestEngineCalls:
         assert _engine(api_client, "get", fix_run, "brief/").status_code == 401
 
     @pytest.mark.parametrize(
-        ("path", "body", "code"),
+        ("path", "body", "field"),
         [
-            ("candidates/", {"attempt": "1"}, "fix_candidate_incomplete"),
+            ("candidates/", {"attempt": "1"}, "tree"),
             (
                 "check-runs/",
                 {"label": "x", "agent_version_id": "a"},
-                "validation_error",
+                "agent_version_id",
             ),
-            ("report/", {"stage": "x" * 33, "spent_usd": 1}, "validation_error"),
+            ("report/", {"stage": "x" * 33, "spent_usd": 1}, "stage"),
         ],
         ids=[
             "candidate-without-files",
@@ -237,14 +237,16 @@ class TestEngineCalls:
         ],
     )
     def test_malformed_calls_are_refused(
-        self, api_client, source_run, path, body, code
+        self, api_client, source_run, path, body, field
     ):
         fix_run = _armed(_fix_run(source_run))
         fmt = "multipart" if path == "candidates/" else "json"
 
         response = _engine(api_client, "post", fix_run, path, data=body, format=fmt)
 
-        assert (response.status_code, response.json()["error"]) == (400, code)
+        # The platform's request-validation envelope names the field it refused.
+        assert response.status_code == 400
+        assert field in response.json()["detail"]
         fix_run.refresh_from_db()
         assert (fix_run.state, fix_run.stage) == (AgentFixRun.State.RUNNING, "")
 

@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from simulate.models import AgentFixCandidate, AgentFixRun
-from simulate.pydantic_schemas.agent_fix import Surface
+from simulate.pydantic_schemas.agent_fix import CandidateOutcome, Ending, Surface
 
 
 class AgentFixLaunchSerializer(serializers.Serializer):
@@ -110,3 +110,58 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
 
 class AgentFixMakeDefaultSerializer(serializers.Serializer):
     outcome = serializers.CharField()
+
+
+# The engine's calls from its sandbox. The services take the pydantic contract
+# (simulate.pydantic_schemas.agent_fix); these serializers are its HTTP shape.
+
+
+class AgentFixCandidateUploadSerializer(serializers.Serializer):
+    attempt = serializers.IntegerField(min_value=1, max_value=32767)
+    summary = serializers.CharField(
+        required=False, allow_blank=True, default="", max_length=4000
+    )
+    tree = serializers.FileField()
+    patch = serializers.FileField()
+
+
+class AgentFixCandidateCreatedSerializer(serializers.Serializer):
+    candidate_id = serializers.UUIDField()
+    agent_version_id = serializers.UUIDField()
+    preflight_status = serializers.CharField()
+
+
+class AgentFixCheckRunRequestSerializer(serializers.Serializer):
+    label = serializers.CharField(max_length=64)
+    agent_version_id = serializers.UUIDField()
+    scenario_keys = serializers.ListField(
+        child=serializers.CharField(max_length=255), min_length=1
+    )
+    trials = serializers.IntegerField(min_value=1, max_value=20)
+
+
+class AgentFixCheckRunCreatedSerializer(serializers.Serializer):
+    run_id = serializers.UUIDField()
+
+
+class AgentFixCandidateUpdateSerializer(serializers.Serializer):
+    candidate_id = serializers.UUIDField()
+    outcome = serializers.ChoiceField(choices=[one.value for one in CandidateOutcome])
+    verdict = AgentFixVerdictSerializer(required=False, allow_null=True)
+
+
+class AgentFixEngineReportSerializer(serializers.Serializer):
+    stage = serializers.CharField(max_length=32)
+    spent_usd = serializers.FloatField(min_value=0)
+    candidates = AgentFixCandidateUpdateSerializer(
+        many=True, required=False, default=list
+    )
+    ending = serializers.ChoiceField(
+        choices=[one.value for one in Ending], required=False, allow_null=True
+    )
+    summary = serializers.CharField(required=False, allow_blank=True, default="")
+    winner_candidate_id = serializers.UUIDField(required=False, allow_null=True)
+
+
+class AgentFixEngineStateSerializer(serializers.Serializer):
+    state = serializers.CharField()
