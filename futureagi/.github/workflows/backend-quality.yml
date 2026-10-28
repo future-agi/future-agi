@@ -1,0 +1,64 @@
+name: Backend Quality
+
+on:
+  pull_request:
+    branches:
+      - main
+      - dev
+      - develop
+    paths:
+      - "**/*.py"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "uv.toml"
+      - "mypy-baseline.txt"
+      - "bin/check_mypy.sh"
+      - ".github/workflows/backend-quality.yml"
+  push:
+    branches:
+      - main
+      - dev
+      - develop
+    paths:
+      - "**/*.py"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "uv.toml"
+      - "mypy-baseline.txt"
+      - "bin/check_mypy.sh"
+      - ".github/workflows/backend-quality.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Backend Quality Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: pyproject.toml
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run Ruff
+        run: uv run ruff check .
+
+      - name: Check Black formatting
+        run: uv run black --check .
+
+      - name: Check baseline mypy
+        run: uv run ./bin/check_mypy.sh
