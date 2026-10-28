@@ -1,0 +1,33 @@
+{
+  "body": {
+    "max_tokens": 1024,
+    "messages": [
+      {
+        "content": [
+          {
+            "text": "What's the weather in New York City today?",
+            "type": "text"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "model": "claude-sonnet-4-5-20250929",
+    "stream": true,
+    "tools": [
+      {
+        "max_uses": 3,
+        "name": "web_search",
+        "type": "web_search_20250305"
+      }
+    ]
+  },
+  "headers": {
+    "accept": "text/event-stream",
+    "anthropic-version": "2023-06-01",
+    "content-type": "application/json",
+    "x-api-key": "REDACTED"
+  },
+  "method": "POST",
+  "path": "/v1/messages"
+}

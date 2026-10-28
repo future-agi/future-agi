@@ -1,0 +1,78 @@
+{
+  "assembled": {
+    "content": "Here is an overview of the general approach",
+    "finish_reason": "stop",
+    "role": "assistant",
+    "usage": {
+      "completion_tokens": 9,
+      "prompt_tokens": 31,
+      "total_tokens": 40
+    }
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "role": "assistant"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_01NqVYEgaN8EF2dWsvXRNk7s",
+      "model": "claude-sonnet-4-5-20250929",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "Here is an overview of"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_01NqVYEgaN8EF2dWsvXRNk7s",
+      "model": "claude-sonnet-4-5-20250929",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " the general approach"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_01NqVYEgaN8EF2dWsvXRNk7s",
+      "model": "claude-sonnet-4-5-20250929",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {},
+          "finish_reason": "stop",
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_01NqVYEgaN8EF2dWsvXRNk7s",
+      "model": "claude-sonnet-4-5-20250929",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 9,
+        "prompt_tokens": 31,
+        "total_tokens": 40
+      }
+    }
+  ],
+  "error": null
+}

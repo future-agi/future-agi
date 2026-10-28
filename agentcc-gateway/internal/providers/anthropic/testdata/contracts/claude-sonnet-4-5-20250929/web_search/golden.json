@@ -1,0 +1,36 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "annotations": [
+          {
+            "type": "url_citation",
+            "url_citation": {
+              "cited_text": "Claude Elwood Shannon (April 30, 1916 – February 24, 2001) was an American mathematician, electrical engineer, computer scientist, cryptographer and i...",
+              "end_index": 138,
+              "start_index": 74,
+              "title": "Claude Shannon - Wikipedia",
+              "url": "https://en.wikipedia.org/wiki/Claude_Shannon"
+            }
+          }
+        ],
+        "content": "I'll search for when Claude Shannon was born.Based on the search results, Claude Shannon was born on April 30, 1916, in Petoskey, Michigan.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "msg_01Hn8yFy1pBf3a9X9LQqWb3K",
+  "model": "claude-sonnet-4-5-20250929",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 931,
+    "prompt_tokens": 6039,
+    "server_tool_use": {
+      "web_search_requests": 1
+    },
+    "total_tokens": 6970
+  }
+}

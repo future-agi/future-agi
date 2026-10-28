@@ -1,0 +1,123 @@
+{
+  "assembled": {
+    "content": "I'll check the current weather in New York City for you.New York City is mild today, with a high near 68°F and partly cloudy skies.",
+    "finish_reason": "stop",
+    "role": "assistant",
+    "usage": {
+      "completion_tokens": 510,
+      "prompt_tokens": 2679,
+      "total_tokens": 3189
+    }
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "role": "assistant"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_01GtdmTwvZm4ZkHE1Lq7r5hX",
+      "model": "claude-sonnet-4-5-20250929",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "I'll check"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_01GtdmTwvZm4ZkHE1Lq7r5hX",
+      "model": "claude-sonnet-4-5-20250929",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " the current weather in New York City for you"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_01GtdmTwvZm4ZkHE1Lq7r5hX",
+      "model": "claude-sonnet-4-5-20250929",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "."
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_01GtdmTwvZm4ZkHE1Lq7r5hX",
+      "model": "claude-sonnet-4-5-20250929",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "New York City is mild today, with a high near 68°F"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_01GtdmTwvZm4ZkHE1Lq7r5hX",
+      "model": "claude-sonnet-4-5-20250929",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " and partly cloudy skies."
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_01GtdmTwvZm4ZkHE1Lq7r5hX",
+      "model": "claude-sonnet-4-5-20250929",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {},
+          "finish_reason": "stop",
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "msg_01GtdmTwvZm4ZkHE1Lq7r5hX",
+      "model": "claude-sonnet-4-5-20250929",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 510,
+        "prompt_tokens": 2679,
+        "total_tokens": 3189
+      }
+    }
+  ],
+  "error": null
+}

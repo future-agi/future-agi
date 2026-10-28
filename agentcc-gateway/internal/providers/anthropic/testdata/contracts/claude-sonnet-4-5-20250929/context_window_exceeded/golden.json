@@ -1,0 +1,21 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "...and the clocks were striking thirteen as she turned the corner onto the empty boulevard, the wind carrying",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "msg_01Wd2pT9xHj6Gq2qUeZkY4vB",
+  "model": "claude-sonnet-4-5-20250929",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 3588,
+    "prompt_tokens": 196412,
+    "total_tokens": 200000
+  }
+}

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 )
 
 // --- Anthropic native types ---
@@ -451,7 +452,10 @@ func translateToolChoice(raw json.RawMessage) (*anthropicToolChoice, error) {
 	return nil, nil
 }
 
-func translateResponse(resp *anthropicResponse) *models.ChatCompletionResponse {
+// translateResponse converts a Messages API response. shape receives a report
+// for every block type and stop reason this function does not translate; nil
+// is allowed.
+func translateResponse(resp *anthropicResponse, shape *common.ShapeReporter) *models.ChatCompletionResponse {
 	msg := models.Message{
 		Role: "assistant",
 	}
@@ -503,6 +507,12 @@ func translateResponse(resp *anthropicResponse) *models.ChatCompletionResponse {
 			})
 		case "image":
 			hasMultipart = true
+		case "server_tool_use", "web_search_tool_result":
+			// Work Anthropic already ran on its side. The answer it informed
+			// arrives as text, and the sources as citations on that text, so
+			// there is nothing here for the caller to act on.
+		default:
+			shape.Report(common.ShapeUnknownBlock, block.Type)
 		}
 	}
 
@@ -584,7 +594,7 @@ func translateResponse(resp *anthropicResponse) *models.ChatCompletionResponse {
 			{
 				Index:        0,
 				Message:      msg,
-				FinishReason: mapStopReason(resp.StopReason),
+				FinishReason: finishReason(shape, resp.StopReason),
 			},
 		},
 		Usage: &models.Usage{
@@ -654,22 +664,39 @@ func serverToolUsage(u *anthropicServerTool) *models.ServerToolUsage {
 }
 
 func mapStopReason(reason string) string {
+	finish, _ := lookupStopReason(reason)
+	return finish
+}
+
+// finishReason is mapStopReason for a live response: a stop reason with no
+// mapping still becomes "stop", and is reported so the default is visible.
+func finishReason(shape *common.ShapeReporter, reason string) string {
+	finish, ok := lookupStopReason(reason)
+	if !ok {
+		shape.Report(common.ShapeUnmappedFinishReason, reason)
+	}
+	return finish
+}
+
+// lookupStopReason maps an Anthropic stop_reason to an OpenAI finish_reason.
+// ok is false for a reason with no mapping, which falls back to "stop".
+func lookupStopReason(reason string) (finish string, ok bool) {
 	switch reason {
 	case "end_turn":
-		return "stop"
+		return "stop", true
 	case "max_tokens":
-		return "length"
+		return "length", true
 	case "stop_sequence":
-		return "stop"
+		return "stop", true
 	case "tool_use":
-		return "tool_calls"
+		return "tool_calls", true
 	case "pause_turn":
 		// A long-running server tool turn that Anthropic paused and expects to
 		// be handed back. It is not finished, so do not report "stop" — the
 		// nearest honest OpenAI reason is a truncated generation.
-		return "length"
+		return "length", true
 	default:
-		return "stop"
+		return "stop", false
 	}
 }
 

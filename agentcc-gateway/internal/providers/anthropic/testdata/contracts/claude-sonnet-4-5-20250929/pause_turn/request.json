@@ -1,0 +1,17 @@
+{
+  "model": "claude-sonnet-4-5-20250929",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Compare the population growth of the five largest US cities over the last decade."
+    }
+  ],
+  "max_tokens": 2048,
+  "tools": [
+    {
+      "type": "web_search_20250305",
+      "name": "web_search",
+      "max_uses": 10
+    }
+  ]
+}

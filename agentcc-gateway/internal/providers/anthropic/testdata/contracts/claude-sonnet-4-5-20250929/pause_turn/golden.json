@@ -1,0 +1,24 @@
+{
+  "choices": [
+    {
+      "finish_reason": "length",
+      "index": 0,
+      "message": {
+        "content": "I'll look up recent population figures for each of the five largest US cities.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "msg_01KcmhGqMHM8kDP4gpF2Qq8Z",
+  "model": "claude-sonnet-4-5-20250929",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 118,
+    "prompt_tokens": 2147,
+    "server_tool_use": {
+      "web_search_requests": 1
+    },
+    "total_tokens": 2265
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "model": "claude-opus-5-5",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Hello, Claude"
+    }
+  ],
+  "max_tokens": 1024
+}

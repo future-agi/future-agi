@@ -1,0 +1,27 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "Optimistic locking avoids holding locks and checks for conflicts at commit time, which scales well when conflicts are rare but forces retries when they are not. Pessimistic locking acquires locks up front so work never has to be redone, at the cost of blocking other writers and risking deadlocks under contention.",
+        "role": "assistant",
+        "thinking_blocks": [
+          {
+            "thinking": "The user wants a two-sentence comparison. Optimistic locking: no locks held, version check at commit, retries on conflict. Pessimistic: locks up front, blocks others, no retries but contention and deadlock risk.",
+            "type": "thinking"
+          }
+        ]
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "msg_01Vf6K8mZzv1XgE3ytPw5fNa",
+  "model": "claude-sonnet-4-5-20250929",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 287,
+    "prompt_tokens": 41,
+    "total_tokens": 328
+  }
+}

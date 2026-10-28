@@ -1,0 +1,14 @@
+{
+  "model": "claude-sonnet-4-5-20250929",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Summarize the trade-offs of optimistic versus pessimistic locking in two sentences."
+    }
+  ],
+  "max_tokens": 4096,
+  "thinking": {
+    "type": "enabled",
+    "budget_tokens": 2048
+  }
+}

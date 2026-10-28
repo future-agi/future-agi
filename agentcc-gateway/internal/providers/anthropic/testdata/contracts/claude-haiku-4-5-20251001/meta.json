@@ -1,0 +1,50 @@
+{
+  "provider": "anthropic",
+  "model": "claude-haiku-4-5-20251001",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: authored by hand from the official Anthropic docs (platform.claude.com/docs/en/api/messages, build-with-claude/streaming, build-with-claude/thinking, build-with-claude/extended-thinking, agents-and-tools/tool-use/web-search-tool, build-with-claude/handling-stop-reasons, build-with-claude/refusals-and-fallback, build-with-claude/citations), read 2026-10-28. Field names, event types and stop reasons are the documented ones; ids, signatures, token counts and text are invented. Replace each case with a recorded capture (source: recorded) when the live recorder runs. No thinking requested: pins the plain text, tool_use and stop_sequence shapes and the 2025-era usage block (cache_creation breakdown, service_tier). Streams use the minimal message_delta usage form ({output_tokens}) from the basic streaming example.",
+  "allowed_unknown_fields": [
+    {
+      "path": "$.stop_sequence",
+      "reason": "no canonical field: OpenAI has no slot for which stop sequence matched; finish_reason \"stop\" carries the outcome"
+    },
+    {
+      "path": "$.usage.cache_creation",
+      "reason": "known gap U2: the per-TTL cache-write breakdown (5m / 1h), needed to price 1h cache writes, is dropped"
+    },
+    {
+      "path": "$.usage.cache_creation_input_tokens",
+      "reason": "known gap U1: prompt-cache write tokens are not added to prompt_tokens (Anthropic's input_tokens excludes them), so usage and cost under-count cached requests. Usually 0 on the canonical path today, which rebuilds content blocks without cache_control"
+    },
+    {
+      "path": "$.usage.cache_read_input_tokens",
+      "reason": "known gap U1: prompt-cache read tokens are dropped instead of counted in prompt_tokens and prompt_tokens_details.cached_tokens, so usage and cost under-count cached requests"
+    },
+    {
+      "path": "$.usage.service_tier",
+      "reason": "known gap U3: the tier that served the request (standard / priority / batch) is dropped; ChatCompletionResponse.service_tier exists but the adapter never sets it"
+    },
+    {
+      "path": "message_delta:$.delta.stop_sequence",
+      "reason": "no canonical field: OpenAI has no slot for which stop sequence matched; finish_reason \"stop\" carries the outcome"
+    },
+    {
+      "path": "message_start:$.message.usage.cache_creation",
+      "reason": "known gap U2: the per-TTL cache-write breakdown (5m / 1h), needed to price 1h cache writes, is dropped"
+    },
+    {
+      "path": "message_start:$.message.usage.cache_creation_input_tokens",
+      "reason": "known gap U1: prompt-cache write tokens are not added to prompt_tokens (Anthropic's input_tokens excludes them), so usage and cost under-count cached requests. Usually 0 on the canonical path today, which rebuilds content blocks without cache_control"
+    },
+    {
+      "path": "message_start:$.message.usage.cache_read_input_tokens",
+      "reason": "known gap U1: prompt-cache read tokens are dropped instead of counted in prompt_tokens and prompt_tokens_details.cached_tokens, so usage and cost under-count cached requests"
+    },
+    {
+      "path": "message_start:$.message.usage.service_tier",
+      "reason": "known gap U3: the tier that served the request (standard / priority / batch) is dropped; ChatCompletionResponse.service_tier exists but the adapter never sets it"
+    }
+  ],
+  "allowed_unknown_shapes": []
+}

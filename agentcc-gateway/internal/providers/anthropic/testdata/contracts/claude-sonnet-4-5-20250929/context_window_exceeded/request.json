@@ -1,0 +1,10 @@
+{
+  "model": "claude-sonnet-4-5-20250929",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Continue the following novel for as long as you can: It was a bright cold day in April..."
+    }
+  ],
+  "max_tokens": 64000
+}

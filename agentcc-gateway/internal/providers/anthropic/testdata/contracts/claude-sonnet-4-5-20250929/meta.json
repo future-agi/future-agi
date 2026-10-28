@@ -1,0 +1,106 @@
+{
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-5-20250929",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: authored by hand from the official Anthropic docs (platform.claude.com/docs/en/api/messages, build-with-claude/streaming, build-with-claude/thinking, build-with-claude/extended-thinking, agents-and-tools/tool-use/web-search-tool, build-with-claude/handling-stop-reasons, build-with-claude/refusals-and-fallback, build-with-claude/citations), read 2026-10-28. Field names, event types and stop reasons are the documented ones; ids, signatures, token counts and text are invented. Replace each case with a recorded capture (source: recorded) when the live recorder runs. Extended thinking is manual here (thinking.type=enabled + budget_tokens; adaptive returns 400 on this model), so request.json carries the thinking param as an extra field the gateway receives. Known gap R1 (request side): translateRequest does not forward thinking (or any other extra field), so the thinking cases' upstream_request.golden.json has no thinking param and extended thinking cannot be enabled through /v1/chat/completions; recording these cases needs an upstream_patch.json (see contracttest/README.md). Streams use the cumulative message_delta usage form from the web-search streaming example. The cited text block in stream_web_search starts as {type:text,text:\"\"} as in the docs; a recording may show a citations key on it.",
+  "allowed_unknown_fields": [
+    {
+      "path": "$.content[].citations[].encrypted_index",
+      "reason": "known gap C2: web-search citations lose encrypted_index, which Anthropic needs passed back to continue a conversation that cites search results; url/title/cited_text survive as url_citation annotations"
+    },
+    {
+      "path": "$.content[].data",
+      "reason": "known gap T3: redacted_thinking blocks are dropped with their encrypted data; Anthropic requires them passed back unchanged in tool-use turns"
+    },
+    {
+      "path": "$.content[].signature",
+      "reason": "known gap T1: thinking-block signatures are dropped (anthropicContentBlock has no signature field), so thinking_blocks reach the inbound translator unsigned and a multi-turn tool-use conversation with thinking cannot be replayed to Anthropic. With display \"omitted\" the whole block is dropped because its thinking text is empty"
+    },
+    {
+      "path": "$.stop_sequence",
+      "reason": "no canonical field: OpenAI has no slot for which stop sequence matched; finish_reason \"stop\" carries the outcome"
+    },
+    {
+      "path": "$.usage.cache_creation",
+      "reason": "known gap U2: the per-TTL cache-write breakdown (5m / 1h), needed to price 1h cache writes, is dropped"
+    },
+    {
+      "path": "$.usage.cache_creation_input_tokens",
+      "reason": "known gap U1: prompt-cache write tokens are not added to prompt_tokens (Anthropic's input_tokens excludes them), so usage and cost under-count cached requests. Usually 0 on the canonical path today, which rebuilds content blocks without cache_control"
+    },
+    {
+      "path": "$.usage.cache_read_input_tokens",
+      "reason": "known gap U1: prompt-cache read tokens are dropped instead of counted in prompt_tokens and prompt_tokens_details.cached_tokens, so usage and cost under-count cached requests"
+    },
+    {
+      "path": "$.usage.service_tier",
+      "reason": "known gap U3: the tier that served the request (standard / priority / batch) is dropped; ChatCompletionResponse.service_tier exists but the adapter never sets it"
+    },
+    {
+      "path": "message_delta:$.delta.stop_sequence",
+      "reason": "no canonical field: OpenAI has no slot for which stop sequence matched; finish_reason \"stop\" carries the outcome"
+    },
+    {
+      "path": "message_delta:$.usage.cache_creation_input_tokens",
+      "reason": "known gap U1: prompt-cache write tokens are not added to prompt_tokens (Anthropic's input_tokens excludes them), so usage and cost under-count cached requests. Usually 0 on the canonical path today, which rebuilds content blocks without cache_control"
+    },
+    {
+      "path": "message_delta:$.usage.cache_read_input_tokens",
+      "reason": "known gap U1: prompt-cache read tokens are dropped instead of counted in prompt_tokens and prompt_tokens_details.cached_tokens, so usage and cost under-count cached requests"
+    },
+    {
+      "path": "message_start:$.message.usage.cache_creation",
+      "reason": "known gap U2: the per-TTL cache-write breakdown (5m / 1h), needed to price 1h cache writes, is dropped"
+    },
+    {
+      "path": "message_start:$.message.usage.cache_creation_input_tokens",
+      "reason": "known gap U1: prompt-cache write tokens are not added to prompt_tokens (Anthropic's input_tokens excludes them), so usage and cost under-count cached requests. Usually 0 on the canonical path today, which rebuilds content blocks without cache_control"
+    },
+    {
+      "path": "message_start:$.message.usage.cache_read_input_tokens",
+      "reason": "known gap U1: prompt-cache read tokens are dropped instead of counted in prompt_tokens and prompt_tokens_details.cached_tokens, so usage and cost under-count cached requests"
+    },
+    {
+      "path": "message_start:$.message.usage.service_tier",
+      "reason": "known gap U3: the tier that served the request (standard / priority / batch) is dropped; ChatCompletionResponse.service_tier exists but the adapter never sets it"
+    }
+  ],
+  "allowed_unknown_shapes": [
+    {
+      "kind": "unknown_block",
+      "value": "redacted_thinking",
+      "reason": "known gap T3: redacted_thinking blocks are dropped with their encrypted data; Anthropic requires them passed back unchanged in tool-use turns"
+    },
+    {
+      "kind": "unknown_block",
+      "value": "thinking",
+      "reason": "known gap T4: the stream parser drops thinking blocks entirely; streamed responses carry no reasoning (no reasoning_content delta, no thinking_blocks), unlike the non-stream path"
+    },
+    {
+      "kind": "unknown_delta",
+      "value": "citations_delta",
+      "reason": "known gap C1: streamed citations are dropped; the non-stream path turns them into url_citation annotations, the stream path emits none"
+    },
+    {
+      "kind": "unknown_delta",
+      "value": "signature_delta",
+      "reason": "known gap T4: thinking signatures are not forwarded on streams (see unknown_block:thinking)"
+    },
+    {
+      "kind": "unknown_delta",
+      "value": "thinking_delta",
+      "reason": "known gap T4: thinking text is not forwarded on streams (see unknown_block:thinking)"
+    },
+    {
+      "kind": "unmapped_finish_reason",
+      "value": "model_context_window_exceeded",
+      "reason": "known gap S3: stop_reason \"model_context_window_exceeded\" (returned by Sonnet 4.5 and later without a beta header) falls back to \"stop\"; the response is truncated, so \"length\" is the honest canonical reason"
+    },
+    {
+      "kind": "unmapped_finish_reason",
+      "value": "refusal",
+      "reason": "known gap S1: stop_reason \"refusal\" has no mapping and falls back to \"stop\", so a declined or cut-off response looks like a normal completion; \"content_filter\" is the canonical reason"
+    }
+  ]
+}
