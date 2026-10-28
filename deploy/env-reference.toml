@@ -709,6 +709,24 @@ the default backend ([Backend variants](/docs/self-hosting/images#backend-varian
     text = "`true` lets one sandbox run several of a simulation's scenarios at once. Parallelism stays off, and a run that asks for it runs one scenario at a time, unless this is `true` and the sandbox's image is in `HARNESS_PARALLEL_SNAPSHOT_DIGESTS`. A Daytona sandbox built from `ALK_DAYTONA_DOCKERFILE` (development) needs only this flag."
 
     [[part.section.row]]
+    keys = ["HARNESS_VERSIONING_ENABLED"]
+    default = "`false`"
+    setups = ["S", "D", "H"]
+    text = "`true` records agent, environment and scenario versions for new and edited environments and pins each run to them. `false` is a kill switch: new environments are created unversioned, and environments that already have versions keep them. Turn it on only after `harness_versions_backfill` has run (see INSTALLATION.md, Upgrading, for how to run it)."
+
+    [[part.section.row]]
+    keys = ["HARNESS_VERSIONING_NUDGES_ENABLED"]
+    default = "`false`"
+    setups = ["S", "D", "H"]
+    text = "`true` tells an environment when its agent or environment version changed and offers a rebuild. Turn it on together with `HARNESS_BUNDLE_CERTIFY_ENABLED`, after `HARNESS_VERSIONING_ENABLED`, once the sandbox template carries an agent-learning-kit release that supports versioning."
+
+    [[part.section.row]]
+    keys = ["HARNESS_BUNDLE_CERTIFY_ENABLED"]
+    default = "`false`"
+    setups = ["S", "D", "H"]
+    text = "`true` lets a run build and certify an environment bundle for a version combination that has none yet. `false` never builds a bundle: a run at the environment's default versions runs as before, a rerun whose versions have no ready bundle runs the defaults, and picking another combination with no ready bundle is refused, as is a default pair with no sealed bundle. Turn it on together with `HARNESS_VERSIONING_NUDGES_ENABLED`."
+
+    [[part.section.row]]
     keys = ["HARNESS_PARALLEL_SNAPSHOT_DIGESTS"]
     default = "empty: no image qualifies"
     setups = ["S", "D", "H"]

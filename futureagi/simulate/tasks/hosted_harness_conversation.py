@@ -54,7 +54,10 @@ def promote_hosted_harness_conversation_checkpoint(
 ) -> str:
     """Publish a finished chat turn's workspace to its environment."""
     from simulate.services.hosted_harness import HostedHarnessError
-    from simulate.services.hosted_harness_conversation import promote_turn_checkpoint
+    from simulate.services.hosted_harness_conversation import (
+        promote_turn_checkpoint,
+        report_checkpoint_rejection,
+    )
 
     try:
         environment = promote_turn_checkpoint(conversation_id, turn_sequence)
@@ -68,6 +71,14 @@ def promote_hosted_harness_conversation_checkpoint(
             code=exc.code,
             message=exc.message,
         )
+        if exc.code in {
+            "scenario_key_retired",
+            "scenario_key_taken",
+            "draft_changed",
+            "conversation_checkpoint_stale",
+        }:
+            # The person has to act (rename, or ask again), so they need to see why.
+            report_checkpoint_rejection(conversation_id, exc.message)
         return ""
     return str(environment.id) if environment is not None else ""
 
