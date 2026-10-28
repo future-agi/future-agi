@@ -271,7 +271,8 @@ function TrendLegend({ items, onCategory }) {
       sx={{ m: 0, p: 0, listStyle: "none" }}
     >
       {items.map((item) => {
-        const clickable = onCategory && item.id !== OTHER_ID && !item.muted;
+        const clickable =
+          onCategory && item.id !== OTHER_ID && !item.muted && !item.absent;
         return (
           <Stack
             key={item.id}
@@ -295,7 +296,7 @@ function TrendLegend({ items, onCategory }) {
                 bgcolor: "transparent",
                 font: "inherit",
                 fontSize: 12,
-                color: "text.primary",
+                color: item.absent ? "text.disabled" : "text.primary",
                 cursor: clickable ? "pointer" : "default",
                 "&:hover": clickable
                   ? { textDecoration: "underline" }
@@ -308,14 +309,24 @@ function TrendLegend({ items, onCategory }) {
             >
               {item.name}
             </Typography>
-            {item.share !== undefined && (
+            {item.absent ? (
               <Typography
                 variant="caption"
-                color="text.secondary"
-                sx={{ fontVariantNumeric: "tabular-nums", flexShrink: 0 }}
+                color="text.disabled"
+                sx={{ flexShrink: 0 }}
               >
-                {formatPercent(item.share)}
+                not in this run
               </Typography>
+            ) : (
+              item.share !== undefined && (
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ fontVariantNumeric: "tabular-nums", flexShrink: 0 }}
+                >
+                  {formatPercent(item.share)}
+                </Typography>
+              )
             )}
           </Stack>
         );
@@ -492,13 +503,25 @@ export default function TrendCard({
           items={
             chart
               ? series
-                  .map((s) => ({
-                    ...s,
-                    share: current ? current.shares[s.id] || 0 : undefined,
-                  }))
-                  // Largest first in the run on screen; Other stays last.
+                  .map((s) => {
+                    // A category of other runs only (categories found afresh)
+                    // is not one this run sorted into: never "0%".
+                    const absent =
+                      Boolean(current) && !(s.id in current.counts);
+                    return {
+                      ...s,
+                      absent,
+                      share:
+                        current && !absent
+                          ? current.shares[s.id] || 0
+                          : undefined,
+                    };
+                  })
+                  // Largest first in the run on screen; Other after them, and
+                  // other runs' categories last.
                   .sort(
                     (a, b) =>
+                      Number(a.absent) - Number(b.absent) ||
                       Number(Boolean(a.muted)) - Number(Boolean(b.muted)) ||
                       (b.share || 0) - (a.share || 0),
                   )
