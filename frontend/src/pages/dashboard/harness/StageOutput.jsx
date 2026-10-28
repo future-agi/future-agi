@@ -6,6 +6,11 @@ import {
   Button,
   Chip,
   Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
   Typography,
 } from "@mui/material";
 import PropTypes from "prop-types";
@@ -63,10 +68,92 @@ RawDetails.propTypes = {
   data: PropTypes.oneOfType([PropTypes.object, PropTypes.array]).isRequired,
 };
 
+// A released environment's world: each table with its row count and its first rows, so the
+// seeded data (customers, accounts, bookings) is visible without opening the release.
+function WorldTables({ tables }) {
+  if (!tables.length) {
+    return (
+      <Typography variant="body2" color="text.secondary">
+        This environment&apos;s world has no tables.
+      </Typography>
+    );
+  }
+  return (
+    <Stack spacing={1.5}>
+      {tables.map((table) => (
+        <Box key={table.name} aria-label={`World table ${table.name}`}>
+          <Typography variant="subtitle2">
+            {table.name}{" "}
+            <Typography
+              component="span"
+              variant="caption"
+              color="text.secondary"
+            >
+              {table.rows} {table.rows === 1 ? "row" : "rows"}
+            </Typography>
+          </Typography>
+          {table.sample.length > 0 && (
+            <Box sx={{ overflowX: "auto", mt: 0.5 }}>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    {table.columns.map((column) => (
+                      <TableCell key={column} sx={{ whiteSpace: "nowrap" }}>
+                        {column}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {table.sample.map((row, index) => (
+                    // Sample rows have no identity of their own; their order is the table's.
+                    // eslint-disable-next-line react/no-array-index-key
+                    <TableRow key={index}>
+                      {row.map((value, column) => (
+                        <TableCell
+                          key={table.columns[column]}
+                          sx={{
+                            maxWidth: 240,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {value === null ? "—" : String(value)}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Box>
+          )}
+        </Box>
+      ))}
+    </Stack>
+  );
+}
+
+WorldTables.propTypes = {
+  tables: PropTypes.arrayOf(
+    PropTypes.shape({
+      name: PropTypes.string.isRequired,
+      rows: PropTypes.number.isRequired,
+      columns: PropTypes.arrayOf(PropTypes.string).isRequired,
+      sample: PropTypes.array.isRequired,
+    }),
+  ).isRequired,
+};
+
 // One artifact the runner produced during a stage. `kind` is a closed set from ALK —
 // contract, environment, scenarios, simulation — and anything else falls back to raw JSON
 // rather than rendering nothing, so a new kind is visible rather than silently dropped.
-export default function StageOutput({ output, jobId, scenarioEditing, onChanged }) {
+export default function StageOutput({
+  output,
+  jobId,
+  scenarioEditing,
+  onChanged,
+}) {
   const data = output.data || {};
   if (output.kind === "activity") {
     const events = Array.isArray(output.events) ? output.events : [];
@@ -98,10 +185,14 @@ export default function StageOutput({ output, jobId, scenarioEditing, onChanged 
                 displayText(payload.text) ||
                 (payload.tool
                   ? `${readable(displayText(payload.event_kind || "tool"))} · ${readable(displayText(payload.tool))}`
-                  : readable(displayText(event.event_type || "Authoring activity")));
+                  : readable(
+                      displayText(event.event_type || "Authoring activity"),
+                    ));
               return (
                 <Typography
-                  key={event.event_id || `${event.sequence || "event"}-${index}`}
+                  key={
+                    event.event_id || `${event.sequence || "event"}-${index}`
+                  }
                   variant="body2"
                   sx={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
                 >
@@ -169,7 +260,19 @@ export default function StageOutput({ output, jobId, scenarioEditing, onChanged 
 
         {output.kind === "contract" && (
           <Stack spacing={1}>
+            {data.agent && typeof data.agent === "string" && (
+              <Typography variant="subtitle2">Agent: {data.agent}</Typography>
+            )}
             <Typography variant="body2">{data.one_liner}</Typography>
+            {data.instructions && (
+              <Typography
+                variant="body2"
+                color="text.secondary"
+                sx={{ whiteSpace: "pre-wrap" }}
+              >
+                {data.instructions}
+              </Typography>
+            )}
             <Typography variant="caption" color="text.secondary">
               Talks over {data.modality || "an unknown transport"} · runs{" "}
               {typeof data.runtime === "string"
@@ -197,7 +300,11 @@ export default function StageOutput({ output, jobId, scenarioEditing, onChanged 
           </Stack>
         )}
 
-        {output.kind === "environment" && (
+        {output.kind === "environment" && data.kind === "world" && (
+          <WorldTables tables={data.tables || []} />
+        )}
+
+        {output.kind === "environment" && data.kind !== "world" && (
           <Stack spacing={1}>
             {Boolean((data.services || []).length) && (
               <Stack direction="row" gap={0.75} flexWrap="wrap">
@@ -243,9 +350,13 @@ export default function StageOutput({ output, jobId, scenarioEditing, onChanged 
             from two different sources. */}
         {output.kind === "coverage" && <RawDetails data={data} />}
 
-        {!["contract", "environment", "scenarios", "simulation", "coverage"].includes(
-          output.kind,
-        ) && <RawDetails data={data} />}
+        {![
+          "contract",
+          "environment",
+          "scenarios",
+          "simulation",
+          "coverage",
+        ].includes(output.kind) && <RawDetails data={data} />}
       </AccordionDetails>
     </Accordion>
   );

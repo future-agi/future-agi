@@ -11,6 +11,7 @@ import {
   OPTIONS,
   OPTION_STATUS,
   BRING_YOUR_AGENT_ORDER,
+  DESIGN_OPTION,
   ENVIRONMENTS_HEADER,
 } from "./environmentOptions";
 
@@ -53,13 +54,66 @@ export default function BuildEnvironmentTab() {
         >
           <TemplateHeroCard
             selected={false}
-            onClick={() => navigate(paths.dashboard.simulate.environments.templates)}
+            onClick={() =>
+              navigate(paths.dashboard.simulate.environments.templates)
+            }
           />
           <WebEnvironmentsHeroCard />
         </Box>
         <Box>
-          <Stack direction="row" alignItems="baseline" spacing={1.5} sx={{ mb: 1.5 }}>
-            <Typography sx={{ typography: "s2", fontWeight: "fontWeightBold", letterSpacing: 0.4, textTransform: "uppercase" }}>
+          <Stack
+            direction="row"
+            alignItems="baseline"
+            spacing={1.5}
+            sx={{ mb: 1.5 }}
+          >
+            <Typography
+              sx={{
+                typography: "s2",
+                fontWeight: "fontWeightBold",
+                letterSpacing: 0.4,
+                textTransform: "uppercase",
+              }}
+            >
+              {ENVIRONMENTS_HEADER.designHeading}
+            </Typography>
+            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+              {ENVIRONMENTS_HEADER.designSub}
+            </Typography>
+          </Stack>
+          <Box
+            sx={{
+              display: "grid",
+              gap: 1.25,
+              gridTemplateColumns: {
+                xs: "1fr",
+                sm: "1fr 1fr",
+                md: "repeat(3, 1fr)",
+              },
+            }}
+          >
+            <OptionCard
+              option={DESIGN_OPTION}
+              selected={choice === DESIGN_OPTION.id}
+              onClick={() => pick(DESIGN_OPTION.id)}
+            />
+          </Box>
+        </Box>
+        <Box>
+          <Stack
+            direction="row"
+            alignItems="baseline"
+            spacing={1.5}
+            sx={{ mb: 1.5 }}
+          >
+            <Typography
+              sx={{
+                typography: "s2",
+                fontWeight: "fontWeightBold",
+                letterSpacing: 0.4,
+                textTransform: "uppercase",
+              }}
+            >
               {ENVIRONMENTS_HEADER.connectHeading}
             </Typography>
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
@@ -70,7 +124,11 @@ export default function BuildEnvironmentTab() {
             sx={{
               display: "grid",
               gap: 1.25,
-              gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr", md: "repeat(3, 1fr)" },
+              gridTemplateColumns: {
+                xs: "1fr",
+                sm: "1fr 1fr",
+                md: "repeat(3, 1fr)",
+              },
             }}
           >
             {BRING_YOUR_AGENT.map((opt) => (

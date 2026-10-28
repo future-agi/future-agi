@@ -1,6 +1,6 @@
-# Environment Releases, Suites, Agent Bindings and Run Manifests (v0.3)
+# Environment Releases, Suites, Agent Bindings and Run Manifests (v0.4)
 
-**Date:** 2026-10-15 (v0.3 adds §7.8) · **Status:** DRAFT for agreement
+**Date:** 2026-10-23 (v0.4 adds §7.9) · **Status:** DRAFT for agreement
 (milestone M0 of `prebuilt-agent-environments-implementation.md`)
 **Producers:** environment and scenario authoring in ALK (`EnvironmentRelease`,
 `SuiteRelease`); the platform (`AgentBinding`, `RunManifest`, compositions).
@@ -855,7 +855,10 @@ and the builder writes the binding.
 
 The builder retries within its turn budget; there is no fixed round limit. The
 approval is a builder question (`question_requested`, `{prompt, options}`,
-answered by a `user_response` replying to it).
+answered by a `user_response` replying to it). When the builder takes the reply it
+emits `question_answered` (`message_id` the question, `{reply_message_id}`): the
+reply is completed and `blocking_input` cleared at once, not at the turn's end, so a
+build that runs on after its approval does not show the question as open.
 
 **Outputs** in `/work/authoring/adaptation/`:
 
@@ -893,11 +896,14 @@ Under `/simulate/api/`, organization-scoped like the other harness routes.
 
 | Route | Request | Response |
 |---|---|---|
-| `GET harness-releases/` | | `{results: [{id, digest, name, system, parent: {digest, name} or null, tools: [{name, description, mutates_state}], policy: {parameters: [{name, type, default, allowed}], agent_rules: [{id, text}]}, suites: [{id, digest, name, scenario_count, origins: {base, specialized, custom}, policy_profile}]}]}`; system releases and the organization's own |
+| `GET harness-releases/` | | `{results: [{id, digest, name, system, parent: {digest, name} or null, derived_from: {digest, name or null} or null (a designed release's template, §7.9), provenance: [{target, document, part, sha256, rows?, replaced}] (§7.9), tools: [{name, description, mutates_state}], policy: {parameters: [{name, type, default, allowed}], agent_rules: [{id, text}]}, suites: [{id, digest, name, scenario_count, origins: {base, specialized, custom}, policy_profile}]}]}`; system releases and the organization's own |
 | `POST harness-adaptations/` | `{suite_id, agent_version_id, agent, name, idempotency_key, parallelism?}` (the key in the body; `parallelism` is the composition's, §7.3); `agent` as in a hosted job (`connector` `retell_chat`, `retell` or `vapi`, `mode: "provider_import"`, `config`, `secret_refs`); the agent definition's type must match the connector's modality (400 `agent_modality_mismatch`) | 202, the job (`HarnessJobReadSerializer`); the UI follows it like any harness job |
 | `POST harness-hosted-agents/` | `{suite_id, name, instructions, model, idempotency_key, parallelism?}`; `model` as in §6.4, `parallelism` as in §7.3 | 201 `{id, agent_version_id}`: the composition (an environment ID) and the new agent version; the same key with the same spec (and parallelism, when given) answers the same composition, with another 409 `idempotency_conflict` |
 | `GET harness-environments/{id}/` | | adds `composition`: `null`, or `{environment: [{digest, name}], suite: {digest, name, parent_digest, policy_profile, unscored_agent_rules: [{id, text}], scenarios: [{key, origin, derived_from}]}, binding: {digest, mode, agent_tools, tools}, agent: {agent_definition_id, agent_version_id, connector, name, version_name}, alignment, binding_proof: {passed, scenarios}}` |
 | `GET harness-environments/{id}/runs/{run_id}/report/` | `?baseline=<run_id>`; a run is named by its test execution ID or its run job ID; the baseline may be a run of another composition in the organization | §7.7; 409 `not_a_composition` for other environments |
+| `POST harness-environment-designs/documents/` | multipart, one `file`: PDF, DOCX, XLSX, CSV, TSV, JSON, JSONL, TXT or MD, at most 25 MB (§7.9) | 201 `{id, name, content_type, sha256, size}`; 413 `document_too_large` (refused on the declared length before the body is parsed); 415 `document_unsupported` |
+| `POST harness-environment-designs/` | `{name, requirements, modality?, template_suite_id?, document_ids?, idempotency_key}`; `modality` `chat` (default) or `voice`; the template must be a root release (422 `design_template_invalid`); at most 100 documents and 200 MiB together | 202, the design job (`HarnessJobReadSerializer`), followed like any harness job |
+| `POST harness-environment-designs/{id}/continue/` | `{idempotency_key}` | 202, a new design job resuming the given one from its checkpoint; 409 `design_not_continuable` unless it stopped as `design_waiting` or `design_unfinished` with a checkpoint |
 
 ### 7.7 Run report
 
@@ -1005,6 +1011,85 @@ the suite by exact key: numbers stay, dropped rows are soft-deleted, new rows ta
 numbers and get dataset rows from the suite's `provision.json`. Publishing
 answers `{applied, revision, scenario_count, added, removed, changed}` as for
 authored environments.
+
+### 7.9 Designs
+
+A design is a hosted job in which the environment's builder designs a new
+environment from a person's requirements, optionally starting from a root
+release (a template) and their uploaded documents, and seals it into an
+environment release and base suite that belong to the organization. Both are
+registered like any release (§7.2) with `organization` set, never as system
+releases. A sealed design is then used like a prebuilt environment: adaptation
+(§7.5), our hosted agent (§6.4) or another design. A design never writes or
+changes an agent, and it is never adapted automatically.
+
+**Job.** The payload has no `agent`; its `source` is `{kind: "provider"}` and
+its runtime runs one world. `metadata.design` and `metadata.design_result` are
+written by the platform only (a client sending them gets 400):
+
+| Field | Holds |
+|---|---|
+| `name` | the sealed environment's slug, from the request's `name` (which stays in `metadata.name`) |
+| `requirements`, `modality` | as requested |
+| `template` | `null`, or `{environment: [{digest, name, object_key}], suite: {digest, name, object_key}}`; the chain has one release |
+| `documents` | `[{id, name, content_type, sha256, size}]` |
+| `resume_from` | `null`, or the design job this one continues |
+
+**Documents.** An upload is checked by signature before it is stored under
+`harness-design-documents/<organization>/`: a PDF, a DOCX or XLSX whose zip
+holds at most 10,000 members and expands to at most 200 MiB (and 100 times its
+size), or UTF-8 text for CSV, TSV, JSON, JSONL, TXT and MD. Upload bodies are
+never captured by telemetry. Documents are parsed only inside the design's
+sandbox, each in a child process with an allow-listed environment and CPU,
+memory and output limits; the platform never parses them. A design's documents
+must have distinct names, since each is staged under its name; a repeated name
+is refused with 400 `design_documents_duplicate_name`.
+
+**Launch.** The gateway stages, as for a composition, the template's archives
+under `/work/releases`, the documents extracted read-only under
+`/work/documents`, and, for a continued design, the previous job's last
+workspace checkpoint extracted into `/work/authoring`, without the previous
+attempt's terminal state (`design-output/` and `.futureagi-build-finished.json`),
+which a later turn's checkpoint can carry. The job's command is
+the control process, `python -m fi.alk.harness.design hosted --job /work/job.json
+--releases /work/releases --workspace /work/authoring --documents /work/documents`,
+and the conversation's builder is asked to design (or to carry on). The chat's
+lease is not control-only: it checkpoints the design's workspace, which is what
+`continue/` resumes from. Its checkpoints are never published as an authored
+environment.
+
+**Interview and approval.** The builder asks one question at a time and
+proposes the design; nothing is built until the person approves it. A question
+unanswered for 15 minutes parks the design: its checkpoint holds the question,
+and the job fails as `design_waiting`.
+
+**Completion.** When the control process exits 0 or 2, the gateway packs
+`/work/authoring/design-output/` (`result.json`, `environment/`, `suite/`).
+The platform recomputes both digests and checks every file against its
+manifest (§3), registers both releases for the job's organization and records
+`metadata.design_result: {environment: {id, digest, name}, suite: {id, digest,
+name, scenarios}}`. A failed result, a missing output or any registration error
+fails the job with the reason (domain `environment`, stage `designing`); the
+releases are never registered from what the sandbox merely claims. A finished
+design's conversation answers 409 `conversation_closed`.
+
+**Customizing.** A customized template is a new root release whose
+`provenance.derived_from` is `release:<template digest>`, a label only; the
+suite's `metadata.template_suite` names the template's suite. Every imported
+table and attached file records its source document and sha256 in the
+environment's `metadata.provenance`.
+
+**Billing.** The builder's model spend is journaled to
+`/work/authoring/cost.json` and billed as authoring when the attempt is cleaned
+up, like any authoring job.
+
+
+**Publishing a design as a prebuilt environment.** A design's releases belong to its
+organization. To offer one to every organization, an operator runs
+`register_harness_release --from-design <job id>`, which takes the archives the design
+registered, recomputes both digests, checks every file and registers them again as system
+releases. A design never publishes itself. The release list (§7.6) shows only the newest
+release of each name per owner; an older one stays usable by the compositions bound to it.
 
 ## 8. Pinned later
 

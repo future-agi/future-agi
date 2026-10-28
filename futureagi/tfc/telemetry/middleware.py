@@ -50,6 +50,7 @@ SENSITIVE_BODY_ENDPOINTS = (
     "/simulate/api/harness-jobs/sources",
     "/simulate/api/harness-jobs/secret-files",
     "/simulate/api/harness-jobs/secret-values",
+    "/simulate/api/harness-environment-designs/documents",
 )
 # The router also serves each endpoint with a format suffix (`secret-values.json`, with or
 # without the trailing slash), which reaches the same view.

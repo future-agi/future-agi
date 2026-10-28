@@ -1,17 +1,24 @@
-"""Environment releases, adaptations and our hosted agents (`environment-releases.md` §6.4, §7.6).
+"""Environment releases, adaptations, designs and our hosted agents (`environment-releases.md`
+§6.4, §7.6, §7.9).
 
 Organization-scoped like the other harness routes: an organization sees system releases and its
 own, never another organization's. A customer's agent is composed with a release only through
 adaptation; our own hosted agent through the binding the platform builds for it.
 """
 
+from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status, viewsets
+from rest_framework.decorators import action
+from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from simulate.serializers.harness_job import HarnessJobReadSerializer
 from simulate.serializers.harness_release import (
+    HarnessDesignContinueRequestSerializer,
+    HarnessDesignDocumentResponseSerializer,
+    HarnessDesignRequestSerializer,
     HarnessHostedAgentRequestSerializer,
     HarnessHostedAgentResponseSerializer,
     HarnessReleaseAgentRequestSerializer,
@@ -101,3 +108,62 @@ class HarnessHostedAgentViewSet(viewsets.ViewSet):
             {"id": str(job.id), "agent_version_id": str(job.run_test.agent_version_id)},
             status=status.HTTP_201_CREATED,
         )
+
+
+class HarnessDesignViewSet(viewsets.ViewSet):
+    """Environment designs: the harness designs an environment from requirements (and a root
+    template and documents) and seals it as the organization's own release. The job is followed
+    like any harness job."""
+
+    permission_classes = [IsAuthenticated]
+
+    @validated_request(
+        request_serializer=HarnessDesignRequestSerializer,
+        responses={
+            202: HarnessJobReadSerializer,
+            404: ApiTextErrorResponseSerializer,
+            422: ApiTextErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
+    def create(self, request):
+        return HostedHarnessProvider().create_design(request)
+
+    @validated_request(
+        request_serializer=HarnessDesignContinueRequestSerializer,
+        responses={
+            202: HarnessJobReadSerializer,
+            404: ApiTextErrorResponseSerializer,
+            409: ApiTextErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="continue")
+    def continue_design(self, request, pk=None):
+        """Continue a design that stopped at an unanswered question, as a new design job."""
+        return HostedHarnessProvider().continue_design(request, pk)
+
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="documents",
+        parser_classes=[MultiPartParser],
+    )
+    @swagger_auto_schema(
+        manual_parameters=[
+            openapi.Parameter(
+                "file",
+                openapi.IN_FORM,
+                type=openapi.TYPE_FILE,
+                required=True,
+                description="One document: PDF, DOCX, XLSX, CSV, TSV, JSON, JSONL, TXT or MD.",
+            ),
+        ],
+        responses={
+            201: HarnessDesignDocumentResponseSerializer,
+            413: ApiTextErrorResponseSerializer,
+            415: ApiTextErrorResponseSerializer,
+        },
+    )
+    def documents(self, request):
+        return HostedHarnessProvider().upload_design_document(request)

@@ -60,8 +60,10 @@ export const jobStatusFor = (status) =>
 // terminal-failed job as still building (the header stuck on "Building" with the
 // animation never stopping). A failed/canceled stage is now BUILD_STATUS.FAILED.
 export const buildStatusFor = (stage) => {
-  if (stage === HARNESS_STAGE.COMPLETED || stage === HARNESS_STAGE.RUNNING) return BUILD_STATUS.READY;
-  if (stage === HARNESS_STAGE.FAILED || stage === HARNESS_STAGE.CANCELED) return BUILD_STATUS.FAILED;
+  if (stage === HARNESS_STAGE.COMPLETED || stage === HARNESS_STAGE.RUNNING)
+    return BUILD_STATUS.READY;
+  if (stage === HARNESS_STAGE.FAILED || stage === HARNESS_STAGE.CANCELED)
+    return BUILD_STATUS.FAILED;
   return BUILD_STATUS.BUILDING;
 };
 
@@ -111,6 +113,8 @@ export function harnessEnvToRow(item) {
   return {
     id: item?.id,
     name: item?.name,
+    // A design (environment-releases.md §7.9) is followed on its job page, not the workspace.
+    design: item?.source_kind === "design",
     // §1 always reports status and agent_type, so these are passed through
     // rather than defaulted — inventing "building"/"chat" for a missing value
     // would hide a real data gap. `agent_type` is one of two modalities.

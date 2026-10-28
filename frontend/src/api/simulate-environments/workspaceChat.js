@@ -269,7 +269,8 @@ export function useWorkspaceChat(env, { source } = {}) {
     stop,
     frozen,
     frozenReason,
-    inFlight: conversationInFlight(conversation),
+    // A frozen chat belongs to a finished run: nothing it left queued will be answered.
+    inFlight: !frozen && conversationInFlight(conversation),
     // A question or confirmation is open and the user can still answer it. A
     // frozen chat (job ended without a saved workspace, conversation retired)
     // can keep an open question on the backend, but there is nothing to do.

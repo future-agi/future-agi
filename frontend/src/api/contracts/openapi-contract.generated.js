@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1080,
+  endpointCount: 1083,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -28191,6 +28191,79 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/HarnessJobRead",
           },
           404: {
+            $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environment-designs/": {
+      post: {
+        operationId: "simulate_api_harness-environment-designs_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessDesignRequest",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/HarnessJobRead",
+          },
+          404: {
+            $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          422: {
+            $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environment-designs/documents/": {
+      post: {
+        operationId: "simulate_api_harness-environment-designs_documents",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/HarnessDesignDocumentResponse",
+          },
+          413: {
+            $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          415: {
+            $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environment-designs/{id}/continue/": {
+      post: {
+        operationId: "simulate_api_harness-environment-designs_continue_design",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessDesignContinueRequest",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/HarnessJobRead",
+          },
+          404: {
+            $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          409: {
             $ref: "#/definitions/ApiTextErrorResponse",
           },
           default: {
@@ -64012,6 +64085,92 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessDesignContinueRequest: {
+      required: ["idempotency_key"],
+      type: "object",
+      properties: {
+        idempotency_key: {
+          title: "Idempotency key",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+      },
+    },
+    HarnessDesignDocumentResponse: {
+      required: ["id", "name", "content_type", "sha256", "size"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        content_type: {
+          title: "Content type",
+          type: "string",
+          minLength: 1,
+        },
+        sha256: {
+          title: "Sha256",
+          type: "string",
+          minLength: 1,
+        },
+        size: {
+          title: "Size",
+          type: "integer",
+        },
+      },
+    },
+    HarnessDesignRequest: {
+      required: ["name", "requirements", "idempotency_key"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        requirements: {
+          title: "Requirements",
+          type: "string",
+          maxLength: 20000,
+          minLength: 1,
+        },
+        modality: {
+          title: "Modality",
+          type: "string",
+          enum: ["chat", "voice"],
+          default: "chat",
+        },
+        template_suite_id: {
+          title: "Template suite id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        document_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          maxItems: 100,
+        },
+        idempotency_key: {
+          title: "Idempotency key",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+      },
+    },
     HarnessEnvironmentAddEvaluation: {
       required: ["name"],
       type: "object",
@@ -93994,6 +94153,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "tool_result",
             "question_requested",
             "confirmation_requested",
+            "question_answered",
             "turn_interrupted",
             "turn_completed",
             "checkpoint_committed",
@@ -95713,6 +95873,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "name",
         "system",
         "parent",
+        "derived_from",
+        "provenance",
         "tools",
         "policy",
         "suites",
@@ -95740,6 +95902,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         parent: {
           $ref: "#/definitions/HarnessReleaseParent",
+        },
+        derived_from: {
+          $ref: "#/definitions/HarnessReleaseDerivedFrom",
+        },
+        provenance: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessReleaseProvenance",
+          },
         },
         tools: {
           type: "array",
@@ -113012,6 +113183,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessReleaseDerivedFrom: {
+      description: "The template a designed release was customized from.",
+      required: ["digest", "name"],
+      type: "object",
+      properties: {
+        digest: {
+          title: "Digest",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          description: "Null when the template is not visible to you.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
     HarnessReleaseParent: {
       required: ["digest", "name"],
       type: "object",
@@ -113044,6 +113235,43 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/HarnessReleaseAgentRule",
           },
+        },
+      },
+    },
+    HarnessReleaseProvenance: {
+      required: ["target", "document", "sha256"],
+      type: "object",
+      properties: {
+        target: {
+          title: "Target",
+          description:
+            "`table:<name>` for imported rows, else the attached file's path.",
+          type: "string",
+          minLength: 1,
+        },
+        document: {
+          title: "Document",
+          type: "string",
+          minLength: 1,
+        },
+        part: {
+          title: "Part",
+          type: "string",
+        },
+        sha256: {
+          title: "Sha256",
+          type: "string",
+          minLength: 1,
+        },
+        rows: {
+          title: "Rows",
+          type: "integer",
+          "x-nullable": true,
+        },
+        replaced: {
+          title: "Replaced",
+          description: "Personal details replaced with made-up ones.",
+          type: "integer",
         },
       },
     },

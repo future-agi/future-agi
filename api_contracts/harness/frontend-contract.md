@@ -213,7 +213,8 @@ where the frontend uses them.
 | `GET harness-environments/{id}/runs/{run_id}/report/?baseline=` | §7.7 | Run detail: Report tab; `run_id` and `baseline` are test execution ids |
 
 A question counts as answered once a user message replies to it;
-its buttons stay visible and disabled.
+its buttons stay visible and disabled. The builder's `question_answered` event then
+clears `blocking_input` and completes the reply while its turn carries on.
 
 ## Not in v0
 

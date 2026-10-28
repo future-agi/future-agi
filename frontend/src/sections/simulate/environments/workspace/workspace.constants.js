@@ -31,7 +31,12 @@ export const WORKSPACE_TABS = [
     badge: "evals",
     hint: "These decide whether each task passed. Pick them from the library and map their inputs onto what the run produces.",
   },
-  { id: "runs", label: "Runs", icon: "solar:play-circle-linear", badge: "runs" },
+  {
+    id: "runs",
+    label: "Runs",
+    icon: "solar:play-circle-linear",
+    badge: "runs",
+  },
   {
     id: "settings",
     label: "Settings",
@@ -56,21 +61,27 @@ export const WORKSPACE_COPY = {
   buildingLabel: "Building",
   finalizingLabel: "Finalizing",
   failedLabel: "Failed",
-  liveTooltip: "Environment is ready to run. You can edit via the builder or inline.",
+  liveTooltip:
+    "Environment is ready to run. You can edit via the builder or inline.",
   buildingTooltip: "Environment is still being built…",
   finalizingTooltip: "Wrapping up the build…",
   cancellingLabel: "Cancelling",
   cancellingTooltip: "Stopping the build and cleaning up its sandbox.",
   cancelledLabel: "Cancelled",
   cancelledTooltip: "You cancelled this build.",
-  runningTooltip: "A simulation is running. Results land under Runs when it finishes.",
+  runningTooltip:
+    "A simulation is running. Results land under Runs when it finishes.",
   failedTooltip: "This environment failed to build.",
+  designTooltip:
+    "A designed environment has no agent of its own: use it with your agent or run ours.",
   run: "Run simulation",
   moreActions: "More actions",
   fork: "Fork environment",
-  forkHint: "Duplicate the world for a different agent or team. Agent + runs reset.",
+  forkHint:
+    "Duplicate the world for a different agent or team. Agent + runs reset.",
   deleteEnv: "Delete environment",
-  deleteEnvHint: "Remove this environment and cancel any live run. This can't be undone.",
+  deleteEnvHint:
+    "Remove this environment and cancel any live run. This can't be undone.",
   notFound: {
     title: "Environment not found",
     body: "It may have been removed from your workspace.",
@@ -103,7 +114,8 @@ export const WORKSPACE_COPY = {
     generic: "Setup incomplete",
     starting: "Starting a run",
     notReady: "This environment hasn't finished building",
-    noRunTest: "This environment isn't linked to a run yet. Rebuild it to run simulations.",
+    noRunTest:
+      "This environment isn't linked to a run yet. Rebuild it to run simulations.",
     detailFailed: "This environment's details didn't load. Retry them first.",
     detailLoading: "Loading this environment's details",
   },

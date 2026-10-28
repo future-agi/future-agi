@@ -475,6 +475,8 @@ class HarnessJobCreateSerializer(serializers.Serializer):
             # Written only by the release services; they name the archives a sandbox unpacks.
             "adaptation",
             "adaptation_result",
+            "design",
+            "design_result",
             "release_composition",
             "run_manifest",
         }
@@ -721,6 +723,23 @@ def missing_provider_credentials(agent, detected_connectors=()):
         if alias not in present
     ]
 
+
+
+class HarnessDesignCreateSerializer(HarnessJobCreateSerializer):
+    """A design job's payload (contract §7.9): no agent and no source, because the harness designs
+    the environment rather than testing an agent. `metadata.design` is written by the design
+    service only. It runs one world at a time."""
+
+    agent = None
+
+    def validate(self, attrs):
+        for name in ("runtime", "security", "retry"):
+            if not attrs.get(name):
+                attrs[name] = self.fields[name].run_validation({})
+        attrs["source"] = {"kind": "provider", "visibility": "public"}
+        attrs["runtime"]["parallelism"] = 1
+        self._apply_sandbox_runtime_limits(attrs["runtime"])
+        return attrs
 
 class HarnessJobActionSerializer(serializers.Serializer):
     reason = serializers.ChoiceField(

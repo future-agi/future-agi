@@ -20,6 +20,7 @@ from .harness_environment_credentials import (
 )
 from .harness_release import (
     HarnessAgentBinding,
+    HarnessDesignDocument,
     HarnessEnvironmentRelease,
     HarnessRunManifest,
     HarnessSuiteRelease,
@@ -76,6 +77,7 @@ __all__ = [
     "HarnessCredentialFile",
     "HarnessEnvironmentCredentials",
     "HarnessAgentBinding",
+    "HarnessDesignDocument",
     "HarnessEnvironmentRelease",
     "HarnessRunManifest",
     "HarnessSuiteRelease",

@@ -26,12 +26,14 @@ import { useNavigate, useParams } from "react-router-dom";
 import Iconify from "src/components/iconify";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import StatusChip from "src/components/custom-status-chip/CustomStatusChip";
+import { STATUS_TYPES } from "src/utils/statusUtils";
 import ScenarioOutcome from "./ScenarioOutcome";
 import CustomTooltip from "src/components/tooltip";
 
 import StageOutput from "./StageOutput";
 import ConversationPrompt from "./ConversationPrompt";
 import AdaptationProgress from "./AdaptationProgress";
+import DesignProgress from "./DesignProgress";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import EnvironmentSwitcher from "src/components/harness/EnvironmentSwitcher";
 import { compactActivityEvents } from "./activityEvents";
@@ -440,6 +442,13 @@ export default function HarnessDetail() {
     blockingInput?.question ? { value: content } : null;
   const answeredIds = answeredMessageIds(current?.conversation?.messages);
   const isAdaptation = Boolean(current?.job?.metadata?.adaptation);
+  const isDesign = Boolean(current?.job?.metadata?.design);
+  // A composition (environment-releases.md §7.3) builds nothing: it binds an agent to released
+  // environments, so build progress, stages and authoring usage do not apply to it.
+  const composition = current?.job?.metadata?.release_composition;
+  const built = !isDesign && !composition;
+  // A design that stopped on an unanswered question is waiting, not broken: Continue resumes it.
+  const parked = isDesign && status?.failure?.code === "design_waiting";
 
   // Only the finished prefix folds away, so the stage a run failed or stopped on is never
   // hidden by collapsing — it is the first row still on screen.
@@ -456,7 +465,11 @@ export default function HarnessDetail() {
 
   // ALK reports one artifact per stage group. "Runs" is the catch-all so a new kind never
   // disappears: anything that is not a named tab lands there alongside the activity feed.
-  const stageOutputs = current?.stage_outputs || [];
+  // A composition's `stores` output feeds the environment workspace's World section; its
+  // tables are already on this page's Environment tab.
+  const stageOutputs = (current?.stage_outputs || []).filter(
+    (output) => output.id !== "release-stores",
+  );
   const selectedOutputs = stageOutputs.filter((output) =>
     detailTab === "runs"
       ? !["contract", "environment", "scenarios"].includes(output.kind)
@@ -796,8 +809,12 @@ export default function HarnessDetail() {
 
             <Stack direction="row" alignItems="center" spacing={1.5}>
               <StatusChip
-                label={readable(status?.stage)}
-                status={stageStatus(status?.stage)}
+                label={
+                  parked ? "Waiting for your answer" : readable(status?.stage)
+                }
+                status={
+                  parked ? STATUS_TYPES.UNSET : stageStatus(status?.stage)
+                }
                 showIcon={false}
               />
               {canViewSimulation && (
@@ -859,7 +876,7 @@ export default function HarnessDetail() {
             clamped={current.job?.metadata?.parallelism_clamped}
             warnings={current.job?.metadata?.parallelism_warnings}
           />
-          {current.parallelism && (
+          {current.parallelism && !isDesign && (
             <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
               World slots: {current.parallelism.effective} effective /{" "}
               {current.parallelism.admitted ?? current.parallelism.effective}{" "}
@@ -929,15 +946,19 @@ export default function HarnessDetail() {
                 </IconButton>
               </CustomTooltip>
             </Stack>
-            <LinearProgress
-              variant="determinate"
-              value={progress}
-              color={status?.stage === "failed" ? "error" : "primary"}
-              sx={{ mt: 1.5 }}
-            />
+            {/* A design has no scenarios to count or build stages to tick; its own steps
+                are in DesignProgress below. */}
+            {built && (
+              <LinearProgress
+                variant="determinate"
+                value={progress}
+                color={status?.stage === "failed" ? "error" : "primary"}
+                sx={{ mt: 1.5 }}
+              />
+            )}
             <Stack direction="row" justifyContent="space-between" mt={0.5}>
               <Typography variant="caption" color="text.secondary">
-                {scenarioTally(status, current.job)}
+                {built ? scenarioTally(status, current.job) : ""}
               </Typography>
               {elapsedLabel && (
                 <Typography variant="caption" color="text.secondary">
@@ -956,7 +977,19 @@ export default function HarnessDetail() {
               {isTerminal ? `${updatedLabel} · ` : ""}attempt{" "}
               {status?.attempt || 1}
             </Typography>
-            <Box sx={{ mt: 1.5 }}>
+            {composition && (
+              <Typography
+                variant="body2"
+                color="text.secondary"
+                sx={{ mt: 1.5 }}
+              >
+                Composed from{" "}
+                {(composition.environment || []).at(-1)?.name || "a release"} ·{" "}
+                {(current.scenarios || []).length} scenarios. Its runs are
+                listed under Runs.
+              </Typography>
+            )}
+            <Box sx={{ mt: 1.5, display: composition ? "none" : "block" }}>
               <Typography variant="caption" fontWeight={600}>
                 Consumption
               </Typography>
@@ -1001,10 +1034,18 @@ export default function HarnessDetail() {
                 stage={status?.stage}
               />
             )}
+            {isDesign && (
+              <DesignProgress
+                job={current.job}
+                conversation={current.conversation}
+                stage={status?.stage}
+                failure={status?.failure}
+              />
+            )}
 
             {/* Finished stages fold away: on a completed run the full list is fifteen ticks
                 carrying no information. A run that ended badly always stays expanded. */}
-            {collapsible && (
+            {collapsible && built && (
               <Button
                 fullWidth
                 color="inherit"
@@ -1044,82 +1085,84 @@ export default function HarnessDetail() {
               </Button>
             )}
 
-            <Stack spacing={1.1} sx={{ pl: collapsible ? "11px" : 0 }}>
-              {visibleStages.map((stage) => {
-                const index = stages.indexOf(stage);
-                const state = stageState(status, index, current?.events);
-                const muted = state === STAGE_STATE.PENDING;
-                const isCurrent = state === STAGE_STATE.ACTIVE;
-                // accent.* are the mode-aware status tokens; success.main/error.main are
-                // tuned for light only and fail contrast on the dark surface.
-                const glyph = {
-                  [STAGE_STATE.DONE]: {
-                    icon: "solar:check-circle-bold",
-                    color: "accent.pass",
-                  },
-                  [STAGE_STATE.ACTIVE]: {
-                    icon: "solar:record-circle-bold",
-                    color: "accent.info",
-                  },
-                  [STAGE_STATE.FAILED]: {
-                    icon: "solar:close-circle-bold",
-                    color: "accent.fail",
-                  },
-                  [STAGE_STATE.STOPPED]: {
-                    icon: "solar:pause-circle-bold",
-                    color: "text.secondary",
-                  },
-                  [STAGE_STATE.PENDING]: {
-                    icon: "solar:record-circle-linear",
-                    color: "text.secondary",
-                  },
-                }[state];
-                return (
-                  <Stack
-                    key={stage}
-                    direction="row"
-                    spacing={1.2}
-                    alignItems="flex-start"
-                  >
-                    <Iconify
-                      icon={glyph.icon}
-                      color={glyph.color}
-                      width={18}
-                      sx={{
-                        opacity: muted ? 0.6 : 1,
-                        mt: "1px",
-                        flexShrink: 0,
-                      }}
-                    />
-                    <Box sx={{ minWidth: 0 }}>
-                      <Typography
-                        variant="body2"
-                        color={
-                          state === STAGE_STATE.FAILED
-                            ? "accent.fail"
-                            : muted
-                              ? "text.secondary"
-                              : "text.primary"
-                        }
+            {built && (
+              <Stack spacing={1.1} sx={{ pl: collapsible ? "11px" : 0 }}>
+                {visibleStages.map((stage) => {
+                  const index = stages.indexOf(stage);
+                  const state = stageState(status, index, current?.events);
+                  const muted = state === STAGE_STATE.PENDING;
+                  const isCurrent = state === STAGE_STATE.ACTIVE;
+                  // accent.* are the mode-aware status tokens; success.main/error.main are
+                  // tuned for light only and fail contrast on the dark surface.
+                  const glyph = {
+                    [STAGE_STATE.DONE]: {
+                      icon: "solar:check-circle-bold",
+                      color: "accent.pass",
+                    },
+                    [STAGE_STATE.ACTIVE]: {
+                      icon: "solar:record-circle-bold",
+                      color: "accent.info",
+                    },
+                    [STAGE_STATE.FAILED]: {
+                      icon: "solar:close-circle-bold",
+                      color: "accent.fail",
+                    },
+                    [STAGE_STATE.STOPPED]: {
+                      icon: "solar:pause-circle-bold",
+                      color: "text.secondary",
+                    },
+                    [STAGE_STATE.PENDING]: {
+                      icon: "solar:record-circle-linear",
+                      color: "text.secondary",
+                    },
+                  }[state];
+                  return (
+                    <Stack
+                      key={stage}
+                      direction="row"
+                      spacing={1.2}
+                      alignItems="flex-start"
+                    >
+                      <Iconify
+                        icon={glyph.icon}
+                        color={glyph.color}
+                        width={18}
                         sx={{
                           opacity: muted ? 0.6 : 1,
-                          fontWeight: isCurrent ? 600 : 400,
+                          mt: "1px",
+                          flexShrink: 0,
                         }}
-                      >
-                        {readable(stage)}
-                      </Typography>
-                      {/* Only six of the fifteen stages emit an event, so this is absent more
-                          often than not. Omitted rather than zeroed: 0s would read as instant. */}
-                      {isCurrent && stageLabel && (
-                        <Typography variant="caption" color="text.secondary">
-                          {stageLabel}
+                      />
+                      <Box sx={{ minWidth: 0 }}>
+                        <Typography
+                          variant="body2"
+                          color={
+                            state === STAGE_STATE.FAILED
+                              ? "accent.fail"
+                              : muted
+                                ? "text.secondary"
+                                : "text.primary"
+                          }
+                          sx={{
+                            opacity: muted ? 0.6 : 1,
+                            fontWeight: isCurrent ? 600 : 400,
+                          }}
+                        >
+                          {readable(stage)}
                         </Typography>
-                      )}
-                    </Box>
-                  </Stack>
-                );
-              })}
-            </Stack>
+                        {/* Only six of the fifteen stages emit an event, so this is absent more
+                          often than not. Omitted rather than zeroed: 0s would read as instant. */}
+                        {isCurrent && stageLabel && (
+                          <Typography variant="caption" color="text.secondary">
+                            {stageLabel}
+                          </Typography>
+                        )}
+                      </Box>
+                    </Stack>
+                  );
+                })}
+              </Stack>
+            )}
           </Box>
 
           <Box
@@ -1611,7 +1654,8 @@ export default function HarnessDetail() {
               )}
             </Box>
 
-            {current && (
+            {/* A finished design's chat is closed and has no saved world to add scenarios to. */}
+            {current && !(isDesign && isTerminal) && (
               <Box
                 sx={{
                   flexShrink: 0,

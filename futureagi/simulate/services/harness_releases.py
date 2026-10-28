@@ -18,7 +18,9 @@ import io
 import json
 import re
 import shlex
+import sqlite3
 import tarfile
+import tempfile
 from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -57,6 +59,9 @@ BINDING_PROOF_SCHEMA = "futureagi.binding-proof.v1"
 RUN_MANIFEST_SCHEMA = "futureagi.run-manifest.v1"
 ADAPTATION_RESULT_SCHEMA = "futureagi.adaptation-result.v1"
 RUNTIME_ENGINE = "postgres"
+# A release's world snapshot, and the table its configurable policy lives in (contract §2.1).
+WORLD = "world"
+POLICY_TABLE = "environment_policy"
 # What `compose` builds (contract §6); anything else would fail inside the sandbox.
 HOSTED_AGENT = "hosted_agent"
 COMPOSABLE = {
@@ -287,12 +292,23 @@ def _suite_summary(suite: HarnessSuiteRelease) -> dict[str, Any]:
 
 def list_releases(organization) -> list[dict[str, Any]]:
     """The environment releases `organization` may compose (contract §7.6): system releases and
-    its own, each with the suites it may use."""
-    environments = list(
+    its own, each with the suites it may use. Re-registering a changed environment under the
+    same name supersedes the older release: only the newest of each name per owner is listed,
+    while the older ones stay usable by the compositions already bound to them."""
+    usable = list(
         _usable(HarnessEnvironmentRelease, organization)
         .select_related("parent")
         .order_by("name", "created_at")
     )
+    newest = {(one.organization_id, one.name): one for one in usable}
+    # A design published as a prebuilt environment is the same content as the organization's
+    # own release; the prebuilt one is listed in its place.
+    published = {one.digest for one in newest.values() if one.organization_id is None}
+    environments = [
+        one
+        for one in newest.values()
+        if one.organization_id is None or one.digest not in published
+    ]
     suites: dict[Any, list[HarnessSuiteRelease]] = {}
     for suite in (
         _usable(HarnessSuiteRelease, organization)
@@ -300,9 +316,13 @@ def list_releases(organization) -> list[dict[str, Any]]:
         .order_by("name", "created_at")
     ):
         suites.setdefault(suite.environment_id, []).append(suite)
+    # A design may name a template that has since been superseded.
+    named = {environment.digest: environment.name for environment in usable}
     results = []
     for environment in environments:
         rules = (environment.policy or {}).get("rules") or []
+        manifest = environment.manifest or {}
+        derived = str((manifest.get("provenance") or {}).get("derived_from") or "")
         results.append(
             {
                 "id": str(environment.id),
@@ -316,6 +336,18 @@ def list_releases(organization) -> list[dict[str, Any]]:
                     }
                     if environment.parent_id
                     else None
+                ),
+                # A designed release names its template as `release:<digest>` (decision 2).
+                "derived_from": (
+                    {
+                        "digest": derived.removeprefix("release:"),
+                        "name": named.get(derived.removeprefix("release:")),
+                    }
+                    if derived.startswith("release:")
+                    else None
+                ),
+                "provenance": list(
+                    (manifest.get("metadata") or {}).get("provenance") or []
                 ),
                 "tools": [
                     {
@@ -1370,3 +1402,167 @@ def complete_adaptation(job: HostedHarnessJob, output: Path | None) -> HostedHar
             blocking_input=None, updated_at=now
         )
     return locked
+
+
+# A world table shown on an environment's page: its first rows, enough to see what it holds.
+_WORLD_SAMPLE_ROWS = 5
+_INTERNAL_TABLES = frozenset({POLICY_TABLE, "_alk_tool_trace", "clock"})
+
+
+def _world_tables(world: bytes) -> list[dict[str, Any]]:
+    with tempfile.NamedTemporaryFile(suffix=".sqlite") as file:
+        file.write(world)
+        file.flush()
+        connection = sqlite3.connect(f"file:{file.name}?mode=ro", uri=True)
+        try:
+            tables = []
+            for (name,) in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' "
+                "AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            ):
+                if name in _INTERNAL_TABLES:
+                    continue
+                cursor = connection.execute(
+                    f'SELECT * FROM "{name}" LIMIT {_WORLD_SAMPLE_ROWS}'
+                )
+                types = {
+                    row[1]: row[2] or "TEXT"
+                    for row in connection.execute(f'PRAGMA table_info("{name}")')
+                }
+                tables.append(
+                    {
+                        "name": name,
+                        "columns": [column[0] for column in cursor.description],
+                        "types": types,
+                        "rows": connection.execute(
+                            f'SELECT count(*) FROM "{name}"'
+                        ).fetchone()[0],
+                        "sample": [list(row) for row in cursor.fetchall()],
+                    }
+                )
+            return tables
+        finally:
+            connection.close()
+
+
+def _world_outputs(
+    chain: list[HarnessEnvironmentRelease],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """A released environment's world as stage outputs (its tables with row counts and first
+    rows, and the workspace's `stores` view of them), and the tables themselves."""
+    environment = chain[-1]
+    rules = (environment.policy or {}).get("rules") or []
+    world: dict[str, Any] = {}
+    for release in reversed(chain):
+        files = archive_files(_download(release.object_key))
+        if f"{WORLD}/world.sqlite" in files:
+            world = files
+            break
+    tables = _world_tables(world[f"{WORLD}/world.sqlite"]) if world else []
+    counts = [{"name": table["name"], "rows": table["rows"]} for table in tables]
+    return [
+        {
+            "id": "release-environment",
+            "kind": "environment",
+            "title": "Environment",
+            "summary": environment.name,
+            "data": {
+                "kind": "world",
+                "project": environment.name,
+                "managed": True,
+                "release": {"digest": environment.digest, "name": environment.name},
+                "tables": tables,
+                # The workspace's World section reads the seeded tables from here.
+                "seed": {"tables": counts},
+                "rules": [
+                    {
+                        "id": rule["id"],
+                        "class": rule.get("class"),
+                        "text": rule.get("text"),
+                    }
+                    for rule in rules
+                ],
+            },
+        },
+        {
+            "id": "release-stores",
+            "kind": "stores",
+            "title": "Stores",
+            "summary": environment.name,
+            "data": [{"capability": "world", "engine": "postgres", "tables": counts}],
+        },
+    ], tables
+
+
+def design_world_outputs(
+    environment: HarnessEnvironmentRelease,
+) -> list[dict[str, Any]]:
+    """What a sealed design adds to its own stage outputs: the world it sealed. Its contract,
+    scenarios and sub-goals are already there from the session's checkpoints."""
+    chain = (
+        [environment.parent, environment] if environment.parent_id else [environment]
+    )
+    outputs, _tables = _world_outputs(chain)
+    return outputs
+
+
+def composition_stage_outputs(job: HostedHarnessJob) -> list[dict[str, Any]]:
+    """What a composition's Contract and Environment tabs show (contract §7.3). A composition
+    authored nothing, so it has no stage outputs of its own; these describe the agent it runs
+    and the released world it runs in, read from the releases themselves."""
+    composition = ((job.payload or {}).get("metadata") or {}).get("release_composition")
+    if not composition:
+        return []
+    chain = [
+        HarnessEnvironmentRelease.no_workspace_objects.filter(
+            digest=one["digest"], object_key=one["object_key"]
+        ).first()
+        for one in composition["environment"]
+    ]
+    if any(release is None for release in chain):
+        return []
+    environment = chain[-1]
+    agent = (job.payload or {}).get("agent") or {}
+    connector = str(agent.get("connector") or "")
+    config = agent.get("config") or {}
+    reference = (composition.get("binding") or {}).get("agent") or {}
+    definition = AgentDefinition.objects.filter(
+        id=reference.get("agent_definition_id")
+    ).first()
+    if connector == HOSTED_AGENT:
+        label = f"Our agent ({config.get('model')})"
+    else:
+        label = f"{definition.agent_name if definition else 'Your agent'} ({connector})"
+    rules = (environment.policy or {}).get("rules") or []
+    world, tables = _world_outputs(chain)
+    return [
+        {
+            "id": "release-contract",
+            "kind": "contract",
+            "title": "Contract",
+            "summary": label,
+            "data": {
+                "agent": label,
+                "agent_definition_id": str(definition.id) if definition else None,
+                "instructions": config.get("instructions")
+                if connector == HOSTED_AGENT
+                else None,
+                "one_liner": f"{label} on the {environment.name} environment",
+                "modality": MODALITY.get(connector, ""),
+                "runtime": "our hosted agent"
+                if connector == HOSTED_AGENT
+                else f"your {connector} agent",
+                "tools": [
+                    {"name": tool["name"], "description": tool.get("description") or ""}
+                    for tool in environment.tools
+                ],
+                "hard_constraints": [
+                    rule.get("text") or rule["id"]
+                    for rule in rules
+                    if rule.get("class") == "agent_policy"
+                ],
+                "data_schema": {table["name"]: table["types"] for table in tables},
+            },
+        },
+        *world,
+    ]

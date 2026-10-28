@@ -262,6 +262,14 @@ def _validate_known_hosted_egress(payload: dict[str, Any], callback_url: str) ->
 
 def _metadata_for_read(job: HostedHarnessJob) -> dict[str, Any]:
     metadata = job.payload.get("metadata", {})
+    renamed = str(job.name or "").strip()
+    if isinstance(metadata, dict) and renamed:
+        # A name set through the rename endpoint wins, as on the environments list.
+        metadata = {
+            **metadata,
+            "name": renamed,
+            **({"agent_name": renamed} if metadata.get("agent_name") else {}),
+        }
     if not isinstance(metadata, dict) or "observability_refusal" not in metadata:
         return metadata
     if not job.run_test_id:
@@ -311,6 +319,16 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
     ]
     if not stage_outputs:
         stage_outputs = list(job.stage_outputs or [])
+    if not stage_outputs and job.state == HostedHarnessJob.State.COMPLETED:
+        from simulate.services.harness_releases import composition_stage_outputs
+
+        # A composition authored nothing: its tabs describe its agent and released world,
+        # read from the releases once and kept (without touching updated_at).
+        stage_outputs = composition_stage_outputs(job)
+        if stage_outputs:
+            HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+                stage_outputs=stage_outputs
+            )
     # Scenarios — bounded to job.scenario_count.
     scenario_regs = list(
         HostedHarnessScenario.no_workspace_objects.filter(job=job)
@@ -1144,6 +1162,174 @@ class HostedHarnessProvider:
             return Response(exc.as_dict(), status=exc.status_code)
         return self._submit(request, organization, payload, data["idempotency_key"])
 
+    def create_design(self, request) -> Response:
+        """Start designing an environment (contract §7.9): a hosted job whose payload carries
+        `metadata.design`, from requirements and optionally a root template and documents."""
+        from simulate.services.harness_designs import design_payload
+        from simulate.services.harness_releases import visible_suite
+        from simulate.services.hosted_harness import HostedHarnessError
+
+        organization = request_organization(request)
+        if organization is None:
+            return Response(
+                build_error_envelope(
+                    "Organization not found", status_code=status.HTTP_404_NOT_FOUND
+                ),
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        data = request.validated_data
+        try:
+            payload = design_payload(
+                organization,
+                name=data["name"],
+                requirements=data["requirements"],
+                modality=data["modality"],
+                template_suite=(
+                    visible_suite(organization, data["template_suite_id"])
+                    if data.get("template_suite_id")
+                    else None
+                ),
+                document_ids=data.get("document_ids") or [],
+            )
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+        return self._submit_design(
+            request, organization, payload, data["idempotency_key"]
+        )
+
+    def continue_design(self, request, pk) -> Response:
+        """Continue a design that stopped at an unanswered question or out of time, from its
+        last checkpoint, as a new design job."""
+        from simulate.services.harness_designs import continued_payload
+        from simulate.services.hosted_harness import HostedHarnessError
+
+        organization = request_organization(request)
+        job = self._job(request, pk)
+        if organization is None or job is None:
+            return Response(
+                build_error_envelope(
+                    "Design not found", status_code=status.HTTP_404_NOT_FOUND
+                ),
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        try:
+            payload = continued_payload(organization, job)
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+        return self._submit_design(
+            request, organization, payload, request.validated_data["idempotency_key"]
+        )
+
+    def upload_design_document(self, request) -> Response:
+        """Store one document for a design (contract §7.9); it is parsed only in the sandbox."""
+        from simulate.services.harness_designs import (
+            DOCUMENT_MAX_BYTES,
+            serialize_document,
+            store_design_document,
+        )
+        from simulate.services.hosted_harness import HostedHarnessError
+
+        # Refused on its declared length, before Django buffers the body.
+        try:
+            declared = int(request.META.get("CONTENT_LENGTH") or 0)
+        except ValueError:
+            declared = 0
+        if declared > DOCUMENT_MAX_BYTES + 1024 * 1024:
+            return Response(
+                build_error_envelope(
+                    "a document may be at most 25 MB",
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    code="document_too_large",
+                ),
+                status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            )
+        organization = request_organization(request)
+        if organization is None:
+            return Response(
+                build_error_envelope(
+                    "Organization not found", status_code=status.HTTP_404_NOT_FOUND
+                ),
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        upload = request.FILES.get("file")
+        if upload is None or len(request.FILES.getlist("file")) != 1:
+            return Response(
+                build_error_envelope(
+                    "upload exactly one file as `file`",
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                ),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if upload.size > DOCUMENT_MAX_BYTES:
+            return Response(
+                build_error_envelope(
+                    "a document may be at most 25 MB",
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    code="document_too_large",
+                ),
+                status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            )
+        try:
+            document = store_design_document(
+                organization,
+                request_workspace(request),
+                request.user,
+                name=upload.name,
+                body=upload.read(),
+            )
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+        return Response(serialize_document(document), status=status.HTTP_201_CREATED)
+
+    def _submit_design(
+        self, request, organization, payload: dict, idempotency_key: str
+    ) -> Response:
+        """Admit a design: its authoring is the only usage it meters before it runs."""
+        from simulate.services.harness_usage import require_harness_authoring
+        from simulate.services.hosted_harness import (
+            HostedHarnessError,
+            create_hosted_job,
+        )
+        from simulate.temporal.client import start_hosted_harness_gateway_workflow
+
+        base_url = (
+            getattr(settings, "HARNESS_PUBLIC_BASE_URL", "")
+            or request.build_absolute_uri("/")
+        ).rstrip("/")
+        try:
+            require_harness_authoring(str(organization.id))
+        except Exception as exc:
+            response = _usage_limit_response(exc)
+            if response is not None:
+                return response
+            raise
+        try:
+            job, _ = create_hosted_job(
+                organization,
+                payload,
+                idempotency_key=idempotency_key,
+                workspace=request_workspace(request),
+            )
+            retry_cfg = job.payload["retry"]
+            start_hosted_harness_gateway_workflow(
+                str(job.id),
+                base_url,
+                retry_cfg["max_infrastructure_attempts"],
+                retry_cfg["initial_backoff_seconds"],
+                retry_cfg["max_backoff_seconds"],
+            )
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+        except Exception:
+            return Response(
+                build_error_envelope(
+                    "Hosted harness scheduler is unavailable",
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                ),
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        return Response(serialize_job(job), status=status.HTTP_202_ACCEPTED)
+
     def _submit(
         self, request, organization, payload: dict, idempotency_key: str
     ) -> Response:
@@ -1609,6 +1795,24 @@ class HostedHarnessProvider:
             return Response(
                 build_error_envelope(
                     "This adaptation has finished; start a new one to change it.",
+                    status_code=status.HTTP_409_CONFLICT,
+                    code="conversation_closed",
+                ),
+                status=status.HTTP_409_CONFLICT,
+            )
+        if job.state in terminal_states and (
+            (job.payload or {}).get("metadata") or {}
+        ).get("design"):
+            # Only the design process answers its conversation, and it has exited.
+            waiting = (job.failure or {}).get("code") in {
+                "design_waiting",
+                "design_unfinished",
+            }
+            return Response(
+                build_error_envelope(
+                    "This design stopped before it was finished; continue it to carry on."
+                    if waiting
+                    else "This design has finished; start a new design from it to change it.",
                     status_code=status.HTTP_409_CONFLICT,
                     code="conversation_closed",
                 ),
