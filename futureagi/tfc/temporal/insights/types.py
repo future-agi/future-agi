@@ -16,3 +16,6 @@ class InsightBatchInput:
 class InsightFailInput:
     run_id: str
     message: str
+    # Why only an administrator can fix it (ee.agenthub.insights.llm.LICENSE,
+    # MODEL_SETUP), or "".
+    code: str = ""

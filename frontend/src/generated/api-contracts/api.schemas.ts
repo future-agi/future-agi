@@ -26707,6 +26707,7 @@ export interface InsightRunSummaryApi {
   taxonomy_mode: string;
   distribution: InsightRunSummaryApiDistributionItem[];
   error: string;
+  error_code: string;
   scope: InsightRunSummaryApiScope;
 }
 
@@ -27067,6 +27068,7 @@ export interface InsightRunDetailApi {
   models_used: InsightRunDetailApiModelsUsed;
   cost_usd: number;
   error: string;
+  error_code: string;
   created_at: string;
   started_at: string;
   finished_at: string;
@@ -27130,6 +27132,19 @@ export interface InsightAskResultApi {
 export interface InsightAskResponseApi {
   status?: boolean;
   result: InsightAskResultApi;
+}
+
+export interface InsightRunStopResultApi {
+  id: string;
+  /** @minLength 1 */
+  status: string;
+  error: string;
+  error_code: string;
+}
+
+export interface InsightRunStopResponseApi {
+  status?: boolean;
+  result: InsightRunStopResultApi;
 }
 
 export type InsightUnitItemApiFacets = { [key: string]: unknown };

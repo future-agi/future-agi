@@ -47,12 +47,99 @@ def refused(exc: BaseException | None) -> bool:
     return getattr(exc, "status_code", None) in _REFUSED_STATUSES
 
 
-class InsightModelError(Exception):
-    """The model could not produce a usable answer; safe to show users."""
+# Why no model call can succeed until someone changes the setup, as a run's
+# error code: the licence (Settings → License) or the Insights model settings.
+LICENSE = "license"
+MODEL_SETUP = "model_setup"
 
-    def __init__(self, message: str, *, unavailable: bool = False):
+_OWN_MODELS = (
+    "or set INSIGHTS_FAST_MODEL and INSIGHTS_THINKING_MODEL to models your own "
+    "gateway serves."
+)
+# Future AGI's managed service refusing this install, by ManagedServiceError
+# code. Only a self-hosted install reaches its models through it.
+_MANAGED_REFUSALS = {
+    "ACTIVATION_FAILED": (
+        "Insights couldn't use Future AGI's managed models: this licence "
+        "couldn't be activated with the managed service. Check it in "
+        f"Settings → License, {_OWN_MODELS}"
+    ),
+    "NO_ENTERPRISE_LICENSE": (
+        "Insights couldn't use Future AGI's managed models: they need an "
+        f"Enterprise licence. Add one in Settings → License, {_OWN_MODELS}"
+    ),
+    "FEATURE_DENIED": (
+        "Insights couldn't use Future AGI's managed models: this licence "
+        f"doesn't include them. Ask Future AGI to add them, {_OWN_MODELS}"
+    ),
+}
+# The model gateway refusing every call alike, by HTTP status. A 403 from a
+# guardrail is about one item's content, so it stays a refusal of that item.
+_GATEWAY_REFUSALS = {
+    401: "The model gateway rejected Insights' API key",
+    402: "The model gateway refused Insights' calls for lack of credit",
+    403: "The model gateway doesn't allow Insights to use {model}",
+    404: "The model gateway doesn't serve {model}",
+}
+_GATEWAY_FIX = {
+    401: "an administrator needs to check the key.",
+    402: "an administrator needs to add credit.",
+}
+
+
+class InsightModelError(Exception):
+    """The model could not produce a usable answer; safe to show users.
+    ``code`` is set (LICENSE, MODEL_SETUP) when only an administrator can fix
+    it."""
+
+    def __init__(self, message: str, *, unavailable: bool = False, code: str = ""):
         super().__init__(message)
         self.unavailable = unavailable
+        self.code = code
+
+
+class InsightModelSetupError(InsightModelError):
+    """No model call can succeed until someone changes the setup: the run
+    stops at the first one, and trying again won't help."""
+
+    def __init__(self, message: str, code: str):
+        super().__init__(message, code=code)
+
+
+def setup_error(exc: BaseException, model: str) -> InsightModelSetupError | None:
+    """What a failed call means when every other call would fail the same
+    way, named with its fix; None when trying again (or another item) may
+    work. Never carries the upstream text."""
+    from ee.licensing.activation_client import ManagedServiceError
+
+    if isinstance(exc, ManagedServiceError):
+        message = _MANAGED_REFUSALS.get(exc.code)
+        return InsightModelSetupError(message, LICENSE) if message else None
+    status = getattr(exc, "status_code", None)
+    if status not in _GATEWAY_REFUSALS:
+        return None
+    if status == 403 and getattr(exc, "type", None) == "guardrail_error":
+        return None
+    cause = _GATEWAY_REFUSALS[status].format(model=str(model)[:60])
+    fix = _GATEWAY_FIX.get(
+        status, "an administrator needs to check the Insights model settings."
+    )
+    return InsightModelSetupError(
+        f"{cause}, so trying again won't help: {fix}", MODEL_SETUP
+    )
+
+
+def check_setup() -> None:
+    """Raise InsightModelSetupError when the managed (Turing) models Insights
+    is set to use can't be reached at all: Future AGI's managed service gives
+    this install no service token. A token already held answers at once, so
+    a run asks this before it reads anything, not on every call."""
+    if not any(_managed(model_for(tier)) for tier in (FAST, THINKING)):
+        return
+    from ee.licensing.activation_client import get_service_token
+
+    if get_service_token() is None:
+        raise InsightModelSetupError(_MANAGED_REFUSALS["ACTIVATION_FAILED"], LICENSE)
 
 
 def model_for(tier: str) -> str:
@@ -301,7 +388,8 @@ def chat_json(
     attempts: int = 3,
 ):
     """One JSON answer from the tier's model, retried on transient failures
-    and on replies that aren't JSON."""
+    and on replies that aren't JSON. A failure no call can get past raises
+    InsightModelSetupError at once."""
     model = model_for(tier)
     messages = [
         {"role": "system", "content": system},
@@ -341,6 +429,9 @@ def chat_json(
                 attempt=attempt + 1,
                 error=str(exc)[:300],
             )
+            stop = setup_error(exc, model)
+            if stop is not None:
+                raise stop from exc
             if refused(exc):
                 break
         time.sleep(min(8, 1.5 * (attempt + 1)))

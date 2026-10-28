@@ -198,6 +198,8 @@ def model(monkeypatch):
 
     fake = FakeModel()
     monkeypatch.setattr(agent, "enabled", lambda: False)
+    # The models are reachable: no licence to activate.
+    monkeypatch.setattr(pipeline, "check_setup", lambda: None)
     for module in (facets, clustering, summary):
         monkeypatch.setattr(module, "chat_json", fake)
     monkeypatch.setattr(serving_client, "serving_available", lambda: True)
@@ -782,5 +784,124 @@ def test_a_report_the_model_refused_says_retrying_will_not_help(
         pipeline.organise(str(run.id))
     if expected == "refused":
         assert str(caught.value) == MODEL_REFUSED_MESSAGE
+        # Not offered again as is: the report page drops its Retry.
+        assert (caught.value.code, caught.value.unavailable) == ("model_setup", False)
     else:
         assert str(caught.value).endswith(expected)
+        assert caught.value.code == ""
+
+
+def _setup_error():
+    from ee.agenthub.insights.llm import LICENSE, InsightModelSetupError
+
+    return InsightModelSetupError("Insights couldn't use the models.", LICENSE)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("workers", [1, pipeline.EXTRACT_WORKERS])
+def test_a_setup_error_stops_the_run_after_the_first_unit(
+    report, user, model, loaded, monkeypatch, workers
+):
+    """A licence the managed service won't activate (or any failure no call
+    can get past) is not tried on every unit: the batch stops at the first
+    one, keeps the rest pending, and the run fails with its message and
+    code. It took 50 minutes of three tries per unit before."""
+    calls = []
+
+    def refuse(*args, **kwargs):
+        calls.append(1)
+        raise _setup_error()
+
+    monkeypatch.setattr(pipeline, "EXTRACT_WORKERS", workers)
+    monkeypatch.setattr(facets, "chat_json", refuse)
+    run = pipeline.create_run(
+        config=report,
+        scope={"window": WINDOW, "preset": "Custom"},
+        population=[{"id": unit_id} for unit_id in ids(order=15, human=15)],
+        sample_size=30,
+        user=user,
+    )
+    ready = pipeline.prepare(str(run.id))
+    with pytest.raises(InsightModelError) as caught:
+        pipeline.extract_batch(str(run.id), ready)
+    # Only the calls already under way when the first one failed.
+    assert 1 <= len(calls) <= workers
+    statuses = set(InsightUnit.objects.filter(run=run).values_list("status", flat=True))
+    assert statuses == {"pending"}
+    pipeline.fail(str(run.id), str(caught.value), caught.value.code)
+    run.refresh_from_db()
+    assert (run.status, run.error) == ("failed", "Insights couldn't use the models.")
+    assert run.progress["error_code"] == "license"
+
+
+@pytest.mark.django_db
+def test_a_licence_that_cannot_activate_fails_the_run_before_it_reads(
+    report, user, model, loaded, monkeypatch
+):
+    from ee.agenthub.insights import llm
+    from ee.licensing import activation_client
+
+    monkeypatch.setattr(pipeline, "check_setup", llm.check_setup)
+    monkeypatch.setattr(llm, "_managed", lambda model: True)
+    monkeypatch.setattr(activation_client, "get_service_token", lambda: None)
+    run = pipeline.create_run(
+        config=report,
+        scope={"window": WINDOW, "preset": "Custom"},
+        population=[{"id": unit_id} for unit_id in ids(order=6)],
+        sample_size=6,
+        user=user,
+    )
+    with pytest.raises(llm.InsightModelSetupError) as caught:
+        pipeline.prepare(str(run.id))
+    assert caught.value.code == llm.LICENSE
+    assert "Settings → License" in str(caught.value)
+    assert loaded == []
+    assert sum(model.calls.values()) == 0
+
+
+@pytest.mark.django_db
+def test_a_stopped_run_fails_once_and_reads_no_further_units(
+    report, user, model, loaded, monkeypatch
+):
+    """Stop fails the run with who stopped it, at once; a batch under way
+    starts no further unit; no later stage runs; stopping again, or the
+    workflow failing it afterwards, changes nothing."""
+    from django.core.cache import cache
+
+    monkeypatch.setattr(pipeline, "EXTRACT_WORKERS", 1)
+    run = pipeline.create_run(
+        config=report,
+        scope={"window": WINDOW, "preset": "Custom"},
+        population=[{"id": unit_id} for unit_id in ids(order=6)],
+        sample_size=6,
+        user=user,
+    )
+    ready = pipeline.prepare(str(run.id))
+    read = model.extract
+
+    def extract_then_stop(prompt):
+        # Stop arrives while the first unit is read: the flag a batch under
+        # way reads (the pool's thread can't see this test's transaction, so
+        # the run itself is stopped below).
+        cache.set(pipeline.STOP_KEY.format(run.id), True)
+        return read(prompt)
+
+    monkeypatch.setattr(model, "extract", extract_then_stop)
+    pipeline.extract_batch(str(run.id), ready)
+    assert model.calls["extract"] == 1
+    statuses = sorted(
+        InsightUnit.objects.filter(run=run).values_list("status", flat=True)
+    )
+    assert statuses == ["done"] + ["pending"] * 5
+    assert pipeline.stop(str(run.id), "Stopped by Ada.")
+    run.refresh_from_db()
+    assert (run.status, run.error) == ("failed", "Stopped by Ada.")
+    assert run.progress["error_code"] == pipeline.STOPPED
+    assert run.finished_at is not None
+
+    assert not pipeline.stop(str(run.id), "Stopped by Bo.")
+    pipeline.fail(str(run.id), "The report could not be completed.")
+    with pytest.raises(pipeline.InsightRunNotRunning):
+        pipeline.organise(str(run.id))
+    run.refresh_from_db()
+    assert (run.status, run.error) == ("failed", "Stopped by Ada.")

@@ -36,7 +36,16 @@ from ee.agenthub.insights import agent as insight_agent
 from ee.agenthub.insights import billing, clustering, report
 from ee.agenthub.insights.agent import InsightEngineMismatch
 from ee.agenthub.insights.facets import clean_attributes, extract, included, lens_for
-from ee.agenthub.insights.llm import FAST, THINKING, InsightModelError, Spend, model_for
+from ee.agenthub.insights.llm import (
+    FAST,
+    MODEL_SETUP,
+    THINKING,
+    InsightModelError,
+    InsightModelSetupError,
+    Spend,
+    check_setup,
+    model_for,
+)
 from ee.agenthub.insights.stats import compare_runs, measure
 from ee.agenthub.insights.units import load_units
 
@@ -167,7 +176,13 @@ def set_progress(
     run, stage: str, done: int | None = None, total: int | None = None, **extra
 ):
     progress = dict(run.progress or {})
-    progress.update({"stage": stage, "stage_index": STAGES.index(stage)})
+    progress.update(
+        {
+            "stage": stage,
+            "stage_index": STAGES.index(stage),
+            "updated_at": timezone.now().isoformat(),
+        }
+    )
     if done is not None:
         progress["done"] = done
     if total is not None:
@@ -295,6 +310,9 @@ def prepare(run_id: str) -> list[int]:
     run = InsightRun.objects.get(id=run_id)
     if not started:
         _require_running(run)
+    # A model setup no call can get through (a licence the managed service
+    # won't activate) fails the run now, before anything is read.
+    check_setup()
     set_progress(run, "reading", 0, run.sample_size)
     units = list(InsightUnit.objects.filter(run=run))
     window = (run.scope or {}).get("window") or []
@@ -361,8 +379,13 @@ def extract_batch(run_id: str, unit_pks: list[int]) -> dict:
     attributes = s.get("attributes") or []
     spend = Spend()
     units = list(InsightUnit.objects.filter(run=run, pk__in=unit_pks, status="pending"))
+    stopped: list[InsightModelSetupError] = []
 
     def one(unit):
+        # After a setup error no other call can succeed, and after Stop none
+        # is wanted: the units not started yet stay pending.
+        if stopped or stop_requested(run_id):
+            return unit
         try:
             facets = extract(
                 run.unit,
@@ -375,6 +398,8 @@ def extract_batch(run_id: str, unit_pks: list[int]) -> dict:
                 spend=spend,
             )
             _apply_facets(unit, facets, s.get("lens", "usage"), attributes)
+        except InsightModelSetupError as exc:
+            stopped.append(exc)
         except InsightModelError as exc:
             unit.status = "failed"
             unit.error = str(exc)
@@ -390,6 +415,7 @@ def extract_batch(run_id: str, unit_pks: list[int]) -> dict:
         else:
             with ThreadPoolExecutor(max_workers=EXTRACT_WORKERS) as pool:
                 finished = list(pool.map(one, units))
+            error = stopped[0] if stopped else None
     except InsightModelError:
         add_spend(run_id, spend)
         raise
@@ -414,6 +440,7 @@ def extract_batch(run_id: str, unit_pks: list[int]) -> dict:
         ).count()
         progress = dict(locked.progress or {})
         progress["done"] = done
+        progress["updated_at"] = timezone.now().isoformat()
         recent = [u.summary for u in finished if u.summary][-6:]
         if recent:
             progress["recent"] = (progress.get("recent", []) + recent)[-8:]
@@ -426,7 +453,7 @@ def extract_batch(run_id: str, unit_pks: list[int]) -> dict:
     _log_spend(run_id, "read", spend)
     if error is not None:
         # What was read is kept; Temporal retries the units still pending,
-        # or the run fails on an engine mismatch.
+        # or the run fails on an engine mismatch or a setup error.
         raise error
     return {
         "done": len(finished),
@@ -598,9 +625,11 @@ def organise(run_id: str) -> dict:
         if not failed:
             message = "Nothing could be read from these items."
         elif not failed_units.exclude(error=MODEL_REFUSED_MESSAGE).exists():
-            message = MODEL_REFUSED_MESSAGE
+            raise InsightModelSetupError(MODEL_REFUSED_MESSAGE, MODEL_SETUP)
         else:
-            message = "The analysis model could not read these items. Try again shortly."
+            message = (
+                "The analysis model could not read these items. Try again shortly."
+            )
         raise InsightModelError(message, unavailable=bool(failed))
     items = [clustering.Item(key=str(u.pk), text=_item_text(u)) for u in units]
     context = _context(run)
@@ -928,12 +957,70 @@ def _forget_evidence(run_id) -> None:
         logger.warning("insight_evidence_forget_failed", run_id=str(run_id))
 
 
-def fail(run_id: str, message: str) -> None:
-    """Mark the run failed. A run that already failed keeps its first reason
-    (a lost run's, or the stage that gave up first)."""
+def fail(run_id: str, message: str, code: str = "") -> None:
+    """Mark the run failed, with ``code`` (``progress["error_code"]``) when
+    only an administrator can fix it. A run that already failed keeps its
+    first reason (a lost run's, a stop, or the stage that gave up first)."""
     InsightRun, _ = _models()
     now = timezone.now()
-    InsightRun.objects.filter(id=run_id).exclude(status="failed").update(
-        status="failed", error=message[:2000], finished_at=now, updated_at=now
-    )
+    with transaction.atomic():
+        run = (
+            InsightRun.no_workspace_objects.select_for_update()
+            .filter(id=run_id)
+            .exclude(status="failed")
+            .first()
+        )
+        if run is not None:
+            _end(run, message, code, now)
     _forget_evidence(run_id)
+
+
+def _end(run, message: str, code: str, now) -> None:
+    run.status = "failed"
+    run.error = message[:2000]
+    run.finished_at = now
+    fields = ["status", "error", "finished_at", "updated_at"]
+    if code:
+        run.progress = {**(run.progress or {}), "error_code": code}
+        fields.append("progress")
+    run.save(update_fields=fields)
+
+
+STOPPED = "stopped"
+STOP_KEY = "insight-stop:{}"
+# How long a stage in flight can still ask whether its run was stopped: the
+# longest a run may last (tfc/temporal/insights/client.py RUN_TIMEOUT).
+STOP_KEY_TTL_S = 2 * 3600
+
+
+def stop(run_id, message: str) -> bool:
+    """Stop a run still in flight: it fails with ``message`` and the code
+    STOPPED, and a stage under way reads no further units. False when it
+    had already ended. A stopped run is never completed or charged."""
+    from django.core.cache import cache
+
+    InsightRun, _ = _models()
+    with transaction.atomic():
+        run = (
+            InsightRun.no_workspace_objects.select_for_update()
+            .filter(id=run_id, status__in=["pending", "running"])
+            .first()
+        )
+        if run is None:
+            return False
+        _end(run, message, STOPPED, timezone.now())
+    try:
+        cache.set(STOP_KEY.format(run_id), True, timeout=STOP_KEY_TTL_S)
+    except Exception:
+        # Each stage still checks the run before it starts.
+        logger.warning("insight_stop_flag_failed", run_id=str(run_id))
+    return True
+
+
+def stop_requested(run_id) -> bool:
+    from django.core.cache import cache
+
+    try:
+        return bool(cache.get(STOP_KEY.format(run_id)))
+    except Exception:
+        return False

@@ -670,25 +670,170 @@ class TestModelCalls:
         assert caught.value.unavailable
         assert "internals" not in str(caught.value)
 
-    @pytest.mark.parametrize("status", [400, 401, 403, 404, 422])
+    # A refusal about the request itself (its content, a guardrail): this
+    # item fails without a retry, the others are still read.
+    @pytest.mark.parametrize(
+        "status, kind", [(400, None), (422, None), (403, "guardrail_error")]
+    )
     def test_a_refused_call_is_not_retried_and_says_retrying_will_not_help(
-        self, monkeypatch, status
+        self, monkeypatch, status, kind
     ):
         calls = []
 
         class Refused(Exception):
             status_code = status
+            type = kind
 
         def refuse(*_):
             calls.append(1)
-            raise Refused("model_not_found")
+            raise Refused("content_blocked")
 
         monkeypatch.setattr(llm, "_complete", refuse)
         monkeypatch.setattr(llm.time, "sleep", lambda *_: None)
         with pytest.raises(llm.InsightModelError) as caught:
             llm.chat_json("s", "u", tier=llm.THINKING)
+        assert not isinstance(caught.value, llm.InsightModelSetupError)
         assert str(caught.value) == llm.MODEL_REFUSED_MESSAGE
         assert len(calls) == 1
+
+    # The gateway refusing every call alike: the run can't go on.
+    @pytest.mark.parametrize(
+        "status, says",
+        [
+            (401, "The model gateway rejected Insights' API key"),
+            (402, "The model gateway refused Insights' calls for lack of credit"),
+            (403, "The model gateway doesn't allow Insights to use my-model"),
+            (404, "The model gateway doesn't serve my-model"),
+        ],
+    )
+    def test_a_gateway_refusing_every_call_is_a_setup_error_named_once(
+        self, monkeypatch, settings, status, says
+    ):
+        calls = []
+
+        class Refused(Exception):
+            status_code = status
+            type = "invalid_request_error"
+
+        def refuse(*_):
+            calls.append(1)
+            raise Refused("upstream secret body sk-live-123")
+
+        settings.INSIGHTS_FAST_MODEL = "my-model"
+        monkeypatch.setattr(llm, "_complete", refuse)
+        monkeypatch.setattr(llm.time, "sleep", lambda *_: None)
+        with pytest.raises(llm.InsightModelSetupError) as caught:
+            llm.chat_json("s", "u", tier=llm.FAST)
+        message = str(caught.value)
+        assert message.startswith(f"{says}, so trying again won't help: ")
+        assert "sk-live" not in message and len(message) <= 240
+        assert caught.value.code == llm.MODEL_SETUP
+        assert not caught.value.unavailable
+        assert len(calls) == 1
+
+    @pytest.mark.parametrize(
+        "code, says",
+        [
+            ("ACTIVATION_FAILED", "this licence couldn't be activated"),
+            ("NO_ENTERPRISE_LICENSE", "they need an Enterprise licence"),
+            ("FEATURE_DENIED", "this licence doesn't include them"),
+        ],
+    )
+    def test_a_licence_the_managed_service_refuses_is_named_with_its_fix(
+        self, monkeypatch, code, says
+    ):
+        from ee.licensing.activation_client import ManagedServiceError
+
+        calls = []
+
+        def refuse(*_):
+            calls.append(1)
+            raise ManagedServiceError(code, "Could not obtain service token")
+
+        monkeypatch.setattr(llm, "_complete", refuse)
+        monkeypatch.setattr(llm.time, "sleep", lambda *_: None)
+        with pytest.raises(llm.InsightModelSetupError) as caught:
+            llm.chat_json("s", "u", tier=llm.FAST)
+        message = str(caught.value)
+        assert message.startswith("Insights couldn't use Future AGI's managed models")
+        assert says in message
+        assert "INSIGHTS_FAST_MODEL and INSIGHTS_THINKING_MODEL" in message
+        assert code not in message and len(message) <= 240
+        assert caught.value.code == llm.LICENSE
+        assert len(calls) == 1
+
+    @pytest.mark.parametrize(
+        "code",
+        [
+            "TOKEN_EXPIRED",
+            "RATE_LIMITED",
+            "SERVICE_ERROR",
+            "GATEWAY_TIMEOUT",
+            "GATEWAY_UNREACHABLE",
+        ],
+    )
+    def test_a_managed_service_hiccup_is_still_retried(self, monkeypatch, code):
+        from ee.licensing.activation_client import ManagedServiceError
+
+        calls = []
+
+        def hiccup(*_):
+            calls.append(1)
+            raise ManagedServiceError(code, "x")
+
+        monkeypatch.setattr(llm, "_complete", hiccup)
+        monkeypatch.setattr(llm.time, "sleep", lambda *_: None)
+        with pytest.raises(llm.InsightModelError) as caught:
+            llm.chat_json("s", "u", tier=llm.FAST)
+        assert not isinstance(caught.value, llm.InsightModelSetupError)
+        assert "Try again shortly" in str(caught.value)
+        assert len(calls) == 3
+
+    def test_a_licence_that_cannot_activate_is_asked_once_not_per_attempt(
+        self, monkeypatch
+    ):
+        """The real managed path on a self-hosted install: no service token
+        fails the call at once (it was three tries per call before)."""
+        from ee.licensing import activation_client
+        from ee.usage.deployment import DeploymentMode
+
+        asked = []
+        monkeypatch.setattr(DeploymentMode, "is_cloud", staticmethod(lambda: False))
+        monkeypatch.setattr(llm, "model_for", lambda tier: "turing_flash")
+        monkeypatch.setattr(
+            activation_client, "get_service_token", lambda: asked.append(1)
+        )
+        monkeypatch.setattr(llm.time, "sleep", lambda *_: None)
+        with pytest.raises(llm.InsightModelSetupError) as caught:
+            llm.chat_json("s", "u", tier=llm.FAST)
+        assert caught.value.code == llm.LICENSE
+        assert asked == [1]
+
+    def test_setup_check_asks_for_a_token_only_for_managed_models(self, monkeypatch):
+        from ee.licensing import activation_client
+
+        asked = []
+        token = object()
+        monkeypatch.setattr(
+            activation_client,
+            "get_service_token",
+            lambda: asked.append(1) or token,
+        )
+        monkeypatch.setattr(llm, "_managed", lambda model: model == "turing_flash")
+        monkeypatch.setattr(
+            llm, "model_for", lambda tier: {"fast": "turing_flash"}.get(tier, "x")
+        )
+        llm.check_setup()
+        assert asked == [1]
+        token = None
+        with pytest.raises(llm.InsightModelSetupError) as caught:
+            llm.check_setup()
+        assert caught.value.code == llm.LICENSE
+        assert "couldn't be activated" in str(caught.value)
+        monkeypatch.setattr(llm, "_managed", lambda model: False)
+        asked.clear()
+        llm.check_setup()
+        assert asked == []
 
     def test_a_transient_failure_still_says_try_again(self, monkeypatch):
         class Busy(Exception):

@@ -184,8 +184,8 @@ def test_the_routes_cover_every_view_and_method():
     # Estimate, start, summary, rows (GET/POST), export (GET/POST), control, runs.
     assert len(instant) == 9
     # Config list, config get/patch/delete, draft, preview, estimate, run
-    # create, run detail, run units, a unit's cited image, ask.
-    assert len(insights) == 12
+    # create, run detail, run stop, run units, a unit's cited image, ask.
+    assert len(insights) == 13
     for _, _, view in instant:
         assert issubclass(view, InstantEvalLicenseRequired), view.__name__
     for _, _, view in insights:

@@ -144,9 +144,14 @@ async def _run(stage: str, fn, *args, licensed: bool = True):
     except Exception as exc:
         if model_error is not None and isinstance(exc, model_error):
             # Typed so the workflow shows its text: the model's errors are
-            # written for people.
+            # written for people. Their code, when they have one, rides along
+            # as the error's detail.
+            code = getattr(exc, "code", "")
             raise ApplicationError(
-                str(exc), type="InsightModelError", non_retryable=not exc.unavailable
+                str(exc),
+                *([code] if code else []),
+                type="InsightModelError",
+                non_retryable=not exc.unavailable,
             ) from exc
         logger.exception("insight_stage_failed", stage=stage)
         raise ApplicationError("The report could not be completed.") from exc
@@ -214,4 +219,4 @@ async def insight_fail(input: InsightFailInput) -> None:
     fail = _pipeline("fail")
 
     # Recording the failure needs no license: it is how a refused run ends.
-    await _run("fail", fail, input.run_id, input.message, licensed=False)
+    await _run("fail", fail, input.run_id, input.message, input.code, licensed=False)

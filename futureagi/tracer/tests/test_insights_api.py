@@ -464,3 +464,196 @@ def test_rediscover_forgets_the_saved_categories_only_once_its_run_starts(
     run = InsightRun.objects.get(id=started["run_id"])
     assert run.taxonomy_mode == "discover"
     assert saved() == {}
+
+
+# ─── Stop ────────────────────────────────────────────────────────────────────
+@pytest.fixture
+def cancelled(monkeypatch):
+    """Workflow ids Temporal was asked to cancel."""
+    from tfc.temporal.common import client
+
+    asked = []
+    monkeypatch.setattr(
+        client, "cancel_workflow_sync", lambda workflow_id: asked.append(workflow_id)
+    )
+    return asked
+
+
+def running_run(client, project, **values):
+    run_id = client.post(RUNS, new_run_body(project), format="json").json()["result"][
+        "run_id"
+    ]
+    InsightRun.objects.filter(id=run_id).update(
+        status="running", workflow_id="insight-run-wf", **values
+    )
+    return run_id
+
+
+@pytest.mark.django_db
+def test_stop_fails_a_run_in_flight_once_and_cancels_its_workflow(
+    auth_client, observe_project, user, cancelled
+):
+    run_id = running_run(auth_client, observe_project)
+    stopped = f"Stopped by {user.name or user.email}."
+
+    response = auth_client.post(f"{RUNS}{run_id}/stop/")
+    assert response.status_code == status.HTTP_200_OK, response.content
+    assert response.json()["result"] == {
+        "id": run_id,
+        "status": "failed",
+        "error": stopped,
+        "error_code": "stopped",
+    }
+    assert cancelled == ["insight-run-wf"]
+    run = InsightRun.objects.get(id=run_id)
+    assert (run.status, run.error) == ("failed", stopped)
+    assert run.finished_at is not None
+    detail = auth_client.get(f"{RUNS}{run_id}/").json()["result"]
+    assert (detail["error"], detail["error_code"]) == (stopped, "stopped")
+    configs = auth_client.get(CONFIGS, {"project_id": str(observe_project.id)}).json()[
+        "result"
+    ]["configs"]
+    assert configs[0]["latest_run"]["error_code"] == "stopped"
+
+    # Again: the same answer, and nothing more is cancelled.
+    again = auth_client.post(f"{RUNS}{run_id}/stop/")
+    assert again.status_code == status.HTTP_200_OK
+    assert again.json()["result"]["error"] == stopped
+    assert cancelled == ["insight-run-wf"]
+
+
+@pytest.mark.django_db
+def test_stop_still_stops_the_run_when_temporal_cannot_be_reached(
+    auth_client, observe_project, monkeypatch
+):
+    from tfc.temporal.common import client
+
+    def unreachable(workflow_id):
+        raise ConnectionError("temporal down")
+
+    monkeypatch.setattr(client, "cancel_workflow_sync", unreachable)
+    run_id = running_run(auth_client, observe_project)
+    response = auth_client.post(f"{RUNS}{run_id}/stop/")
+    assert response.status_code == status.HTTP_200_OK
+    assert InsightRun.objects.get(id=run_id).status == "failed"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("ended", ["completed", "failed"])
+def test_stop_refuses_a_run_that_already_ended(
+    auth_client, observe_project, cancelled, ended
+):
+    run_id = running_run(auth_client, observe_project)
+    InsightRun.objects.filter(id=run_id).update(status=ended, error="lost")
+    response = auth_client.post(f"{RUNS}{run_id}/stop/")
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json()["message"] == "This run has already finished."
+    run = InsightRun.objects.get(id=run_id)
+    assert (run.status, run.error) == (ended, "lost")
+    assert cancelled == []
+
+
+@pytest.mark.django_db
+def test_stop_never_reaches_another_organizations_run(
+    auth_client, observe_project, cancelled
+):
+    other = Organization.objects.create(name="Other org")
+    project = getattr(Project, "no_workspace_objects", Project.objects).create(
+        name="Elsewhere",
+        organization=other,
+        model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+        trace_type="observe",
+    )
+    config = InsightConfig.objects.create(
+        project=project,
+        organization=other,
+        workspace=project.workspace,
+        name="Theirs",
+        unit="sessions",
+        lens="failures",
+        question="Theirs?",
+    )
+    theirs = getattr(InsightRun, "no_workspace_objects", InsightRun.objects).create(
+        config=config,
+        project=project,
+        organization=other,
+        workspace=project.workspace,
+        unit="sessions",
+        status="running",
+    )
+    assert auth_client.post(f"{RUNS}{theirs.id}/stop/").status_code == 404
+    assert auth_client.post(f"{RUNS}{uuid.uuid4()}/stop/").status_code == 404
+    theirs.refresh_from_db()
+    assert theirs.status == "running"
+    assert cancelled == []
+
+
+@pytest.mark.django_db
+def test_a_run_failed_on_its_model_setup_says_so(auth_client, observe_project):
+    run_id = running_run(auth_client, observe_project)
+    InsightRun.objects.filter(id=run_id).update(
+        status="failed", error="licence", progress={"error_code": "license"}
+    )
+    assert auth_client.get(f"{RUNS}{run_id}/").json()["result"]["error_code"] == (
+        "license"
+    )
+    # A run still in flight has no error code, whatever its progress holds.
+    InsightRun.objects.filter(id=run_id).update(status="running")
+    assert auth_client.get(f"{RUNS}{run_id}/").json()["result"]["error_code"] == ""
+
+
+@pytest.mark.django_db
+def test_draft_and_preview_name_a_licence_that_cannot_activate(
+    auth_client, observe_project, monkeypatch
+):
+    """Draft with AI and Preview make the run's model calls: a licence the
+    managed service won't activate fails them at once, with the same reason
+    and fix as the run."""
+    from types import SimpleNamespace
+
+    from ee.agenthub.insights import agent, draft, llm
+    from ee.licensing.activation_client import ManagedServiceError
+
+    calls = []
+
+    def refuse(*_):
+        calls.append(1)
+        raise ManagedServiceError("ACTIVATION_FAILED", "Could not obtain service token")
+
+    unit = SimpleNamespace(
+        unit_id="s1",
+        content="User: cancel my plan",
+        label="s1",
+        excerpt="cancel",
+        user_id="u1",
+    )
+    monkeypatch.setattr(draft, "load_units", lambda *a, **k: {"s1": unit})
+    monkeypatch.setattr(agent, "enabled", lambda: False)
+    monkeypatch.setattr(llm, "_complete", refuse)
+    monkeypatch.setattr(llm.time, "sleep", lambda *_: None)
+    drafted = auth_client.post(
+        "/tracer/insights/draft/",
+        {
+            "project_id": str(observe_project.id),
+            "unit": "sessions",
+            "lens": "failures",
+            "sample_ids": ["s1"],
+        },
+        format="json",
+    )
+    previewed = auth_client.post(
+        "/tracer/insights/preview/",
+        {
+            "project_id": str(observe_project.id),
+            "config": new_run_body(observe_project)["config"],
+            "unit_ids": ["s1"],
+        },
+        format="json",
+    )
+    for response in (drafted, previewed):
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        body = response.json()
+        assert body["code"] == "insight_unavailable"
+        assert body["message"] == llm._MANAGED_REFUSALS["ACTIVATION_FAILED"]
+    # One call each: none retried.
+    assert len(calls) == 2

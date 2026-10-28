@@ -91,13 +91,14 @@ def test_a_plan_without_insights_still_refuses_the_run_for_good(run_org):
 
 
 # ─── The report page shows only text written for people ──────────────────────
-def _recorded_failure(cause) -> list[str]:
-    """What a run whose first stage failed with ``cause`` records."""
+def _recorded_failure(cause, *, codes=False) -> list:
+    """What a run whose first stage failed with ``cause`` records: its
+    message, or (message, code) with ``codes``."""
     recorded = []
 
     async def execute_activity(name, arg, **_):
         if name == "insight_fail":
-            recorded.append(arg.message)
+            recorded.append((arg.message, arg.code) if codes else arg.message)
             return None
         raise ActivityError(
             "activity failed",
@@ -179,6 +180,28 @@ def test_a_model_error_from_a_stage_reaches_the_report():
     assert _recorded_failure(raised.value) == [
         "Nothing could be read from these items."
     ]
+
+
+@pytest.mark.requires_ee
+def test_a_setup_error_fails_the_run_for_good_with_its_code():
+    """A licence the managed service won't activate is not retried by
+    Temporal either, and the run records why, so the report page offers the
+    fix instead of Retry."""
+    from ee.agenthub.insights.llm import LICENSE, InsightModelSetupError
+
+    message = "Insights couldn't use Future AGI's managed models."
+
+    def extract(run_id, unit_pks):
+        raise InsightModelSetupError(message, LICENSE)
+
+    with pytest.raises(ApplicationError) as raised:
+        asyncio.run(activities._run("extract", extract, "run-1", [1], licensed=False))
+    assert raised.value.non_retryable
+    assert _recorded_failure(raised.value, codes=True) == [(message, LICENSE)]
+    # Any other error records no code.
+    assert _recorded_failure(
+        ApplicationError("Try again shortly.", type="InsightModelError"), codes=True
+    ) == [("Try again shortly.", "")]
 
 
 # ─── Stage bounds allow the model's nested request retries ──────────────────

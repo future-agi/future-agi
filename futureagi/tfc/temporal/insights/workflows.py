@@ -101,9 +101,14 @@ class InsightReportWorkflow:
             cause = getattr(exc, "cause", None)
             shown = isinstance(cause, ApplicationError) and cause.type in SHOWN_ERRORS
             message = (cause.message if shown else "") or FAILED_MESSAGE
+            details = cause.details if shown else ()
             await workflow.execute_activity(
                 "insight_fail",
-                InsightFailInput(run_id=input.run_id, message=message),
+                InsightFailInput(
+                    run_id=input.run_id,
+                    message=message,
+                    code=str(details[0]) if details else "",
+                ),
                 start_to_close_timeout=timedelta(seconds=30),
             )
             raise

@@ -12,6 +12,7 @@ POST   /tracer/insights/runs/                   start a run (new or saved report
 GET    /tracer/insights/runs/<id>/              run status and results
 GET    /tracer/insights/runs/<id>/units/        analysed units, by category
 GET    /tracer/insights/runs/<id>/media/        an image a unit's evidence cites
+POST   /tracer/insights/runs/<id>/stop/         stop a run in flight
 POST   /tracer/insights/runs/<id>/ask/          a question about a run's report
 
 A run reads a sample of a scope: the rows of a Traces, Sessions or Users view
@@ -33,7 +34,7 @@ from rest_framework.views import APIView
 
 from accounts.authentication import workspace_read_only
 from tfc.utils.api_contracts import validated_request
-from tfc.utils.api_serializers import ApiErrorResponseSerializer
+from tfc.utils.api_serializers import ApiErrorResponseSerializer, EmptyRequestSerializer
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.insights import (
     InsightConfig,
@@ -318,6 +319,7 @@ class InsightRunSummarySerializer(serializers.Serializer):
     taxonomy_mode = serializers.CharField()
     distribution = serializers.ListField(child=serializers.JSONField())
     error = serializers.CharField(allow_blank=True)
+    error_code = serializers.CharField(allow_blank=True)
     scope = serializers.JSONField()
 
 
@@ -372,6 +374,7 @@ class InsightRunDetailSerializer(serializers.Serializer):
     models_used = serializers.JSONField()
     cost_usd = serializers.FloatField()
     error = serializers.CharField(allow_blank=True)
+    error_code = serializers.CharField(allow_blank=True)
     created_at = serializers.DateTimeField()
     started_at = serializers.DateTimeField(allow_null=True)
     finished_at = serializers.DateTimeField(allow_null=True)
@@ -392,6 +395,18 @@ class InsightRunCreatedResultSerializer(serializers.Serializer):
 class InsightRunCreatedResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField(default=True)
     result = InsightRunCreatedResultSerializer()
+
+
+class InsightRunStopResultSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    status = serializers.CharField()
+    error = serializers.CharField(allow_blank=True)
+    error_code = serializers.CharField(allow_blank=True)
+
+
+class InsightRunStopResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = InsightRunStopResultSerializer()
 
 
 class InsightUnitItemSerializer(serializers.Serializer):
@@ -564,6 +579,15 @@ def settle_lost_runs(runs) -> None:
         run.refresh_from_db(fields=["status", "error", "finished_at", "updated_at"])
 
 
+def _error_code(run) -> str:
+    """Why a failed run ended when running it again can't help as it is:
+    "license" or "model_setup" (an administrator must fix the licence or the
+    model settings), "stopped" (someone stopped it); else ""."""
+    if run.status != "failed":
+        return ""
+    return str((run.progress or {}).get("error_code") or "")
+
+
 def _run_summary(run) -> dict:
     return {
         "id": run.id,
@@ -580,6 +604,7 @@ def _run_summary(run) -> dict:
         "taxonomy_mode": run.taxonomy_mode,
         "distribution": _distribution(run),
         "error": run.error,
+        "error_code": _error_code(run),
         "scope": normalize_scope(run.scope),
     }
 
@@ -1555,6 +1580,7 @@ class InsightRunDetailView(InsightsLicenseRequired, APIView):
                 "models_used": run.models_used or {},
                 "cost_usd": run.cost_usd,
                 "error": run.error,
+                "error_code": _error_code(run),
                 "created_at": run.created_at,
                 "started_at": run.started_at,
                 "finished_at": run.finished_at,
@@ -1562,6 +1588,55 @@ class InsightRunDetailView(InsightsLicenseRequired, APIView):
                 "next_run_id": following.id if following else None,
             }
         )
+
+
+class InsightRunStopView(InsightsLicenseRequired, APIView):
+    permission_classes = [IsAuthenticated]
+    _gm = GeneralMethods()
+
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
+        responses={200: InsightRunStopResponseSerializer, **ERROR_RESPONSES},
+    )
+    def post(self, request, run_id):
+        """Stop a run in flight: it reads nothing more and is neither written
+        nor charged. Stopping a stopped run again answers the same."""
+        modules = _pipeline()
+        if modules is None:
+            return _unavailable(self._gm)
+        _, pipeline, _ = modules
+        run = InsightRun.objects.filter(
+            id=run_id, organization=_org(request), deleted=False
+        ).first()
+        if run is None:
+            return self._gm.not_found("Report run not found")
+        user = request.user
+        if pipeline.stop(run.id, f"Stopped by {user.name or user.email}."):
+            _cancel_workflow(run)
+        run.refresh_from_db(fields=["status", "error", "progress"])
+        if _error_code(run) != pipeline.STOPPED:
+            return self._gm.bad_request("This run has already finished.")
+        return self._gm.success_response(
+            {
+                "id": run.id,
+                "status": run.status,
+                "error": run.error,
+                "error_code": _error_code(run),
+            }
+        )
+
+
+def _cancel_workflow(run) -> None:
+    """Cancel a stopped run's workflow. The run has stopped either way: a
+    Temporal that can't be reached only lets a stage under way finish the
+    units it had started."""
+    try:
+        from tfc.temporal.common.client import cancel_workflow_sync
+        from tfc.temporal.insights.client import workflow_id_for
+
+        cancel_workflow_sync(run.workflow_id or workflow_id_for(run.id))
+    except Exception:
+        logger.warning("insight_workflow_cancel_failed", run_id=str(run.id))
 
 
 class InsightRunUnitsView(InsightsLicenseRequired, APIView):
