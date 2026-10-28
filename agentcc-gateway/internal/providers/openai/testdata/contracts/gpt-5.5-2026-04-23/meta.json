@@ -1,0 +1,22 @@
+{
+  "provider": "openai",
+  "model": "gpt-5.5-2026-04-23",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: authored from the OpenAI OpenAPI spec as published in github.com/openai/openai-python api_reference/openapi.transformed.yml and the types generated from it (src/openai/types/chat/chat_completion.py, chat_completion_chunk.py, completion_usage.py, shared/chat_model.py), commit 35fc9f3 of 2026-10-28; SSE framing and per-chunk field order follow the live-recorded stream snapshots in that repo (.inline-snapshot/external/*.bin, recorded from api.openai.com). platform.openai.com and developers.openai.com were not reachable from the authoring sandbox. The reasoning-model shape: reasoning_effort in the request (forwarded from Extra), max_tokens rewritten to max_completion_tokens for the official API, no temperature, completion_tokens_details.reasoning_tokens counted inside completion_tokens, and reasoning_length: a budget spent entirely on reasoning, so content \"\" with finish_reason \"length\". Chat Completions returns no reasoning text, only its token count. Stream requests carry include_usage as server/handlers.go forces it.",
+  "allowed_unknown_fields": [
+    {
+      "path": "$.choices[].message.refusal",
+      "reason": "known gap O1: message.refusal is dropped (models.Message has no refusal field). A structured-outputs refusal arrives as content null plus a refusal string, so the client receives content null, no refusal and finish_reason \"stop\": an empty answer it cannot tell from a refusal. null in every case without a refusal"
+    },
+    {
+      "path": "chunk:$.choices[].delta.refusal",
+      "reason": "known gap O2: delta.refusal is dropped (models.Delta has no refusal field), so a streamed refusal reaches the client as empty deltas. null on the first chunk of an ordinary stream"
+    },
+    {
+      "path": "chunk:$.choices[].logprobs",
+      "reason": "known gap O3: streamed choice logprobs are dropped (models.StreamChoice has no logprobs field), so a stream with logprobs: true carries none to the client; the non-stream path keeps them. null unless logprobs were requested"
+    }
+  ],
+  "allowed_unknown_shapes": []
+}

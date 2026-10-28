@@ -20,6 +20,12 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 )
 
+// adapterName is this adapter's name in unknown-shape reports and the
+// agentcc_provider_unknown_shape_total metric. Every OpenAI-format upstream
+// (OpenAI itself, Groq, Perplexity, OpenRouter, ...) reports under it; the
+// configured provider ID only appears in the log line.
+const adapterName = "openai"
+
 // Provider implements the Provider interface for OpenAI-compatible APIs.
 type Provider struct {
 	id         string
@@ -292,6 +298,11 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("parsing provider response: %v", err))
 	}
 
+	shape := common.NewShapeReporter(ctx, adapterName, p.id)
+	for _, ch := range result.Choices {
+		reportFinishReason(shape, ch.FinishReason)
+	}
+
 	return &result, nil
 }
 
@@ -362,6 +373,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 		scanner := bufio.NewScanner(resp.Body)
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		shape := common.NewShapeReporter(ctx, adapterName, p.id)
 
 		for scanner.Scan() {
 			line := scanner.Text()
@@ -371,6 +383,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 			}
 
 			if !strings.HasPrefix(line, "data: ") {
+				reportSkippedLine(shape, line)
 				continue
 			}
 
@@ -387,6 +400,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 					"data", data,
 					"provider", p.id,
 				)
+				shape.Report(common.ShapeMalformed, "chat.completion.chunk")
 				continue
 			}
 			if streamErrorChunk(chunk) {
@@ -395,6 +409,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 				errs <- parseProviderError(http.StatusBadGateway, []byte(data))
 				return
 			}
+			reportChunk(shape, &chunk)
 
 			select {
 			case chunks <- chunk:
@@ -411,6 +426,60 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 	}()
 
 	return chunks, errs
+}
+
+// The adapter decodes upstream bodies straight into the canonical types, so it
+// translates nothing and a new nested field is dropped with no code path to
+// notice it (the contract tests catch those). What it can see are the places
+// below where it skips or forwards something the rest of the gateway does not
+// understand; each is reported through common.ShapeReporter. Reporting never
+// changes what is returned.
+
+// reportFinishReason reports a finish_reason outside the canonical set. The
+// adapter forwards it unchanged, so the client receives it as is, and the
+// inbound translators, which only know the canonical values, pass it through
+// or fall back to a default (translation/anthropic reverseMapFinishReason).
+func reportFinishReason(shape *common.ShapeReporter, reason string) {
+	switch reason {
+	case "", "stop", "length", "tool_calls", "content_filter":
+	case "function_call":
+		// OpenAI's own value for the deprecated functions parameter. It only
+		// comes back to a client that sent functions, which expects it.
+	default:
+		shape.Report(common.ShapeUnmappedFinishReason, reason)
+	}
+}
+
+// reportSkippedLine reports a stream line the parser skips although it could
+// have carried something. A Chat Completions stream is data-only: every
+// event is a single "data: " line, which is all the parser reads.
+func reportSkippedLine(shape *common.ShapeReporter, line string) {
+	field, value, found := strings.Cut(line, ":")
+	switch {
+	case field == "":
+		// A comment (": ..."), such as a keep-alive. Carries nothing.
+	case field == "data" && found:
+		// "data:" with no space after the colon is valid SSE, but the
+		// parser only matches "data: ", so this payload is lost.
+		shape.Report(common.ShapeMalformed, "data line without a space after the colon")
+	case field == "event":
+		// Chat Completions streams have no named events. One here (say an
+		// "event: error") signals something the parser cannot tell apart:
+		// the data line that follows is read as an ordinary chunk.
+		shape.Report(common.ShapeUnknownEvent, strings.TrimSpace(value))
+	}
+	// "id:" and "retry:" lines are SSE framing with no content, and the SSE
+	// spec itself ignores any other field name.
+}
+
+// reportChunk reports what the stream parser forwards without understanding
+// in a decoded chunk.
+func reportChunk(shape *common.ShapeReporter, chunk *models.StreamChunk) {
+	for _, ch := range chunk.Choices {
+		if ch.FinishReason != nil {
+			reportFinishReason(shape, *ch.FinishReason)
+		}
+	}
 }
 
 // ListModels returns available models from this provider.

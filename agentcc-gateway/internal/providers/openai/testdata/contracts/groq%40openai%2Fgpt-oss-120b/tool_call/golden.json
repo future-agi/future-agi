@@ -1,0 +1,47 @@
+{
+  "choices": [
+    {
+      "finish_reason": "tool_calls",
+      "index": 0,
+      "message": {
+        "content": null,
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{\"location\":\"Boston, MA\"}",
+              "name": "get_current_weather"
+            },
+            "id": "fc_85a990f1549cf874ba7595dbea472887",
+            "type": "function"
+          }
+        ]
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "chatcmpl-nfEXwGlfRN7RWuKCxCsSHO3UsV",
+  "model": "openai/gpt-oss-120b",
+  "object": "chat.completion",
+  "service_tier": "on_demand",
+  "system_fingerprint": "fp_d5746aaf70",
+  "usage": {
+    "completion_time": 0.317421,
+    "completion_tokens": 58,
+    "completion_tokens_details": {
+      "reasoning_tokens": 23
+    },
+    "prompt_time": 0.004126,
+    "prompt_tokens": 171,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "queue_time": 0.054813,
+    "total_time": 0.321547,
+    "total_tokens": 229
+  },
+  "usage_breakdown": null,
+  "x_groq": {
+    "id": "req_95f1cztbyb956aktr9nzcqzq7h"
+  }
+}

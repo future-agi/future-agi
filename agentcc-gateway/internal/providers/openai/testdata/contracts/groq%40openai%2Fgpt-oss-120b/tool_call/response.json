@@ -1,0 +1,48 @@
+{
+  "id": "chatcmpl-nfEXwGlfRN7RWuKCxCsSHO3UsV",
+  "object": "chat.completion",
+  "created": 1793170512,
+  "model": "openai/gpt-oss-120b",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "reasoning": "The user wants current weather for Boston. Call get_current_weather with Boston, MA.",
+        "tool_calls": [
+          {
+            "id": "fc_85a990f1549cf874ba7595dbea472887",
+            "type": "function",
+            "function": {
+              "name": "get_current_weather",
+              "arguments": "{\"location\":\"Boston, MA\"}"
+            }
+          }
+        ]
+      },
+      "logprobs": null,
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "queue_time": 0.054813,
+    "prompt_tokens": 171,
+    "prompt_time": 0.004126,
+    "completion_tokens": 58,
+    "completion_time": 0.317421,
+    "total_tokens": 229,
+    "total_time": 0.321547,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 23
+    }
+  },
+  "usage_breakdown": null,
+  "system_fingerprint": "fp_d5746aaf70",
+  "x_groq": {
+    "id": "req_95f1cztbyb956aktr9nzcqzq7h"
+  },
+  "service_tier": "on_demand"
+}

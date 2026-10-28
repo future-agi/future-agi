@@ -1,0 +1,17 @@
+{
+  "model": "sonar",
+  "messages": [
+    {
+      "role": "system",
+      "content": "Be precise and concise."
+    },
+    {
+      "role": "user",
+      "content": "When was the James Webb Space Telescope launched?"
+    }
+  ],
+  "search_mode": "web",
+  "web_search_options": {
+    "search_context_size": "low"
+  }
+}

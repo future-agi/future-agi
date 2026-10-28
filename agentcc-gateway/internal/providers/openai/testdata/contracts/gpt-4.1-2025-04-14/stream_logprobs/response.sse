@@ -1,0 +1,12 @@
+data: {"id":"chatcmpl-e7TvHNz9eOlyb1cC8V9TakTAOEU1e","object":"chat.completion.chunk","created":1793170512,"model":"gpt-4.1-2025-04-14","service_tier":"default","system_fingerprint":"fp_e4dbd429e2","choices":[{"index":0,"delta":{"role":"assistant","content":"","refusal":null},"logprobs":{"content":[],"refusal":null},"finish_reason":null}],"usage":null,"obfuscation":"rjeKhNSS"}
+
+data: {"id":"chatcmpl-e7TvHNz9eOlyb1cC8V9TakTAOEU1e","object":"chat.completion.chunk","created":1793170512,"model":"gpt-4.1-2025-04-14","service_tier":"default","system_fingerprint":"fp_e4dbd429e2","choices":[{"index":0,"delta":{"content":"Foo"},"logprobs":{"content":[{"token":"Foo","logprob":-0.0025094282,"bytes":[70,111,111],"top_logprobs":[]}],"refusal":null},"finish_reason":null}],"usage":null,"obfuscation":"NuKoyUC5P6ZC"}
+
+data: {"id":"chatcmpl-e7TvHNz9eOlyb1cC8V9TakTAOEU1e","object":"chat.completion.chunk","created":1793170512,"model":"gpt-4.1-2025-04-14","service_tier":"default","system_fingerprint":"fp_e4dbd429e2","choices":[{"index":0,"delta":{"content":"!"},"logprobs":{"content":[{"token":"!","logprob":-0.26638845,"bytes":[33],"top_logprobs":[]}],"refusal":null},"finish_reason":null}],"usage":null,"obfuscation":"zEp8TBDeetPQug"}
+
+data: {"id":"chatcmpl-e7TvHNz9eOlyb1cC8V9TakTAOEU1e","object":"chat.completion.chunk","created":1793170512,"model":"gpt-4.1-2025-04-14","service_tier":"default","system_fingerprint":"fp_e4dbd429e2","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"stop"}],"usage":null,"obfuscation":"ePAT"}
+
+data: {"id":"chatcmpl-e7TvHNz9eOlyb1cC8V9TakTAOEU1e","object":"chat.completion.chunk","created":1793170512,"model":"gpt-4.1-2025-04-14","service_tier":"default","system_fingerprint":"fp_e4dbd429e2","choices":[],"usage":{"prompt_tokens":9,"completion_tokens":2,"total_tokens":11,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":0,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}},"obfuscation":"hC2cAHO8"}
+
+data: [DONE]
+

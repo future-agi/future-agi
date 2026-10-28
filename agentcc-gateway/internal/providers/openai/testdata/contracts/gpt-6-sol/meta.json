@@ -1,0 +1,22 @@
+{
+  "provider": "openai",
+  "model": "gpt-6-sol",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: authored from the OpenAI OpenAPI spec as published in github.com/openai/openai-python api_reference/openapi.transformed.yml and the types generated from it (src/openai/types/chat/chat_completion.py, chat_completion_chunk.py, completion_usage.py, shared/chat_model.py), commit 35fc9f3 of 2026-10-28; SSE framing and per-chunk field order follow the live-recorded stream snapshots in that repo (.inline-snapshot/external/*.bin, recorded from api.openai.com). platform.openai.com and developers.openai.com were not reachable from the authoring sandbox. GPT-6 is documented there as gpt-6-astra, gpt-6-sol, gpt-6-luna, gpt-6.1-sol and gpt-6.1-terra (ChatModel). text_basic, tool_call, logprobs and stream_text are the spec's own /chat/completions examples (Default, Functions, Logprobs, Streaming) with the model set to gpt-6-sol: the spec runs Logprobs on gpt-6-sol with reasoning_effort \"none\" and the others on gpt-6-astra. They are kept verbatim, so their ids and created times are the spec's, and some omit refusal / annotations / service_tier exactly as the spec does. stream_text adds what include_usage (forced by server/handlers.go) and the default obfuscation add. moderation / stream_moderation pin moderated completions (the moderation request parameter; ChatCompletionModeration on the response, and on a choices-less chunk of a stream, ordered as in openai-python tests/lib/chat/test_stream_moderation.py): a top-level field, so it reaches the client through ChatCompletionResponse.Extra / StreamChunk.Extra. Not covered: gpt-6.1-*, which the spec gives no Chat Completions shape of its own, and gpt-6-astra, whose spec Model example carries shutdown_date 2026-10-23 (it looks like template data, but the newer gpt-6-sol is the safer pin).",
+  "allowed_unknown_fields": [
+    {
+      "path": "$.choices[].message.refusal",
+      "reason": "known gap O1: message.refusal is dropped (models.Message has no refusal field). A structured-outputs refusal arrives as content null plus a refusal string, so the client receives content null, no refusal and finish_reason \"stop\": an empty answer it cannot tell from a refusal. null in every case without a refusal"
+    },
+    {
+      "path": "chunk:$.choices[].delta.refusal",
+      "reason": "known gap O2: delta.refusal is dropped (models.Delta has no refusal field), so a streamed refusal reaches the client as empty deltas. null on the first chunk of an ordinary stream"
+    },
+    {
+      "path": "chunk:$.choices[].logprobs",
+      "reason": "known gap O3: streamed choice logprobs are dropped (models.StreamChoice has no logprobs field), so a stream with logprobs: true carries none to the client; the non-stream path keeps them. null unless logprobs were requested"
+    }
+  ],
+  "allowed_unknown_shapes": []
+}

@@ -1,0 +1,37 @@
+{
+  "id": "chatcmpl-a8i8tNJkF2FiVk6iw9oKhsCNcyBMP",
+  "object": "chat.completion",
+  "created": 1793170512,
+  "model": "gpt-5.6-sol",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Version 2.3.0 adds prompt cache breakpoints, fixes retry jitter and drops Python 3.9 support.",
+        "refusal": null,
+        "annotations": []
+      },
+      "logprobs": null,
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 1562,
+    "completion_tokens": 241,
+    "total_tokens": 1803,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "audio_tokens": 0,
+      "cache_write_tokens": 1536
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 218,
+      "audio_tokens": 0,
+      "accepted_prediction_tokens": 0,
+      "rejected_prediction_tokens": 0
+    }
+  },
+  "service_tier": "priority",
+  "system_fingerprint": "fp_0d7881e19f"
+}

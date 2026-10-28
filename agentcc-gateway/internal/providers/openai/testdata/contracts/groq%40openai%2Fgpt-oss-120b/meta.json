@@ -1,0 +1,22 @@
+{
+  "provider": "openai",
+  "model": "groq@openai/gpt-oss-120b",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: authored from Groq's official SDK, github.com/groq/groq-python v1.7.0 (2026-08-25), whose types are generated from Groq's OpenAPI spec: types/chat/chat_completion.py, chat_completion_message.py, chat_completion_chunk.py, completion_usage.py and completion_create_params.py (reasoning_format, reasoning_effort). console.groq.com was not reachable from the authoring sandbox. Naming: an OpenAI-compatible upstream's fixtures are keyed <preset>@<upstream model ID>, so this is the groq preset (providers/presets.go) serving model openai/gpt-oss-120b; the directory is that key as contracttest.ModelDir encodes it. Groq's divergences from OpenAI: the parsed reasoning comes back as message.reasoning (not reasoning_content), usage carries queue/prompt/completion/total timings, and x_groq / usage_breakdown / service_tier \"on_demand\" sit at the top level. Top-level and usage extras reach the client through Extra. stream_reasoning follows the SDK's chunk type and its streaming example (examples/chat_completion_streaming.py), which reads usage from x_groq.usage on the finish chunk; x_groq.id comes on the first and final chunk and x_groq.seed on the final one, as XGroq documents. Groq's SDK documents no stream_options, so the fixture carries no top-level usage even though the gateway asks for include_usage; a recording should confirm. max_tokens stays max_tokens: normalizeMaxTokens only rewrites it for api.openai.com.",
+  "allowed_unknown_fields": [
+    {
+      "path": "$.choices[].message.reasoning",
+      "reason": "known gap GQ1: Groq's parsed reasoning (message.reasoning, sent when reasoning_format is \"parsed\") is dropped; models.Message has reasoning_content, the canonical slot for it, but the adapter decodes the body as is and nothing maps one to the other, so clients get no reasoning from Groq reasoning models"
+    },
+    {
+      "path": "chunk:$.choices[].delta.reasoning",
+      "reason": "known gap GQ2: Groq's streamed reasoning (delta.reasoning) is dropped; models.Delta has reasoning_content, the canonical slot for it, so streaming clients get no reasoning either"
+    },
+    {
+      "path": "chunk:$.choices[].logprobs",
+      "reason": "known gap O3: streamed choice logprobs are dropped (models.StreamChoice has no logprobs field). Always null from Groq, whose SDK documents logprobs as not yet supported by any model"
+    }
+  ],
+  "allowed_unknown_shapes": []
+}

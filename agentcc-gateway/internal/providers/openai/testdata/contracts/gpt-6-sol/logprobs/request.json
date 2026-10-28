@@ -1,0 +1,12 @@
+{
+  "model": "gpt-6-sol",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Hello!"
+    }
+  ],
+  "reasoning_effort": "none",
+  "logprobs": true,
+  "top_logprobs": 2
+}

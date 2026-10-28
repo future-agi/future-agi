@@ -1,0 +1,23 @@
+{
+  "body": {
+    "max_completion_tokens": 256,
+    "messages": [
+      {
+        "content": "You are a helpful assistant.",
+        "role": "developer"
+      },
+      {
+        "content": "Hello!",
+        "role": "user"
+      }
+    ],
+    "model": "gpt-4.1-2025-04-14",
+    "temperature": 0.7
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/chat/completions"
+}

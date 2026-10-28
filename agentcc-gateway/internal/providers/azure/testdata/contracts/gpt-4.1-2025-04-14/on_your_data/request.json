@@ -1,0 +1,21 @@
+{
+  "model": "gpt-4.1-2025-04-14",
+  "messages": [
+    {
+      "role": "user",
+      "content": "can you tell me how to care for a dog?"
+    }
+  ],
+  "data_sources": [
+    {
+      "type": "azure_search",
+      "parameters": {
+        "endpoint": "https://your-search-endpoint.search.windows.net/",
+        "index_name": "pet-care",
+        "authentication": {
+          "type": "system_assigned_managed_identity"
+        }
+      }
+    }
+  ]
+}

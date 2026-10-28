@@ -1,0 +1,26 @@
+{
+  "provider": "azure",
+  "model": "gpt-4.1-2025-04-14",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: authored from the Azure OpenAI data-plane inference spec for the gateway's default api-version, github.com/Azure/azure-rest-api-specs specification/cognitiveservices/data-plane/OpenAIInference/stable/2024-10-21/inference.json (createChatCompletionResponse, createChatCompletionStreamResponse, promptFilterResults, contentFilterChoiceResults, contentFilterSeverityResult, azureChatExtensionsMessageContext, citation) and its examples chat_completions.json and chat_completions_azure_search_minimum.json, whose ids and created times are kept. learn.microsoft.com was not reachable from the authoring sandbox. Azure routes by deployment, not by the body's model: the directory is the deployment name, here named after the model snapshot it serves, and the test checks the URL path /openai/deployments/<directory>/chat/completions. Azure's divergences from OpenAI: prompt_filter_results at the top level (passed through ChatCompletionResponse.Extra), content_filter_results on each choice, and message.context for On Your Data. stream_text follows the 2024-10-21 stream schema, which lists no content-filter fields. Live Azure streams are expected to carry content-filter annotations on their chunks too, but that could not be checked against learn.microsoft.com from here, so the fixture carries none and a recording should replace it.",
+  "allowed_unknown_fields": [
+    {
+      "path": "$.choices[].content_filter_results",
+      "reason": "known gap A1: Azure's per-choice content filter verdicts (content_filter_results: category, severity, filtered, protected material) are dropped; models.Choice has no field for them and no Extra, so a client cannot see why a completion was cut to finish_reason \"content_filter\". The prompt-side prompt_filter_results survive (top level)"
+    },
+    {
+      "path": "$.choices[].message.context",
+      "reason": "known gap A2: Azure On Your Data's message.context (retrieved citations and the detected intent) is dropped, so answers grounded on data_sources reach the client with [docN] markers and no citations"
+    },
+    {
+      "path": "$.choices[].message.refusal",
+      "reason": "known gap O1: message.refusal is dropped (models.Message has no refusal field). A structured-outputs refusal arrives as content null plus a refusal string, so the client receives content null, no refusal and finish_reason \"stop\": an empty answer it cannot tell from a refusal. null in every case without a refusal"
+    },
+    {
+      "path": "chunk:$.choices[].logprobs",
+      "reason": "known gap O3: streamed choice logprobs are dropped (models.StreamChoice has no logprobs field), so a stream with logprobs: true carries none to the client; the non-stream path keeps them. null unless logprobs were requested"
+    }
+  ],
+  "allowed_unknown_shapes": []
+}

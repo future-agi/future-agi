@@ -1,0 +1,20 @@
+{
+  "body": {
+    "logprobs": true,
+    "messages": [
+      {
+        "content": "Hello!",
+        "role": "user"
+      }
+    ],
+    "model": "gpt-6-sol",
+    "reasoning_effort": "none",
+    "top_logprobs": 2
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/chat/completions"
+}
