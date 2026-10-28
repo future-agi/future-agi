@@ -17,7 +17,9 @@ export const ANSWER_TYPES = {
 // resolve input/output on the trace or the span itself; trace_tree is
 // every span of the trace as an indented outline (kind, name, model, latency,
 // errors, clipped input/output). A session's transcript is its user and
-// assistant turns; transcript_full adds every turn's tool calls and steps.
+// assistant messages only; transcript_full adds every turn's tool calls,
+// their results and errors, and is what a session is read as by default:
+// read without them, "was it resolved?" is answered Yes where a tool failed.
 export const READS = {
   input_output: {
     label: "Input and output",
@@ -46,14 +48,14 @@ export const READS = {
     mapping: { output: "output" },
   },
   transcript: {
-    label: "The conversation",
-    hint: "User and assistant turns, in order",
+    label: "The conversation only",
+    hint: "User and assistant messages, without tool calls or their results",
     variables: ["transcript"],
     mapping: { transcript: "transcript" },
   },
   transcript_full: {
     label: "The whole session",
-    hint: "Every turn with its tool calls and intermediate steps",
+    hint: "Every turn with its tool calls, their results and errors",
     variables: ["conversation"],
     mapping: { conversation: "transcript_full" },
   },
@@ -73,8 +75,8 @@ const SPAN_READS = {
 export const UNIT_READS = {
   traces: ["input_output", "trace_tree", "input", "output"],
   spans: ["input_output", "input", "output"],
-  sessions: ["transcript", "transcript_full"],
-  users: ["transcript", "transcript_full"],
+  sessions: ["transcript_full", "transcript"],
+  users: ["transcript_full", "transcript"],
 };
 
 export const readsFor = (unit) => UNIT_READS[unit] || UNIT_READS.traces;

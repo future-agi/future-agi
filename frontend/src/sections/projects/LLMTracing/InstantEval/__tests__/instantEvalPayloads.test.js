@@ -189,8 +189,17 @@ describe("helpers", () => {
       "output",
     ]);
     expect(readsFor("spans")).toEqual(["input_output", "input", "output"]);
-    expect(readsFor("sessions")).toEqual(["transcript", "transcript_full"]);
-    expect(readsFor("users")).toEqual(["transcript", "transcript_full"]);
+    // A session is read whole by default: without its tool results, "was
+    // it resolved?" reads Yes where a tool call failed.
+    expect(readsFor("sessions")).toEqual(["transcript_full", "transcript"]);
+    expect(readsFor("users")).toEqual(["transcript_full", "transcript"]);
+    expect(readOption("sessions", "transcript")).toMatchObject({
+      label: "The conversation only",
+      hint: "User and assistant messages, without tool calls or their results",
+    });
+    expect(readOption("sessions", "transcript_full").hint).toBe(
+      "Every turn with its tool calls, their results and errors",
+    );
   });
 
   it("names evaluators with a slug the template API accepts", () => {

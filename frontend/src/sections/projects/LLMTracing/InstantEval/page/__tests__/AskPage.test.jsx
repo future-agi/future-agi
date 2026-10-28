@@ -577,7 +577,7 @@ describe("a new question the server holds for its confirm", () => {
     await holdTheSample();
     fireEvent.mouseDown(screen.getByRole("combobox", { name: /Jev reads/ }));
     fireEvent.click(
-      await screen.findByRole("option", { name: /The whole session/ }),
+      await screen.findByRole("option", { name: /The conversation only/ }),
     );
     expect(screen.queryByText(/This reads 6,000/)).toBeNull();
     expect(screen.queryByRole("button", { name: "Start" })).toBeNull();

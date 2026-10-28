@@ -13,7 +13,11 @@ from tracer.models.observation_span import EvalLogger, EvalTargetType
 from tracer.tests.test_instant_eval_scale import (
     instant_eval_enabled as instant_eval_enabled,
 )
-from tracer.utils.eval import render_session_transcript
+from tracer.utils.eval import (
+    render_session_full_transcript,
+    render_session_transcript,
+    render_trace_tree,
+)
 from tracer.views import instant_eval
 
 RUNS = "/tracer/instant-eval/runs/"
@@ -88,6 +92,61 @@ def test_transcript_renders_ordered_turns_and_keeps_the_ends_when_long():
     assert len(clipped) <= 60000 + 200
     assert clipped.startswith("[Turn 1]") and "[Turn 30]" in clipped
     assert "turns omitted" in clipped
+
+
+def _span(n, *, parent=None, status="OK", size=1500, kind="llm"):
+    return SimpleNamespace(
+        id=f"s{n}",
+        parent_span_id=parent,
+        observation_type=kind,
+        name=f"step {n}",
+        model=None,
+        latency_ms=None,
+        status=status,
+        status_message="refund_declined" if status == "ERROR" else "",
+        input="i" * size,
+        output="o" * size,
+    )
+
+
+def test_a_whole_session_keeps_every_turn_of_a_long_one():
+    """A 30-turn session over the budget lost its latest turns to a cut at
+    60,000 characters, with nothing to say they were gone. The latest turn's
+    failed tool call is what decides "was it resolved?"."""
+    traces = [SimpleNamespace(n=i) for i in range(30)]
+
+    def spans_of(trace):
+        last = trace.n == 29
+        return [
+            _span(1),
+            _span(2, parent="s1", kind="tool", status="ERROR" if last else "OK"),
+            _span(3, parent="s1"),
+        ]
+
+    text = render_session_full_transcript(traces, spans_of)
+    assert len(text) <= 60000
+    assert "[Turn 30]" in text and "ERROR: refund_declined" in text
+    assert "cut to fit" not in text and "turns omitted" not in text
+
+
+def test_a_trace_over_budget_shrinks_its_fields_then_marks_every_span_left_out():
+    spans = [_span(i, parent="s0" if i else None) for i in range(40)]
+    # Shorter fields fit every span.
+    shrunk = render_trace_tree(spans, max_chars=40 * 400)
+    assert shrunk.count("] llm · step") == 40 and "omitted" not in shrunk
+
+    spans[20] = _span(20, parent="s0", kind="tool", status="ERROR")
+    kept = render_trace_tree(spans, max_chars=6000)
+    assert len(kept) <= 6000
+    # The first and latest spans and the errored one stay; each gap says so.
+    assert "[1] llm · step 0" in kept and "[40] llm · step 39" in kept
+    assert "[21] tool · step 20 · ERROR: refund_declined" in kept
+    assert kept.count("spans omitted") == 2
+    assert "cut to fit" not in kept
+
+    # Past every step, the cut is marked too.
+    cut = render_trace_tree(spans, max_chars=500)
+    assert len(cut) <= 500 and cut.endswith("[… cut to fit …]")
 
 
 # ─── History: one run by id, its pending rows ────────────────────────────────

@@ -123,7 +123,7 @@ describe("startAskRun", () => {
     serve();
     const started = await ask({
       unit: "sessions",
-      // Not a session read: sessions read their conversation.
+      // Not a session read: a session is read whole.
       reads: "input_output",
       filters: [STATUS_ITEM, DATE_ITEM],
       sampleSize: 1000,
@@ -136,9 +136,9 @@ describe("startAskRun", () => {
       output_type: "deterministic",
       choice_scores: { Yes: 1, No: 0 },
       instructions:
-        "Did the customer get what they came for?\n\nConversation:\n{{transcript}}",
+        "Did the customer get what they came for?\n\nConversation:\n{{conversation}}",
     });
-    const mapping = { transcript: "transcript" };
+    const mapping = { conversation: "transcript_full" };
     expect(postBody("/config")).toEqual({
       project: "p1",
       eval_template: "t1",
@@ -153,7 +153,7 @@ describe("startAskRun", () => {
           question: QUESTION.question,
           answer_type: "yes_no",
           labels: ["Yes", "No"],
-          reads: "transcript",
+          reads: "transcript_full",
           unit: "sessions",
         },
       },
@@ -176,7 +176,7 @@ describe("startAskRun", () => {
           configId: "c1",
           templateId: "t1",
           question: QUESTION.question,
-          reads: "transcript",
+          reads: "transcript_full",
           unit: "sessions",
         }),
       ],

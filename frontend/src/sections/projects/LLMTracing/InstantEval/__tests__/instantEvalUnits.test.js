@@ -57,8 +57,9 @@ describe("splitScopeFilters", () => {
 
 describe("reads", () => {
   it("keeps a read only on the views that offer it", () => {
-    expect(normalizeReads("sessions", "input_output")).toBe("transcript");
-    expect(normalizeReads("users", undefined)).toBe("transcript");
+    expect(normalizeReads("sessions", "input_output")).toBe("transcript_full");
+    expect(normalizeReads("users", undefined)).toBe("transcript_full");
+    expect(normalizeReads("sessions", "transcript")).toBe("transcript");
     expect(normalizeReads("users", "transcript_full")).toBe("transcript_full");
     expect(normalizeReads("traces", "output")).toBe("output");
     expect(normalizeReads("traces", "trace_tree")).toBe("trace_tree");

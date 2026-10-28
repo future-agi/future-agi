@@ -2686,12 +2686,30 @@ def _span_block(span, depth: int, number: int, field_chars: int) -> str:
     return "\n".join(lines)
 
 
+# Over budget, a tree's input and output shrink to these before any span is
+# left out, and then the first and latest of these many spans stay.
+_TREE_SHRUNK_FIELD_CHARS = (600, 300, 150)
+_TREE_KEEP_ENDS_STEPS = (_TREE_KEEP_ENDS, 6, 3, 1)
+# Where a text over budget is cut anyway, it says so.
+_CUT_MARK = "\n[… cut to fit …]"
+
+
+def _clip_marked(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - len(_CUT_MARK))] + _CUT_MARK
+
+
 def render_trace_tree(spans, *, max_chars: int = _TREE_MAX_CHARS) -> str:
-    """A trace's spans as an indented outline for a judge, within budget."""
+    """A trace's spans as an indented outline for a judge, within budget.
+
+    Over budget, every span's input and output shrink first. If that isn't
+    enough, spans in the middle are left out (the first and latest stay, and
+    every errored one), each gap marked with how many went: nothing is left
+    out without a mark."""
     if not spans:
         return ""
     by_id = {str(s.id): s for s in spans}
-    depths: dict[str, int] = {}
 
     def depth(span) -> int:
         seen, node, d = set(), span, 0
@@ -2702,49 +2720,75 @@ def render_trace_tree(spans, *, max_chars: int = _TREE_MAX_CHARS) -> str:
             seen.add(parent)
             node, d = by_id[parent], d + 1
 
-    field_chars = _TREE_FIELD_CHARS
-    blocks = []
-    for number, span in enumerate(spans, start=1):
-        sid = str(span.id)
-        depths[sid] = depth(span)
-        blocks.append((span, _span_block(span, depths[sid], number, field_chars)))
-    text = "\n".join(b for _, b in blocks)
-    if len(text) <= max_chars:
-        return text
-    # Over budget: keep the ends, every errored span, and shrink fields.
-    keep = set(range(min(_TREE_KEEP_ENDS, len(blocks)))) | set(
-        range(max(0, len(blocks) - _TREE_KEEP_ENDS), len(blocks))
-    )
-    keep |= {
+    depths = [depth(span) for span in spans]
+
+    def block(i: int, field_chars: int) -> str:
+        return _span_block(spans[i], depths[i], i + 1, field_chars)
+
+    for field_chars in (_TREE_FIELD_CHARS, *_TREE_SHRUNK_FIELD_CHARS):
+        text = "\n".join(block(i, field_chars) for i in range(len(spans)))
+        if len(text) <= max_chars:
+            return text
+    field_chars = _TREE_SHRUNK_FIELD_CHARS[-1]
+    errored = {
         i
-        for i, (span, _) in enumerate(blocks)
+        for i, span in enumerate(spans)
         if str(getattr(span, "status", "") or "").upper() == "ERROR"
     }
-    field_chars = 600
-    out, skipped = [], 0
-    for i, (span, _) in enumerate(blocks):
-        if i in keep:
-            if skipped:
-                out.append(f"[… {skipped} spans omitted …]")
-                skipped = 0
-            out.append(_span_block(span, depths[str(span.id)], i + 1, field_chars))
-        else:
-            skipped += 1
-    if skipped:
-        out.append(f"[… {skipped} spans omitted …]")
-    return _clip_text("\n".join(out), max_chars)
+    for ends in _TREE_KEEP_ENDS_STEPS:
+        keep = errored | set(range(min(ends, len(spans))))
+        keep |= set(range(max(0, len(spans) - ends), len(spans)))
+        out, skipped = [], 0
+        for i in range(len(spans)):
+            if i in keep:
+                if skipped:
+                    out.append(f"[… {skipped} spans omitted …]")
+                    skipped = 0
+                out.append(block(i, field_chars))
+            else:
+                skipped += 1
+        if skipped:
+            out.append(f"[… {skipped} spans omitted …]")
+        text = "\n".join(out)
+        if len(text) <= max_chars:
+            return text
+    return _clip_marked(text, max_chars)
+
+
+def _fit_turns(turns: list[str], max_chars: int) -> str:
+    """A session's turns within budget: all of them, else the first two and
+    as many of the latest as fit, the turns between marked as left out."""
+    text = "\n\n".join(turns)
+    if len(text) <= max_chars:
+        return text
+    head, tail, used = turns[:2], [], sum(len(t) for t in turns[:2])
+    for turn in reversed(turns[2:]):
+        if used + len(turn) > max_chars:
+            break
+        tail.insert(0, turn)
+        used += len(turn)
+    skipped = len(turns) - len(head) - len(tail)
+    return "\n\n".join(head + [f"[… {skipped} turns omitted …]"] + tail)
+
+
+# A turn of a long session keeps at least this much of its outline; past
+# what fits at that, the turns in the middle are left out, marked.
+_TURN_MIN_CHARS = 1500
+# "[Turn 12]\n" and the blank line between turns.
+_TURN_HEAD_CHARS = 16
 
 
 def render_session_full_transcript(traces, spans_of) -> str:
-    """Every turn of a session as its full span outline."""
+    """Every turn of a session as its span outline, each within an equal
+    share of the budget, so the latest turns are never cut off the end."""
     if not traces:
         return ""
-    per_turn = max(4000, _TREE_MAX_CHARS // max(1, len(traces)))
+    per_turn = max(_TURN_MIN_CHARS, _TREE_MAX_CHARS // len(traces) - _TURN_HEAD_CHARS)
     turns = [
         f"[Turn {i}]\n{render_trace_tree(spans_of(t), max_chars=per_turn)}"
         for i, t in enumerate(traces, start=1)
     ]
-    return _clip_text("\n\n".join(turns), _TREE_MAX_CHARS)
+    return _fit_turns(turns, _TREE_MAX_CHARS)
 
 
 def render_session_transcript(traces) -> str:
@@ -2763,17 +2807,7 @@ def render_session_transcript(traces) -> str:
         f"Assistant: {clip(_transcript_text(getattr(t, 'output', None)))}"
         for i, t in enumerate(traces, start=1)
     ]
-    text = "\n\n".join(turns)
-    if len(text) <= _TRANSCRIPT_MAX_CHARS:
-        return text
-    head, tail, used = turns[:2], [], sum(len(t) for t in turns[:2])
-    for turn in reversed(turns[2:]):
-        if used + len(turn) > _TRANSCRIPT_MAX_CHARS:
-            break
-        tail.insert(0, turn)
-        used += len(turn)
-    skipped = len(turns) - len(head) - len(tail)
-    return "\n\n".join(head + [f"[… {skipped} turns omitted …]"] + tail)
+    return _fit_turns(turns, _TRANSCRIPT_MAX_CHARS)
 
 
 # Span model fields that are stored as dedicated DB columns (not inside
