@@ -78,7 +78,7 @@ def test_https_uses_hostname_for_sni_and_certificate_verification(monkeypatch):
     response.getheader.side_effect = lambda key, default=None: default
     response.getheaders.return_value = []
     response.read.return_value = b""
-    monkeypatch.setattr(destination.ssl, "create_default_context", lambda: context)
+    monkeypatch.setattr(destination.ssl, "create_default_context", lambda **kwargs: context)
     monkeypatch.setattr(
         destination,
         "_resolve",
@@ -115,9 +115,12 @@ def test_https_uses_hostname_for_sni_and_certificate_verification(monkeypatch):
         "[::ffff:0:7f00:1]",
     ],
 )
-def test_additional_address_forms_are_refused(address):
-    with pytest.raises(destination.DestinationError):
+def test_additional_address_forms_are_refused(address, monkeypatch):
+    spawn = Mock(side_effect=AssertionError("preflight must precede worker startup"))
+    monkeypatch.setattr(destination.subprocess, "Popen", spawn)
+    with pytest.raises(destination.DestinationError, match="^address_class$"):
         destination.request(method="GET", url=f"http://{address}/")
+    spawn.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -131,6 +134,9 @@ def test_additional_address_forms_are_refused(address):
         "http://public.fixture.test\n/",
     ],
 )
-def test_noncanonical_authorities_are_refused(url):
-    with pytest.raises(destination.DestinationError):
+def test_noncanonical_authorities_are_refused(url, monkeypatch):
+    spawn = Mock(side_effect=AssertionError("preflight must precede worker startup"))
+    monkeypatch.setattr(destination.subprocess, "Popen", spawn)
+    with pytest.raises(destination.DestinationError, match="^url_"):
         destination.request(method="GET", url=url)
+    spawn.assert_not_called()
