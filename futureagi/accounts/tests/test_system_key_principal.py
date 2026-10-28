@@ -1,5 +1,6 @@
 """System credentials use an active organization Owner membership."""
 
+import base64
 from datetime import timedelta
 
 import pytest
@@ -12,6 +13,57 @@ from tfc.constants.levels import Level
 from tfc.middleware.workspace_context import clear_workspace_context
 
 pytestmark = [pytest.mark.django_db, pytest.mark.integration, pytest.mark.api]
+
+
+@pytest.mark.parametrize("transport", ["basic", "mcp"])
+@pytest.mark.parametrize("has_owner", [False, True])
+def test_system_key_transports_share_membership_principal(
+    key_scope, transport, has_owner
+):
+    from rest_framework.exceptions import AuthenticationFailed
+    from rest_framework.request import Request
+    from rest_framework.test import APIRequestFactory
+
+    from accounts.authentication import LangfuseBasicAuthentication
+    from mcp_server import mcp_app
+
+    scope, other = key_scope
+    owner = scope.users[Level.OWNER]
+    # None of the members has this org as home, including the actual Owner.
+    User.objects.filter(organization=scope.org).update(organization=other.org)
+    if not has_owner:
+        OrganizationMembership.no_workspace_objects.filter(
+            user=owner, organization=scope.org
+        ).update(is_active=False)
+    key = make_key(scope.org, key_type="system")
+    try:
+        if transport == "mcp":
+            context = mcp_app._authenticate_and_set_context(key.api_key, key.secret_key)
+            if has_owner:
+                assert context is not None
+                assert context.user.pk == owner.pk
+                assert context.organization.pk == scope.org.pk
+            else:
+                assert context is None
+        else:
+            encoded = base64.b64encode(
+                f"{key.api_key}:{key.secret_key}".encode()
+            ).decode()
+            req = Request(
+                APIRequestFactory().get(
+                    "/api/test/", HTTP_AUTHORIZATION=f"Basic {encoded}"
+                )
+            )
+            if has_owner:
+                user, _ = LangfuseBasicAuthentication().authenticate(req)
+                assert user.pk == owner.pk
+                assert req.organization.pk == scope.org.pk
+            else:
+                with pytest.raises(AuthenticationFailed):
+                    LangfuseBasicAuthentication().authenticate(req)
+    finally:
+        mcp_app._clear_context()
+        clear_workspace_context()
 
 
 @pytest.mark.parametrize("legacy", [False, True])

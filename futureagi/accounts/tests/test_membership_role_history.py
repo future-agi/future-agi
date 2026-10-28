@@ -100,6 +100,10 @@ def test_truly_legacy_role_still_resolves(key_scope):
 def test_workspace_add_does_not_readmit_removed_org_member(key_scope, through_view):
     scope = key_scope[0]
     user = scope.users[Level.VIEWER]
+    # The public add-user endpoint canonicalizes emails before its lookup.
+    # Keep this test on the existing removed user, not a case-distinct new user.
+    user.email = user.email.lower()
+    user.save(update_fields=["email"])
     membership = user.get_membership(scope.org)
     membership.delete()
     clear_workspace_context()
