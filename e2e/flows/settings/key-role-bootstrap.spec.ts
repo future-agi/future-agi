@@ -26,10 +26,10 @@ type Bootstrap = { status: string; data: Pair };
 type KeyRow = { id: string; key_name: string; api_key: string; secret_key: string; type: string };
 type KeyList = { result: { table: KeyRow[]; metadata: { total_rows: number } } };
 
-test('SET-E2E-004: key access follows the current organization role and removal', {
+test('SET-E2E-007: key access follows the current organization role and removal', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'SET-E2E-004', area: 'settings',
+    id: 'SET-E2E-007', area: 'settings',
     userGoal: 'Use only the keys allowed by the current organization role and lose access after removal',
     steps: [
       'bootstrap an Owner and Viewer using their own bearer sessions',
