@@ -28,6 +28,11 @@ def test_removed_membership_is_not_healed_by_existing_bearer(
     membership = user.get_membership(scope.org)
     if state == "delete":
         membership.delete()
+        # The deletion signal revokes existing sessions. A subsequently issued
+        # bearer still must not turn the removal record into legacy repair.
+        assert client.get(KEYS_URL).status_code == 401
+        clear_workspace_context()
+        client = session_client(user, scope.org)
     else:
         OrganizationMembership.all_objects.filter(pk=membership.pk).update(
             **({"is_active": False} if state == "inactive" else {"deleted": True})
@@ -94,6 +99,9 @@ def test_explicit_reinvitation_can_follow_a_removed_membership(key_scope):
     user = scope.users[Level.VIEWER]
     client = session_client(user, scope.org)
     user.get_membership(scope.org).delete()
+    assert client.get(KEYS_URL).status_code == 401
+    clear_workspace_context()
+    client = session_client(user, scope.org)
     assert client.get(KEYS_URL).status_code == 403
     clear_workspace_context()
     # Only an explicit membership grant, not a resolver read, restores access.

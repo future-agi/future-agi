@@ -24,6 +24,21 @@ for label in base red head dev removal; do
   esac
   git -C "$repo" worktree add --detach "$run/$label" "$revision"
 done
+# Use the exact final regression tests on the pre-repair implementation. This
+# also carries corrections to positive controls (for example revoked sessions
+# are 401, while a freshly issued bearer without membership is 403).
+cp "$run/head/futureagi/accounts/tests/test_membership_key_healing.py" \
+  "$run/removal/futureagi/accounts/tests/test_membership_key_healing.py"
+git -C "$run/removal" add futureagi/accounts/tests/test_membership_key_healing.py
+if ! git -C "$run/removal" diff --cached --quiet; then
+  UV_NO_SYNC=1 git -C "$run/removal" -c user.name='Key role checks' -c user.email='checks@example.test' commit \
+    -m 'test(accounts): pin bearer removal controls for paired verification' \
+    -m 'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>'
+fi
+cmp "$run/head/futureagi/accounts/tests/test_membership_key_healing.py" \
+  "$run/removal/futureagi/accounts/tests/test_membership_key_healing.py"
+printf 'removal_base=git:%s\nremoval_tests=git:%s\n' "$removal" \
+  "$(git -C "$run/removal" rev-parse HEAD)" >> "$run/results/revisions.txt"
 git -C "$repo" worktree add -b "verify/key-role-replay-$(date -u +%Y%m%dT%H%M%SZ)-$$" "$run/replay" "$dev"
 # Applying explicit tree deltas works even when cloud exec ships shallow commit objects.
 git -C "$repo" diff --binary "$base" "$red" > "$run/tests.patch"
