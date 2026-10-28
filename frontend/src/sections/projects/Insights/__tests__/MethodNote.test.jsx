@@ -48,4 +48,32 @@ describe("MethodNote", () => {
       screen.getByText("300 of 2,345 sessions, spread evenly over time"),
     ).toBeInTheDocument();
   });
+
+  it.each([
+    [{ credits: 964.57 }, "Charged", "965 credits"],
+    [
+      { credits: 964.57, unpriced: true },
+      "Charged",
+      "965 credits, including calls to a model with no listed price, charged at the highest rate",
+    ],
+    [{ usd: 0.4213 }, "Model cost", "$0.42 at list prices"],
+    [
+      { usd: 8.04, unpriced: true },
+      "Model cost",
+      "Not known: a model it used has no listed price",
+    ],
+  ])("shows what the report cost as recorded: %j", (cost, label, text) => {
+    renderNote({ cost_usd: 8.04, result: { ...run.result, cost } });
+    expect(screen.getByText(label)).toBeInTheDocument();
+    expect(screen.getByText(text)).toBeInTheDocument();
+    // Never the raw model cost in dollars beside a charge in credits.
+    if (cost.credits || cost.unpriced)
+      expect(screen.queryByText(/\$8\.04/)).toBeNull();
+  });
+
+  it("shows no cost a run didn't record", () => {
+    renderNote({ cost_usd: 8.04, result: { ...run.result, cost: undefined } });
+    expect(screen.queryByText("Cost")).toBeNull();
+    expect(screen.queryByText(/\$8\.04/)).toBeNull();
+  });
 });

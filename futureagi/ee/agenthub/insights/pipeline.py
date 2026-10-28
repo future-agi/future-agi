@@ -762,7 +762,8 @@ def _settle_written(run, taxonomy) -> None:
     when the report's question or lens changed while the run was under way:
     its categories answer the old one, and the edit applies from the next
     run."""
-    billing.charge_run(run)
+    charged = billing.charge_run(run)
+    _record_cost(run, charged)
     set_progress(run, "done")
     config = run.config
     s = run.settings or {}
@@ -779,6 +780,23 @@ def _settle_written(run, taxonomy) -> None:
             "frozen_at": timezone.now().isoformat(),
         }
         config.save(update_fields=["taxonomy", "updated_at"])
+
+
+def _record_cost(run, charged: float) -> None:
+    """What the report itself cost, for "How this report was made": the
+    credits it was charged where reports are billed (Cloud), else its model
+    cost at list prices; ``unpriced`` when some of it is the ceiling price
+    of a model nothing priced. Kept now: follow-up questions add to the
+    run's ``cost_usd`` later."""
+    InsightRun, _ = _models()
+    if billing.applies():
+        cost = {"credits": charged}
+    else:
+        cost = {"usd": round(float(run.cost_usd or 0), 6)}
+    if ((run.settings or {}).get("spend_flags") or {}).get("unpriced"):
+        cost["unpriced"] = True
+    run.result = {**(run.result or {}), "cost": cost}
+    InsightRun.objects.filter(id=run.id).update(result=run.result)
 
 
 def finish(run_id: str) -> dict:

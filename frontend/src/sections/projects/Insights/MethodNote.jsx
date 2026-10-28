@@ -2,6 +2,7 @@ import React from "react";
 import PropTypes from "prop-types";
 import { Box, Button, Collapse, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { creditCount } from "src/sections/projects/LLMTracing/InstantEval/page/askFilter";
 import {
   formatCost,
   formatCount,
@@ -18,6 +19,27 @@ const STATUS_LABEL = {
   running: "Running",
   pending: "Queued",
 };
+
+// What the report itself cost, as the run recorded it when it was charged:
+// its credits on Cloud, else its model cost. A ceiling price (a model with no
+// listed price) is never shown as what something cost.
+function costRow(cost) {
+  if (cost?.credits > 0)
+    return [
+      "Charged",
+      cost.unpriced
+        ? `${creditCount(cost.credits)}, including calls to a model with no listed price, charged at the highest rate`
+        : creditCount(cost.credits),
+    ];
+  if (cost?.usd > 0)
+    return [
+      "Model cost",
+      cost.unpriced
+        ? "Not known: a model it used has no listed price"
+        : `${formatCost(cost.usd)} at list prices`,
+    ];
+  return ["Cost", null];
+}
 
 function rowsFor(run, config) {
   const settings = run.settings || {};
@@ -90,7 +112,7 @@ function rowsFor(run, config) {
         .filter(Boolean)
         .join(", "),
     ],
-    ["Cost", run.cost_usd > 0 ? formatCost(run.cost_usd) : null],
+    costRow(result.cost),
   ].filter(([, value]) => value);
 }
 

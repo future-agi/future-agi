@@ -361,6 +361,8 @@ def test_a_first_run_reads_groups_and_freezes_its_categories(
     assert written["dropped_points"] == 1
     assert written["verification"] == {"numbers": True, "quotes": False, "audit": False}
     assert run.result["engine"] == {"kind": "builtin", "version": "builtin/v1"}
+    # Off Cloud nothing is charged: the report's model cost at list prices.
+    assert run.result["cost"] == {"usd": round(run.cost_usd, 6)}
 
     # The first run's categories become the report's.
     config.refresh_from_db()
@@ -504,8 +506,10 @@ def test_a_retried_finish_does_not_write_or_charge_the_report_twice(
         charged.append(run.id)
         if len(charged) == 1:
             raise RuntimeError("billing blip")
+        return 12.5
 
     monkeypatch.setattr(billing, "charge_run", charge_run)
+    monkeypatch.setattr(billing, "applies", lambda: True)
     run = pipeline.create_run(
         config=report,
         scope={"window": WINDOW, "preset": "Custom"},
@@ -521,12 +525,17 @@ def test_a_retried_finish_does_not_write_or_charge_the_report_twice(
     run.refresh_from_db()
     cost, summaries, written = run.cost_usd, model.calls["summary"], run.result
     assert run.status == "completed"
+    # Some of its spend was priced at a ceiling: the charge says so.
+    run.settings = {**run.settings, "spend_flags": {"unpriced": True}}
+    run.save(update_fields=["settings"])
 
     pipeline.finish(str(run.id))
     run.refresh_from_db()
     assert model.calls["summary"] == summaries
     assert run.cost_usd == cost
-    assert run.result == written
+    # The report as written, with what it was charged once it was.
+    assert "cost" not in written
+    assert run.result == {**written, "cost": {"credits": 12.5, "unpriced": True}}
     assert charged == [run.id, run.id]
     assert run.stage == "done"
     report.refresh_from_db()
