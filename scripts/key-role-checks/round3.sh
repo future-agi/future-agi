@@ -14,7 +14,7 @@ compose=(docker compose -p key-round3 -f "$repo/futureagi/docker-compose.test.ym
 trap '"${compose[@]}" down' EXIT
 (cd "$repo/futureagi" && uv sync --locked)
 code=0
-env -i HOME="$HOME" PATH="$PATH" \
+env -i HOME="$HOME" PATH="$PATH" OMEGA_EXEC_SOURCE_HEAD="$head" \
   DJANGO_SETTINGS_MODULE=tfc.settings.test ENV_TYPE=local TESTING=true \
   PG_HOST=127.0.0.1 PG_PORT=15432 PG_DB=test_tfc PG_TEST_DB=test_key_round3 \
   PG_USER=test_user PG_PASSWORD=test_password PGBOUNCER_HOST=127.0.0.1 PGBOUNCER_PORT=15432 \
