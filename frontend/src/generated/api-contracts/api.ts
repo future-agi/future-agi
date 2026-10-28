@@ -1169,6 +1169,7 @@ import type {
   SimulateApiAgentDefinitionOperationsListParams,
   SimulateApiAgentFixEngineCandidatesBodyOne,
   SimulateApiAgentFixEngineCandidatesBodyTwo,
+  SimulateApiAgentFixEngineV1ChatCompletionsCreateBody,
   SimulateApiAgentFixRunsListParams,
   SimulateApiAgentPromptOptimiserList200,
   SimulateApiAgentPromptOptimiserListParams,
@@ -57915,6 +57916,57 @@ export const simulateApiAgentFixEngineSource = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type simulateApiAgentFixEngineV1ChatCompletionsCreateResponse200 = {
+  data: void;
+  status: 200;
+};
+
+export type simulateApiAgentFixEngineV1ChatCompletionsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixEngineV1ChatCompletionsCreateResponseSuccess =
+  simulateApiAgentFixEngineV1ChatCompletionsCreateResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixEngineV1ChatCompletionsCreateResponseError =
+  simulateApiAgentFixEngineV1ChatCompletionsCreateResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixEngineV1ChatCompletionsCreateResponse =
+  | simulateApiAgentFixEngineV1ChatCompletionsCreateResponseSuccess
+  | simulateApiAgentFixEngineV1ChatCompletionsCreateResponseError;
+
+export const getSimulateApiAgentFixEngineV1ChatCompletionsCreateUrl = (
+  id: string,
+) => {
+  return `/simulate/api/agent-fix-engine/${id}/v1/chat/completions`;
+};
+
+/**
+ * The engine's model calls, at the path an OpenAI-compatible client builds from its
+base URL: no trailing slash, so it is routed on its own, not by the router.
+ */
+export const simulateApiAgentFixEngineV1ChatCompletionsCreate = async (
+  id: string,
+  simulateApiAgentFixEngineV1ChatCompletionsCreateBody: SimulateApiAgentFixEngineV1ChatCompletionsCreateBody,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixEngineV1ChatCompletionsCreateResponse> => {
+  return apiMutator<simulateApiAgentFixEngineV1ChatCompletionsCreateResponse>(
+    getSimulateApiAgentFixEngineV1ChatCompletionsCreateUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(
+        simulateApiAgentFixEngineV1ChatCompletionsCreateBody,
+      ),
     },
   );
 };

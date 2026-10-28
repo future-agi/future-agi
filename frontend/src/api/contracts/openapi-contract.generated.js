@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1104,
+  endpointCount: 1105,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -27755,6 +27755,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeRequestValidation: false,
         runtimeResponseValidation: false,
         requestBody: null,
+        queryParameters: {},
+        responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-engine/{id}/v1/chat/completions": {
+      post: {
+        operationId: "simulate_api_agent-fix-engine_v1_chat_completions_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: false,
+        requestBody: {
+          type: "object",
+          additionalProperties: true,
+        },
         queryParameters: {},
         responses: {
           default: {

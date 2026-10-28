@@ -36406,6 +36406,10 @@ export type SimulateApiAgentFixEngineCandidatesBodyTwo = {
   patch: Blob;
 };
 
+export type SimulateApiAgentFixEngineV1ChatCompletionsCreateBody = {
+  [key: string]: unknown;
+};
+
 export type SimulateApiAgentFixRunsListParams = {
   environment_id: string;
 };

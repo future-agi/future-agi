@@ -50030,6 +50030,46 @@
                 }
             ]
         },
+        "/simulate/api/agent-fix-engine/{id}/v1/chat/completions": {
+            "post": {
+                "operationId": "simulate_api_agent-fix-engine_v1_chat_completions_create",
+                "description": "The engine's model calls, at the path an OpenAI-compatible client builds from its\nbase URL: no trailing slash, so it is routed on its own, not by the router.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "the gateway's reply, as it sent it"
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/agent-fix-runs/": {
             "get": {
                 "operationId": "simulate_api_agent-fix-runs_list",

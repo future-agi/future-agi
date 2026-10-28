@@ -13,18 +13,15 @@ from django.db import InterfaceError, OperationalError, transaction
 from django.db.models import F
 from django.utils import timezone
 
-from agentcc.services.gateway_client import GatewayClientError
 from simulate.models import AgentFixRun
 from simulate.pydantic_schemas.agent_fix import EngineCapability, EngineModels
 from simulate.selectors.agent_fix import fix_deadline
-from simulate.services import agent_fix_keys
 from simulate.services.agent_fix_runs import close_fix_run
 from simulate.services.hosted_harness import HostedHarnessError, hash_secret
 from simulate.services.hosted_harness_gateway import (
     _CHAT_RUNTIME_PATH,
     _hostname_from_url,
     _validate_resolved_egress_domains,
-    platform_model_gateway,
 )
 from simulate.services.hosted_sandbox import (
     E2BSandboxRuntimeProvider,
@@ -71,22 +68,8 @@ def launch(fix_run_id: str) -> AgentFixLaunch:
         return AgentFixLaunch(observation=refusal)
     release(fix_run_id)
     provider = _provider()
-    gateway_url = _model_gateway_url()
     fix_run = AgentFixRun.no_workspace_objects.get(id=fix_run_id)
-    spec = _launch_spec(fix_run, gateway_url, provider)
-    try:
-        model_key = agent_fix_keys.mint(fix_run, _credentials_expiry(fix_run))
-    except GatewayClientError:
-        logger.exception("agent_fix_model_key_failed", fix_run=str(fix_run.id))
-        close_fix_run(
-            fix_run.id,
-            AgentFixRun.State.FAILED,
-            failure={
-                "code": "fix_model_key_unavailable",
-                "message": "AgentCC could not issue the improvement engine a model key",
-            },
-        )
-        return AgentFixLaunch(observation=Observation.ENDED)
+    spec = _launch_spec(fix_run, provider)
     sandbox = provider.create(spec, timeout=provider.create_timeout_seconds)
     AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
         sandbox_ref=sandbox.id, updated_at=timezone.now()
@@ -95,13 +78,16 @@ def launch(fix_run_id: str) -> AgentFixLaunch:
     if credentials is None:
         # The user stopped the run while its sandbox was created; the workflow deletes it.
         return AgentFixLaunch(observation=Observation.STOPPING)
+    api_base = f"{_public_base_url()}/simulate/api/agent-fix-engine/{fix_run.id}/"
     capability = EngineCapability(
         fix_run_id=str(fix_run.id),
-        api_base=f"{_public_base_url()}/simulate/api/agent-fix-engine/{fix_run.id}/",
+        api_base=api_base,
         token=credentials.token,
         fence=credentials.fence,
         expires_at=credentials.expires_at.isoformat(),
-        models=EngineModels(base_url=gateway_url, api_key=model_key),
+        # The engine's model calls go through its fix's own API on the same token: the
+        # platform forwards them with its own key and meters them (agent_fix_models).
+        models=EngineModels(base_url=f"{api_base}v1", api_key=credentials.token),
     )
     command_id = _start_engine(sandbox, capability)
     # Only a started engine uses up one of the run's attempts; a launch that failed
@@ -215,7 +201,7 @@ def _look(fix_run_id: str, command_id: str) -> Observation:
 
 
 def release(fix_run_id: str) -> None:
-    """Delete the fix's sandbox and revoke its model key, if it has them. Safe to repeat."""
+    """Delete the fix's sandbox, if it has one. Safe to repeat."""
     sandbox_ref = AgentFixRun.no_workspace_objects.values_list(
         "sandbox_ref", flat=True
     ).get(id=fix_run_id)
@@ -235,7 +221,6 @@ def release(fix_run_id: str) -> None:
         logger.info(
             "agent_fix_sandbox_released", fix_run=str(fix_run_id), sandbox=sandbox_ref
         )
-    agent_fix_keys.revoke(fix_run_id)
 
 
 def _start_engine(sandbox, capability: EngineCapability) -> str:
@@ -312,18 +297,11 @@ def _settled(fix_run: AgentFixRun) -> Observation | None:
 
 
 def _credentials_expiry(fix_run: AgentFixRun) -> datetime:
-    """The engine's token and model key outlive the deadline by a grace period, so a
+    """The engine's token outlives the deadline by a grace period, so a
     final report sent near the deadline still lands. The workflow ends the run itself
     at the deadline."""
     grace = timedelta(seconds=settings.AGENT_FIX_TOKEN_GRACE_SECONDS)
     return fix_deadline(fix_run) + grace
-
-
-def _model_gateway_url() -> str:
-    """AgentCC's OpenAI-compatible endpoint, as a sandbox reaches it."""
-    # Only the URL: the platform's own key never enters a sandbox.
-    url, _platform_key = platform_model_gateway()
-    return f"{url.removesuffix('/v1')}/v1"
 
 
 def _provider() -> SandboxRuntimeProvider:
@@ -338,7 +316,7 @@ def _provider() -> SandboxRuntimeProvider:
 
 
 def _launch_spec(
-    fix_run: AgentFixRun, gateway_url: str, provider: SandboxRuntimeProvider
+    fix_run: AgentFixRun, provider: SandboxRuntimeProvider
 ) -> SandboxLaunchSpec:
     template = settings.AGENT_FIX_E2B_TEMPLATE_REFERENCE
     if not template:
@@ -347,11 +325,8 @@ def _launch_spec(
             "AGENT_FIX_E2B_TEMPLATE_REFERENCE is not set",
             status_code=503,
         )
-    # The engine reaches only the platform's engine API and the model gateway.
-    domains = {
-        _hostname_from_url(_public_base_url()),
-        _hostname_from_url(gateway_url),
-    }
+    # The engine reaches only its fix's API on the platform, models included.
+    domains = {_hostname_from_url(_public_base_url())}
     _validate_resolved_egress_domains(domains, max_domains=provider.max_egress_domains)
     # E2B sizes a sandbox by its template; this only passes the provider's admission.
     cpu_units, memory_mb, disk_gb = E2BSandboxRuntimeProvider.configured_resources()

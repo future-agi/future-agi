@@ -1099,12 +1099,16 @@ AGENT_FIX_HEARTBEAT_TIMEOUT_SECONDS = int(
 AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = os.getenv(
     "AGENT_FIX_WORST_CASE_USD_PER_EXECUTION", "0.05"
 )
-# Models the engine's per-launch AgentCC key may call.
+# Models the engine may call through its fix's API; Future AGI pays for them.
 AGENT_FIX_ENGINE_MODELS = os.getenv(
     "AGENT_FIX_ENGINE_MODELS", "deepseek/deepseek-v4.1-flash"
 ).split(",")
-# How long past the fix's deadline its token and key still work, for the final report.
+# How long past the fix's deadline its token still works, for the final report.
 AGENT_FIX_TOKEN_GRACE_SECONDS = int(os.getenv("AGENT_FIX_TOKEN_GRACE_SECONDS", "600"))
+# How long one of the engine's model calls may take at the gateway.
+AGENT_FIX_MODEL_TIMEOUT_SECONDS = int(
+    os.getenv("AGENT_FIX_MODEL_TIMEOUT_SECONDS", "900")
+)
 # Limits on what an engine may upload: a candidate's unpacked tree and a checkpoint.
 AGENT_FIX_MAX_TREE_BYTES = int(
     os.getenv("AGENT_FIX_MAX_TREE_BYTES", str(128 * 1024 * 1024))

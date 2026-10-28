@@ -9,8 +9,12 @@ from rest_framework.decorators import action
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
-from simulate.authentication import AgentFixEngineAuthentication
+from simulate.authentication import (
+    AgentFixEngineAuthentication,
+    AgentFixModelAuthentication,
+)
 from simulate.models import AgentFixCandidate, AgentFixRun, HostedHarnessJob
 from simulate.pydantic_schemas.agent_fix import (
     CandidateCreated,
@@ -34,7 +38,7 @@ from simulate.serializers.agent_fix import (
     AgentFixMakeDefaultSerializer,
     AgentFixRunSerializer,
 )
-from simulate.services import agent_fix_engine
+from simulate.services import agent_fix_engine, agent_fix_models
 from simulate.services.agent_fix_runs import (
     launch_fix_run,
     make_candidate_default,
@@ -306,3 +310,28 @@ class AgentFixEngineViewSet(viewsets.ViewSet):
         if body is None:
             return _not_found()
         return HttpResponse(body, content_type="application/json")
+
+
+class AgentFixModelView(APIView):
+    """The engine's model calls, at the path an OpenAI-compatible client builds from its
+    base URL: no trailing slash, so it is routed on its own, not by the router."""
+
+    authentication_classes = [AgentFixModelAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def handle_exception(self, exc):
+        return _error_response(exc) or super().handle_exception(exc)
+
+    @swagger_auto_schema(
+        # An OpenAI chat completion request, forwarded as sent: checked in the service.
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT, additional_properties=True
+        ),
+        runtime_request_validation=True,
+        responses={200: "the gateway's reply, as it sent it"},
+    )
+    def post(self, request, pk=None):
+        reply = agent_fix_models.complete(request.auth, request.body)
+        return HttpResponse(
+            reply.body, status=reply.status_code, content_type=reply.content_type
+        )

@@ -34261,6 +34261,20 @@ export const SimulateApiAgentFixEngineSourceParams = zod.object({
 });
 
 /**
+ * The engine's model calls, at the path an OpenAI-compatible client builds from its
+base URL: no trailing slash, so it is routed on its own, not by the router.
+ */
+export const SimulateApiAgentFixEngineV1ChatCompletionsCreateParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const SimulateApiAgentFixEngineV1ChatCompletionsCreateBody = zod.record(
+  zod.string(),
+  zod.unknown(),
+);
+
+/**
  * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
 and make a proven candidate the environment's default.
  */

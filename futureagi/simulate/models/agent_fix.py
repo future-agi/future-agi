@@ -75,8 +75,6 @@ class AgentFixRun(BaseModel):
     fence_hash = models.CharField(max_length=64, blank=True, default="")
     token_expires_at = models.DateTimeField(null=True, blank=True)
     heartbeat_at = models.DateTimeField(null=True, blank=True)
-    # The AgentCC key minted for this fix's model calls; revoked when the fix ends.
-    model_key_id = models.CharField(max_length=64, blank=True, default="")
 
     class Meta:
         db_table = "simulate_agent_fix_run"

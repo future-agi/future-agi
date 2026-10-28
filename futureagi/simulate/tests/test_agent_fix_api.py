@@ -1,12 +1,15 @@
 """Fix my agent over HTTP: the user's fixes, the engine's calls from its sandbox, and
 the run lists that leave a fix's check runs out."""
 
+import json
 from contextlib import ExitStack, contextmanager
 from datetime import timedelta
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
 
+import httpx
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connection
@@ -23,6 +26,7 @@ from simulate.services.harness_environment import (
     run_summaries,
 )
 from simulate.services.hosted_harness import hash_secret
+from simulate.services.preview_pagination import _read_revision_state
 from simulate.services.run_results_v3_queries import (
     build_run_comparison,
     run_calls_queryset,
@@ -55,6 +59,8 @@ pytestmark = pytest.mark.django_db
 BASE = "/simulate/api/agent-fix-runs"
 ENGINE = "/simulate/api/agent-fix-engine"
 TOKEN, FENCE = "token-1", "fence-1"
+ENGINE_MODEL = "deepseek/deepseek-v4.1-flash"
+PLATFORM_KEY = "platform-harness-key"
 
 
 @pytest.fixture(autouse=True)
@@ -283,6 +289,127 @@ class TestEngineCalls:
         response = _engine(api_client, "get", fix_run, f"check-runs/{source_run.id}/")
 
         assert (response.status_code, response.json()["error"]) == (404, "not_found")
+
+
+class TestEngineModelCalls:
+    """The engine's model calls go through its fix: the platform's key, the fix's budget."""
+
+    @pytest.fixture(autouse=True)
+    def gateway(self, settings, monkeypatch):
+        settings.AGENT_FIX_ENGINE_MODELS = [ENGINE_MODEL]
+        monkeypatch.setenv("AGENTCC_BASE_URL", "https://gateway.example.test")
+        monkeypatch.setenv("AGENTCC_HARNESS_API_KEY", PLATFORM_KEY)
+        monkeypatch.setenv(
+            "AGENTCC_GATEWAY_INTERNAL_URL", "http://gateway.internal:8080/"
+        )
+        reply = httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "diagnosis"}}]},
+            headers={"x-agentcc-cost": "0.0123"},
+        )
+        with patch(
+            "simulate.services.agent_fix_models.httpx.post", return_value=reply
+        ) as post:
+            yield post
+
+    def _complete(self, client, fix_run, *, fence=FENCE, **body):
+        return _engine(
+            client,
+            "post",
+            fix_run,
+            "v1/chat/completions",
+            fence=fence,
+            data=json.dumps({"model": ENGINE_MODEL, "messages": [], **body}),
+            content_type="application/json",
+        )
+
+    def test_a_call_goes_out_on_the_platform_key_and_is_metered(
+        self, api_client, source_run, gateway
+    ):
+        fix_run = _armed(_fix_run(source_run))
+
+        # An OpenAI-compatible client sends its token and no fence.
+        response = self._complete(api_client, fix_run, fence="")
+
+        assert response.status_code == 200, response.content
+        assert response.json() == {"choices": [{"message": {"content": "diagnosis"}}]}
+        [call] = gateway.call_args_list
+        assert call.args == ("http://gateway.internal:8080/v1/chat/completions",)
+        assert call.kwargs["headers"]["Authorization"] == f"Bearer {PLATFORM_KEY}"
+        assert json.loads(call.kwargs["content"])["model"] == ENGINE_MODEL
+        fix_run.refresh_from_db()
+        assert fix_run.spent_usd == Decimal("0.0123")
+
+    def test_the_gateway_s_refusal_reaches_the_engine_and_costs_nothing(
+        self, api_client, source_run, gateway
+    ):
+        fix_run = _armed(_fix_run(source_run))
+        gateway.return_value = httpx.Response(429, json={"error": "rate limited"})
+
+        response = self._complete(api_client, fix_run)
+
+        assert (response.status_code, response.json()) == (
+            429,
+            {"error": "rate limited"},
+        )
+        fix_run.refresh_from_db()
+        assert fix_run.spent_usd == 0
+
+    @pytest.mark.parametrize(
+        ("fix", "body", "refusal"),
+        [
+            ({}, {"model": "openai/gpt-5"}, (403, "fix_model_not_allowed")),
+            ({}, {"stream": True}, (400, "fix_model_stream_unsupported")),
+            (
+                {"state": AgentFixRun.State.STOPPING},
+                {},
+                (409, "fix_run_not_running"),
+            ),
+            ({"spent_usd": Decimal("5")}, {}, (402, "fix_budget_exhausted")),
+        ],
+        ids=["other-model", "streamed", "stopping", "budget-spent"],
+    )
+    def test_refused_calls_never_reach_the_gateway(
+        self, api_client, source_run, gateway, fix, body, refusal
+    ):
+        fix_run = _armed(_fix_run(source_run, **fix))
+
+        response = self._complete(api_client, fix_run, **body)
+
+        assert (response.status_code, response.json()["error"]) == refusal
+        gateway.assert_not_called()
+
+    def test_an_unreachable_gateway_is_retryable(self, api_client, source_run, gateway):
+        fix_run = _armed(_fix_run(source_run))
+        gateway.side_effect = httpx.ConnectError("refused")
+
+        response = self._complete(api_client, fix_run)
+
+        assert response.status_code == 502
+        assert response.json()["error"] == "fix_model_gateway_unreachable"
+        assert response.json()["retryable"] is True
+
+    def test_a_replaced_sandbox_s_token_is_refused(
+        self, api_client, source_run, gateway
+    ):
+        fix_run = _armed(_fix_run(source_run))
+
+        response = _engine(
+            api_client,
+            "post",
+            fix_run,
+            "v1/chat/completions",
+            token="token-0",
+            fence="",
+            data=json.dumps({"model": ENGINE_MODEL}),
+            content_type="application/json",
+        )
+
+        assert (response.status_code, response.json()["error"]) == (
+            401,
+            "authentication_invalid",
+        )
+        gateway.assert_not_called()
 
 
 class TestUserApi:
@@ -526,8 +653,15 @@ class TestCheckRunsStayOutOfTheUsersRuns:
         assert run_summaries([latest])[latest.id]["run_number"] == 2
 
     def test_the_run_preview(self, auth_client, environment, runs):
-        with patch(
-            "simulate.views.preview_pagination._repeatable_read_snapshot", _snapshot
+        with (
+            patch(
+                "simulate.views.preview_pagination._repeatable_read_snapshot",
+                _snapshot,
+            ),
+            patch(
+                "simulate.services.preview_pagination._read_revision_state",
+                _revision_state,
+            ),
         ):
             response = auth_client.get(
                 f"/simulate/run-tests/{environment.run_test_id}/preview-executions/",
@@ -596,3 +730,10 @@ def _snapshot(deadline):
         cursor.execute("SELECT txid_current_snapshot()::text, CURRENT_TIMESTAMP")
         row = cursor.fetchone()
     yield row
+
+
+def _revision_state(**kwargs):
+    """The preview's revision with its rows counted but always visible: the test's own
+    uncommitted rows can sit past the snapshot's xmax, so their visibility means nothing."""
+    _parent_visible, physical_count, _all_visible = _read_revision_state(**kwargs)
+    return True, physical_count, True
