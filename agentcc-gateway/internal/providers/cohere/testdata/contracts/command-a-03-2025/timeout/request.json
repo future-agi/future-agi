@@ -1,0 +1,10 @@
+{
+  "model": "command-a-03-2025",
+  "messages": [
+    {
+      "role": "user",
+      "content": "List every prime number below one million."
+    }
+  ],
+  "max_tokens": 8000
+}

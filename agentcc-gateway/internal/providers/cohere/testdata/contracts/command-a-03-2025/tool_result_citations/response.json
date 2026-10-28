@@ -1,0 +1,60 @@
+{
+  "id": "e8f9afc1-0888-46f0-a9ed-eb0e5a51e17f",
+  "message": {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "It's currently 62°F and partly cloudy in San Francisco."
+      }
+    ],
+    "citations": [
+      {
+        "start": 15,
+        "end": 19,
+        "text": "62°F",
+        "sources": [
+          {
+            "type": "tool",
+            "id": "get_weather_1byjy32y4hvq:0",
+            "tool_output": {
+              "temperature": "62°F",
+              "conditions": "partly cloudy"
+            }
+          }
+        ],
+        "content_index": 0,
+        "type": "TEXT_CONTENT"
+      },
+      {
+        "start": 24,
+        "end": 37,
+        "text": "partly cloudy",
+        "sources": [
+          {
+            "type": "tool",
+            "id": "get_weather_1byjy32y4hvq:0",
+            "tool_output": {
+              "temperature": "62°F",
+              "conditions": "partly cloudy"
+            }
+          }
+        ],
+        "content_index": 0,
+        "type": "TEXT_CONTENT"
+      }
+    ]
+  },
+  "finish_reason": "COMPLETE",
+  "usage": {
+    "billed_units": {
+      "input_tokens": 87,
+      "output_tokens": 19
+    },
+    "tokens": {
+      "input_tokens": 1061,
+      "output_tokens": 85
+    },
+    "cached_tokens": 0
+  }
+}

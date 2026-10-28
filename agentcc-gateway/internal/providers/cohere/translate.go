@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 )
 
 // --- Cohere v2 native types ---
@@ -170,7 +171,10 @@ func translateRequest(req *models.ChatCompletionRequest) *cohereRequest {
 	return cr
 }
 
-func translateResponse(resp *cohereResponse, model string) *models.ChatCompletionResponse {
+// translateResponse converts a v2 Chat response. shape receives a report for
+// every content type and finish reason this function does not translate; nil
+// is allowed.
+func translateResponse(resp *cohereResponse, model string, shape *common.ShapeReporter) *models.ChatCompletionResponse {
 	msg := models.Message{
 		Role: "assistant",
 	}
@@ -180,6 +184,8 @@ func translateResponse(resp *cohereResponse, model string) *models.ChatCompletio
 	for _, part := range resp.Message.Content {
 		if part.Type == "text" {
 			textParts = append(textParts, part.Text)
+		} else {
+			shape.Report(common.ShapeUnknownBlock, part.Type)
 		}
 	}
 	if len(textParts) > 0 {
@@ -211,7 +217,7 @@ func translateResponse(resp *cohereResponse, model string) *models.ChatCompletio
 			{
 				Index:        0,
 				Message:      msg,
-				FinishReason: mapCohereFinishReason(resp.FinishReason),
+				FinishReason: finishReason(shape, resp.FinishReason),
 			},
 		},
 	}
@@ -267,19 +273,38 @@ func mapRoleToCohere(role string) string {
 }
 
 func mapCohereFinishReason(reason string) string {
+	finish, _ := lookupCohereFinishReason(reason)
+	return finish
+}
+
+// finishReason is mapCohereFinishReason for a live response: a finish reason
+// with no mapping still becomes "stop", and is reported so the default is
+// visible.
+func finishReason(shape *common.ShapeReporter, reason string) string {
+	finish, ok := lookupCohereFinishReason(reason)
+	if !ok {
+		shape.Report(common.ShapeUnmappedFinishReason, reason)
+	}
+	return finish
+}
+
+// lookupCohereFinishReason maps a Cohere finish_reason to an OpenAI
+// finish_reason. ok is false for a reason with no mapping, which falls back
+// to "stop".
+func lookupCohereFinishReason(reason string) (finish string, ok bool) {
 	switch reason {
 	case "COMPLETE":
-		return "stop"
+		return "stop", true
 	case "MAX_TOKENS":
-		return "length"
+		return "length", true
 	case "STOP_SEQUENCE":
-		return "stop"
+		return "stop", true
 	case "TOOL_CALL":
-		return "tool_calls"
+		return "tool_calls", true
 	case "ERROR":
-		return "stop"
+		return "stop", true
 	default:
-		return "stop"
+		return "stop", false
 	}
 }
 

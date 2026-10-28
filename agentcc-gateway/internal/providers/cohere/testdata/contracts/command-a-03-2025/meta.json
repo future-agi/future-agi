@@ -1,0 +1,51 @@
+{
+  "provider": "cohere",
+  "model": "command-a-03-2025",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: authored by hand from the Cohere v2 Chat API reference (cohere-openapi.yaml: /v2/chat, ChatResponseV2, AssistantMessageResponse, ChatThinkingContent, Citation, ChatToolSource, Usage, ChatFinishReason, StreamedChatResponseV2 and every stream event schema, x-fern-streaming terminator [DONE]) and the docs pages v2/docs/streaming, v2/docs/tool-use-streaming, v2/docs/tool-use-citations, v2/docs/tool-use-overview, docs/reasoning and docs/models, read 2026-10-28 from github.com/cohere-ai/cohere-developer-experience (the source of docs.cohere.com, which was not reachable from the authoring session). Field names, event types and finish reasons are the documented ones; ids, token counts and text are invented. Replace each case with a recorded capture (source: recorded) when the live recorder runs. Usage carries cached_tokens (in the Usage schema, absent from the reference examples). message-start's delta.message carries the empty content/tool_plan/tool_calls/citations the streaming docs print. The tool_output of a citation source for a plain-string tool message is assumed to be the parsed JSON object, by analogy with the documented document-content case. SSE frames are event: + data: lines, ended by data: [DONE].",
+  "allowed_unknown_fields": [
+    {
+      "path": "$.message.citations",
+      "reason": "known gap K3: citations (cited span, text and the tool output or document it came from) are dropped; the canonical message has annotations, but the adapter emits none, so a client cannot show sources for a grounded answer"
+    },
+    {
+      "path": "$.message.tool_plan",
+      "reason": "known gap K5: the tool plan (the model's stated reasoning before its tool calls) is dropped instead of becoming content or reasoning_content; Cohere expects it back as tool_plan on the next turn"
+    },
+    {
+      "path": "$.usage.cached_tokens",
+      "reason": "known gap K2: cached prompt tokens are dropped instead of reported as prompt_tokens_details.cached_tokens, so cache hits are invisible to cost accounting"
+    },
+    {
+      "path": "message-end:$.delta.finish_reason",
+      "reason": "known gap K1: message-end carries finish_reason under delta, and the parser reads a top-level finish_reason that is never sent, so every stream ends with \"stop\" (unmapped_finish_reason with an empty value); a tool-call stream says \"stop\" instead of \"tool_calls\", and MAX_TOKENS truncation is invisible"
+    },
+    {
+      "path": "message-end:$.delta.usage",
+      "reason": "known gap K1: message-end carries usage under delta, and the parser reads a top-level usage that is never sent, so no stream reports usage (see streamSanityGaps in contract_test.go); billing and budgets see zero tokens for every Cohere stream"
+    }
+  ],
+  "allowed_unknown_shapes": [
+    {
+      "kind": "unknown_event",
+      "value": "citation-start",
+      "reason": "known gap K3: streamed citations are dropped (see $.message.citations)"
+    },
+    {
+      "kind": "unknown_event",
+      "value": "tool-plan-delta",
+      "reason": "known gap K5: the streamed tool plan is dropped (see $.message.tool_plan)"
+    },
+    {
+      "kind": "unmapped_finish_reason",
+      "value": "",
+      "reason": "known gap K1: the parser reads message-end's finish_reason from the wrong place (see message-end:$.delta.finish_reason), finds none, and falls back to \"stop\""
+    },
+    {
+      "kind": "unmapped_finish_reason",
+      "value": "TIMEOUT",
+      "reason": "known gap K6: finish_reason TIMEOUT falls back to \"stop\", so a generation the API cut off for time looks complete; \"length\" is the nearest canonical reason"
+    }
+  ]
+}

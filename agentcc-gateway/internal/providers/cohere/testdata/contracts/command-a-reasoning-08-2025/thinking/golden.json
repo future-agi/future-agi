@@ -1,0 +1,21 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "Alice's brother has 3 sisters: Alice and her 2 sisters.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "3f8c1a2e-6b4d-4e9a-a7c1-0d5e2f8b9c63",
+  "model": "command-a-reasoning-08-2025",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 97,
+    "prompt_tokens": 528,
+    "total_tokens": 625
+  }
+}

@@ -17,6 +17,9 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 )
 
+// adapterName labels this adapter's unknown-shape reports and metric.
+const adapterName = "cohere"
+
 // Provider implements the Provider interface for the Cohere v2 Chat API.
 type Provider struct {
 	id         string
@@ -132,7 +135,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("cohere: parsing response: %v", err))
 	}
 
-	return translateResponse(&cr2, model), nil
+	return translateResponse(&cr2, model, common.NewShapeReporter(ctx, adapterName, p.id)), nil
 }
 
 // StreamChatCompletion sends a streaming request to Cohere.
@@ -195,6 +198,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 		state := newStreamState(model)
+		state.shape = common.NewShapeReporter(ctx, adapterName, p.id)
 
 		for scanner.Scan() {
 			line := scanner.Text()
