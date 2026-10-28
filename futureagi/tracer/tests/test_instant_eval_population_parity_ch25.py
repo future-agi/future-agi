@@ -18,6 +18,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from tracer.models.insights import InsightRun, InsightUnit
 from tracer.services import instant_eval_users as users_service
 from tracer.services.clickhouse.list_cursor import ListCursor
 from tracer.services.clickhouse.v2.dispatch import get_v2_class
@@ -325,8 +326,11 @@ def test_each_users_sessions_are_read_inside_the_window(seeded, observe_project)
     assert len(sessions) == 3
 
 
-def _user_is(*labels, op="in"):
-    return {
+def _user_is(*labels, op="in", unit="sessions"):
+    """A User ID filter as a view's filter panel sends it (the Sessions shape
+    is the one captured from the browser), or with no property (``unit=None``)
+    as older saved views and the Users view carry it."""
+    leaf = {
         "column_id": "user_id",
         "filter_config": {
             "col_type": "SYSTEM_METRIC",
@@ -335,6 +339,28 @@ def _user_is(*labels, op="in"):
             "filter_value": list(labels) if op in ("in", "not_in") else labels[0],
         },
     }
+    if unit:
+        leaf["property_id"] = f"system_attribute:{unit}:user"
+        leaf["display_name"] = "User ID"
+    return leaf
+
+
+@pytest.fixture
+def licensed(monkeypatch):
+    """Instant eval and Insights served as a licensed install serves them;
+    a report's run is recorded, not started on Temporal."""
+    from tfc.capabilities import service as capability_service
+    from tfc.capabilities.service import CapabilityDecision
+    from tracer.views import insights as insight_views
+
+    monkeypatch.setattr(capability_service, "_configured", True)
+    monkeypatch.setattr(
+        capability_service,
+        "check",
+        lambda feature_id, **_: CapabilityDecision(allowed=True, feature_id=feature_id),
+    )
+    monkeypatch.setattr(insight_views, "_start", lambda run: None)
+    monkeypatch.setattr(insight_views, "_spend", lambda *a: True)
 
 
 def _sessions_grid_total(client, project, filters) -> int:
@@ -357,12 +383,13 @@ def _sessions_grid_total(client, project, filters) -> int:
     [
         ("sessions", _user_is("user-U1"), 3),
         ("sessions", _user_is("user-U1", op="equals"), 3),
+        ("sessions", _user_is("user-U1", unit=None), 3),
         ("sessions", _user_is("user-U1", "user-U3"), 5),
         ("sessions", _user_is("user-U1", op="not_in"), 4),
         ("sessions", _user_is("nobody"), 0),
-        ("traces", _user_is("user-U1"), 6),
-        ("spans", _user_is("user-U3"), 4),
-        ("users", _user_is("user-U1", "user-U3"), 2),
+        ("traces", _user_is("user-U1", unit="traces"), 6),
+        ("spans", _user_is("user-U3", unit="spans"), 4),
+        ("users", _user_is("user-U1", "user-U3", unit=None), 2),
     ],
 )
 def test_a_view_filtered_by_user_id_counts_and_picks_what_its_grid_shows(
@@ -384,19 +411,10 @@ def test_a_view_filtered_by_user_id_counts_and_picks_what_its_grid_shows(
 
 
 def test_both_estimates_count_a_sessions_view_filtered_by_user_id(
-    seeded, observe_project, auth_client, monkeypatch
+    seeded, observe_project, auth_client, licensed
 ):
     """What the Ask page and a new Insights report ask first: on a Sessions
     view filtered by User ID, each counts the sessions the grid shows."""
-    from tfc.capabilities import service as capability_service
-    from tfc.capabilities.service import CapabilityDecision
-
-    monkeypatch.setattr(capability_service, "_configured", True)
-    monkeypatch.setattr(
-        capability_service,
-        "check",
-        lambda feature_id, **_: CapabilityDecision(allowed=True, feature_id=feature_id),
-    )
     filters = [WINDOW, _user_is("user-U1")]
     project = str(observe_project.id)
     asked = auth_client.post(
@@ -413,3 +431,43 @@ def test_both_estimates_count_a_sessions_view_filtered_by_user_id(
     )
     assert report.status_code == 200, report.content
     assert report.json()["result"]["population"] == 3
+
+
+def test_a_report_on_a_sessions_view_filtered_by_user_id_reads_its_sessions(
+    seeded, observe_project, auth_client, ch_client, licensed
+):
+    """Run report on the new-report form's scope: the server counts and draws
+    the user's own sessions, as the Sessions grid lists them."""
+    response = auth_client.post(
+        "/tracer/insights/runs/",
+        {
+            "project_id": str(observe_project.id),
+            "config": {
+                "name": "Where is the agent failing?",
+                "unit": "sessions",
+                "lens": "failures",
+                "question": "Where is the agent failing?",
+            },
+            "scope": {
+                "filters": [WINDOW, _user_is("user-U1")],
+                "label": "1 filter",
+            },
+            "sample_size": 10,
+        },
+        format="json",
+    )
+    assert response.status_code == 200, response.content
+    run = InsightRun.objects.get(id=response.json()["result"]["run_id"])
+    sessions = {
+        row[0]
+        for row in ch_client.execute(
+            "SELECT DISTINCT toString(trace_session_id) FROM spans "
+            "WHERE toString(project_id) = %(project)s "
+            "AND toString(end_user_id) = %(user)s",
+            {"project": str(observe_project.id), "user": seeded["U1"]},
+        )
+    }
+    assert len(sessions) == 3
+    assert run.population_size == 3
+    units = InsightUnit.objects.filter(run=run).values_list("unit_id", flat=True)
+    assert set(units) == sessions
