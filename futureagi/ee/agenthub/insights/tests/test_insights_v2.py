@@ -1095,6 +1095,102 @@ class TestAskOnARefundReport:
         assert out["answer"] == []
         assert out["dropped"] == 4
 
+    def test_how_many_units_a_paragraph_cites_is_a_number_it_may_write(self):
+        result, units = refund_report()
+        # Not a statistic, a user's count or how many users there are.
+        assert "2" not in report.checked_numbers(result, units)
+        out = self.ask(
+            [
+                {
+                    "text": "In 2 sessions the refund tool said the charge was "
+                    "still pending settlement.",
+                    "unit_keys": ["111", "109"],
+                    "category_ids": [MISREPORTS],
+                    "evidence": [cites("111", units), cites("109", units, 1)],
+                },
+                # The same unit cited twice is one.
+                {
+                    "text": "In 2 sessions the tool declined the refund.",
+                    "unit_keys": ["111", "111"],
+                    "category_ids": [MISREPORTS],
+                    "evidence": [cites("111", units)],
+                },
+            ]
+        )
+        assert out["dropped"] == 1
+        assert [p["unit_ids"] for p in out["answer"]] == [
+            [REFUND_SESSIONS["111"][1], REFUND_SESSIONS["109"][1]]
+        ]
+
+
+class TestFindingsOnARefundReport:
+    def summary(self, findings):
+        result, units = refund_report()
+        reply = {
+            "title": "Refunds",
+            "findings": findings,
+            "verification": {"status": "verified", "reason": None},
+        }
+        return report.from_agent(reply, result, units, {}, v2=True)
+
+    def test_a_finding_may_repeat_its_quotes_and_count_its_units(self):
+        result, units = refund_report()
+        assert {"2", "61.2", "24"}.isdisjoint(report.checked_numbers(result, units))
+        out = self.summary(
+            [
+                {
+                    "headline": "The agent confirms refunds the tool declined",
+                    "detail": "In 2 sessions the agent told the customer "
+                    '"Done. I\'ve refunded $61.20" after the tool declined it.',
+                    "action": "Read the refund tool's result before confirming.",
+                    "severity": "high",
+                    "category_ids": [MISREPORTS],
+                    "unit_keys": ["111", "109"],
+                    "evidence": [cites("109", units)],
+                },
+                {
+                    "headline": "A failed export is reported as running",
+                    "detail": "The export tool said to retry after 24h.",
+                    "category_ids": [MISREPORTS],
+                    "unit_keys": ["119"],
+                    "evidence": [cites("119", units)],
+                },
+            ]
+        )
+        assert out["dropped_points"] == 0
+        assert [[r["ref"] for r in f["refs"]] for f in out["findings"]] == [
+            [1, 2],
+            [3],
+        ]
+        assert out["findings"][0]["evidence"][0]["quote"] == (
+            "Done. I've refunded $61.20"
+        )
+
+    def test_a_finding_with_a_number_nothing_it_cites_holds_is_dropped(self):
+        _, units = refund_report()
+        out = self.summary(
+            [
+                # An amount its quote doesn't show.
+                {
+                    "headline": "The agent promised $75.00 back",
+                    "unit_keys": ["109"],
+                    "evidence": [cites("109", units)],
+                },
+                # More units than it cites.
+                {
+                    "headline": "In 2 sessions the tool declined the refund",
+                    "unit_keys": ["111"],
+                    "evidence": [cites("111", units)],
+                },
+                # Another finding's quote vouches for nothing here.
+                {"headline": "Exports wait 24h", "unit_keys": ["119"]},
+            ]
+        )
+        assert out["findings"] == []
+        assert out["dropped_points"] == 3
+        # A dropped finding takes no example number.
+        assert out["examples"] == []
+
 
 class TestEstimates:
     def test_a_run_is_sized_for_the_engine_it_is_pinned_to(self, monkeypatch):

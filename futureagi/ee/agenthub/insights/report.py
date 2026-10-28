@@ -245,11 +245,11 @@ def _without_ids(text: str, units: list[dict]) -> str:
     return text
 
 
-def _quoted_numbers(evidence: list[dict]) -> set[str]:
-    """The numbers a paragraph's own quotes hold (an amount the agent
-    promised, a tool's retry delay), as ``verified`` reads them: a claim may
-    repeat what a quote it cites shows."""
-    numbers = set()
+def _cited_numbers(keys: list[str], evidence: list[dict]) -> set[str]:
+    """The numbers a claim's own citations hold, as ``verified`` reads them
+    (the agent's numbers rule): how many units it cites, and what its kept
+    quotes show (an amount the agent promised, a tool's retry delay)."""
+    numbers = {str(len(set(keys)))} if keys else set()
     for item in evidence:
         for found in _NUMBER.findall(item.get("quote") or ""):
             found = found.replace(",", "")
@@ -354,13 +354,17 @@ def _findings(
         headline = _clean(raw.get("headline"), 200)
         detail = _clean(raw.get("detail"), 600)
         action = _clean(raw.get("action"), 200)
+        keys = [str(k) for k in model_list(raw.get("unit_keys"))]
+        keys += [str(e.get("unit_key", "")) for e in _objects(raw.get("evidence"))]
+        # Checked against what it cites too, as a paragraph is; its example
+        # numbers are given only once it checks out.
+        evidence = _evidence(raw.get("evidence"), units_by_key, contents, v2=v2)
+        grounded = _cited_numbers([k for k in keys if k in units_by_key], evidence)
         if not headline or not verified(
-            _without_ids(f"{headline} {detail} {action}", units), numbers
+            _without_ids(f"{headline} {detail} {action}", units), numbers | grounded
         ):
             dropped += 1
             continue
-        keys = [str(k) for k in model_list(raw.get("unit_keys"))]
-        keys += [str(e.get("unit_key", "")) for e in _objects(raw.get("evidence"))]
         cited = [refs.ref(k) for k in dict.fromkeys(keys)]
         findings.append(
             {
@@ -382,9 +386,7 @@ def _findings(
                     for r in cited
                     if r
                 ],
-                "evidence": _evidence(
-                    raw.get("evidence"), units_by_key, contents, v2=v2
-                ),
+                "evidence": evidence,
             }
         )
         if len(findings) >= MAX_FINDINGS:
@@ -674,15 +676,17 @@ def _paragraphs(
         )
         if not text:
             continue
-        # Its quotes are checked first: a number one of them holds is what
-        # the paragraph cites, not a statistic.
-        evidence = _evidence(raw.get("evidence"), units_by_key, contents, v2=v2)
-        if not verified(_without_ids(text, units), numbers | _quoted_numbers(evidence)):
-            dropped += 1
-            continue
         keys = [
             str(k) for k in model_list(raw.get("unit_keys")) if str(k) in units_by_key
         ] + cited
+        # Its citations are checked first: how many units it cites, or a
+        # number one of its quotes holds, is what it cites, not a statistic.
+        evidence = _evidence(raw.get("evidence"), units_by_key, contents, v2=v2)
+        if not verified(
+            _without_ids(text, units), numbers | _cited_numbers(keys, evidence)
+        ):
+            dropped += 1
+            continue
         ids = [
             str(c) for c in model_list(raw.get("category_ids")) if str(c) in categories
         ] + cited_ids
