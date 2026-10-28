@@ -25,6 +25,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import Iconify from "src/components/iconify";
+import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import { useRouter } from "src/routes/hooks";
 import { paths } from "src/routes/paths";
 import {
@@ -484,7 +485,8 @@ ReportBody.propTypes = {
 // only the model settings can fix it (its reason says what to change).
 function FailedRun({ run, onRerun }) {
   const router = useRouter();
-  const next = failedRunNext(run);
+  const { isCloud } = useDeploymentMode();
+  const next = failedRunNext(run, { cloud: isCloud });
   let action = null;
   if (next.rerun)
     action = (

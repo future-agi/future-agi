@@ -90,6 +90,34 @@ def test_a_plan_without_insights_still_refuses_the_run_for_good(run_org):
     assert refused.message == "Insights isn't included in your plan."
 
 
+@pytest.mark.parametrize("lapsed", ["insights", "turing_models"])
+def test_a_licence_that_lapses_mid_run_fails_it_as_a_licence_problem(run_org, lapsed):
+    """Insights, or the Turing models it runs on, taken off the licence while
+    a report runs: the run fails with the denial and the code "license", so
+    the report page offers the License settings instead of a Retry that
+    would be refused."""
+    if lapsed == "insights":
+        refused = _license_error(
+            CapabilityDenied(
+                feature_id="insights", reason_code="LICENSE_FEATURE_MISSING"
+            )
+        )
+    else:
+        with (
+            patch("tfc.ee_gating.check_ee_feature"),
+            patch.object(ee_gates, "insights_turing_denied", return_value=True),
+        ):
+            with pytest.raises(ApplicationError) as raised:
+                activities.require_license("run-1")
+        refused = raised.value
+    assert (refused.type, refused.non_retryable) == ("CapabilityDenied", True)
+    assert refused.message
+    assert _recorded_failure(refused, codes=True) == [
+        (refused.message, activities.LICENSE_CODE)
+    ]
+    assert activities.LICENSE_CODE == "license"
+
+
 # ─── The report page shows only text written for people ──────────────────────
 def _recorded_failure(cause, *, codes=False) -> list:
     """What a run whose first stage failed with ``cause`` records: its

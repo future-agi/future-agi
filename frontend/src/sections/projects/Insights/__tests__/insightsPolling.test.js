@@ -19,6 +19,7 @@ vi.mock("src/utils/axios", () => ({
 }));
 
 import {
+  failedRunNext,
   useInsightsConfig,
   useInsightsConfigs,
   useInsightsRun,
@@ -88,5 +89,40 @@ describe.each([
     // ...and nothing polls after it.
     await wait(60_000);
     expect(http.read).toHaveBeenCalledTimes(reads);
+  });
+});
+
+describe("failedRunNext", () => {
+  it("offers what can help after a run fails, by its error code", () => {
+    const next = (code, options) =>
+      failedRunNext({ error_code: code }, options);
+    expect(next("")).toEqual({
+      stopped: false,
+      license: false,
+      rerun: "Retry",
+    });
+    expect(next("stopped")).toEqual({
+      stopped: true,
+      license: false,
+      rerun: "Run again",
+    });
+    expect(next("model_setup")).toEqual({
+      stopped: false,
+      license: false,
+      rerun: null,
+    });
+    // A licence that can't run Insights (or lapsed mid-run): the License
+    // settings on a self-hosted install, never Retry; Cloud has no License
+    // settings, so its reason (the plan) stands alone.
+    expect(next("license")).toEqual({
+      stopped: false,
+      license: true,
+      rerun: null,
+    });
+    expect(next("license", { cloud: true })).toEqual({
+      stopped: false,
+      license: false,
+      rerun: null,
+    });
   });
 });

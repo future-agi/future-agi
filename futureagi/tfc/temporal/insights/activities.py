@@ -28,9 +28,15 @@ from tfc.temporal.insights.types import (
 logger = structlog.get_logger(__name__)
 
 
+# The run's error code for a refusal (ee.agenthub.insights.llm.LICENSE): the
+# report page offers the License settings, not a Retry that would be refused.
+LICENSE_CODE = "license"
+
+
 def require_license(run_id: str) -> None:
     """Refuse a stage whose organization may not use Insights or its Turing
-    models. Retry entitlement outages rather than treating them as denials."""
+    models, for good and with LICENSE_CODE. Retry entitlement outages rather
+    than treating them as denials."""
     from tfc.capabilities.service import refusal_message
     from tfc.ee_gates import (
         INSIGHTS_DENIED_MESSAGE,
@@ -67,12 +73,14 @@ def require_license(run_id: str) -> None:
             ) from None
         raise ApplicationError(
             refusal_message(exc, INSIGHTS_DENIED_MESSAGE),
+            LICENSE_CODE,
             type="CapabilityDenied",
             non_retryable=True,
         ) from None
     if insights_turing_denied(org_id):
         raise ApplicationError(
             insights_turing_denied_message(),
+            LICENSE_CODE,
             type="CapabilityDenied",
             non_retryable=True,
         )

@@ -221,16 +221,17 @@ export const runFailureReason = (run) =>
 /**
  * What a failed run offers next, by its `error_code`: someone stopped it
  * ("stopped": run it again), only an administrator can fix it ("license":
- * the License settings; "model_setup": nothing to click, its reason says
+ * the License settings, which only a self-hosted install has; on Cloud the
+ * reason names the plan. "model_setup": nothing to click, its reason says
  * what to change), or another try may work ("": Retry).
  */
-export function failedRunNext(run) {
+export function failedRunNext(run, { cloud = false } = {}) {
   const code = run?.error_code || "";
   const stopped = code === "stopped";
   const needsAdmin = code === "license" || code === "model_setup";
   return {
     stopped,
-    license: code === "license",
+    license: code === "license" && !cloud,
     rerun: stopped ? "Run again" : needsAdmin ? null : "Retry",
   };
 }
