@@ -10711,7 +10711,20 @@ export const appCoreJourneys = [
     id: "CORE-API-019",
     title: "System organization key bootstrap readback and API-key auth",
     tags: ["core", "keys", "system-keys", "data-roundtrip", "security"],
-    async run({ apiBase, client, organizationId, workspaceId, evidence }) {
+    async run({
+      apiBase,
+      client,
+      user,
+      organizationId,
+      workspaceId,
+      evidence,
+    }) {
+      // This journey verifies organization credentials, not personal bootstrap.
+      if (!(Number(user?.org_level) >= 8)) {
+        skip(
+          "System-key bootstrap journey requires an active organization Owner/Admin.",
+        );
+      }
       const unauthClient = createApiClient({ apiBase });
       const unauthError = await expectApiError(
         () => unauthClient.get(apiPath("/accounts/keys/")),

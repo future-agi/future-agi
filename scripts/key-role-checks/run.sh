@@ -6,6 +6,7 @@ base=$2
 red=$3
 dev=$4
 head=$5
+removal=$6
 if [[ $(uname -s) != Linux || ${OMEGA_EXEC_SOURCE_HEAD:-} != "$head" ]]; then
   printf '%s\n' 'This driver requires the pinned cloud-exec snapshot.' >&2
   exit 2
@@ -16,9 +17,10 @@ mkdir -p "$run/raw" "$run/results"
 printf '%s\n' "git:$base" "git:$red" "git:$head" "git:$dev" > "$run/results/revisions.txt"
 
 # Detached, new checkouts only: the shipped tree and every existing branch stay intact.
-for label in base red head dev; do
+for label in base red head dev removal; do
   case "$label" in
     base) revision=$base;; red) revision=$red;; head) revision=$head;; dev) revision=$dev;;
+    removal) revision=$removal;;
   esac
   git -C "$repo" worktree add --detach "$run/$label" "$revision"
 done
@@ -27,12 +29,12 @@ git -C "$repo" worktree add -b "verify/key-role-replay-$(date -u +%Y%m%dT%H%M%SZ
 git -C "$repo" diff --binary "$base" "$red" > "$run/tests.patch"
 git -C "$run/replay" apply --check "$run/tests.patch"
 git -C "$run/replay" apply --index "$run/tests.patch"
-HUSKY=0 git -C "$run/replay" -c user.name='Key role checks' -c user.email='checks@example.test' commit \
+UV_NO_SYNC=1 git -C "$run/replay" -c user.name='Key role checks' -c user.email='checks@example.test' commit \
   -m 'test(accounts): replay key role contracts' -m 'Co-Authored-By: Claude Code <noreply@anthropic.com>'
 git -C "$repo" diff --binary "$red" "$head" > "$run/policy.patch"
 git -C "$run/replay" apply --check "$run/policy.patch"
 git -C "$run/replay" apply --index "$run/policy.patch"
-HUSKY=0 git -C "$run/replay" -c user.name='Key role checks' -c user.email='checks@example.test' commit \
+UV_NO_SYNC=1 git -C "$run/replay" -c user.name='Key role checks' -c user.email='checks@example.test' commit \
   -m 'fix(accounts): replay organization key role policy' -m 'Co-Authored-By: Claude Code <noreply@anthropic.com>'
 printf 'git:%s\n' "$(git -C "$run/replay" rev-parse HEAD)" >> "$run/results/revisions.txt"
 test -z "$(git -C "$run/replay" status --porcelain)"
@@ -43,7 +45,7 @@ test -z "$(git -C "$run/replay" status --porcelain)"
 compose=(docker compose -p key-role-checks -f "$repo/futureagi/docker-compose.test.yml")
 "${compose[@]}" up -d --wait
 trap '"${compose[@]}" down' EXIT
-for label in base red head dev replay; do
+for label in base red head dev replay removal; do
   (cd "$run/$label/futureagi" && uv sync --locked)
 done
 
@@ -77,6 +79,15 @@ run_suite() {
 focused=(accounts/tests/test_key_role_scope.py accounts/tests/test_key_management_scope.py accounts/tests/test_key_tool_scope.py)
 run_suite red red "${focused[@]}"
 run_suite green head "${focused[@]}"
+run_suite removal_red removal accounts/tests/test_membership_key_healing.py
+run_suite removal_green head accounts/tests/test_membership_key_healing.py
+# The tests-first driver includes the RuntimeError-only negative probe.
+for label in removal head; do
+  code=0
+  python3 -I "$run/$label/scripts/key-role-checks/test_driver.py" \
+    > "$run/results/driver-$label.log" 2>&1 || code=$?
+  printf '%s\n' "$code" > "$run/raw/driver-$label.exit"
+done
 # Both complete accounts suites plus the sibling tools use identical test services.
 run_suite base_accounts base accounts/tests ai_tools/tests/test_user_tools.py
 run_suite head_accounts head accounts/tests ai_tools/tests/test_user_tools.py

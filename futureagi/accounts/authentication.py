@@ -428,13 +428,11 @@ class APIKeyAuthentication(BaseAuthentication):
             )
             return first_membership.organization
 
-        # 5. Legacy fallback: user.organization FK (for old accounts without membership records)
-        # Only use if user has no memberships at all (truly legacy account)
+        # 5. Legacy repair is only for accounts that never had a membership.
+        # A soft-deleted row is removal history, not missing migration data.
         if (
             user.organization
-            and not OrganizationMembership.no_workspace_objects.filter(
-                user=user
-            ).exists()
+            and not OrganizationMembership.all_objects.filter(user=user).exists()
         ):
             logger.debug(
                 "org_resolved", source="user_fk", org_id=str(user.organization_id)
@@ -590,6 +588,19 @@ class APIKeyAuthentication(BaseAuthentication):
         creating one (as workspace_admin) if missing.  Without a membership
         the next request's ``_user_has_workspace_access`` check would fail.
         """
+        from accounts.models.organization_membership import OrganizationMembership
+        from accounts.services.workspace_membership import resolve_org_membership
+
+        # This path can also be reached through API-key scope. Never provision
+        # workspace access after an explicit organization membership removal.
+        if (
+            resolve_org_membership(user, organization) is None
+            and OrganizationMembership.all_objects.filter(
+                user=user, organization=organization
+            ).exists()
+        ):
+            raise PermissionDenied("Access denied to this organization")
+
         try:
             default_workspace = Workspace.objects.get(
                 organization=organization, is_default=True, is_active=True

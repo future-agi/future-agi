@@ -44,9 +44,10 @@ def ensure_org_membership(user, organization, *, invited_by=None):
     create path, healing the drift that left workspace members with no
     ``OrganizationMembership`` row (TH-6156).
 
-    Fail-closed on removal: if a row already exists but is *inactive* (the user
-    was deliberately removed from the org), it is NOT resurrected — ``None`` is
-    returned and the caller leaves the FK NULL. New rows are created at the
+    Fail-closed on removal: if only inactive or soft-deleted rows exist (the
+    user was deliberately removed), they are NOT resurrected — ``None`` is
+    returned and the caller leaves the FK NULL. An explicit new active grant
+    may follow a removal; it is used as-is. New rows are created at the
     minimal ``Viewer`` level, which grants org membership without global
     workspace access (that requires ``>= ADMIN``).
     """
@@ -55,6 +56,16 @@ def ensure_org_membership(user, organization, *, invited_by=None):
 
     from tfc.constants.levels import Level
     from tfc.constants.roles import OrganizationRoles
+
+    active = resolve_org_membership(user, organization)
+    if active is not None:
+        return active
+    # The ordinary manager hides soft-deleted rows. They are evidence of an
+    # explicit removal, so do not treat their absence there as legacy drift.
+    if OrganizationMembership.all_objects.filter(
+        user=user, organization=organization
+    ).exists():
+        return None
 
     # The (user, organization) unique constraint (WHERE deleted=False) guarantees
     # at most one non-deleted row, so get_or_create resolves to exactly that row.

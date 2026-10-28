@@ -75,17 +75,34 @@ class ComparisonTests(unittest.TestCase):
 
         families = (
             ("test_key_role_scope", "test_bootstrap_role_and_authenticated_identity"),
-            ("test_key_management_scope", "test_system_key_changes_require_current_org_admin"),
+            (
+                "test_key_management_scope",
+                "test_system_key_changes_require_current_org_admin",
+            ),
             ("test_key_tool_scope", "test_key_tools_use_current_org_membership"),
         )
         with tempfile.TemporaryDirectory() as directory:
             raw = Path(directory)
-            for label in ("red", "green", "base_accounts", "head_accounts", "dev_accounts", "replay_accounts"):
+            for label in (
+                "red",
+                "green",
+                "base_accounts",
+                "head_accounts",
+                "dev_accounts",
+                "replay_accounts",
+            ):
                 suite = ET.Element("testsuite")
                 for module, name in families:
-                    case = ET.SubElement(suite, "testcase", classname=f"accounts.tests.{module}", name=name)
+                    case = ET.SubElement(
+                        suite,
+                        "testcase",
+                        classname=f"accounts.tests.{module}",
+                        name=name,
+                    )
                     if label == "red":
-                        failure = ET.SubElement(case, "failure", message="RuntimeError: unavailable service")
+                        failure = ET.SubElement(
+                            case, "failure", message="RuntimeError: unavailable service"
+                        )
                         failure.text = "E   RuntimeError: unavailable service"
                 ET.ElementTree(suite).write(raw / f"{label}.xml")
                 (raw / f"{label}.exit").write_text("1" if label == "red" else "0")
@@ -95,6 +112,37 @@ class ComparisonTests(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertFalse(result["red_assertions_proven"])
             self.assertEqual(result["status"], "BLOCKED")
+
+    def test_only_matching_policy_assertions_count(self):
+        import xml.etree.ElementTree as ET
+
+        from check_results import POLICY_ASSERTIONS, policy_assertion_failures
+
+        family = next(iter(POLICY_ASSERTIONS))
+        module, name = family.split("::")
+        source, _ = POLICY_ASSERTIONS[family]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "result.xml"
+            for message, statement, expected in (
+                ("AssertionError: assert 'system' == 'user'", source, True),
+                ("RuntimeError: unavailable service", source, False),
+                ("AssertionError: assert 1 == 2", source, False),
+                (
+                    "AssertionError: assert 'system' == 'user'",
+                    "assert unrelated == expected_type",
+                    False,
+                ),
+            ):
+                suite = ET.Element("testsuite")
+                case = ET.SubElement(
+                    suite, "testcase", classname=module, name=f"{name}[False-1-0]"
+                )
+                failure = ET.SubElement(case, "failure", message=message)
+                failure.text = f"file.py:45: in {name}\n    {statement}\nE   {message}"
+                ET.ElementTree(suite).write(path)
+                self.assertEqual(
+                    bool(policy_assertion_failures(path)[family]), expected
+                )
 
     def test_empty_or_duplicate_results_are_refused(self):
         with tempfile.TemporaryDirectory() as directory:

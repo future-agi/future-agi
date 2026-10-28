@@ -52,6 +52,48 @@ def compare(base, head):
     }
 
 
+# Pin both the test identity and its policy assertion. A call-phase exception
+# is a JUnit <failure> too; its phase alone is not red regression evidence.
+POLICY_ASSERTIONS = {
+    "accounts.tests.test_key_role_scope::test_bootstrap_role_and_authenticated_identity": (
+        "assert key.type == expected_type",
+        r"(?:AssertionError: )?assert 'system' == 'user'(?:\n|$)",
+    ),
+    "accounts.tests.test_key_management_scope::test_system_key_changes_require_current_org_admin": (
+        "assert response.status_code == (200 if permitted else 400)",
+        r"(?:AssertionError: )?assert (?:200 == 400|400 == 200)(?:\n|$)",
+    ),
+    "accounts.tests.test_key_tool_scope::test_key_tools_use_current_org_membership": (
+        "assert result.is_error is (level < Level.ADMIN)",
+        r"(?:AssertionError: )?assert False is \([13] < 8\)(?:\n|$)",
+    ),
+}
+
+
+def policy_assertion_failures(path, assertions=POLICY_ASSERTIONS):
+    matched = {family: [] for family in assertions}
+    for case in ET.parse(path).getroot().iter("testcase"):
+        identity = f"{case.get('classname')}::{case.get('name')}"
+        family = identity.split("[", 1)[0]
+        failure = case.find("failure")
+        if family not in assertions or failure is None:
+            continue
+        source, message_pattern = assertions[family]
+        failure_type = failure.get("type", "")
+        if failure_type not in ("", "AssertionError", "builtins.AssertionError"):
+            continue
+        if not re.match(message_pattern, failure.get("message", "")):
+            continue
+        # Pytest short and long tracebacks both retain the failing source line.
+        lines = {
+            line.strip().removeprefix(">").strip()
+            for line in (failure.text or "").splitlines()
+        }
+        if source in lines:
+            matched[family].append(identity)
+    return matched
+
+
 def main(raw, output):
     raw, output = Path(raw), Path(output)
     output.mkdir(parents=True, exist_ok=True)
@@ -68,18 +110,11 @@ def main(raw, output):
     }
     codes = {name: int((raw / f"{name}.exit").read_text()) for name in outcomes}
     red, green = outcomes["red"], outcomes["green"]
-    red_families = (
-        "test_bootstrap_role_and_authenticated_identity",
-        "test_system_key_changes_require_current_org_admin",
-        "test_key_tools_use_current_org_membership",
-    )
+    policy_failures = policy_assertion_failures(raw / "red.xml")
     red_proven = (
         codes["red"] == 1
         and "error" not in red.values()
-        and all(
-            any(family in name and state == "failed" for name, state in red.items())
-            for family in red_families
-        )
+        and all(policy_failures.values())
     )
     green_proven = (
         codes["green"] == 0
@@ -94,6 +129,37 @@ def main(raw, output):
     blocked |= any(code not in (0, 1) for code in codes.values())
     # A new fixture failure must not be accepted as an inherited baseline failure.
     blocked |= any("error" in cases.values() for cases in outcomes.values())
+    removal_proof = None
+    if (raw / "removal_red.xml").exists():
+        removal_red = load(raw / "removal_red.xml")
+        removal_green = load(raw / "removal_green.xml")
+        assertions = {
+            "accounts.tests.test_membership_key_healing::test_removed_membership_is_not_healed_by_existing_bearer": (
+                "assert client.get(KEYS_URL).status_code == 403",
+                r"(?:AssertionError: )?assert 200 == 403(?:\n|$)",
+            ),
+        }
+        removal_failures = policy_assertion_failures(
+            raw / "removal_red.xml", assertions
+        )
+        removal_proof = {
+            "red_assertions": removal_failures,
+            "red": removal_red,
+            "green": removal_green,
+            "driver_red_exit": int((raw / "driver-removal.exit").read_text()),
+            "driver_green_exit": int((raw / "driver-head.exit").read_text()),
+        }
+        removal_ok = (
+            int((raw / "removal_red.exit").read_text()) == 1
+            and int((raw / "removal_green.exit").read_text()) == 0
+            and "error" not in removal_red.values()
+            and all(removal_failures.values())
+            and set(removal_red) == set(removal_green)
+            and set(removal_green.values()) == {"passed"}
+            and removal_proof["driver_red_exit"] == 1
+            and removal_proof["driver_green_exit"] == 0
+        )
+        blocked |= not removal_ok
     summary = {
         "status": "BLOCKED"
         if blocked
@@ -101,7 +167,9 @@ def main(raw, output):
         if main_pair["shared_failures"] or dev_pair["shared_failures"]
         else "PASSED",
         "red_assertions_proven": red_proven,
+        "policy_assertion_failures": policy_failures,
         "focused_green_proven": green_proven,
+        "removal_proof": removal_proof,
         "main_pair": main_pair,
         "dev_pair": dev_pair,
         "exit_codes": codes,
