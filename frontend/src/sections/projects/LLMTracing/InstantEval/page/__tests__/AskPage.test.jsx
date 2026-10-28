@@ -1278,6 +1278,55 @@ describe("the Ask page", () => {
     expect(screen.queryByRole("button", { name: /Read all/ })).toBeNull();
   });
 
+  it("asks before it cancels, since a cancelled run can't be resumed", async () => {
+    const live = runOf({
+      status: "running",
+      total: 49,
+      answered: 8,
+      records: null,
+    });
+    live.summary = { ...live.summary, counts: { [CONFIG]: { Yes: 5, No: 3 } } };
+    fakes.askRuns["task-sessions"] = live;
+    renderAt(
+      `/dashboard/observe/${PROJECT}/ask?run=task-sessions&unit=sessions&tab=sessions`,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(fakes.control).not.toHaveBeenCalled();
+    const ask = screen
+      .getByText(
+        "Cancel this run? The 8 answers so far are kept; it can't be resumed.",
+      )
+      .closest("[role='alert']");
+    // Back keeps it running.
+    fireEvent.click(within(ask).getByRole("button", { name: "Back" }));
+    expect(screen.queryByText(/Cancel this run\?/)).toBeNull();
+    expect(fakes.control).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Cancel run" }));
+    });
+    expect(fakes.control).toHaveBeenCalledExactlyOnceWith("cancel", {});
+    expect(screen.queryByText(/Cancel this run\?/)).toBeNull();
+  });
+
+  it("pauses at once, without asking", async () => {
+    fakes.askRuns["task-sessions"] = runOf({
+      status: "running",
+      total: 49,
+      answered: 8,
+      records: null,
+    });
+    renderAt(
+      `/dashboard/observe/${PROJECT}/ask?run=task-sessions&unit=sessions&tab=sessions`,
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Pause" }));
+    });
+    expect(fakes.control).toHaveBeenCalledExactlyOnceWith("pause", {});
+    expect(screen.queryByText(/Cancel this run\?/)).toBeNull();
+  });
+
   it("says a pause is draining, and when a run waits for its workers", () => {
     const pausing = runOf({ status: "pausing", total: 1000, answered: 410 });
     pausing.summary = { ...pausing.summary, in_flight: 6 };

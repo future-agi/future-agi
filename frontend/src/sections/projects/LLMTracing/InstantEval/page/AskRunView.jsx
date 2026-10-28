@@ -94,6 +94,12 @@ const answeredNothing = (run) =>
   run.failed > 0 &&
   !savedAnswerCount(run.summary?.counts);
 
+// "Cancel this run? The 8 answers so far are kept; it can't be resumed."
+const cancelWords = (answers) =>
+  answers
+    ? `Cancel this run? The ${answers.toLocaleString()} ${answers === 1 ? "answer" : "answers"} so far ${answers === 1 ? "is" : "are"} kept; it can't be resumed.`
+    : "Cancel this run? Nothing has been answered yet, and it can't be resumed.";
+
 // "2 of 49 sessions done with both questions": with several questions a row
 // is done once each has its answer, so the progress says so beside the
 // answers to the question shown.
@@ -247,8 +253,9 @@ StatusLine.propTypes = {
 };
 
 // Pause, resume, cancel and retry the failed rows of a run. A cancelled run
-// is over: it is asked again (Run again), not resumed or retried.
-function RunControls({ run, onControl, busy, retryElsewhere }) {
+// is over: it is asked again (Run again), not resumed or retried, so Cancel
+// asks first (`onCancel`); Pause is instant.
+function RunControls({ run, onControl, onCancel, busy, retryElsewhere }) {
   const live = run.status === "running" || run.status === "preparing";
   const cancelled = run.status === "cancelled";
   const resumable = PAUSED_STATES.has(run.status) || run.status === "stalled";
@@ -282,12 +289,7 @@ function RunControls({ run, onControl, busy, retryElsewhere }) {
           </Button>
         )}
       {(live || PAUSED_STATES.has(run.status)) && (
-        <Button
-          size="small"
-          color="inherit"
-          disabled={busy}
-          onClick={() => onControl("cancel")}
-        >
+        <Button size="small" color="inherit" disabled={busy} onClick={onCancel}>
           Cancel
         </Button>
       )}
@@ -315,6 +317,7 @@ function RunControls({ run, onControl, busy, retryElsewhere }) {
 RunControls.propTypes = {
   run: PropTypes.object.isRequired,
   onControl: PropTypes.func.isRequired,
+  onCancel: PropTypes.func.isRequired,
   busy: PropTypes.bool,
   retryElsewhere: PropTypes.bool,
 };
@@ -692,6 +695,8 @@ export default function AskRunView({
   const [acting, setActing] = useState(false);
   const [actionError, setActionError] = useState(null);
   const [confirmMore, setConfirmMore] = useState(null);
+  // Cancel asks first: a cancelled run can't be resumed.
+  const [confirmCancel, setConfirmCancel] = useState(false);
   const [handing, setHanding] = useState(false);
   // Why a hand-off of the selection was refused: {label, message}, shown
   // while that selection stays.
@@ -1092,6 +1097,7 @@ export default function AskRunView({
                 <RunControls
                   run={run}
                   onControl={control}
+                  onCancel={() => setConfirmCancel(true)}
                   busy={acting || !canRun}
                   retryElsewhere={
                     nothingAnswered ||
@@ -1279,6 +1285,32 @@ export default function AskRunView({
         {actionError && (
           <Alert severity="error" onClose={() => setActionError(null)}>
             {actionError}
+          </Alert>
+        )}
+        {confirmCancel && (live || PAUSED_STATES.has(run.status)) && (
+          <Alert
+            severity="warning"
+            action={
+              <Stack direction="row" spacing={1}>
+                <Button size="small" onClick={() => setConfirmCancel(false)}>
+                  Back
+                </Button>
+                <Button
+                  size="small"
+                  variant="contained"
+                  color="warning"
+                  disabled={acting}
+                  onClick={async () => {
+                    setConfirmCancel(false);
+                    await control("cancel");
+                  }}
+                >
+                  Cancel run
+                </Button>
+              </Stack>
+            }
+          >
+            {cancelWords(savedAnswerCount(summary?.counts))}
           </Alert>
         )}
         {confirmMore && (
