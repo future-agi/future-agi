@@ -65,7 +65,7 @@ describe("Scenario table in Vel's columns", () => {
 
   it("Sub-goals shows the real count", () => {
     renderTable();
-    const row = screen.getAllByRole("row")[1];
+    const row = screen.getByText("Caller wants a refund above the limit").closest("tr");
     expect(within(row).getByText("2")).toBeInTheDocument();
   });
 
@@ -102,5 +102,24 @@ describe("Scenario table in Vel's columns", () => {
   it("a locked template has no row menu", () => {
     renderTable({ locked: true });
     expect(screen.getByRole("button", { name: "More actions for refund-over-limit-01" })).toBeDisabled();
+  });
+
+  it("wraps the contract's use-case groups in sample author batches, flagged UI only, each one hideable", () => {
+    const row = (id, n, uc) => ({ ...ROWS[0], id, number: n, name: `k-${id}`, summary: `Summary ${id}`, useCase: uc });
+    const groups = [
+      { id: "g1", label: "Book a ride", rows: [row("a", 1, "Book a ride"), row("b", 2, "Book a ride")] },
+      { id: "g2", label: "Cancel a ride", rows: [row("c", 3, "Cancel a ride")] },
+    ];
+    renderTable({ rows: groups.flatMap((g) => g.rows), groups });
+    expect(screen.getByText("Arjun Kapoor added 2 scenarios")).toBeInTheDocument();
+    expect(screen.getByText("Vel added 1 scenario")).toBeInTheDocument();
+    expect(screen.getByText("Latest")).toBeInTheDocument();
+    expect(screen.getAllByLabelText("UI only").length).toBeGreaterThan(0);
+    expect(screen.getByText("Book a ride")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Hide 2" }));
+    expect(screen.queryByText("Summary a")).toBeNull();
+    expect(screen.getByText("Summary c")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show 2" }));
+    expect(screen.getByText("Summary a")).toBeInTheDocument();
   });
 });

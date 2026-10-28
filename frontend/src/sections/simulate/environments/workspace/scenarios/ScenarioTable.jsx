@@ -3,7 +3,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { alpha } from "@mui/material/styles";
 import {
   Box, Stack, Typography, Table, TableBody, TableCell, TableHead, TableRow,
-  IconButton, Tooltip, Checkbox, Menu, MenuItem,
+  IconButton, Tooltip, Checkbox, Menu, MenuItem, Button,
 } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 
@@ -137,6 +137,19 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onOpen, 
     () => (groups?.length ? groups : [{ id: "all", label: null, rows: rows || [] }]),
     [groups, rows],
   );
+  // Vel groups the list by who added each batch. The API has no batches or
+  // authors, so sample authors wrap the contract's own use-case groups: the
+  // first group as the latest batch, the rest as an earlier one. Flagged UI
+  // only; hiding a batch is local.
+  const batches = useMemo(() => batchesOf(sections), [sections]);
+  const [hiddenBatches, setHiddenBatches] = useState(() => new Set());
+  const toggleBatch = (id) =>
+    setHiddenBatches((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   const allIds = useMemo(
     () => sections.flatMap((s) => (s.rows || []).map((r) => r.id)).filter(Boolean),
@@ -279,7 +292,17 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onOpen, 
         </TableHead>
 
         <TableBody>
-          {sections.map((section) => (
+          {batches.map((batch) => (
+            <Fragment key={batch.id}>
+              <BatchHeaderRow
+                batch={batch}
+                colSpan={columns.length}
+                hidden={hiddenBatches.has(batch.id)}
+                onToggle={() => toggleBatch(batch.id)}
+              />
+              {!hiddenBatches.has(batch.id) && (
+                <>
+          {batch.sections.map((section) => (
             <Fragment key={section.id}>
               {section.label && (
                 <TableRow>
@@ -427,6 +450,10 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onOpen, 
               })}
             </Fragment>
           ))}
+                </>
+              )}
+            </Fragment>
+          ))}
         </TableBody>
       </Table>
   );
@@ -538,4 +565,71 @@ RowMenu.propTypes = {
   locked: PropTypes.bool,
   onEdit: PropTypes.func,
   onRemove: PropTypes.func,
+};
+
+const SAMPLE_AUTHORS = [
+  { initials: "AK", name: "Arjun Kapoor", how: "By hand", icon: "solar:pen-linear", ago: "5h ago", latest: true },
+  { initials: "V", name: "Vel", how: "In chat", icon: "solar:chat-round-line-linear", ago: "4d ago" },
+];
+const countOf = (section) => section.totalInGroup ?? section.rows.length;
+function batchesOf(sections) {
+  const parts = sections.length > 1 ? [sections.slice(0, 1), sections.slice(1)] : [sections];
+  return parts.map((secs, i) => ({
+    id: `batch-${i}`,
+    author: SAMPLE_AUTHORS[i],
+    sections: secs,
+    count: secs.reduce((n, sec) => n + countOf(sec), 0),
+  }));
+}
+
+function BatchHeaderRow({ batch, colSpan, hidden, onToggle }) {
+  const { author, count } = batch;
+  return (
+    <TableRow>
+      <TableCell colSpan={colSpan} sx={{ px: 2, py: 1.25, borderBottom: "1px solid", borderColor: "divider", bgcolor: "background.paper" }}>
+        <Stack direction="row" alignItems="center" spacing={1.25}>
+          <Box
+            sx={{
+              width: 28, height: 28, borderRadius: "50%", flexShrink: 0, display: "grid", placeItems: "center",
+              bgcolor: "background.neutral", typography: "s3", fontWeight: 600, color: "text.secondary",
+            }}
+          >
+            {author.initials}
+          </Box>
+          <Box flex={1} minWidth={0}>
+            <Stack direction="row" alignItems="center" spacing={0.75}>
+              <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                {`${author.name} added ${count} scenario${count === 1 ? "" : "s"}`}
+              </Typography>
+              {author.latest && (
+                <Box component="span" sx={{ px: 0.75, borderRadius: 0.5, typography: "s3", bgcolor: "background.neutral", color: "text.secondary" }}>
+                  Latest
+                </Box>
+              )}
+              <UiOnlyFlag feature="scenarioBatches" />
+            </Stack>
+            <Stack direction="row" alignItems="center" spacing={0.5} sx={{ color: "text.subtitle" }}>
+              <Iconify icon={author.icon} width={12} />
+              <Typography sx={{ typography: "s3", color: "inherit" }}>{`${author.how} · ${author.ago}`}</Typography>
+            </Stack>
+          </Box>
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={onToggle}
+            endIcon={<Iconify icon={hidden ? "solar:alt-arrow-down-linear" : "solar:alt-arrow-up-linear"} width={12} />}
+            sx={{ flexShrink: 0, color: "text.primary", borderColor: "divider" }}
+          >
+            {`${hidden ? "Show" : "Hide"} ${count}`}
+          </Button>
+        </Stack>
+      </TableCell>
+    </TableRow>
+  );
+}
+BatchHeaderRow.propTypes = {
+  batch: PropTypes.object.isRequired,
+  colSpan: PropTypes.number.isRequired,
+  hidden: PropTypes.bool,
+  onToggle: PropTypes.func.isRequired,
 };

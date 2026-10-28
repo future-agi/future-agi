@@ -46,6 +46,10 @@ export const UI_ONLY_FEATURES = Object.freeze({
     label: "MCP tools",
     ask: "adding, refreshing and removing tools from MCP servers",
   },
+  scenarioBatches: {
+    label: "Scenario batches",
+    ask: "who added which scenarios, how and when (batches with an author)",
+  },
   scenarioChecks: {
     label: "Scenario checks",
     ask: "the checks that prove each scenario, with their code",
