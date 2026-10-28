@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Box,
   Button,
@@ -16,8 +17,10 @@ import { UNITS } from "src/sections/projects/observePopulation";
 import { CitationChip, EvidenceQuote } from "./Citation";
 import {
   askRun,
+  actionCreditsBlocked,
   insightsCreditRefusal,
   insightsErrorMessage,
+  useActionCredits,
 } from "./insightsApi";
 import { assignAskRefs } from "./insightsCitations";
 import { categoriesFor } from "./insightsDistribution";
@@ -35,6 +38,7 @@ import {
 } from "./insightsReport";
 import { useReport } from "./reportContext";
 import { CategoryLink, ErrorText } from "./parts";
+import ActionCreditNote from "./ActionCreditNote";
 
 // `line` keeps the chips on one row, each shrinking to fit.
 function Chips({ items, onPick, disabled, line }) {
@@ -131,7 +135,7 @@ Thinking.propTypes = {
   hint: PropTypes.bool,
 };
 
-function Answer({ turn, refs, reading, hint, onFollowUp, onRetry }) {
+function Answer({ turn, refs, reading, hint, onFollowUp, onRetry, disabled }) {
   const report = useReport();
   return (
     <Box component="li" data-turn sx={{ py: 1.5 }}>
@@ -157,7 +161,12 @@ function Answer({ turn, refs, reading, hint, onFollowUp, onRetry }) {
             >
               <ErrorText message={turn.error} billing={turn.billing} />
             </Typography>
-            <Button size="small" color="inherit" onClick={onRetry}>
+            <Button
+              size="small"
+              color="inherit"
+              onClick={onRetry}
+              disabled={disabled}
+            >
               Retry
             </Button>
           </Stack>
@@ -237,7 +246,11 @@ function Answer({ turn, refs, reading, hint, onFollowUp, onRetry }) {
               </Typography>
             )}
             {turn.followUps?.length > 0 && (
-              <Chips items={turn.followUps} onPick={onFollowUp} />
+              <Chips
+                items={turn.followUps}
+                onPick={onFollowUp}
+                disabled={disabled}
+              />
             )}
           </Stack>
         )}
@@ -253,6 +266,7 @@ Answer.propTypes = {
   hint: PropTypes.bool,
   onFollowUp: PropTypes.func.isRequired,
   onRetry: PropTypes.func.isRequired,
+  disabled: PropTypes.bool,
 };
 
 // Answers still on their way, by run and turn: the panel unmounts when a
@@ -269,6 +283,9 @@ const inflight = new Map();
 export default function AskPanel({ run, lens }) {
   const report = useReport();
   const runId = run.id;
+  const queryClient = useQueryClient();
+  const credits = useActionCredits(run.project_id, "ask");
+  const creditBlocked = actionCreditsBlocked(credits);
   const [thread, setThread] = useState(() => readAskThread(runId));
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
@@ -343,7 +360,7 @@ export default function AskPanel({ run, lens }) {
   // sent with one is the turns already answered.
   const ask = async (question, replaceId) => {
     const q = question.trim().slice(0, ASK_QUESTION_MAX);
-    if (!q) return;
+    if (!q || creditBlocked) return;
     const id =
       replaceId || `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const history = askHistory(thread.filter((turn) => turn.id !== replaceId));
@@ -383,6 +400,7 @@ export default function AskPanel({ run, lens }) {
     })();
     inflight.set(key, answered);
     const patch = await answered;
+    queryClient.invalidateQueries({ queryKey: ["insights", "action-credits"] });
     if (inflight.get(key) === answered) inflight.delete(key);
     if (controllers.current.get(id) === own) controllers.current.delete(id);
     if (!patch) return;
@@ -480,12 +498,17 @@ export default function AskPanel({ run, lens }) {
                 hint={turn.id === lastBusyId}
                 onFollowUp={(question) => ask(question)}
                 onRetry={() => ask(turn.question, turn.id)}
+                disabled={creditBlocked}
               />
             ))}
           </Box>
         </Box>
       )}
 
+      <ActionCreditNote
+        query={credits}
+        label="Each question, including suggestions and retries"
+      />
       <Box
         component="form"
         onSubmit={(event) => {
@@ -503,7 +526,12 @@ export default function AskPanel({ run, lens }) {
         {/* Starting questions live inside the composer, on one line. */}
         {thread.length === 0 && (
           <Box sx={{ px: 1.25, pt: 1 }}>
-            <Chips items={suggestions} onPick={ask} line />
+            <Chips
+              items={suggestions}
+              onPick={ask}
+              line
+              disabled={creditBlocked}
+            />
           </Box>
         )}
         <Stack
@@ -555,7 +583,7 @@ export default function AskPanel({ run, lens }) {
             type="submit"
             color="primary"
             aria-label="Ask"
-            disabled={!text.trim()}
+            disabled={!text.trim() || creditBlocked}
             sx={{ flexShrink: 0 }}
           >
             <Iconify icon="mdi:arrow-up-circle" width={24} />

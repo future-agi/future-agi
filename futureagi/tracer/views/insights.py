@@ -7,7 +7,7 @@ PATCH  /tracer/insights/configs/<id>/           edit a report, or reset its taxo
 DELETE /tracer/insights/configs/<id>/           delete a report
 POST   /tracer/insights/draft/                  guided setup from a goal + examples
 POST   /tracer/insights/preview/                what the extractor reads from 3 units
-POST   /tracer/insights/estimate/               how many units a scope holds
+POST   /tracer/insights/estimate/               unit counts and action credit costs
 POST   /tracer/insights/runs/                   start a run (new or saved report)
 GET    /tracer/insights/runs/<id>/              run status and results
 GET    /tracer/insights/runs/<id>/units/        analysed units, by category
@@ -22,7 +22,7 @@ from datetime import timedelta
 
 import structlog
 from django.core.cache import cache
-from django.db.models import Q
+from django.db.models import Count, Q
 from django.utils import timezone
 from rest_framework import serializers, status
 from rest_framework.permissions import IsAuthenticated
@@ -201,7 +201,10 @@ class InsightRunCreateSerializer(serializers.Serializer):
 
 class InsightEstimateRequestSerializer(serializers.Serializer):
     project_id = serializers.UUIDField()
-    unit = serializers.ChoiceField(choices=InsightUnitType.choices)
+    action = serializers.ChoiceField(
+        choices=["run", "ask", "draft", "preview"], required=False, default="run"
+    )
+    unit = serializers.ChoiceField(choices=InsightUnitType.choices, required=False)
     # A scope the server counts, or how many rows are handed over by id (a
     # selection, or a run again on the same rows), which need no count.
     scope = InsightScopeSerializer(required=False)
@@ -209,6 +212,10 @@ class InsightEstimateRequestSerializer(serializers.Serializer):
     sample_size = serializers.IntegerField(min_value=10, max_value=1000, required=False)
 
     def validate(self, attrs):
+        if attrs["action"] != "run":
+            return attrs
+        if "unit" not in attrs:
+            raise serializers.ValidationError({"unit": "This field is required."})
         if ("scope" in attrs) == ("population_size" in attrs):
             raise serializers.ValidationError(
                 "Provide either scope or population_size."
@@ -295,8 +302,10 @@ class InsightRunSummarySerializer(serializers.Serializer):
     population_size = serializers.IntegerField()
     sample_size = serializers.IntegerField()
     analysed_count = serializers.IntegerField()
+    skipped_count = serializers.IntegerField()
     taxonomy_mode = serializers.CharField()
     distribution = serializers.ListField(child=serializers.JSONField())
+    error = serializers.CharField(allow_blank=True)
     scope = serializers.JSONField()
 
 
@@ -345,6 +354,7 @@ class InsightRunDetailSerializer(serializers.Serializer):
     population_size = serializers.IntegerField()
     sample_size = serializers.IntegerField()
     analysed_count = serializers.IntegerField()
+    skipped_count = serializers.IntegerField()
     taxonomy_mode = serializers.CharField()
     result = serializers.JSONField()
     models_used = serializers.JSONField()
@@ -428,6 +438,8 @@ class InsightEstimateResultSerializer(serializers.Serializer):
     # Null where reports aren't billed (off Cloud).
     credits_estimate = serializers.FloatField(allow_null=True)
     credit_limited = serializers.BooleanField()
+    # A failed check needs retrying, not a change to the billing plan.
+    credit_check_unavailable = serializers.BooleanField(required=False)
     # Credits left this month, when the cap is what refuses the report.
     credits_left = serializers.FloatField(allow_null=True)
     # The largest sample (10 or more) the credits left pay for.
@@ -530,8 +542,11 @@ def settle_lost_runs(runs) -> None:
             continue
         if not _workflow_lost(run):
             continue
-        if InsightRun.objects.filter(
-            id=run.id, status__in=["pending", "running"]
+        if InsightRun.no_workspace_objects.filter(
+            id=run.id,
+            status__in=["pending", "running"],
+            deleted=False,
+            updated_at__lte=now - LOST_AFTER,
         ).update(status="failed", error=LOST_ERROR, finished_at=now, updated_at=now):
             logger.info("insight_run_lost", run_id=str(run.id), stage=run.stage)
         run.refresh_from_db(fields=["status", "error", "finished_at", "updated_at"])
@@ -546,16 +561,28 @@ def _run_summary(run) -> dict:
         "finished_at": run.finished_at,
         "population_size": run.population_size,
         "sample_size": run.sample_size,
-        "analysed_count": run.analysed_count,
+        "analysed_count": (
+            run.read_count if run.status == "failed" else run.analysed_count
+        ),
+        "skipped_count": run.skipped_count,
         "taxonomy_mode": run.taxonomy_mode,
         "distribution": _distribution(run),
+        "error": run.error,
         "scope": normalize_scope(run.scope),
     }
 
 
 def _config_item(config, *, with_runs=False) -> dict:
-    runs = list(config.runs.filter(deleted=False).order_by("-created_at"))
-    settle_lost_runs(runs)
+    runs = list(
+        config.runs.filter(deleted=False)
+        .annotate(
+            skipped_count=Count("units", filter=Q(units__status="skipped")),
+            read_count=Count(
+                "units", filter=Q(units__status="done", units__included=True)
+            ),
+        )
+        .order_by("-created_at")
+    )
     item = {
         "id": config.id,
         "name": config.name,
@@ -782,11 +809,12 @@ def _step_cost(
     }[step]()
 
 
-def _credit_estimate(org, sample_size: int, unit: str, project=None) -> dict:
-    """The estimate's credit fields: about what a report over
-    ``sample_size`` units costs, and whether the credit cap lets it start.
-    The estimate is None where reports aren't billed. A unit costs what the
-    engine a run would start on spends on one of its size (``_sizing``)."""
+def _credit_estimate(
+    org, sample_size: int, unit: str | None, project=None, *, step="run"
+) -> dict:
+    """A step's cost and whether the credit cap lets it start; null off Cloud.
+    Reports are sized for the engine and units they would read. Other actions
+    use the same per-step estimate their submission checks use."""
     out = {
         "credits_estimate": None,
         "credit_limited": False,
@@ -797,19 +825,31 @@ def _credit_estimate(org, sample_size: int, unit: str, project=None) -> dict:
     billing = _billing()
     if billing is None:
         return out
+    out["credit_check_unavailable"] = False
     out["credits_estimate"] = 0.0
-    if sample_size <= 0:
+    if step == "run" and sample_size <= 0:
         return out
-    sizing = _sizing(unit, project)
-    cost = billing.run_cost(sample_size, **sizing)
+    sizing = _sizing(unit, project) if step == "run" else {}
+    cost = _step_cost(billing, step, sample_size, sizing)
     out["credits_estimate"] = billing.credits(cost)
     try:
         verdict = _credit_verdict(
-            billing, org, cost, what=_STEPS["run"], unit=unit, sizing=sizing
+            billing,
+            org,
+            cost,
+            what=_STEPS[step],
+            unit=unit if step == "run" else None,
+            sizing=sizing,
         )
     except billing.CreditCheckUnavailable:
         # Fail closed: the report can't start until billing answers.
-        out.update({"credit_limited": True, "credit_message": CREDIT_CHECK_UNAVAILABLE})
+        out.update(
+            {
+                "credit_limited": True,
+                "credit_check_unavailable": True,
+                "credit_message": CREDIT_CHECK_UNAVAILABLE,
+            }
+        )
         return out
     if verdict is not None:
         out.update(
@@ -1176,6 +1216,19 @@ class InsightEstimateView(InsightsLicenseRequired, APIView):
         project = _project(request, data["project_id"])
         if project is None:
             return self._gm.not_found("Project not found")
+        if data["action"] != "run":
+            return self._gm.success_response(
+                {
+                    "population": 0,
+                    "population_is_lower_bound": False,
+                    "sample_size": 0,
+                    "window": None,
+                    "sample_ids": [],
+                    **_credit_estimate(
+                        _org(request), 0, None, project, step=data["action"]
+                    ),
+                }
+            )
         unit = data["unit"]
         if "population_size" in data:
             handed = data["population_size"]
@@ -1394,7 +1447,6 @@ class InsightRunDetailView(InsightsLicenseRequired, APIView):
         )
         if run is None:
             return self._gm.not_found("Report run not found")
-        settle_lost_runs([run])
         siblings = InsightRun.objects.filter(config_id=run.config_id, deleted=False)
         previous = (
             siblings.filter(created_at__lt=run.created_at)
@@ -1419,7 +1471,12 @@ class InsightRunDetailView(InsightsLicenseRequired, APIView):
                 "settings": run.settings or {},
                 "population_size": run.population_size,
                 "sample_size": run.sample_size,
-                "analysed_count": run.analysed_count,
+                "analysed_count": (
+                    run.units.filter(status="done", included=True).count()
+                    if run.status == "failed"
+                    else run.analysed_count
+                ),
+                "skipped_count": run.units.filter(status="skipped").count(),
                 "taxonomy_mode": run.taxonomy_mode,
                 "result": run.result or {},
                 "models_used": run.models_used or {},

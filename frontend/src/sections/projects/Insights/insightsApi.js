@@ -8,6 +8,7 @@ import {
 } from "src/sections/projects/requestErrors";
 import { collectPopulation } from "src/sections/projects/observePopulation";
 import { isRunActive } from "./insightsLenses";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 
 // Reads and writes of the Insights endpoints. Every response is
 // {status, result}; the hooks hand back `result`.
@@ -188,6 +189,49 @@ export function insightsErrorMessage(
   return actionErrorMessage(error, { fallback, retry });
 }
 
+export const runFailureReason = (run) =>
+  getSafeActionErrorMessage(
+    { statusCode: 400, result: run.error },
+    "The report could not be completed. Try again in a moment.",
+  );
+
+const creditsFrom = (data) =>
+  data?.credits_estimate != null
+    ? {
+        estimate: data.credits_estimate,
+        limited: Boolean(data.credit_limited),
+        unavailable: Boolean(data.credit_check_unavailable),
+        left: data.credits_left ?? null,
+        maxSample: data.credit_max_sample ?? null,
+        message: data.credit_message || null,
+      }
+    : null;
+
+export const actionCreditsBlocked = (query) =>
+  !query.isSuccess ||
+  query.isFetching ||
+  Boolean(query.data?.limited || query.data?.unavailable);
+
+export function useActionCredits(projectId, action) {
+  return useQuery({
+    queryKey: ["insights", "action-credits", projectId, action],
+    queryFn: async ({ signal }) =>
+      creditsFrom(
+        result(
+          await axios.post(
+            endpoints.project.insightsEstimate(),
+            { project_id: projectId, action },
+            { signal },
+          ),
+        ),
+      ),
+    enabled: Boolean(projectId),
+    staleTime: 0,
+    retry: false,
+    meta: { errorHandled: true },
+  });
+}
+
 export function useInsightsConfigs(projectId) {
   return useQuery({
     queryKey: insightsKeys.configs(projectId),
@@ -334,16 +378,7 @@ export const fetchScopeCount = async (
       ? data.sample_ids.map(String)
       : null,
     // What the run costs, and whether the credits left pay for it.
-    credits:
-      data?.credits_estimate != null
-        ? {
-            estimate: data.credits_estimate,
-            limited: Boolean(data.credit_limited),
-            left: data.credits_left ?? null,
-            maxSample: data.credit_max_sample ?? null,
-            message: data.credit_message || null,
-          }
-        : null,
+    credits: creditsFrom(data),
   };
 };
 

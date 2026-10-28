@@ -1,6 +1,7 @@
 """An Insights run whose Temporal workflow was lost (a Temporal restart) is
-marked failed when it is read, so the report offers Run again instead of
-running forever. Temporal is a stand-in here."""
+marked failed by the periodic sweep, so the report offers Run again instead
+of running forever. Reading a report never asks Temporal or changes a run.
+Temporal is a stand-in here."""
 
 from datetime import timedelta
 
@@ -9,6 +10,7 @@ from django.utils import timezone
 from rest_framework import status
 
 from tfc.temporal.eval_tasks.client import WF_ABSENT, WF_CLOSED, WF_PROGRESSING
+from tfc.temporal.insights.activities import _sweep_lost_runs as sweep
 from tracer.models.insights import InsightConfig, InsightRun
 from tracer.tests.test_insights_api import CONFIGS, RUNS, population
 from tracer.tests.test_insights_api import insight_enabled as insight_enabled
@@ -75,11 +77,16 @@ def test_a_run_whose_workflow_is_gone_is_marked_failed_once(
     auth_client, stuck_run, workflow, answer
 ):
     workflow["answer"] = answer
+    # Reading is read-only: the run is still running until the sweep.
+    assert _detail(auth_client, stuck_run)["status"] == "running"
+    assert workflow["asked"] == []
+    sweep()
     result = _detail(auth_client, stuck_run)
     assert (result["status"], result["error"]) == ("failed", views.LOST_ERROR)
     assert result["finished_at"] is not None
     assert workflow["asked"] == [f"insight-run-{stuck_run.id}"]
     # A failed run isn't asked about again.
+    sweep()
     assert _detail(auth_client, stuck_run)["status"] == "failed"
     assert len(workflow["asked"]) == 1
 
@@ -89,8 +96,10 @@ def test_a_run_whose_workflow_still_runs_is_left_alone_and_asked_about_once(
     auth_client, stuck_run, workflow
 ):
     workflow["answer"] = WF_PROGRESSING
+    sweep()
     assert _detail(auth_client, stuck_run)["status"] == "running"
-    # The answer is kept for a few seconds: polling asks Temporal once.
+    # The answer is kept for a few seconds: back-to-back sweeps ask once.
+    sweep()
     assert _detail(auth_client, stuck_run)["status"] == "running"
     assert len(workflow["asked"]) == 1
     assert InsightRun.objects.get(id=stuck_run.id).error == ""
@@ -101,6 +110,7 @@ def test_a_run_that_changed_lately_or_an_unreachable_temporal_changes_nothing(
     auth_client, stuck_run, workflow
 ):
     InsightRun.objects.filter(id=stuck_run.id).update(updated_at=timezone.now())
+    sweep()
     assert _detail(auth_client, stuck_run)["status"] == "running"
     assert workflow["asked"] == []
 
@@ -108,6 +118,7 @@ def test_a_run_that_changed_lately_or_an_unreachable_temporal_changes_nothing(
         updated_at=timezone.now() - timedelta(minutes=10)
     )
     workflow["answer"] = RuntimeError("Temporal is unreachable")
+    sweep()
     assert _detail(auth_client, stuck_run)["status"] == "running"
     assert len(workflow["asked"]) == 1
 
@@ -116,6 +127,7 @@ def test_a_run_that_changed_lately_or_an_unreachable_temporal_changes_nothing(
 def test_the_report_and_its_run_list_show_a_lost_run_as_failed(
     auth_client, observe_project, stuck_run, workflow
 ):
+    sweep()
     config = auth_client.get(f"{CONFIGS}{stuck_run.config_id}/").json()["result"]
     assert config["latest_run"]["status"] == "failed"
     assert [r["status"] for r in config["runs"]] == ["failed"]

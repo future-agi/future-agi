@@ -28,9 +28,11 @@ import {
 } from "src/sections/projects/observeScope";
 import {
   draftConfig,
+  actionCreditsBlocked,
   previewConfig,
   rememberPopulation,
   startRun,
+  useActionCredits,
   useExampleRows,
   useHasSessions,
   usePopulationCount,
@@ -68,6 +70,7 @@ import NewReportTune from "./NewReportTune";
 import { CreditLimit, ErrorText } from "./parts";
 import { creditWords } from "src/sections/projects/LLMTracing/InstantEval/page/askFilter";
 import PreviewExamples from "./PreviewExamples";
+import ActionCreditNote from "./ActionCreditNote";
 
 const DRAFT_EXAMPLES = 5;
 const PREVIEW_EXAMPLES = 3;
@@ -281,6 +284,8 @@ export default function NewReport({
   onStarted,
 }) {
   const queryClient = useQueryClient();
+  const draftCredits = useActionCredits(projectId, "draft");
+  const previewCredits = useActionCredits(projectId, "preview");
   const fixedPopulation = useMemo(
     () =>
       Array.isArray(seed?.population) ? toPopulation(seed.population) : [],
@@ -417,8 +422,9 @@ export default function NewReport({
     "Couldn't start right now. Try again in a moment.",
   );
 
-  const draftWithAI = () =>
-    drafting.run(async (signal) => {
+  const draftWithAI = () => {
+    if (actionCreditsBlocked(draftCredits)) return;
+    return drafting.run(async (signal) => {
       const data = await draftConfig(
         {
           project_id: projectId,
@@ -442,8 +448,12 @@ export default function NewReport({
       }));
       setTouched((current) => ({ ...current, question: true, agent: true }));
       setTuneOpen(true);
+      queryClient.invalidateQueries({
+        queryKey: ["insights", "action-credits"],
+      });
       return data;
     });
+  };
 
   const configForPreview = useMemo(
     () =>
@@ -457,6 +467,7 @@ export default function NewReport({
   const configKey = JSON.stringify(configForPreview);
 
   const preview = (offset) => {
+    if (actionCreditsBlocked(previewCredits)) return;
     setPreviewOffset(offset);
     setPreviewedConfig(configKey);
     return previewing.run(async (signal) => {
@@ -470,6 +481,9 @@ export default function NewReport({
         },
         signal,
       );
+      queryClient.invalidateQueries({
+        queryKey: ["insights", "action-credits"],
+      });
       return data?.units || [];
     });
   };
@@ -712,8 +726,7 @@ export default function NewReport({
                 </Stack>
               ) : count.isError && !fixed ? (
                 <Typography variant="body2" color="text.secondary">
-                  Couldn&apos;t count this scope. The report still reads it when
-                  it runs.
+                  The scope and report cost could not be checked.
                 </Typography>
               ) : population ? (
                 <Stack direction="row" spacing={1} alignItems="center">
@@ -767,7 +780,24 @@ export default function NewReport({
               </Typography>
             )}
           </Stack>
-          {creditLimited && (
+          {((fixed ? handedCost.isError : count.isError) || credits?.unavailable) && (
+            <Alert
+              severity="error"
+              action={
+                <Button
+                  color="inherit"
+                  onClick={() => (fixed ? handedCost : count).refetch()}
+                >
+                  Retry cost check
+                </Button>
+              }
+            >
+              {credits?.unavailable
+                ? credits.message
+                : "The report cost could not be checked. Check it before running."}
+            </Alert>
+          )}
+          {creditLimited && !credits.unavailable && (
             <CreditLimit
               credits={credits}
               onSample={(size) => update({ sampleSize: size })}
@@ -802,29 +832,36 @@ export default function NewReport({
                 onCancel={drafting.cancel}
               />
             ) : (
-              <Tooltip
-                describeChild
-                arrow
-                title={
-                  items.length
-                    ? `Reads ${Math.min(DRAFT_EXAMPLES, items.length)} real ${UNITS[draft.unit].plural} and drafts the name, question, agent description, instructions and attributes. Takes 10–40 seconds.`
-                    : "Needs at least one item in the scope"
-                }
-              >
-                <span>
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    startIcon={
-                      <Iconify icon="mdi:creation-outline" width={16} />
-                    }
-                    onClick={draftWithAI}
-                    disabled={busy || !items.length}
-                  >
-                    Draft with AI
-                  </Button>
-                </span>
-              </Tooltip>
+              <Stack spacing={0.5} alignItems="flex-end">
+                <ActionCreditNote query={draftCredits} label="Draft" />
+                <Tooltip
+                  describeChild
+                  arrow
+                  title={
+                    items.length
+                      ? `Reads ${Math.min(DRAFT_EXAMPLES, items.length)} real ${UNITS[draft.unit].plural} and drafts the name, question, agent description, instructions and attributes. Takes 10–40 seconds.`
+                      : "Needs at least one item in the scope"
+                  }
+                >
+                  <span>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      startIcon={
+                        <Iconify icon="mdi:creation-outline" width={16} />
+                      }
+                      onClick={draftWithAI}
+                      disabled={
+                        busy ||
+                        !items.length ||
+                        actionCreditsBlocked(draftCredits)
+                      }
+                    >
+                      Draft with AI
+                    </Button>
+                  </span>
+                </Tooltip>
+              </Stack>
             )
           }
           draftNote={
@@ -873,6 +910,9 @@ export default function NewReport({
           <Typography variant="caption" color="text.secondary">
             Optional · see what the report reads from {PREVIEW_EXAMPLES} real{" "}
             {UNITS[draft.unit].plural} before spending a full run
+            <Box component="span" sx={{ display: "block" }}>
+              <ActionCreditNote query={previewCredits} label="Preview" />
+            </Box>
           </Typography>
           <Box sx={{ flex: 1 }} />
           {previewState.status === "busy" ? (
@@ -894,7 +934,11 @@ export default function NewReport({
                 )
               }
               disabled={
-                busy || !items.length || questionMissing || attributeProblem
+                busy ||
+                !items.length ||
+                questionMissing ||
+                attributeProblem ||
+                actionCreditsBlocked(previewCredits)
               }
             >
               {previewState.status === "done" && !previewStale
@@ -991,7 +1035,13 @@ export default function NewReport({
             onClick={runReport}
             // While a new scope or sample size is costed, the shown cost is
             // the previous one: Run waits for the server's figure.
-            disabled={Boolean(blocker) || busy || counting || costing}
+            disabled={
+              Boolean(blocker) ||
+              busy ||
+              counting ||
+              costing ||
+              (fixed ? handedCost.isError : count.isError)
+            }
             startIcon={<Iconify icon="mdi:play" width={16} />}
           >
             Run report

@@ -29,6 +29,7 @@ import omegaRunFixture from "./fixtures/run_sessions_failures_omega.json";
 const mocks = vi.hoisted(() => ({
   readQuery: vi.fn(),
   post: vi.fn(),
+  actionCredits: vi.fn(),
   patch: vi.fn(),
   collect: vi.fn(),
   enriched: false,
@@ -40,7 +41,8 @@ vi.mock("src/components/iconify", () => ({ default: () => null }));
 vi.mock("src/utils/axios", () => ({
   default: {
     get: vi.fn(),
-    post: (...args) => mocks.post(...args),
+    post: (...args) =>
+      args[1]?.action ? mocks.actionCredits(...args) : mocks.post(...args),
     patch: (...args) => mocks.patch(...args),
     delete: vi.fn(),
   },
@@ -189,6 +191,7 @@ beforeEach(() => {
   vi.stubGlobal("localStorage", memoryStorage());
   mocks.enriched = false;
   mocks.omega = false;
+  mocks.actionCredits.mockImplementation(() => ok({ credits_estimate: null }));
   mocks.readQuery.mockImplementation((url, { params } = {}) => {
     if (url === "/tracer/insights/configs/") return ok(configsFixture.result);
     if (url === `/tracer/insights/configs/${CONFIG_ID}/`)
@@ -246,6 +249,356 @@ afterEach(() => {
 });
 
 describe("InsightsView", () => {
+  it.each(["completed", "failed"])(
+    "renders a running report entering %s and stops polling",
+    async (outcome) => {
+      const base = mocks.readQuery.getMockImplementation();
+      const runUrl = `/tracer/insights/runs/${RUN_ID}/`;
+      let reads = 0;
+      const failed = {
+        ...runFixture.result,
+        status: "failed",
+        analysed_count: 0,
+        skipped_count: 125,
+        error: "This report stopped before it finished. Run it again.",
+      };
+      mocks.readQuery.mockImplementation((url, options) => {
+        if (url !== runUrl) return base(url, options);
+        reads += 1;
+        return ok(
+          reads === 1
+            ? {
+                ...runFixture.result,
+                status: "running",
+                stage: "reading",
+                progress: { stage: "reading", done: 2, total: 125 },
+              }
+            : outcome === "failed"
+              ? failed
+              : runFixture.result,
+        );
+      });
+      renderAt(`?report=${CONFIG_ID}`);
+      expect(
+        await screen.findByRole("list", { name: "Report stages" }),
+      ).toBeInTheDocument();
+      if (outcome === "failed") {
+        expect(
+          await screen.findByText(
+            "0 analysed · 125 skipped",
+            {},
+            { timeout: 6000 },
+          ),
+        ).toBeInTheDocument();
+        expect(screen.getByText(failed.error)).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+      } else {
+        expect(
+          await screen.findByRole(
+            "textbox",
+            { name: "Ask about this report" },
+            { timeout: 6000 },
+          ),
+        ).toBeInTheDocument();
+      }
+      expect(
+        screen.queryByRole("list", { name: "Report stages" }),
+      ).not.toBeInTheDocument();
+      const settledReads = reads;
+      await new Promise((resolve) => setTimeout(resolve, 2400));
+      expect(reads).toBe(settledReads);
+    },
+    15000,
+  );
+
+  it("shows failed history outcomes, a safe reason, and a retry on the same handed-over rows", async () => {
+    const rows = [{ id: "s1" }, { id: "s2" }];
+    const store = new Map([
+      [`insights-population:${CONFIG_ID}`, JSON.stringify(rows)],
+    ]);
+    vi.stubGlobal("sessionStorage", {
+      getItem: (key) => store.get(key) ?? null,
+      setItem: (key, value) => store.set(key, value),
+    });
+    const failed = {
+      ...runFixture.result,
+      status: "failed",
+      analysed_count: 0,
+      skipped_count: 125,
+      error: "DB::Exception SELECT secret FROM internal",
+      scope: { preset: "fixed", label: "Handed-over sessions" },
+    };
+    const config = {
+      ...configDetail,
+      scope: failed.scope,
+      latest_run: failed,
+      runs: [failed],
+    };
+    mocks.readQuery.mockImplementation((url) => {
+      if (url === "/tracer/insights/configs/") return ok({ configs: [config] });
+      if (url === `/tracer/insights/configs/${CONFIG_ID}/`) return ok(config);
+      if (url === `/tracer/insights/runs/${RUN_ID}/`) return ok(failed);
+      return ok({ units: [], total: 0 });
+    });
+    renderAt(`?report=${CONFIG_ID}`);
+    expect(await screen.findAllByText("0 analysed · 125 skipped")).toHaveLength(
+      2,
+    );
+    expect(screen.queryByText(/DB::Exception/)).not.toBeInTheDocument();
+    expect(
+      screen.getAllByText(
+        "The report could not be completed. Try again in a moment.",
+      ),
+    ).toHaveLength(2);
+    fireEvent.click(screen.getAllByRole("button", { name: "Retry" })[0]);
+    const dialog = await screen.findByRole("dialog");
+    const rerun = within(dialog).getByRole("button", { name: "Run again" });
+    await waitFor(() => expect(rerun).toBeEnabled());
+    fireEvent.click(rerun);
+    await waitFor(() =>
+      expect(postsTo("/tracer/insights/runs/")).toHaveLength(1),
+    );
+    expect(postsTo("/tracer/insights/runs/")[0][1].population).toEqual(rows);
+  });
+
+  it.each(
+    ["new", "rerun", "same rows"].flatMap((mode) =>
+      ["HTTP error", "unavailable check"].map((failure) => [mode, failure]),
+    ),
+  )(
+    "holds a %s report on %s and offers a cost retry",
+    async (mode, failure) => {
+      let unavailable = true;
+      mocks.post.mockImplementation((url) =>
+        url === "/tracer/insights/estimate/"
+          ? unavailable
+            ? failure === "HTTP error"
+              ? Promise.reject({ statusCode: 503 })
+              : ok({
+                  population: 108,
+                  sample_size: 108,
+                  credits_estimate: 5,
+                  credit_limited: true,
+                  credit_check_unavailable: true,
+                  credit_message:
+                    "Credits can't be checked right now, so this wasn't started. Please retry in a moment.",
+                })
+            : ok({ population: 108, sample_size: 108, credits_estimate: 5 })
+          : ok({ run_id: RUN_ID, config_id: CONFIG_ID }),
+      );
+      if (mode === "same rows") {
+        const rows = [{ id: "s1" }];
+        vi.stubGlobal("sessionStorage", {
+          getItem: (key) =>
+            key === `insights-population:${CONFIG_ID}`
+              ? JSON.stringify(rows)
+              : null,
+        });
+        const base = mocks.readQuery.getMockImplementation();
+        mocks.readQuery.mockImplementation((url, options) =>
+          url === `/tracer/insights/configs/${CONFIG_ID}/`
+            ? ok({
+                ...configDetail,
+                scope: { preset: "fixed", label: "Handed over" },
+              })
+            : base(url, options),
+        );
+      }
+      renderAt(mode === "new" ? "?new=1&lens=usage" : `?report=${CONFIG_ID}`);
+      if (mode !== "new")
+        fireEvent.click(await screen.findByRole("button", { name: "Run now" }));
+      const retry = await screen.findByRole("button", {
+        name: "Retry cost check",
+      });
+      const run = screen.getByRole("button", {
+        name: mode === "new" ? "Run report" : "Run again",
+      });
+      expect(run).toBeDisabled();
+      expect(
+        screen.queryByRole("link", { name: "Open billing" }),
+      ).not.toBeInTheDocument();
+      unavailable = false;
+      fireEvent.click(retry);
+      await screen.findAllByText(/about 5 credits/);
+      await waitFor(() => expect(run).toBeEnabled());
+      expect(postsTo("/tracer/insights/runs/")).toHaveLength(0);
+    },
+  );
+
+  it("shows Draft and Preview prices and waits for their credit checks", async () => {
+    const prices = [];
+    mocks.actionCredits.mockImplementation(
+      (url, body) =>
+        new Promise((resolve) => prices.push({ action: body.action, resolve })),
+    );
+    renderAt("?new=1&lens=usage");
+    const draft = await screen.findByRole("button", { name: "Draft with AI" });
+    const preview = screen.getByRole("button", {
+      name: "Preview on 3 examples",
+    });
+    expect(draft).toBeDisabled();
+    expect(preview).toBeDisabled();
+    await waitFor(() => expect(prices).toHaveLength(2));
+    prices.forEach(({ action, resolve }) =>
+      resolve({
+        data: {
+          status: true,
+          result: {
+            credits_estimate: action === "draft" ? 2 : 3,
+            credit_limited: action === "preview",
+            credit_message: "No credits left for a preview.",
+          },
+        },
+      }),
+    );
+    expect(
+      await screen.findByText(/Draft: about 2 credits per action/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Preview: about 3 credits per action/),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(draft).toBeEnabled());
+    expect(preview).toBeDisabled();
+    expect(
+      screen.getByText(/No credits left for a preview\./),
+    ).toBeInTheDocument();
+  });
+
+  it("prices suggested, typed, follow-up and retry questions before they can be asked", async () => {
+    const store = new Map();
+    vi.stubGlobal("sessionStorage", {
+      getItem: (key) => store.get(key) ?? null,
+      setItem: (key, value) => store.set(key, value),
+    });
+    let price;
+    mocks.actionCredits.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          price = resolve;
+        }),
+    );
+    const base = mocks.post.getMockImplementation();
+    mocks.post.mockImplementation((url, body) =>
+      url.endsWith("/ask/")
+        ? Promise.resolve({ data: askFixture })
+        : base(url, body),
+    );
+    renderAt(`?report=${CONFIG_ID}`);
+    const suggestion = await screen.findByRole("button", {
+      name: "Which users are hit hardest?",
+    });
+    expect(suggestion).toBeDisabled();
+    const input = screen.getByRole("textbox", {
+      name: "Ask about this report",
+    });
+    fireEvent.change(input, { target: { value: "Why?" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(postsTo(`/tracer/insights/runs/${RUN_ID}/ask/`)).toHaveLength(0);
+    price({ data: { status: true, result: { credits_estimate: 4 } } });
+    expect(
+      await screen.findByText(
+        /Each question, including suggestions and retries: about 4 credits/,
+      ),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(suggestion).toBeEnabled());
+    fireEvent.click(suggestion);
+    const followUp = await screen.findByRole("button", {
+      name: "Which of these users came back later?",
+    });
+    // The completed action rechecks the remaining balance; follow-ups wait too.
+    expect(followUp).toBeDisabled();
+    price({
+      data: {
+        status: true,
+        result: {
+          credits_estimate: 4,
+          credit_limited: true,
+          credit_message: "No credits left for a question.",
+        },
+      },
+    });
+    expect(
+      await screen.findByText(/No credits left for a question\./),
+    ).toBeInTheDocument();
+    expect(followUp).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Ask" })).toBeDisabled();
+  });
+
+  it.each([
+    ["draft", "Draft with AI", "?new=1&lens=usage"],
+    ["preview", "Preview on 3 examples", "?new=1&lens=usage"],
+    ["ask", "Which users are hit hardest?", `?report=${CONFIG_ID}`],
+  ])(
+    "retries an unavailable %s credit check without sending the paid action",
+    async (action, buttonName, search) => {
+      let unavailable = true;
+      mocks.actionCredits.mockImplementation((url, body) =>
+        ok({
+          credits_estimate: 4,
+          credit_limited: body.action === action && unavailable,
+          credit_check_unavailable: body.action === action && unavailable,
+          credit_message:
+            "Credits can't be checked right now, so this wasn't started. Please retry in a moment.",
+        }),
+      );
+      renderAt(search);
+      const retry = await screen.findByRole("button", {
+        name: "Retry cost check",
+      });
+      const button = screen.getByRole("button", { name: buttonName });
+      expect(button).toBeDisabled();
+      expect(
+        screen.queryByRole("link", { name: "Open billing" }),
+      ).not.toBeInTheDocument();
+      expect(screen.getByText(/Please retry in a moment\./)).toBeInTheDocument();
+      fireEvent.click(button);
+      expect(postsTo("/tracer/insights/draft/")).toHaveLength(0);
+      expect(postsTo("/tracer/insights/preview/")).toHaveLength(0);
+      expect(postsTo(`/tracer/insights/runs/${RUN_ID}/ask/`)).toHaveLength(0);
+      unavailable = false;
+      fireEvent.click(retry);
+      await waitFor(() => expect(button).toBeEnabled());
+      expect(
+        screen.queryByRole("button", { name: "Retry cost check" }),
+      ).not.toBeInTheDocument();
+      expect(mocks.actionCredits.mock.calls.filter(
+        ([, body]) => body.action === action,
+      )).toHaveLength(2);
+      expect(postsTo("/tracer/insights/runs/")).toHaveLength(0);
+    },
+  );
+
+  it("checks the displayed cost again before retrying a failed question", async () => {
+    vi.stubGlobal("sessionStorage", memoryStorage());
+    const prices = [];
+    mocks.actionCredits.mockImplementation(
+      () => new Promise((resolve) => prices.push(resolve)),
+    );
+    mocks.post.mockRejectedValue({ statusCode: 503 });
+    renderAt(`?report=${CONFIG_ID}`);
+    const question = await screen.findByRole("button", {
+      name: "Which users are hit hardest?",
+    });
+    prices[0]({ data: { status: true, result: { credits_estimate: 4 } } });
+    await waitFor(() => expect(question).toBeEnabled());
+    fireEvent.click(question);
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    expect(retry).toBeDisabled();
+    await waitFor(() => expect(prices).toHaveLength(2));
+    prices[1]({ data: { status: true, result: { credits_estimate: 5 } } });
+    await screen.findByText(
+      /Each question, including suggestions and retries: about 5 credits/,
+    );
+    await waitFor(() => expect(retry).toBeEnabled());
+    fireEvent.click(retry);
+    await waitFor(() =>
+      expect(postsTo(`/tracer/insights/runs/${RUN_ID}/ask/`)).toHaveLength(2),
+    );
+    expect(postsTo(`/tracer/insights/runs/${RUN_ID}/ask/`)[1][1].question).toBe(
+      "Which users are hit hardest?",
+    );
+  });
+
   it("lists saved reports with their distribution, and the templates", async () => {
     renderAt("");
     expect(
@@ -716,11 +1069,11 @@ describe("InsightsView", () => {
     );
     try {
       renderAt(`?report=${CONFIG_ID}`);
-      fireEvent.click(
-        await screen.findByRole("button", {
-          name: "Which users are hit hardest?",
-        }),
-      );
+      const question = await screen.findByRole("button", {
+        name: "Which users are hit hardest?",
+      });
+      await waitFor(() => expect(question).toBeEnabled());
+      fireEvent.click(question);
       // While it answers: what it reads, and the composer stays usable.
       expect(
         await screen.findByText("Reading 72 conversations…"),
@@ -785,13 +1138,11 @@ describe("InsightsView", () => {
           : Promise.reject(new Error(`unexpected ${url}`)),
       );
       renderAt(`?report=${CONFIG_ID}`);
-      fireEvent.click(
-        await screen.findByRole(
-          "button",
-          { name: "Which users are hit hardest?" },
-          { timeout: 5000 },
-        ),
-      );
+      const question = await screen.findByRole("button", {
+        name: "Which users are hit hardest?",
+      });
+      await waitFor(() => expect(question).toBeEnabled());
+      fireEvent.click(question);
       await screen.findByText("Reading 72 conversations…");
       const table = await screen.findByRole("table");
       fireEvent.click(
@@ -1485,13 +1836,16 @@ describe("InsightsView", () => {
               // A billing config that doesn't load prices nothing.
               credits_estimate: 0,
               credit_limited: true,
+              credit_check_unavailable: true,
               credits_left: null,
               credit_message: unavailable,
             })
           : ok({ run_id: RUN_ID, config_id: CONFIG_ID }),
       );
       renderAt("?new=1&lens=failures");
-      expect(await screen.findByRole("status")).toHaveTextContent(unavailable);
+      expect(await screen.findByRole("alert")).toHaveTextContent(unavailable);
+      expect(screen.getByRole("button", { name: "Retry cost check" })).toBeEnabled();
+      expect(screen.queryByRole("link", { name: "Open billing" })).toBeNull();
       const [line] = await screen.findAllByText(
         /Analysing all 108 sessions · about \d+ minutes/,
       );
@@ -1612,11 +1966,11 @@ describe("InsightsView", () => {
       mocks.enriched = true;
       mocks.post.mockImplementation(() => Promise.reject(refused(402)));
       renderAt(`?report=${CONFIG_ID}`);
-      fireEvent.click(
-        await screen.findByRole("button", {
-          name: "Which users are hit hardest?",
-        }),
-      );
+      const question = await screen.findByRole("button", {
+        name: "Which users are hit hardest?",
+      });
+      await waitFor(() => expect(question).toBeEnabled());
+      fireEvent.click(question);
       const message = await screen.findByText(
         /This report needs about 12 credits; you have 2 left this month\./,
       );

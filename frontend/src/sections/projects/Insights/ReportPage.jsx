@@ -43,11 +43,12 @@ import {
   insightsErrorMessage,
   insightsKeys,
   patchConfig,
+  runFailureReason,
   useInsightsConfig,
   useInsightsRun,
 } from "./insightsApi";
 import { buildSegments, resultTops } from "./insightsDistribution";
-import { formatCount } from "./insightsFormat";
+import { formatCount, runOutcome } from "./insightsFormat";
 import { useCancellable } from "./insightsHooks";
 import { isRunActive, lensFor, unitTitle } from "./insightsLenses";
 import { reportMetaParts } from "./insightsReport";
@@ -619,8 +620,11 @@ export default function ReportPage({
           </Button>
         }
       >
-        <Typography variant="subtitle2">This run failed</Typography>
-        {run.error || "Something went wrong while the report was running."}
+        <Typography variant="subtitle2">
+          {run.analysed_count ? "This run failed" : "Failed before analysing"}
+        </Typography>
+        <Typography variant="body2">{runOutcome(run)}</Typography>
+        {runFailureReason(run)}
       </Alert>
     );
   else

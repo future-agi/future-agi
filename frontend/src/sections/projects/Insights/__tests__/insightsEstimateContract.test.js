@@ -85,6 +85,52 @@ describe("the Insights estimate against the API contract", () => {
     ).toBe(true);
   });
 
+  it.each(["ask", "draft", "preview"])(
+    "accepts an action-specific %s estimate request",
+    (action) => {
+      const request = validateContractedRequestConfig({
+        url: URL,
+        method: "post",
+        data: { project_id: PROJECT, action },
+      });
+      expect(request.skipped).toBeUndefined();
+      expect(request.error).toBeUndefined();
+      expect(request.ok).toBe(true);
+    },
+  );
+
+  it("preserves a retryable credit check in a successful HTTP response", async () => {
+    const data = {
+      status: true,
+      result: {
+        ...PRICED,
+        credit_limited: true,
+        credit_check_unavailable: true,
+        credit_message:
+          "Credits can't be checked right now, so this wasn't started. Please retry in a moment.",
+      },
+    };
+    http.post.mockResolvedValue({ data });
+    const count = await fetchScopeCount({
+      projectId: PROJECT,
+      unit: "sessions",
+      populationSize: 12,
+    });
+    expect(count.credits).toMatchObject({
+      estimate: 0.4,
+      limited: true,
+      unavailable: true,
+    });
+    const response = validateContractedResponse({
+      config: { url: URL, method: "post" },
+      status: 200,
+      data,
+    });
+    expect(response.skipped).toBeUndefined();
+    expect(response.error).toBeUndefined();
+    expect(response.ok).toBe(true);
+  });
+
   it("accepts the answer's null window", () => {
     const response = validateContractedResponse({
       config: { url: URL, method: "post" },

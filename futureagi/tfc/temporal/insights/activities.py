@@ -18,6 +18,7 @@ import structlog
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
+from tfc.temporal.drop_in import temporal_activity
 from tfc.temporal.insights.types import (
     InsightBatchInput,
     InsightFailInput,
@@ -146,6 +147,28 @@ async def _run(stage: str, fn, *args, licensed: bool = True):
             ) from exc
         logger.exception("insight_stage_failed", stage=stage)
         raise ApplicationError("The report could not be completed.") from exc
+
+
+def _sweep_lost_runs() -> None:
+    from django.utils import timezone
+
+    from tracer.models.insights import InsightRun
+    from tracer.views.insights import LOST_AFTER, settle_lost_runs
+
+    # Stream quiet runs without loading every report into the worker.
+    runs = InsightRun.no_workspace_objects.filter(
+        deleted=False,
+        status__in=["pending", "running"],
+        updated_at__lte=timezone.now() - LOST_AFTER,
+    ).order_by("updated_at")
+    settle_lost_runs(runs.iterator(chunk_size=100))
+
+
+@temporal_activity(time_limit=300, queue="tasks_xl", max_retries=0)
+def sweep_lost_insight_runs() -> None:
+    # TaskRunner schedules use the drop-in adapter's args/kwargs envelope.
+    # Settlement must also work after a licence lapses.
+    _sweep_lost_runs()
 
 
 @activity.defn

@@ -6,6 +6,9 @@ const NUMBER = new Intl.NumberFormat("en-US");
 export const formatCount = (value) =>
   Number.isFinite(value) ? NUMBER.format(Math.round(value)) : "–";
 
+export const runOutcome = (run) =>
+  `${formatCount(run.analysed_count ?? 0)} analysed · ${formatCount(run.skipped_count ?? run.result?.skipped ?? 0)} skipped`;
+
 // 0.384 -> "38%". A share that rounds to 0 but is not zero reads "<1%", so a
 // real category never looks empty.
 export function formatPercent(value) {

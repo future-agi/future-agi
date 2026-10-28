@@ -27,13 +27,19 @@ import {
   insightsErrorMessage,
   insightsKeys,
   patchConfig,
+  runFailureReason,
 } from "./insightsApi";
 import {
   buildColorOrder,
   buildSegments,
   runTops,
 } from "./insightsDistribution";
-import { formatCount, formatPercent, relativeTime } from "./insightsFormat";
+import {
+  formatCount,
+  formatPercent,
+  relativeTime,
+  runOutcome,
+} from "./insightsFormat";
 import { useCancellable } from "./insightsHooks";
 import {
   STAGES,
@@ -340,15 +346,25 @@ function ReportCard({ config, selected, onOpen, onRerun, onDelete }) {
           />
         </Stack>
       ) : run?.status === "failed" ? (
-        <Stack direction="row" spacing={0.75} alignItems="center">
-          <Iconify
-            icon="mdi:alert-circle-outline"
-            width={14}
-            sx={{ color: "error.main", flexShrink: 0 }}
-          />
-          <Typography variant="caption" color="error.main" noWrap>
-            Last run failed {relativeTime(run.created_at)}
+        <Stack spacing={0.5}>
+          <Typography variant="caption" color="error.main">
+            {run.analysed_count ? "Last run failed" : "Failed before analysing"}
           </Typography>
+          <Typography variant="caption">{runOutcome(run)}</Typography>
+          <Typography variant="caption" color="text.secondary">
+            {runFailureReason(run)}
+          </Typography>
+          <Button
+            size="small"
+            color="inherit"
+            sx={{ alignSelf: "flex-start" }}
+            onClick={(event) => {
+              event.stopPropagation();
+              onRerun(config);
+            }}
+          >
+            Retry
+          </Button>
         </Stack>
       ) : segments.length > 0 ? (
         <Stack spacing={1}>

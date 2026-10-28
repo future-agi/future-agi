@@ -11,12 +11,16 @@ vi.mock("src/components/iconify", () => ({ default: () => null }));
 const theme = createTheme({ palette: palette("light"), typography });
 
 describe("CitedText", () => {
-  it("leaves no stray separators where folded refs were", () => {
+  it.each([
+    "Refund loops. See #1, #3, #5, #6, #7, #8, #9, #10.",
+    "Refund loops. See (#1, #3, #5, #6, #7), #8, #9, #10.",
+    "Refund loops. See (#1, #3, #5, #6, #7) and #8; #9 & #10.",
+  ])("leaves no stray separators where folded refs were: %s", (prose) => {
     const hidden = [7, 8, 9, 10];
     const { container } = render(
       <ThemeProvider theme={theme}>
         <CitedText
-          text="Refund loops. See #1, #3, #5, #6, #7, #8, #9, #10."
+          text={prose}
           hiddenRefs={new Set(hidden)}
           moreRefs={hidden}
         />

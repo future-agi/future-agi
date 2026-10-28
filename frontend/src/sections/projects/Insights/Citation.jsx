@@ -351,31 +351,33 @@ export function CitedText({
     morePlaced = true;
     return <MoreRefs refs={moreRefs} />;
   };
-  const allHidden = (segment) =>
-    segment?.type !== "text" &&
-    segment?.refs?.length > 0 &&
-    segment.refs.every((n) => hide(n));
-  const parts = segments.map((segment, i) => {
-    if (segment.type === "text") {
-      // ", " or " and " between two folded refs has nothing left to separate.
-      if (
-        SEPARATOR.test(segment.text) &&
-        allHidden(segments[i - 1]) &&
-        allHidden(segments[i + 1])
-      )
-        return null;
-      return <React.Fragment key={i}>{segment.text}</React.Fragment>;
-    }
+  // Resolve folding first: a grouped segment may place +N while the next
+  // individual reference renders nothing at all.
+  const rendered = segments.map((segment, i) => {
+    if (segment.type === "text") return null;
     const visible = segment.refs.filter((n) => !hide(n));
     const folded = visible.length < segment.refs.length;
+    const overflow = folded ? more() : null;
+    if (!visible.length && !overflow) return null;
     return (
       <Box component="span" key={i} sx={{ whiteSpace: "nowrap" }}>
         {visible.map((n) => (
           <CitationChip key={n} n={n} />
         ))}
-        {folded && more()}
+        {overflow}
       </Box>
     );
+  });
+  const parts = segments.map((segment, i) => {
+    if (segment.type !== "text") return rendered[i];
+    if (
+      SEPARATOR.test(segment.text) &&
+      segments[i - 1]?.type === "refs" &&
+      segments[i + 1]?.type === "refs" &&
+      (!rendered[i - 1] || !rendered[i + 1])
+    )
+      return null;
+    return <React.Fragment key={i}>{segment.text}</React.Fragment>;
   });
   const extra = (extraRefs || []).filter((n) => !hide(n));
   const folded = (extraRefs || []).length > extra.length;

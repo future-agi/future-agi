@@ -252,7 +252,24 @@ function RerunForm({
               )}
             </Typography>
           </Stack>
-          {creditLimited && (
+          {((sameRows ? sameCost.isError : count.isError) || credits?.unavailable) && (
+            <Alert
+              severity="error"
+              action={
+                <Button
+                  color="inherit"
+                  onClick={() => (sameRows ? sameCost : count).refetch()}
+                >
+                  Retry cost check
+                </Button>
+              }
+            >
+              {credits?.unavailable
+                ? credits.message
+                : "The report cost could not be checked. Check it before running again."}
+            </Alert>
+          )}
+          {creditLimited && !credits.unavailable && (
             <CreditLimit credits={credits} onSample={setSampleSize} />
           )}
           {config.has_taxonomy && (
@@ -309,6 +326,7 @@ function RerunForm({
             creditLimited ||
             counting ||
             costing ||
+            (sameRows ? sameCost.isError : count.isError) ||
             (Number.isFinite(total) && total === 0)
           }
           startIcon={
