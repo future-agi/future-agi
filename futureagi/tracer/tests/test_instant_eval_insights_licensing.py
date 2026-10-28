@@ -155,11 +155,23 @@ def call(client, method, path, project):
     return getattr(client, method)(path, body, format="json")
 
 
+NAMES = {"instant_eval": "Instant eval", "insights": "Insights"}
+# A denial names the feature and what unlocks it on this deployment: never the
+# internal id, and never "upgrade your plan" on a self-hosted install.
+MESSAGES = {
+    "LICENSE_MISSING": "{} needs an Enterprise license that includes it.",
+    "LICENSE_FEATURE_MISSING": "{} isn't included in this Enterprise license.",
+    "LICENSE_EXPIRED": "{} needs an Enterprise license; this one has expired.",
+    "EE_CODE_UNAVAILABLE": "{} is not available.",
+    "PLAN_FEATURE_MISSING": "{} isn't included in your plan.",
+}
+
+
 def assert_refused(response, feature, code):
     assert response.status_code == status.HTTP_402_PAYMENT_REQUIRED, response.content
     body = response.json()
     assert body["code"] == code
-    assert body["message"] == f"'{feature}' is not available. Upgrade your plan."
+    assert body["message"] == MESSAGES[code].format(NAMES[feature])
     assert body["upgrade_required"] is True
     assert body["error"]["code"] == code
     assert body["error"]["detail"]["feature"] == feature

@@ -302,6 +302,29 @@ def _check_self_hosted_ee(
     )
 
 
+def denial_message(decision: CapabilityDecision) -> str:
+    """What a denial tells the caller: the feature by name and what would
+    unlock it on this deployment, never the internal id or another edition's
+    wording ("upgrade your plan" on a self-hosted install)."""
+    feature = FEATURE_REGISTRY.get(decision.feature_id)
+    name = feature.display_name if feature else decision.feature_id
+    reason = decision.reason_code
+    if reason == DenialReason.LICENSE_MISSING.value:
+        return f"{name} needs an Enterprise license that includes it."
+    if reason in (
+        DenialReason.LICENSE_EXPIRED.value,
+        DenialReason.LICENSE_TRIAL_EXPIRED.value,
+    ):
+        return f"{name} needs an Enterprise license; this one has expired."
+    if reason == DenialReason.LICENSE_INVALID.value:
+        return f"{name} needs a valid Enterprise license."
+    if reason == DenialReason.LICENSE_FEATURE_MISSING.value:
+        return f"{name} isn't included in this Enterprise license."
+    if reason == DenialReason.PLAN_FEATURE_MISSING.value:
+        return f"{name} isn't included in your plan."
+    return f"{name} is not available."
+
+
 def _raise_denied(decision: CapabilityDecision, *, activity: bool) -> None:
     logger.info(
         "capability_denied",
@@ -318,7 +341,7 @@ def _raise_denied(decision: CapabilityDecision, *, activity: bool) -> None:
         raise_capability_denied_for_temporal(
             decision.feature_id,
             decision.reason_code or "DENIED",
-            detail=f"'{decision.feature_id}' is not available.",
+            detail=denial_message(decision),
         )
 
     from tfc.capabilities.errors import CapabilityDenied
@@ -326,5 +349,6 @@ def _raise_denied(decision: CapabilityDecision, *, activity: bool) -> None:
     raise CapabilityDenied(
         feature_id=decision.feature_id,
         reason_code=decision.reason_code or "DENIED",
+        detail=denial_message(decision),
         upgrade_cta=decision.upgrade_cta,
     )
