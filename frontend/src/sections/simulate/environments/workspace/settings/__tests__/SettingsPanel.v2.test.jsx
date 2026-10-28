@@ -164,6 +164,23 @@ describe("SettingsPanel v2", () => {
     expect(turns).toHaveTextContent("12 turns");
   });
 
+  it("one conversation at a time doesn't claim a run finishes sooner", () => {
+    const detail = {
+      ...DETAIL,
+      settings: {
+        ...DETAIL.settings,
+        runtime: { ...DETAIL.settings.runtime, parallelism: 1 },
+        agent: { ...DETAIL.settings.agent, connector: "retell_chat" },
+      },
+    };
+    renderPanel({ detail, envState: { agent: { typeId: "retell_chat" } } });
+    const card = section("Simulation defaults");
+    expect(card).toHaveTextContent(
+      "Every run takes one conversation at a time.",
+    );
+    expect(card).not.toHaveTextContent("finishes sooner");
+  });
+
   it("says when the build ran fewer conversations at once than it asked for", () => {
     renderPanel({
       env: {

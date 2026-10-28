@@ -180,7 +180,8 @@ export default function SimulationDefaults({
                   `${PARALLELISM_COPY.fact}: ${PARALLELISM_COPY.factValue(parallelism)}.`,
                 voice
                   ? "Your provider's concurrency limit still applies."
-                  : "Results are the same. A run finishes sooner.",
+                  : value("atOnce") !== 1 &&
+                    "Results are the same. A run finishes sooner.",
               ]
                 .filter(Boolean)
                 .join(" ")}
