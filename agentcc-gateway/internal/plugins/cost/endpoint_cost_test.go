@@ -8,6 +8,7 @@ import (
 
 	"github.com/futureagi/agentcc-gateway/internal/modeldb"
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/tenant"
 )
 
 // endpointDB prices each non-token endpoint the way the bundled table does.
@@ -25,6 +26,8 @@ func endpointDB() *modeldb.ModelDB {
 		"perplexity/perplexity/sonar":                    {ID: "perplexity/perplexity/sonar", Pricing: modeldb.PricingInfo{InputPerToken: 2.5e-7, OutputPerToken: 2.5e-6}},
 		"perplexity/google/gemini-3.6-flash":             {ID: "perplexity/google/gemini-3.6-flash", Pricing: modeldb.PricingInfo{InputPerToken: 1.5e-6, OutputPerToken: 7.5e-6}},
 		"gemini-3.6-flash":                               {ID: "gemini-3.6-flash", Pricing: modeldb.PricingInfo{InputPerToken: 7.5e-7, OutputPerToken: 3.75e-6}},
+		"gemini/gemini-4-argon":                          {ID: "gemini/gemini-4-argon", Pricing: modeldb.PricingInfo{InputPerToken: 2e-6, OutputPerToken: 1e-5}},
+		"vertex_ai/gemini-4-argon":                       {ID: "vertex_ai/gemini-4-argon", Pricing: modeldb.PricingInfo{InputPerToken: 4e-6, OutputPerToken: 2e-5}},
 		"fireworks_ai/accounts/fireworks/models/glm-5p3": {ID: "fireworks_ai/accounts/fireworks/models/glm-5p3", Pricing: modeldb.PricingInfo{InputPerToken: 1.4e-6, OutputPerToken: 4.4e-6}},
 		"text-embedding-gecko":                           {ID: "text-embedding-gecko", Mode: modeldb.ModeEmbedding, Pricing: modeldb.PricingInfo{InputPerCharacter: 2.5e-8}},
 		"gemini-embedding-001":                           {ID: "gemini-embedding-001", Mode: modeldb.ModeEmbedding, Pricing: modeldb.PricingInfo{InputPerToken: 1.5e-7}},
@@ -41,7 +44,12 @@ func endpointRC(endpoint, model string) *models.RequestContext {
 func priced(t *testing.T, rc *models.RequestContext, want float64) {
 	t.Helper()
 	db := endpointDB()
-	New(true, func() *modeldb.ModelDB { return db }, nil, nil).ProcessResponse(context.Background(), rc)
+	pricedBy(t, New(true, func() *modeldb.ModelDB { return db }, nil, nil), rc, want)
+}
+
+func pricedBy(t *testing.T, p *Plugin, rc *models.RequestContext, want float64) {
+	t.Helper()
+	p.ProcessResponse(context.Background(), rc)
 	got := rc.Metadata["cost"]
 	if want == 0 {
 		if got != "" || rc.Metadata["cost_source"] != CostSourceUnpriced {
@@ -151,6 +159,39 @@ func TestChatCostUnderTheResellersPrice(t *testing.T) {
 		rc.Provider = tc.provider
 		rc.Response = &models.ChatCompletionResponse{Usage: &models.Usage{PromptTokens: 1000, CompletionTokens: 100}}
 		t.Run(tc.provider+"/"+tc.model, func(t *testing.T) { priced(t, rc, tc.want) })
+	}
+}
+
+// The table lists gemini-4-argon only under "gemini/" and "vertex_ai/". The
+// provider's ID need not be either: the provider states the table's name for
+// itself. One that states none is not guessed at.
+func TestChatCostUnderTheNameTheProviderStates(t *testing.T) {
+	tables := map[string]string{"vertex_ai_global": "vertex_ai", "google": "gemini"}
+	for _, tc := range []struct {
+		provider string
+		want     float64
+	}{
+		{"vertex_ai_global", 1000*4e-6 + 100*2e-5},
+		{"google", 1000*2e-6 + 100*1e-5},
+		{"custom", 0},
+	} {
+		t.Run(tc.provider, func(t *testing.T) {
+			db := endpointDB()
+			p := New(true, func() *modeldb.ModelDB { return db }, nil, nil)
+			var asked [2]string
+			p.SetPriceTables(func(orgID, providerID string) string {
+				asked = [2]string{orgID, providerID}
+				return tables[providerID]
+			})
+			rc := endpointRC("chat", "gemini-4-argon")
+			rc.Provider = tc.provider
+			rc.Metadata[tenant.MetadataKeyOrgID] = "org-1"
+			rc.Response = &models.ChatCompletionResponse{Usage: &models.Usage{PromptTokens: 1000, CompletionTokens: 100}}
+			pricedBy(t, p, rc, tc.want)
+			if asked != [2]string{"org-1", tc.provider} {
+				t.Errorf("asked for the name of %q, want org-1's %q", asked, tc.provider)
+			}
+		})
 	}
 }
 

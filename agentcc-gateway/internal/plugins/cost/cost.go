@@ -48,6 +48,7 @@ type Plugin struct {
 	enabled          bool
 	tenantStore      *tenant.Store
 	aliasCostFactors map[string]float64 // alias prefix → cost multiplier
+	priceTables      func(orgID, providerID string) string
 
 	unpricedWarned      sync.Map     // model → struct{}: models already warned about
 	unpricedWarnedCount atomic.Int32 // size of unpricedWarned, for the cap
@@ -61,6 +62,12 @@ func New(enabled bool, modelDBGetter func() *modeldb.ModelDB, tenantStore *tenan
 		tenantStore:      tenantStore,
 		aliasCostFactors: aliasCostFactors,
 	}
+}
+
+// SetPriceTables gives the plugin the name the price table keys a provider's
+// models under, as the provider that served the request states it.
+func (p *Plugin) SetPriceTables(f func(orgID, providerID string) string) {
+	p.priceTables = f
 }
 
 func (p *Plugin) Name() string               { return "cost" }
@@ -107,7 +114,8 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 	}
 
 	// After org pricing, which is keyed by the name the org configured.
-	model = priceKey(db, model, rc.Provider)
+	table := p.tableName(rc)
+	model = priceKey(db, model, rc.Provider, table)
 
 	opts := modeldb.CostOptions{
 		Cached: rc.Metadata["cache_status"] == "hit",
@@ -171,7 +179,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		billed = float64(usage.PromptTokens + usage.CompletionTokens)
 		cost, ok = db.CalculateCost(model, usage.PromptTokens, usage.CompletionTokens, opts)
 		if !ok && rc.ResolvedModel != "" && rc.Model != "" {
-			cost, ok = db.CalculateCost(priceKey(db, rc.Model, rc.Provider), usage.PromptTokens, usage.CompletionTokens, opts)
+			cost, ok = db.CalculateCost(priceKey(db, rc.Model, rc.Provider, table), usage.PromptTokens, usage.CompletionTokens, opts)
 		}
 	}
 
@@ -208,14 +216,18 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 // prefix, as Perplexity's "google/gemini-3.6-flash". The lookup would strip
 // that to the vendor's own price, so the provider's entry
 // ("perplexity/google/gemini-3.6-flash") is tried first.
-func priceKey(db *modeldb.ModelDB, model, provider string) string {
+//
+// table is the name the provider states for itself, which its ID need not
+// match: the table lists new Gemini models only under "gemini/" and
+// "vertex_ai/", and a Gemini provider may be named "vertex_ai_global".
+func priceKey(db *modeldb.ModelDB, model, provider, table string) string {
 	if provider == "" || model == "" {
 		return model
 	}
 	if _, ok := db.Get(model); ok && !strings.Contains(model, "/") {
 		return model
 	}
-	for _, name := range []string{provider, tableProviderNames[provider]} {
+	for _, name := range []string{provider, table, tableProviderNames[provider]} {
 		if name == "" {
 			continue
 		}
@@ -231,6 +243,15 @@ func priceKey(db *modeldb.ModelDB, model, provider string) string {
 var tableProviderNames = map[string]string{
 	"fireworks": "fireworks_ai",
 	"together":  "together_ai",
+}
+
+// tableName is the name the price table keys rc's provider's models under, or
+// "" when the provider states none.
+func (p *Plugin) tableName(rc *models.RequestContext) string {
+	if p.priceTables == nil || rc.Provider == "" {
+		return ""
+	}
+	return p.priceTables(rc.Metadata[tenant.MetadataKeyOrgID], rc.Provider)
 }
 
 // listsExactly says whether the table has an entry under id itself, not
