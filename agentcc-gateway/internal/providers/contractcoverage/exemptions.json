@@ -1,0 +1,558 @@
+{
+  "about": "Implemented provider x endpoint cells with no contract case, each with why (TestCoverageGrid in this package). kind: not_served (the upstream has no such endpoint, or the gateway never routes there), not_parsed (relayed, nothing parsed), no_upstream (answered without an upstream call), uncovered (served and parsed, no fixture yet: an accepted coverage gap). An entry whose cells gain a case, or that names a cell the adapter does not implement, fails as stale. CONTRACT_COVERAGE.md lists them.",
+  "cells": [
+    {
+      "provider": "openai",
+      "endpoints": [
+        "ocr"
+      ],
+      "kind": "not_served",
+      "reason": "OpenAI has no OCR endpoint: /v1/ocr is Mistral's API, which the openai adapter serves for the mistral preset (pinned by mistral@mistral-ocr-latest)."
+    },
+    {
+      "provider": "openai",
+      "endpoints": [
+        "assistants"
+      ],
+      "kind": "not_parsed",
+      "reason": "ProxyAssistantsRequest and StreamAssistantsRequest relay a 2xx body or stream unparsed, so there is no shape to drift; an error body goes through parseProviderError, which the openai suite's error cases pin. No fixture: Assistants calls create objects in the account, so the drift job could not record one either."
+    },
+    {
+      "provider": "gemini",
+      "endpoints": [
+        "images"
+      ],
+      "kind": "uncovered",
+      "reason": "Imagen's :predict on the Gemini API: the same CreateImage code as vertex@imagen-4.0-generate-001's images_basic, at the Gemini API's URL, but no Gemini API fixture (Imagen is deprecated on the Gemini API)."
+    },
+    {
+      "provider": "vertex@",
+      "endpoints": [
+        "speech"
+      ],
+      "kind": "uncovered",
+      "reason": "Gemini TTS on Vertex AI: the generateContent audio path gemini-3.8-flash-tts pins on the Gemini API, with no Vertex AI fixture."
+    },
+    {
+      "provider": "vertex@",
+      "endpoints": [
+        "genai_generate",
+        "genai_count_tokens",
+        "genai_embed"
+      ],
+      "kind": "uncovered",
+      "reason": "The native Google GenAI passthrough on Vertex AI: the same doGenAIRequest the gemini suite's genai_* cases pin, at Vertex AI's publisher-model URL, with no Vertex AI fixture."
+    },
+    {
+      "provider": "vertex@",
+      "endpoints": [
+        "list_models"
+      ],
+      "kind": "no_upstream",
+      "reason": "The gemini adapter's ListModels returns nil without calling upstream (known gap G26); the Gemini API's list_models case pins that."
+    },
+    {
+      "provider": "bedrock",
+      "endpoints": [
+        "list_models"
+      ],
+      "kind": "no_upstream",
+      "reason": "ListModels returns nil without calling Bedrock's ListFoundationModels or ListInferenceProfiles, so there is no upstream shape to pin; model-watch lists Bedrock itself (contractwatch BedrockLister)."
+    },
+    {
+      "provider": "cartesia",
+      "endpoints": [
+        "chat",
+        "list_models"
+      ],
+      "kind": "no_upstream",
+      "reason": "The speech relay serves only its vendor's WebSocket API: ChatCompletion and StreamChatCompletion answer 501 not_supported, and ListModels lists the configured models, all without an upstream call. The relay itself is pinned by the speech sessions."
+    },
+    {
+      "provider": "deepgram",
+      "endpoints": [
+        "chat",
+        "list_models"
+      ],
+      "kind": "no_upstream",
+      "reason": "The speech relay serves only its vendor's WebSocket API: ChatCompletion and StreamChatCompletion answer 501 not_supported, and ListModels lists the configured models, all without an upstream call. The relay itself is pinned by the speech sessions."
+    },
+    {
+      "provider": "anyscale@",
+      "endpoints": [
+        "chat_via_responses"
+      ],
+      "kind": "not_served",
+      "reason": "ChatNeedsResponses is false unless the base URL is the official OpenAI API (openAIAPI), so the gateway never sends a Anyscale chat request over the Responses API."
+    },
+    {
+      "provider": "anyscale@",
+      "endpoints": [
+        "assistants",
+        "vector_stores"
+      ],
+      "kind": "not_served",
+      "reason": "OpenAI's own Assistants and Vector Stores APIs; Anyscale does not serve them."
+    },
+    {
+      "provider": "anyscale@",
+      "endpoints": [
+        "ocr"
+      ],
+      "kind": "not_served",
+      "reason": "/v1/ocr is Mistral's OCR API (pinned by mistral@mistral-ocr-latest); Anyscale has no OCR endpoint."
+    },
+    {
+      "provider": "anyscale@",
+      "endpoints": [
+        "chat",
+        "completions",
+        "embeddings",
+        "images",
+        "speech",
+        "transcription",
+        "translation",
+        "responses",
+        "list_models"
+      ],
+      "kind": "uncovered",
+      "reason": "No anyscale@ fixture at all: the preset points at Anyscale's public Endpoints API (api.endpoints.anyscale.com), which Anyscale moved to a private offering in 2024, and has no machine-readable spec."
+    },
+    {
+      "provider": "cerebras@",
+      "endpoints": [
+        "chat_via_responses"
+      ],
+      "kind": "not_served",
+      "reason": "ChatNeedsResponses is false unless the base URL is the official OpenAI API (openAIAPI), so the gateway never sends a Cerebras chat request over the Responses API."
+    },
+    {
+      "provider": "cerebras@",
+      "endpoints": [
+        "assistants",
+        "vector_stores"
+      ],
+      "kind": "not_served",
+      "reason": "OpenAI's own Assistants and Vector Stores APIs; Cerebras does not serve them."
+    },
+    {
+      "provider": "cerebras@",
+      "endpoints": [
+        "ocr"
+      ],
+      "kind": "not_served",
+      "reason": "/v1/ocr is Mistral's OCR API (pinned by mistral@mistral-ocr-latest); Cerebras has no OCR endpoint."
+    },
+    {
+      "provider": "cerebras@",
+      "endpoints": [
+        "completions",
+        "embeddings",
+        "images",
+        "speech",
+        "transcription",
+        "translation",
+        "responses",
+        "list_models"
+      ],
+      "kind": "uncovered",
+      "reason": "No cerebras@ fixture for these endpoints. The openai adapter sends each to Cerebras's base URL and its code is pinned by the openai suite's cases, but Cerebras's answers (where Cerebras serves the endpoint at all) are not."
+    },
+    {
+      "provider": "deepinfra@",
+      "endpoints": [
+        "chat_via_responses"
+      ],
+      "kind": "not_served",
+      "reason": "ChatNeedsResponses is false unless the base URL is the official OpenAI API (openAIAPI), so the gateway never sends a DeepInfra chat request over the Responses API."
+    },
+    {
+      "provider": "deepinfra@",
+      "endpoints": [
+        "assistants",
+        "vector_stores"
+      ],
+      "kind": "not_served",
+      "reason": "OpenAI's own Assistants and Vector Stores APIs; DeepInfra does not serve them."
+    },
+    {
+      "provider": "deepinfra@",
+      "endpoints": [
+        "ocr"
+      ],
+      "kind": "not_served",
+      "reason": "/v1/ocr is Mistral's OCR API (pinned by mistral@mistral-ocr-latest); DeepInfra has no OCR endpoint."
+    },
+    {
+      "provider": "deepinfra@",
+      "endpoints": [
+        "chat",
+        "completions",
+        "embeddings",
+        "images",
+        "speech",
+        "transcription",
+        "translation",
+        "responses",
+        "list_models"
+      ],
+      "kind": "uncovered",
+      "reason": "No deepinfra@ fixture at all, and no machine-readable spec (contractspec/subsets/unfetchable.json); the openai adapter's code is pinned by the openai suite, DeepInfra's answers are not."
+    },
+    {
+      "provider": "fireworks@",
+      "endpoints": [
+        "chat_via_responses"
+      ],
+      "kind": "not_served",
+      "reason": "ChatNeedsResponses is false unless the base URL is the official OpenAI API (openAIAPI), so the gateway never sends a Fireworks chat request over the Responses API."
+    },
+    {
+      "provider": "fireworks@",
+      "endpoints": [
+        "assistants",
+        "vector_stores"
+      ],
+      "kind": "not_served",
+      "reason": "OpenAI's own Assistants and Vector Stores APIs; Fireworks does not serve them."
+    },
+    {
+      "provider": "fireworks@",
+      "endpoints": [
+        "ocr"
+      ],
+      "kind": "not_served",
+      "reason": "/v1/ocr is Mistral's OCR API (pinned by mistral@mistral-ocr-latest); Fireworks has no OCR endpoint."
+    },
+    {
+      "provider": "fireworks@",
+      "endpoints": [
+        "completions",
+        "embeddings",
+        "images",
+        "speech",
+        "transcription",
+        "translation",
+        "responses",
+        "list_models"
+      ],
+      "kind": "uncovered",
+      "reason": "No fireworks@ fixture for these endpoints. The openai adapter sends each to Fireworks's base URL and its code is pinned by the openai suite's cases, but Fireworks's answers (where Fireworks serves the endpoint at all) are not."
+    },
+    {
+      "provider": "groq@",
+      "endpoints": [
+        "chat_via_responses"
+      ],
+      "kind": "not_served",
+      "reason": "ChatNeedsResponses is false unless the base URL is the official OpenAI API (openAIAPI), so the gateway never sends a Groq chat request over the Responses API."
+    },
+    {
+      "provider": "groq@",
+      "endpoints": [
+        "assistants",
+        "vector_stores"
+      ],
+      "kind": "not_served",
+      "reason": "OpenAI's own Assistants and Vector Stores APIs; Groq does not serve them."
+    },
+    {
+      "provider": "groq@",
+      "endpoints": [
+        "ocr"
+      ],
+      "kind": "not_served",
+      "reason": "/v1/ocr is Mistral's OCR API (pinned by mistral@mistral-ocr-latest); Groq has no OCR endpoint."
+    },
+    {
+      "provider": "groq@",
+      "endpoints": [
+        "completions",
+        "embeddings",
+        "images",
+        "speech",
+        "transcription",
+        "translation",
+        "responses",
+        "list_models"
+      ],
+      "kind": "uncovered",
+      "reason": "No groq@ fixture for these endpoints. The openai adapter sends each to Groq's base URL and its code is pinned by the openai suite's cases, but Groq's answers (where Groq serves the endpoint at all) are not. Groq's own spec is checked for chat, embeddings, transcription and the model list (contractspec subsets groq/*, TestSpecCoverage in the openai package)."
+    },
+    {
+      "provider": "huggingface@",
+      "endpoints": [
+        "chat_via_responses"
+      ],
+      "kind": "not_served",
+      "reason": "ChatNeedsResponses is false unless the base URL is the official OpenAI API (openAIAPI), so the gateway never sends a Hugging Face chat request over the Responses API."
+    },
+    {
+      "provider": "huggingface@",
+      "endpoints": [
+        "assistants",
+        "vector_stores"
+      ],
+      "kind": "not_served",
+      "reason": "OpenAI's own Assistants and Vector Stores APIs; Hugging Face does not serve them."
+    },
+    {
+      "provider": "huggingface@",
+      "endpoints": [
+        "ocr"
+      ],
+      "kind": "not_served",
+      "reason": "/v1/ocr is Mistral's OCR API (pinned by mistral@mistral-ocr-latest); Hugging Face has no OCR endpoint."
+    },
+    {
+      "provider": "huggingface@",
+      "endpoints": [
+        "chat",
+        "completions",
+        "embeddings",
+        "images",
+        "speech",
+        "transcription",
+        "translation",
+        "responses",
+        "list_models"
+      ],
+      "kind": "uncovered",
+      "reason": "No huggingface@ fixture at all: the preset points at the legacy serverless Inference API (api-inference.huggingface.co); the openai adapter's code is pinned by the openai suite, Hugging Face's answers are not."
+    },
+    {
+      "provider": "mistral@",
+      "endpoints": [
+        "chat_via_responses"
+      ],
+      "kind": "not_served",
+      "reason": "ChatNeedsResponses is false unless the base URL is the official OpenAI API (openAIAPI), so the gateway never sends a Mistral chat request over the Responses API."
+    },
+    {
+      "provider": "mistral@",
+      "endpoints": [
+        "assistants",
+        "vector_stores"
+      ],
+      "kind": "not_served",
+      "reason": "OpenAI's own Assistants and Vector Stores APIs; Mistral does not serve them."
+    },
+    {
+      "provider": "mistral@",
+      "endpoints": [
+        "completions",
+        "embeddings",
+        "images",
+        "speech",
+        "transcription",
+        "translation",
+        "responses",
+        "list_models"
+      ],
+      "kind": "uncovered",
+      "reason": "No mistral@ fixture for these endpoints. The openai adapter sends each to Mistral's base URL and its code is pinned by the openai suite's cases, but Mistral's answers (where Mistral serves the endpoint at all) are not."
+    },
+    {
+      "provider": "openrouter@",
+      "endpoints": [
+        "chat_via_responses"
+      ],
+      "kind": "not_served",
+      "reason": "ChatNeedsResponses is false unless the base URL is the official OpenAI API (openAIAPI), so the gateway never sends a OpenRouter chat request over the Responses API."
+    },
+    {
+      "provider": "openrouter@",
+      "endpoints": [
+        "assistants",
+        "vector_stores"
+      ],
+      "kind": "not_served",
+      "reason": "OpenAI's own Assistants and Vector Stores APIs; OpenRouter does not serve them."
+    },
+    {
+      "provider": "openrouter@",
+      "endpoints": [
+        "ocr"
+      ],
+      "kind": "not_served",
+      "reason": "/v1/ocr is Mistral's OCR API (pinned by mistral@mistral-ocr-latest); OpenRouter has no OCR endpoint."
+    },
+    {
+      "provider": "openrouter@",
+      "endpoints": [
+        "completions",
+        "embeddings",
+        "images",
+        "speech",
+        "transcription",
+        "translation",
+        "responses",
+        "list_models"
+      ],
+      "kind": "uncovered",
+      "reason": "No openrouter@ fixture for these endpoints. The openai adapter sends each to OpenRouter's base URL and its code is pinned by the openai suite's cases, but OpenRouter's answers (where OpenRouter serves the endpoint at all) are not. OpenRouter's own spec is checked for chat, embeddings and the model list (contractspec subsets openrouter/*)."
+    },
+    {
+      "provider": "perplexity@",
+      "endpoints": [
+        "chat_via_responses"
+      ],
+      "kind": "not_served",
+      "reason": "ChatNeedsResponses is false unless the base URL is the official OpenAI API (openAIAPI), so the gateway never sends a Perplexity chat request over the Responses API."
+    },
+    {
+      "provider": "perplexity@",
+      "endpoints": [
+        "assistants",
+        "vector_stores"
+      ],
+      "kind": "not_served",
+      "reason": "OpenAI's own Assistants and Vector Stores APIs; Perplexity does not serve them."
+    },
+    {
+      "provider": "perplexity@",
+      "endpoints": [
+        "ocr"
+      ],
+      "kind": "not_served",
+      "reason": "/v1/ocr is Mistral's OCR API (pinned by mistral@mistral-ocr-latest); Perplexity has no OCR endpoint."
+    },
+    {
+      "provider": "perplexity@",
+      "endpoints": [
+        "completions",
+        "embeddings",
+        "images",
+        "speech",
+        "transcription",
+        "translation",
+        "responses",
+        "list_models"
+      ],
+      "kind": "uncovered",
+      "reason": "No perplexity@ fixture for these endpoints. The openai adapter sends each to Perplexity's base URL and its code is pinned by the openai suite's cases, but Perplexity's answers (where Perplexity serves the endpoint at all) are not."
+    },
+    {
+      "provider": "replicate@",
+      "endpoints": [
+        "chat_via_responses"
+      ],
+      "kind": "not_served",
+      "reason": "ChatNeedsResponses is false unless the base URL is the official OpenAI API (openAIAPI), so the gateway never sends a Replicate chat request over the Responses API."
+    },
+    {
+      "provider": "replicate@",
+      "endpoints": [
+        "assistants",
+        "vector_stores"
+      ],
+      "kind": "not_served",
+      "reason": "OpenAI's own Assistants and Vector Stores APIs; Replicate does not serve them."
+    },
+    {
+      "provider": "replicate@",
+      "endpoints": [
+        "ocr"
+      ],
+      "kind": "not_served",
+      "reason": "/v1/ocr is Mistral's OCR API (pinned by mistral@mistral-ocr-latest); Replicate has no OCR endpoint."
+    },
+    {
+      "provider": "replicate@",
+      "endpoints": [
+        "chat",
+        "completions",
+        "embeddings",
+        "images",
+        "speech",
+        "transcription",
+        "translation",
+        "responses",
+        "list_models"
+      ],
+      "kind": "uncovered",
+      "reason": "No replicate@ fixture at all: the preset points at api.replicate.com/v1, whose OpenAI-compatible surface no fixture or spec pins; the openai adapter's code is pinned by the openai suite, Replicate's answers are not."
+    },
+    {
+      "provider": "together@",
+      "endpoints": [
+        "chat_via_responses"
+      ],
+      "kind": "not_served",
+      "reason": "ChatNeedsResponses is false unless the base URL is the official OpenAI API (openAIAPI), so the gateway never sends a Together chat request over the Responses API."
+    },
+    {
+      "provider": "together@",
+      "endpoints": [
+        "assistants",
+        "vector_stores"
+      ],
+      "kind": "not_served",
+      "reason": "OpenAI's own Assistants and Vector Stores APIs; Together does not serve them."
+    },
+    {
+      "provider": "together@",
+      "endpoints": [
+        "ocr"
+      ],
+      "kind": "not_served",
+      "reason": "/v1/ocr is Mistral's OCR API (pinned by mistral@mistral-ocr-latest); Together has no OCR endpoint."
+    },
+    {
+      "provider": "together@",
+      "endpoints": [
+        "completions",
+        "embeddings",
+        "images",
+        "speech",
+        "transcription",
+        "translation",
+        "responses",
+        "list_models"
+      ],
+      "kind": "uncovered",
+      "reason": "No together@ fixture for these endpoints. The openai adapter sends each to Together's base URL and its code is pinned by the openai suite's cases, but Together's answers (where Together serves the endpoint at all) are not. Together's own spec is checked for chat, embeddings and images (contractspec subsets together/*)."
+    },
+    {
+      "provider": "xai@",
+      "endpoints": [
+        "chat_via_responses"
+      ],
+      "kind": "not_served",
+      "reason": "ChatNeedsResponses is false unless the base URL is the official OpenAI API (openAIAPI), so the gateway never sends a xAI chat request over the Responses API."
+    },
+    {
+      "provider": "xai@",
+      "endpoints": [
+        "assistants",
+        "vector_stores"
+      ],
+      "kind": "not_served",
+      "reason": "OpenAI's own Assistants and Vector Stores APIs; xAI does not serve them."
+    },
+    {
+      "provider": "xai@",
+      "endpoints": [
+        "ocr"
+      ],
+      "kind": "not_served",
+      "reason": "/v1/ocr is Mistral's OCR API (pinned by mistral@mistral-ocr-latest); xAI has no OCR endpoint."
+    },
+    {
+      "provider": "xai@",
+      "endpoints": [
+        "chat",
+        "completions",
+        "embeddings",
+        "images",
+        "speech",
+        "transcription",
+        "translation",
+        "responses",
+        "list_models"
+      ],
+      "kind": "uncovered",
+      "reason": "No xai@ fixture at all, and xAI's REST spec is not fetchable (contractspec/subsets/unfetchable.json tracks a change signal only); the openai adapter's code is pinned by the openai suite, xAI's answers are not."
+    }
+  ]
+}
