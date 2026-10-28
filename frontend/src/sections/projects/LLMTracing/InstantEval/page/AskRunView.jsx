@@ -26,6 +26,10 @@ import { CAPABILITY, useFeatureDenied } from "src/hooks/useCapabilities";
 import { paths } from "src/routes/paths";
 import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import { insightsReportLink } from "src/sections/projects/observeHandoff";
+import {
+  VIEWER_CANT_RUN,
+  useCanStartRuns,
+} from "src/sections/projects/runPermission";
 import { ANSWER_TYPES, readOption } from "../instantEvalPayloads";
 import { answerText, quoted } from "../instantEvalAnswers";
 import { formatWhen, unitMeta } from "../instantEvalUnits";
@@ -639,6 +643,7 @@ export default function AskRunView({
   onCancelRunAgain,
 }) {
   const navigate = useNavigate();
+  const canRun = useCanStartRuns();
   const meta = unitMeta(unit);
   // What a run reads: a user question reads its users' sessions.
   const rowNoun = unit === "users" ? "sessions" : meta.plural;
@@ -1045,7 +1050,7 @@ export default function AskRunView({
                 <RunControls
                   run={run}
                   onControl={control}
-                  busy={acting}
+                  busy={acting || !canRun}
                   retryElsewhere={bannerRetries(
                     run,
                     question,
@@ -1058,7 +1063,7 @@ export default function AskRunView({
                   size="small"
                   // The way forward from a cancelled or failed run.
                   variant={run.status === "done" ? "outlined" : "contained"}
-                  disabled={rerunning || Boolean(runAgainConfirm)}
+                  disabled={!canRun || rerunning || Boolean(runAgainConfirm)}
                   startIcon={<Iconify icon="mdi:refresh" width={16} />}
                   onClick={() => onRunAgain()}
                 >
@@ -1080,11 +1085,22 @@ export default function AskRunView({
                     navigate={navigate}
                     unit={unit}
                     billed={run.creditsUsed != null}
+                    disabled={!canRun}
                   />
                 )}
               <MoreMenu questions={questions} onCopyLink={copyLink} />
             </Stack>
           </Stack>
+          {!canRun && (
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              component="p"
+              sx={{ mt: 0.5 }}
+            >
+              {VIEWER_CANT_RUN}
+            </Typography>
+          )}
           {questions.length > 1 && (
             <Stack
               direction="row"
@@ -1251,7 +1267,7 @@ export default function AskRunView({
               focus.configId === question?.configId ? focus.answer : null
             }
             onControl={control}
-            busy={acting}
+            busy={acting || !canRun}
           />
         )}
 
@@ -1284,7 +1300,7 @@ export default function AskRunView({
               <AskHeatmap
                 {...chartProps}
                 onReadMore={
-                  run.sample?.can_extend && run.status !== "cancelled"
+                  canRun && run.sample?.can_extend && run.status !== "cancelled"
                     ? () =>
                         control(
                           "read_more",

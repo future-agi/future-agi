@@ -14,6 +14,10 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { UNITS } from "src/sections/projects/observePopulation";
+import {
+  VIEWER_CANT_RUN,
+  useCanStartRuns,
+} from "src/sections/projects/runPermission";
 import { CitationChip, EvidenceQuote } from "./Citation";
 import {
   askRun,
@@ -284,8 +288,10 @@ export default function AskPanel({ run, lens }) {
   const report = useReport();
   const runId = run.id;
   const queryClient = useQueryClient();
+  const canRun = useCanStartRuns();
   const credits = useActionCredits(run.project_id, "ask");
-  const creditBlocked = actionCreditsBlocked(credits);
+  // A question costs credits, and the server refuses a Viewer one.
+  const blocked = !canRun || actionCreditsBlocked(credits);
   const [thread, setThread] = useState(() => readAskThread(runId));
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
@@ -360,7 +366,7 @@ export default function AskPanel({ run, lens }) {
   // sent with one is the turns already answered.
   const ask = async (question, replaceId) => {
     const q = question.trim().slice(0, ASK_QUESTION_MAX);
-    if (!q || creditBlocked) return;
+    if (!q || blocked) return;
     const id =
       replaceId || `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const history = askHistory(thread.filter((turn) => turn.id !== replaceId));
@@ -498,7 +504,7 @@ export default function AskPanel({ run, lens }) {
                 hint={turn.id === lastBusyId}
                 onFollowUp={(question) => ask(question)}
                 onRetry={() => ask(turn.question, turn.id)}
-                disabled={creditBlocked}
+                disabled={blocked}
               />
             ))}
           </Box>
@@ -526,12 +532,7 @@ export default function AskPanel({ run, lens }) {
         {/* Starting questions live inside the composer, on one line. */}
         {thread.length === 0 && (
           <Box sx={{ px: 1.25, pt: 1 }}>
-            <Chips
-              items={suggestions}
-              onPick={ask}
-              line
-              disabled={creditBlocked}
-            />
+            <Chips items={suggestions} onPick={ask} line disabled={blocked} />
           </Box>
         )}
         <Stack
@@ -556,7 +557,12 @@ export default function AskPanel({ run, lens }) {
                 ask(text);
               }
             }}
-            placeholder={`Ask anything about these ${formatCount(analysed)} ${noun}…`}
+            placeholder={
+              canRun
+                ? `Ask anything about these ${formatCount(analysed)} ${noun}…`
+                : VIEWER_CANT_RUN
+            }
+            disabled={!canRun}
             multiline
             maxRows={4}
             inputProps={{ "aria-label": "Ask about this report" }}
@@ -583,7 +589,7 @@ export default function AskPanel({ run, lens }) {
             type="submit"
             color="primary"
             aria-label="Ask"
-            disabled={!text.trim() || creditBlocked}
+            disabled={!text.trim() || blocked}
             sx={{ flexShrink: 0 }}
           >
             <Iconify icon="mdi:arrow-up-circle" width={24} />

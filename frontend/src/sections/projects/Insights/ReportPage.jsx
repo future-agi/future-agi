@@ -25,6 +25,10 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import Iconify from "src/components/iconify";
+import {
+  VIEWER_CANT_RUN,
+  useCanStartRuns,
+} from "src/sections/projects/runPermission";
 import AskPanel from "./AskPanel";
 import CategoryExplorer from "./CategoryExplorer";
 import CategoryTable from "./CategoryTable";
@@ -94,6 +98,7 @@ HeaderChip.propTypes = {
 // Escape cancels.
 function InlineName({ config }) {
   const queryClient = useQueryClient();
+  const canRun = useCanStartRuns();
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(config.name);
   const cancelled = useRef(false);
@@ -166,12 +171,13 @@ function InlineName({ config }) {
         component="h1"
         fontWeight={600}
         noWrap
-        title={`${config.name} · click to rename`}
+        title={canRun ? `${config.name} · click to rename` : config.name}
         onClick={() => {
+          if (!canRun) return;
           setValue(config.name);
           setEditing(true);
         }}
-        sx={{ cursor: "text", minWidth: 0 }}
+        sx={{ cursor: canRun ? "text" : "default", minWidth: 0 }}
       >
         {config.name}
       </Typography>
@@ -179,6 +185,7 @@ function InlineName({ config }) {
         className="rename"
         size="small"
         aria-label="Rename report"
+        disabled={!canRun}
         onClick={() => {
           setValue(config.name);
           setEditing(true);
@@ -208,6 +215,7 @@ function ReportHeader({
   onDetails,
 }) {
   const [anchor, setAnchor] = useState(null);
+  const canRun = useCanStartRuns();
   const lens = lensFor(run?.settings?.lens || config.lens);
   const scope = run?.scope?.label || config.latest_run?.scope?.label;
   return (
@@ -272,6 +280,16 @@ function ReportHeader({
             </Box>
           )}
         </Stack>
+        {!canRun && (
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            component="p"
+            sx={{ mt: 0.75 }}
+          >
+            {VIEWER_CANT_RUN}
+          </Typography>
+        )}
       </Box>
       <Stack
         direction="row"
@@ -285,7 +303,7 @@ function ReportHeader({
           color="inherit"
           startIcon={<Iconify icon="mdi:play-outline" width={16} />}
           onClick={onRunNow}
-          disabled={busy}
+          disabled={busy || !canRun}
           sx={{ fontSize: 13 }}
         >
           {busy ? "Running…" : "Run now"}
@@ -296,6 +314,7 @@ function ReportHeader({
           color="inherit"
           startIcon={<Iconify icon="mdi:cog-outline" width={16} />}
           onClick={onEdit}
+          disabled={!canRun}
           sx={{ fontSize: 13 }}
         >
           Edit
@@ -316,7 +335,7 @@ function ReportHeader({
           transformOrigin={{ vertical: "top", horizontal: "right" }}
         >
           <MenuItem
-            disabled={!config.has_taxonomy || busy}
+            disabled={!config.has_taxonomy || busy || !canRun}
             onClick={() => {
               setAnchor(null);
               onRediscover();
@@ -333,6 +352,7 @@ function ReportHeader({
             />
           </MenuItem>
           <MenuItem
+            disabled={!canRun}
             onClick={() => {
               setAnchor(null);
               onDelete();
@@ -469,6 +489,7 @@ export default function ReportPage({
   projectPending = false,
 }) {
   const queryClient = useQueryClient();
+  const canRun = useCanStartRuns();
   const configQuery = useInsightsConfig(configId);
   const config = configQuery.data;
   const effectiveRunId = runId || config?.latest_run?.id;
@@ -585,6 +606,7 @@ export default function ReportPage({
           <Button
             color="inherit"
             size="small"
+            disabled={!canRun}
             onClick={() => setRerun({ rediscover: false })}
           >
             Run it

@@ -21,6 +21,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import Iconify from "src/components/iconify";
 import { unitWord } from "src/sections/projects/observePopulation";
+import { useCanStartRuns } from "src/sections/projects/runPermission";
 import {
   deleteConfig,
   forgetConfig,
@@ -109,6 +110,7 @@ CardLegend.propTypes = { segments: PropTypes.array.isRequired };
 
 function CardMenu({ config, onRerun, onRename, onDelete }) {
   const [anchor, setAnchor] = useState(null);
+  const canRun = useCanStartRuns();
   const close = () => setAnchor(null);
   const active = isRunActive(config.latest_run?.status);
   return (
@@ -133,7 +135,7 @@ function CardMenu({ config, onRerun, onRename, onDelete }) {
         transformOrigin={{ vertical: "top", horizontal: "right" }}
       >
         <MenuItem
-          disabled={active}
+          disabled={active || !canRun}
           onClick={() => {
             close();
             onRerun(config);
@@ -145,6 +147,7 @@ function CardMenu({ config, onRerun, onRename, onDelete }) {
           <ListItemText>{active ? "Running…" : "Run now"}</ListItemText>
         </MenuItem>
         <MenuItem
+          disabled={!canRun}
           onClick={() => {
             close();
             onRename();
@@ -156,6 +159,7 @@ function CardMenu({ config, onRerun, onRename, onDelete }) {
           <ListItemText>Rename</ListItemText>
         </MenuItem>
         <MenuItem
+          disabled={!canRun}
           onClick={() => {
             close();
             onDelete(config);

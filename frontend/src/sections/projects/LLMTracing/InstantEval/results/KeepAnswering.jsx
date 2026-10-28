@@ -20,6 +20,7 @@ export default function KeepAnswering({
   navigate,
   unit = "traces",
   billed = false,
+  disabled = false,
 }) {
   const noun = unitMeta(unit);
   const { user } = useSafeAuthContext();
@@ -128,6 +129,7 @@ export default function KeepAnswering({
         variant="outlined"
         size="small"
         startIcon={<Iconify icon="mdi:sync" width={16} />}
+        disabled={disabled}
         onClick={() => setState({ step: "confirm" })}
         sx={{ textTransform: "none" }}
       >
@@ -143,4 +145,6 @@ KeepAnswering.propTypes = {
   navigate: PropTypes.func.isRequired,
   unit: PropTypes.oneOf(["traces", "spans"]),
   billed: PropTypes.bool,
+  // A Viewer reads the run; the server refuses them a live task.
+  disabled: PropTypes.bool,
 };

@@ -26,6 +26,10 @@ import {
 } from "../instantEvalPayloads";
 import ScopeFilterBar from "src/sections/projects/ScopeFilterBar";
 import {
+  VIEWER_CANT_RUN,
+  useCanStartRuns,
+} from "src/sections/projects/runPermission";
+import {
   defaultReads,
   draftsFromQuestions,
   emptyDraft,
@@ -676,6 +680,7 @@ export default function AskComposer({
 }) {
   const meta = unitMeta(unit);
   const jev = useJevAvailability();
+  const canRun = useCanStartRuns();
   // A sample size typed in, read before the scope's estimate is known so
   // the server can cost it too.
   const [customText, setCustomText] = useState("");
@@ -1147,6 +1152,7 @@ export default function AskComposer({
           size="large"
           variant="contained"
           disabled={
+            !canRun ||
             !jev.available ||
             jev.isLoading ||
             starting ||
@@ -1193,9 +1199,15 @@ export default function AskComposer({
           component="p"
           sx={{ mt: 1, maxWidth: 640 }}
         >
-          Each question is saved as a Jev evaluator you can reuse or edit.
-          {billed ? " Every answer is billed as one eval run;" : ""} TypeSafe
-          bills its tokens to your own key.
+          {canRun ? (
+            <>
+              Each question is saved as a Jev evaluator you can reuse or edit.
+              {billed ? " Every answer is billed as one eval run;" : ""}{" "}
+              TypeSafe bills its tokens to your own key.
+            </>
+          ) : (
+            VIEWER_CANT_RUN
+          )}
         </Typography>
       </Box>
 

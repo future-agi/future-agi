@@ -21,6 +21,10 @@ import Iconify from "src/components/iconify";
 import { UNITS, unitWord } from "src/sections/projects/observePopulation";
 import ScopeFilterBar from "src/sections/projects/ScopeFilterBar";
 import {
+  VIEWER_CANT_RUN,
+  useCanStartRuns,
+} from "src/sections/projects/runPermission";
+import {
   CUSTOM,
   defaultScope,
   scopeForUnit,
@@ -284,6 +288,7 @@ export default function NewReport({
   onStarted,
 }) {
   const queryClient = useQueryClient();
+  const canRun = useCanStartRuns();
   const draftCredits = useActionCredits(projectId, "draft");
   const previewCredits = useActionCredits(projectId, "preview");
   const fixedPopulation = useMemo(
@@ -853,6 +858,7 @@ export default function NewReport({
                       }
                       onClick={draftWithAI}
                       disabled={
+                        !canRun ||
                         busy ||
                         !items.length ||
                         actionCreditsBlocked(draftCredits)
@@ -935,6 +941,7 @@ export default function NewReport({
                 )
               }
               disabled={
+                !canRun ||
                 busy ||
                 !items.length ||
                 questionMissing ||
@@ -1018,7 +1025,9 @@ export default function NewReport({
               // Wraps rather than cuts off: a refusal is read whole, with
               // its way to billing.
               <Typography variant="body2" color="text.secondary">
-                {blocker ? (
+                {!canRun ? (
+                  VIEWER_CANT_RUN
+                ) : blocker ? (
                   <ErrorText
                     message={blocker}
                     billing={blocker === creditBlocker && !credits.unavailable}
@@ -1045,6 +1054,7 @@ export default function NewReport({
             // While a new scope or sample size is costed, the shown cost is
             // the previous one: Run waits for the server's figure.
             disabled={
+              !canRun ||
               Boolean(blocker) ||
               busy ||
               counting ||
