@@ -1843,8 +1843,9 @@ describe("a new question's date and filters", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Question 1" }), {
       target: { value: QUESTION },
     });
+    // It asks about users; their sessions are only an upper bound.
     expect(
-      screen.getByRole("button", { name: "Ask Jev about 209 sessions" }),
+      screen.getByRole("button", { name: "Ask Jev about 209 users" }),
     ).toBeEnabled();
     expect(
       await screen.findByText(
@@ -1861,6 +1862,34 @@ describe("a new question's date and filters", () => {
         label: "Past 7D · 1 filter · “acme”",
       }),
     );
+  });
+
+  it("names the users it asks about, not the most sessions it could read", async () => {
+    // 12 users, read at up to 5 sessions each: 60 at most, 49 in the view.
+    fakes.estimate.mockResolvedValue({
+      ...smallEstimate(12),
+      sessions_per_user: 5,
+      choices: [
+        {
+          sample_size: null,
+          rows_to_read: 60,
+          seconds_estimate: 22,
+          needs_confirm: false,
+          allowed: true,
+        },
+      ],
+    });
+    renderAt(askLink(PROJECT, { ...viewOf("users", []), label: undefined }));
+    expect(
+      await screen.findByText(/Reads up to 60 sessions \(5 per user\)/),
+    ).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("textbox", { name: "Question 1" }), {
+      target: { value: QUESTION },
+    });
+    expect(
+      screen.getByRole("button", { name: "Ask Jev about 12 users" }),
+    ).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /60 sessions/ })).toBeNull();
   });
 
   it("keeps the date on another unit and says which filters went", async () => {

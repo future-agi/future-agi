@@ -680,6 +680,8 @@ export default function AskRunView({
   const meta = unitMeta(unit);
   // What a run reads: a user question reads its users' sessions.
   const rowNoun = unit === "users" ? "sessions" : meta.plural;
+  // Its users' sessions are the most it can read, not a count.
+  const upTo = unit === "users" ? "up to " : "";
   const { questions, records, summary } = run;
   const [focus, setFocus] = useState({ configId: null, answer: null });
   // {filter, label} from a chart, or {ids, label} from a chart that still
@@ -1301,7 +1303,7 @@ export default function AskRunView({
               </Stack>
             }
           >
-            {`Read ${Number(confirmMore.rows || 0).toLocaleString()} more ${rowNoun}?`}
+            {`Read ${upTo}${Number(confirmMore.rows || 0).toLocaleString()} more ${rowNoun}?`}
             {confirmMore.credits != null
               ? ` That is ${creditWords(confirmMore.credits)}.`
               : ""}
@@ -1327,7 +1329,8 @@ export default function AskRunView({
               </Stack>
             }
           >
-            Read {Number(runAgainConfirm.rows || 0).toLocaleString()} {rowNoun}{" "}
+            Read {upTo}
+            {Number(runAgainConfirm.rows || 0).toLocaleString()} {rowNoun}{" "}
             again?
             {runAgainConfirm.credits != null
               ? ` That is ${creditWords(runAgainConfirm.credits)}.`

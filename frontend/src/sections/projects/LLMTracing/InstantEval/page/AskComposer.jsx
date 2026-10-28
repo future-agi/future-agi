@@ -851,6 +851,14 @@ export default function AskComposer({
         ? null
         : choiceCost(customEstimate, customSize, filled)
       : choiceCost(estimate, sampleSize, filled);
+  // What the button asks about: users, for a user question, of whom it
+  // reads up to five sessions each (the cost line says so). Their sessions
+  // are only an upper bound, which the button must not claim.
+  const asked = cost
+    ? unit === "users"
+      ? Math.round(cost.rows / (estimate?.sessions_per_user || 1))
+      : cost.rows
+    : 0;
   // A typed size is started once the server has costed it.
   const costing = choice === CUSTOM && !coversAll && population.sample.updating;
   // A confirm restates one scope's credits; a new date or filter retracts it.
@@ -1139,10 +1147,11 @@ export default function AskComposer({
             </Stack>
           }
         >
-          {/* The server's count, which can be more than the estimate here. */}
+          {/* The server's count, which can be more than the estimate here;
+              a user question's sessions are the most it can read. */}
           {serverConfirm.credits != null
-            ? `This reads ${Number(serverConfirm.rows).toLocaleString()} ${unit === "users" ? "sessions" : meta.plural}: ${creditWords(serverConfirm.credits)}.`
-            : `This reads ${Number(serverConfirm.rows).toLocaleString()} ${unit === "users" ? "sessions" : meta.plural}.`}{" "}
+            ? `This reads ${unit === "users" ? "up to " : ""}${Number(serverConfirm.rows).toLocaleString()} ${unit === "users" ? "sessions" : meta.plural}: ${creditWords(serverConfirm.credits)}.`
+            : `This reads ${unit === "users" ? "up to " : ""}${Number(serverConfirm.rows).toLocaleString()} ${unit === "users" ? "sessions" : meta.plural}.`}{" "}
           Start it?
         </Alert>
       )}
@@ -1184,12 +1193,8 @@ export default function AskComposer({
             : population.isLoading || population.isUpdating
               ? `Counting the ${meta.plural}…`
               : cost
-                ? `Ask Jev about ${sampleSize ? "a sample of " : ""}${cost.rows.toLocaleString()} ${
-                    unit === "users"
-                      ? "sessions"
-                      : cost.rows === 1
-                        ? meta.noun
-                        : meta.plural
+                ? `Ask Jev about ${sampleSize ? "a sample of " : ""}${asked.toLocaleString()} ${
+                    asked === 1 ? meta.noun : meta.plural
                   }`
                 : `Ask Jev`}
         </Button>
