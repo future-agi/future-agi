@@ -1484,7 +1484,14 @@ class InstantEvalExportView(_InstantEvalSelectionView):
         response = StreamingHttpResponse(
             summary_service.marked_export(
                 summary_service.iter_export(
-                    view, row_filter, questions, sessions=sessions
+                    view,
+                    row_filter,
+                    questions,
+                    sessions=sessions,
+                    sort=params["sort"],
+                    sort_config=(
+                        str(params["config_id"]) if params.get("config_id") else None
+                    ),
                 )
             ),
             content_type="text/csv",

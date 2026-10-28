@@ -386,6 +386,13 @@ def test_a_user_question_exports_a_line_per_user_or_per_session(
     )
     assert {line[2] for line in picked[1:]} == {"ana", "ben", "gus"}
     assert len(picked) - 1 == 3 + 2 + 5
+    # Users and sessions alike come newest first, as the rows table lists
+    # them, or oldest first when asked.
+    for export in (body, sessions[1:]):
+        when = [line[2 if export is body else 1] for line in export]
+        assert when == sorted(when, reverse=True)
+    oldest = _csv(_get(auth_client, EXPORT, observe_project, task, sort="time"))[1:]
+    assert [line[2] for line in oldest] == sorted(line[2] for line in body)
 
 
 @pytest.mark.django_db

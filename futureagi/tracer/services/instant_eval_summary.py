@@ -1556,6 +1556,68 @@ def answers_for(
     return out
 
 
+def _row_order(
+    view: RunView, sort: str, sort_config: str | None, state: dict, params: dict
+) -> tuple[str, str, str, str]:
+    """(joins, sort key, ORDER BY, keyset) that read a run's rows in ``sort``
+    order after the row ``state`` names: the rows page and the export read
+    them alike."""
+    if sort == "confidence":
+        params["s_cfg"] = sort_config or (view.config_ids[0] if view.config_ids else "")
+        joins = (
+            "LEFT JOIN tracer_instant_eval_answer c ON c.task_id = %(task)s "
+            "AND c.config_id = %(s_cfg)s::uuid AND c.row_id = r.id"
+        )
+        # Unanswered rows sort last, as a confidence of 2. The cursor carries
+        # the last row's (confidence, id): a page deep in a run is read from
+        # there, not by counting past an offset.
+        keyset = ""
+        if state.get("c") is not None:
+            params["c_c"] = float(state["c"])
+            params["c_id"] = int(state["i"])
+            keyset = " AND (COALESCE(c.confidence, 2), r.id) > (%(c_c)s, %(c_id)s)"
+        return (
+            joins,
+            ", COALESCE(c.confidence, 2)",
+            "COALESCE(c.confidence, 2) ASC, r.id ASC",
+            keyset,
+        )
+    # The (task, time, id) index serves both directions. A row normally
+    # has a time (its first span's), but the column is nullable: NULLs
+    # come first newest-first and last oldest-first (Postgres' defaults,
+    # so the index still orders), and the cursor marks a page that ended
+    # among them, so no row is skipped.
+    desc = sort != "time"
+    order = "r.time DESC, r.id DESC" if desc else "r.time ASC, r.id ASC"
+    keyset = ""
+    if state.get("n"):
+        params["c_id"] = int(state["i"])
+        keyset = (
+            " AND ((r.time IS NULL AND r.id < %(c_id)s) OR r.time IS NOT NULL)"
+            if desc
+            else " AND r.time IS NULL AND r.id > %(c_id)s"
+        )
+    elif state.get("t") is not None:
+        params["c_t"] = parse_time(state["t"])
+        params["c_id"] = int(state["i"])
+        keyset = (
+            " AND (r.time, r.id) < (%(c_t)s, %(c_id)s)"
+            if desc
+            else " AND ((r.time, r.id) > (%(c_t)s, %(c_id)s) OR r.time IS NULL)"
+        )
+    return "", "", order, keyset
+
+
+def _row_state(sort: str, rec) -> dict:
+    """Where a page in ``sort`` order ended: its last row (read with
+    ``_ROW_COLUMNS`` and, for confidence, the sort key after them)."""
+    if sort == "confidence":
+        return {"c": rec[11], "i": rec[0]}
+    if rec[2] is None:
+        return {"n": 1, "i": rec[0]}
+    return {"t": rec[2].isoformat(), "i": rec[0]}
+
+
 def rows_page(
     view: RunView,
     f: RowFilter,
@@ -1579,48 +1641,7 @@ def rows_page(
         )
     conds = _conditions(view, f, params)
     where = " AND ".join(["r.task_id = %(task)s", *conds])
-    joins = ""
-    sort_key = ""
-    if sort == "confidence":
-        params["s_cfg"] = sort_config or (view.config_ids[0] if view.config_ids else "")
-        joins = (
-            "LEFT JOIN tracer_instant_eval_answer c ON c.task_id = %(task)s "
-            "AND c.config_id = %(s_cfg)s::uuid AND c.row_id = r.id"
-        )
-        # Unanswered rows sort last, as a confidence of 2. The cursor carries
-        # the last row's (confidence, id): a page deep in a run is read from
-        # there, not by counting past an offset.
-        sort_key = ", COALESCE(c.confidence, 2)"
-        order = "COALESCE(c.confidence, 2) ASC, r.id ASC"
-        keyset = ""
-        if state.get("c") is not None:
-            params["c_c"] = float(state["c"])
-            params["c_id"] = int(state["i"])
-            keyset = " AND (COALESCE(c.confidence, 2), r.id) > (%(c_c)s, %(c_id)s)"
-    else:
-        # The (task, time, id) index serves both directions. A row normally
-        # has a time (its first span's), but the column is nullable: NULLs
-        # come first newest-first and last oldest-first (Postgres' defaults,
-        # so the index still orders), and the cursor marks a page that ended
-        # among them, so no row is skipped.
-        desc = sort != "time"
-        order = "r.time DESC, r.id DESC" if desc else "r.time ASC, r.id ASC"
-        keyset = ""
-        if state.get("n"):
-            params["c_id"] = int(state["i"])
-            keyset = (
-                " AND ((r.time IS NULL AND r.id < %(c_id)s) OR r.time IS NOT NULL)"
-                if desc
-                else " AND r.time IS NULL AND r.id > %(c_id)s"
-            )
-        elif state.get("t") is not None:
-            params["c_t"] = parse_time(state["t"])
-            params["c_id"] = int(state["i"])
-            keyset = (
-                " AND (r.time, r.id) < (%(c_t)s, %(c_id)s)"
-                if desc
-                else " AND ((r.time, r.id) > (%(c_t)s, %(c_id)s) OR r.time IS NULL)"
-            )
+    joins, sort_key, order, keyset = _row_order(view, sort, sort_config, state, params)
     params["lim"] = page_size + 1
     recs = _rows(
         f"SELECT {_ROW_COLUMNS}{sort_key} FROM tracer_instant_eval_row r {joins} "
@@ -1640,16 +1661,7 @@ def rows_page(
             row["answers"] = answers.get(row["id"], {})
     next_cursor = None
     if more and recs:
-        last = recs[-1]
-        next_cursor = _cursor_encode(
-            {"c": last[11], "i": last[0]}
-            if sort == "confidence"
-            else (
-                {"n": 1, "i": last[0]}
-                if last[2] is None
-                else {"t": last[2].isoformat(), "i": last[0]}
-            )
-        )
+        next_cursor = _cursor_encode(_row_state(sort, recs[-1]))
     total = _rows(
         f"SELECT count(*) FROM tracer_instant_eval_row r WHERE {where}", params
     )[0][0]
@@ -1918,13 +1930,22 @@ def _selected_users(view: RunView, f: RowFilter) -> list[str] | None:
 
 
 def iter_export(
-    view: RunView, f: RowFilter, questions: list[dict], *, sessions: bool = False
+    view: RunView,
+    f: RowFilter,
+    questions: list[dict],
+    *,
+    sessions: bool = False,
+    sort: str = "-time",
+    sort_config: str | None = None,
 ):
-    """CSV lines for every row the filter selects, read page by page. A user
-    question writes a line per user (``_iter_user_export``), or with
-    ``sessions`` a line per session of the users the filter selects."""
+    """CSV lines for every row the filter selects, read page by page in
+    ``sort`` order, as the rows table lists them. A user question writes a
+    line per user (``_iter_user_export``), or with ``sessions`` a line per
+    session of the users the filter selects."""
     if view.by_user and not sessions:
-        yield from _iter_user_export(view, f, questions)
+        yield from _iter_user_export(
+            view, f, questions, sort=sort, sort_config=sort_config
+        )
         return
     names = {q["config_id"]: q["question"] for q in questions}
     header = [
@@ -1958,17 +1979,20 @@ def iter_export(
     else:
         conds = _conditions(view, f, params)
         where = " AND ".join(["r.task_id = %(task)s", *conds])
-    last_id = 0
+    state: dict = {}
     while True:
-        params.update(after=last_id, lim=EXPORT_PAGE)
+        joins, sort_key, order, keyset = _row_order(
+            view, sort, sort_config, state, params
+        )
+        params["lim"] = EXPORT_PAGE
         recs = _rows(
-            f"SELECT {_ROW_COLUMNS} FROM tracer_instant_eval_row r "
-            f"WHERE {where} AND r.id > %(after)s ORDER BY r.id LIMIT %(lim)s",
+            f"SELECT {_ROW_COLUMNS}{sort_key} FROM tracer_instant_eval_row r "
+            f"{joins} WHERE {where}{keyset} ORDER BY {order} LIMIT %(lim)s",
             params,
         )
         if not recs:
             return
-        last_id = recs[-1][0]
+        state = _row_state(sort, recs[-1])
         answers = answers_for(view, [rec[1] for rec in recs])
         for rec in recs:
             row = _row_dict(rec)
@@ -2001,10 +2025,18 @@ def iter_export(
             return
 
 
-def _iter_user_export(view: RunView, f: RowFilter, questions: list[dict]):
+def _iter_user_export(
+    view: RunView,
+    f: RowFilter,
+    questions: list[dict],
+    *,
+    sort: str = "-time",
+    sort_config: str | None = None,
+):
     """A line per user the filter selects: their rolled-up answer to each
     question, its sessions' mean confidence, and the sessions behind it, by
-    answer. Read a page of users at a time, in user id order."""
+    answer. Read a page of users at a time, in ``sort`` order as the rows
+    table lists them."""
     names = {q["config_id"]: q["question"] for q in questions}
     found: dict[str, set] = defaultdict(set)
     for cfg, label in _rows(
@@ -2035,47 +2067,31 @@ def _iter_user_export(view: RunView, f: RowFilter, questions: list[dict]):
         header.append(f"{q} · couldn't answer sessions")
     yield _csv_line(header)
 
-    params = _user_params(
-        view, {"task": view.task_id, "tz": view.tz.key, "lim": EXPORT_PAGE}
-    )
-    where = " AND ".join(_conditions(view, f, params)) or "true"
-    rolled = ", ".join(f"r.l{i}, r.c{i}" for i in range(len(view.config_ids)))
-    rollup = _user_rollup(view, sessions=" AND r.end_user_id = ANY(%(page)s::uuid[])")
-    after = None
+    state: dict = {}
     while True:
-        page = [
-            str(uid)
-            for (uid,) in _rows(
-                "SELECT DISTINCT end_user_id FROM tracer_instant_eval_row "
-                "WHERE task_id = %(task)s AND end_user_id IS NOT NULL"
-                f"{' AND end_user_id > %(after)s::uuid' if after else ''} "
-                "ORDER BY end_user_id LIMIT %(lim)s",
-                {**params, "after": after},
-            )
-        ]
-        if not page:
-            return
-        recs = _rows(
-            f"WITH {rollup} SELECT {_USER_COLUMNS}, {rolled} FROM ur r "
-            f"WHERE {where} ORDER BY r.end_user_id",
-            {**params, "page": page},
+        params = {
+            "task": view.task_id,
+            "task_s": view.task_id,
+            "cfgs": view.config_ids,
+            "tz": view.tz.key,
+        }
+        page = _user_rows_page(
+            view, f, params, state, EXPORT_PAGE, sort=sort, sort_config=sort_config
         )
-        tally = _user_sessions_tally(view, [rec[0] for rec in recs])
-        for rec in recs:
-            uid, label, time, sessions, model, turns, duration, error = rec[:8]
-            answers = _user_answers(view, rec, tally.get(uid, {}))
+        for row in page["rows"]:
+            facets = row["facets"]
             values = [
-                label or "",
-                uid,
-                time.isoformat() if time else "",
-                int(sessions),
-                model or "",
-                "" if turns is None else int(turns),
-                "" if duration is None else int(duration),
-                "true" if error else "false",
+                row["user_id"],
+                row["end_user_id"],
+                row["time"] or "",
+                row["sessions"],
+                facets["model"] or "",
+                "" if facets["turns"] is None else facets["turns"],
+                "" if facets["duration_ms"] is None else facets["duration_ms"],
+                "true" if facets["error"] else "false",
             ]
             for cfg in view.config_ids:
-                ans = answers[cfg]
+                ans = row["answers"][cfg]
                 by_label = ans["counts"]
                 values += [
                     ans["answer"] or "",
@@ -2084,6 +2100,6 @@ def _iter_user_export(view: RunView, f: RowFilter, questions: list[dict]):
                     sum(by_label.get(label, 0) for label in FAILED_LABELS),
                 ]
             yield _csv_line(values)
-        if len(page) < EXPORT_PAGE:
+        if not page["next_cursor"]:
             return
-        after = page[-1]
+        state = _cursor_decode(page["next_cursor"])

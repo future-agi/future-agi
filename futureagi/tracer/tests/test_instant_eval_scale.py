@@ -893,6 +893,35 @@ def test_export_streams_every_selected_row(
     )
 
 
+@pytest.mark.django_db
+def test_export_lists_the_rows_in_the_order_it_was_asked_for(
+    auth_client, observe_project, answered_run
+):
+    """sort=-time wrote the rows in the order the sample picked them, not
+    newest first as the rows table lists them."""
+    task, ids = answered_run
+    times = {}
+    for sort in ("-time", "time", None):
+        query = {"project_id": str(observe_project.id), "eval_task_id": str(task.id)}
+        if sort:
+            query["sort"] = sort
+        body = b"".join(auth_client.get(EXPORT, query).streaming_content).decode()
+        lines = list(csv.reader(io.StringIO(body)))[1:]
+        assert sorted(line[0] for line in lines) == sorted(ids)
+        times[sort] = [line[1] for line in lines]
+    # The sample's own order isn't the time order, so this can't pass by luck.
+    picked = list(
+        InstantEvalRow.objects.filter(task_id=task.id)
+        .order_by("id")
+        .values_list("time", flat=True)
+    )
+    assert picked != sorted(picked)
+    assert times["-time"] == sorted(times["-time"], reverse=True)
+    assert times["time"] == sorted(times["time"])
+    # Newest first, as the rows table, when no order is asked for.
+    assert times[None] == times["-time"]
+
+
 def test_export_cells_never_read_as_spreadsheet_formulas():
     from tracer.services import instant_eval_summary as summary_service
 
