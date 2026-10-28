@@ -1,6 +1,8 @@
 import { unitWord } from "src/sections/projects/observePopulation";
+import { DATE_OPTION_LABELS } from "src/sections/projects/LLMTracing/DateRangePill";
 import {
   CUSTOM,
+  customRangeLabel,
   isPresetOption,
   isoWindow,
   reanchorScope as reanchorPreset,
@@ -100,6 +102,21 @@ export const scopeDateLabel = (scope) =>
     : !scope?.window
       ? "All time"
       : undefined;
+
+/**
+ * A stored scope's label as a report shows it: a custom range names the days
+ * it read ("Oct 22–23 · 1 filter"), as the scope bar does; any other scope
+ * reads as stored.
+ */
+export function shownScopeLabel(scope) {
+  const label = scope?.label || "";
+  const custom = DATE_OPTION_LABELS[CUSTOM];
+  const days =
+    scope?.preset === CUSTOM && label.startsWith(custom)
+      ? customRangeLabel(scope.window)
+      : undefined;
+  return days ? days + label.slice(custom.length) : label;
+}
 
 /** The scope a report stores and a run is started with. */
 export function storedScope(scope) {

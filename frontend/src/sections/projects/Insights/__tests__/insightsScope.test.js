@@ -22,6 +22,7 @@ import {
   sampleSentence,
   savedDateOption,
   scopeDateLabel,
+  shownScopeLabel,
   spreadPick,
   storedScope,
   toPopulation,
@@ -313,5 +314,56 @@ describe("spreadPick", () => {
 
   it("returns everything when there are few items", () => {
     expect(spreadPick([1, 2], 3)).toEqual([1, 2]);
+  });
+});
+
+describe("shownScopeLabel", () => {
+  // Local days of this year, so the label carries no year.
+  const year = new Date().getFullYear();
+  const day = (d, ...time) => new Date(year, 9, d, ...time).toISOString();
+
+  it("names the days a custom range read, keeping the filters", () => {
+    expect(
+      shownScopeLabel({
+        label: "Custom range · 1 filter",
+        preset: "Custom",
+        window: [day(22), day(23, 23, 59, 59, 999)],
+      }),
+    ).toBe("Oct 22–23 · 1 filter");
+    expect(
+      shownScopeLabel({
+        label: "Custom range",
+        preset: "Custom",
+        window: [day(22), day(22, 23, 59, 59, 999)],
+      }),
+    ).toBe("Oct 22");
+  });
+
+  it("names a window ending at midnight by the last day it read", () => {
+    expect(
+      shownScopeLabel({
+        label: "Custom range",
+        preset: "Custom",
+        window: [day(22), day(23)],
+      }),
+    ).toBe("Oct 22");
+  });
+
+  it("keeps any other scope as stored", () => {
+    const window = [day(15), day(22)];
+    expect(shownScopeLabel({ label: "Past 7D", preset: "7D", window })).toBe(
+      "Past 7D",
+    );
+    expect(shownScopeLabel({ label: "Custom range", preset: "Custom" })).toBe(
+      "Custom range",
+    );
+    expect(
+      shownScopeLabel({
+        label: "12 sessions from Instant eval",
+        preset: "fixed",
+      }),
+    ).toBe("12 sessions from Instant eval");
+    expect(shownScopeLabel({ label: "All" })).toBe("All");
+    expect(shownScopeLabel(undefined)).toBe("");
   });
 });

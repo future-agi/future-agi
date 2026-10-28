@@ -71,6 +71,22 @@ describe("MethodNote", () => {
       expect(screen.queryByText(/\$8\.04/)).toBeNull();
   });
 
+  it("names the days a custom range read", () => {
+    const year = new Date().getFullYear();
+    renderNote({
+      scope: {
+        label: "Custom range · 1 filter",
+        preset: "Custom",
+        window: [
+          new Date(year, 9, 22).toISOString(),
+          new Date(year, 9, 23, 23, 59, 59, 999).toISOString(),
+        ],
+      },
+    });
+    expect(screen.getByText("Oct 22–23 · 1 filter")).toBeInTheDocument();
+    expect(screen.queryByText(/Custom range/)).toBeNull();
+  });
+
   it("shows no cost a run didn't record", () => {
     renderNote({ cost_usd: 8.04, result: { ...run.result, cost: undefined } });
     expect(screen.queryByText("Cost")).toBeNull();

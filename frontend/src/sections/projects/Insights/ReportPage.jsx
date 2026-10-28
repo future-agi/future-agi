@@ -62,6 +62,7 @@ import { formatCount, runOutcome } from "./insightsFormat";
 import { useCancellable } from "./insightsHooks";
 import { isRunActive, lensFor, unitTitle } from "./insightsLenses";
 import { reportMetaParts } from "./insightsReport";
+import { shownScopeLabel } from "./insightsScope";
 import { ReportProvider, useReportModel } from "./reportContext";
 import { ErrorState } from "./parts";
 
@@ -222,7 +223,9 @@ function ReportHeader({
   const [anchor, setAnchor] = useState(null);
   const canRun = useCanStartRuns();
   const lens = lensFor(run?.settings?.lens || config.lens);
-  const scope = run?.scope?.label || config.latest_run?.scope?.label;
+  const scope = shownScopeLabel(
+    run?.scope?.label ? run.scope : config.latest_run?.scope,
+  );
   return (
     <Stack
       direction="row"

@@ -12,6 +12,7 @@ import {
 } from "./insightsFormat";
 import { lensFor } from "./insightsLenses";
 import { engineLabel, samplingText } from "./insightsReport";
+import { shownScopeLabel } from "./insightsScope";
 
 const STATUS_LABEL = {
   completed: "Completed",
@@ -63,7 +64,7 @@ function rowsFor(run, config) {
         .filter(Boolean)
         .join(" "),
     ],
-    ["Scope", run.scope?.label],
+    ["Scope", shownScopeLabel(run.scope)],
     ["Sampled", samplingText(run)],
     ["Analysed", Number.isFinite(analysed) ? formatCount(analysed) : null],
     [

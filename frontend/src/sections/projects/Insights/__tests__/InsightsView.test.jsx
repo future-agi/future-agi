@@ -1189,6 +1189,28 @@ describe("InsightsView", () => {
     ).toHaveAttribute("href", "/dashboard/observe");
   });
 
+  it("names the days a custom range read in the report header", async () => {
+    const base = mocks.readQuery.getMockImplementation();
+    const year = new Date().getFullYear();
+    const scope = {
+      label: "Custom range · 1 filter",
+      preset: "Custom",
+      window: [
+        new Date(year, 9, 22).toISOString(),
+        new Date(year, 9, 23, 23, 59, 59, 999).toISOString(),
+      ],
+    };
+    mocks.readQuery.mockImplementation((url, options) =>
+      url === `/tracer/insights/runs/${RUN_ID}/`
+        ? ok({ ...runFixture.result, scope })
+        : base(url, options),
+    );
+    renderAt(`?report=${CONFIG_ID}&run=${RUN_ID}`);
+    const shown = await screen.findAllByText("Oct 22–23 · 1 filter");
+    expect(shown.some((label) => label.closest(".MuiChip-root"))).toBe(true);
+    expect(screen.queryByText(/Custom range/)).toBeNull();
+  });
+
   it("falls back to the unit alone when its content cannot be read", async () => {
     const unitId = "5b2ca31b-3453-52f3-a646-a8801b377c16";
     const base = mocks.readQuery.getMockImplementation();
