@@ -38,6 +38,7 @@ vi.mock("react-apexcharts", () => ({
 
 const { default: RunWidgetEditorPage } = await import("../RunWidgetEditorPage");
 const { default: RunWidgetChart } = await import("../RunWidgetChart");
+const { defaultSpanOf } = await import("../../analytics/panelRegistry");
 const { newId, readLayoutWidget, resetLayouts, saveLayoutWidget } =
   await import("../../analytics/useRunLayout");
 
@@ -278,10 +279,13 @@ describe("Run widget editor", () => {
     renderEditor("copy-1");
     await screen.findByText("3 calls in this run");
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(readLayoutWidget(ENV_ID, "copy-1")).toMatchObject({
-      kind: "query",
-      section: "breakdowns",
-    });
+    const saved = readLayoutWidget(ENV_ID, "copy-1");
+    expect(saved).toMatchObject({ kind: "query", section: "breakdowns" });
+    // And keeps the built-in's width rather than taking the whole row.
+    expect(defaultSpanOf("copy-1", saved, 4)).toBe(
+      defaultSpanOf("goal_outcome", null, 4),
+    );
+    expect(defaultSpanOf("copy-1", saved, 4)).toBeLessThan(4);
   });
 
   it("opening a built-in starts from its query and saves a new custom widget", async () => {

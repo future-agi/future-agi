@@ -157,13 +157,12 @@ export const defaultSectionOf = (id, widget, surface) =>
   widget ? widget.section || "custom" : panelSection(id, surface);
 
 // A widget's width until it is changed, in its section's `columns`: a
-// built-in or a copy of one takes the built-in's width, a query widget the
-// whole row.
-export const defaultSpanOf = (id, widget, columns) =>
-  Math.min(
-    widget && !widget.of ? columns : panelSpan(widget?.of || id),
-    columns,
-  );
+// built-in, a copy of one or an edited copy (`spanOf`) takes the built-in's
+// width, any other query widget the whole row.
+export const defaultSpanOf = (id, widget, columns) => {
+  const builtin = widget ? widget.of || widget.spanOf : id;
+  return Math.min(builtin ? panelSpan(builtin) : columns, columns);
+};
 
 export const sectionColumns = (id) => sectionMeta(id)?.columns || 2;
 

@@ -139,11 +139,13 @@ export function saveLayoutWidget(envId, widget, viewName) {
   const custom = Array.isArray(view.custom) ? view.custom : [];
   const order = Array.isArray(view.order) ? view.order : [];
   const exists = custom.some((item) => item?.id === widget.id);
-  // An edited copy stays in its source's section.
-  const replace = (item) =>
-    item?.section && !widget.section
-      ? { ...widget, section: item.section }
-      : widget;
+  // An edited copy stays in its source's section, at its built-in's width.
+  const replace = (item) => ({
+    ...widget,
+    ...(item?.section && !widget.section && { section: item.section }),
+    ...((item?.of || item?.spanOf) &&
+      !widget.of && { spanOf: item.of || item.spanOf }),
+  });
   writeLayout(envId, {
     activeView: stored?.activeView || name,
     views: {
