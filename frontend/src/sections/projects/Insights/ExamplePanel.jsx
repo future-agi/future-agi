@@ -206,6 +206,8 @@ function CitedImage({ runId, unitId, item }) {
   const [open, setOpen] = useState(false);
   const image = useCitedImage(runId, unitId, item.media);
   const caption = item.observation || "";
+  // What the analysis saw in it describes the image, small or enlarged.
+  const alt = caption || IMAGE_ALT;
   return (
     <Box component="figure" sx={{ m: 0 }}>
       {image.url ? (
@@ -226,7 +228,7 @@ function CitedImage({ runId, unitId, item }) {
           <Box
             component="img"
             src={image.url}
-            alt={IMAGE_ALT}
+            alt={alt}
             sx={{
               display: "block",
               maxWidth: "100%",
@@ -301,7 +303,7 @@ function CitedImage({ runId, unitId, item }) {
           <Box
             component="img"
             src={image.url || undefined}
-            alt={caption || IMAGE_ALT}
+            alt={alt}
             sx={{
               display: "block",
               maxWidth: "min(90vw, 1568px)",

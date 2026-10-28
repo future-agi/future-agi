@@ -172,8 +172,9 @@ describe("ExamplePanel", () => {
     );
 
     expect(useCitedImage).toHaveBeenCalledWith("run-1", "sess_028_008", "m1");
+    // The thumbnail says what the analysis saw, like the enlarged view.
     const thumbnail = screen.getByRole("img", {
-      name: "Image cited as evidence",
+      name: "A card-declined error, code 51.",
     });
     expect(thumbnail).toHaveAttribute("src", "blob:shot");
     expect(
@@ -190,6 +191,16 @@ describe("ExamplePanel", () => {
     fireEvent.click(
       within(dialog).getByRole("button", { name: "Close image" }),
     );
+  });
+
+  it("names an image the analysis didn't describe as cited evidence", () => {
+    useCitedImage.mockReturnValue({ url: "blob:shot", isError: false });
+    renderPanel(
+      unit({ facets: { evidence: [{ kind: "media", media: "m1" }] } }),
+    );
+    expect(
+      screen.getByRole("img", { name: "Image cited as evidence" }),
+    ).toHaveAttribute("src", "blob:shot");
   });
 
   it("says plainly when the image can't be shown", () => {
