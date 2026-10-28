@@ -27,6 +27,7 @@ Configuration in settings.py:
 """
 
 import json
+import re
 import time
 import uuid
 from collections.abc import Callable
@@ -42,7 +43,27 @@ logger = structlog.get_logger(__name__)
 # Defaults
 DEFAULT_MAX_BODY_SIZE = 8192
 DEFAULT_MAX_ITEMS = 50
-SENSITIVE_BODY_PATH_PREFIXES = ("/telemetry/", "/saml2_auth/")
+# Bodies never captured: credentials, uploaded files (whose names and form fields can carry
+# personal data), and the secret values and files a harness job is configured with.
+SENSITIVE_BODY_PREFIXES = ("/telemetry/", "/saml2_auth/")
+SENSITIVE_BODY_ENDPOINTS = (
+    "/simulate/api/harness-jobs/sources",
+    "/simulate/api/harness-jobs/secret-files",
+    "/simulate/api/harness-jobs/secret-values",
+)
+# The router also serves each endpoint with a format suffix (`secret-values.json`, with or
+# without the trailing slash), which reaches the same view.
+_SENSITIVE_BODY_PATH = re.compile(
+    "|".join(re.escape(prefix) for prefix in SENSITIVE_BODY_PREFIXES)
+    + "|(?:"
+    + "|".join(re.escape(endpoint) for endpoint in SENSITIVE_BODY_ENDPOINTS)
+    + r")(?:\.[A-Za-z0-9]+)?/?(?:$|[?#])"
+)
+
+
+def is_sensitive_body_path(path: object) -> bool:
+    """Whether a request path, or a URL holding one, has a body that is never captured."""
+    return bool(path) and _SENSITIVE_BODY_PATH.search(str(path)) is not None
 
 
 def _safe_json(value: Any, max_size: int = DEFAULT_MAX_BODY_SIZE) -> str:
@@ -234,7 +255,7 @@ class OTelContextMiddleware:
             # Request body
             if (
                 self.capture_request_body
-                and not request.path.startswith(SENSITIVE_BODY_PATH_PREFIXES)
+                and not is_sensitive_body_path(request.path)
                 and request.body
             ):
                 self._capture_request_body(span, request)

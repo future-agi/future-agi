@@ -316,9 +316,6 @@ const SimulatePrebuiltEnvironments = lazyWithRetry(
   () =>
     import("src/pages/dashboard/simulate/environments/PrebuiltEnvironments"),
 );
-const SimulateUseTemplate = lazyWithRetry(
-  () => import("src/pages/dashboard/simulate/environments/UseTemplate"),
-);
 const SimulateEnvironmentWorkspace = lazyWithRetry(
   () =>
     import("src/pages/dashboard/simulate/environments/EnvironmentWorkspace"),
@@ -1414,10 +1411,6 @@ export const dashboardRoutes = (
         {
           path: "environments/templates",
           element: <SimulatePrebuiltEnvironments />,
-        },
-        {
-          path: "environments/templates/:templateId",
-          element: <SimulateUseTemplate />,
         },
         {
           // Build is no longer a page of its own — the source panels create the

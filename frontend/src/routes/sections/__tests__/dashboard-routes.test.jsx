@@ -91,15 +91,13 @@ const ENVIRONMENT_URLS = [
   `${SIMULATE}/environments/env-1/runs/test-1/exec-1/optimization_runs`,
 ];
 
-// Each Prebuilt template URL and the route that must serve it, so
-// "templates" is never read as an :envId.
+// The Prebuilt list has its own route, so "templates" is never read as an
+// :envId. A template has no page of its own: prebuilt environments are adopted
+// from released environments, so a template URL is a 404, not an environment.
 const TEMPLATE_ROUTES = [
   [`${SIMULATE}/environments/templates`, "environments/templates"],
-  [
-    `${SIMULATE}/environments/templates/template-1`,
-    "environments/templates/:templateId",
-  ],
 ];
+const TEMPLATE_DETAIL_URL = `${SIMULATE}/environments/templates/template-1`;
 
 const ALWAYS_REDIRECTED = [
   [SIMULATE, `${SIMULATE}/environments`],
@@ -146,6 +144,10 @@ describe.each([
     const route = leafRoute(user, url);
     expect(route.path).toBe(path);
     expect(redirectTarget(route)).toBeNull();
+  });
+
+  it("a template URL is a 404, not read as an environment", () => {
+    expect(leafRoute(user, TEMPLATE_DETAIL_URL)).toBe(CATCH_ALL);
   });
 
   it("an old harness job link opens that environment", () => {

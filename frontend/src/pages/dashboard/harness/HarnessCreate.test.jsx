@@ -6,16 +6,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { render } from "src/utils/test-utils";
 
-import {
-  callLimitConfig,
-  canStartEndToEndRun,
-  parseProviderDynamicVariables,
-} from "./HarnessCreate";
+import { callLimitConfig, canStartEndToEndRun } from "./HarnessCreate";
+import { parseProviderDynamicVariables } from "./harnessShared";
 
 const createHarnessJob = vi.fn();
 const preflightHarnessJob = vi.fn();
 
 vi.mock("src/api/harness/harness", () => ({
+  harnessIdempotencyKey: () => "test-key",
   createHarnessJob: (...args) => createHarnessJob(...args),
   preflightHarnessJob: (...args) => preflightHarnessJob(...args),
   listHarnessJobs: vi.fn(async () => ({ jobs: [] })),

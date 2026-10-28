@@ -94,6 +94,66 @@ def test_sentry_scrubs_outbound_telemetry_request_breadcrumb_body():
     assert other_crumb["data"]["body"] == '{"keep":"me"}'
 
 
+# The router serves every harness route with an optional format suffix too, so a sensitive
+# endpoint is reachable as `secret-values/`, `secret-values.json` and `secret-values.json/`.
+_SENSITIVE_HARNESS_PATHS = [
+    f"/simulate/api/harness-jobs/{endpoint}{suffix}"
+    for endpoint in ("sources", "secret-files", "secret-values")
+    for suffix in ("/", ".json", ".json/")
+]
+
+
+@pytest.mark.parametrize("path", _SENSITIVE_HARNESS_PATHS)
+def test_otel_never_reads_a_sensitive_harness_body(path):
+    request = RequestFactory().post(
+        path,
+        data='{"environment_values": {"DATABASE_URL": "postgres://u:hunter2@db/x"}}',
+        content_type="application/json",
+    )
+    span = MagicMock()
+
+    OTelContextMiddleware(lambda request: None)._capture_request(span, request)
+
+    captured_attributes = [call.args[0] for call in span.set_attribute.call_args_list]
+    assert "http.request.body" not in captured_attributes
+    # Not even read: a source upload is refused by its declared size before it is buffered.
+    assert not hasattr(request, "_body")
+
+
+@pytest.mark.parametrize("path", _SENSITIVE_HARNESS_PATHS)
+def test_sentry_scrubs_a_sensitive_harness_request(path):
+    event = {
+        "request": {
+            "url": f"https://api.futureagi.com{path}",
+            "data": {
+                "environment_values": {"DATABASE_URL": "postgres://u:hunter2@db/x"}
+            },
+        },
+        "exception": {
+            "values": [{"stacktrace": {"frames": [{"vars": {"value": "hunter2"}}]}}]
+        },
+    }
+
+    scrubbed = _scrub_deployment_telemetry_event(event)
+
+    assert "data" not in scrubbed["request"]
+    assert "vars" not in scrubbed["exception"]["values"][0]["stacktrace"]["frames"][0]
+
+
+def test_otel_still_captures_an_ordinary_harness_body():
+    request = RequestFactory().post(
+        "/simulate/api/harness-jobs/preflight.json",
+        data='{"scenario_count": 3}',
+        content_type="application/json",
+    )
+    span = MagicMock()
+
+    OTelContextMiddleware(lambda request: None)._capture_request(span, request)
+
+    captured_attributes = [call.args[0] for call in span.set_attribute.call_args_list]
+    assert "http.request.body" in captured_attributes
+
+
 def test_minimal_disabled_registration_payload_drops_user_data():
     """The opt-out path must carry only the four documented fields plus
     ``telemetry_disabled=true``. ``users`` is the field most often added by a

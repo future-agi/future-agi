@@ -12,6 +12,7 @@ import EvalsStep from "./evals/EvalsStep";
 import RunsSummary from "./runs/summary/RunsSummary";
 import SettingsPanel from "./settings/SettingsPanel";
 import WorkspaceTabLabel from "./WorkspaceTabLabel";
+import CompositionPanel from "./composition/CompositionPanel";
 import { WORKSPACE_TABS } from "./workspace.constants";
 
 // The shared rail + body switch. One instance serves the route workspace and
@@ -74,7 +75,12 @@ export default function WorkspacePanels({
   // loading, a deep link to ?tab=runs keeps the tab so it does not bounce to
   // the Overview and back.
   const showRuns = runsTotal > 0 || (runsLoading && tab === "runs");
-  const tabs = showRuns ? WORKSPACE_TABS : WORKSPACE_TABS.filter((t) => t.id !== "runs");
+  // Alignment exists only on a composition: a released environment bound to the agent.
+  const tabs = WORKSPACE_TABS.filter(
+    (t) =>
+      (t.id !== "runs" || showRuns) &&
+      (t.id !== "composition" || Boolean(env?.composition)),
+  );
 
   // Default landing is the Overview, which is also the first tab in the rail.
   const current =
@@ -123,6 +129,8 @@ export default function WorkspacePanels({
         // The summary's eval columns come from the runs' own scores, so it
         // only needs the store for its scenario count.
         return <RunsSummary env={env} envState={envState} onOpenRun={openRun} onGo={go} />;
+      case "composition":
+        return <CompositionPanel composition={env.composition} />;
       case "settings":
         return <SettingsPanel env={env} locked={locked} backed={backed} />;
       default:
@@ -190,6 +198,7 @@ WorkspacePanels.propTypes = {
     id: PropTypes.string,
     name: PropTypes.string,
     surface: PropTypes.string,
+    composition: PropTypes.object,
     platform: PropTypes.shape({
       runTestId: PropTypes.string,
       testExecutionId: PropTypes.string,

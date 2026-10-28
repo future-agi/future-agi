@@ -169,15 +169,27 @@ def _current_chat_workspace(job: HostedHarnessJob, checkpoint: bytes) -> bytes |
     that never finished; publishing it later would apply changes nobody confirmed. Only the
     chat's own state (its root dot files: sessions, journal, kept notes) carries over.
     """
+    from simulate.services.harness_releases import composition_of
+
     environment = job.environment or job
-    revision = str(
-        ((environment.payload or {}).get("metadata") or {}).get("authoring_revision") or ""
-    )
-    if not revision:
-        return checkpoint
-    current = _authoring_archive_for(environment)
-    if current is None:
-        return checkpoint
+    if composition_of(environment) is not None:
+        from simulate.services.harness_composition_edits import (
+            composition_revision,
+            composition_workspace_archive,
+        )
+
+        revision = composition_revision(environment)
+        current = composition_workspace_archive(environment)
+    else:
+        revision = str(
+            ((environment.payload or {}).get("metadata") or {}).get("authoring_revision")
+            or ""
+        )
+        if not revision:
+            return checkpoint
+        current = _authoring_archive_for(environment)
+        if current is None:
+            return checkpoint
     out = io.BytesIO()
     with (
         tarfile.open(fileobj=io.BytesIO(checkpoint), mode="r:gz") as chat,
@@ -211,6 +223,24 @@ def _ask_harness_to_build(
         client_request_id=f"build-{attempt.id}",
         endpoint_base_url=endpoint_base_url,
     )
+
+
+def _ask_harness_to_adapt(
+    job: HostedHarnessJob, attempt: HostedHarnessAttempt, endpoint_base_url: str
+) -> None:
+    """Put the adaptation request into the job's conversation; its harness binds the agent."""
+    from simulate.services.hosted_harness_conversation import enqueue_message
+    from simulate.tasks.hosted_harness_conversation import schedule_conversation_runtime
+
+    conversation, _message, _created = enqueue_message(
+        job,
+        content=(
+            "Bind this agent to the environment: write the binding, prove it, report where "
+            "the agent's instructions conflict with the policy, then finish."
+        ),
+        client_request_id=f"adapt-{attempt.id}",
+    )
+    schedule_conversation_runtime(str(conversation.id), endpoint_base_url)
 
 
 def _alk_source_overlay() -> bytes | None:
@@ -300,6 +330,40 @@ def _sandbox_collector_url() -> str:
     ).strip()
 
 
+def simulator_settings() -> dict[str, str]:
+    """The simulated caller's model and speech settings from deployment configuration, as the
+    sandbox receives them. Release runs freeze exactly this at submission (contract §2.5), so a
+    run dispatched or retried later behaves as it did when submitted."""
+    provider = str(os.environ.get("SIMULATOR_LLM_PROVIDER") or "vertex").strip()
+    # Gateway model names carry the serving provider: a bare Gemini name is the Gemini API.
+    model = str(
+        os.environ.get("SIMULATOR_LLM_MODEL") or "vertex_ai/gemini-3.8-flash"
+    ).strip()
+    values = {"SIMULATOR_LLM_PROVIDER": provider, "SIMULATOR_LLM_MODEL": model}
+    # Models the simulated caller tries in turn when the chosen one fails.
+    fallbacks = [
+        one.strip()
+        for one in str(os.environ.get("SIMULATOR_LLM_FALLBACK_MODELS") or "").split(",")
+        if one.strip()
+    ]
+    if fallbacks:
+        values["SIMULATOR_LLM_FALLBACK_MODELS"] = ",".join(fallbacks)
+    for name in (
+        # Unset keeps ALK's per-model least deliberation; set it to go lower where a model
+        # allows (e.g. "minimal" on gemini-3.5-flash-lite, which gemini-3.7-flash refuses).
+        "SIMULATOR_LLM_THINKING",
+        "SIMULATOR_STT_MODEL",
+        "SIMULATOR_STT_PROVIDER",
+        "SIMULATOR_TTS_MODEL",
+        "SIMULATOR_TTS_PROVIDER",
+        "SIMULATOR_TTS_VOICE",
+    ):
+        value = str(os.environ.get(name) or "").strip()
+        if value:
+            values[name] = value
+    return values
+
+
 def _platform_simulator_material() -> dict[str, str]:
     """Return control-process-only simulator config.
 
@@ -312,11 +376,8 @@ def _platform_simulator_material() -> dict[str, str]:
     AgentCC on its key, so no vendor's credential is placed in a sandbox. AgentCC relays speech
     for Deepgram and Cartesia only, which is why no other speech provider is accepted.
     """
-    provider = str(os.environ.get("SIMULATOR_LLM_PROVIDER") or "vertex").strip()
-    # Gateway model names carry the serving provider: a bare Gemini name is the Gemini API.
-    model = str(
-        os.environ.get("SIMULATOR_LLM_MODEL") or "vertex_ai/gemini-3.8-flash"
-    ).strip()
+    settings = simulator_settings()
+    model = settings["SIMULATOR_LLM_MODEL"]
     backend = str(os.environ.get("ALK_HARNESS") or "claude").strip()
     agentcc_url = str(
         os.environ.get("ALK_HOSTED_AGENTCC_BASE_URL")
@@ -369,30 +430,18 @@ def _platform_simulator_material() -> dict[str, str]:
         "ALK_HARNESS_MODEL": authoring_model,
         # Explicit "0": Claude Code treats an empty value as set.
         "CLAUDE_CODE_USE_VERTEX": "0",
-        "SIMULATOR_LLM_PROVIDER": provider,
-        "SIMULATOR_LLM_MODEL": model,
+        **settings,
         "ALK_CLAUDE_GATEWAY_URL": agentcc_url.rstrip("/"),
         "ALK_CLAUDE_GATEWAY_API_KEY": agentcc_key,
         "AGENTCC_BASE_URL": agentcc_url.rstrip("/"),
         "AGENTCC_API_KEY": agentcc_key,
     }
-    # Unset keeps ALK's per-model least deliberation; set it to go lower where a model allows
-    # (e.g. "minimal" on gemini-3.5-flash-lite, which gemini-3.7-flash refuses).
-    thinking = str(os.environ.get("SIMULATOR_LLM_THINKING") or "").strip()
-    if thinking:
-        values["SIMULATOR_LLM_THINKING"] = thinking
     from simulate.services.phone_telephony import platform_phone_telephony
 
     values.update(
         {name: value for name, value in platform_phone_telephony().items() if value}
     )
     for name in (
-        # Models the simulated caller tries in turn when the chosen one fails.
-        "SIMULATOR_LLM_FALLBACK_MODELS",
-        "SIMULATOR_STT_MODEL",
-        "SIMULATOR_STT_PROVIDER",
-        "SIMULATOR_TTS_MODEL",
-        "SIMULATOR_TTS_PROVIDER",
         # Observe account of the guest: platform evals and, on opt-in, the harness's own traces.
         "FI_API_KEY",
         "FI_SECRET_KEY",
@@ -2254,12 +2303,27 @@ class HostedHarnessGateway:
         _mark_stage(job, "acquiring_source")
         source_archive, commit_sha = HostedSourceAcquirer().acquire(job)
         authoring_archive = _authoring_archive_for(job)
+        from simulate.services.harness_releases import (
+            adaptation_launch_for,
+            apply_frozen_simulator,
+            release_launch_for,
+        )
+
+        # A run of a composition receives immutable releases instead of an authoring archive;
+        # an adaptation receives the releases it adapts the agent to and runs nothing else.
+        release = release_launch_for(job)
+        adaptation = adaptation_launch_for(job)
+        # Releases staged under /work/releases: a job carries a composition or an adaptation.
+        staged = release or adaptation
         payload = dict(job.payload)
         if authoring_archive is not None:
             # Resolve cached authoring created before connector resolution shipped as well as
             # newly-authored jobs. This must happen before network policy and job.json are built.
             payload = resolve_authored_connector(payload, authoring_archive)
         simulator_env = _platform_simulator_material()
+        if release is not None:
+            # The manifest froze these at submission; a run never uses later settings.
+            apply_frozen_simulator(simulator_env, release.simulator)
         guest_pin_policy_released = _add_scoped_guest_pin_policy(simulator_env, job)
         # A chat-driven "add N scenarios" request replays the frozen world but re-runs
         # scenario-gen (extend) against it. The marker persists across infra retries and is
@@ -2282,7 +2346,7 @@ class HostedHarnessGateway:
         secrets_map = PlatformSecretResolver().resolve(job)
         authoring_target_secrets, _authoring_connector = (
             _provider_import_authoring_material(job, payload)
-            if authoring_archive is None
+            if authoring_archive is None and release is None and adaptation is None
             else ({}, "")
         )
         from simulate.services.harness_capacity import configured_capacity
@@ -2344,6 +2408,15 @@ class HostedHarnessGateway:
         registered_snapshot_digest = (
             capacity.snapshot_digest or self.client.runtime_digest
         )
+        if release is not None and (
+            release.runtime["image_name"],
+            release.runtime["image_digest"],
+        ) != (selected_snapshot, registered_snapshot_digest):
+            raise HostedHarnessError(
+                "run_manifest_runtime_changed",
+                "the sandbox runtime changed since this run was submitted; submit it again",
+                status_code=409,
+            )
         if self.client.name != "daytona" and (
             (
                 capacity.snapshot_name
@@ -2432,6 +2505,8 @@ class HostedHarnessGateway:
                 ).encode(),
                 "/work/job.json",
             )
+            for path, body in staged.uploads if staged is not None else ():
+                sandbox.fs.upload_file(body, path)
             sandbox.fs.upload_file(
                 json.dumps(secrets_map, sort_keys=True, separators=(",", ":")).encode(),
                 "/run/futureagi/secrets.json",
@@ -2501,14 +2576,15 @@ class HostedHarnessGateway:
                 "mkdir -p /work/authoring && "
                 "tar -xzf /work/authoring.tar.gz -C /work/authoring && "
                 "rm /work/authoring.tar.gz; fi && "
-                "tar -xzf /work/source.tar.gz -C /work && "
+                + (f"{staged.prepare_command} && " if staged is not None else "")
+                + "tar -xzf /work/source.tar.gz -C /work && "
                 "rm /work/source.tar.gz && "
                 "chown -R svc-control:svc-control /work/source && "
                 "chmod -R a-w /work/source && "
                 "chmod 0600 /work/job.json /run/futureagi/secrets.json "
                 "/run/futureagi/capabilities.json "
                 f"{_CHAT_POLICY_PATH} "
-                f"{_SIMULATOR_SECRETS_PATH} "
+                + f"{_SIMULATOR_SECRETS_PATH} "
                 + (authoring_secrets_path if authoring_target_secrets else ""),
                 timeout=120,
             )
@@ -2542,6 +2618,11 @@ class HostedHarnessGateway:
                 }
             }
             authoring_exports["PATH"] = _CHAT_RUNTIME_PATH
+            # The control processes (build and adaptation) otherwise wait ALK's own 55-minute
+            # default, not the authoring budget this deployment sized the sandbox for.
+            authoring_exports["ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS"] = str(
+                int(getattr(settings, "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS", 3600))
+            )
             if overlay is not None:
                 authoring_exports["PYTHONPATH"] = "/work/alk-src"
             provider_profile_args = (
@@ -2554,9 +2635,12 @@ class HostedHarnessGateway:
                 (dispatch_payload.get("metadata") or {}).get("simulation_only")
             )
             # A fresh build is the conversation's harness's work; this command waits for it.
+            # Release and adaptation jobs author nothing, so they never ask it to build.
             harness_builds = (
                 authoring_archive is None
                 and not simulation_only
+                and release is None
+                and adaptation is None
                 and getattr(settings, "ALK_HOSTED_BUILDER_SESSION", True)
             )
             bundle_command = (
@@ -2574,22 +2658,31 @@ class HostedHarnessGateway:
                     "cp -a /work/bundle /work/authoring/environment-bundle"
                 )
             )
+            entrypoint = (
+                "python -m fi.alk.harness.hosted_entrypoint /work/job.json "
+                "--source /work/source --output /work/artifacts"
+            )
+            if adaptation is not None:
+                guest_command = adaptation.command
+            elif release is not None:
+                guest_command = f"{release.bundle_command} && {entrypoint}"
+            else:
+                guest_command = (
+                    "if [ ! -f /work/authoring/contract.json ]; then "
+                    "python -m fi.alk.harness.hosted_authoring_entrypoint "
+                    "/work/job.json --source /work/source --output /work/authoring "
+                    + ("--await-harness " if harness_builds else f"--adjustments {_ADJUSTMENTS_PATH} ")
+                    + provider_profile_args
+                    + "; fi && "
+                    + ((extend_command + " && ") if extend_command else "")
+                    + bundle_command
+                    + " && "
+                    + entrypoint
+                )
             command = sandbox.process.execute_session_command(
                 _ENTRYPOINT_SESSION,
                 SandboxCommandRequest(
-                    command=(
-                        "if [ ! -f /work/authoring/contract.json ]; then "
-                        "python -m fi.alk.harness.hosted_authoring_entrypoint "
-                        "/work/job.json --source /work/source --output /work/authoring "
-                        + ("--await-harness " if harness_builds else f"--adjustments {_ADJUSTMENTS_PATH} ")
-                        + provider_profile_args
-                        + "; fi && "
-                        + ((extend_command + " && ") if extend_command else "")
-                        + bundle_command
-                        + " && "
-                        "python -m fi.alk.harness.hosted_entrypoint /work/job.json "
-                        "--source /work/source --output /work/artifacts"
-                    ),
+                    command=guest_command,
                     env=authoring_exports,
                     run_async=True,
                     suppress_input_echo=True,
@@ -2603,6 +2696,8 @@ class HostedHarnessGateway:
             attempt.save(update_fields=["state", "heartbeat_at", "updated_at"])
             if harness_builds:
                 _ask_harness_to_build(job, attempt, endpoint_base_url)
+            elif adaptation is not None:
+                _ask_harness_to_adapt(job, attempt, endpoint_base_url)
             return attempt
         except Exception as exc:
             provider_status_code = getattr(exc, "status_code", None)
@@ -2985,16 +3080,29 @@ class HostedHarnessGateway:
         if workspace_archive is not None:
             workspace_archive = _current_chat_workspace(job, workspace_archive)
         if workspace_archive is None:
-            workspace_archive = _authoring_archive_for(job.environment or job)
-            if workspace_archive is not None:
-                environment = job.environment or job
+            from simulate.services.harness_releases import composition_of
+
+            environment = job.environment or job
+            if composition_of(environment) is not None:
+                # A composition's chat edits its suite on the releases it was composed from.
+                from simulate.services.harness_composition_edits import (
+                    composition_revision,
+                    composition_workspace_archive,
+                )
+
+                workspace_archive = with_authoring_basis(
+                    composition_workspace_archive(environment),
+                    composition_revision(environment),
+                )
+            else:
+                workspace_archive = _authoring_archive_for(environment)
                 basis = str(
                     ((environment.payload or {}).get("metadata") or {}).get(
                         "authoring_revision"
                     )
                     or ""
                 )
-                if basis:
+                if workspace_archive is not None and basis:
                     workspace_archive = with_authoring_basis(workspace_archive, basis)
         control_only = workspace_archive is None
         if workspace_archive is None:
@@ -4157,6 +4265,10 @@ class HostedHarnessGateway:
             attempt.heartbeat_at = timezone.now()
             attempt.save(update_fields=["heartbeat_at", "updated_at"])
             return None
+        from simulate.services.harness_releases import adaptation_of
+
+        if exit_code in {0, 2} and adaptation_of(job) is not None:
+            return self._finish_adaptation(attempt)
 
         # Event/manifest ingestion runs independently from the provider poll. The attempt object
         # held by the workflow may predate terminal HTTP requests even though both commits are
@@ -4308,6 +4420,45 @@ class HostedHarnessGateway:
                 ]
             )
         return self._delete_and_record(attempt, retry_pending=retry_pending)
+
+    def _finish_adaptation(self, attempt: HostedHarnessAttempt) -> HostedHarnessJob:
+        """Settle an adaptation whose process exited 0 or 2 from what it left in its output
+        directory (contract §7.5), then clean up through the normal attempt protocol."""
+        from simulate.services.harness_releases import (
+            ADAPTATION_OUTPUT,
+            complete_adaptation,
+        )
+
+        sandbox = self.client.get(
+            str(attempt.provider_ref), request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS
+        )
+        packed = sandbox.process.exec(
+            f"mkdir -p {ADAPTATION_OUTPUT} && "
+            f"tar -czf /tmp/adaptation.tar.gz -C {ADAPTATION_OUTPUT} .",
+            timeout=180,
+        )
+        if packed.exit_code:
+            raise HostedHarnessError(
+                "adaptation_pack_failed",
+                str(packed.result or "")[-500:],
+                status_code=502,
+                retryable=True,
+            )
+        body = sandbox.fs.download_file("/tmp/adaptation.tar.gz", 300)
+        with tempfile.TemporaryDirectory() as directory:
+            output: Path | None = Path(directory)
+            try:
+                with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
+                    archive.extractall(directory, filter="data")
+            except tarfile.TarError:
+                output = None
+            job = complete_adaptation(attempt.job, output)
+        attempt.terminal_stage = (
+            "completed" if job.state == HostedHarnessJob.State.COMPLETED else "failed"
+        )
+        attempt.terminal_failure = job.failure
+        attempt.save(update_fields=["terminal_stage", "terminal_failure", "updated_at"])
+        return self._delete_and_record(attempt)
 
     def _cleanup_conversation_runtime(self, job: HostedHarnessJob) -> None:
         """Delete the control-only chat sandbox after the execution becomes terminal."""

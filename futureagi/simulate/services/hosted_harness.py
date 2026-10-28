@@ -263,7 +263,11 @@ def create_selected_harness_run(
             status_code=409,
         )
     metadata = dict((environment.payload or {}).get("metadata") or {})
-    if not environment.run_test_id or not metadata.get("authoring_object_key"):
+    # A composition's snapshot is its immutable releases rather than an authoring archive.
+    snapshot = metadata.get("authoring_object_key") or metadata.get(
+        "release_composition"
+    )
+    if not environment.run_test_id or not snapshot:
         raise HostedHarnessError(
             "environment_snapshot_missing",
             "environment has no durable validated snapshot",
@@ -306,12 +310,14 @@ def create_selected_harness_run(
                 "environment was deleted while submitting this Run",
                 status_code=409,
             ) from exc
+        locked_metadata = environment.payload.get("metadata") or {}
         if (
             environment.deleted
             or environment.state != HostedHarnessJob.State.COMPLETED
             or not environment.run_test_id
-            or not (environment.payload.get("metadata") or {}).get(
-                "authoring_object_key"
+            or not (
+                locked_metadata.get("authoring_object_key")
+                or locked_metadata.get("release_composition")
             )
         ):
             raise HostedHarnessError(
@@ -442,6 +448,12 @@ def create_selected_harness_run(
         child_payload = dict(child.payload)
         child_metadata = dict(child_payload.get("metadata") or {})
         child_metadata["execution_manifest"] = manifest
+        if child_metadata.get("release_composition"):
+            from simulate.services.harness_releases import freeze_run_manifest
+
+            child_metadata["run_manifest"] = freeze_run_manifest(
+                environment, child, scenario_keys=scenario_keys, trials=trials
+            )
         child_payload["metadata"] = child_metadata
         child.payload = child_payload
         execution_metadata = dict(test_execution.execution_metadata or {})
@@ -1303,18 +1315,18 @@ def provision_scenarios(
 
 def _target_agent_prompt(job: HostedHarnessJob, payload: dict[str, Any]) -> str:
     """Resolve target instructions without reducing an Others prompt."""
-    connector = str((job.payload.get("agent") or {}).get("connector") or "")
-    if connector in {"phone", "livekit"}:
-        # "Others" is configured from a user-supplied system prompt.  Keep that
-        # complete prompt as the agent definition's source of truth: the hosted
-        # guest's ``agent_prompt`` may only be the short contract excerpt used
-        # during authoring and must not replace it.
-        configured = str(
-            ((job.payload.get("agent") or {}).get("config") or {}).get(
-                "target_system_prompt"
-            )
-            or ""
-        ).strip()
+    agent = job.payload.get("agent") or {}
+    # "Others" is configured from a user-supplied system prompt, and our hosted agent carries
+    # its instructions. Keep that complete prompt as the agent definition's source of truth:
+    # the hosted guest's ``agent_prompt`` may only be the short contract excerpt used during
+    # authoring and must not replace it.
+    configured_key = {
+        "phone": "target_system_prompt",
+        "livekit": "target_system_prompt",
+        "hosted_agent": "instructions",
+    }.get(str(agent.get("connector") or ""))
+    if configured_key:
+        configured = str((agent.get("config") or {}).get(configured_key) or "").strip()
         if configured:
             return configured
     supplied = str(payload.get("agent_prompt") or "").strip()
@@ -1764,10 +1776,12 @@ def record_cleanup(
             job.state = HostedHarnessJob.State.RETRY_WAIT
             job.save(update_fields=["state", "updated_at"])
             return job
+        # An adaptation job is completed by complete_adaptation, not by an authoring archive.
         snapshot_missing = (
             job.environment_id is None
             and job.test_execution_id is None
             and attempt.terminal_stage == "completed"
+            and not (job.payload.get("metadata") or {}).get("adaptation")
             and (
                 not job.run_test_id
                 or not (job.payload.get("metadata") or {}).get("authoring_object_key")
