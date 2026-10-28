@@ -115,11 +115,26 @@ const titleOf = (layer) =>
  * do. The back arrow (and Esc) slides it back out; the X closes the whole
  * drawer. While a build is being created nothing closes, so its hand-off
  * to the environment page always runs.
+ *
+ * `connect` ({ modality, onConnected }) opens it straight onto the ways to
+ * connect an agent of that type, as an environment's agent picker does. That
+ * layer is then the whole drawer: going back from it or connecting closes it.
  */
-export default function BuildEnvironmentDrawer({ open, onClose }) {
+export default function BuildEnvironmentDrawer({ open, onClose, connect }) {
   // { kind: "setup", item, at, connect? } or { kind: "connect", modality,
   // onConnected, at }. `at` keys a layer, so opening a way again starts fresh.
-  const [layers, setLayers] = useState([]);
+  const [layers, setLayers] = useState(() =>
+    connect
+      ? [
+          {
+            kind: "connect",
+            modality: connect.modality ?? null,
+            onConnected: connect.onConnected,
+            at: 0,
+          },
+        ]
+      : [],
+  );
   // "catalog", or "worlds" while browsing every prebuilt world.
   const [view, setView] = useState("catalog");
   const [busy, setBusy] = useState(false);
@@ -162,6 +177,7 @@ export default function BuildEnvironmentDrawer({ open, onClose }) {
       { variant: "info" },
     );
     connectLayer.onConnected?.(agent);
+    if (connect && connectLayer.at === 0) finish();
   };
   const pickToConnect = (connectLayer) => (it) =>
     push({
@@ -198,6 +214,10 @@ export default function BuildEnvironmentDrawer({ open, onClose }) {
   };
   const back = () => {
     if (busy || !top) return;
+    if (connect && top.at === 0) {
+      finish();
+      return;
+    }
     setLayers((ls) =>
       ls.map((l) => (l.at === top.at ? { ...l, leaving: true } : l)),
     );
@@ -238,13 +258,15 @@ export default function BuildEnvironmentDrawer({ open, onClose }) {
         spacing={1.5}
         sx={{ ...headerSx, px: 2.5, py: 1.75 }}
       >
-        <CloseButton
-          ref={isTop ? backRef : undefined}
-          label={backLabel}
-          icon="solar:alt-arrow-left-linear"
-          onClick={back}
-          disabled={busy}
-        />
+        {!(connect && layer.at === 0) && (
+          <CloseButton
+            ref={isTop ? backRef : undefined}
+            label={backLabel}
+            icon="solar:alt-arrow-left-linear"
+            onClick={back}
+            disabled={busy}
+          />
+        )}
         {item && (item.logo || item.icon) && (
           <LogoTile logo={item.logo} icon={item.icon} size={36} />
         )}
@@ -404,15 +426,15 @@ export default function BuildEnvironmentDrawer({ open, onClose }) {
               minHeight: 0,
             }}
           >
-            {header}
-            <Box sx={{ ...scrollSx, px: 3, pt: 2.5 }}>{list}</Box>
+            {!connect && header}
+            {!connect && <Box sx={{ ...scrollSx, px: 3, pt: 2.5 }}>{list}</Box>}
           </Box>
           {layers.map((layer) => (
             <Slide
               key={layer.at}
               direction="left"
               in={!layer.leaving}
-              appear
+              appear={!(connect && layer.at === 0)}
               container={stageRef.current}
               timeout={slideMs}
               onExited={() => removeLayer(layer.at)}
@@ -451,4 +473,8 @@ export default function BuildEnvironmentDrawer({ open, onClose }) {
 BuildEnvironmentDrawer.propTypes = {
   open: PropTypes.bool,
   onClose: PropTypes.func.isRequired,
+  connect: PropTypes.shape({
+    modality: PropTypes.oneOf(["voice", "text"]),
+    onConnected: PropTypes.func,
+  }),
 };

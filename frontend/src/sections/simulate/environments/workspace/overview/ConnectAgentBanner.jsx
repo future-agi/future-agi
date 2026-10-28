@@ -1,11 +1,10 @@
+import PropTypes from "prop-types";
 import { Button, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { RouterLink } from "src/routes/components";
-import { CONNECT_AGENT_PATH } from "src/sections/agent-playground/agentsTabs";
 
-// Vel's no-agent banner on Overview. Attaching an agent to an existing
-// environment has no API yet, so Connect agent opens the agent connect flow.
-export default function ConnectAgentBanner() {
+// Vel's no-agent banner on Overview. Connect agent opens the Change agent
+// drawer, as Vel's does; attaching the agent there is UI only.
+export default function ConnectAgentBanner({ onConnect }) {
   return (
     <Stack
       direction="row"
@@ -30,8 +29,7 @@ export default function ConnectAgentBanner() {
         Connect your agent to start testing
       </Typography>
       <Button
-        component={RouterLink}
-        href={CONNECT_AGENT_PATH}
+        onClick={onConnect}
         size="small"
         variant="contained"
         color="primary"
@@ -41,3 +39,5 @@ export default function ConnectAgentBanner() {
     </Stack>
   );
 }
+
+ConnectAgentBanner.propTypes = { onConnect: PropTypes.func.isRequired };

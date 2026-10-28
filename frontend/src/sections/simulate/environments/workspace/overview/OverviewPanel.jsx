@@ -1,4 +1,5 @@
 import PropTypes from "prop-types";
+import { useState } from "react";
 import { Box, Stack, Typography, Grid } from "@mui/material";
 import { getSurface } from "src/api/simulate-environments/_fixtures/surfaces";
 import { contractFor } from "src/api/simulate-environments/_fixtures/contract";
@@ -19,6 +20,7 @@ import useUiSample from "../../hooks/useUiSample";
 import { RUN_MODE_CHIP } from "../workspace.constants";
 import AgentLine from "./AgentLine";
 import ConnectAgentBanner from "./ConnectAgentBanner";
+import ChangeAgentDrawer from "../agent/ChangeAgentDrawer";
 import SourceToSandboxMap from "./SourceToSandboxMap";
 import AgentRefreshBanner from "./AgentRefreshBanner";
 import StateSummary from "./StateSummary";
@@ -52,6 +54,7 @@ const WORLD_NOTE = {
 export default function OverviewPanel({ env, envState, patch, onGo, locked = false, buildMode, counts, latestRun, backedWorld }) {
   const sampleWorld = useUiSample("world");
   const sampleAgentChange = useUiSample("agentchange");
+  const [changingAgent, setChangingAgent] = useState(false);
   // Manage-versions drawer state — commented with the card + drawer below,
   // to be picked up later.
   // const [agentDrawerOpen, setAgentDrawerOpen] = useState(false);
@@ -116,10 +119,17 @@ export default function OverviewPanel({ env, envState, patch, onGo, locked = fal
       )}
 
       {env.testSubject ? (
-        <AgentLine subject={env.testSubject} agentMode={env.agentMode} envId={env.id} />
+        <AgentLine
+          subject={env.testSubject}
+          agentMode={env.agentMode}
+          envId={env.id}
+          envName={env.name}
+          onChangeAgent={locked ? undefined : () => setChangingAgent(true)}
+        />
       ) : (
-        <ConnectAgentBanner />
+        <ConnectAgentBanner onConnect={() => setChangingAgent(true)} />
       )}
+      <ChangeAgentDrawer open={changingAgent} onClose={() => setChangingAgent(false)} env={env} />
 
       {/* The agent-changed banner reads sample versions, so it shows only with
           ?uiSample=agentchange. */}

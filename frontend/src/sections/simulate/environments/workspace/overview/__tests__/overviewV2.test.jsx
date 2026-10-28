@@ -131,7 +131,7 @@ describe("Overview, Vel's layout", () => {
       screen.getByText("Connect your agent to start testing"),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: "Connect agent" }),
+      screen.getByRole("button", { name: "Connect agent" }),
     ).toBeInTheDocument();
   });
 

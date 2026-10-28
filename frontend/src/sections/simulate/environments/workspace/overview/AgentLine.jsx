@@ -1,10 +1,8 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { enqueueSnackbar } from "notistack";
 import {
   Box,
   Button,
-  Dialog,
   IconButton,
   Menu,
   MenuItem,
@@ -17,8 +15,10 @@ import { VOICE_CHAT_PROVIDERS } from "src/sections/agents/constants";
 import { CONNECTED_AGENTS_PATH } from "src/sections/agent-playground/agentsTabs";
 import SoonChip from "../../components/SoonChip";
 import UiOnlyFlag from "../../components/UiOnlyFlag";
+import useUiSample from "../../hooks/useUiSample";
 import { RUN_MODE_CHIP } from "../workspace.constants";
-import { UI_ONLY_SAVED } from "../gaps/NeedsInputButton";
+import AgentSyncDialog from "../agent/AgentSyncDialog";
+import SwitchVersionDialog from "../agent/SwitchVersionDialog";
 import { CONNECTOR_LABEL } from "./overview.constants";
 
 const providerLabel = (provider) =>
@@ -26,14 +26,41 @@ const providerLabel = (provider) =>
   CONNECTOR_LABEL[provider] ||
   provider;
 
+// The newest version when the agent has one past the active version:
+// "v3" for versions_count 3 and active_version "v2".
+const newerVersion = ({ active_version: active, versions_count: count }) => {
+  const n = Number(/^v(\d+)$/.exec(active || "")?.[1]);
+  return n && count > n ? `v${count}` : null;
+};
+
 // Vel's agent line: "Tests <name> <version> · <provider> · Live · default:
-// production" with View agent and a menu. Name, version and provider are real;
-// which version is the environment's default isn't in the API (soon chip), and
-// Sync agent has no API (UI only).
-export default function AgentLine({ subject, agentMode, envId }) {
+// production" with Try vN, View agent and a menu. Name, version and provider
+// are real; Try vN shows only with ?uiSample=agentversion. Which version
+// is the environment's default isn't in the API (soon chip), so Default to
+// production shows only with ?uiSample=agentversion. Changing the default,
+// Change agent and Sync agent have no API (UI only).
+export default function AgentLine({
+  subject,
+  agentMode,
+  envId,
+  envName,
+  onChangeAgent,
+}) {
   const [menu, setMenu] = useState(null);
   const [syncOpen, setSyncOpen] = useState(false);
+  const [switchOpen, setSwitchOpen] = useState(false);
+  // { label, follows } for the switch dialog; kept while it closes.
+  const [switchTo, setSwitchTo] = useState(null);
+  const openSwitch = (to) => {
+    setSwitchTo(to);
+    setSwitchOpen(true);
+  };
+  const sampleDefault = useUiSample("agentversion");
   const live = RUN_MODE_CHIP[agentMode]?.label;
+  const source = subject.provider ? providerLabel(subject.provider) : null;
+  // Version numbers can have gaps or drafts, so a count can't name a real
+  // newer version: Try vN is sample only until the API says which is newer.
+  const newer = sampleDefault ? newerVersion(subject) : null;
   const strong = (t) => (
     <Box component="span" sx={{ color: "text.primary", fontWeight: 600 }}>
       {t}
@@ -66,7 +93,7 @@ export default function AgentLine({ subject, agentMode, envId }) {
         {strong(
           `${subject.name || "Agent"} ${subject.active_version || ""}`.trim(),
         )}
-        {[subject.provider && providerLabel(subject.provider), live]
+        {[source, live]
           .filter(Boolean)
           .map((x) => ` · ${x}`)
           .join("")}
@@ -78,6 +105,35 @@ export default function AgentLine({ subject, agentMode, envId }) {
         size="tiny"
       />
       <Box flex={1} />
+      {newer && (
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={() => openSwitch({ label: newer, follows: false })}
+          sx={{ color: "text.primary", borderColor: "divider", flexShrink: 0 }}
+        >
+          {`Try ${newer}`}
+        </Button>
+      )}
+      {sampleDefault && subject.active_version && (
+        <>
+          <UiOnlyFlag feature="agentVersionDefault" />
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={() =>
+              openSwitch({ label: subject.active_version, follows: true })
+            }
+            sx={{
+              color: "text.primary",
+              borderColor: "divider",
+              flexShrink: 0,
+            }}
+          >
+            Default to production
+          </Button>
+        </>
+      )}
       <Button
         component={RouterLink}
         href={`${CONNECTED_AGENTS_PATH}/${subject.id}?tab=environments&env=${envId || ""}`}
@@ -102,6 +158,19 @@ export default function AgentLine({ subject, agentMode, envId }) {
         anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
         transformOrigin={{ vertical: "top", horizontal: "right" }}
       >
+        {onChangeAgent && (
+          <MenuItem
+            onClick={() => {
+              setMenu(null);
+              onChangeAgent();
+            }}
+            sx={{ gap: 1 }}
+          >
+            <Iconify icon="solar:transfer-horizontal-linear" width={16} />
+            <Typography sx={{ typography: "s2" }}>Change agent</Typography>
+            <UiOnlyFlag feature="connectAgent" />
+          </MenuItem>
+        )}
         <MenuItem
           onClick={() => {
             setMenu(null);
@@ -114,46 +183,20 @@ export default function AgentLine({ subject, agentMode, envId }) {
           <UiOnlyFlag feature="syncAgent" />
         </MenuItem>
       </Menu>
-      <Dialog
+      <AgentSyncDialog
         open={syncOpen}
         onClose={() => setSyncOpen(false)}
-        PaperProps={{ sx: { width: 460, p: 2.5 } }}
-      >
-        <Stack spacing={1.25}>
-          <Stack direction="row" alignItems="center" spacing={1}>
-            <Typography
-              sx={{ typography: "m3", fontWeight: 600 }}
-            >{`Sync ${subject.name || "the agent"}`}</Typography>
-            <UiOnlyFlag feature="syncAgent" />
-          </Stack>
-          <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-            Reads the agent&apos;s source again and shows what changed since{" "}
-            {subject.active_version || "this version"}. A change becomes the
-            agent&apos;s next version; this environment keeps testing the one it
-            tests now until you switch.
-          </Typography>
-          <Stack direction="row" spacing={1} justifyContent="flex-end">
-            <Button
-              size="small"
-              onClick={() => setSyncOpen(false)}
-              sx={{ color: "text.secondary" }}
-            >
-              Cancel
-            </Button>
-            <Button
-              size="small"
-              variant="contained"
-              color="primary"
-              onClick={() => {
-                setSyncOpen(false);
-                enqueueSnackbar(UI_ONLY_SAVED, { variant: "info" });
-              }}
-            >
-              Sync now
-            </Button>
-          </Stack>
-        </Stack>
-      </Dialog>
+        name={subject.name}
+        sourceLabel={source}
+        version={subject.active_version}
+      />
+      <SwitchVersionDialog
+        open={switchOpen}
+        onClose={() => setSwitchOpen(false)}
+        envName={envName}
+        label={switchTo?.label}
+        follows={switchTo?.follows}
+      />
     </Stack>
   );
 }
@@ -164,7 +207,11 @@ AgentLine.propTypes = {
     name: PropTypes.string,
     provider: PropTypes.string,
     active_version: PropTypes.string,
+    versions_count: PropTypes.number,
   }).isRequired,
   agentMode: PropTypes.string,
   envId: PropTypes.string,
+  envName: PropTypes.string,
+  // Opens the Change agent drawer; the menu item shows only with it.
+  onChangeAgent: PropTypes.func,
 };
