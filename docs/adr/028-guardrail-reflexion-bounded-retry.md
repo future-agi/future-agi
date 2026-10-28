@@ -44,7 +44,9 @@ outcomes; this is not evidence about a deployed production configuration.
   limits before additional repair work, preserve ordinary non-reflection
   failover admission behavior and record missing usage honestly.
 - Keep final cache/telemetry execution single-shot and rejected content out of
-  asynchronous observers and debug history.
+  asynchronous observers and debug history. Revalidate cache hits; a hit that
+  fails a reflecting rule returns `cached_response_blocked` without paid repair.
+  The caller can opt into regeneration with `Cache-Control: no-cache`.
 
 ## Consequences
 

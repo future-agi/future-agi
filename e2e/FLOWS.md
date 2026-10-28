@@ -1046,7 +1046,7 @@
 ### GW-E2E-005 — response retry settings persist and return only the first passing answer
 
 **Goal:** A developer enables response retry with feedback, keeps that setting after reload, and receives only the first passing answer from the gateway  
-**Spec:** `flows/gateway/guardrail-retry-feedback.spec.ts:77`  
+**Spec:** `flows/gateway/guardrail-retry-feedback.spec.ts:80`  
 **Tags:** —
 
 **User steps:**

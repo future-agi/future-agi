@@ -44,6 +44,14 @@ with the rule's top-level `stage: post`, `mode: sync` and `action: block`.
 | `reflect_debug` | `false` | Boolean |
 | `stage` | Check's native stage | `pre` or `post`; response-only checks cannot run before generation |
 
+The control plane validates retry settings before activation. The gateway also
+validates single-org `PUT` updates before writing anything: invalid enabled checks
+return `400 invalid_guardrail_config` without changing stored configs or caches,
+including for a new tenant. Bulk loads and control-plane sync store configs as
+received, without gateway admission. If an invalid retry configuration or an
+unresolved reflecting check reaches storage, request-time guardrail validation
+fails closed with `400 invalid_guardrail_config` before calling a provider.
+
 The retry limit counts **additional generations**, not the original response.
 One allows an original answer and one repair. Normal transport retry/failover can
 add upstream calls, so this is not a limit on all upstream HTTP requests.
@@ -78,9 +86,11 @@ control-plane URL, the plugin stays off.
 1. Run ordinary request admission and request checks.
 2. Generate a candidate and settle its observed provider usage before a response
    check can discard it.
-3. Run synchronous response checks against the candidate. A rejecting rule wins
-   over a reflecting rule. The smallest retry allowance encountered across the
-   request remains the limit; a later rule cannot reset it.
+3. Run synchronous response checks against the candidate. An effective reject-only
+   block ends post-stage evaluation; later checks, including tenant checks after a
+   static block, are skipped. Repairable blocks continue evaluation so later
+   reject-only or operational blocks can veto repair. The smallest retry allowance
+   encountered across the request remains the limit; a later rule cannot reset it.
 4. On a repairable block, build a private copy of the original request with the
    rejected assistant answer and check feedback. Do not mutate the request that
    validators, final logs or asynchronous observers see.
@@ -90,6 +100,19 @@ control-plane URL, the plugin stays off.
    feedback, so the client, request log and observers receive only its status
    with gateway-generated type, code and message.
 6. Run final observers once. Never cache a rejected candidate.
+
+A cached response is revalidated against the current checks. If it fails a
+reflecting rule, the gateway fails closed with `cached_response_blocked` rather
+than silently starting paid repair work on a cache hit. Send `Cache-Control:
+no-cache` to regenerate through the candidate controller; only a passing answer
+can replace the cached entry.
+
+Feedback instructs the model to follow the checks' intent rather than bypass them
+with alternate spellings, lookalike or invisible characters, spacing or encodings,
+and to decline briefly if the request cannot be answered within those checks.
+This instruction is not an enforcement guarantee: lexical checks such as keyword
+blocklists can still be evaded with lookalike characters. Prefer semantic checks
+for repair when policy intent, rather than exact text, must be enforced.
 
 A post-stage rejection, with or without repair, also replaces the messages of
 that stage's check results and restores the earlier warning metadata, so a

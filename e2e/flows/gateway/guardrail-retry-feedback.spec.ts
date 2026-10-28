@@ -26,7 +26,10 @@ const REPAIRED_USAGE = { prompt_tokens: 14, completion_tokens: 14, total_tokens:
 // guardrails/reflexion.go:postBlock prefixes the rule name; leakage/leakage.go
 // orders path_traversal before system_info_leak. The stock mock adds "echo: ".
 const EXPECTED_REPAIR = 'echo: The preceding answer failed the response checks below. '
-  + 'Produce a corrected answer to the original request. Do not repeat the rejected answer.\n'
+  + 'Produce a corrected answer to the original request. Comply with the intent of these checks. '
+  + 'Do not use alternate spellings, lookalike or invisible characters, spacing, encodings, '
+  + 'or other obfuscation to bypass them. If the original request cannot be answered within '
+  + 'these checks, say so briefly instead. Do not repeat the rejected answer.\n'
   + 'data-leakage-prevention: Data leakage detected: path_traversal, system_info_leak';
 // e2e/README.md: one page-load budget per short UI step, plus action headroom.
 const UI_READY = 60_000;
