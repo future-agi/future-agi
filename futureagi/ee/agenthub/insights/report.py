@@ -670,7 +670,10 @@ def answer(
     spend: Spend,
 ) -> dict:
     engine = _engine(run)
-    if insight_agent.is_omega(engine):
+    # A report written by the agent is asked about there while the agent is
+    # configured. With the agent turned off (a rollback) the built-in engine
+    # answers instead, so the report's follow-up questions keep working.
+    if insight_agent.is_omega(engine) and insight_agent.enabled():
         payload = agent_payload(run, result, units, contents, stage="ask")
         summary = result.get("summary") or {}
         payload.update(

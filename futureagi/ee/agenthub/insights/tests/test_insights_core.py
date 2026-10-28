@@ -1134,6 +1134,37 @@ class TestAsk:
         assert out["answer"] == []
         assert out["dropped"] == 4
 
+    def test_an_agent_report_is_answered_by_the_built_in_engine_once_the_agent_is_off(
+        self, monkeypatch
+    ):
+        """Turning the agent off (a rollback) must not break follow-up
+        questions on reports it wrote: the built-in engine answers them."""
+        from types import SimpleNamespace
+
+        from ee.agenthub.insights import agent, report
+
+        monkeypatch.setattr(agent, "enabled", lambda: False)
+
+        def no_agent(*args, **kwargs):
+            raise AssertionError("the agent is off and must not be called")
+
+        monkeypatch.setattr(agent, "ask", no_agent)
+        monkeypatch.setattr(
+            llm,
+            "chat_json",
+            lambda *a, **k: {"answer": [{"text": "Most end unresolved."}]},
+        )
+        result = {"totals": {"count": 40, "users": 30, "sessions": 40}, "categories": []}
+        run = SimpleNamespace(
+            settings={
+                "question": "Where?",
+                "engine": {"kind": "omega", "contract": "insights-agent/v2"},
+            },
+            unit="sessions",
+        )
+        out = report.answer(run, result, [], {}, "Why?", [], llm.Spend())
+        assert [p["text"] for p in out["answer"]] == ["Most end unresolved."]
+
     def test_answer_fields_in_the_wrong_shape_are_read_as_empty(self, monkeypatch):
         """A number where a list belongs, a null, an object as an id or a
         string for the follow-ups: the paragraph stays, nothing raises."""
