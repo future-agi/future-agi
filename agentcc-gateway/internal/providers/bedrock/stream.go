@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
+	"github.com/futureagi/agentcc-gateway/internal/providers/common"
 )
 
 // AWS Event Stream decoder for Bedrock streaming responses.
@@ -28,6 +29,10 @@ type bedrockStreamState struct {
 	created                   int64
 	toolCallIndex             int
 	blockIndexToToolCallIndex map[int]int
+
+	// shape receives a report for every event, block and delta type this
+	// parser skips without translating. nil (the default) discards reports.
+	shape *common.ShapeReporter
 }
 
 func newBedrockStreamState(model string) *bedrockStreamState {
@@ -174,6 +179,16 @@ type bedrockStreamChunk struct {
 	Bytes json.RawMessage `json:"bytes,omitempty"`
 }
 
+// bedrockStreamEvent is what parseStreamPayload decodes each event payload
+// as: an Anthropic Messages stream event.
+type bedrockStreamEvent struct {
+	Type    string          `json:"type"`
+	Message json.RawMessage `json:"message,omitempty"`
+	Delta   json.RawMessage `json:"delta,omitempty"`
+	Index   int             `json:"index,omitempty"`
+	Usage   *bedrockUsage   `json:"usage,omitempty"`
+}
+
 // parseStreamPayload parses a Bedrock event stream payload into a StreamChunk.
 func (s *bedrockStreamState) parseStreamPayload(msg *eventStreamMessage) (*models.StreamChunk, bool, error) {
 	messageType := msg.Headers[":message-type"]
@@ -188,15 +203,10 @@ func (s *bedrockStreamState) parseStreamPayload(msg *eventStreamMessage) (*model
 
 	// The payload for Bedrock Claude streaming is the Anthropic event JSON.
 	// Parse it as a stream event.
-	var event struct {
-		Type    string          `json:"type"`
-		Message json.RawMessage `json:"message,omitempty"`
-		Delta   json.RawMessage `json:"delta,omitempty"`
-		Index   int             `json:"index,omitempty"`
-		Usage   *bedrockUsage   `json:"usage,omitempty"`
-	}
+	var event bedrockStreamEvent
 
 	if err := json.Unmarshal(msg.Payload, &event); err != nil {
+		s.shape.Report(common.ShapeMalformed, msg.Headers[":event-type"])
 		return nil, false, nil
 	}
 
@@ -253,7 +263,7 @@ func (s *bedrockStreamState) parseStreamPayload(msg *eventStreamMessage) (*model
 			Type        string `json:"type"`
 			PartialJSON string `json:"partial_json"`
 		}
-		json.Unmarshal(event.Delta, &inputJSONDelta)
+		deltaErr := json.Unmarshal(event.Delta, &inputJSONDelta)
 		if inputJSONDelta.Type == "input_json_delta" {
 			tcIdx, ok := s.blockIndexToToolCallIndex[event.Index]
 			if !ok {
@@ -271,6 +281,14 @@ func (s *bedrockStreamState) parseStreamPayload(msg *eventStreamMessage) (*model
 					}}}},
 				},
 			}, false, nil
+		}
+		// Neither: a delta type this parser does not translate. An empty
+		// text_delta carries nothing.
+		switch {
+		case deltaErr != nil:
+			s.shape.Report(common.ShapeMalformed, "content_block_delta")
+		case inputJSONDelta.Type != "text_delta":
+			s.shape.Report(common.ShapeUnknownDelta, inputJSONDelta.Type)
 		}
 		return nil, false, nil
 
@@ -290,7 +308,9 @@ func (s *bedrockStreamState) parseStreamPayload(msg *eventStreamMessage) (*model
 				Name string `json:"name,omitempty"`
 			} `json:"content_block"`
 		}
-		json.Unmarshal(msg.Payload, &payload)
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			s.shape.Report(common.ShapeMalformed, "content_block_start")
+		}
 		block = payload.ContentBlock
 		if block.Type == "tool_use" {
 			idx := s.toolCallIndex
@@ -311,6 +331,9 @@ func (s *bedrockStreamState) parseStreamPayload(msg *eventStreamMessage) (*model
 				},
 			}, false, nil
 		}
+		if block.Type != "text" { // text arrives as text_delta
+			s.shape.Report(common.ShapeUnknownBlock, block.Type)
+		}
 		return nil, false, nil
 
 	case "message_delta":
@@ -320,8 +343,10 @@ func (s *bedrockStreamState) parseStreamPayload(msg *eventStreamMessage) (*model
 		var delta struct {
 			StopReason string `json:"stop_reason"`
 		}
-		json.Unmarshal(event.Delta, &delta)
-		finishReason := mapStopReason(delta.StopReason)
+		if err := json.Unmarshal(event.Delta, &delta); err != nil {
+			s.shape.Report(common.ShapeMalformed, "message_delta")
+		}
+		finish := finishReason(s.shape, delta.StopReason)
 
 		chunk := &models.StreamChunk{
 			ID:      s.messageID,
@@ -329,7 +354,7 @@ func (s *bedrockStreamState) parseStreamPayload(msg *eventStreamMessage) (*model
 			Model:   s.model,
 			Created: s.created,
 			Choices: []models.StreamChoice{
-				{Index: 0, FinishReason: &finishReason},
+				{Index: 0, FinishReason: &finish},
 			},
 		}
 		if event.Usage != nil {
@@ -343,7 +368,18 @@ func (s *bedrockStreamState) parseStreamPayload(msg *eventStreamMessage) (*model
 
 	case "message_stop":
 		return nil, true, nil
+
+	case "content_block_stop", "ping":
+		// Carry nothing to translate: a block's content arrived in its deltas.
+		return nil, false, nil
 	}
 
+	// An event this parser does not translate. A payload with no Anthropic
+	// "type" at all is named by its event-stream :event-type instead.
+	name := event.Type
+	if name == "" {
+		name = msg.Headers[":event-type"]
+	}
+	s.shape.Report(common.ShapeUnknownEvent, name)
 	return nil, false, nil
 }

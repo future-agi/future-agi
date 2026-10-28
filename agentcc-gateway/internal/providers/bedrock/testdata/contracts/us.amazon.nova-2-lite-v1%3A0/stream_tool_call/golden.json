@@ -1,0 +1,119 @@
+{
+  "assembled": {
+    "content": "",
+    "finish_reason": "tool_calls",
+    "role": "assistant",
+    "tool_calls": [
+      {
+        "function": {
+          "arguments": "{\"location\":\"San Francisco, CA\"}",
+          "name": "get_weather"
+        },
+        "id": "tooluse_9bXr2TqLQ0eZk4Hn7sVw5g",
+        "type": "function"
+      }
+    ],
+    "usage": {
+      "completion_tokens": 41,
+      "prompt_tokens": 431,
+      "total_tokens": 472
+    }
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "role": "assistant"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "us.amazon.nova-2-lite-v1:0",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "",
+                  "name": "get_weather"
+                },
+                "id": "tooluse_9bXr2TqLQ0eZk4Hn7sVw5g",
+                "index": 0,
+                "type": "function"
+              }
+            ]
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "us.amazon.nova-2-lite-v1:0",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "{\"location\":\"San Francisco, CA\"}",
+                  "name": ""
+                },
+                "index": 0
+              }
+            ]
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "us.amazon.nova-2-lite-v1:0",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {},
+          "finish_reason": "tool_calls",
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "us.amazon.nova-2-lite-v1:0",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {},
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "us.amazon.nova-2-lite-v1:0",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 41,
+        "prompt_tokens": 431,
+        "total_tokens": 472
+      }
+    }
+  ],
+  "error": null
+}

@@ -1,0 +1,76 @@
+{
+  "assembled": {
+    "content": "Sorry, the model cannot answer this question.",
+    "finish_reason": "stop",
+    "role": "assistant",
+    "usage": {
+      "completion_tokens": 0,
+      "prompt_tokens": 19,
+      "total_tokens": 19
+    }
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "role": "assistant"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "Sorry, the model cannot answer this question."
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {},
+          "finish_reason": "stop",
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {},
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "bedrock-<generated>",
+      "model": "global.anthropic.claude-sonnet-4-6",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 0,
+        "prompt_tokens": 19,
+        "total_tokens": 19
+      }
+    }
+  ],
+  "error": null
+}

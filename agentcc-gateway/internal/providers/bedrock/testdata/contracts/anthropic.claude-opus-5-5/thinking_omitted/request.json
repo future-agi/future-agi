@@ -1,0 +1,10 @@
+{
+  "model": "anthropic.claude-opus-5-5",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Is 2^31 - 1 prime?"
+    }
+  ],
+  "max_tokens": 4096
+}

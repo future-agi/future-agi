@@ -1,0 +1,45 @@
+{
+  "provider": "bedrock",
+  "model": "anthropic.claude-opus-5-5",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: authored by hand from platform.claude.com/docs/en/build-with-claude/claude-on-amazon-bedrock-legacy (Opus 4.7 and later are reachable through InvokeModel on bedrock-runtime under their dateless base IDs), build-with-claude/claude-in-amazon-bedrock (the same Messages API body shape), api/messages and build-with-claude/streaming, plus the Bedrock Runtime API model for InvokeModelWithResponseStream (ResponseStream chunk = PayloadPart {bytes: base64-encoded payload}; Smithy model github.com/aws/api-models-aws bedrock-runtime 2023-09-30), read 2026-10-28. A base model ID routes the gateway to InvokeModel with an Anthropic body. Bodies keep the long-standing Messages API fields (stop_details, service_tier, speed and inference_geo are left out because their presence on Bedrock is unverified). Bedrock-specific details: msg_bdrk_/toolu_bdrk_ ids, model \"claude-opus-5-5\" in the body, and amazon-bedrock-invocationMetrics on the final message_stop chunk are from memory of real Bedrock responses, not from a page read this session. Ids, signatures, token counts and text are invented. Replace each case with a recorded capture (source: recorded) when the live recorder runs.",
+  "allowed_unknown_fields": [
+    {
+      "path": "$.content[].signature",
+      "reason": "known gap B3: thinking blocks are dropped whole on the InvokeModel path, signature included (unknown_block:thinking); Anthropic requires them passed back unchanged in a tool-use turn. The direct Anthropic adapter at least keeps the thinking text"
+    },
+    {
+      "path": "$.content[].thinking",
+      "reason": "known gap B3: the thinking text is dropped with its block (unknown_block:thinking); it should become reasoning_content / thinking_blocks"
+    },
+    {
+      "path": "$.stop_sequence",
+      "reason": "no canonical field: OpenAI has no slot for which stop sequence matched; finish_reason \"stop\" carries the outcome"
+    },
+    {
+      "path": "$.usage.cache_creation_input_tokens",
+      "reason": "known gap B9: prompt-cache write tokens are not added to prompt_tokens (Anthropic's input_tokens excludes them), so usage and cost under-count cached requests. Usually 0 on the canonical path today, which sends no cache_control"
+    },
+    {
+      "path": "$.usage.cache_read_input_tokens",
+      "reason": "known gap B9: prompt-cache read tokens are dropped instead of counted in prompt_tokens and prompt_tokens_details.cached_tokens, so usage and cost under-count cached requests"
+    },
+    {
+      "path": "chunk:$.bytes",
+      "reason": "known gap B1: parseStreamPayload decodes the chunk payload {\"bytes\": \"<base64 Anthropic event>\"} as if it were the Anthropic event and never reads bytes, so every InvokeModel stream yields no content, no finish_reason and no usage (see invokeStreamSanityGaps in contract_test.go)"
+    }
+  ],
+  "allowed_unknown_shapes": [
+    {
+      "kind": "unknown_block",
+      "value": "thinking",
+      "reason": "known gap B3: thinking blocks are dropped on the InvokeModel path (see allowed_unknown_fields)"
+    },
+    {
+      "kind": "unknown_event",
+      "value": "chunk",
+      "reason": "known gap B1: every InvokeModelWithResponseStream chunk is skipped (see chunk:$.bytes)"
+    }
+  ]
+}

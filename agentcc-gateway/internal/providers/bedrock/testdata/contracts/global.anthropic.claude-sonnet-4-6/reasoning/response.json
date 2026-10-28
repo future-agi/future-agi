@@ -1,0 +1,31 @@
+{
+  "output": {
+    "message": {
+      "role": "assistant",
+      "content": [
+        {
+          "reasoningContent": {
+            "reasoningText": {
+              "text": "Use the Euclidean algorithm. 1071 = 2 × 462 + 147. 462 = 3 × 147 + 21. 147 = 7 × 21 + 0. The last non-zero remainder is 21.",
+              "signature": "EqgCCkgIDBACGAIqQGZ0r1Yk8iVx3Q2c9bWm7nQ1kZ0pH6s4uJt8eR2yLw5vXa3oNf1cTg7hBd9jKq0iMs6lPe4rUy2zVb8wCgwSDFmS0jW2b6R1aNyYxoM3pQ8vK7tL1rF9eH2iIjA0uXy5Wq4tR6sE1oP8nB3mC7vZ2kL9jH5gD0fA4yT6rU1iO8pS3eW7qN2bM5vC9xK1lJ4hG6dF0aY3tR8uE2iO5pQ7wS1zX4cV9bN6mL0kJ3hG8fD2aT5yR7uE1iW4oP9qS6zX3cV0bN8mL2kJ5hG1fD7aY4tR9uE3iO6pQ0w=="
+            }
+          }
+        },
+        {
+          "text": "The greatest common divisor of 1071 and 462 is 21."
+        }
+      ]
+    }
+  },
+  "stopReason": "end_turn",
+  "usage": {
+    "inputTokens": 52,
+    "outputTokens": 214,
+    "totalTokens": 266,
+    "cacheReadInputTokens": 0,
+    "cacheWriteInputTokens": 0
+  },
+  "metrics": {
+    "latencyMs": 3920
+  }
+}

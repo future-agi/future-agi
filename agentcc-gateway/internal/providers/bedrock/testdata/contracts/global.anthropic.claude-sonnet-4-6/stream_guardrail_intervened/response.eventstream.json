@@ -1,0 +1,44 @@
+[
+  {
+    "event": "messageStart",
+    "payload": {
+      "role": "assistant"
+    }
+  },
+  {
+    "event": "contentBlockDelta",
+    "payload": {
+      "delta": {
+        "text": "Sorry, the model cannot answer this question."
+      },
+      "contentBlockIndex": 0
+    }
+  },
+  {
+    "event": "contentBlockStop",
+    "payload": {
+      "contentBlockIndex": 0
+    }
+  },
+  {
+    "event": "messageStop",
+    "payload": {
+      "stopReason": "guardrail_intervened"
+    }
+  },
+  {
+    "event": "metadata",
+    "payload": {
+      "usage": {
+        "inputTokens": 19,
+        "outputTokens": 0,
+        "totalTokens": 19,
+        "cacheReadInputTokens": 0,
+        "cacheWriteInputTokens": 0
+      },
+      "metrics": {
+        "latencyMs": 301
+      }
+    }
+  }
+]

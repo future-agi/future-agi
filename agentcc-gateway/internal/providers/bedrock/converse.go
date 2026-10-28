@@ -377,7 +377,63 @@ func newConverseStreamState(model string) *converseStreamState {
 	}
 }
 
-func translateConverseResponse(resp *converseResponse, model string) *models.ChatCompletionResponse {
+// converseTranslatedBlocks are the members of a Converse response content
+// block (a union keyed by member name) that translateConverseResponse reads.
+// Any other member — reasoningContent, citationsContent, ... — is dropped.
+var converseTranslatedBlocks = map[string]bool{"text": true, "toolUse": true}
+
+// converseTranslatedStarts and converseTranslatedDeltas are the members of a
+// ConverseStream contentBlockStart "start" and contentBlockDelta "delta" union
+// that parseConverseEvent reads.
+var (
+	converseTranslatedStarts = map[string]bool{"toolUse": true}
+	converseTranslatedDeltas = map[string]bool{"text": true, "toolUse": true}
+)
+
+// reportUnknownConverseBlocks reports every content-block member of a Converse
+// response body that translateConverseResponse does not read. The decoded
+// converseContentPart cannot say which unknown member a block carried, so the
+// member names come from the raw body.
+func reportUnknownConverseBlocks(shape *common.ShapeReporter, body []byte) {
+	if shape == nil {
+		return
+	}
+	var raw struct {
+		Output struct {
+			Message struct {
+				Content []json.RawMessage `json:"content"`
+			} `json:"message"`
+		} `json:"output"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return // the caller decoded the same body already
+	}
+	for _, block := range raw.Output.Message.Content {
+		reportUnknownMembers(shape, common.ShapeUnknownBlock, block, converseTranslatedBlocks)
+	}
+}
+
+// reportUnknownMembers reports each member of the JSON object union that is
+// not in translated.
+func reportUnknownMembers(shape *common.ShapeReporter, kind common.ShapeKind, union json.RawMessage, translated map[string]bool) {
+	if shape == nil || len(union) == 0 {
+		return
+	}
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(union, &members); err != nil {
+		return
+	}
+	for name := range members {
+		if !translated[name] {
+			shape.Report(kind, name)
+		}
+	}
+}
+
+// translateConverseResponse converts a Converse response. shape receives a
+// report for every stop reason it does not translate (see
+// reportUnknownConverseBlocks for content blocks); nil is allowed.
+func translateConverseResponse(resp *converseResponse, model string, shape *common.ShapeReporter) *models.ChatCompletionResponse {
 	created := time.Now().Unix()
 	msg := models.Message{Role: "assistant"}
 
@@ -416,7 +472,7 @@ func translateConverseResponse(resp *converseResponse, model string) *models.Cha
 		Choices: []models.Choice{{
 			Index:        0,
 			Message:      msg,
-			FinishReason: mapStopReason(resp.StopReason),
+			FinishReason: finishReason(shape, resp.StopReason),
 		}},
 		Usage: &models.Usage{
 			PromptTokens:     resp.Usage.InputTokens,
@@ -470,7 +526,9 @@ func (p *Provider) chatCompletionConverse(ctx context.Context, req *models.ChatC
 		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("bedrock converse: parsing response: %v", err))
 	}
 
-	return translateConverseResponse(&cr2, modelID), nil
+	shape := common.NewShapeReporter(ctx, adapterName, p.id)
+	reportUnknownConverseBlocks(shape, respBody)
+	return translateConverseResponse(&cr2, modelID, shape), nil
 }
 
 func (p *Provider) streamChatCompletionConverse(ctx context.Context, req *models.ChatCompletionRequest) (<-chan models.StreamChunk, <-chan error) {
@@ -522,6 +580,7 @@ func (p *Provider) streamChatCompletionConverse(ctx context.Context, req *models
 		}
 
 		state := newConverseStreamState(modelID)
+		state.shape = common.NewShapeReporter(ctx, adapterName, p.id)
 		for {
 			select {
 			case <-ctx.Done():
@@ -572,13 +631,63 @@ type converseStreamState struct {
 	created                int64
 	toolCallIndex          int
 	blockIndexToToolCallIx map[int]int
+
+	// shape receives a report for every event, block and delta type this
+	// parser skips without translating. nil (the default) discards reports.
+	shape *common.ShapeReporter
+}
+
+// converseBlockStartEvent is a ConverseStream contentBlockStart payload.
+type converseBlockStartEvent struct {
+	Start struct {
+		ToolUse struct {
+			ToolUseID string `json:"toolUseId"`
+			Name      string `json:"name"`
+		} `json:"toolUse"`
+	} `json:"start"`
+	ContentBlockIndex int `json:"contentBlockIndex"`
+}
+
+// converseBlockDeltaEvent is a ConverseStream contentBlockDelta payload.
+type converseBlockDeltaEvent struct {
+	Delta struct {
+		Text    string `json:"text"`
+		ToolUse struct {
+			Input string `json:"input"`
+		} `json:"toolUse"`
+	} `json:"delta"`
+	ContentBlockIndex int `json:"contentBlockIndex"`
+}
+
+// converseMessageStopEvent is a ConverseStream messageStop payload.
+type converseMessageStopEvent struct {
+	StopReason string `json:"stopReason"`
+}
+
+// converseMetadataEvent is a ConverseStream metadata payload.
+type converseMetadataEvent struct {
+	Usage struct {
+		InputTokens  int `json:"inputTokens"`
+		OutputTokens int `json:"outputTokens"`
+	} `json:"usage"`
+}
+
+// converseUnionField returns the raw value of payload's member field, the
+// union a contentBlockStart ("start") or contentBlockDelta ("delta") carries.
+func converseUnionField(payload []byte, field string) json.RawMessage {
+	var obj map[string]json.RawMessage
+	if json.Unmarshal(payload, &obj) != nil {
+		return nil
+	}
+	return obj[field]
 }
 
 func (s *converseStreamState) parseConverseEvent(msg *eventStreamMessage) (*models.StreamChunk, bool, error) {
 	if msg.Headers[":message-type"] == "exception" {
 		return nil, false, fmt.Errorf("bedrock converse exception: %s", string(msg.Payload))
 	}
-	if msg.Headers[":message-type"] != "event" {
+	if mt := msg.Headers[":message-type"]; mt != "event" {
+		s.shape.Report(common.ShapeUnknownEvent, ":message-type "+mt)
 		return nil, false, nil
 	}
 
@@ -599,17 +708,13 @@ func (s *converseStreamState) parseConverseEvent(msg *eventStreamMessage) (*mode
 		if s.blockIndexToToolCallIx == nil {
 			s.blockIndexToToolCallIx = make(map[int]int)
 		}
-		var e struct {
-			Start struct {
-				ToolUse struct {
-					ToolUseID string `json:"toolUseId"`
-					Name      string `json:"name"`
-				} `json:"toolUse"`
-			} `json:"start"`
-			ContentBlockIndex int `json:"contentBlockIndex"`
+		var e converseBlockStartEvent
+		if err := json.Unmarshal(msg.Payload, &e); err != nil {
+			s.shape.Report(common.ShapeMalformed, "contentBlockStart")
 		}
-		json.Unmarshal(msg.Payload, &e)
 		if e.Start.ToolUse.ToolUseID == "" {
+			reportUnknownMembers(s.shape, common.ShapeUnknownBlock,
+				converseUnionField(msg.Payload, "start"), converseTranslatedStarts)
 			return nil, false, nil
 		}
 		idx := s.toolCallIndex
@@ -629,16 +734,10 @@ func (s *converseStreamState) parseConverseEvent(msg *eventStreamMessage) (*mode
 		}, false, nil
 
 	case "contentBlockDelta":
-		var e struct {
-			Delta struct {
-				Text    string `json:"text"`
-				ToolUse struct {
-					Input string `json:"input"`
-				} `json:"toolUse"`
-			} `json:"delta"`
-			ContentBlockIndex int `json:"contentBlockIndex"`
+		var e converseBlockDeltaEvent
+		if err := json.Unmarshal(msg.Payload, &e); err != nil {
+			s.shape.Report(common.ShapeMalformed, "contentBlockDelta")
 		}
-		json.Unmarshal(msg.Payload, &e)
 		if e.Delta.Text != "" {
 			t := e.Delta.Text
 			return &models.StreamChunk{
@@ -665,14 +764,23 @@ func (s *converseStreamState) parseConverseEvent(msg *eventStreamMessage) (*mode
 				}}}}},
 			}, false, nil
 		}
+		// Nothing emitted: an empty text or toolUse delta, or a member this
+		// parser does not translate.
+		reportUnknownMembers(s.shape, common.ShapeUnknownDelta,
+			converseUnionField(msg.Payload, "delta"), converseTranslatedDeltas)
+		return nil, false, nil
+
+	case "contentBlockStop":
+		// Carries only the block index; the block's content arrived in its
+		// deltas.
 		return nil, false, nil
 
 	case "messageStop":
-		var e struct {
-			StopReason string `json:"stopReason"`
+		var e converseMessageStopEvent
+		if err := json.Unmarshal(msg.Payload, &e); err != nil {
+			s.shape.Report(common.ShapeMalformed, "messageStop")
 		}
-		json.Unmarshal(msg.Payload, &e)
-		reason := mapStopReason(e.StopReason)
+		reason := finishReason(s.shape, e.StopReason)
 		return &models.StreamChunk{
 			ID:      s.messageID,
 			Object:  "chat.completion.chunk",
@@ -682,13 +790,10 @@ func (s *converseStreamState) parseConverseEvent(msg *eventStreamMessage) (*mode
 		}, false, nil
 
 	case "metadata":
-		var e struct {
-			Usage struct {
-				InputTokens  int `json:"inputTokens"`
-				OutputTokens int `json:"outputTokens"`
-			} `json:"usage"`
+		var e converseMetadataEvent
+		if err := json.Unmarshal(msg.Payload, &e); err != nil {
+			s.shape.Report(common.ShapeMalformed, "metadata")
 		}
-		json.Unmarshal(msg.Payload, &e)
 		return &models.StreamChunk{
 			ID:      s.messageID,
 			Object:  "chat.completion.chunk",
@@ -703,6 +808,7 @@ func (s *converseStreamState) parseConverseEvent(msg *eventStreamMessage) (*mode
 		}, true, nil
 	}
 
+	s.shape.Report(common.ShapeUnknownEvent, msg.Headers[":event-type"])
 	return nil, false, nil
 }
 

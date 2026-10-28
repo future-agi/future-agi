@@ -1,0 +1,31 @@
+{
+  "choices": [
+    {
+      "finish_reason": "tool_calls",
+      "index": 0,
+      "message": {
+        "content": null,
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{\"location\":\"San Francisco, CA\"}",
+              "name": "get_weather"
+            },
+            "id": "tooluse_3oC8mGv7SV2cXn6Fw0aY1Q",
+            "type": "function"
+          }
+        ]
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "bedrock-<generated>",
+  "model": "us.amazon.nova-2-lite-v1:0",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 41,
+    "prompt_tokens": 431,
+    "total_tokens": 472
+  }
+}

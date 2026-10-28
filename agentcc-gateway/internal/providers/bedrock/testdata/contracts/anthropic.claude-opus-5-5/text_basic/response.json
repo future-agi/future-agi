@@ -1,0 +1,20 @@
+{
+  "id": "msg_bdrk_01Hk3uQ7fN2xVb9cWm4rTy8E",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-opus-5-5",
+  "content": [
+    {
+      "type": "text",
+      "text": "The capital of France is Paris."
+    }
+  ],
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 24,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "output_tokens": 10
+  }
+}

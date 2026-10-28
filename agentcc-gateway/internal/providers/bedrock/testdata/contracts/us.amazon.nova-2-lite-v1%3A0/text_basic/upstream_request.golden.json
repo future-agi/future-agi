@@ -1,0 +1,32 @@
+{
+  "body": {
+    "inferenceConfig": {
+      "maxTokens": 256,
+      "temperature": 0.2
+    },
+    "messages": [
+      {
+        "content": [
+          {
+            "text": "What is the capital of France? Answer in one sentence."
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "system": [
+      {
+        "text": "You are a concise assistant."
+      }
+    ]
+  },
+  "headers": {
+    "accept": "application/json",
+    "authorization": "REDACTED",
+    "content-type": "application/json",
+    "x-amz-content-sha256": "21ad7e41bccc2b323e0554a8d78e8e79cef216d5c64227aa0859151508bd147d",
+    "x-amz-date": "VOLATILE"
+  },
+  "method": "POST",
+  "path": "/model/us.amazon.nova-2-lite-v1:0/converse"
+}
