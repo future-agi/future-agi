@@ -94,12 +94,12 @@ describe("ScenarioTable — opening a row", () => {
   it("opens a row on click, but not from its checkbox or its actions", () => {
     const onOpen = vi.fn();
     const { boxes } = renderTable({ rows: served, onOpen });
-    fireEvent.click(screen.getByText(served[1].name || served[1].title));
+    fireEvent.click(screen.getByText(served[1].summary || served[1].title || served[1].name));
     expect(onOpen).toHaveBeenCalledWith(served[1]);
 
     onOpen.mockClear();
     fireEvent.click(boxes[1]);
-    fireEvent.click(screen.getAllByRole("button", { name: "Edit scenario" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: /^More actions for / })[0]);
     expect(onOpen).not.toHaveBeenCalled();
   });
 

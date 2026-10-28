@@ -3,14 +3,18 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { alpha } from "@mui/material/styles";
 import {
   Box, Stack, Typography, Table, TableBody, TableCell, TableHead, TableRow,
-  IconButton, Tooltip, Checkbox,
+  IconButton, Tooltip, Checkbox, Menu, MenuItem,
 } from "@mui/material";
+import { enqueueSnackbar } from "notistack";
 
 import Iconify from "src/components/iconify";
 import DraggableColResizer from "src/components/draggable-col-resizer";
 import { getStorage, setStorage } from "src/hooks/use-local-storage";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
-import { ClampCell, SubTasksCell, TruncTooltip } from "./ScenarioTableCells";
+import SoonChip from "../../components/SoonChip";
+import UiOnlyFlag from "../../components/UiOnlyFlag";
+import { UI_ONLY_SAVED } from "../gaps/NeedsInputButton";
+import { ClampCell, TruncTooltip } from "./ScenarioTableCells";
 import { ROW_HEIGHTS, SCENARIOS_COPY } from "./scenarios.constants";
 import { personaSubline } from "./personaLabels";
 import { GROUP_SHAPE, SCENARIO_SHAPE } from "./scenarios.shapes";
@@ -41,8 +45,39 @@ const pinnedSelectCellSx = { ...pinnedBodyCellSx("left"), pl: 1.5, verticalAlign
 const HEAD_OFFSET = 36;
 
 const WIDTHS_KEY = "simulate:scenario-table:column-widths";
-const DEFAULT_WIDTHS = { Scenario: 280, Persona: 200, Situation: 320, "Sub-goals": 260, "Ideal outcome": 320 };
-const FIXED_WIDTHS = { select: 48, "#": 44, "": 96 };
+const DEFAULT_WIDTHS = { Scenario: 380, Persona: 190, Brief: 340, "Passes when": 260 };
+const FIXED_WIDTHS = { select: 48, "#": 44, "Sub-goals": 88, "Must-pass": 92, "Last runs": 116, "": 48 };
+
+// Vel's column headings. What a column needs that the API doesn't send yet is
+// a soon chip in its header: a scenario's state and source, whether it's
+// must-pass, and how it did in the last runs.
+const HEAD_TIPS = {
+  Scenario: "The summary; the scenario's key is on hover",
+  "Sub-goals": "How many sub-goals the scenario is graded on",
+  Brief: "What the caller is told to do",
+  "Passes when": "What the agent has to do for the scenario to pass",
+};
+function HeadLabel({ h }) {
+  if (h === "Scenario")
+    return (
+      <Stack direction="row" alignItems="center" spacing={0.75} sx={{ minWidth: 0 }}>
+        <Box component="span">Scenario</Box>
+        <SoonChip label="State" what="A scenario's state, like needs review or stale" size="tiny" />
+        <SoonChip label="Source" what="Where a scenario came from: the build, chat, by hand or an import" size="tiny" />
+      </Stack>
+    );
+  if (h === "Must-pass") return <SoonChip label="Must-pass" what="Scenarios an improvement may never break" size="tiny" />;
+  if (h === "Last runs") return <SoonChip label="Last runs" what="This scenario in the environment's last runs" plural size="tiny" />;
+  return (
+    <Tooltip arrow title={HEAD_TIPS[h] || ""} disableHoverListener={!HEAD_TIPS[h]}>
+      <Box component="span" sx={{ overflow: "hidden", textOverflow: "ellipsis" }}>{h}</Box>
+    </Tooltip>
+  );
+}
+HeadLabel.propTypes = { h: PropTypes.string };
+
+// Name · age group, as Vel's Persona column reads; gender stays on hover.
+const personaLine = (p) => [p?.name, p?.ageGroup].filter(Boolean).join(" · ");
 const FILLER = "filler";
 const edgeLine = (color) => ({ backgroundColor: "transparent", "&::after": { bgcolor: color } });
 const RESIZE_HANDLE_SX = {
@@ -164,7 +199,7 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onOpen, 
   // fork gate would only refuse.
   const columns = [
     ...(locked ? [] : ["select"]),
-    "#", "Scenario", "Persona", "Situation", "Sub-goals", "Ideal outcome", FILLER, "",
+    "#", "Scenario", "Persona", "Sub-goals", "Must-pass", "Last runs", "Brief", "Passes when", FILLER, "",
   ];
   const widthOf = (h) => widths[h] ?? FIXED_WIDTHS[h] ?? 0;
   const tableWidth = columns.reduce((sum, h) => sum + widthOf(h), 0);
@@ -193,8 +228,7 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onOpen, 
                   align={isActions ? "right" : "left"}
                   padding={isSelect ? "checkbox" : "normal"}
                   sx={{
-                    typography: "s3", fontWeight: "fontWeightBold", color: "text.subtitle",
-                    textTransform: "uppercase", letterSpacing: 0.4,
+                    typography: "s3", fontWeight: "fontWeightSemiBold", color: "text.subtitle",
                     bgcolor: "background.neutral",
                     borderBottom: "1px solid", borderColor: "divider",
                     whiteSpace: "nowrap", height: HEAD_OFFSET,
@@ -212,7 +246,7 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onOpen, 
                     ...(isActions && {
                       // The top-right corner: sticky on both axes, above all.
                       right: 0, zIndex: 4,
-                      width: 96, minWidth: 96,
+                      width: 48, minWidth: 48,
                       boxShadow: (t) => `-8px 0 12px -6px ${alpha(t.palette.common.black, t.palette.mode === "dark" ? 0.45 : 0.08)}`,
                     }),
                   }}
@@ -227,7 +261,7 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onOpen, 
                     />
                   ) : resize ? (
                     <>
-                      <Box sx={{ overflow: "hidden", textOverflow: "ellipsis" }}>{h}</Box>
+                      <HeadLabel h={h} />
                       <DraggableColResizer
                         onResize={resize.onResize}
                         getCurrentWidth={resize.getCurrentWidth}
@@ -237,7 +271,7 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onOpen, 
                         sx={RESIZE_HANDLE_SX}
                       />
                     </>
-                  ) : h === FILLER ? null : h}
+                  ) : h === FILLER || isActions ? null : <HeadLabel h={h} />}
                 </TableCell>
               );
             })}
@@ -301,10 +335,10 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onOpen, 
                 const idx = row.number;
                 const p = row.persona;
                 const subTasks = row.subTasks || [];
-                const personaLine = personaSubline(p);
-                const situationText = row.situation || row.task || "";
-                const idealOutcomeText = row.outcome || row.expected || "";
-
+                const personaHover = [p?.name, personaSubline(p)].filter(Boolean).join(" · ");
+                const briefText = row.situation || row.task || "";
+                const passesText = row.outcome || row.expected || "";
+                const key = row.name || row.title;
                 return (
                   <TableRow
                     key={row.id}
@@ -341,9 +375,11 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onOpen, 
 
                     <TableCell sx={{ overflow: "hidden", verticalAlign: "top" }}>
                       <Stack direction="row" alignItems="center" spacing={0.75}>
-                        <TruncTooltip title={row.name || row.title}>
-                          <Typography noWrap sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}>{row.name || row.title}</Typography>
-                        </TruncTooltip>
+                        <Tooltip arrow title={key || ""} placement="top-start">
+                          <Typography noWrap sx={{ typography: "s2", fontWeight: "fontWeightSemiBold", minWidth: 0 }}>
+                            {row.summary || row.title || key}
+                          </Typography>
+                        </Tooltip>
                         {row.critical && (
                           <Tooltip arrow title={SCENARIOS_COPY.critical}>
                             <Box sx={{ display: "flex" }}>
@@ -352,32 +388,27 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onOpen, 
                           </Tooltip>
                         )}
                       </Stack>
-                      <TruncTooltip title={row.summary || row.title}>
-                        <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{row.summary || row.title}</Typography>
+                    </TableCell>
+                    <TableCell sx={{ overflow: "hidden", verticalAlign: "top" }}>
+                      <TruncTooltip title={personaHover}>
+                        <Typography noWrap sx={{ typography: "s2" }}>{personaLine(p)}</Typography>
                       </TruncTooltip>
                     </TableCell>
-
-                    <TableCell sx={{ overflow: "hidden", verticalAlign: "top" }}>
-                      <TruncTooltip title={p?.name || ""}>
-                        <Typography noWrap sx={{ typography: "s2" }}>{p?.name}</Typography>
-                      </TruncTooltip>
-                      {personaLine && (
-                        <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{personaLine}</Typography>
-                      )}
+                    <TableCell align="right" sx={{ typography: "s2", fontVariantNumeric: "tabular-nums", verticalAlign: "top" }}>
+                      <Tooltip arrow title={subTasks.join(" · ")} disableHoverListener={!subTasks.length}>
+                        <Box component="span">{subTasks.length || "-"}</Box>
+                      </Tooltip>
                     </TableCell>
-
-                    <TableCell sx={{ overflow: "hidden", verticalAlign: "top" }}>
-                      <ClampCell text={situationText} lines={limits.lines} />
+                    <TableCell align="center" onClick={stopRowClick} sx={{ verticalAlign: "top", py: 0.5 }}>
+                      <MustPassToggle name={key} disabled={locked} />
                     </TableCell>
-
+                    <TableCell sx={{ typography: "s3", color: "text.disabled", verticalAlign: "top" }}>-</TableCell>
                     <TableCell sx={{ overflow: "hidden", verticalAlign: "top" }}>
-                      <SubTasksCell subTasks={subTasks} limit={limits.subTasks} />
+                      <ClampCell text={briefText} lines={limits.lines} />
                     </TableCell>
-
                     <TableCell sx={{ overflow: "hidden", verticalAlign: "top" }}>
-                      <ClampCell text={idealOutcomeText} lines={limits.lines} />
+                      <ClampCell text={passesText} lines={limits.lines} />
                     </TableCell>
-
                     <TableCell />
 
                     <TableCell
@@ -386,23 +417,10 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onOpen, 
                       sx={{
                         ...pinnedBodyCellSx("right"),
                         whiteSpace: "nowrap", verticalAlign: "top",
-                        width: 96, minWidth: 96,
+                        width: 48, minWidth: 48,
                       }}
                     >
-                      <Tooltip arrow title={locked ? LOCK_TOOLTIP : SCENARIOS_COPY.editLabel}>
-                        <Box component="span" sx={{ display: "inline-flex" }}>
-                          <IconButton size="small" disabled={locked} aria-label={SCENARIOS_COPY.editLabel} onClick={() => onEdit?.(row)}>
-                            <Iconify icon="solar:pen-new-square-linear" width={15} sx={{ color: "text.subtitle" }} />
-                          </IconButton>
-                        </Box>
-                      </Tooltip>
-                      <Tooltip arrow title={locked ? LOCK_TOOLTIP : SCENARIOS_COPY.removeLabel}>
-                        <Box component="span" sx={{ display: "inline-flex" }}>
-                          <IconButton size="small" disabled={locked} aria-label={SCENARIOS_COPY.removeLabel} onClick={() => onRemove(row.id)}>
-                            <Iconify icon="solar:trash-bin-trash-linear" width={15} sx={{ color: "text.subtitle" }} />
-                          </IconButton>
-                        </Box>
-                      </Tooltip>
+                      <RowMenu row={row} name={key} locked={locked} onEdit={onEdit} onRemove={onRemove} />
                     </TableCell>
                   </TableRow>
                 );
@@ -433,3 +451,91 @@ ScenarioTable.propTypes = {
   rowHeight: PropTypes.oneOf(Object.keys(ROW_HEIGHTS)),
 };
 
+
+const uiOnly = () => enqueueSnackbar(UI_ONLY_SAVED, { variant: "info" });
+
+// Vel's must-pass mark. Whether a scenario is must-pass isn't in the API, so
+// it toggles here and saves nothing.
+function MustPassToggle({ name, disabled }) {
+  const [on, setOn] = useState(false);
+  return (
+    <IconButton
+      size="small"
+      disabled={disabled}
+      aria-pressed={on}
+      aria-label={`Must-pass for ${name}`}
+      onClick={() => {
+        setOn((v) => !v);
+        uiOnly();
+      }}
+      sx={{ p: 0.25, color: on ? "text.primary" : "text.disabled" }}
+    >
+      <Iconify icon={on ? "solar:shield-check-bold" : "solar:shield-linear"} width={16} />
+    </IconButton>
+  );
+}
+MustPassToggle.propTypes = { name: PropTypes.string, disabled: PropTypes.bool };
+
+// Vel's row menu: Edit, Archive and Remove. Archive has no API, so it's
+// flagged and saves nothing; Remove still asks first (the parent confirms).
+function RowMenu({ row, name, locked, onEdit, onRemove }) {
+  const [anchor, setAnchor] = useState(null);
+  const close = () => setAnchor(null);
+  return (
+    <>
+      <Tooltip arrow title={locked ? LOCK_TOOLTIP : ""} disableHoverListener={!locked}>
+        <Box component="span" sx={{ display: "inline-flex" }}>
+          <IconButton size="small" disabled={locked} aria-label={`More actions for ${name}`} onClick={(e) => setAnchor(e.currentTarget)}>
+            <Iconify icon="solar:menu-dots-bold" width={16} sx={{ color: "text.subtitle" }} />
+          </IconButton>
+        </Box>
+      </Tooltip>
+      <Menu
+        open={!!anchor}
+        anchorEl={anchor}
+        onClose={close}
+        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+        transformOrigin={{ vertical: "top", horizontal: "right" }}
+      >
+        <MenuItem
+          onClick={() => {
+            close();
+            onEdit?.(row);
+          }}
+          sx={{ typography: "s2", gap: 1 }}
+        >
+          <Iconify icon="solar:pen-new-square-linear" width={16} />
+          Edit
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            close();
+            uiOnly();
+          }}
+          sx={{ typography: "s2", gap: 1 }}
+        >
+          <Iconify icon="solar:archive-linear" width={16} />
+          Archive
+          <UiOnlyFlag feature="scenarioStates" sx={{ ml: 0.5 }} />
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            close();
+            onRemove?.(row.id);
+          }}
+          sx={{ typography: "s2", gap: 1, color: "error.main" }}
+        >
+          <Iconify icon="solar:trash-bin-trash-linear" width={16} />
+          Remove
+        </MenuItem>
+      </Menu>
+    </>
+  );
+}
+RowMenu.propTypes = {
+  row: PropTypes.object.isRequired,
+  name: PropTypes.string,
+  locked: PropTypes.bool,
+  onEdit: PropTypes.func,
+  onRemove: PropTypes.func,
+};

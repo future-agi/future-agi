@@ -24,6 +24,7 @@ export default function ScenarioToolbar({
   groupBy, onGroupByChange, groupings = [],
   filterFields, filters, onApplyFilters, filterCount,
   rowHeight = "Short", onRowHeightChange,
+  leading,
   actions,
 }) {
   const [filterAnchor, setFilterAnchor] = useState(null);
@@ -54,7 +55,7 @@ export default function ScenarioToolbar({
               ),
             }}
             sx={{
-              flex: 1, minWidth: 200, maxWidth: 420, mr: 0.5,
+              flex: "0 1 220px", minWidth: 160, maxWidth: 260, mr: 0.5,
               [SEARCH_OWN_ROW]: {
                 flexBasis: "100%", maxWidth: "none", mr: 0,
               },
@@ -70,6 +71,7 @@ export default function ScenarioToolbar({
           >
             {SCENARIOS_COPY.filterLabel}{filterCount ? ` (${filterCount})` : ""}
           </Button>
+          {leading}
           <Button
             aria-haspopup="dialog"
             aria-expanded={!!displayAnchor}

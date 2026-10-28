@@ -18,6 +18,13 @@ import {
   pickView,
 } from "./scenariosTestUtils";
 
+// Edit and Remove live in each row's ⋯ menu (Vel's row actions).
+const ROW_MENU = /^More actions for /;
+const rowAction = (i, name) => {
+  fireEvent.click(screen.getAllByRole("button", { name: ROW_MENU })[i]);
+  fireEvent.click(screen.getByRole("menuitem", { name }));
+};
+
 const { mockSnack } = vi.hoisted(() => ({ mockSnack: { calls: [], close: () => {} } }));
 vi.mock("notistack", () => ({
   useSnackbar: () => ({
@@ -132,9 +139,7 @@ describe("ScenariosStep — pagination", () => {
     expect(await screen.findByText(/Showing 51–60 of 60/)).toBeInTheDocument();
 
     // Delete a row on the (now non-existent after shrink) last page.
-    fireEvent.click(
-      screen.getAllByRole("button", { name: "Remove from this environment" })[0],
-    );
+    rowAction(0, "Remove");
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 
     // The suite is now 40 rows (2 pages); page 3 is gone, so it clamps to page 2

@@ -17,6 +17,13 @@ import {
   renderWithClient,
 } from "./scenariosTestUtils";
 
+// Edit and Remove live in each row's ⋯ menu (Vel's row actions).
+const ROW_MENU = /^More actions for /;
+const rowAction = (i, name) => {
+  fireEvent.click(screen.getAllByRole("button", { name: ROW_MENU })[i]);
+  fireEvent.click(screen.getByRole("menuitem", { name }));
+};
+
 // The list reads the server (fixtures) source.
 vi.mock("src/api/simulate-environments/scenarios", async () => {
   const actual = await vi.importActual("src/api/simulate-environments/scenarios");
@@ -75,15 +82,14 @@ describe("ScenariosStep — edit", () => {
   it("enables the per-row edit pencil", async () => {
     renderStep();
     await screen.findByRole("table");
-    const pencils = screen.getAllByRole("button", { name: "Edit scenario" });
-    expect(pencils[0]).toBeEnabled();
+    expect(screen.getAllByRole("button", { name: ROW_MENU })[0]).toBeEnabled();
   });
 
   it("opens the editor prefilled, gates read-only fields, and amends the changed editable field", async () => {
     renderStep();
     await screen.findByRole("table");
     const row = firstRow();
-    fireEvent.click(screen.getAllByRole("button", { name: "Edit scenario" })[0]);
+    rowAction(0, "Edit");
 
     // Name is proved, not described — it prefills but is read-only (not in the
     // server's editable_fields).

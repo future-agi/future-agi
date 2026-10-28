@@ -106,7 +106,7 @@ export default function WorkspacePanels({
       case "contract":
         return <RlContractPanel env={env} envState={envState} patch={patch} onGo={go} locked={locked} backed={backed} />;
       case "scenarios":
-        return <ScenariosStep env={env} envState={envState} patch={patch} locked={locked} onFork={onFork} onStartRun={onStartRun} canRun={canRun} runBlockedReason={runBlockedReason} />;
+        return <ScenariosStep env={env} envState={envState} patch={patch} locked={locked} onFork={onFork} onStartRun={onStartRun} canRun={canRun} runBlockedReason={runBlockedReason} noRuns={noRuns} />;
       case "evals":
         return (
           <EvalsStep
