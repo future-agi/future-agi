@@ -1540,6 +1540,42 @@ describe("a run asking several questions while it is answered", () => {
   });
 });
 
+describe("a run whose workflow went before it picked its rows", () => {
+  it("says it stopped, offers Resume and claims no rows read", async () => {
+    // The server stops calling it "picking" once its workflow is gone.
+    const stalled = runOf({
+      status: "stalled",
+      total: 1000,
+      answered: 0,
+      sample: {
+        is_sample: true,
+        population: 24473,
+        requested: 1000,
+        read: 1000,
+        next_size: 1000,
+        can_extend: false,
+      },
+      records: null,
+    });
+    stalled.summary = { ...stalled.summary, preparing: true, counts: {} };
+    fakes.askRuns["task-sessions"] = stalled;
+    renderAt(
+      `/dashboard/observe/${PROJECT}/ask?run=task-sessions&unit=sessions&tab=sessions`,
+    );
+    expect(
+      screen.getByText(
+        "This run stopped before it picked the 1,000 sessions to read",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Picking the/)).toBeNull();
+    expect(screen.queryByText(/sessions read, picked at random/)).toBeNull();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+    });
+    expect(fakes.control).toHaveBeenCalledWith("resume", {});
+  });
+});
+
 describe("a run that stopped before finishing", () => {
   it("says how far it got and resumes", async () => {
     fakes.askRuns["task-sessions"] = runOf({

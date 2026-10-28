@@ -343,8 +343,11 @@ def _failure(task, view) -> dict | None:
 
 def _stalled(task, status: str, data: dict, progress: dict) -> bool:
     """A run stopped before finishing: its task ended (or its workflow is
-    gone) while rows still wait for an answer."""
-    if not data["pending"] or data.get("preparing"):
+    gone) while rows still wait for an answer. A run still picking its rows
+    stalls too once its workflow is gone (a restart took it before that
+    step stored any): it would otherwise read "Picking…" forever. While its
+    workflow lives, however long a big view takes to pick, it is picking."""
+    if not data["pending"]:
         return False
     if status in (EvalTaskStatus.COMPLETED, EvalTaskStatus.FAILED):
         return True

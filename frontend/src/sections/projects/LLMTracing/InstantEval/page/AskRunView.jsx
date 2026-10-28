@@ -129,7 +129,10 @@ function StatusLine({ run, unit, creating }) {
   else if (run.status === "preparing")
     text = `Picking the ${run.total.toLocaleString()} ${noun(run.total)} to read…`;
   else if (run.status === "stalled")
-    text = `This run stopped before finishing: ${run.answered.toLocaleString()} of ${run.total.toLocaleString()} answered`;
+    // Its workflow went before it picked its rows: Resume picks them.
+    text = run.summary?.preparing
+      ? `This run stopped before it picked the ${run.total.toLocaleString()} ${noun(run.total)} to read`
+      : `This run stopped before finishing: ${run.answered.toLocaleString()} of ${run.total.toLocaleString()} answered`;
   else if (run.status === "failed")
     text = !answersSaved
       ? "Failed before answering"
@@ -1374,8 +1377,9 @@ export default function AskRunView({
           </Alert>
         )}
 
-        {/* A run without an answer has no sample to estimate from. */}
-        {!failedBeforeAnswering && !nothingAnswered && (
+        {/* A run without an answer has no sample to estimate from, nor one
+            that hasn't picked its rows yet (it has read none of them). */}
+        {!failedBeforeAnswering && !nothingAnswered && !summary?.preparing && (
           <SampleBanner
             run={run}
             unit={unit}

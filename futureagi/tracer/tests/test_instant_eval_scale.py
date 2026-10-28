@@ -1500,6 +1500,48 @@ def _running_with_unanswered(auth_client, observe_project, yes_no):
 
 
 @pytest.mark.django_db
+def test_a_run_whose_workflow_vanished_before_it_picked_its_rows_stalls(
+    auth_client, observe_project, yes_no, fake_view, started, monkeypatch
+):
+    """Its workflow went before the first step stored any row: the page
+    read "Picking the 6 sessions to read…" forever. Past the quiet spell
+    with no workflow it is stalled, still counting every row it asked for,
+    and resumes like any stalled run."""
+    from django.core.cache import cache
+
+    cache.clear()
+    result = _start(auth_client, observe_project, [yes_no], sample_size=6)
+    task = EvalTask.objects.get(id=result.json()["result"]["task_id"])
+    assert not InstantEvalRow.objects.filter(task_id=task.id).exists()
+    workflow = {"state": "progressing"}
+    monkeypatch.setattr(
+        "tfc.temporal.eval_tasks.client.describe_eval_task_workflow_sync",
+        lambda task_id: workflow["state"],
+    )
+
+    # Just started, or picking a big view with its workflow alive: picking.
+    s = _summary(auth_client, observe_project, task)
+    assert (s["status"], s["preparing"], s["pending"]) == ("pending", True, 6)
+    long_ago = datetime.now(UTC) - timedelta(minutes=10)
+    EvalTask.objects.filter(id=task.id).update(updated_at=long_ago)
+    cache.clear()
+    s = _summary(auth_client, observe_project, task)
+    assert (s["status"], s["preparing"]) == ("pending", True)
+
+    # Its workflow is gone: stalled, with every row still to read.
+    workflow["state"] = "absent"
+    cache.clear()
+    s = _summary(auth_client, observe_project, task)
+    assert (s["status"], s["preparing"]) == ("stalled", True)
+    assert (s["total"], s["answered"], s["pending"]) == (6, 0, 6)
+
+    before = len(started)
+    resumed = _control(auth_client, observe_project, task, "resume")
+    assert resumed.status_code == 200, resumed.json()
+    assert started[before:] == [(str(task.id), {"replace_existing": True})]
+
+
+@pytest.mark.django_db
 def test_a_run_whose_workflow_vanished_reports_stalled_and_resumes(
     auth_client, observe_project, yes_no, fake_view, started, monkeypatch
 ):
