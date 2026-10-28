@@ -1879,6 +1879,27 @@
 - GET /mcp/internal/tools/ equals the initial tool set minus all dataset tools
 - POST /mcp/internal/tool-call/ list_datasets returns 403 while whoami and list_projects still succeed
 
+### SET-E2E-004 — key access follows the current organization role and removal
+
+**Goal:** Use only the keys allowed by the current organization role and lose access after removal  
+**Spec:** `flows/settings/key-role-bootstrap.spec.ts:29`  
+**Tags:** —
+
+**User steps:**
+
+1. bootstrap an Owner and Viewer using their own bearer sessions
+2. open each Keys page and compare exact allowed IDs, names and masked fields
+3. use each returned key for a permitted read and refuse a Viewer owner-only deletion
+4. remove the Viewer through the public membership endpoint
+5. refuse the existing bearer and personal key, then open a fresh browser at sign-in
+
+**Backend state verified:**
+
+- A: bootstrap IDs map to an organization system key for the Owner and a user-bound personal key for the Viewer in Postgres
+- B: each masked Keys UI row set equals the independently scoped management API and Postgres identities
+- C: each key authenticates the intended user for reads; Viewer deletion is refused and the target remains unchanged
+- D: public removal revokes bearer and key access, sends a fresh browser to sign-in and leaves no active or regenerated membership
+
 ## simulate
 
 ### SIM-E2E-001 — Simulate opens on Environments, and an org from after the cutoff sees only Environments
