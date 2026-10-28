@@ -2065,6 +2065,39 @@ describe("a new question's date and filters", () => {
   });
 });
 
+describe("a question asked here, once its run is done", () => {
+  it("is run again, not recreated, before the saved list is read again", async () => {
+    // The question is saved as a new evaluator when it starts; the page's
+    // saved list was read before that.
+    const NEW = { ...QUESTIONS[0], configId: "config-new" };
+    fakes.estimate.mockResolvedValue(smallEstimate(3));
+    fakes.startAskRun.mockResolvedValue({
+      taskId: "task-new",
+      questions: [NEW],
+    });
+    renderAt(askLink(PROJECT, { unit: "sessions", population: POPULATION }));
+    fireEvent.change(
+      await screen.findByRole("textbox", { name: "Question 1" }),
+      { target: { value: QUESTION } },
+    );
+    fakes.askRuns["task-new"] = {
+      ...runOf(),
+      taskId: "task-new",
+      questions: [NEW],
+    };
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Ask Jev about 3 sessions" }),
+      );
+    });
+    await waitFor(() => expect(where().params.run).toBe("task-new"));
+    expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled();
+    expect(
+      screen.queryByRole("button", { name: "Recreate question" }),
+    ).toBeNull();
+  });
+});
+
 describe("running a question again", () => {
   const STATUS = {
     column_id: "status",

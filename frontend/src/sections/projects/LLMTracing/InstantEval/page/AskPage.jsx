@@ -39,6 +39,7 @@ import {
   AskRefused,
   AskSampleTooLarge,
   HISTORY_KEY,
+  SAVED_QUESTIONS_KEY,
   startAskRun,
   useInstantEvalHistory,
   useInstantEvals,
@@ -87,9 +88,9 @@ function RunPane({
   rerunning,
   runAgainConfirm,
   onCancelRunAgain,
-  configsById = {},
   configsLoading = false,
   onProgress,
+  evaluatorGone = () => false,
 }) {
   const run = useAskRun({
     projectId,
@@ -133,7 +134,7 @@ function RunPane({
           : undefined
       }
       rerunning={rerunning || configsLoading}
-      needsEvaluator={run.questions.some((q) => !configsById[q.configId])}
+      needsEvaluator={run.questions.some(evaluatorGone)}
       runAgainConfirm={runAgainConfirm}
       onCancelRunAgain={onCancelRunAgain}
     />
@@ -151,9 +152,10 @@ RunPane.propTypes = {
   rerunning: PropTypes.bool,
   runAgainConfirm: PropTypes.object,
   onCancelRunAgain: PropTypes.func,
-  configsById: PropTypes.object,
   configsLoading: PropTypes.bool,
   onProgress: PropTypes.func,
+  // Whether a question's saved evaluator is gone, so it is recreated.
+  evaluatorGone: PropTypes.func,
 };
 
 function Welcome({ onNew }) {
@@ -291,6 +293,14 @@ export default function AskPage() {
     () => Object.fromEntries(saved.all.map((item) => [item.configId, item])),
     [saved.all],
   );
+  // A question started here has its evaluator, even before the saved list
+  // is read again: else a run that just finished offered "Recreate
+  // question", and "Run again" after a reload.
+  const evaluatorGone = (question) =>
+    !configsById[question.configId] &&
+    !Object.values(launches).some((launched) =>
+      launched.questions?.some((item) => item.configId === question.configId),
+    );
 
   // With nothing chosen, open the most recent run.
   const latest = useInstantEvalHistory(observeId, configsById, {
@@ -413,6 +423,10 @@ export default function AskPage() {
       }));
       setPending(null);
       refreshHistory();
+      // New questions were saved as evaluators.
+      queryClient.invalidateQueries({
+        queryKey: [SAVED_QUESTIONS_KEY, observeId],
+      });
       // Replace the new-question entry, so Back from the run skips it.
       go(
         { [ASK_RUN_PARAM]: started.taskId, [ASK_UNIT_PARAM]: unit },
@@ -470,7 +484,7 @@ export default function AskPage() {
   // confirmed (or than whoever started the run confirmed), so a run past
   // the confirm size restates its credits here first, as the composer does.
   const runAgain = async (run, { confirm = false } = {}) => {
-    if (run.questions.some((question) => !configsById[question.configId])) {
+    if (run.questions.some(evaluatorGone)) {
       recreateQuestions(run.questions, run.unit);
       return;
     }
@@ -603,9 +617,9 @@ export default function AskPage() {
           rerunConfirm?.taskId === runId ? rerunConfirm : undefined
         }
         onCancelRunAgain={() => setRerunConfirm(null)}
-        configsById={configsById}
         configsLoading={saved.isLoading}
         onProgress={setOpenProgress}
+        evaluatorGone={evaluatorGone}
       />
     );
   } else if (latest.isError) {

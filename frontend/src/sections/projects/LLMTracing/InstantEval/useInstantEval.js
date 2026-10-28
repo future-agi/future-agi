@@ -567,6 +567,9 @@ export async function findContinuousTask({
   throw new LiveTaskUnchecked();
 }
 
+// The saved questions' query, read again once a start has saved new ones.
+export const SAVED_QUESTIONS_KEY = "instant-evals";
+
 /**
  * Questions saved by Instant eval in this project. `items` has one entry per
  * question (the newest evaluator for it), optionally only those asked about
@@ -574,7 +577,7 @@ export async function findContinuousTask({
  */
 export function useInstantEvals(projectId, { enabled = true, unit } = {}) {
   const query = useQuery({
-    queryKey: ["instant-evals", projectId],
+    queryKey: [SAVED_QUESTIONS_KEY, projectId],
     enabled: Boolean(projectId) && enabled,
     queryFn: () =>
       axios.get(endpoints.project.getEvalTaskConfig(), {
