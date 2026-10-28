@@ -734,9 +734,9 @@ class TestModelCalls:
     @pytest.mark.parametrize(
         "code, says",
         [
-            ("ACTIVATION_FAILED", "this licence couldn't be activated"),
-            ("NO_ENTERPRISE_LICENSE", "they need an Enterprise licence"),
-            ("FEATURE_DENIED", "this licence doesn't include them"),
+            ("ACTIVATION_FAILED", "this license couldn't be activated"),
+            ("NO_ENTERPRISE_LICENSE", "they need an Enterprise license"),
+            ("FEATURE_DENIED", "this license doesn't include them"),
         ],
     )
     def test_a_licence_the_managed_service_refuses_is_named_with_its_fix(
@@ -757,6 +757,8 @@ class TestModelCalls:
         message = str(caught.value)
         assert message.startswith("Insights couldn't use Future AGI's managed models")
         assert says in message
+        # Spelt as the product spells it, beside "Settings → License".
+        assert "licence" not in message
         assert "INSIGHTS_FAST_MODEL and INSIGHTS_THINKING_MODEL" in message
         assert code not in message and len(message) <= 240
         assert caught.value.code == llm.LICENSE

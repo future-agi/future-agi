@@ -60,16 +60,16 @@ _OWN_MODELS = (
 # code. Only a self-hosted install reaches its models through it.
 _MANAGED_REFUSALS = {
     "ACTIVATION_FAILED": (
-        "Insights couldn't use Future AGI's managed models: this licence "
+        "Insights couldn't use Future AGI's managed models: this license "
         "couldn't be activated with the managed service. Check it in "
         f"Settings → License, {_OWN_MODELS}"
     ),
     "NO_ENTERPRISE_LICENSE": (
         "Insights couldn't use Future AGI's managed models: they need an "
-        f"Enterprise licence. Add one in Settings → License, {_OWN_MODELS}"
+        f"Enterprise license. Add one in Settings → License, {_OWN_MODELS}"
     ),
     "FEATURE_DENIED": (
-        "Insights couldn't use Future AGI's managed models: this licence "
+        "Insights couldn't use Future AGI's managed models: this license "
         f"doesn't include them. Ask Future AGI to add them, {_OWN_MODELS}"
     ),
 }

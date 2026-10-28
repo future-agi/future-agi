@@ -372,7 +372,7 @@ describe("InsightsView", () => {
 
   describe("a run that retrying can't help", () => {
     const LICENCE =
-      "Insights couldn't use Future AGI's managed models: this licence couldn't be activated with the managed service. Check it in Settings → License, or set INSIGHTS_FAST_MODEL and INSIGHTS_THINKING_MODEL to models your own gateway serves.";
+      "Insights couldn't use Future AGI's managed models: this license couldn't be activated with the managed service. Check it in Settings → License, or set INSIGHTS_FAST_MODEL and INSIGHTS_THINKING_MODEL to models your own gateway serves.";
     const GATEWAY =
       "The model gateway doesn't serve turing_flash, so trying again won't help: an administrator needs to check the Insights model settings.";
 
