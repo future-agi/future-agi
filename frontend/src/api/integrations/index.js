@@ -80,6 +80,54 @@ export const useStartSlackInstall = () =>
       ),
   });
 
+export const useStartGitHubInstall = () =>
+  useMutation({
+    mutationFn: () => axios.post(endpoints.integrations.github.install, {}),
+  });
+
+export const useGitHubConnection = (options = {}) =>
+  useQuery({
+    queryKey: [...integrationKeys.connections(), "github"],
+    queryFn: () =>
+      axios.get(endpoints.integrations.connections.list, {
+        params: { platform: "github" },
+      }),
+    select: (response) => response.data?.result?.connections?.[0] ?? null,
+    staleTime: 1000 * 60 * 2,
+    ...options,
+  });
+
+export const useSourceRepositories = (connectionId, query, options = {}) =>
+  useQuery({
+    queryKey: [...integrationKeys.all, "source-repositories", connectionId, query],
+    queryFn: () =>
+      axios.get(endpoints.integrations.connections.repositories(connectionId), {
+        params: { q: query },
+      }),
+    select: (response) => response.data?.result?.repositories ?? [],
+    enabled: !!connectionId && (options.enabled ?? true),
+    staleTime: 1000 * 60,
+    ...options,
+  });
+
+export const useSourceBranches = (connectionId, repositoryId, options = {}) =>
+  useQuery({
+    queryKey: [
+      ...integrationKeys.all,
+      "source-branches",
+      connectionId,
+      repositoryId,
+    ],
+    queryFn: () =>
+      axios.get(
+        endpoints.integrations.connections.branches(connectionId, repositoryId),
+      ),
+    select: (response) => response.data?.result?.branches ?? [],
+    enabled: !!connectionId && !!repositoryId && (options.enabled ?? true),
+    staleTime: 1000 * 60,
+    ...options,
+  });
+
 export const useIntegrationConnection = (connectionId, options = {}) => {
   return useQuery({
     queryKey: integrationKeys.connection(connectionId),

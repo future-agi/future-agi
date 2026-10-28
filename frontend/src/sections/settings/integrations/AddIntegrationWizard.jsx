@@ -29,7 +29,7 @@ const FULL_STEPS = ["Platform", "Credentials", "Project", "Sync Settings"];
 const SHORT_STEPS = ["Platform", "Credentials", "Sync Settings"];
 const MINIMAL_STEPS = ["Platform", "Credentials"];
 
-function WizardContent({ onClose, initialPlatform, onSelectSlack }) {
+function WizardContent({ onClose, initialPlatform, onSelectInstall }) {
   const theme = useTheme();
   const navigate = useNavigate();
   const [activeStep, setActiveStep] = useState(initialPlatform ? 1 : 0);
@@ -120,7 +120,7 @@ function WizardContent({ onClose, initialPlatform, onSelectSlack }) {
             data={wizardData}
             onUpdate={updateData}
             onNext={handleNext}
-            onSelectSlack={onSelectSlack}
+            onSelectInstall={onSelectInstall}
           />
         )}
         {activeStep === 1 && (
@@ -219,14 +219,14 @@ function WizardContent({ onClose, initialPlatform, onSelectSlack }) {
 WizardContent.propTypes = {
   onClose: PropTypes.func.isRequired,
   initialPlatform: PropTypes.string,
-  onSelectSlack: PropTypes.func.isRequired,
+  onSelectInstall: PropTypes.func.isRequired,
 };
 
 export default function AddIntegrationWizard({
   open,
   onClose,
   initialPlatform,
-  onSelectSlack,
+  onSelectInstall,
 }) {
   const theme = useTheme();
 
@@ -256,7 +256,7 @@ export default function AddIntegrationWizard({
         },
       }}
     >
-      <WizardContent onClose={onClose} initialPlatform={initialPlatform} onSelectSlack={onSelectSlack} />
+      <WizardContent onClose={onClose} initialPlatform={initialPlatform} onSelectInstall={onSelectInstall} />
     </Drawer>
   );
 }
@@ -265,5 +265,5 @@ AddIntegrationWizard.propTypes = {
   open: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
   initialPlatform: PropTypes.string,
-  onSelectSlack: PropTypes.func.isRequired,
+  onSelectInstall: PropTypes.func.isRequired,
 };

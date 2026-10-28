@@ -19,10 +19,14 @@ import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import { fToNow } from "src/utils/format-time";
 import { fDateTime } from "src/utils/format-time";
-import { useDeleteConnection, useStartSlackInstall } from "src/api/integrations";
+import {
+  useDeleteConnection,
+  useStartGitHubInstall,
+  useStartSlackInstall,
+} from "src/api/integrations";
 import PlatformLogo from "./PlatformLogo";
 import StatusBadge from "./StatusBadge";
-import { SKIP_SYNC_SETTINGS_PLATFORMS } from "./constants";
+import { INSTALL_FLOWS, SKIP_SYNC_SETTINGS_PLATFORMS } from "./constants";
 import { getErrorMessage } from "./utils";
 
 export default function IntegrationCard({ connection }) {
@@ -52,6 +56,10 @@ export default function IntegrationCard({ connection }) {
   const { mutate: deleteConnection, isPending: deleting } =
     useDeleteConnection();
   const startSlackInstall = useStartSlackInstall();
+  const startGitHubInstall = useStartGitHubInstall();
+  const installFlow = INSTALL_FLOWS[connection.platform];
+  const startInstall =
+    connection.platform === "github" ? startGitHubInstall : startSlackInstall;
 
   const handleClick = () => {
     if (isActionOnly) {
@@ -74,15 +82,15 @@ export default function IntegrationCard({ connection }) {
     });
   };
 
-  const handleReconnectSlack = () => {
+  const handleReconnect = () => {
     setConnectionError("");
-    startSlackInstall.mutate(connection.id, {
+    startInstall.mutate(connection.id, {
       onSuccess: (response) => {
-        const authorizationUrl = response.data?.result?.authorization_url;
-        if (authorizationUrl) window.location.assign(authorizationUrl);
-        else setConnectionError("Could not start Slack authorization. Please try again.");
+        const installUrl = response.data?.result?.[installFlow.urlField];
+        if (installUrl) window.location.assign(installUrl);
+        else setConnectionError(`Could not start ${installFlow.label} authorization. Please try again.`);
       },
-      onError: (error) => setConnectionError(getErrorMessage(error, "Could not reconnect Slack.")),
+      onError: (error) => setConnectionError(getErrorMessage(error, `Could not reconnect ${installFlow.label}.`)),
     });
   };
 
@@ -117,7 +125,7 @@ export default function IntegrationCard({ connection }) {
                 {hostUrl || "—"}
               </Typography>
             </Box>
-            {isActionOnly ? (
+            {isActionOnly && connection.status === "active" ? (
               <Chip
                 size="small"
                 color="success"
@@ -169,8 +177,8 @@ export default function IntegrationCard({ connection }) {
           <DialogTitle>Manage {displayName}</DialogTitle>
           <DialogContent>
             <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              {connection.platform === "slack"
-                ? `Connected ${createdAt ? fDateTime(createdAt) : "—"}. Reconnect to renew Slack access, or disconnect to stop Error Feed notifications using this workspace.`
+              {installFlow
+                ? `Connected ${createdAt ? fDateTime(createdAt) : "—"}. ${installFlow.manageText}`
                 : `Connected ${createdAt ? fDateTime(createdAt) : "—"}. Disconnecting will remove the API key and disable issue creation from Error Feed.`}
             </Typography>
             {connectionError && <Alert severity="error" sx={{ mt: 2 }}>{connectionError}</Alert>}
@@ -179,9 +187,9 @@ export default function IntegrationCard({ connection }) {
             <Button onClick={() => setDisconnectOpen(false)} size="small">
               Cancel
             </Button>
-            {connection.platform === "slack" && (
-              <Button onClick={handleReconnectSlack} size="small" disabled={startSlackInstall.isPending}>
-                {startSlackInstall.isPending ? "Connecting…" : "Reconnect Slack"}
+            {installFlow && (
+              <Button onClick={handleReconnect} size="small" disabled={startInstall.isPending}>
+                {startInstall.isPending ? "Connecting…" : `Reconnect ${installFlow.label}`}
               </Button>
             )}
             <Button

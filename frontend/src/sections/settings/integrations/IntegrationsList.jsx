@@ -14,16 +14,23 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { LoadingScreen } from "src/components/loading-screen";
-import { integrationKeys, useIntegrationConnections, useStartSlackInstall } from "src/api/integrations";
+import {
+  integrationKeys,
+  useIntegrationConnections,
+  useStartGitHubInstall,
+  useStartSlackInstall,
+} from "src/api/integrations";
 import IntegrationCard from "./IntegrationCard";
 import PlatformLogo from "./PlatformLogo";
 import AddIntegrationWizard from "./AddIntegrationWizard";
-import { PLATFORMS } from "./constants";
+import { GITHUB_INSTALL_OUTCOMES, INSTALL_FLOWS, PLATFORMS } from "./constants";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { getErrorMessage } from "./utils";
 
 const SLACK_RETURN_TO_KEY = "slack-integration-return-to";
+const GITHUB_RETURN_TO_KEY = "github-integration-return-to";
+const isAppPath = (path) => path?.startsWith("/") && !path.startsWith("//");
 
 export default function IntegrationsList() {
   const { role } = useAuthContext();
@@ -33,9 +40,9 @@ export default function IntegrationsList() {
   const queryClient = useQueryClient();
   const { data, isLoading, isError } = useIntegrationConnections();
   const { mutate: startSlackInstall, isPending: connectingSlack } = useStartSlackInstall();
-  const autoStartedSlack = useRef(false);
-  const [slackError, setSlackError] = useState("");
-  const [slackNotice, setSlackNotice] = useState("");
+  const { mutate: startGitHubInstall, isPending: connectingGitHub } = useStartGitHubInstall();
+  const autoStartedInstall = useRef(false);
+  const [installMessage, setInstallMessage] = useState(null);
   // null = wizard closed, "" = wizard open (no platform), "langfuse" = wizard open with platform
   const [selectedPlatform, setSelectedPlatform] = useState(null);
 
@@ -51,43 +58,63 @@ export default function IntegrationsList() {
       if (returnTo?.startsWith("/") && !returnTo.startsWith("//")) {
         navigate(`${returnTo}${returnTo.includes("?") ? "&" : "?"}resume_alert=1`, { replace: true });
       } else {
-        setSlackNotice("Slack workspace connected successfully.");
+        setInstallMessage({ severity: "success", text: INSTALL_FLOWS.slack.connected });
       }
     } else if (params.get("slack") === "error") {
-      setSlackError("Could not connect Slack. Please try again.");
+      setInstallMessage({ severity: "error", text: "Could not connect Slack. Please try again." });
+    }
+    const githubOutcome = params.get("github");
+    if (GITHUB_INSTALL_OUTCOMES[githubOutcome]) {
+      queryClient.invalidateQueries({ queryKey: integrationKeys.connections() });
+      const returnTo = sessionStorage.getItem(GITHUB_RETURN_TO_KEY);
+      sessionStorage.removeItem(GITHUB_RETURN_TO_KEY);
+      if (isAppPath(returnTo)) {
+        navigate(`${returnTo}${returnTo.includes("?") ? "&" : "?"}github=${githubOutcome}`, { replace: true });
+      } else {
+        setInstallMessage(GITHUB_INSTALL_OUTCOMES[githubOutcome]);
+      }
     }
   }, [location.search, navigate, queryClient]);
 
-  const connectSlack = useCallback(() => {
-    setSlackError("");
-    const params = new URLSearchParams(location.search);
-    const returnTo = params.get("return_to");
-    if (returnTo?.startsWith("/") && !returnTo.startsWith("//")) {
-      sessionStorage.setItem(SLACK_RETURN_TO_KEY, returnTo);
+  const startInstall = useCallback((platformId) => {
+    const flow = INSTALL_FLOWS[platformId];
+    setInstallMessage(null);
+    const returnTo = new URLSearchParams(location.search).get("return_to");
+    if (isAppPath(returnTo)) {
+      sessionStorage.setItem(platformId === "github" ? GITHUB_RETURN_TO_KEY : SLACK_RETURN_TO_KEY, returnTo);
     }
-    startSlackInstall(undefined, {
+    const start = platformId === "github" ? startGitHubInstall : startSlackInstall;
+    start(undefined, {
       onSuccess: (response) => {
-        const authorizationUrl = response.data?.result?.authorization_url;
-        if (!authorizationUrl) {
-          setSlackError("Could not start Slack authorization. Please try again.");
+        const installUrl = response.data?.result?.[flow.urlField];
+        if (!installUrl) {
+          setInstallMessage({
+            severity: "error",
+            text: `Could not start ${flow.label} authorization. Please try again.`,
+          });
           return;
         }
-        window.location.assign(authorizationUrl);
+        window.location.assign(installUrl);
       },
-      onError: (error) => setSlackError(getErrorMessage(error, "Could not connect Slack.")),
+      onError: (error) =>
+        setInstallMessage({
+          severity: "error",
+          text: getErrorMessage(error, `Could not connect ${flow.label}.`),
+        }),
     });
-  }, [location.search, startSlackInstall]);
+  }, [location.search, startGitHubInstall, startSlackInstall]);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
-    if (params.get("platform") === "slack" && !params.has("slack") && !isLoading && !autoStartedSlack.current) {
-      autoStartedSlack.current = true;
-      connectSlack();
+    const platformId = params.get("platform");
+    if (INSTALL_FLOWS[platformId] && !params.has(platformId) && !isLoading && !autoStartedInstall.current) {
+      autoStartedInstall.current = true;
+      startInstall(platformId);
     }
-  }, [connectSlack, isLoading, location.search]);
+  }, [startInstall, isLoading, location.search]);
 
   const selectPlatform = (platformId) => {
-    if (platformId === "slack") connectSlack();
+    if (INSTALL_FLOWS[platformId]) startInstall(platformId);
     else setSelectedPlatform(platformId);
   };
 
@@ -109,9 +136,12 @@ export default function IntegrationsList() {
 
   return (
     <Box>
-      {slackError && <Alert severity="error" sx={{ mb: 2 }}>{slackError}</Alert>}
-      {slackNotice && <Alert severity="success" sx={{ mb: 2 }}>{slackNotice}</Alert>}
-      {connectingSlack && <Alert severity="info" sx={{ mb: 2 }}>Starting Slack authorization…</Alert>}
+      {installMessage && <Alert severity={installMessage.severity} sx={{ mb: 2 }}>{installMessage.text}</Alert>}
+      {(connectingSlack || connectingGitHub) && (
+        <Alert severity="info" sx={{ mb: 2 }}>
+          Starting {connectingGitHub ? "GitHub" : "Slack"} authorization…
+        </Alert>
+      )}
       {/* Header */}
       <Box
         display="flex"
@@ -292,7 +322,7 @@ export default function IntegrationsList() {
         open={wizardOpen}
         onClose={() => setSelectedPlatform(null)}
         initialPlatform={selectedPlatform || undefined}
-        onSelectSlack={() => { setSelectedPlatform(null); connectSlack(); }}
+        onSelectInstall={(platformId) => { setSelectedPlatform(null); startInstall(platformId); }}
       />
     </Box>
   );

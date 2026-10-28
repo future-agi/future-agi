@@ -2082,6 +2082,9 @@ export const endpoints = {
       install: apiPath("/integrations/slack/install/"),
       channels: (id) => apiPath("/integrations/connections/{connection_id}/slack/channels/", { connection_id: id }),
     },
+    github: {
+      install: apiPath("/integrations/github/install/"),
+    },
     connections: {
       list: apiPath("/integrations/connections/"),
       create: apiPath("/integrations/connections/"),
@@ -2094,6 +2097,15 @@ export const endpoints = {
         apiPath("/integrations/connections/{id}/pause/", { id: id }),
       resume: (id) =>
         apiPath("/integrations/connections/{id}/resume/", { id: id }),
+      repositories: (id) =>
+        apiPath("/integrations/connections/{connection_id}/repositories/", {
+          connection_id: id,
+        }),
+      branches: (id, repositoryId) =>
+        apiPath(
+          "/integrations/connections/{connection_id}/repositories/{repository_id}/branches/",
+          { connection_id: id, repository_id: repositoryId },
+        ),
     },
     validate: apiPath("/integrations/connections/validate/"),
     syncLogs: apiPath("/integrations/sync-logs/"),
