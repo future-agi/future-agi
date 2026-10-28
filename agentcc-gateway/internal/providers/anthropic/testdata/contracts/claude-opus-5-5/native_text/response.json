@@ -1,0 +1,31 @@
+{
+  "id": "msg_01Qh8vN3cTzW5rKp2Lx9JmYd",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-opus-5-5",
+  "content": [
+    {
+      "type": "text",
+      "text": "Pride and Prejudice turns on three linked themes: the danger of first impressions, the economics of marriage, and the slow work of self-knowledge."
+    }
+  ],
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "stop_details": null,
+  "usage": {
+    "input_tokens": 2048,
+    "cache_creation_input_tokens": 248,
+    "cache_read_input_tokens": 1800,
+    "cache_creation": {
+      "ephemeral_5m_input_tokens": 148,
+      "ephemeral_1h_input_tokens": 100
+    },
+    "output_tokens": 503,
+    "output_tokens_details": {
+      "thinking_tokens": 0
+    },
+    "service_tier": "standard",
+    "speed": "standard",
+    "inference_geo": "global"
+  }
+}

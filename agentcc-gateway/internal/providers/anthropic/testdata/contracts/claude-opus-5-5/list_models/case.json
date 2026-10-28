@@ -1,0 +1,11 @@
+{
+  "endpoint": "list_models",
+  "recordable": false,
+  "notes": "Synthetic, from platform.claude.com/docs/en/api/models/list (the ModelInfo fields and the 200 example, with the example's placeholder dates, line and token limits replaced by plausible values for three current models; first_id/last_id are the first and last id). Pins that ListModels never calls GET /v1/models (gap X8). Not recordable while ListModels sends nothing upstream (gap X8): the recorder fails a case whose adapter makes no request. Make it recordable when ListModels calls GET /v1/models.",
+  "sanity_gaps": [
+    {
+      "failure": "ListModels returned 0 models",
+      "reason": "known gap X8: ListModels returns nil without calling GET /v1/models (its comment says Anthropic has no list endpoint, which is stale), so the gateway cannot list or validate the models a key can use"
+    }
+  ]
+}

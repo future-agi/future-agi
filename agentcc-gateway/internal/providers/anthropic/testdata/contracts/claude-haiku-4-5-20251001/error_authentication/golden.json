@@ -1,0 +1,6 @@
+{
+  "code": "provider_authentication_error",
+  "message": "invalid x-api-key",
+  "status": 401,
+  "type": "authentication_error"
+}

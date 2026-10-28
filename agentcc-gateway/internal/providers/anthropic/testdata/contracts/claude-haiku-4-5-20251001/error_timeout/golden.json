@@ -1,0 +1,6 @@
+{
+  "code": "provider_timeout_error",
+  "message": "The request timed out while processing.",
+  "status": 502,
+  "type": "upstream_error"
+}

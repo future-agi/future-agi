@@ -1,0 +1,8 @@
+{
+  "type": "error",
+  "error": {
+    "type": "billing_error",
+    "message": "There's an issue with your billing or payment information. Check your payment details in the Claude Console."
+  },
+  "request_id": "req_011CVnA4Rt8yLp2Gd5vQwE6h"
+}

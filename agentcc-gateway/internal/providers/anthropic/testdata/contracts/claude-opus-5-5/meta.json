@@ -3,7 +3,7 @@
   "model": "claude-opus-5-5",
   "source": "synthetic",
   "recorded_at": null,
-  "notes": "Synthetic: authored by hand from the official Anthropic docs (platform.claude.com/docs/en/api/messages, build-with-claude/streaming, build-with-claude/thinking, build-with-claude/extended-thinking, agents-and-tools/tool-use/web-search-tool, build-with-claude/handling-stop-reasons, build-with-claude/refusals-and-fallback, build-with-claude/citations), read 2026-10-28. Field names, event types and stop reasons are the documented ones; ids, signatures, token counts and text are invented. Replace each case with a recorded capture (source: recorded) when the live recorder runs. Pins the 2026 shape: stop_details (null unless stop_reason is refusal), usage with output_tokens_details/inference_geo/speed, and display-omitted adaptive thinking (thinking blocks with an empty thinking string plus a signature, streamed as one empty thinking_delta and one signature_delta). container and diagnostics are omitted: the reference types them nullable and they are only populated by code execution and the cache-diagnosis beta.",
+  "notes": "Synthetic: authored by hand from the official Anthropic docs (platform.claude.com/docs/en/api/messages, build-with-claude/streaming, build-with-claude/thinking, build-with-claude/extended-thinking, agents-and-tools/tool-use/web-search-tool, build-with-claude/handling-stop-reasons, build-with-claude/refusals-and-fallback, build-with-claude/citations), read 2026-10-28. Field names, event types and stop reasons are the documented ones; ids, signatures, token counts and text are invented. Replace each case with a recorded capture (source: recorded) when the live recorder runs. Pins the 2026 shape: stop_details (null unless stop_reason is refusal), usage with output_tokens_details/inference_geo/speed, and display-omitted adaptive thinking (thinking blocks with an empty thinking string plus a signature, streamed as one empty thinking_delta and one signature_delta). container and diagnostics are omitted: the reference types them nullable and they are only populated by code execution and the cache-diagnosis beta. Non-chat cases (case.json endpoint), read 2026-10-28: native_text / stream_native_text drive the native /v1/messages passthrough with the 1h-cache usage example from build-with-claude/prompt-caching; native_error_rate_limit / stream_native_error_rate_limit its 429 (docs/en/api/errors, docs/en/api/rate-limits); count_tokens the count_tokens example (docs/en/api/messages/count_tokens); list_models the GET /v1/models example (docs/en/api/models/list). Their paths are rooted native:$, native/<event>:$, native/error:$, count_tokens:$ and models:$, apart from the chat ones.",
   "allowed_unknown_fields": [
     {
       "path": "$.content[].signature",
@@ -80,6 +80,70 @@
     {
       "path": "message_start:$.message.usage.speed",
       "reason": "known gap U7: usage.speed is dropped; a fast-mode response (speed \"fast\") is billed at a premium the gateway's cost accounting cannot see"
+    },
+    {
+      "path": "native/message_delta:$.usage.cache_creation_input_tokens",
+      "reason": "known gap U8: the native /v1/messages passthrough bills from anthropicfmt.ExtractUsage / StreamUsageScanner, which read only input_tokens and output_tokens; cache writes (priced above base input) are not billed, and Anthropic's input_tokens excludes them"
+    },
+    {
+      "path": "native/message_delta:$.usage.cache_read_input_tokens",
+      "reason": "known gap U8: the native /v1/messages passthrough bills from anthropicfmt.ExtractUsage / StreamUsageScanner, which read only input_tokens and output_tokens; cache reads are not billed, and Anthropic's input_tokens excludes them, so a cached request (every Claude Code turn) under-bills its input"
+    },
+    {
+      "path": "native/message_start:$.message.usage.cache_creation",
+      "reason": "known gap U8: the native /v1/messages passthrough bills from anthropicfmt.ExtractUsage / StreamUsageScanner, which read only input_tokens and output_tokens; the 5m / 1h cache-write breakdown, which prices 1h writes higher, is not read"
+    },
+    {
+      "path": "native/message_start:$.message.usage.cache_creation_input_tokens",
+      "reason": "known gap U8: the native /v1/messages passthrough bills from anthropicfmt.ExtractUsage / StreamUsageScanner, which read only input_tokens and output_tokens; cache writes (priced above base input) are not billed, and Anthropic's input_tokens excludes them"
+    },
+    {
+      "path": "native/message_start:$.message.usage.cache_read_input_tokens",
+      "reason": "known gap U8: the native /v1/messages passthrough bills from anthropicfmt.ExtractUsage / StreamUsageScanner, which read only input_tokens and output_tokens; cache reads are not billed, and Anthropic's input_tokens excludes them, so a cached request (every Claude Code turn) under-bills its input"
+    },
+    {
+      "path": "native/message_start:$.message.usage.inference_geo",
+      "reason": "known gap U8: the native /v1/messages passthrough bills from anthropicfmt.ExtractUsage / StreamUsageScanner, which read only input_tokens and output_tokens; the inference region, which data-residency pricing depends on, is not read"
+    },
+    {
+      "path": "native/message_start:$.message.usage.output_tokens_details",
+      "reason": "no billing effect: thinking_tokens are already part of output_tokens, which billing reads; the client gets the field unchanged"
+    },
+    {
+      "path": "native/message_start:$.message.usage.service_tier",
+      "reason": "known gap U8: the native /v1/messages passthrough bills from anthropicfmt.ExtractUsage / StreamUsageScanner, which read only input_tokens and output_tokens; the tier that served the request (priority and batch are priced differently) is not read"
+    },
+    {
+      "path": "native/message_start:$.message.usage.speed",
+      "reason": "known gap U8: the native /v1/messages passthrough bills from anthropicfmt.ExtractUsage / StreamUsageScanner, which read only input_tokens and output_tokens; fast mode, billed at a premium, is not read"
+    },
+    {
+      "path": "native:$.usage.cache_creation",
+      "reason": "known gap U8: the native /v1/messages passthrough bills from anthropicfmt.ExtractUsage / StreamUsageScanner, which read only input_tokens and output_tokens; the 5m / 1h cache-write breakdown, which prices 1h writes higher, is not read"
+    },
+    {
+      "path": "native:$.usage.cache_creation_input_tokens",
+      "reason": "known gap U8: the native /v1/messages passthrough bills from anthropicfmt.ExtractUsage / StreamUsageScanner, which read only input_tokens and output_tokens; cache writes (priced above base input) are not billed, and Anthropic's input_tokens excludes them"
+    },
+    {
+      "path": "native:$.usage.cache_read_input_tokens",
+      "reason": "known gap U8: the native /v1/messages passthrough bills from anthropicfmt.ExtractUsage / StreamUsageScanner, which read only input_tokens and output_tokens; cache reads are not billed, and Anthropic's input_tokens excludes them, so a cached request (every Claude Code turn) under-bills its input"
+    },
+    {
+      "path": "native:$.usage.inference_geo",
+      "reason": "known gap U8: the native /v1/messages passthrough bills from anthropicfmt.ExtractUsage / StreamUsageScanner, which read only input_tokens and output_tokens; the inference region, which data-residency pricing depends on, is not read"
+    },
+    {
+      "path": "native:$.usage.output_tokens_details",
+      "reason": "no billing effect: thinking_tokens are already part of output_tokens, which billing reads; the client gets the field unchanged"
+    },
+    {
+      "path": "native:$.usage.service_tier",
+      "reason": "known gap U8: the native /v1/messages passthrough bills from anthropicfmt.ExtractUsage / StreamUsageScanner, which read only input_tokens and output_tokens; the tier that served the request (priority and batch are priced differently) is not read"
+    },
+    {
+      "path": "native:$.usage.speed",
+      "reason": "known gap U8: the native /v1/messages passthrough bills from anthropicfmt.ExtractUsage / StreamUsageScanner, which read only input_tokens and output_tokens; fast mode, billed at a premium, is not read"
     }
   ],
   "allowed_unknown_shapes": [

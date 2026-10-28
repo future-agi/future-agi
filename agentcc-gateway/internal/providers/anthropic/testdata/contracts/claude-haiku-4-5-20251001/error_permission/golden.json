@@ -1,0 +1,6 @@
+{
+  "code": "provider_permission_error",
+  "message": "Your API key does not have permission to use the specified resource.",
+  "status": 403,
+  "type": "permission_error"
+}

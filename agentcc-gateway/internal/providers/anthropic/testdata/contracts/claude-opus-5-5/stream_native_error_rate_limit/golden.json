@@ -1,0 +1,10 @@
+{
+  "body": "",
+  "error": {
+    "code": "provider_429",
+    "message": "{\n  \"type\": \"error\",\n  \"error\": {\n    \"type\": \"rate_limit_error\",\n    \"message\": \"This request would exceed the rate limit for your organization (3f9c1e2a-7b4d-4c8e-9a1f-6d2b8e0c5a71) of 2,000,000 input tokens per minute. For details, refer to: https://docs.claude.com/en/api/rate-limits. You can see the response headers for current usage. Please reduce the prompt length or the maximum tokens requested, or try again later. You may also contact sales at https://www.anthropic.com/contact-sales to discuss your options for a rate limit increase.\"\n  },\n  \"request_id\": \"req_011CVnAR6gAt9Uf2Qj5xZa8r\"\n}\n",
+    "status": 502,
+    "type": "upstream_error"
+  },
+  "status": 429
+}

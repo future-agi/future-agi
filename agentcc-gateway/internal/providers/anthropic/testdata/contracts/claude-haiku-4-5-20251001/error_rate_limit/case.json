@@ -1,0 +1,27 @@
+{
+  "status": 429,
+  "headers": {
+    "retry-after": "3",
+    "request-id": "req_011CVmY2c7Pn4rKx9wQ3tLzB",
+    "anthropic-ratelimit-requests-limit": "50",
+    "anthropic-ratelimit-requests-remaining": "0",
+    "anthropic-ratelimit-requests-reset": "2026-10-28T12:00:03Z",
+    "anthropic-ratelimit-tokens-limit": "90000",
+    "anthropic-ratelimit-tokens-remaining": "89000",
+    "anthropic-ratelimit-tokens-reset": "2026-10-28T12:00:01Z",
+    "anthropic-ratelimit-input-tokens-limit": "50000",
+    "anthropic-ratelimit-input-tokens-remaining": "49800",
+    "anthropic-ratelimit-input-tokens-reset": "2026-10-28T12:00:01Z",
+    "anthropic-ratelimit-output-tokens-limit": "10000",
+    "anthropic-ratelimit-output-tokens-remaining": "9200",
+    "anthropic-ratelimit-output-tokens-reset": "2026-10-28T12:00:01Z"
+  },
+  "recordable": false,
+  "notes": "Synthetic, from platform.claude.com/docs/en/api/errors (429 rate_limit_error) and docs/en/api/rate-limits (the retry-after header in seconds and the anthropic-ratelimit-{requests,tokens,input-tokens,output-tokens}-{limit,remaining,reset} headers, reset as RFC 3339); organization ID, limits and request_id invented. Inducing a 429 would mean exhausting a real organization's limit, so it is not recordable.",
+  "sanity_gaps": [
+    {
+      "failure": "carries no retry hint",
+      "reason": "known gap X3: the retry-after header (and every anthropic-ratelimit-* header) is dropped; models.APIError has no retry field, so the gateway's retry, failover and the client's backoff ignore when Anthropic says to come back"
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "status": 404,
+  "headers": {
+    "request-id": "req_011CVnAA2bVq8Ys6Lh4cJm7n"
+  },
+  "notes": "Synthetic, from platform.claude.com/docs/en/api/errors (404 not_found_error) with the message the API sends for an unknown model (\"model: <id>\"); request_id invented. Recordable: upstream_patch.json swaps the model for one that does not exist, so the recorder induces the 404 while request.json (and the outbound-request golden) keep the fixture's model."
+}

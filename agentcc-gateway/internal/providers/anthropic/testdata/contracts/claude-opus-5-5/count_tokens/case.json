@@ -1,0 +1,4 @@
+{
+  "endpoint": "anthropic_count_tokens",
+  "notes": "Synthetic, from platform.claude.com/docs/en/api/messages/count_tokens (request and the 200 example {\"input_tokens\": 2095}). Drives CountAnthropicTokens, a byte passthrough: the gateway reads nothing from the body, so the case pins the endpoint, headers, status and an unchanged body. Recordable."
+}

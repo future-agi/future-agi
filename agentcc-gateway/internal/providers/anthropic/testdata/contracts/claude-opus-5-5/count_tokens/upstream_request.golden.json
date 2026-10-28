@@ -1,0 +1,49 @@
+{
+  "body": {
+    "messages": [
+      {
+        "content": "Hello, world",
+        "role": "user"
+      }
+    ],
+    "model": "claude-opus-5-5",
+    "system": [
+      {
+        "text": "Today's date is 2024-06-01.",
+        "type": "text"
+      }
+    ],
+    "tools": [
+      {
+        "description": "Get the current weather in a given location",
+        "input_schema": {
+          "properties": {
+            "location": {
+              "description": "The city and state, e.g. San Francisco, CA",
+              "type": "string"
+            },
+            "unit": {
+              "enum": [
+                "celsius",
+                "fahrenheit"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "location"
+          ],
+          "type": "object"
+        },
+        "name": "get_weather"
+      }
+    ]
+  },
+  "headers": {
+    "anthropic-version": "2023-06-01",
+    "content-type": "application/json",
+    "x-api-key": "REDACTED"
+  },
+  "method": "POST",
+  "path": "/v1/messages/count_tokens"
+}

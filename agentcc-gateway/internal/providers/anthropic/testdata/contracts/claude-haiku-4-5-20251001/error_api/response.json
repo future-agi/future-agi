@@ -1,0 +1,8 @@
+{
+  "type": "error",
+  "error": {
+    "type": "api_error",
+    "message": "Internal server error"
+  },
+  "request_id": "req_011CVnAK8eYr2Sd4Ng1vWx3p"
+}

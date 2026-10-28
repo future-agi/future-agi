@@ -1,0 +1,6 @@
+{
+  "code": "provider_request_too_large",
+  "message": "Request exceeds the maximum allowed number of bytes.",
+  "status": 502,
+  "type": "upstream_error"
+}

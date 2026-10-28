@@ -1,0 +1,24 @@
+{
+  "body": {
+    "max_tokens": 1000000,
+    "messages": [
+      {
+        "content": [
+          {
+            "text": "Say hello.",
+            "type": "text"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "model": "claude-haiku-4-5-20251001"
+  },
+  "headers": {
+    "anthropic-version": "2023-06-01",
+    "content-type": "application/json",
+    "x-api-key": "REDACTED"
+  },
+  "method": "POST",
+  "path": "/v1/messages"
+}

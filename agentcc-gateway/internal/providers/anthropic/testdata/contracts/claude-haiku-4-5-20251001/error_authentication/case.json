@@ -1,0 +1,8 @@
+{
+  "status": 401,
+  "headers": {
+    "request-id": "req_011CVnA1Kc4bTq2Wm7sXyZ3d"
+  },
+  "recordable": false,
+  "notes": "Synthetic, from platform.claude.com/docs/en/api/errors (401 authentication_error: an issue with the API key) and its error-shape example; the message is the one the API sends for a key it does not recognise; request_id invented. Not recordable: inducing it needs an invalid key, and the recorder sends the configured one."
+}

@@ -1,0 +1,6 @@
+{
+  "code": "provider_not_found_error",
+  "message": "model: claude-haiku-0-0-00000000",
+  "status": 404,
+  "type": "not_found"
+}
