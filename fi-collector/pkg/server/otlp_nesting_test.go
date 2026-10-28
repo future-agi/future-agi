@@ -102,11 +102,9 @@ func TestCheckProtoNesting(t *testing.T) {
 	}
 }
 
-// A protobuf body nested past the limit is a 400, compressed or not, and one
-// at the limit still decodes. On dev, the 1.5M-array body (3M levels, 13.8
-// MiB) overflows the decoder's stack: "goroutine stack exceeds
-// 1000000000-byte limit", a fatal error that ends this test binary. (On
-// darwin/arm64 the decoder overflows between 1.1M and 1.2M nested arrays.)
+// A protobuf body whose attribute value nests past maxValueNesting is a 400,
+// compressed or not, and one at the limit still decodes. The scan refuses it
+// before pdata decodes it, bounding decoder recursion and request stack growth.
 func TestOTLPHTTPDeeplyNestedProtobufIs400(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -114,8 +112,9 @@ func TestOTLPHTTPDeeplyNestedProtobufIs400(t *testing.T) {
 		want   int
 		gzip   bool // also send it gzipped (slow for the 13.8 MiB body under -race)
 	}{
-		{"at the limit", arraysAtLimit, http.StatusOK, true},
-		{"one level past the limit", arraysAtLimit + 1, http.StatusBadRequest, true},
+		{"at the limit", maxValueNesting, http.StatusOK, true},
+		{"one level past the limit", maxValueNesting + 1, http.StatusBadRequest, true},
+		{"at the old structural limit", arraysAtLimit, http.StatusBadRequest, true},
 		{"deep enough to overflow the decoder's stack", 1_500_000, http.StatusBadRequest, false},
 	}
 	for _, tc := range cases {
@@ -134,7 +133,7 @@ func TestOTLPHTTPDeeplyNestedProtobufIs400(t *testing.T) {
 				if rec.Code != tc.want {
 					t.Fatalf("status %d, want %d (%s)", rec.Code, tc.want, rec.Body.String())
 				}
-				if tc.want == http.StatusBadRequest && !strings.Contains(rec.Body.String(), "nesting") {
+				if tc.want == http.StatusBadRequest && !strings.Contains(rec.Body.String(), "nested") {
 					t.Errorf("400 body should name the nesting: %q", rec.Body.String())
 				}
 			})
@@ -153,11 +152,8 @@ func (rawProtoCodec) Unmarshal(b []byte, v any) error {
 }
 func (rawProtoCodec) Name() string { return "proto" }
 
-// gRPC requests get the same nesting limit, checked by the server's codec
-// before pdata decodes the request. On dev, the 1.5M-array request (14.5 MiB,
-// under the 16 MiB receive cap) overflows the decoder's stack: "goroutine
-// stack exceeds 1000000000-byte limit", a fatal error that ends this test
-// binary.
+// gRPC requests get the same nesting limit, checked by the scan before pdata
+// decodes the request, and refused as INVALID_ARGUMENT.
 func TestGRPCDeeplyNestedProtobufIsRefused(t *testing.T) {
 	addr, _ := startGRPCOnly(t, Config{})
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -171,13 +167,13 @@ func TestGRPCDeeplyNestedProtobufIsRefused(t *testing.T) {
 			&body, &resp, grpc.ForceCodec(rawProtoCodec{}))
 	}
 
-	if err := export(pbDeepAttr(arraysAtLimit)); err != nil {
-		t.Errorf("%d nested arrays (at the limit): %v, want OK", arraysAtLimit, err)
+	if err := export(pbDeepAttr(maxValueNesting)); err != nil {
+		t.Errorf("%d nested arrays (at the limit): %v, want OK", maxValueNesting, err)
 	}
-	for _, arrays := range []int{arraysAtLimit + 1, 1_500_000} {
+	for _, arrays := range []int{maxValueNesting + 1, arraysAtLimit, 1_500_000} {
 		err := export(pbDeepAttr(arrays))
-		if status.Code(err) != codes.Internal || !strings.Contains(err.Error(), "nesting") {
-			t.Errorf("%d nested arrays: %v, want INTERNAL naming the nesting", arrays, err)
+		if status.Code(err) != codes.InvalidArgument || !strings.Contains(err.Error(), "nested") {
+			t.Errorf("%d nested arrays: %v, want INVALID_ARGUMENT naming the nesting", arrays, err)
 		}
 	}
 	// The server is still up and decodes ordinary requests.
@@ -210,19 +206,41 @@ func TestNestingCheckedCodecChecksOnlyTraceExports(t *testing.T) {
 	}
 }
 
-// JSON was already limited on dev: jsoniter refuses more than 10,000 nested
-// objects/arrays. This locks that in, since the handler only checks protobuf.
+// JSON gets the same attribute nesting limit, and a limit on JSON nesting
+// anywhere, including unknown keys that the decoder skips recursively.
 func TestOTLPHTTPDeeplyNestedJSONIs400(t *testing.T) {
 	// Each nested array is 3 JSON levels: {"arrayValue":{"values":[ ... ]}}.
-	value := `{"intValue":"1"}`
-	for i := 0; i < maxDecodeNesting/3+1; i++ {
-		value = `{"arrayValue":{"values":[` + value + `]}}`
+	nested := func(arrays int) string {
+		value := `{"intValue":"1"}`
+		for i := 0; i < arrays; i++ {
+			value = `{"arrayValue":{"values":[` + value + `]}}`
+		}
+		return value
 	}
-	body := []byte(`{"resourceSpans":[{"scopeSpans":[{"spans":[{"traceId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","spanId":"bbbbbbbbbbbbbbbb","attributes":[{"key":"k","value":` +
-		value + `}]}]}]}]}`)
-	rec := postBody(acceptingServer(), "application/json", false, nil, body)
-	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "depth") {
-		t.Fatalf("status %d %q, want 400 naming the depth", rec.Code, rec.Body.String())
+	span := func(attr string) []byte {
+		return []byte(`{"resourceSpans":[{"scopeSpans":[{"spans":[{"traceId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","spanId":"bbbbbbbbbbbbbbbb","attributes":[` +
+			attr + `]}]}]}]}`)
+	}
+	cases := []struct {
+		name string
+		body []byte
+		want int
+	}{
+		{"at the limit", span(`{"key":"k","value":` + nested(maxValueNesting) + `}`), http.StatusOK},
+		{"past the limit", span(`{"key":"k","value":` + nested(maxValueNesting+1) + `}`), http.StatusBadRequest},
+		{"past jsoniter's limit", span(`{"key":"k","value":` + nested(maxDecodeNesting/3+1) + `}`), http.StatusBadRequest},
+		{"deep unknown key", span(`{"key":"k","unknown":` + strings.Repeat("[", maxJSONNesting) + strings.Repeat("]", maxJSONNesting) + `}`), http.StatusBadRequest},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := postBody(acceptingServer(), "application/json", false, nil, tc.body)
+			if rec.Code != tc.want {
+				t.Fatalf("status %d %q, want %d", rec.Code, rec.Body.String(), tc.want)
+			}
+			if tc.want == http.StatusBadRequest && !strings.Contains(rec.Body.String(), "nested deeper") {
+				t.Errorf("400 should name the nesting: %q", rec.Body.String())
+			}
+		})
 	}
 }
 

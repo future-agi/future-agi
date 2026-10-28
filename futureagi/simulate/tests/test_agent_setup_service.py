@@ -765,6 +765,21 @@ def test_summary_pinned_version(definition, version):
 
 
 @pytest.mark.django_db
+def test_summary_pinned_version_with_nothing_stored_reads_no_other_row(
+    definition, version
+):
+    store_agent(agent_version_id=version.id, agent=_unit_agent("older", HASH_A), sdk_version="0.2.3")
+    newer = definition.create_version(description="", commit_message="second", status="active")
+
+    pinned = agent_summary(definition.id, agent_version_id=newer.id)
+    unpinned = agent_summary(definition.id)
+
+    assert (pinned.agent_version_id, pinned.agent_stored, pinned.setup_hash) == (newer.id, False, None)
+    assert (pinned.kind, pinned.instrumentation, pinned.unit_ids) == (None, "none", ("main",))
+    assert (unpinned.agent_version_id, unpinned.agent_stored, unpinned.setup_hash) == (newer.id, True, HASH_A)
+
+
+@pytest.mark.django_db
 def test_summary_pinned_deleted_version_falls_back(definition, version):
     store_agent(agent_version_id=version.id, agent=_unit_agent("older", HASH_A), sdk_version="0.2.3")
     newer = definition.create_version(description="", commit_message="second", status="active")

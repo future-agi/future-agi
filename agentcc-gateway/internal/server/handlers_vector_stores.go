@@ -40,6 +40,7 @@ func (h *Handlers) proxyVectorStores(w http.ResponseWriter, r *http.Request, met
 	rc := h.setupAssistantsRC(r, operation)
 	rc.EndpointType = "vector_stores"
 	rc.Metadata["vector_stores_operation"] = operation
+	rc.Flags.NoSpend = method == http.MethodDelete
 	defer rc.Release()
 
 	timeout := h.resolveTimeout(rc, r)
@@ -52,27 +53,32 @@ func (h *Handlers) proxyVectorStores(w http.ResponseWriter, r *http.Request, met
 		return
 	}
 
-	respBody, statusCode, respHeaders, proxyErr := vsp.ProxyVectorStoresRequest(ctx, method, upstreamPath, body, queryParams)
-	if proxyErr != nil {
-		models.WriteErrorFromError(w, proxyErr)
+	var respBody []byte
+	var statusCode int
+	var respHeaders http.Header
+	call := func(callCtx context.Context, callRC *models.RequestContext) error {
+		var callErr error
+		respBody, statusCode, respHeaders, callErr = vsp.ProxyVectorStoresRequest(callCtx, method, upstreamPath, body, queryParams)
+		if callErr == nil && statusCode >= http.StatusBadRequest {
+			// Relayed as sent, and logged as the failure it is.
+			callRC.AddError(models.ErrUpstreamProvider(statusCode, fmt.Sprintf("vector stores error (HTTP %d)", statusCode)))
+		}
+		return callErr
+	}
+
+	// Writes and searches go through the pipeline — rate limits, budgets,
+	// the request log; deletes too, but no budget refuses them. Reads stay
+	// outside it, as the other lifecycle reads do.
+	if method == http.MethodGet {
+		err = call(ctx, rc)
+	} else {
+		err = h.engine.Process(ctx, rc, call)
+	}
+	if err != nil {
+		models.WriteErrorFromError(w, err)
 		return
 	}
-
-	h.setAgentccHeaders(w, rc)
-	if respHeaders != nil {
-		for _, key := range []string{"openai-organization", "openai-processing-ms", "openai-version", "x-request-id"} {
-			if v := respHeaders.Get(key); v != "" {
-				w.Header().Set(key, v)
-			}
-		}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if statusCode == 0 {
-		statusCode = http.StatusOK
-	}
-	w.WriteHeader(statusCode)
-	w.Write(respBody)
+	h.writeAssistantsResponse(w, rc, respBody, statusCode, respHeaders)
 }
 
 // ===========================================================================

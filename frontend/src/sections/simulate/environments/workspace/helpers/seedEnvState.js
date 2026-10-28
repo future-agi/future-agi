@@ -1,5 +1,4 @@
 import { AGENT_TYPES } from "src/sections/agents/constants";
-import { environmentNameFor } from "src/api/simulate-environments/preflightPayload";
 import { generatedPool } from "src/api/simulate-environments/_fixtures/scenarioPool";
 import { MOCK_WORLD } from "src/api/simulate-environments/_fixtures/world";
 import { SEED_COPY } from "./seedEnvState.constants";
@@ -57,27 +56,6 @@ export function seedFromTemplate(template, now) {
       name: SEED_COPY.templateBaselineName,
       connectedAt: now,
     },
-    agentVersions: [
-      {
-        id: "agent-v1",
-        label: "v1",
-        note: SEED_COPY.templateAgentNote,
-        reach: "seed",
-        createdAt: now,
-      },
-    ],
-    envVersions: [
-      {
-        id: `${template.id}-v1`,
-        label: "v1",
-        createdAt: now,
-        note: SEED_COPY.templateEnvNote,
-        scenarios: scenarios.length,
-        changed: ["contract", "seed"],
-      },
-    ],
-    envDerivedForAgent: "v1",
-    activeAgentVersion: "v1",
     scenarios,
     scenarioSource: "templates",
     evals: [],
@@ -86,9 +64,8 @@ export function seedFromTemplate(template, now) {
   };
 }
 
-// Per-env state for an agent-built environment: a fresh v1 for both the agent
-// and the environment, the scenarios derived from the build's world, and empty
-// evals/runs. `seededFromTemplate` stays false so version editing is unlocked.
+// Per-env state for an agent-built environment: the scenarios derived from the
+// build's world, and empty evals/runs. `seededFromTemplate` stays false so version editing is unlocked.
 export function seedAgentBuilt(draft, audit, now) {
   const world = worldFor(audit);
   const scenarios = generatedPool(world);
@@ -99,27 +76,6 @@ export function seedAgentBuilt(draft, audit, now) {
       via: "endpoint",
       connectedAt: now,
     },
-    agentVersions: [
-      {
-        id: "agent-v1",
-        label: "v1",
-        note: SEED_COPY.agentVersionNote,
-        reach: "endpoint",
-        createdAt: now,
-      },
-    ],
-    activeAgentVersion: "v1",
-    envVersions: [
-      {
-        id: `${environmentNameFor(draft)}-v1`,
-        label: "v1",
-        createdAt: now,
-        note: SEED_COPY.agentEnvNote,
-        scenarios: scenarios.length,
-        changed: ["contract", "seed"],
-      },
-    ],
-    envDerivedForAgent: "v1",
     scenarios,
     evals: [],
     runs: [],

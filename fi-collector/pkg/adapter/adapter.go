@@ -269,6 +269,18 @@ func DeriveHotKeys(
 	return hk
 }
 
+// ProviderIs reports whether any provider alias (providerKeys, which include
+// gen_ai.system) names provider, ignoring case. Unlike HotKeys.Provider it
+// looks past the first non-empty alias.
+func ProviderIs(attrsString map[string]string, provider string) bool {
+	for _, k := range providerKeys {
+		if v := attrsString[k]; v != "" && strings.EqualFold(v, provider) {
+			return true
+		}
+	}
+	return false
+}
+
 // userCost applies the cost rule to one set of keys: the first total key
 // present wins; else input + output when either side is present.
 func userCost(

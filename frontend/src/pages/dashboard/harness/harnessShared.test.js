@@ -309,6 +309,12 @@ describe("errorMessage", () => {
     );
   });
 
+  it("shows a harness error's sentence, not its code", () => {
+    expect(
+      errorMessage({ error: "credential_missing", message: "Enter it again" }),
+    ).toBe("Enter it again");
+  });
+
   it("never returns an empty string", () => {
     expect(errorMessage({})).toBe("Something went wrong");
     expect(errorMessage(undefined)).toBe("Something went wrong");

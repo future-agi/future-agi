@@ -18815,6 +18815,312 @@ export interface HarnessEnvironmentRenameApi {
   name: string;
 }
 
+export type HarnessComparePairApiBand =
+  (typeof HarnessComparePairApiBand)[keyof typeof HarnessComparePairApiBand];
+
+export const HarnessComparePairApiBand = {
+  paired: "paired",
+  criteria_changed: "criteria_changed",
+  new: "new",
+  not_applicable: "not_applicable",
+} as const;
+
+export type HarnessComparePairApiVerdict =
+  (typeof HarnessComparePairApiVerdict)[keyof typeof HarnessComparePairApiVerdict];
+
+export const HarnessComparePairApiVerdict = {
+  improved: "improved",
+  regressed: "regressed",
+  no_meaningful_change: "no_meaningful_change",
+  inconclusive: "inconclusive",
+} as const;
+
+/**
+ * Newcombe 95% interval of the difference.
+ */
+export interface HarnessCompareIntervalApi {
+  low: number;
+  high: number;
+}
+
+export interface HarnessCompareSideApi {
+  passed: number;
+  /** Trials a verdict was reached on. */
+  trials: number;
+  /** Trials that ran to an end but a sub-goal check was undecided. */
+  undecided: number;
+  pass_rate: number | null;
+  /** Context only; never decides the verdict. */
+  eval_pass_rate: number | null;
+}
+
+export interface RunVersionLabelApi {
+  readonly id?: string;
+  /** @minLength 1 */
+  readonly label?: string | null;
+}
+
+export interface HarnessComparePairApi {
+  /** @minLength 1 */
+  scenario_key: string;
+  /** @minLength 1 */
+  scenario: string;
+  band: HarnessComparePairApiBand;
+  verdict: HarnessComparePairApiVerdict | null;
+  /** Pass-rate change in percentage points. */
+  difference: number | null;
+  interval: HarnessCompareIntervalApi | null;
+  current: HarnessCompareSideApi | null;
+  against: HarnessCompareSideApi | null;
+  changed_sub_goals: string[];
+  /** @minLength 1 */
+  reason: string | null;
+  removed_in: RunVersionLabelApi | null;
+}
+
+export interface HarnessCompareSummaryApi {
+  paired: number;
+  improved: number;
+  regressed: number;
+  no_meaningful_change: number;
+  inconclusive: number;
+  criteria_changed: number;
+  new: number;
+  not_applicable: number;
+  current_pass_rate: number | null;
+  against_pass_rate: number | null;
+  margin: number;
+}
+
+export interface HarnessRunPinnedVersionsApi {
+  agent: RunVersionLabelApi | null;
+  environment: RunVersionLabelApi | null;
+  suite: RunVersionLabelApi | null;
+}
+
+export interface HarnessCompareVersionsApi {
+  current: HarnessRunPinnedVersionsApi;
+  against: HarnessRunPinnedVersionsApi | null;
+}
+
+export interface HarnessCompareApi {
+  execution_id: string;
+  against_execution_id: string | null;
+  pairs: HarnessComparePairApi[];
+  summary: HarnessCompareSummaryApi;
+  versions: HarnessCompareVersionsApi;
+}
+
+export type HarnessDraftItemApiStatus =
+  (typeof HarnessDraftItemApiStatus)[keyof typeof HarnessDraftItemApiStatus];
+
+export const HarnessDraftItemApiStatus = {
+  draft: "draft",
+  active: "active",
+  discarded: "discarded",
+} as const;
+
+export interface HarnessVersionPersonApi {
+  /** @minLength 1 */
+  id: string;
+  name: string;
+}
+
+/**
+ * An agent version's non-secret source facts.
+ */
+export type HarnessDraftItemApiSource = { [key: string]: unknown };
+
+/**
+ * An agent version's last check: check statuses and names only.
+ */
+export type HarnessDraftItemApiPreflightReport = { [key: string]: unknown };
+
+/**
+ * Counts against the parent: added, removed and changed for the suite; tools, rules, sub_goals and world_files for the environment.
+ */
+export type HarnessDraftItemApiChanges = { [key: string]: number };
+
+export interface HarnessDraftItemApi {
+  id: string;
+  /** @minLength 1 */
+  label: string | null;
+  status: HarnessDraftItemApiStatus;
+  is_default: boolean;
+  created_at: string;
+  created_by: HarnessVersionPersonApi | null;
+  /** @minLength 1 */
+  origin: string | null;
+  summary: string;
+  /** @minLength 1 */
+  hash: string | null;
+  parent_id: string | null;
+  derived_from_agent_version_id: string | null;
+  scenario_count: number | null;
+  /** An agent version's non-secret source facts. */
+  source: HarnessDraftItemApiSource | null;
+  /** The default agent version's prompt; null on every other item. */
+  prompt: string | null;
+  /** @minLength 1 */
+  preflight_status: string | null;
+  /** An agent version's last check: check statuses and names only. */
+  preflight_report: HarnessDraftItemApiPreflightReport | null;
+  preflighted_at: string | null;
+  /** When an agent version's latest check was asked for. */
+  check_started_at: string | null;
+  /** An agent version's credential names, provider keys included. */
+  credential_names: string[] | null;
+  /** The variables an agent version's source reads, when known. */
+  required_variable_names: string[] | null;
+  /**
+   * Why a passed agent version is or isn't this environment's default, as last recorded.
+   * @minLength 1
+   */
+  activation_outcome: string | null;
+  /** Whether this environment asked for an agent version. */
+  requested_here: boolean | null;
+  /** Whether an agent version can be picked for a run of this environment or made its default. */
+  pickable: boolean | null;
+  /** Whether this environment can discard an agent version. */
+  discardable: boolean | null;
+  /** Whether the default moved since the draft started; Save refuses it. */
+  stale: boolean;
+  /** Bumped on every edit to the draft. */
+  revision: number;
+  last_edited_by: HarnessVersionPersonApi | null;
+  updated_at: string;
+  /**
+   * The version the draft started from.
+   * @minLength 1
+   */
+  parent_label: string | null;
+  /**
+   * The piece's default now.
+   * @minLength 1
+   */
+  default_label: string | null;
+  /** Counts against the parent: added, removed and changed for the suite; tools, rules, sub_goals and world_files for the environment. */
+  changes: HarnessDraftItemApiChanges;
+}
+
+export interface HarnessDraftsApi {
+  environment: HarnessDraftItemApi | null;
+  suite: HarnessDraftItemApi | null;
+  set_aside: HarnessDraftItemApi[];
+}
+
+export type HarnessDraftSaveItemApiPiece =
+  (typeof HarnessDraftSaveItemApiPiece)[keyof typeof HarnessDraftSaveItemApiPiece];
+
+export const HarnessDraftSaveItemApiPiece = {
+  environment: "environment",
+  suite: "suite",
+} as const;
+
+export interface HarnessDraftSaveItemApi {
+  piece: HarnessDraftSaveItemApiPiece;
+  /** The draft's parent the caller saw. */
+  expected_parent_id: string | null;
+  /**
+   * The draft's revision the caller saw.
+   * @minimum 0
+   */
+  expected_revision?: number;
+}
+
+export interface HarnessDraftSaveApi {
+  drafts: HarnessDraftSaveItemApi[];
+  /**
+   * Repeating a Save with the same key repeats its answer.
+   * @minLength 1
+   * @maxLength 128
+   * @pattern ^[A-Za-z0-9_-]+$
+   */
+  idempotency_key: string;
+}
+
+export type HarnessVersionApiStatus =
+  (typeof HarnessVersionApiStatus)[keyof typeof HarnessVersionApiStatus];
+
+export const HarnessVersionApiStatus = {
+  draft: "draft",
+  active: "active",
+  discarded: "discarded",
+} as const;
+
+/**
+ * An agent version's non-secret source facts.
+ */
+export type HarnessVersionApiSource = { [key: string]: unknown };
+
+/**
+ * An agent version's last check: check statuses and names only.
+ */
+export type HarnessVersionApiPreflightReport = { [key: string]: unknown };
+
+export interface HarnessVersionApi {
+  id: string;
+  /** @minLength 1 */
+  label: string | null;
+  status: HarnessVersionApiStatus;
+  is_default: boolean;
+  created_at: string;
+  created_by: HarnessVersionPersonApi | null;
+  /** @minLength 1 */
+  origin: string | null;
+  summary: string;
+  /** @minLength 1 */
+  hash: string | null;
+  parent_id: string | null;
+  derived_from_agent_version_id: string | null;
+  scenario_count: number | null;
+  /** An agent version's non-secret source facts. */
+  source: HarnessVersionApiSource | null;
+  /** The default agent version's prompt; null on every other item. */
+  prompt: string | null;
+  /** @minLength 1 */
+  preflight_status: string | null;
+  /** An agent version's last check: check statuses and names only. */
+  preflight_report: HarnessVersionApiPreflightReport | null;
+  preflighted_at: string | null;
+  /** When an agent version's latest check was asked for. */
+  check_started_at: string | null;
+  /** An agent version's credential names, provider keys included. */
+  credential_names: string[] | null;
+  /** The variables an agent version's source reads, when known. */
+  required_variable_names: string[] | null;
+  /**
+   * Why a passed agent version is or isn't this environment's default, as last recorded.
+   * @minLength 1
+   */
+  activation_outcome: string | null;
+  /** Whether this environment asked for an agent version. */
+  requested_here: boolean | null;
+  /** Whether an agent version can be picked for a run of this environment or made its default. */
+  pickable: boolean | null;
+  /** Whether this environment can discard an agent version. */
+  discardable: boolean | null;
+}
+
+/**
+ * Each saved piece's new default version, by piece.
+ */
+export type HarnessDraftSaveResponseApiSaved = {
+  [key: string]: HarnessVersionApi;
+};
+
+export interface HarnessVersionsApi {
+  agent: HarnessVersionApi[];
+  environment: HarnessVersionApi[];
+  suite: HarnessVersionApi[];
+}
+
+export interface HarnessDraftSaveResponseApi {
+  /** Each saved piece's new default version, by piece. */
+  saved: HarnessDraftSaveResponseApiSaved;
+  versions: HarnessVersionsApi;
+}
+
 export interface HarnessEnvironmentAddEvaluationApi {
   /**
    * @minLength 1
@@ -19002,6 +19308,179 @@ export interface SimulateEvalConfigResponseApi {
   readonly editable?: boolean;
 }
 
+export type HarnessNudgeApiTarget =
+  (typeof HarnessNudgeApiTarget)[keyof typeof HarnessNudgeApiTarget];
+
+export const HarnessNudgeApiTarget = {
+  environment: "environment",
+  suite: "suite",
+} as const;
+
+export type HarnessNudgeApiState =
+  (typeof HarnessNudgeApiState)[keyof typeof HarnessNudgeApiState];
+
+export const HarnessNudgeApiState = {
+  pending: "pending",
+  answered_no: "answered_no",
+  queued: "queued",
+  running: "running",
+  applied: "applied",
+  no_change: "no_change",
+  replaced: "replaced",
+  failed: "failed",
+} as const;
+
+export type HarnessNudgeApiSummary = { [key: string]: unknown };
+
+export type HarnessNudgeFileApiStatus =
+  (typeof HarnessNudgeFileApiStatus)[keyof typeof HarnessNudgeFileApiStatus];
+
+export const HarnessNudgeFileApiStatus = {
+  added: "added",
+  removed: "removed",
+  modified: "modified",
+  renamed: "renamed",
+  copied: "copied",
+} as const;
+
+export interface HarnessNudgeFileApi {
+  /** @minLength 1 */
+  path: string;
+  status: HarnessNudgeFileApiStatus;
+  /** @minLength 1 */
+  previous_path: string | null;
+  additions: number | null;
+  deletions: number | null;
+  has_patch: boolean;
+  /**
+   * Why the file's patch isn't kept: secret_path, too_large, binary, budget or redaction_unavailable.
+   * @minLength 1
+   */
+  patch_omitted: string | null;
+}
+
+export interface HarnessNudgeVariablesApi {
+  added: string[];
+  removed: string[];
+  changed: string[];
+  /** Names whose values couldn't be read, so they may have changed. */
+  unknown: string[];
+}
+
+/**
+ * The agent source's kind, whether it changed, and its from/to ids.
+ */
+export type HarnessNudgeFactsApiSource = { [key: string]: unknown };
+
+export type HarnessNudgeFactsApiEnvironmentDiff = { [key: string]: unknown };
+
+export interface HarnessNudgeFactsApi {
+  /** The agent source's kind, whether it changed, and its from/to ids. */
+  source?: HarnessNudgeFactsApiSource;
+  changed_files?: HarnessNudgeFileApi[];
+  files_total?: number | null;
+  files_truncated?: boolean;
+  /** A roll back to an earlier commit. */
+  reversed?: boolean;
+  /**
+   * Why the file changes aren't listed: private_repository, no_commit, repository_changed, not_linear, rate_limited, github_error, archive_missing, archive_unreadable or archive_too_large.
+   * @minLength 1
+   */
+  files_unavailable?: string | null;
+  prompt_changed?: boolean;
+  variables?: HarnessNudgeVariablesApi;
+  settings_changed?: string[];
+  /** Whether the agent version is already this environment's default. */
+  agent_default_moved?: boolean;
+  environment_diff?: HarnessNudgeFactsApiEnvironmentDiff | null;
+  environment_summary?: string;
+  from_environment_version_id?: string | null;
+}
+
+export interface HarnessNudgeProblemApi {
+  item: string;
+  kind: string;
+  message: string;
+  in_your_unsaved_edits: boolean;
+}
+
+export interface HarnessNudgeErrorApi {
+  /**
+   * stopped_by_user, stopped_by_newer, environment_deleted, checks_failed, no_report, not_runnable, turn_failed, turn_interrupted, rebuild_not_started, rebuild_stuck, landing_failed, or a refused save's code.
+   * @minLength 1
+   */
+  code: string;
+  /** @minLength 1 */
+  message?: string;
+  problems?: HarnessNudgeProblemApi[];
+}
+
+export interface HarnessNudgeReplacementApi {
+  id: string;
+  /** @minLength 1 */
+  trigger_label: string | null;
+}
+
+export interface HarnessNudgeApi {
+  id: string;
+  target: HarnessNudgeApiTarget;
+  state: HarnessNudgeApiState;
+  facts: HarnessNudgeFactsApi;
+  trigger_agent_version: RunVersionLabelApi | null;
+  base_agent_version: RunVersionLabelApi | null;
+  base_environment_version: RunVersionLabelApi | null;
+  base_suite_version: RunVersionLabelApi | null;
+  result_environment_version: RunVersionLabelApi | null;
+  result_suite_version: RunVersionLabelApi | null;
+  summary: HarnessNudgeApiSummary | null;
+  error: HarnessNudgeErrorApi | null;
+  closed_at: string | null;
+  queued_behind_input: boolean;
+  can_stop: boolean;
+  replaced_by: HarnessNudgeReplacementApi | null;
+  /** The nudge's card in the environment's chat. */
+  card_message_id: string | null;
+  answered_by: HarnessVersionPersonApi | null;
+  answered_at: string | null;
+  created_at: string;
+}
+
+export type HarnessNudgeAnswerApiAnswer =
+  (typeof HarnessNudgeAnswerApiAnswer)[keyof typeof HarnessNudgeAnswerApiAnswer];
+
+export const HarnessNudgeAnswerApiAnswer = {
+  yes: "yes",
+  no: "no",
+} as const;
+
+export interface HarnessNudgeAnswerApi {
+  answer: HarnessNudgeAnswerApiAnswer;
+}
+
+export type HarnessRunWarningApiPiece =
+  (typeof HarnessRunWarningApiPiece)[keyof typeof HarnessRunWarningApiPiece];
+
+export const HarnessRunWarningApiPiece = {
+  agent: "agent",
+  environment: "environment",
+  suite: "suite",
+} as const;
+
+export interface HarnessRunWarningApi {
+  /** @minLength 1 */
+  code: string;
+  /** @minLength 1 */
+  message: string;
+  piece: HarnessRunWarningApiPiece | null;
+}
+
+export interface HarnessRunPlanApi {
+  versions: HarnessRunPinnedVersionsApi;
+  warnings: HarnessRunWarningApi[];
+  /** Whether the run replays a cached bundle (true) or prepares one (false); null when it runs without one, as the defaults do before their bundle is cached. */
+  bundle_cached: boolean | null;
+}
+
 export interface HarnessRunCreateApi {
   /** @maxItems 1000 */
   scenario_ids: string[];
@@ -19010,6 +19489,9 @@ export interface HarnessRunCreateApi {
    * @maximum 20
    */
   trials?: number;
+  agent_version_id?: string | null;
+  environment_version_id?: string | null;
+  suite_version_id?: string | null;
 }
 
 export interface HarnessRunCreateResponseApi {
@@ -19031,6 +19513,8 @@ export interface HarnessRunCreateResponseApi {
   state: string;
   /** @minLength 1 */
   stage: string;
+  versions: HarnessRunPinnedVersionsApi;
+  warnings: HarnessRunWarningApi[];
 }
 
 export interface HarnessEnvironmentRunEvaluationQueuedApi {
@@ -19052,6 +19536,68 @@ export interface HarnessEnvironmentRunEvaluationsApi {
 export interface HarnessEnvironmentRunEvaluationsQueuedApi {
   /** How many of the run's calls were queued for grading. */
   call_execution_count: number;
+}
+
+export interface HarnessAgentConfigChangeApi {
+  /**
+   * @minLength 1
+   * @maxLength 512
+   */
+  phone_number?: string;
+  /**
+   * @minLength 1
+   * @maxLength 512
+   */
+  agent_name?: string;
+  target_speaks_first?: boolean;
+}
+
+export interface HarnessAgentPayloadChangeApi {
+  config: HarnessAgentConfigChangeApi;
+}
+
+export interface HarnessAgentVersionCreateApi {
+  /** A folder uploaded through source-upload. */
+  archive_artifact_id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 65536
+   */
+  prompt?: string;
+  agent_payload?: HarnessAgentPayloadChangeApi;
+}
+
+export interface HarnessAgentCredentialsResponseApi {
+  agent_version: HarnessVersionApi;
+}
+
+export interface HarnessSuiteMemberApi {
+  /** @minLength 1 */
+  scenario_key: string;
+  number: number;
+  name: string;
+  use_case: string;
+}
+
+export interface HarnessDefaultMoveApi {
+  /** The default the caller saw; a newer default refuses the move. */
+  expected_default_id: string | null;
+}
+
+export type HarnessVersionDiffApiDiff = { [key: string]: unknown };
+
+/**
+ * Those unsaved edits, against the default they started from.
+ */
+export type HarnessVersionDiffApiSnapshotDiff = { [key: string]: unknown };
+
+export interface HarnessVersionDiffApi {
+  summary: string;
+  diff: HarnessVersionDiffApiDiff | null;
+  /** A rebuild made someone's unsaved edits live with this version. */
+  includes_draft_edits?: boolean;
+  /** Those unsaved edits, against the default they started from. */
+  snapshot_diff?: HarnessVersionDiffApiSnapshotDiff | null;
 }
 
 export type HarnessJobReadApiReceiptsItem = { [key: string]: unknown };
@@ -19276,6 +19822,11 @@ export interface HarnessConsumptionApi {
   sandbox_seconds: number;
 }
 
+export interface HarnessVersioningFlagsApi {
+  enabled: boolean;
+  nudges_enabled: boolean;
+}
+
 export interface HarnessJobReadApi {
   job: HarnessJobInfoApi;
   status: HarnessJobStatusApi;
@@ -19289,6 +19840,7 @@ export interface HarnessJobReadApi {
   conversation?: HarnessConversationReadApi;
   consumption?: HarnessConsumptionApi;
   usage_limit?: HarnessJobReadApiUsageLimit;
+  versioning?: HarnessVersioningFlagsApi;
 }
 
 export type HarnessJobCreateApiSchemaVersion =
@@ -19301,6 +19853,11 @@ export const HarnessJobCreateApiSchemaVersion = {
 export type HarnessJobCreateApiMetadata = {
   [key: string]: { [key: string]: unknown };
 };
+
+/**
+ * Agent credential values by name; stored with the environment's first agent version, never echoed.
+ */
+export type HarnessJobCreateApiCredentialValues = { [key: string]: string };
 
 export type HarnessSourceApiKind =
   (typeof HarnessSourceApiKind)[keyof typeof HarnessSourceApiKind];
@@ -19545,6 +20102,8 @@ export interface HarnessJobCreateApi {
    */
   platform_run_id?: string;
   metadata?: HarnessJobCreateApiMetadata;
+  /** Agent credential values by name; stored with the environment's first agent version, never echoed. */
+  credential_values?: HarnessJobCreateApiCredentialValues;
 }
 
 export type HarnessPreflightApiSchemaVersion =
@@ -19665,10 +20224,21 @@ export interface HarnessSecretFileUploadResponseApi {
   size: number;
 }
 
+/**
+ * Values by name; may be empty only when an environment's files are given.
+ */
 export type HarnessSecretValuesApiEnvironmentValues = { [key: string]: string };
 
 export interface HarnessSecretValuesApi {
+  /** Values by name; may be empty only when an environment's files are given. */
   environment_values: HarnessSecretValuesApiEnvironmentValues;
+  /** Change this environment's agent credentials: the values make its next agent version. */
+  environment_id: string;
+  /**
+   * Credential files staged through secret-files/, by their refs.
+   * @maxItems 10
+   */
+  files?: SecretReferenceApi[];
 }
 
 export interface HarnessSourceUploadResponseApi {
@@ -20421,6 +20991,11 @@ export type HarnessConversationOverviewApiEarlierMessagesItem = {
   [key: string]: string;
 };
 
+/**
+ * The unsaved changes by piece, where the environment has drafts.
+ */
+export type HarnessConversationOverviewApiDrafts = { [key: string]: string };
+
 export interface HarnessConversationOverviewApi {
   environment: HarnessConversationOverviewApiEnvironment;
   scenario_count: number;
@@ -20429,6 +21004,8 @@ export interface HarnessConversationOverviewApi {
   recent_runs: HarnessConversationOverviewApiRecentRunsItem[];
   build_changes: HarnessConversationOverviewApiBuildChangesItem[];
   earlier_messages: HarnessConversationOverviewApiEarlierMessagesItem[];
+  /** The unsaved changes by piece, where the environment has drafts. */
+  drafts?: HarnessConversationOverviewApiDrafts;
 }
 
 export interface HarnessConversationPublishApi {
@@ -20557,6 +21134,28 @@ export interface HarnessConversationWorkspaceResponseApi {
   digest: string;
   /** @minimum 0 */
   size: number;
+}
+
+export interface HarnessGitHubPushRepositoryApi {
+  /** @minimum 1 */
+  id?: number;
+  /**
+   * @minLength 1
+   * @maxLength 256
+   */
+  full_name: string;
+  /** @maxLength 256 */
+  default_branch?: string;
+}
+
+export interface HarnessGitHubPushApi {
+  /**
+   * @minLength 1
+   * @maxLength 512
+   */
+  ref: string;
+  deleted?: boolean;
+  repository: HarnessGitHubPushRepositoryApi;
 }
 
 export type HarnessIngressProxyRequestApiPayload = { [key: string]: unknown };
@@ -22603,6 +23202,10 @@ export interface TestExecutionItemResponseApi {
   readonly outcome_passed?: number;
   readonly outcome_failed?: number;
   readonly outcome_skipped?: number;
+  environment_version?: RunVersionLabelApi | null;
+  suite_version?: RunVersionLabelApi | null;
+  pinned_agent_version?: RunVersionLabelApi | null;
+  readonly agent_differs?: boolean;
 }
 
 export interface RunTestExecutionsResponseApi {
@@ -24314,8 +24917,8 @@ export interface ReliabilityIntervalApi {
   low: number;
   high: number;
   effective_n: number;
+  scenarios: number;
   evaluated: number;
-  clusters: number;
 }
 
 export type ReliabilityRowApiVerdict =
@@ -24343,6 +24946,7 @@ export interface ReliabilityRowApi {
   evaluated: number;
   pass_rate: number;
   verdict: ReliabilityRowApiVerdict;
+  call_ids: string[];
 }
 
 export interface ReliabilityApi {
@@ -24353,6 +24957,15 @@ export interface ReliabilityApi {
   repeated: number;
   flaky: number;
   flip_rate: number;
+  k: number;
+  inconclusive: number;
+  pass_hat_1: number;
+  pass_hat_k: number;
+  pass_hat_k_scenarios: number;
+  pass_hat_k_passed: number;
+  pass_hat_k_excluded: number;
+  trials_passed: number;
+  trials_evaluated: number;
   pass_rate_interval: ReliabilityIntervalApi;
   rows: ReliabilityRowApi[];
 }
@@ -24487,6 +25100,10 @@ export interface RunExecutionApi {
   ordinal: number;
   /** @minLength 1 */
   agent_version: string;
+  environment_version?: RunVersionLabelApi | null;
+  suite_version?: RunVersionLabelApi | null;
+  pinned_agent_version?: RunVersionLabelApi | null;
+  agent_differs?: boolean;
   selected_scenario_keys?: string[];
   /** @minimum 1 */
   trials?: number;
@@ -30152,6 +30769,7 @@ export const SharedLinkListApiResourceType = {
   dataset: "dataset",
   project: "project",
   call_execution: "call_execution",
+  error_feed_issue: "error_feed_issue",
 } as const;
 
 export type SharedLinkListApiAccessType =
@@ -30186,6 +30804,7 @@ export const SharedLinkCreateApiResourceType = {
   dashboard: "dashboard",
   project: "project",
   call_execution: "call_execution",
+  error_feed_issue: "error_feed_issue",
 } as const;
 
 export type SharedLinkCreateApiAccessType =
@@ -30219,6 +30838,7 @@ export const SharedLinkDetailApiResourceType = {
   dataset: "dataset",
   project: "project",
   call_execution: "call_execution",
+  error_feed_issue: "error_feed_issue",
 } as const;
 
 export type SharedLinkDetailApiAccessType =
@@ -30286,6 +30906,7 @@ export const SharedLinkResolveResponseApiResourceType = {
   dataset: "dataset",
   project: "project",
   call_execution: "call_execution",
+  error_feed_issue: "error_feed_issue",
 } as const;
 
 export type SharedLinkResolveResponseApiAccessType =
@@ -30371,6 +30992,11 @@ export interface SharedLinkResolvedDataApi {
   updated_at?: string;
   widgets?: SharedLinkResolvedDataApiWidgetsItem[];
   widget_count?: number;
+  issue?: FeedDetailCoreApi;
+  overview?: OverviewResponseApi;
+  traces?: TracesTabResponseApi;
+  trends?: TrendsTabResponseApi;
+  sidebar?: FeedSidebarApi;
 }
 
 export interface SharedLinkResolveResponseApi {
@@ -30414,6 +31040,110 @@ export interface SharedLinkResolveErrorApi {
   error?: string;
   attr?: string;
   details?: SharedLinkResolveErrorApiDetails;
+}
+
+export type EvalRollupApiScope =
+  (typeof EvalRollupApiScope)[keyof typeof EvalRollupApiScope];
+
+export const EvalRollupApiScope = {
+  trace: "trace",
+  span: "span",
+} as const;
+
+export type EvalRollupEvalApiTargetType =
+  (typeof EvalRollupEvalApiTargetType)[keyof typeof EvalRollupEvalApiTargetType];
+
+export const EvalRollupEvalApiTargetType = {
+  span: "span",
+  trace: "trace",
+} as const;
+
+/**
+ * Any valid JSON value.
+ */
+export type EvalRollupSpanApiValue = JsonValueApi;
+
+export interface EvalRollupSpanApi {
+  /** @minLength 1 */
+  span_id: string;
+  span_name?: string;
+  /** Any valid JSON value. */
+  value?: EvalRollupSpanApiValue | null;
+  /** @minLength 1 */
+  explanation?: string | null;
+  error?: boolean;
+  /** @minLength 1 */
+  status?: string | null;
+  eval_config_id?: string;
+}
+
+/**
+ * Any valid JSON value.
+ */
+export type EvalRollupEvalApiChoicesMap = JsonValueApi;
+
+/**
+ * Any valid JSON value.
+ */
+export type EvalRollupEvalApiAggregate = JsonValueApi;
+
+export interface EvalRollupEvalApi {
+  /** @minLength 1 */
+  eval_config_id: string;
+  /** @minLength 1 */
+  eval_name: string;
+  /** @minLength 1 */
+  output_type?: string | null;
+  /** @minLength 1 */
+  template_type?: string | null;
+  target_type?: EvalRollupEvalApiTargetType | null;
+  /** Any valid JSON value. */
+  choices_map?: EvalRollupEvalApiChoicesMap | null;
+  /** Any valid JSON value. */
+  aggregate: EvalRollupEvalApiAggregate;
+  spans: EvalRollupSpanApi[];
+  error?: boolean;
+}
+
+export interface EvalRollupApi {
+  scope: EvalRollupApiScope;
+  evals: EvalRollupEvalApi[];
+  error?: boolean;
+}
+
+export type TraceDetailSpanApiObservationSpan = { [key: string]: unknown };
+
+export type TraceDetailSpanApiChildrenItem = { [key: string]: unknown };
+
+export type TraceDetailSpanApiEvalScoresItem = { [key: string]: unknown };
+
+export type TraceDetailSpanApiAnnotationsItem = { [key: string]: unknown };
+
+export interface TraceDetailSpanApi {
+  observation_span: TraceDetailSpanApiObservationSpan;
+  children?: TraceDetailSpanApiChildrenItem[];
+  /** Raw eval rows retained for backwards-compatible array consumers. */
+  eval_scores?: TraceDetailSpanApiEvalScoresItem[];
+  eval_rollup?: EvalRollupApi;
+  annotations?: TraceDetailSpanApiAnnotationsItem[];
+}
+
+export type TraceDetailResultApiTrace = { [key: string]: unknown };
+
+export type TraceDetailResultApiSummary = { [key: string]: unknown };
+
+export type TraceDetailResultApiGraph = { [key: string]: unknown };
+
+export interface TraceDetailResultApi {
+  trace: TraceDetailResultApiTrace;
+  observation_spans: TraceDetailSpanApi[];
+  summary: TraceDetailResultApiSummary;
+  graph: TraceDetailResultApiGraph;
+}
+
+export interface TraceDetailResponseApi {
+  status?: boolean;
+  result: TraceDetailResultApi;
 }
 
 export type TraceAnnotationValueResponseApiAnnotationValue = {
@@ -31406,6 +32136,11 @@ export interface TraceObserveListResponseApi {
 }
 
 export interface TraceObserveListQueryApi {
+  /**
+   * JSON-encoded list of sort params.
+   * @minLength 1
+   */
+  sort_params?: string;
   project_id?: string;
   project_version_id?: string;
   session_id?: string;
@@ -31536,61 +32271,6 @@ export const TraceVoiceCallDetailResultApiEvalRollupScope = {
   span: "span",
 } as const;
 
-export type EvalRollupEvalApiTargetType =
-  (typeof EvalRollupEvalApiTargetType)[keyof typeof EvalRollupEvalApiTargetType];
-
-export const EvalRollupEvalApiTargetType = {
-  span: "span",
-  trace: "trace",
-} as const;
-
-/**
- * Any valid JSON value.
- */
-export type EvalRollupSpanApiValue = JsonValueApi;
-
-export interface EvalRollupSpanApi {
-  /** @minLength 1 */
-  span_id: string;
-  span_name?: string;
-  /** Any valid JSON value. */
-  value?: EvalRollupSpanApiValue | null;
-  /** @minLength 1 */
-  explanation?: string | null;
-  error?: boolean;
-  /** @minLength 1 */
-  status?: string | null;
-  eval_config_id?: string;
-}
-
-/**
- * Any valid JSON value.
- */
-export type EvalRollupEvalApiChoicesMap = JsonValueApi;
-
-/**
- * Any valid JSON value.
- */
-export type EvalRollupEvalApiAggregate = JsonValueApi;
-
-export interface EvalRollupEvalApi {
-  /** @minLength 1 */
-  eval_config_id: string;
-  /** @minLength 1 */
-  eval_name: string;
-  /** @minLength 1 */
-  output_type?: string | null;
-  /** @minLength 1 */
-  template_type?: string | null;
-  target_type?: EvalRollupEvalApiTargetType | null;
-  /** Any valid JSON value. */
-  choices_map?: EvalRollupEvalApiChoicesMap | null;
-  /** Any valid JSON value. */
-  aggregate: EvalRollupEvalApiAggregate;
-  spans: EvalRollupSpanApi[];
-  error?: boolean;
-}
-
 export type TraceVoiceCallDetailResultApiCostBreakdown = {
   [key: string]: unknown;
 };
@@ -31716,55 +32396,6 @@ export interface TraceVoiceCallDetailResultApi {
 export interface TraceVoiceCallDetailResponseApi {
   status: boolean;
   result: TraceVoiceCallDetailResultApi;
-}
-
-export type EvalRollupApiScope =
-  (typeof EvalRollupApiScope)[keyof typeof EvalRollupApiScope];
-
-export const EvalRollupApiScope = {
-  trace: "trace",
-  span: "span",
-} as const;
-
-export interface EvalRollupApi {
-  scope: EvalRollupApiScope;
-  evals: EvalRollupEvalApi[];
-  error?: boolean;
-}
-
-export type TraceDetailSpanApiObservationSpan = { [key: string]: unknown };
-
-export type TraceDetailSpanApiChildrenItem = { [key: string]: unknown };
-
-export type TraceDetailSpanApiEvalScoresItem = { [key: string]: unknown };
-
-export type TraceDetailSpanApiAnnotationsItem = { [key: string]: unknown };
-
-export interface TraceDetailSpanApi {
-  observation_span: TraceDetailSpanApiObservationSpan;
-  children?: TraceDetailSpanApiChildrenItem[];
-  /** Raw eval rows retained for backwards-compatible array consumers. */
-  eval_scores?: TraceDetailSpanApiEvalScoresItem[];
-  eval_rollup?: EvalRollupApi;
-  annotations?: TraceDetailSpanApiAnnotationsItem[];
-}
-
-export type TraceDetailResultApiTrace = { [key: string]: unknown };
-
-export type TraceDetailResultApiSummary = { [key: string]: unknown };
-
-export type TraceDetailResultApiGraph = { [key: string]: unknown };
-
-export interface TraceDetailResultApi {
-  trace: TraceDetailResultApiTrace;
-  observation_spans: TraceDetailSpanApi[];
-  summary: TraceDetailResultApiSummary;
-  graph: TraceDetailResultApiGraph;
-}
-
-export interface TraceDetailResponseApi {
-  status?: boolean;
-  result: TraceDetailResultApi;
 }
 
 export interface TraceTagsUpdateApi {
@@ -36461,6 +37092,32 @@ export type SimulateApiHarnessEnvironmentsListParams = {
   agent_definition_id?: string;
 };
 
+export type SimulateApiHarnessEnvironmentsCompareParams = {
+  execution_id: string;
+  /**
+   * The run to compare against; the previous completed run if absent.
+   */
+  against_execution_id?: string;
+};
+
+export type SimulateApiHarnessEnvironmentsNudgesParams = {
+  /**
+   * Comma-separated nudge states to list.
+   * @minLength 1
+   */
+  state?: string;
+};
+
+export type SimulateApiHarnessEnvironmentsRunPlanParams = {
+  agent_version_id?: string;
+  environment_version_id?: string;
+  suite_version_id?: string;
+};
+
+export type SimulateApiHarnessEnvironmentsVersionsVersionDiffParams = {
+  against?: string;
+};
+
 export type SimulateApiHarnessJobsSecretFileUploadBody = {
   /** Credential file; transferred without entering job JSON. */
   file: Blob;
@@ -37985,6 +38642,13 @@ export type TracerSharedLinksList200 = {
   results: SharedLinkListApi[];
 };
 
+export type TracerSharedSidebarListParams = {
+  /**
+   * @minLength 1
+   */
+  trace_id?: string;
+};
+
 export type TracerTraceAnnotationGetAnnotationValuesParams = {
   /**
    * A page number within the paginated result set.
@@ -38320,6 +38984,10 @@ export type TracerTraceListTracesParams = {
 };
 
 export type TracerTraceListTracesOfSessionParams = {
+  /**
+   * @minLength 1
+   */
+  sort_params?: string;
   project_id?: string;
   project_version_id?: string;
   session_id?: string;
