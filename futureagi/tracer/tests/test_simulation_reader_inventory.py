@@ -756,6 +756,25 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "ClickHouseVectorDB.vector_similarity_search": _EMBEDDING_STORE,
         "ClickHouseVectorDB.vector_similarity_search_with_threshold": _EMBEDDING_STORE,
     },
+    "ee.agenthub.insights.evidence": {
+        **{
+            f"EvidenceQueryBuilder.{name}": filed(
+                BY_ID_ALONE,
+                why=(
+                    "reads the spans of the sessions, users or traces a report run "
+                    "sampled, for the evidence broker, pinned to the run's project; "
+                    "a run is only created for a project its view took from a "
+                    "project manager"
+                ),
+            )
+            for name in (
+                "content_query",
+                "identity_query",
+                "roster_query",
+                "trace_stats_query",
+            )
+        },
+    },
     "ee.agenthub.traceerroragent.error_cluster": {
         (
             "ErrorEmbeddingClusterer.cluster_project.<locals>._fetch_project_embeddings"
@@ -1702,6 +1721,14 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
                 "one is passed, and a hidden project has no session row to pass it"
             ),
         ),
+        "CHSpanReader.activity_by_trace_ids": filed(
+            BY_ID_ALONE,
+            why=(
+                "the tool calls, failed steps and media steps of the traces it is "
+                "given (the built-in Insights engine, after roots_by_trace_ids or "
+                "roots_by_session_ids picked them); the project only narrows it"
+            ),
+        ),
         "CHSpanReader.distinct_end_users_by_trace_ids": _READS_THE_IDS_IT_IS_GIVEN,
         "CHSpanReader.distinct_session_ids_with_filters": filed(
             ROW_DRIVEN,
@@ -1979,6 +2006,10 @@ SCOPE_IDS = {
 BY_ID_WITHOUT_AN_ID = {
     "tracer.services.clickhouse.v2.span_reader:_dedup_sql": (
         "wraps reads that name their ids in the where clause the caller passes"
+    ),
+    "ee.agenthub.insights.evidence:EvidenceQueryBuilder.content_query": (
+        "reads the physical span identities (trace, span and version) that "
+        "identity_query returned for the trace ids it was given"
     ),
 }
 

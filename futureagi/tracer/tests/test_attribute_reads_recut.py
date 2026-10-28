@@ -13440,7 +13440,13 @@ def test_session_eval_picker_without_verified_sessions_returns_static_sample(
     response = ObservationSpanView.as_view({"get": "get_eval_attributes_list"})(request)
 
     assert response.status_code == 200
-    assert response.data["result"] == ["name", "bookmarked"]
+    # The session's own fields, and its whole conversation for an evaluator.
+    assert response.data["result"] == [
+        "name",
+        "bookmarked",
+        "transcript",
+        "transcript_full",
+    ]
     assert response.data["query_complete"] is False
     assert response.data["query_status"] == "sampled"
     assert response.data["query_error_code"] == "sample_limit"
