@@ -96,7 +96,7 @@ func contractStream(t *testing.T, c contracttest.Case) {
 	assertUpstreamRequest(t, c, upstream)
 	contracttest.AssertKnownPaths(t, c, streamUnknownFields(t, events))
 	contracttest.AssertNoUnknownShapes(t, c, shapes.Shapes())
-	contracttest.AssertSaneWithGaps(t, contracttest.FromStream(res.Chunks), streamHasOutput(t, events), streamSanityGaps...)
+	contracttest.AssertSaneWithGaps(t, c, contracttest.FromStream(res.Chunks), streamHasOutput(t, events), streamSanityGaps...)
 }
 
 // streamEvents drops the [DONE] terminator, which is not an event.

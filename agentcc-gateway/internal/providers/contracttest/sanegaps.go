@@ -15,15 +15,17 @@ import (
 // It fails t for every failure no gap matches, so the case still guards the
 // other rules, and for every gap that matches no failure, so the gap is
 // removed from the test once the adapter is fixed: the same rule as a stale
-// allowlist entry. With no gaps it is AssertSane.
-func AssertSaneWithGaps(t testing.TB, c Completion, expectOutput bool, gaps ...string) {
+// allowlist entry. Like that rule, the second check is skipped for a live case,
+// whose real response need not trigger every gap its fixture pinned (a prompt
+// the model answers instead of blocking, say). With no gaps it is AssertSane.
+func AssertSaneWithGaps(t testing.TB, c Case, got Completion, expectOutput bool, gaps ...string) {
 	t.Helper()
 	if len(gaps) == 0 {
-		AssertSane(t, c, expectOutput)
+		AssertSane(t, got, expectOutput)
 		return
 	}
 	rec := &saneGapRecorder{TB: t}
-	AssertSane(rec, c, expectOutput)
+	AssertSane(rec, got, expectOutput)
 
 	matched := make([]bool, len(gaps))
 	for _, failure := range rec.failures() {
@@ -36,6 +38,9 @@ func AssertSaneWithGaps(t testing.TB, c Completion, expectOutput bool, gaps ...s
 		if !known {
 			t.Errorf("%s", failure)
 		}
+	}
+	if c.Live {
+		return
 	}
 	for i, gap := range gaps {
 		if !matched[i] {

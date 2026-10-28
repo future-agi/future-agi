@@ -224,7 +224,10 @@ func chunkHasOutput(t *testing.T, body []byte) bool {
 }
 
 // assertSane is contracttest.AssertSane, except for a case in sanityGaps, which
-// must fail it in exactly the listed ways.
+// must fail it in exactly the listed ways. A live case may fail in fewer of
+// them: its real response need not trigger the gap its fixture pinned (a prompt
+// the model answers instead of blocking), just as stale allowlist entries are
+// not reported in live mode.
 func assertSane(t *testing.T, c contracttest.Case, got contracttest.Completion, expectOutput bool) {
 	t.Helper()
 	gap, known := sanityGaps[c.ID()]
@@ -234,6 +237,14 @@ func assertSane(t *testing.T, c contracttest.Case, got contracttest.Completion, 
 	}
 	probe := &sanityProbe{TB: t}
 	contracttest.AssertSane(probe, got, expectOutput)
+	if c.Live {
+		for _, f := range probe.failures {
+			if !slices.ContainsFunc(gap.failures, func(w string) bool { return strings.HasPrefix(f, w) }) {
+				t.Errorf("%s", f)
+			}
+		}
+		return
+	}
 	sort.Strings(probe.failures)
 	want := append([]string(nil), gap.failures...)
 	sort.Strings(want)

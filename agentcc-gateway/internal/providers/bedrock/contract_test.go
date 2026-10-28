@@ -130,11 +130,11 @@ func contractStream(t *testing.T, c contracttest.Case) {
 	if usesConverse(c) {
 		contracttest.AssertKnownPaths(t, c, converseStreamUnknownFields(events))
 		contracttest.AssertNoUnknownShapes(t, c, shapes.Shapes())
-		contracttest.AssertSaneWithGaps(t, contracttest.FromStream(res.Chunks), converseStreamHasOutput(t, events), gaps...)
+		contracttest.AssertSaneWithGaps(t, c, contracttest.FromStream(res.Chunks), converseStreamHasOutput(t, events), gaps...)
 	} else {
 		contracttest.AssertKnownPaths(t, c, invokeStreamUnknownFields(events))
 		contracttest.AssertNoUnknownShapes(t, c, shapes.Shapes())
-		contracttest.AssertSaneWithGaps(t, contracttest.FromStream(res.Chunks), invokeStreamHasOutput(t, events), gaps...)
+		contracttest.AssertSaneWithGaps(t, c, contracttest.FromStream(res.Chunks), invokeStreamHasOutput(t, events), gaps...)
 	}
 }
 

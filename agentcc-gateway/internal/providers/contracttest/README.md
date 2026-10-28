@@ -221,8 +221,9 @@ fixtures"). In live mode:
   the `request.json` in use, so a repo request is still pinned;
 - unknown fields, unknown shapes, event types and sanity are all checked, so a
   new field or block type in a live response fails the job;
-- stale allowlist entries are not reported, since a live response need not
-  reproduce every shape a fixture pinned.
+- stale allowlist entries and known sanity gaps that do not occur are not
+  reported, since a live response need not reproduce every shape a fixture
+  pinned (a prompt the model answers instead of blocking, say).
 
 To promote a recording, copy it into `testdata/contracts/<model-dir>/<case>/`,
 set `source: "recorded"` and `recorded_at`, run with `-update`, and review the

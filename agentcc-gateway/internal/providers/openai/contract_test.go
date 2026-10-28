@@ -109,7 +109,7 @@ func contractJSON(t *testing.T, c contracttest.Case) {
 	assertUpstreamRequest(t, c, upstream)
 	contracttest.AssertKnownPaths(t, c, responseUnknownFields(t, c.Body))
 	contracttest.AssertNoUnknownShapes(t, c, shapes.Shapes())
-	contracttest.AssertSaneWithGaps(t, contracttest.FromResponse(resp), responseHasOutput(t, c.Body), saneGaps[c.ID()]...)
+	contracttest.AssertSaneWithGaps(t, c, contracttest.FromResponse(resp), responseHasOutput(t, c.Body), saneGaps[c.ID()]...)
 }
 
 func contractStream(t *testing.T, c contracttest.Case) {
@@ -130,7 +130,7 @@ func contractStream(t *testing.T, c contracttest.Case) {
 	assertUpstreamRequest(t, c, upstream)
 	contracttest.AssertKnownPaths(t, c, streamUnknownFields(chunks))
 	contracttest.AssertNoUnknownShapes(t, c, shapes.Shapes())
-	contracttest.AssertSaneWithGaps(t, contracttest.FromStream(res.Chunks), streamHasOutput(t, chunks), saneGaps[c.ID()]...)
+	contracttest.AssertSaneWithGaps(t, c, contracttest.FromStream(res.Chunks), streamHasOutput(t, chunks), saneGaps[c.ID()]...)
 }
 
 // assertUpstreamRequest pins the outbound request and checks the fixture is
