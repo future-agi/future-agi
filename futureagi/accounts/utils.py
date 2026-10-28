@@ -92,8 +92,11 @@ def _fire_deployment_telemetry_registration(user_id=None, source="system"):
 
 
 def resolve_org(request):
-    """Return the organization resolved by auth middleware, falling back to the user FK."""
-    return getattr(request, "organization", None) or request.user.organization
+    """Use auth's resolved scope, including an explicit denial (``None``).
+
+    Only a request without an auth-resolved organization may use the legacy FK.
+    """
+    return getattr(request, "organization", request.user.organization)
 
 
 def resolve_org_role(user, organization):
@@ -102,6 +105,8 @@ def resolve_org_role(user, organization):
     Falls back to user.organization_role only for truly legacy accounts
     (users with no membership records at all for this org).
     """
+    if organization is None:
+        return None
     mem = OrganizationMembership.no_workspace_objects.filter(
         user=user, organization=organization, is_active=True
     ).first()
@@ -109,9 +114,9 @@ def resolve_org_role(user, organization):
         return mem.role
 
     # Fallback: legacy field (only for truly legacy accounts)
-    # Users with deactivated memberships should NOT get this fallback.
+    # Both inactive rows and soft-delete tombstones record an explicit removal.
     if user.organization_id and user.organization_id == organization.id:
-        has_any_membership = OrganizationMembership.no_workspace_objects.filter(
+        has_any_membership = OrganizationMembership.all_objects.filter(
             user=user, organization=organization
         ).exists()
         if not has_any_membership:
@@ -385,16 +390,16 @@ def first_signup(data, mode=None, telemetry_source="web"):
                 organization=organization, type="system"
             )
             transaction.on_commit(
-                lambda key_id=system_key.id, org_id=organization.id: _record_signup_api_key_event(
-                    key_id, org_id
+                lambda key_id=system_key.id, org_id=organization.id: (
+                    _record_signup_api_key_event(key_id, org_id)
                 )
             )
         if generated_password:
             process_post_registration(user.id, generated_password)
 
         transaction.on_commit(
-            lambda user_id=user.id, source=telemetry_source: _fire_deployment_telemetry_registration(
-                user_id, source
+            lambda user_id=user.id, source=telemetry_source: (
+                _fire_deployment_telemetry_registration(user_id, source)
             )
         )
         return user

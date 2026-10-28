@@ -1,11 +1,32 @@
 """Organization-key policy shared by account views and key tools."""
 
 from django.db import transaction
-from rest_framework.exceptions import PermissionDenied
+from django.db.models import Q
+from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
 
 from accounts.models import Organization, OrgApiKey, User
+from accounts.models.organization_membership import OrganizationMembership
 from accounts.services.workspace_membership import resolve_org_membership
 from tfc.constants.levels import Level
+
+
+def system_key_principal(organization):
+    """Resolve system credentials to a current Owner, never a home-org guess."""
+    membership = (
+        OrganizationMembership.no_workspace_objects.filter(
+            organization=organization,
+            is_active=True,
+            user__is_active=True,
+            user__deleted=False,
+        )
+        .filter(Q(level__gte=Level.OWNER) | Q(level__isnull=True, role="Owner"))
+        .select_related("user", "user__organization")
+        .order_by("created_at", "id")
+        .first()
+    )
+    if membership is None:
+        raise AuthenticationFailed("The organization has no active Owner.")
+    return membership.user
 
 
 def request_key_organization(request):

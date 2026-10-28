@@ -7,6 +7,7 @@ red=$3
 dev=$4
 head=$5
 removal=$6
+history=$7
 if [[ $(uname -s) != Linux || ${OMEGA_EXEC_SOURCE_HEAD:-} != "$head" ]]; then
   printf '%s\n' 'This driver requires the pinned cloud-exec snapshot.' >&2
   exit 2
@@ -17,13 +18,20 @@ mkdir -p "$run/raw" "$run/results"
 printf '%s\n' "git:$base" "git:$red" "git:$head" "git:$dev" > "$run/results/revisions.txt"
 
 # Detached, new checkouts only: the shipped tree and every existing branch stay intact.
-for label in base red head dev removal; do
+for label in base red head dev removal history; do
   case "$label" in
     base) revision=$base;; red) revision=$red;; head) revision=$head;; dev) revision=$dev;;
-    removal) revision=$removal;;
+    removal) revision=$removal;; history) revision=$history;;
   esac
   git -C "$repo" worktree add --detach "$run/$label" "$revision"
 done
+# The identical final history/principal contracts run on the pre-repair tree,
+# including the lowercase-email correction for the legacy add-user control.
+for test_file in test_membership_role_history.py test_system_key_principal.py test_key_management_scope.py; do
+  cp "$run/head/futureagi/accounts/tests/$test_file" "$run/history/futureagi/accounts/tests/$test_file"
+done
+# Keep original bootstrap/management/tool red assertions identical to green too.
+cp "$run/head/futureagi/accounts/tests/test_key_management_scope.py" "$run/red/futureagi/accounts/tests/test_key_management_scope.py"
 # Use the exact final regression tests on the pre-repair implementation. This
 # also carries corrections to positive controls (for example revoked sessions
 # are 401, while a freshly issued bearer without membership is 403).
@@ -45,12 +53,12 @@ git -C "$repo" diff --binary "$base" "$red" > "$run/tests.patch"
 git -C "$run/replay" apply --check "$run/tests.patch"
 git -C "$run/replay" apply --index "$run/tests.patch"
 UV_NO_SYNC=1 git -C "$run/replay" -c user.name='Key role checks' -c user.email='checks@example.test' commit \
-  -m 'test(accounts): replay key role contracts' -m 'Co-Authored-By: Claude Code <noreply@anthropic.com>'
+  -m 'test(accounts): replay key role contracts' -m 'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>'
 git -C "$repo" diff --binary "$red" "$head" > "$run/policy.patch"
 git -C "$run/replay" apply --check "$run/policy.patch"
 git -C "$run/replay" apply --index "$run/policy.patch"
 UV_NO_SYNC=1 git -C "$run/replay" -c user.name='Key role checks' -c user.email='checks@example.test' commit \
-  -m 'fix(accounts): replay organization key role policy' -m 'Co-Authored-By: Claude Code <noreply@anthropic.com>'
+  -m 'fix(accounts): replay organization key role policy' -m 'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>'
 printf 'git:%s\n' "$(git -C "$run/replay" rev-parse HEAD)" >> "$run/results/revisions.txt"
 test -z "$(git -C "$run/replay" status --porcelain)"
 
@@ -60,7 +68,7 @@ test -z "$(git -C "$run/replay" status --porcelain)"
 compose=(docker compose -p key-role-checks -f "$repo/futureagi/docker-compose.test.yml")
 "${compose[@]}" up -d --wait
 trap '"${compose[@]}" down' EXIT
-for label in base red head dev replay removal; do
+for label in base red head dev replay removal history; do
   (cd "$run/$label/futureagi" && uv sync --locked)
 done
 
@@ -103,6 +111,9 @@ for label in removal head; do
     > "$run/results/driver-$label.log" 2>&1 || code=$?
   printf '%s\n' "$code" > "$run/raw/driver-$label.exit"
 done
+history_tests=(accounts/tests/test_membership_role_history.py accounts/tests/test_system_key_principal.py accounts/tests/test_key_management_scope.py)
+run_suite history_red history "${history_tests[@]}"
+run_suite history_green head "${history_tests[@]}"
 # Both complete accounts suites plus the sibling tools use identical test services.
 run_suite base_accounts base accounts/tests ai_tools/tests/test_user_tools.py
 run_suite head_accounts head accounts/tests ai_tools/tests/test_user_tools.py

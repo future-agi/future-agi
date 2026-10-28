@@ -324,8 +324,8 @@ class SecretKeyAPIViewSet(ViewSet):
             if not key_id:
                 return self._gm.bad_request(get_error_message("KEY_ID_REQUIRED"))
             org_key = self.key_queryset(request).get(id=key_id)
-            # Keep personal-key deletion owner-only; org admins manage system keys.
-            required_level = Level.ADMIN if org_key.type == "system" else Level.OWNER
+            # Irreversible deletion stays Owner-only for every key type.
+            required_level = Level.OWNER
             level = key_org_level(request.user, request_key_organization(request))
             if level is None or level < required_level:
                 return self._gm.bad_request(get_error_message("UNAUTHORIZED_ACCESS"))

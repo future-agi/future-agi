@@ -77,8 +77,11 @@ def _authenticate_and_set_context(
     api_key: str, secret_key: str
 ) -> MCPRequestContext | None:
     """Authenticate via API key and set per-request context."""
-    from accounts.models.user import OrgApiKey, User
+    from rest_framework.exceptions import AuthenticationFailed
+
+    from accounts.models.user import OrgApiKey
     from accounts.models.workspace import Workspace
+    from accounts.services.api_keys import system_key_principal
 
     try:
         # Use .all() to bypass BaseModelManager workspace filtering
@@ -98,13 +101,10 @@ def _authenticate_and_set_context(
         return None
 
     if org_api_key.type == "system":
-        user = (
-            User.objects.all()
-            .select_related("organization")
-            .filter(organization=org_api_key.organization)
-            .order_by("created_at")
-            .first()
-        )
+        try:
+            user = system_key_principal(org_api_key.organization)
+        except AuthenticationFailed:
+            return None
     else:
         user = org_api_key.user
 

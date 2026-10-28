@@ -160,6 +160,42 @@ def main(raw, output):
             and removal_proof["driver_green_exit"] == 0
         )
         blocked |= not removal_ok
+    history_proof = None
+    if (raw / "history_red.xml").exists():
+        history_red = load(raw / "history_red.xml")
+        history_green = load(raw / "history_green.xml")
+        assertions = {
+            "accounts.tests.test_membership_role_history::test_removed_owner_has_no_role_or_private_workspace": (
+                "assert str(private.pk) not in {",
+                r"(?:AssertionError: )?assert '[^']+' not in ",
+            ),
+            "accounts.tests.test_membership_role_history::test_resolved_no_organization_does_not_fall_back_to_home_org": (
+                "assert resolve_org(SimpleNamespace(user=user, organization=None)) is None",
+                r"(?:AssertionError: )?assert <Organization: [^>]+> is None",
+            ),
+            "accounts.tests.test_system_key_principal::test_system_key_selects_owner_membership_not_first_home_user": (
+                'assert response.data["id"] == str(owner.pk)',
+                r"(?:AssertionError: )?assert '[^']+' == '[^']+'",
+            ),
+            "accounts.tests.test_key_management_scope::test_system_key_changes_require_current_org_admin": (
+                "assert response.status_code == (200 if permitted else 400)",
+                r"(?:AssertionError: )?assert 200 == 400(?:\n|$)",
+            ),
+        }
+        matched = policy_assertion_failures(raw / "history_red.xml", assertions)
+        controls = [state for name, state in history_red.items()
+                    if "test_workspace_add_does_not_readmit_removed_org_member" in name]
+        history_proof = {"red_assertions": matched, "red": history_red, "green": history_green,
+                         "workspace_add_controls": controls}
+        blocked |= not (
+            int((raw / "history_red.exit").read_text()) == 1
+            and int((raw / "history_green.exit").read_text()) == 0
+            and "error" not in history_red.values()
+            and all(matched.values())
+            and set(history_red) == set(history_green)
+            and set(history_green.values()) == {"passed"}
+            and controls == ["passed", "passed"]
+        )
     summary = {
         "status": "BLOCKED"
         if blocked
@@ -170,6 +206,7 @@ def main(raw, output):
         "policy_assertion_failures": policy_failures,
         "focused_green_proven": green_proven,
         "removal_proof": removal_proof,
+        "history_proof": history_proof,
         "main_pair": main_pair,
         "dev_pair": dev_pair,
         "exit_codes": codes,

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Usage: dispatch.sh WORKTREE BASE TESTS_ONLY DEV_BASE LANE OUTPUT_DIRECTORY REMOVAL_TESTS [--plan]
+# Usage: dispatch.sh WORKTREE BASE TESTS_ONLY DEV_BASE LANE OUTPUT_DIRECTORY REMOVAL_TESTS HISTORY_RED [--plan]
 set -euo pipefail
 repo=$(realpath "$1")
 base=$(git -C "$repo" rev-parse "$2^{commit}")
@@ -8,7 +8,8 @@ dev=$(git -C "$repo" rev-parse "$4^{commit}")
 lane=$5
 output=$6
 removal=$(git -C "$repo" rev-parse "$7^{commit}")
-mode=${8:-}
+history=$(git -C "$repo" rev-parse "$8^{commit}")
+mode=${9:-}
 cloud="$HOME/.futureagi-local/bin/omega-cloud"
 head=$(git -C "$repo" rev-parse HEAD)
 test -z "$(git -C "$repo" status --porcelain)" || {
@@ -24,7 +25,7 @@ while IFS= read -r path; do
 done < <(git -C "$repo" diff --name-only "$base" "$red")
 git -C "$repo" merge-base --is-ancestor "$red" "$removal"
 git -C "$repo" merge-base --is-ancestor "$removal" "$head"
-args=(exec --lane "$lane" --repo "$repo" --ref "$base" --ref "$red" --ref "$dev" --ref "$removal"
+args=(exec --lane "$lane" --repo "$repo" --ref "$base" --ref "$red" --ref "$dev" --ref "$removal" --ref "$history"
   --standard --machine n2d-standard-32 --disk-gb 200 --life 5h --timeout 4h
   --on-lost fail --keep 1h --no-env-auto
   --env FUTURE_AGI_LICENSE_URL=http://127.0.0.1:9
@@ -42,7 +43,7 @@ else
   }
 fi
 printf 'base=git:%s red=git:%s head=git:%s dev=git:%s\n' "$base" "$red" "$head" "$dev"
-"$cloud" "${args[@]}" -- bash "$repo/scripts/key-role-checks/run.sh" "$repo" "$base" "$red" "$dev" "$head" "$removal"
+"$cloud" "${args[@]}" -- bash "$repo/scripts/key-role-checks/run.sh" "$repo" "$base" "$red" "$dev" "$head" "$removal" "$history"
 printf 'Next: omega-cloud job status --lane %s\n' "$lane"
 printf 'Then: omega-cloud job wait --lane %s --timeout 540\n' "$lane"
 printf 'After completion and result pull: omega-cloud lease release --lane %s\n' "$lane"

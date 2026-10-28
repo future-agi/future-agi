@@ -33,6 +33,7 @@ from accounts.models.auth_token import (
 from accounts.models.organization import Organization
 from accounts.models.workspace import Workspace, WorkspaceMembership
 from accounts.saml_credential import SamlCredentialInvalid, validate_saml_credential
+from accounts.services.api_keys import system_key_principal
 from accounts.services.workspace_membership import create_workspace_membership
 from tfc.constants.roles import OrganizationRoles
 from tfc.ee_gating import is_oss
@@ -220,14 +221,9 @@ class APIKeyAuthentication(BaseAuthentication):
             if not org_api_key.enabled:
                 raise AuthenticationFailed("API key is disabled")
 
-            # Get or create a system user for this organization
+            # Membership, not home-org creation order, determines the principal.
             if org_api_key.type == "system":
-                user = (
-                    User.objects.select_related("organization")
-                    .filter(organization=org_api_key.organization)
-                    .order_by("created_at")
-                    .first()
-                )
+                user = system_key_principal(org_api_key.organization)
             else:
                 user = org_api_key.user
 
@@ -713,14 +709,9 @@ class LangfuseBasicAuthentication(APIKeyAuthentication):
         if org_api_key.type == "ingest":
             raise AuthenticationFailed("ingest keys cannot call the API")
 
-        # Resolve user (same logic as parent class)
+        # Share the principal contract with header-based key authentication.
         if org_api_key.type == "system":
-            user = (
-                User.objects.select_related("organization")
-                .filter(organization=org_api_key.organization)
-                .order_by("created_at")
-                .first()
-            )
+            user = system_key_principal(org_api_key.organization)
         else:
             user = org_api_key.user
 

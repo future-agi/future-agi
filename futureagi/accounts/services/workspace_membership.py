@@ -50,6 +50,12 @@ def ensure_org_membership(user, organization, *, invited_by=None):
     may follow a removal; it is used as-is. New rows are created at the
     minimal ``Viewer`` level, which grants org membership without global
     workspace access (that requires ``>= ADMIN``).
+
+    Adding a workspace grant, including the legacy admin add-user endpoint, is
+    not organization re-admission. After removal, use the explicit RBAC org
+    invite/reactivate path first; it restores the organization membership.
+    Workspace grants created meanwhile have a NULL organization FK and do not
+    restore organization access.
     """
     if user is None or organization is None:
         return None
