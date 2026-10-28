@@ -228,6 +228,10 @@ def included(facets: dict, lens_key: str, attributes: list[dict]) -> bool:
         return False
     if any(answer == word for word in lens_for(lens_key).exclude):
         return False
+    # A failure the evidence did not back (no receipt, or the checks were
+    # rejected) can still be named in the lens answer: it is not a failure.
+    if lens_key == "failures" and not facets.get("failure_present"):
+        return False
     for attribute in attributes:
         if attribute.get("filter_by") and not facets["attributes"].get(
             attribute["key"]

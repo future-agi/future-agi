@@ -168,6 +168,26 @@ class TestFacets:
             {"lens_answer": "x", "attributes": {"refund": True}}, "usage", attrs
         )
 
+    def test_the_failures_lens_takes_only_backed_failures(self):
+        mistake = "Agent promised a refund timeline no tool returned."
+        assert included(
+            {"lens_answer": mistake, "failure_present": True, "attributes": {}},
+            "failures",
+            [],
+        )
+        # Named in the answer, but its evidence was rejected or missing.
+        assert not included(
+            {"lens_answer": mistake, "failure_present": False, "attributes": {}},
+            "failures",
+            [],
+        )
+        # Other lenses don't depend on a failure.
+        assert included(
+            {"lens_answer": mistake, "failure_present": False, "attributes": {}},
+            "usage",
+            [],
+        )
+
 
 class TestClustering:
     def test_cluster_count_grows_with_square_root(self):
