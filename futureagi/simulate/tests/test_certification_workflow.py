@@ -55,7 +55,8 @@ class RecordingActivities:
     @activity.defn(name="certification_load_cases")
     async def load(self, _input: CertificationCampaignInput):
         return CertificationCasesOutput(
-            case_ids=list(self.case_ids), max_active_cases=4
+            pending_case_ids=list(self.case_ids),
+            max_active_cases=4,
         )
 
     @activity.defn(name="certification_submit_case")
@@ -70,10 +71,16 @@ class RecordingActivities:
     @activity.defn(name="certification_poll_case")
     async def poll(self, input: CertificationCaseInput):
         self.poll_calls[input.case_id] = self.poll_calls.get(input.case_id, 0) + 1
-        done = self.poll_calls[input.case_id] >= self.done_after
+        done = (
+            input.case_id in self.canceled
+            or self.poll_calls[input.case_id] >= self.done_after
+        )
         if done:
             self.in_flight = max(0, self.in_flight - 1)
-        return CertificationPollOutput(done=done, job_state="completed")
+        return CertificationPollOutput(
+            done=done,
+            job_state="canceled" if input.case_id in self.canceled else "completed",
+        )
 
     @activity.defn(name="certification_reconcile_case")
     async def reconcile(self, input: CertificationCaseInput):
@@ -81,7 +88,7 @@ class RecordingActivities:
 
     @activity.defn(name="certification_record_case_result")
     async def record(self, input: CertificationResultInput):
-        self.recorded.append((input.case_id, input.reconcile_ok))
+        self.recorded.append((input.case_id, input.outcome))
 
     @activity.defn(name="certification_deliver_notifications")
     async def deliver(self, _input: CertificationCampaignInput):
@@ -96,7 +103,12 @@ class RecordingActivities:
     @activity.defn(name="certification_finalize_campaign")
     async def finalize(self, _input: CertificationCampaignInput):
         self.finalized = True
-        return CertificationFinalizeOutput(state="completed")
+        completed = sum(outcome == "completed" for _, outcome in self.recorded)
+        failed = sum(outcome == "failed" for _, outcome in self.recorded)
+        state = "completed_with_failures" if failed else "completed"
+        return CertificationFinalizeOutput(
+            state=state, cases_completed=completed, cases_failed=failed
+        )
 
     def all(self):
         return [
@@ -256,5 +268,5 @@ async def test_reconcile_failure_marks_case_failed_but_campaign_continues(
     assert result.cases_completed == 1
     assert result.cases_failed == 1
     # Result recording still ran for the failed case with its failure class.
-    assert ("case-a", False) in acts.recorded
-    assert ("case-b", True) in acts.recorded
+    assert ("case-a", "failed") in acts.recorded
+    assert ("case-b", "completed") in acts.recorded

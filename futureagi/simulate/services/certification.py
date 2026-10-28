@@ -97,9 +97,47 @@ class CertificationError(Exception):
 def validated_suite(suite_key: str) -> dict:
     doc = load_suite(suite_key)
     try:
-        return validate_manifest(doc)
+        from simulate.certification.manifest import REPO_ROOT
+
+        return validate_manifest(doc, repo_root=REPO_ROOT)
     except CertificationManifestError as exc:
         raise CertificationError(exc.code, exc.message, status_code=422) from exc
+
+
+def _materialized_agent(spec: dict) -> dict:
+    from simulate.serializers.harness_job import HarnessAgentSerializer
+
+    executable = spec["interactions"][0]["agent_config"]
+    secret_refs = {}
+    for interaction in spec["interactions"]:
+        for ref in interaction.get("secret_ref_set", []):
+            secret_refs.setdefault(
+                ref["key"],
+                {
+                    "manager": ref["manager"],
+                    "key": ref["key"],
+                    "purpose": ref["purpose"],
+                },
+            )
+    value = {
+        "connector": spec["agent"].get("connector", "auto"),
+        **({"mode": executable["mode"]} if executable.get("mode") else {}),
+        **(
+            {"call_direction": executable["call_direction"]}
+            if executable.get("call_direction")
+            else {}
+        ),
+        "config": executable.get("config") or {},
+        "secret_refs": secret_refs,
+    }
+    serializer = HarnessAgentSerializer(data=value)
+    if not serializer.is_valid():
+        raise CertificationError(
+            "case_payload_invalid",
+            f"case {spec['case_key']}: invalid agent configuration: {serializer.errors}",
+            status_code=422,
+        )
+    return serializer.validated_data
 
 
 def create_campaign(
@@ -124,6 +162,8 @@ def create_campaign(
     digest = suite_digest(normalized)
     idem_key = campaign_idempotency_key(deployment_id, digest)
     case_specs = expand_enabled_cases(normalized)
+    for spec in case_specs:
+        _materialized_agent(spec)
 
     try:
         with transaction.atomic():
@@ -177,8 +217,21 @@ def create_campaign(
         )
         created = False
 
-    if created:
+    if campaign.deployment_identity != deployment_identity:
+        raise CertificationError(
+            "deployment_identity_conflict",
+            "an existing campaign for this release and suite has a different deployment identity",
+            status_code=409,
+        )
+    terminal_states = {
+        CertificationState.COMPLETED,
+        CertificationState.COMPLETED_WITH_FAILURES,
+        CertificationState.CANCELED,
+        CertificationState.FAILED,
+    }
+    if campaign.state not in terminal_states:
         start_certification_workflow(str(campaign.id))
+    if created:
         logger.info(
             "certification_campaign_total",
             state="created",
@@ -189,17 +242,18 @@ def create_campaign(
 
 
 def request_campaign_cancel(campaign) -> None:
-    from simulate.temporal.client import cancel_certification_workflow
+    from simulate.temporal.client import (
+        cancel_certification_workflow,
+        start_certification_workflow,
+    )
 
     campaign.cancel_requested_at = timezone.now()
-    if campaign.state == CertificationState.RUNNING:
+    if campaign.state in (CertificationState.RUNNING, CertificationState.PENDING):
         campaign.state = CertificationState.CANCELING
-    elif campaign.state == CertificationState.PENDING:
-        campaign.state = CertificationState.CANCELED
-        campaign.finished_at = timezone.now()
     campaign.save(
         update_fields=["cancel_requested_at", "state", "finished_at", "updated_at"]
     )
+    start_certification_workflow(str(campaign.id))
     cancel_certification_workflow(str(campaign.id))
 
 
@@ -248,28 +302,11 @@ def build_case_job_payload(case, campaign) -> dict:
     else:
         src = {"kind": "remote", "endpoint": target["ref"]}
 
-    secret_refs = {}
-    secrets_seen = set()
-    for i in interactions:
-        for ref in i.get("secret_ref_set", []):
-            alias = ref["key"]
-            if alias not in secrets_seen:
-                secrets_seen.add(alias)
-                secret_refs[alias] = {
-                    "manager": ref["manager"],
-                    "key": ref["key"],
-                    "purpose": ref["purpose"],
-                }
-
     defaults = campaign.normalized_suite.get("defaults") or {}
     payload = {
         "schema_version": "futureagi.harness-job.v1",
         "source": src,
-        "agent": {
-            "connector": agent.get("connector", "auto"),
-            "config": {"target_ref": target["ref"]},
-            "secret_refs": secret_refs,
-        },
+        "agent": _materialized_agent(spec),
         "scenario_count": len(interactions),
         "seed": interactions[0].get("seed"),
         "runtime": {
@@ -329,7 +366,7 @@ def build_case_job_payload(case, campaign) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def reconcile_case(case) -> dict:
+def reconcile_case(case, *, expected_terminal: str = "completed") -> dict:
     """Verify the evidence checklist for a terminal case.
 
     Returns {ok, checks: {name: {ok, detail}}, missing: [...], failure_class}.
@@ -337,8 +374,7 @@ def reconcile_case(case) -> dict:
     from simulate.models import (
         HostedHarnessArtifact,
         HostedHarnessCleanupReceipt,
-        HostedHarnessConversationTranscript,
-        HostedHarnessExecution,
+        HostedHarnessManifest,
         HostedHarnessReceipt,
         HostedHarnessScenario,
     )
@@ -346,11 +382,7 @@ def reconcile_case(case) -> dict:
     job = case.hosted_harness_job
     spec = case.spec
     interactions = spec.get("interactions") or []
-    expected = len(interactions) or 2
     voice = spec.get("run_test_id") in _VOICE_RUN_TESTS
-    declared_evidence = any(
-        i.get("expected_tools") or i.get("expected_state") for i in interactions
-    )
 
     checks: dict[str, dict] = {}
     if job is None:
@@ -370,101 +402,145 @@ def reconcile_case(case) -> dict:
                 case_key=case.case_key,
             )
 
-    _record(
-        "job_terminal",
-        job.state in _JOB_TERMINAL,
-        f"job state {job.state}",
-    )
+    _record("job_terminal", job.state == expected_terminal, f"job state {job.state}")
 
-    attempt = (
-        job.attempts.order_by("-attempt_number").first()
-        if hasattr(job, "attempts")
-        else None
-    )
-    expected_snapshot = (case.campaign.deployment_identity or {}).get(
-        "alk_snapshot_digest"
-    )
+    attempt = job.attempts.filter(attempt_number=job.current_attempt_number).first()
+    snapshot = (case.campaign.deployment_identity or {}).get("alk_snapshot") or {}
     if attempt is None:
-        _record("snapshot_digest", False, "no attempt recorded")
-    elif expected_snapshot:
-        ok = attempt.snapshot_digest == expected_snapshot
-        _record(
-            "snapshot_digest",
-            ok,
-            f"attempt {attempt.snapshot_digest} vs expected {expected_snapshot}",
-        )
-        if not ok:
-            logger.info(
-                "certification_snapshot_mismatch_total",
-                case_key=case.case_key,
-                expected=expected_snapshot,
-                actual=attempt.snapshot_digest,
-            )
+        _record("current_attempt", False, "no current attempt recorded")
+        _record("snapshot_identity", False, "no current attempt recorded")
+        if expected_terminal == "completed":
+            _record("terminal_event", False, "no current attempt recorded")
+            _record("manifest", False, "no current attempt recorded")
     else:
         _record(
-            "snapshot_digest",
-            bool(attempt.snapshot_digest),
-            f"attempt digest {attempt.snapshot_digest or 'absent'}",
+            "current_attempt",
+            attempt.state == expected_terminal,
+            f"attempt {attempt.attempt_number} state {attempt.state}",
         )
-
-    scenario_regs = HostedHarnessScenario.no_workspace_objects.filter(job=job).count()
-    _record(
-        "scenario_registrations",
-        scenario_regs >= expected,
-        f"{scenario_regs}/{expected} registered",
-    )
-
-    terminal_receipts = HostedHarnessReceipt.no_workspace_objects.filter(
-        job=job, status__in=("passed", "failed")
-    ).count()
-    _record(
-        "terminal_receipts",
-        terminal_receipts >= expected,
-        f"{terminal_receipts}/{expected} terminal receipts",
-    )
-
-    call_execs = HostedHarnessExecution.no_workspace_objects.filter(
-        job=job, call_execution__isnull=False
-    ).count()
-    _record(
-        "call_executions",
-        call_execs >= expected,
-        f"{call_execs}/{expected} call executions",
-    )
-
-    artifacts = HostedHarnessArtifact.no_workspace_objects.filter(job=job)
-    transcript_count = artifacts.filter(kind="transcript").count()
-    convo_entries = HostedHarnessConversationTranscript.no_workspace_objects.filter(
-        conversation__job=job
-    ).exclude(entries=[])
-    _record(
-        "transcripts",
-        transcript_count >= expected or convo_entries.count() >= expected,
-        f"{transcript_count} transcript artifacts, "
-        f"{convo_entries.count()} conversation transcripts",
-    )
-
-    if voice:
-        recordings = artifacts.filter(kind__in=_RECORDING_KINDS).count()
+        snapshot_ok = bool(snapshot.get("name") and snapshot.get("digest")) and (
+            attempt.snapshot_name == snapshot["name"]
+            and attempt.snapshot_digest == snapshot["digest"]
+        )
         _record(
-            "voice_recordings",
-            recordings >= expected,
-            f"{recordings}/{expected} recording artifacts",
+            "snapshot_identity",
+            snapshot_ok,
+            f"attempt {attempt.snapshot_name}/{attempt.snapshot_digest}",
         )
+        if expected_terminal == "completed":
+            _record(
+                "terminal_event",
+                attempt.terminal_event_received
+                and attempt.terminal_stage == expected_terminal,
+                f"received={attempt.terminal_event_received} stage={attempt.terminal_stage}",
+            )
+            _record(
+                "manifest", attempt.manifest_acked, f"acked={attempt.manifest_acked}"
+            )
 
-    if declared_evidence:
-        tool_traces = artifacts.filter(kind__in=("tool_trace", "result")).count()
-        _record(
-            "declared_evidence",
-            tool_traces > 0,
-            f"{tool_traces} tool/state evidence artifacts",
-        )
+    manifest = (
+        HostedHarnessManifest.no_workspace_objects.filter(attempt=attempt)
+        .order_by("-created_at")
+        .first()
+        if attempt is not None
+        else None
+    )
+    manifest_entries = (manifest.body or {}).get("entries", []) if manifest else []
+    manifest_ids = {
+        entry.get("artifact_id", "").removeprefix("sha256:")
+        for entry in manifest_entries
+    }
 
-    cleanup = None
-    if attempt is not None:
-        cleanup = HostedHarnessCleanupReceipt.no_workspace_objects.filter(
-            attempt=attempt
-        ).first()
+    if expected_terminal == "completed":
+        for interaction in interactions:
+            scenario_key = interaction["scenario_key"]
+            prefix = f"scenario:{scenario_key}"
+            scenario = HostedHarnessScenario.no_workspace_objects.filter(
+                job=job, scenario_key=scenario_key
+            ).first()
+            _record(f"{prefix}:registration", scenario is not None)
+            execution = (
+                scenario.executions.select_related("call_execution").first()
+                if scenario is not None
+                else None
+            )
+            _record(
+                f"{prefix}:execution",
+                execution is not None and execution.call_execution_id is not None,
+            )
+            receipt = (
+                HostedHarnessReceipt.no_workspace_objects.filter(
+                    job=job,
+                    attempt=attempt,
+                    scenario=scenario,
+                    execution=execution,
+                ).first()
+                if attempt is not None
+                and scenario is not None
+                and execution is not None
+                else None
+            )
+            _record(
+                f"{prefix}:receipt",
+                receipt is not None and receipt.status == "passed",
+                f"status={receipt.status if receipt else 'absent'}",
+            )
+            call = (receipt.body or {}).get("call") if receipt else None
+            transcript_id = (
+                (call or {}).get("transcript_artifact", "").removeprefix("sha256:")
+            )
+            artifact_keys = {
+                scenario_key,
+                execution.execution_key if execution is not None else None,
+            }
+            transcript = HostedHarnessArtifact.no_workspace_objects.filter(
+                job=job,
+                sha256=transcript_id,
+                kind="transcript",
+                size__gt=0,
+                scenario_key__in=artifact_keys,
+            ).first()
+            _record(
+                f"{prefix}:transcript",
+                transcript is not None and transcript_id in manifest_ids,
+            )
+            if voice:
+                recording_ids = {
+                    item.removeprefix("sha256:")
+                    for item in (call or {}).get("recording_artifacts", [])
+                }
+                recording_count = HostedHarnessArtifact.no_workspace_objects.filter(
+                    job=job,
+                    sha256__in=recording_ids & manifest_ids,
+                    kind__in=_RECORDING_KINDS,
+                    size__gt=0,
+                    scenario_key__in=artifact_keys,
+                ).count()
+                _record(f"{prefix}:recording", recording_count > 0)
+            if interaction.get("expected_tools"):
+                tool_count = HostedHarnessArtifact.no_workspace_objects.filter(
+                    job=job,
+                    sha256__in=manifest_ids,
+                    kind="tool_trace",
+                    size__gt=0,
+                    scenario_key__in=artifact_keys,
+                ).count()
+                _record(f"{prefix}:tool_evidence", tool_count > 0)
+            if interaction.get("expected_state"):
+                result_count = HostedHarnessArtifact.no_workspace_objects.filter(
+                    job=job,
+                    sha256__in=manifest_ids,
+                    kind="result",
+                    size__gt=0,
+                    scenario_key__in=artifact_keys,
+                ).count()
+                _record(f"{prefix}:state_evidence", result_count > 0)
+
+    cleanup = (
+        HostedHarnessCleanupReceipt.no_workspace_objects.filter(attempt=attempt).first()
+        if attempt is not None
+        else None
+    )
     _record(
         "cleanup_receipt",
         cleanup is not None and cleanup.verified_absent,
@@ -477,7 +553,7 @@ def reconcile_case(case) -> dict:
     if not ok:
         if "cleanup_receipt" in missing:
             failure_class = "cleanup"
-        elif "snapshot_digest" in missing:
+        elif "snapshot_identity" in missing:
             failure_class = "environment"
         elif "job_terminal" in missing:
             failure_class = classify_job_failure(job)
@@ -511,6 +587,9 @@ def detect_stable_behavior_failures(case) -> list[dict]:
     job = case.hosted_harness_job
     if job is None:
         return []
+    attempt = job.attempts.filter(attempt_number=job.current_attempt_number).first()
+    if attempt is None:
+        return []
     return [
         {
             "scenario_key": r.scenario.scenario_key if r.scenario_id else None,
@@ -518,7 +597,7 @@ def detect_stable_behavior_failures(case) -> list[dict]:
             "status": r.status,
         }
         for r in HostedHarnessReceipt.no_workspace_objects.filter(
-            job=job, status="failed"
+            job=job, attempt=attempt, status="failed"
         ).select_related("scenario")
     ]
 
@@ -530,10 +609,13 @@ def detect_exploratory_failures(case) -> list[dict]:
     job = case.hosted_harness_job
     if job is None:
         return []
+    attempt = job.attempts.filter(attempt_number=job.current_attempt_number).first()
+    if attempt is None:
+        return []
     out = []
-    for r in HostedHarnessReceipt.no_workspace_objects.filter(job=job).exclude(
-        body__isnull=True
-    ):
+    for r in HostedHarnessReceipt.no_workspace_objects.filter(
+        job=job, attempt=attempt
+    ).exclude(body__isnull=True):
         for ev in (r.body or {}).get("evaluations") or []:
             if ev.get("exploratory") and ev.get("status") in {"failed", "error"}:
                 out.append(
@@ -610,7 +692,12 @@ def deliver_pending_notifications(campaign) -> dict:
     url = _slack_webhook_url()
     counts = {"delivered": 0, "failed": 0, "skipped": 0}
     pending = CertificationNotification.no_workspace_objects.filter(
-        campaign=campaign, state=CertificationNotification.State.PENDING
+        campaign=campaign,
+        state__in=(
+            CertificationNotification.State.PENDING,
+            CertificationNotification.State.FAILED,
+        ),
+        attempts__lt=3,
     ).select_related("case")
     if not url:
         for row in pending:

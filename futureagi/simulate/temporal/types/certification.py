@@ -9,12 +9,15 @@ class CertificationWorkflowInput:
 @dataclass(frozen=True)
 class CertificationCaseInput:
     case_id: str
+    expected_terminal: str = "completed"
 
 
 @dataclass(frozen=True)
 class CertificationCasesOutput:
-    case_ids: list[str] = field(default_factory=list)
+    pending_case_ids: list[str] = field(default_factory=list)
+    active_case_ids: list[str] = field(default_factory=list)
     max_active_cases: int = 4
+    cancel_requested: bool = False
 
 
 @dataclass(frozen=True)
@@ -38,8 +41,9 @@ class CertificationReconcileOutput:
 @dataclass(frozen=True)
 class CertificationResultInput:
     case_id: str
-    reconcile_ok: bool
-    failure_class: str | None
+    outcome: str
+    failure_class: str | None = None
+    failure_detail: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -57,6 +61,8 @@ class CertificationNotifyOutput:
 @dataclass(frozen=True)
 class CertificationFinalizeOutput:
     state: str
+    cases_completed: int = 0
+    cases_failed: int = 0
 
 
 @dataclass(frozen=True)

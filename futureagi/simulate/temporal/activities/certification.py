@@ -53,11 +53,18 @@ async def certification_load_cases(
                 CertificationCase.State.PENDING,
                 CertificationCase.State.DISPATCHED,
                 CertificationCase.State.RUNNING,
+                CertificationCase.State.RECONCILING,
             ),
         ).order_by("sequence")
         return CertificationCasesOutput(
-            case_ids=[str(c.id) for c in cases],
+            pending_case_ids=[
+                str(c.id) for c in cases if c.state == CertificationCase.State.PENDING
+            ],
+            active_case_ids=[
+                str(c.id) for c in cases if c.state != CertificationCase.State.PENDING
+            ],
             max_active_cases=campaign.max_active_cases,
+            cancel_requested=campaign.cancel_requested_at is not None,
         )
 
     return await _run_db(_load)
@@ -153,7 +160,7 @@ async def certification_reconcile_case(
         case = CertificationCase.no_workspace_objects.select_related(
             "campaign", "hosted_harness_job"
         ).get(id=input.case_id)
-        result = reconcile_case(case)
+        result = reconcile_case(case, expected_terminal=input.expected_terminal)
         case.reconciliation = result
         case.state = CertificationCase.State.RECONCILING
         case.save(update_fields=["reconciliation", "state", "updated_at"])
@@ -170,9 +177,8 @@ async def certification_reconcile_case(
 async def certification_record_case_result(
     input: CertificationResultInput,
 ) -> None:
-    """Finalize a case, enqueue its notifications, bump campaign counters."""
+    """Apply one replay-safe terminal case transition and derive counters."""
     from django.db import transaction
-    from django.db.models import F
     from django.utils import timezone
 
     from simulate.models import (
@@ -188,23 +194,48 @@ async def certification_record_case_result(
 
     def _record() -> None:
         with transaction.atomic():
-            case = CertificationCase.no_workspace_objects.select_related(
-                "campaign"
-            ).get(id=input.case_id)
-            campaign = case.campaign
-            stable_failures = detect_stable_behavior_failures(case)
+            case = (
+                CertificationCase.no_workspace_objects.select_for_update()
+                .select_related("campaign")
+                .get(id=input.case_id)
+            )
+            campaign = (
+                CertificationCampaign.no_workspace_objects.select_for_update().get(
+                    id=case.campaign_id
+                )
+            )
+            if case.state in {
+                CertificationCase.State.COMPLETED,
+                CertificationCase.State.FAILED,
+                CertificationCase.State.CANCELED,
+            }:
+                return
+            stable_failures = (
+                detect_stable_behavior_failures(case)
+                if input.outcome == CertificationCase.State.COMPLETED
+                else []
+            )
             exploratory = detect_exploratory_failures(case)
-            if input.reconcile_ok and not stable_failures:
+            if (
+                input.outcome == CertificationCase.State.COMPLETED
+                and not stable_failures
+            ):
                 case.state = CertificationCase.State.COMPLETED
                 case.failure_class = None
+                case.failure_detail = {}
+            elif input.outcome == CertificationCase.State.CANCELED:
+                case.state = CertificationCase.State.CANCELED
+                case.failure_class = None
+                case.failure_detail = input.failure_detail
             else:
                 case.state = CertificationCase.State.FAILED
-                if not input.reconcile_ok:
-                    case.failure_class = input.failure_class or "evidence"
-                else:
-                    case.failure_class = CertificationCase.FailureClass.STABLE_BEHAVIOR
+                case.failure_class = (
+                    CertificationCase.FailureClass.STABLE_BEHAVIOR
+                    if stable_failures
+                    else input.failure_class or CertificationCase.FailureClass.EVIDENCE
+                )
                 case.failure_detail = {
-                    "reconcile_ok": input.reconcile_ok,
+                    **input.failure_detail,
                     "stable_failures": stable_failures,
                 }
             case.finished_at = timezone.now()
@@ -218,14 +249,16 @@ async def certification_record_case_result(
                 ]
             )
 
-            if case.state == CertificationCase.State.COMPLETED:
-                CertificationCampaign.no_workspace_objects.filter(
-                    id=campaign.id
-                ).update(cases_completed=F("cases_completed") + 1)
-            else:
-                CertificationCampaign.no_workspace_objects.filter(
-                    id=campaign.id
-                ).update(cases_failed=F("cases_failed") + 1)
+            campaign.cases_completed = CertificationCase.no_workspace_objects.filter(
+                campaign=campaign, state=CertificationCase.State.COMPLETED
+            ).count()
+            campaign.cases_failed = CertificationCase.no_workspace_objects.filter(
+                campaign=campaign, state=CertificationCase.State.FAILED
+            ).count()
+            campaign.save(
+                update_fields=["cases_completed", "cases_failed", "updated_at"]
+            )
+            if case.state == CertificationCase.State.FAILED:
                 enqueue_notification(
                     campaign,
                     case,
@@ -237,7 +270,9 @@ async def certification_record_case_result(
                         "stable_failures": stable_failures,
                     },
                 )
-            for failure in exploratory:
+            for failure in (
+                exploratory if case.state == CertificationCase.State.COMPLETED else []
+            ):
                 enqueue_notification(
                     campaign,
                     case,
@@ -290,8 +325,6 @@ async def certification_cancel_case(input: CertificationCaseInput) -> None:
     def _cancel() -> None:
         case = CertificationCase.no_workspace_objects.get(id=input.case_id)
         if case.hosted_harness_job_id is None:
-            case.state = CertificationCase.State.CANCELED
-            case.save(update_fields=["state", "updated_at"])
             return
         from simulate.temporal.client import (
             cancel_hosted_harness_gateway_workflow,
@@ -307,13 +340,49 @@ async def certification_finalize_campaign(
     input: CertificationCampaignInput,
 ) -> CertificationFinalizeOutput:
     """Set terminal campaign state, summary result, final notification."""
+    from django.db import transaction
     from django.utils import timezone
 
     from simulate.models import CertificationCampaign, CertificationCase
     from simulate.services.certification import enqueue_notification
 
+    @transaction.atomic
     def _finalize() -> CertificationFinalizeOutput:
-        campaign = CertificationCampaign.no_workspace_objects.get(id=input.campaign_id)
+        campaign = CertificationCampaign.no_workspace_objects.select_for_update().get(
+            id=input.campaign_id
+        )
+        cases = CertificationCase.no_workspace_objects.select_for_update().filter(
+            campaign=campaign
+        )
+        terminal = {
+            CertificationCase.State.COMPLETED,
+            CertificationCase.State.FAILED,
+            CertificationCase.State.CANCELED,
+        }
+        incomplete = [
+            {"id": str(row["id"]), "state": row["state"]}
+            for row in cases.exclude(state__in=terminal).values("id", "state")
+        ]
+        if incomplete:
+            now = timezone.now()
+            for case in cases.exclude(state__in=terminal):
+                previous_state = case.state
+                case.state = CertificationCase.State.FAILED
+                case.failure_class = CertificationCase.FailureClass.ENVIRONMENT
+                case.failure_detail = {
+                    "reason": "orchestration_incomplete_at_finalize",
+                    "previous_state": previous_state,
+                }
+                case.finished_at = now
+                case.save(
+                    update_fields=[
+                        "state",
+                        "failure_class",
+                        "failure_detail",
+                        "finished_at",
+                        "updated_at",
+                    ]
+                )
         counts = {
             state: CertificationCase.no_workspace_objects.filter(
                 campaign=campaign, state=state
@@ -324,10 +393,12 @@ async def certification_finalize_campaign(
                 CertificationCase.State.CANCELED,
             )
         }
-        if campaign.cancel_requested_at:
-            state = CertificationCampaign.State.CANCELED
+        if incomplete:
+            state = CertificationCampaign.State.FAILED
         elif counts[CertificationCase.State.FAILED] > 0:
             state = CertificationCampaign.State.COMPLETED_WITH_FAILURES
+        elif campaign.cancel_requested_at:
+            state = CertificationCampaign.State.CANCELED
         else:
             state = CertificationCampaign.State.COMPLETED
         campaign.state = state
@@ -347,7 +418,20 @@ async def certification_finalize_campaign(
             ),
             "report_url": f"/simulate/api/certification-campaigns/{campaign.id}/",
         }
-        campaign.save(update_fields=["state", "finished_at", "result", "updated_at"])
+        campaign.cases_completed = counts[CertificationCase.State.COMPLETED]
+        campaign.cases_failed = counts[CertificationCase.State.FAILED]
+        campaign.failure_detail = {"incomplete_cases": incomplete} if incomplete else {}
+        campaign.save(
+            update_fields=[
+                "state",
+                "finished_at",
+                "result",
+                "cases_completed",
+                "cases_failed",
+                "failure_detail",
+                "updated_at",
+            ]
+        )
         enqueue_notification(
             campaign,
             None,
@@ -366,6 +450,10 @@ async def certification_finalize_campaign(
             state=state,
             campaign_id=str(campaign.id),
         )
-        return CertificationFinalizeOutput(state=state)
+        return CertificationFinalizeOutput(
+            state=state,
+            cases_completed=counts[CertificationCase.State.COMPLETED],
+            cases_failed=counts[CertificationCase.State.FAILED],
+        )
 
     return await _run_db(_finalize)
