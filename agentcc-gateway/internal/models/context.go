@@ -59,6 +59,14 @@ type RequestContext struct {
 	Timings       map[string]time.Duration
 	Errors        []error
 
+	// GuardrailRequest and GuardrailResponse carry the text of a request and
+	// its response, chat-shaped, on the routes that forward the client's own
+	// body: native /v1/messages, /v1/responses and native GenAI. There Request
+	// is nil, so that the cache key is not built from an empty carrier, and
+	// Response holds usage only. Guardrails read these; nothing else does.
+	GuardrailRequest  *ChatCompletionRequest
+	GuardrailResponse *ChatCompletionResponse
+
 	// mu serializes writes to Timings and Metadata between the goroutines that
 	// legitimately write them — handlers, pre-plugins, sequential post-plugins,
 	// streaming callbacks.
@@ -158,6 +166,8 @@ func (rc *RequestContext) Release() {
 	rc.Provider = ""
 	rc.Request = nil
 	rc.Response = nil
+	rc.GuardrailRequest = nil
+	rc.GuardrailResponse = nil
 	rc.IsStream = false
 	rc.SessionID = ""
 	rc.UserID = ""

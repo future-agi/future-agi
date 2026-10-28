@@ -52,6 +52,7 @@ func (h *Handlers) CreateResponse(w http.ResponseWriter, r *http.Request) {
 	rc.Model = req.Model
 	rc.IsStream = req.Stream
 	rc.UserID = req.User
+	rc.GuardrailRequest = responsesGuardrailRequest(&req)
 
 	// Extract client IP.
 	rc.Metadata["client_ip"] = extractClientIP(r)
@@ -175,6 +176,7 @@ func (h *Handlers) handleResponseNonStream(ctx context.Context, w http.ResponseW
 			return err
 		}
 		respBody = body
+		callRC.GuardrailResponse = assistantText(responsesOutputText(body))
 
 		// Parse usage from the response for cost tracking.
 		var parsed struct {

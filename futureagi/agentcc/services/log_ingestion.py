@@ -8,6 +8,21 @@ from agentcc.models import AgentccAPIKey, AgentccRequestLog, AgentccSession
 
 logger = structlog.get_logger(__name__)
 
+# The codes the gateway sets on a request a budget refused.
+BUDGET_ERROR_CODES = frozenset({"budget_exceeded", "org_budget_exceeded"})
+
+
+def _event_types(entry):
+    """The events a log entry raises, for webhooks and email alerts alike."""
+    events = ["request.completed"]
+    if bool(entry.get("is_error", False)) or int(entry.get("status_code", 0)) >= 400:
+        events.append("error.occurred")
+    if entry.get("guardrail_triggered"):
+        events.append("guardrail.triggered")
+    if entry.get("error_code") in BUDGET_ERROR_CODES:
+        events.append("budget.exceeded")
+    return events
+
 
 def _dispatch_webhook_events(org, logs):
     from agentcc.models.webhook import AgentccWebhook, AgentccWebhookEvent
@@ -62,13 +77,7 @@ def _dispatch_webhook_events(org, logs):
             "cost": float(entry.get("cost", 0) or 0),
         }
 
-        triggered = ["request.completed"]
-        if is_error:
-            triggered.append("error.occurred")
-        if guardrail_triggered:
-            triggered.append("guardrail.triggered")
-
-        for event_type in triggered:
+        for event_type in _event_types(entry):
             for webhook in webhooks_by_event.get(event_type, []):
                 events_to_create.append(
                     AgentccWebhookEvent(
@@ -100,6 +109,52 @@ def _dispatch_webhook_events(org, logs):
 
 MAX_BODY_SIZE = 65536  # 64KB
 MAX_SESSION_ID_LEN = 255  # matches VARCHAR(255) DB column
+
+
+def _send_email_alerts(org, logs):
+    """Email each active alert of the org for the first entry that raises one
+    of its events. send_alert_email holds the alert's cooldown, so a busy
+    batch sends one email per alert, not one per request.
+
+    The events that need a threshold (error.rate_spike, latency.spike,
+    cost.threshold) are not sent: an alert has no threshold to compare with.
+    """
+    from agentcc.models import AgentccEmailAlert
+    from agentcc.services.email_sender import send_alert_email
+
+    alerts = list(
+        AgentccEmailAlert.no_workspace_objects.filter(
+            organization=org, is_active=True, deleted=False
+        )
+    )
+    for alert in alerts:
+        wanted = set(alert.events or [])
+        for entry in logs:
+            if not isinstance(entry, dict):
+                continue
+            event_type = next((e for e in _event_types(entry) if e in wanted), None)
+            if event_type is None:
+                continue
+            result = send_alert_email(
+                alert,
+                event_type,
+                context={
+                    "request_id": entry.get("request_id", ""),
+                    "model": entry.get("model", ""),
+                    "provider": entry.get("provider", ""),
+                    "status_code": entry.get("status_code", ""),
+                    "error_code": entry.get("error_code", ""),
+                    "error_message": entry.get("error_message", ""),
+                },
+            )
+            if not result.get("success"):
+                logger.info(
+                    "email_alert_not_sent",
+                    alert_id=str(alert.id),
+                    event_type=event_type,
+                    reason=result.get("error"),
+                )
+            break
 
 
 def _parse_datetime(value):
@@ -301,6 +356,11 @@ def ingest_request_logs(logs):
         _dispatch_webhook_events(org, logs)
     except Exception:
         logger.exception("webhook_dispatch_failed", org_id=str(org.id))
+
+    try:
+        _send_email_alerts(org, logs)
+    except Exception:
+        logger.exception("email_alert_dispatch_failed", org_id=str(org.id))
 
     try:
         try:
