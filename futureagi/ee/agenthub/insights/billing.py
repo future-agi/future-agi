@@ -30,8 +30,19 @@ CLASSIFY_TOKENS = (3_000, 800)
 CLASSIFY_BATCH = 20
 REPORT_TOKENS = (30_000, 6_000)
 ASK_TOKENS = (12_000, 1_600)
-DRAFT_TOKENS = (4_000, 900)
+# A draft reads four examples of at most 2,500 characters with its
+# instructions (about 11,500 characters); Cloud's test drafts replied in a
+# few hundred of the 900 tokens allowed.
+DRAFT_TOKENS = (2_900, 400)
 PREVIEW_UNITS = 3
+
+# The agent writes a report over several calls with tools (a controller, a
+# reader per category, the writer and its verifier), and answers a question
+# the same way in up to 8 calls. Cloud's test reports of 20 and 21 sessions
+# took 86,000 to 126,000 tokens in and 9,000 to 11,400 out to write; a
+# question took 50,300 in and 4,100 out over 7 calls (here, at 8).
+AGENT_REPORT_TOKENS = (130_000, 12_000)
+AGENT_ASK_TOKENS = (58_000, 4_700)
 
 # The insights-agent/v2 reader reads a unit's whole span graph with tools over
 # a few turns, each sending again what was read so far, inside its budgets
@@ -67,8 +78,10 @@ def read_tokens(
     )
 
 
-def _price(tier: str, tokens: tuple[int, int]) -> float:
-    return call_cost(model_for(tier), 0.0, *tokens)
+def _price(tier: str, tokens: tuple[int, int], models: dict | None = None) -> float:
+    """``tokens`` at the price of the model that runs the step: the agent's
+    for ``tier`` when the agent runs it (``models``), else this deployment's."""
+    return call_cost((models or {}).get(tier) or model_for(tier), 0.0, *tokens)
 
 
 def _run_cost(sample_size: int, read: float, classify: float, write: float) -> float:
@@ -76,17 +89,21 @@ def _run_cost(sample_size: int, read: float, classify: float, write: float) -> f
     return sample_size * read + batches * classify + write
 
 
-def _step_prices(**sizing) -> tuple[float, float, float]:
+def _step_prices(models: dict | None = None, **sizing) -> tuple[float, float, float]:
+    # The agent (any contract) reads the units and writes the report;
+    # classifying into saved categories is always the built-in engine's.
+    write = AGENT_REPORT_TOKENS if sizing.get("contract") else REPORT_TOKENS
     return (
-        _price(FAST, read_tokens(**sizing)),
+        _price(FAST, read_tokens(**sizing), models),
         _price(FAST, CLASSIFY_TOKENS),
-        _price(THINKING, REPORT_TOKENS),
+        _price(THINKING, write, models),
     )
 
 
 def run_cost(sample_size: int, **sizing) -> float:
     """About what a report over ``sample_size`` units costs, in USD.
-    ``sizing`` is ``read_tokens``'s: the contract, unit and typical unit size."""
+    ``sizing`` is ``read_tokens``'s (the contract, unit and typical unit
+    size) and the agent's ``models``."""
     return _run_cost(sample_size, *_step_prices(**sizing))
 
 
@@ -102,7 +119,11 @@ def largest_sample(
     return None
 
 
-def ask_cost() -> float:
+def ask_cost(*, agent: bool = False, models: dict | None = None) -> float:
+    """A question about a report: on the agent (``agent``, priced at its
+    ``models``) it looks things up over several calls."""
+    if agent:
+        return _price(THINKING, AGENT_ASK_TOKENS, models)
     return _price(THINKING, ASK_TOKENS)
 
 
@@ -110,10 +131,11 @@ def draft_cost() -> float:
     return _price(THINKING, DRAFT_TOKENS)
 
 
-def preview_cost(**sizing) -> float:
-    """Preview reads its units the way the report would, on the same engine:
-    ``sizing`` is ``read_tokens``'s, as for ``run_cost``."""
-    return PREVIEW_UNITS * _price(FAST, read_tokens(**sizing))
+def preview_cost(models: dict | None = None) -> float:
+    """Preview reads each of its units whole in one call, on the agent (at
+    its ``models``) or the built-in engine, whatever contract a report would
+    read them on."""
+    return PREVIEW_UNITS * _price(FAST, READ_TOKENS, models)
 
 
 def applies() -> bool:

@@ -156,6 +156,33 @@ def expected_contract() -> str | None:
     return CONTRACT_V2 if broker.configured() else CONTRACT_V1
 
 
+# How long estimates reuse the models the agent said it runs on.
+MODELS_CACHE_SECONDS = 300
+
+
+def expected_models() -> dict | None:
+    """The models the agent runs on (``{"fast": ..., "thinking": ...}``), for
+    estimates: what its health reports, kept a few minutes. A run is charged
+    what those models cost, not this deployment's tier models. None without
+    an agent, or when it can't be asked (estimates then use the tier
+    models)."""
+    if not enabled():
+        return None
+    from django.core.cache import cache
+
+    key = "insights:agent-models"
+    models = cache.get(key)
+    if models is None:
+        try:
+            models = _health().get("models")
+        except InsightModelError:
+            models = None
+        if not (isinstance(models, dict) and models.get("fast")):
+            models = {}
+        cache.set(key, models, MODELS_CACHE_SECONDS)
+    return models or None
+
+
 # An agent reply is a report or an answer: a few hundred KB at most. Anything
 # far larger is a broken agent, not a reply to read.
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024

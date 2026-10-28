@@ -790,18 +790,27 @@ def _typical_unit_chars(project, unit: str) -> int | None:
 
 
 def _sizing(unit: str | None, project=None, engine: dict | None = None) -> dict:
-    """What a report's per-unit reading cost depends on: the engine the run
-    is pinned to (``engine``), else the one it would likely start on, the
-    kind of unit and how large one typically reads."""
+    """What a step's cost depends on: the engine the run is pinned to
+    (``engine``), else the one it would likely start on, the models that
+    engine runs on, the kind of unit and how large one typically reads."""
     try:
-        from ee.agenthub.insights.agent import CONTRACT_V2, expected_contract, is_omega
+        from ee.agenthub.insights.agent import (
+            CONTRACT_V2,
+            expected_contract,
+            expected_models,
+            is_omega,
+        )
     except ImportError:
         return {}
     if engine is None:
         contract = expected_contract()
+        models = expected_models()
     else:
         contract = engine.get("contract") if is_omega(engine) else None
+        models = (engine.get("models") or expected_models()) if contract else None
     sizing = {"contract": contract, "unit": unit}
+    if models:
+        sizing["models"] = models
     if contract == CONTRACT_V2:
         sizing["unit_chars"] = _typical_unit_chars(project, unit)
     return sizing
@@ -810,11 +819,16 @@ def _sizing(unit: str | None, project=None, engine: dict | None = None) -> dict:
 def _step_cost(
     billing, step: str, sample_size: int | None = None, sizing: dict | None = None
 ) -> float:
+    sizing = sizing or {}
     if step == "run":
-        return billing.run_cost(sample_size or DEFAULT_SAMPLE, **(sizing or {}))
+        return billing.run_cost(sample_size or DEFAULT_SAMPLE, **sizing)
     if step == "preview":
-        return billing.preview_cost(**(sizing or {}))
-    return {"ask": billing.ask_cost, "draft": billing.draft_cost}[step]()
+        return billing.preview_cost(sizing.get("models"))
+    if step == "ask":
+        return billing.ask_cost(
+            agent=bool(sizing.get("contract")), models=sizing.get("models")
+        )
+    return billing.draft_cost()
 
 
 def _credit_estimate(
@@ -837,8 +851,9 @@ def _credit_estimate(
     out["credits_estimate"] = 0.0
     if step == "run" and sample_size <= 0:
         return out
-    # Preview reads units like the report would, so it is sized the same way.
-    sizing = _sizing(unit, project) if step in ("run", "preview") else {}
+    # A draft is the built-in engine's; the other steps run on the agent's
+    # models when there is one.
+    sizing = _sizing(unit, project) if step != "draft" else {}
     cost = _step_cost(billing, step, sample_size, sizing)
     out["credits_estimate"] = billing.credits(cost)
     try:
@@ -880,7 +895,7 @@ def _credits_refused(
     billing = _billing()
     if billing is None:
         return None
-    sizing = _sizing(unit, project, engine) if step in ("run", "preview") else {}
+    sizing = _sizing(unit, project, engine) if step != "draft" else {}
     try:
         verdict = _credit_verdict(
             billing,
@@ -1603,6 +1618,7 @@ class InsightRunAskView(InsightsLicenseRequired, APIView):
         """Answer a follow-up question about a completed report, citing its examples."""
         try:
             from ee.agenthub.insights import report
+            from ee.agenthub.insights.agent import pinned
             from ee.agenthub.insights.llm import InsightModelError, Spend
             from ee.agenthub.insights.pipeline import _unit_dict, add_spend
         except ImportError:
@@ -1621,7 +1637,8 @@ class InsightRunAskView(InsightsLicenseRequired, APIView):
             return denied
         if not _spend("ask", org.id, ASKS_PER_HOUR):
             return _rate_limited(self._gm)
-        refused = _credits_refused(self._gm, org, "ask")
+        # Asked on the engine that wrote the report.
+        refused = _credits_refused(self._gm, org, "ask", engine=pinned(run.settings))
         if refused:
             return refused
         data = request.validated_data
