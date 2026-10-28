@@ -46,7 +46,10 @@ export function buildSummaryRow(run, scores) {
     runState: run?.runState ?? run?.status,
     stoppable: !!run?.stoppable,
     at: run?.finishedAt || run?.startedAt || null,
+    finishedAt: run?.finishedAt ?? null,
     tasks: total,
+    passed,
+    failed: run?.failed ?? Math.max(total - passed, 0),
     scenarioCount: run?.scenarioCount ?? null,
     scenarioIds: run?.scenarioIds ?? [],
     trials: run?.trials ?? 1,
@@ -85,17 +88,13 @@ export function deriveEvals(rows) {
   }));
 }
 
-// The graph series: one line per applied eval, its data the eval's score for
-// each run in chronological order (a null gap where a run never scored it, so
-// the line breaks rather than inventing a point). No applied evals → no series.
-export function buildEvalSeries(rowsChrono, evals) {
-  return (evals || []).map((e) => ({
-    id: e.id,
-    name: e.name,
-    color: e.color,
-    data: (rowsChrono || []).map((r) => {
-      const v = r?.scores?.[e.id];
-      return v == null ? null : v;
-    }),
-  }));
+// A run the pass-rate chart plots: it finished with a verdict on at least one
+// call. Running and stopped runs are left off, since their pass rate counts
+// calls that never ran.
+export function isFinishedRun(run) {
+  return (
+    !!run?.finishedAt &&
+    (run?.total ?? 0) > 0 &&
+    (run?.status === "passed" || run?.status === "failed")
+  );
 }
