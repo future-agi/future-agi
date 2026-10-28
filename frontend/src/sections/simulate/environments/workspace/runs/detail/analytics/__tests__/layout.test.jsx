@@ -279,6 +279,8 @@ describe("analytics widget layout", () => {
       await screen.findByText("Saving views isn't available yet."),
     ).toBeInTheDocument();
 
+    // The pill sits right after Save view, with the views it labels.
+    expect(save.parentElement.nextElementSibling).toHaveTextContent("UI only");
     fireEvent.mouseOver(screen.getByText("UI only"));
     expect(
       await screen.findByText(

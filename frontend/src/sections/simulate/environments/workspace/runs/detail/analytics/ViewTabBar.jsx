@@ -169,6 +169,7 @@ export default function ViewTabBar({
   defaultName,
   onSwitch,
   onSave,
+  adornment = null,
   onRename,
   onDuplicate,
   onDelete,
@@ -324,6 +325,7 @@ export default function ViewTabBar({
           </ButtonBase>
         </Box>
       </CustomTooltip>
+      {adornment}
       {onSave && (
         <SaveViewPopover
           anchorEl={saveAnchor}
@@ -344,6 +346,8 @@ export default function ViewTabBar({
   );
 }
 ViewTabBar.propTypes = {
+  // Shown right after Save view, e.g. a UI only flag.
+  adornment: PropTypes.node,
   activeView: PropTypes.string.isRequired,
   viewNames: PropTypes.arrayOf(PropTypes.string).isRequired,
   defaultName: PropTypes.string.isRequired,

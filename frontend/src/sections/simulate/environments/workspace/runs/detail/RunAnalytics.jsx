@@ -936,8 +936,8 @@ function Dashboard({
           onDuplicate={layout.duplicateView}
           onDelete={layout.deleteView}
           onReorder={layout.reorderViews}
+          adornment={<UiOnlyFlag feature="analyticsViews" />}
         />
-        <UiOnlyFlag feature="analyticsViews" />
         <Button
           size="small"
           variant="text"
