@@ -1,14 +1,26 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router";
-import { useSearchParams } from "react-router-dom";
-import { Alert, Box, Skeleton, Stack, useMediaQuery } from "@mui/material";
+import { Link as RouterLink, useSearchParams } from "react-router-dom";
+import {
+  Alert,
+  Box,
+  Button,
+  Skeleton,
+  Stack,
+  useMediaQuery,
+} from "@mui/material";
+import { paths } from "src/routes/paths";
 import {
   INSIGHTS_NEW_PARAM,
   INSIGHTS_SEED_PARAM,
   readHandoff,
 } from "src/sections/projects/observeHandoff";
 import { OBSERVE_TABS } from "../common";
-import { insightsErrorMessage, useInsightsConfigs } from "./insightsApi";
+import {
+  insightsErrorMessage,
+  projectMissing,
+  useInsightsConfigs,
+} from "./insightsApi";
 import { ErrorState } from "./parts";
 import InsightsEmpty from "./InsightsEmpty";
 import NewReport from "./NewReport";
@@ -124,8 +136,34 @@ export default function InsightsView() {
     [setSearchParams],
   );
 
+  // A deleted project's reports went with it: one message for the page, not
+  // "not found" from the list and the report each, with retries that can't
+  // help.
+  const projectGone = configs.isError && projectMissing(configs.error);
+
   let content;
-  if (isNew) {
+  if (projectGone) {
+    content = (
+      <Box sx={{ px: 3, pt: 2.5, maxWidth: 1180, mx: "auto" }}>
+        <Alert
+          severity="error"
+          action={
+            <Button
+              component={RouterLink}
+              to={paths.dashboard.observe}
+              color="inherit"
+              size="small"
+            >
+              Open projects
+            </Button>
+          }
+        >
+          This project can&apos;t be found. It may have been deleted, and its
+          reports with it.
+        </Alert>
+      </Box>
+    );
+  } else if (isNew) {
     content = (
       <Box sx={{ px: 3, pt: 2.5 }}>
         {seedKey && !seed && (
@@ -161,6 +199,7 @@ export default function InsightsView() {
         onView={setView}
         onDeleted={() => go({}, { replace: true })}
         onStarted={(configId, nextRunId) => showRun(configId, nextRunId)}
+        projectPending={configs.isLoading}
       />
     );
   } else if (!configs.isLoading && !configs.isError && !firstId) {

@@ -201,6 +201,10 @@ export function insightsErrorMessage(
   return actionErrorMessage(error, { fallback, retry });
 }
 
+/** A read refused because the project is gone (deleted, or not this
+ * organization's): no retry brings it back. */
+export const projectMissing = (error) => errorStatus(error) === 404;
+
 export const runFailureReason = (run) =>
   getSafeActionErrorMessage(
     { statusCode: 400, result: run.error },

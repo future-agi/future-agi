@@ -43,6 +43,7 @@ import {
   insightsErrorMessage,
   insightsKeys,
   patchConfig,
+  projectMissing,
   runFailureReason,
   useInsightsConfig,
   useInsightsRun,
@@ -465,6 +466,7 @@ export default function ReportPage({
   onView,
   onDeleted,
   onStarted,
+  projectPending = false,
 }) {
   const queryClient = useQueryClient();
   const configQuery = useInsightsConfig(configId);
@@ -515,7 +517,13 @@ export default function ReportPage({
     document.getElementById("insights-pane")?.scrollTo?.({ top: 0 });
   }, [effectiveRunId, categoryId]);
 
-  if (configQuery.isLoading) return <ReportSkeleton />;
+  // A report not found while the project's reports are still being read may
+  // be a deleted project's: the page says that once it knows.
+  if (
+    configQuery.isLoading ||
+    (projectPending && configQuery.isError && projectMissing(configQuery.error))
+  )
+    return <ReportSkeleton />;
   if (configQuery.isError || !config)
     return (
       <Box sx={{ px: 3, pt: 2.5 }}>
@@ -792,4 +800,5 @@ ReportPage.propTypes = {
   onView: PropTypes.func.isRequired,
   onDeleted: PropTypes.func.isRequired,
   onStarted: PropTypes.func.isRequired,
+  projectPending: PropTypes.bool,
 };

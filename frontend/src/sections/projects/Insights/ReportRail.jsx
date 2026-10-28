@@ -27,6 +27,7 @@ import {
   insightsErrorMessage,
   insightsKeys,
   patchConfig,
+  projectMissing,
   runFailureReason,
 } from "./insightsApi";
 import {
@@ -458,6 +459,9 @@ export default function ReportRail({
 }) {
   const queryClient = useQueryClient();
   const configs = configsQuery.data || [];
+  // The page says the project is gone; the list adds no second error.
+  const projectGone =
+    configsQuery.isError && projectMissing(configsQuery.error);
   const [toDelete, setToDelete] = useState(null);
   const deleting = useCancellable("The report could not be deleted.");
 
@@ -566,7 +570,7 @@ export default function ReportRail({
               <Skeleton key={i} variant="rounded" height={132} />
             ))}
           </Stack>
-        ) : configsQuery.isError ? (
+        ) : projectGone ? null : configsQuery.isError ? (
           <ErrorState
             message={insightsErrorMessage(
               configsQuery.error,

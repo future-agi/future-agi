@@ -998,6 +998,33 @@ describe("InsightsView", () => {
     );
   });
 
+  it("says once that a deleted project's reports are gone, with no retries", async () => {
+    const missing = (message) =>
+      Promise.reject({
+        status: false,
+        code: "not_found",
+        message,
+        result: message,
+        statusCode: 404,
+      });
+    mocks.readQuery.mockImplementation((url) =>
+      url === "/tracer/insights/configs/"
+        ? missing("Project not found")
+        : missing("Report not found"),
+    );
+    renderAt(`?report=${CONFIG_ID}`);
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(
+      "This project can't be found. It may have been deleted, and its reports with it.",
+    );
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(screen.queryByText(/not found/i)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(
+      within(alert).getByRole("link", { name: "Open projects" }),
+    ).toHaveAttribute("href", "/dashboard/observe");
+  });
+
   it("falls back to the unit alone when its content cannot be read", async () => {
     const unitId = "5b2ca31b-3453-52f3-a646-a8801b377c16";
     const base = mocks.readQuery.getMockImplementation();
