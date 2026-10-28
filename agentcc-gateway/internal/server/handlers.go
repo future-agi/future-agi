@@ -104,23 +104,6 @@ type Handlers struct {
 	mirror            atomic.Pointer[routing.Mirror]
 }
 
-// orgModelMatches checks if an org provider's registered model matches the
-// requested model. It first tries exact match, then prefix-stripping:
-// "anthropic/claude-haiku-4-5" matches provider "anthropic" with model "claude-haiku-4-5".
-func orgModelMatches(registeredModel, requestedModel, providerID string) bool {
-	if registeredModel == requestedModel {
-		return true
-	}
-	if idx := strings.IndexByte(requestedModel, '/'); idx > 0 {
-		prefix := requestedModel[:idx]
-		bareModel := requestedModel[idx+1:]
-		if strings.EqualFold(prefix, providerID) && registeredModel == bareModel {
-			return true
-		}
-	}
-	return false
-}
-
 func setAuthMetadataFromRequest(rc *models.RequestContext, r *http.Request) {
 	if authHeader := r.Header.Get("Authorization"); authHeader != "" {
 		rc.Metadata["authorization"] = authHeader
@@ -195,11 +178,11 @@ func (h *Handlers) resolveProviderWithOrgFallback(ctx context.Context, rc *model
 // it reports that failure without trying them again.
 func (h *Handlers) resolveProviderOrgFirst(ctx context.Context, rc *models.RequestContext, orgID string, orgCfg *tenant.OrgConfig, model string) (providers.Provider, string, error) {
 	if orgID != "" {
-		p, providerID, err := h.orgProviderFor(orgID, orgCfg, model)
+		p, providerID, upstreamModel, err := h.orgProviderFor(orgID, orgCfg, model)
 		if p != nil {
 			rc.Provider = providerID
 			rc.Metadata["org_provider_model_match"] = model
-			return p, model, nil
+			return p, upstreamModel, nil
 		}
 		if err != nil && h.orgProvidersOnly(ctx, rc) {
 			return nil, "", orgProviderError(model, providerID, err)
@@ -405,41 +388,70 @@ func (h *Handlers) applyOrgProviderOverride(orgID string, orgCfg *tenant.OrgConf
 // provider config. It checks each enabled provider's model list and creates a
 // cached provider instance with the org's API key.
 func (h *Handlers) resolveOrgProvider(orgID string, orgCfg *tenant.OrgConfig, model string) (providers.Provider, string) {
-	if p, providerID, _ := h.orgProviderFor(orgID, orgCfg, model); p != nil {
+	if p, providerID, _, _ := h.orgProviderFor(orgID, orgCfg, model); p != nil {
 		return p, providerID
 	}
 	return nil, ""
 }
 
-// orgProviderFor returns the first of the org's enabled providers that lists
-// model and can be built. When every one that lists it fails to build, it
-// returns the first failure and that provider's ID instead.
-func (h *Handlers) orgProviderFor(orgID string, orgCfg *tenant.OrgConfig, model string) (providers.Provider, string, error) {
+// orgProviderFor returns the org's enabled provider for model that can be
+// built, its ID, and the model name to send it.
+//
+// "<provider>/<model>" names the provider, and the provider is sent the name
+// without its prefix. It wins over a provider that lists the whole name, so
+// adding a provider whose model names carry a vendor prefix (Perplexity's
+// "anthropic/claude-sonnet-5-5") does not take traffic from the org's own
+// "anthropic" provider. Callers reach that provider as
+// "perplexity/anthropic/claude-sonnet-5-5". Otherwise the provider that lists
+// model exactly is used. Providers are tried in ID order, so a tie always
+// resolves the same way.
+//
+// When every match fails to build, it returns the first failure and that
+// provider's ID instead.
+func (h *Handlers) orgProviderFor(orgID string, orgCfg *tenant.OrgConfig, model string) (providers.Provider, string, string, error) {
 	if orgCfg == nil || h.orgProviderCache == nil {
-		return nil, "", nil
+		return nil, "", "", nil
 	}
-	var failedID string
-	var firstErr error
+	ids := make([]string, 0, len(orgCfg.Providers))
 	for providerID, pcfg := range orgCfg.Providers {
-		if pcfg == nil || !pcfg.Enabled || !pcfg.HasCredentials() {
-			continue
+		if pcfg != nil && pcfg.Enabled && pcfg.HasCredentials() {
+			ids = append(ids, providerID)
 		}
-		for _, m := range pcfg.Models {
-			if orgModelMatches(m, model, providerID) {
-				p, err := h.orgProviderCache.GetOrCreateWithTenantConfig(orgID, providerID, pcfg.APIKey, pcfg)
-				if err != nil {
-					slog.Warn("failed to create org provider for model",
-						"org_id", orgID, "provider", providerID, "model", model, "error", err)
-					if firstErr == nil {
-						failedID, firstErr = providerID, err
-					}
-					continue
-				}
-				return p, providerID, nil
+	}
+	slices.Sort(ids)
+
+	type match struct{ providerID, upstreamModel string }
+	var matches []match
+	if prefix, bare, ok := strings.Cut(model, "/"); ok {
+		for _, providerID := range ids {
+			if strings.EqualFold(prefix, providerID) && slices.Contains(orgCfg.Providers[providerID].Models, bare) {
+				matches = append(matches, match{providerID, bare})
 			}
 		}
 	}
-	return nil, failedID, firstErr
+	for _, providerID := range ids {
+		named := slices.ContainsFunc(matches, func(m match) bool { return m.providerID == providerID })
+		if !named && slices.Contains(orgCfg.Providers[providerID].Models, model) {
+			matches = append(matches, match{providerID, model})
+		}
+	}
+
+	var failedID string
+	var firstErr error
+	for _, m := range matches {
+		pcfg := orgCfg.Providers[m.providerID]
+		p, err := h.orgProviderCache.GetOrCreateWithTenantConfig(orgID, m.providerID, pcfg.APIKey, pcfg)
+		if err != nil {
+			slog.Warn("failed to create org provider for model",
+				"org_id", orgID, "provider", m.providerID, "model", model, "error", err)
+			if firstErr == nil {
+				failedID, firstErr = m.providerID, err
+			}
+			continue
+		}
+		return p, m.providerID, m.upstreamModel, nil
+	}
+	return nil, failedID, "", firstErr
 }
 
 func (h *Handlers) effectiveFailover(orgCfg *tenant.OrgConfig) *routing.Failover {
@@ -1246,7 +1258,7 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 // answer would send the caller looking at their API key instead.
 func (h *Handlers) unavailableModelError(rc *models.RequestContext, model string) error {
 	if orgID, orgCfg := h.resolveOrgConfig(rc); orgID != "" {
-		if _, providerID, err := h.orgProviderFor(orgID, orgCfg, model); err != nil {
+		if _, providerID, _, err := h.orgProviderFor(orgID, orgCfg, model); err != nil {
 			return orgProviderError(model, providerID, err)
 		}
 	}
