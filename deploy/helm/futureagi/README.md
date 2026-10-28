@@ -1385,7 +1385,11 @@ the [configuration reference](https://docs.futureagi.com/docs/self-hosting/confi
 | `fiCollector.service.grpcPort` | `4317` | OTLP/gRPC port. |
 | `fiCollector.service.httpPort` | `4318` | OTLP/HTTP port (POST /v1/traces). |
 | `fiCollector.service.annotations` | `{}` | Service annotations (e.g. for a cloud load balancer). |
-| `fiCollector.goMemLimit` | `"900MiB"` | [GOMEMLIMIT] soft memory limit; keep it below the memory limit. |
+| `fiCollector.goMemLimit` | `"900MiB"` | [GOMEMLIMIT] soft memory limit; keep it below the memory limit. The ingest budget is derived from it. |
+| `fiCollector.ingestBudgetMiB` | `0` | [FI_INGEST_BUDGET_MIB] memory, in MiB, that all OTLP requests may hold at once, from reading a body to storing its spans; past it, requests wait their turn (up to 2 s), then get 503 / UNAVAILABLE, which exporters retry. A request that could never fit gets 413 / INVALID_ARGUMENT. 0: derived from `goMemLimit` (about half of it, less a fixed allowance: 391 with the default). |
+| `fiCollector.maxBodyMiB` | `0` | [FI_OTLP_MAX_BODY_MIB] largest OTLP/HTTP body, in MiB, as sent and after gzip decompression (413 above it). 0: 16, lowered when the ingest budget cannot hold a body that size. |
+| `fiCollector.grpcMaxRecvMiB` | `0` | [FI_GRPC_MAX_RECV_MIB] largest OTLP/gRPC message, in MiB (INVALID_ARGUMENT above it). 0: the OTLP/HTTP body cap, lowered like it. |
+| `fiCollector.maxConnections` | `0` | [FI_OTLP_MAX_CONNECTIONS] open connections each OTLP listener (gRPC and HTTP) accepts. 0: no cap. |
 | `fiCollector.resources` | see values.yaml | Resources of each collector pod. |
 | `fiCollector.autoscaling.enabled` | `false` | HorizontalPodAutoscaler for the collector. |
 | `fiCollector.autoscaling.minReplicas` | `2` | Minimum replicas. |
