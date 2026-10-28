@@ -6,7 +6,7 @@ import pytest
 from agentic_eval.core_evals.run_prompt.litellm_models import MissingProviderKeyError
 from ee.jev.client import JevGatewayError
 from ee.jev.errors import describe
-from ee.jev.mapping import JevMappingError
+from ee.jev.mapping import JevMappingError, check_input_size
 from ee.jev.validation import JevResponseError
 from sdk.utils.evaluations import StandaloneEvaluationError
 from tfc.utils.error_codes import get_specific_error_message, get_usage_error_code
@@ -58,14 +58,14 @@ KEY_MISSING = (
                 "JEV_MODEL_UNKNOWN", "model", "Model 'jev-2.0.0' is not supported."
             ),
             "JEV_MODEL_UNKNOWN",
-            "JEV_MODEL_UNKNOWN: Model 'jev-2.0.0' is not supported.",
+            "Model 'jev-2.0.0' is not supported.",
         ),
         (
             JevMappingError(
                 "JEV_INPUT_UNSUPPORTED", "state", "Jev does not accept media inputs."
             ),
             "JEV_INPUT_UNSUPPORTED",
-            "JEV_INPUT_UNSUPPORTED: Jev does not accept media inputs.",
+            "Jev does not accept media inputs.",
         ),
     ],
 )
@@ -78,6 +78,18 @@ def test_each_code_has_fixed_text(error, code, message):
     # Dataset cells and preview rows show the same text.
     assert get_specific_error_message(error) == message
     assert get_specific_error_message(StandaloneEvaluationError(error)) == message
+
+
+def test_too_large_says_what_to_map_instead():
+    """The playground and task logs showed "JEV_INPUT_TOO_LARGE: Jev input
+    exceeds the configured size limit." for a session with a screenshot."""
+    with pytest.raises(JevMappingError) as too_large:
+        check_input_size({"state": "x" * 120001, "questions": {}})
+    described = describe(too_large.value)
+    assert described["code"] == "JEV_INPUT_TOO_LARGE"
+    assert not described["message"].startswith("JEV_")
+    assert '"transcript" instead of "traces"' in described["message"]
+    assert get_specific_error_message(too_large.value) == described["message"]
 
 
 def test_a_rejected_key_is_never_told_to_retry():
@@ -115,7 +127,7 @@ def test_a_mapping_rule_is_reported_as_jev_mapping_invalid(code, field):
     assert described["code"] == "JEV_MAPPING_INVALID"
     assert described["details"] == {field: [code]}
     assert described["attr"] == field
-    assert described["message"] == f"{code}: This configuration is not supported."
+    assert described["message"] == "This configuration is not supported."
 
 
 @pytest.mark.parametrize(

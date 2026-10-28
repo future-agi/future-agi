@@ -263,5 +263,7 @@ def check_input_size(payload):
         _reject(
             "JEV_INPUT_TOO_LARGE",
             "state",
-            "Jev input exceeds the configured size limit.",
+            "This input is too large for Jev to read. Map a smaller field, such "
+            'as "transcript" instead of "traces" for a session; images in a '
+            "field make it large.",
         )

@@ -59,10 +59,11 @@ def describe(exc):
     if error is None:
         return None
     if isinstance(error, JevMappingError):
-        # Unknown models and mapping errors keep their specific messages.
+        # Unknown models and mapping errors keep their specific messages,
+        # without the code in front: that travels as "code".
         return {
             "code": error.code if error.code in _RUN_CODES else "JEV_MAPPING_INVALID",
-            "message": str(error),
+            "message": error.detail,
             "attr": error.field,
             "details": error.details,
         }
