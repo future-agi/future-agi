@@ -1,5 +1,6 @@
 """API-column destination and stored-secret boundary contracts."""
 
+import subprocess
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -20,7 +21,11 @@ def legacy_transport(monkeypatch):
     response.encoding = "utf-8"
     transport = Mock(return_value=response)
     monkeypatch.setattr(requests, "request", transport)
-    return transport
+    # These refusals must precede worker startup as well as any network activity.
+    worker = Mock(side_effect=AssertionError("unexpected outbound worker"))
+    monkeypatch.setattr(subprocess, "Popen", worker)
+    yield transport
+    worker.assert_not_called()
 
 
 def config(url="http://public.fixture.test/value"):

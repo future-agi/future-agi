@@ -7,6 +7,7 @@ from unittest.mock import Mock
 import pytest
 
 from accounts.models.organization import Organization
+from accounts.models.user import User
 from accounts.models.workspace import Workspace
 from model_hub.models.api_key import SecretModel
 from model_hub.views import dynamic_columns as columns
@@ -49,11 +50,14 @@ def test_secret_scope_without_middleware(
         key="own-value",
     )
     other_org = Organization.objects.create(name="other-fixture")
+    other_user = User.objects.create_user(
+        email="other-fixture@example.test", name="Other Fixture", organization=other_org
+    )
     other_workspace = Workspace.objects.create(
-        name="other-fixture", organization=other_org
+        name="other-fixture", organization=other_org, created_by=other_user
     )
     same_org_workspace = Workspace.objects.create(
-        name="sibling-fixture", organization=organization
+        name="sibling-fixture", organization=organization, created_by=workspace.created_by
     )
     foreign = SecretModel.no_workspace_objects.create(
         name="foreign-fixture",
