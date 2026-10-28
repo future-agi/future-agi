@@ -585,6 +585,19 @@ describe("a new question the server holds for its confirm", () => {
   });
 });
 
+// jsdom can't match :focus-visible, so read the rule emotion wrote for the
+// element's own class.
+function focusRing(element) {
+  const rules = Array.from(document.styleSheets).flatMap((sheet) =>
+    Array.from(sheet.cssRules, (rule) => rule.cssText),
+  );
+  return rules.find((rule) =>
+    Array.from(element.classList).some((name) =>
+      rule.startsWith(`.${name}:focus-visible`),
+    ),
+  );
+}
+
 describe("the Ask page", () => {
   it("reads a sample of a big view by default and opens the run", async () => {
     let finishStart;
@@ -690,6 +703,21 @@ describe("the Ask page", () => {
     expect(
       screen.getByRole("radio", { name: /A sample of 2,000/ }),
     ).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("rings the answer type and Ask Jev when they have keyboard focus", async () => {
+    renderAt(askLink(PROJECT, { unit: "sessions", label: "Past 7D" }));
+    await screen.findByText(/104,233 sessions in the Sessions view/);
+    for (const control of [
+      screen.getByRole("button", { name: "Yes / No" }),
+      screen.getByRole("button", { name: "Categories" }),
+      screen.getByRole("button", {
+        name: "Ask Jev about a sample of 1,000 sessions",
+      }),
+      // The size cards had their ring already.
+      screen.getByRole("radio", { name: /A sample of 1,000/ }),
+    ])
+      expect(focusRing(control)).toMatch(/outline: 2px solid/);
   });
 
   it("restates the credits before reading every row of a big view", async () => {

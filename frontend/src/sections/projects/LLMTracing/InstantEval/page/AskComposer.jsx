@@ -1158,6 +1158,13 @@ export default function AskComposer({
             confirming
           }
           onClick={() => ask(false)}
+          sx={{
+            "&:focus-visible": {
+              outline: "2px solid",
+              outlineColor: "primary.main",
+              outlineOffset: 2,
+            },
+          }}
           startIcon={
             starting ? (
               <CircularProgress size={16} color="inherit" />

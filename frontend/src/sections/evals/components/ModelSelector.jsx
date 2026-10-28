@@ -1054,6 +1054,11 @@ const ModelSelector = ({
                 ? "rgba(255,255,255,0.05)"
                 : "rgba(0,0,0,0.03)",
             "&:hover": disabled ? {} : { borderColor: "text.secondary" },
+            "&:focus-visible": {
+              outline: "2px solid",
+              outlineColor: "primary.main",
+              outlineOffset: 1,
+            },
             transition: "all 0.15s",
           }}
         >
@@ -1096,6 +1101,11 @@ const ModelSelector = ({
           py: 0.4,
           cursor: disabled ? "default" : "pointer",
           "&:hover": disabled ? {} : { opacity: 0.7 },
+          "&:focus-visible": {
+            outline: "2px solid",
+            outlineColor: "primary.main",
+            outlineOffset: 1,
+          },
           transition: "opacity 0.15s",
         }}
       >

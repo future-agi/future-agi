@@ -114,6 +114,17 @@ CategoryEditor.propTypes = {
   onChange: PropTypes.func.isRequired,
 };
 
+// A toggle shows no keyboard focus of its own: ring it like the size cards.
+const answerTypeSx = {
+  px: 1.5,
+  py: 0.25,
+  "&:focus-visible": {
+    outline: "2px solid",
+    outlineColor: "primary.main",
+    outlineOffset: 1,
+  },
+};
+
 export default function QuestionEditor({
   index,
   value,
@@ -180,13 +191,10 @@ export default function QuestionEditor({
           onChange={(_, answerType) => answerType && update({ answerType })}
           aria-label={`Answer type for question ${index + 1}`}
         >
-          <ToggleButton value={ANSWER_TYPES.YES_NO} sx={{ px: 1.5, py: 0.25 }}>
+          <ToggleButton value={ANSWER_TYPES.YES_NO} sx={answerTypeSx}>
             Yes / No
           </ToggleButton>
-          <ToggleButton
-            value={ANSWER_TYPES.CATEGORY}
-            sx={{ px: 1.5, py: 0.25 }}
-          >
+          <ToggleButton value={ANSWER_TYPES.CATEGORY} sx={answerTypeSx}>
             Categories
           </ToggleButton>
         </ToggleButtonGroup>

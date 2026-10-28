@@ -338,6 +338,19 @@ async function chooseModel(label) {
   await userEvent.click(row);
 }
 
+// jsdom can't match :focus-visible, so read the rule emotion wrote for the
+// element's own class.
+function focusRing(element) {
+  const rules = Array.from(document.styleSheets).flatMap((sheet) =>
+    Array.from(sheet.cssRules, (rule) => rule.cssText),
+  );
+  return rules.find((rule) =>
+    Array.from(element.classList).some((name) =>
+      rule.startsWith(`.${name}:focus-visible`),
+    ),
+  );
+}
+
 describe("ModelSelector Jev transitions and accessible controls", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -436,6 +449,18 @@ describe("ModelSelector Jev transitions and accessible controls", () => {
     ]) {
       expect(cb).not.toHaveBeenCalled();
     }
+  });
+
+  it("rings the mode and model pills when they have keyboard focus", async () => {
+    renderStatefulSelector();
+    await chooseModel(/Jev 1.13/);
+    for (const name of [
+      "Evaluation mode: Quick",
+      "Evaluation model: Jev 1.13 (pinned)",
+    ])
+      expect(focusRing(screen.getByRole("button", { name }))).toMatch(
+        /outline: 2px solid/,
+      );
   });
 
   it("opens mode, model and configuration with native keyboard button activation", async () => {
