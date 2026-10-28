@@ -81,6 +81,17 @@ const pulse = keyframes`
 
 const CONTENT_WIDTH = 1180;
 
+// An alert's reason takes the room beside its buttons. Where the buttons
+// don't fit beside it they drop below it together, each label on one line;
+// the reason stays beside its icon however narrow the page.
+const ALERT_ACTIONS_WRAP = {
+  flexWrap: "wrap",
+  rowGap: 1,
+  "& .MuiAlert-message": { flex: "1 1 min(320px, 100% - 40px)" },
+  "& .MuiAlert-action": { flexShrink: 0, maxWidth: "100%" },
+  "& .MuiAlert-action .MuiButton-root": { whiteSpace: "nowrap" },
+};
+
 const LIVE_STATES = new Set(["running", "preparing", "loading"]);
 // Paused, or pausing while the answers already being read land.
 const PAUSED_STATES = new Set(["paused", "pausing"]);
@@ -1278,8 +1289,15 @@ export default function AskRunView({
         {nothingAnswered && (
           <Alert
             severity="error"
+            sx={ALERT_ACTIONS_WRAP}
             action={
-              <Stack direction="row" spacing={1}>
+              <Stack
+                direction="row"
+                spacing={1}
+                useFlexGap
+                flexWrap="wrap"
+                justifyContent="flex-end"
+              >
                 {failure?.ai_providers && (
                   <Button
                     size="small"

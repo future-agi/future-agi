@@ -1491,6 +1491,30 @@ describe("a run that answered nothing", () => {
     expect(fakes.control).toHaveBeenCalledWith("retry_failed", {});
   });
 
+  it("keeps each button's label on one line, the buttons wrapping together", () => {
+    // Run 8f99dde0: beside the long reason, "Open AI Providers" and
+    // "Retry 5 rows" were squeezed onto two lines each.
+    fakes.askRuns["task-sessions"] = allFailed({
+      message: KEY_REJECTED,
+      every: true,
+      ai_providers: true,
+    });
+    renderAt(
+      `/dashboard/observe/${PROJECT}/ask?run=task-sessions&unit=sessions&tab=sessions`,
+    );
+    const alert = screen.getByText(KEY_REJECTED).closest("[role='alert']");
+    // The reason and the buttons share a line while they fit; past that
+    // the buttons drop below the reason as one group, never shrinking.
+    expect(alert).toHaveStyle({ flexWrap: "wrap" });
+    const actions = alert.querySelector(".MuiAlert-action");
+    expect(actions).toHaveStyle({ flexShrink: "0" });
+    expect(actions.firstChild).toHaveStyle({ flexWrap: "wrap" });
+    const link = within(alert).getByRole("link", { name: "Open AI Providers" });
+    const retry = within(alert).getByRole("button", { name: "Retry 5 rows" });
+    expect(link).toHaveStyle({ whiteSpace: "nowrap" });
+    expect(retry).toHaveStyle({ whiteSpace: "nowrap" });
+  });
+
   it("names the reason most rows give, without a settings link it doesn't need", () => {
     fakes.askRuns["task-sessions"] = allFailed({
       message: "TypeSafe didn't respond in time. Try again.",
