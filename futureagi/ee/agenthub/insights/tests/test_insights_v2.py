@@ -916,6 +916,186 @@ class TestReportV2:
         assert agent.naming_audit({"subs": []}, {"kind": "omega"}) == {}
 
 
+# A report shaped like the Cloud re-test's (run 3e2b52fe): three refunds the
+# tool declined, filed with an export the tool failed under one category of
+# five sessions, each unit with the receipts its reader stored.
+MISREPORTS, SUB = "c0c59413d17e", "56d1a662f05d"
+REFUND_SESSIONS = {
+    "111": ("cust_002", "c7af5d83-abfd-56af-bfbc-0dd8b2b5262c"),
+    "106": ("cust_003", "956ae508-1958-589e-8c60-f63701a20b25"),
+    "109": ("cust_005", "f4fb3a27-6189-53f8-bc58-ee5a2afab9cc"),
+}
+EXPORT_SESSION = "459b8af0-bc52-5097-9baf-6d51666ad84e"
+
+
+def refund_report():
+    stats = {"count": 5, "users": 5, "sessions": 5, "share": 0.4545}
+    result = {
+        "totals": {"count": 11, "users": 8, "sessions": 11},
+        "categories": [
+            {"id": MISREPORTS, "level": 1, "stats": {**stats, "failure_rate": 1.0}},
+            {"id": SUB, "level": 2, "parent_id": MISREPORTS, "stats": stats},
+            {"id": "ef936cfce645", "level": 1, "stats": {"count": 3, "share": 0.27}},
+        ],
+    }
+
+    def session(key, user, session_id, quotes):
+        item = unit(int(key), user=user, category=MISREPORTS, sub=SUB, failure=True)
+        item.update(unit_id=session_id, session_id=session_id)
+        item["facets"]["evidence"] = [
+            {
+                "kind": "text",
+                "evidence_id": receipt(key, span, field, start, len(quote)),
+                "span": span,
+                "field": field,
+                "quote": quote,
+                "supports": "failure",
+            }
+            for span, field, start, quote in quotes
+        ]
+        return item
+
+    refusal = "Charge is still pending settlement; refunds open after settlement."
+    units = [
+        session(
+            "111",
+            *REFUND_SESSIONS["111"],
+            [("s3", "output", 34, f'"message": "{refusal}"')],
+        ),
+        session(
+            "106",
+            *REFUND_SESSIONS["106"],
+            [("s3", "output", 4, '"error": "refund_declined",')],
+        ),
+        session(
+            "109",
+            *REFUND_SESSIONS["109"],
+            [
+                ("s1", "output", 0, "Done. I've refunded $61.20"),
+                ("s3", "output", 46, refusal),
+            ],
+        ),
+        session(
+            "119",
+            "cust_006",
+            EXPORT_SESSION,
+            [
+                (
+                    "s48",
+                    "input",
+                    127,
+                    '{"status": "failed", "error": "quota_exceeded", "retry_after": "24h"}',
+                )
+            ],
+        ),
+    ]
+    return result, units
+
+
+def cites(key, units, index=0):
+    """The agent's citation of a unit's stored receipt."""
+    item = next(u for u in units if u["key"] == key)["facets"]["evidence"][index]
+    return {"unit_key": key, "evidence_id": item["evidence_id"], "quote": item["quote"]}
+
+
+class TestAskOnARefundReport:
+    QUESTION = (
+        "Which sessions did the agent tell the customer a refund was done after "
+        "the refund tool declined it, and what did the tool say?"
+    )
+
+    def ask(self, paragraphs, units=None):
+        result, fixture = refund_report()
+        units = units or fixture
+        reply = {
+            "answer": paragraphs,
+            "unverified_answer": [],
+            "verification": {"status": "verified", "reason": None},
+            "dropped": {"paragraphs": 0, "quotes": 0},
+        }
+        return report._answer_payload(reply, result, units, {}, v2=True)
+
+    def test_an_answer_naming_the_sessions_and_quoting_them_is_kept(self):
+        _, units = refund_report()
+        refunds = list(REFUND_SESSIONS)
+        out = self.ask(
+            [
+                {
+                    "text": "In 3 sessions, from cust_002, cust_003 and cust_005, the "
+                    'agent told the customer "Done. I\'ve refunded $61.20" after '
+                    "the refund tool declined it.",
+                    "unit_keys": refunds,
+                    "category_ids": [MISREPORTS],
+                    "evidence": [cites("109", units)],
+                },
+                {
+                    "text": "Those sessions are "
+                    + ", ".join(session for _, session in REFUND_SESSIONS.values())
+                    + ".",
+                    "unit_keys": refunds,
+                    "category_ids": [MISREPORTS],
+                    "evidence": [],
+                },
+                {
+                    "text": 'The refund tool said: "Charge is still pending '
+                    'settlement; refunds open after settlement."',
+                    "unit_keys": ["111"],
+                    "category_ids": [MISREPORTS],
+                    "evidence": [cites("111", units)],
+                },
+                {
+                    "text": "The export check in session "
+                    f"{EXPORT_SESSION} failed too and said to retry after 24h.",
+                    "unit_keys": ["119"],
+                    "category_ids": [MISREPORTS],
+                    "evidence": [cites("119", units)],
+                },
+            ]
+        )
+
+        assert out["dropped"] == 0
+        assert [len(p["unit_ids"]) for p in out["answer"]] == [3, 3, 1, 1]
+        assert out["answer"][1]["unit_ids"] == [
+            session for _, session in REFUND_SESSIONS.values()
+        ]
+        assert [e["quote"] for e in out["answer"][0]["evidence"]] == [
+            "Done. I've refunded $61.20"
+        ]
+        assert out["answer"][2]["evidence"][0]["quote"].startswith('"message": ')
+        assert out["answer"][3]["evidence"][0]["read_by"] == "reader"
+
+    def test_a_number_neither_the_statistics_nor_its_own_quotes_hold_is_dropped(
+        self,
+    ):
+        _, units = refund_report()
+        # A session whose id is digits alone.
+        units[0]["session_id"] = units[0]["unit_id"] = "75"
+        out = self.ask(
+            [
+                # A rate the statistics don't hold.
+                {
+                    "text": "62% of refund requests end this way.",
+                    "unit_keys": ["111"],
+                    "category_ids": [MISREPORTS],
+                    "evidence": [cites("111", units)],
+                },
+                # An amount its quote doesn't show.
+                {
+                    "text": "The agent promised $75.00 back.",
+                    "unit_keys": ["109"],
+                    "evidence": [cites("109", units)],
+                },
+                # Another paragraph's quote vouches for nothing here.
+                {"text": "The export waits 24h.", "unit_keys": ["119"], "evidence": []},
+                # An id of digits alone is not taken out of the text.
+                {"text": "75% of these sessions failed.", "unit_keys": ["111"]},
+            ],
+            units,
+        )
+        assert out["answer"] == []
+        assert out["dropped"] == 4
+
+
 class TestEstimates:
     def test_a_run_is_sized_for_the_engine_it_is_pinned_to(self, monkeypatch):
         from tracer.views import insights as views

@@ -30,6 +30,7 @@ from types import SimpleNamespace
 from ee.agenthub.insights import agent as insight_agent
 from ee.agenthub.insights.llm import Spend
 from ee.agenthub.insights.summary import (
+    _NUMBER,
     allowed_numbers,
     model_list,
     verified,
@@ -232,10 +233,28 @@ def checked_numbers(result: dict, units: list[dict]) -> set[str]:
 
 
 def _without_ids(text: str, units: list[dict]) -> str:
-    """User ids like cust_ada_532 carry digits that are not claims."""
+    """Ids carry digits that are not claims: user ids like cust_ada_532, and
+    the session or trace id of a unit (956ae508-1958-…) an answer names. An
+    id of digits alone stays in, so it never vouches for a number."""
     for user in {u.get("user_id") for u in units if u.get("user_id")}:
         text = text.replace(user, "")
+    ids = {u.get(k) or "" for u in units for k in ("unit_id", "session_id")}
+    for unit_id in sorted(ids, key=len, reverse=True):
+        if unit_id in text and re.search(r"[A-Za-z]", unit_id):
+            text = re.sub(rf"(?<![\w-]){re.escape(unit_id)}(?![\w-])", "", text)
     return text
+
+
+def _quoted_numbers(evidence: list[dict]) -> set[str]:
+    """The numbers a paragraph's own quotes hold (an amount the agent
+    promised, a tool's retry delay), as ``verified`` reads them: a claim may
+    repeat what a quote it cites shows."""
+    numbers = set()
+    for item in evidence:
+        for found in _NUMBER.findall(item.get("quote") or ""):
+            found = found.replace(",", "")
+            numbers.add(found.rstrip("0").rstrip(".") if "." in found else found)
+    return numbers
 
 
 def _inline_citations(
@@ -655,7 +674,10 @@ def _paragraphs(
         )
         if not text:
             continue
-        if not verified(_without_ids(text, units), numbers):
+        # Its quotes are checked first: a number one of them holds is what
+        # the paragraph cites, not a statistic.
+        evidence = _evidence(raw.get("evidence"), units_by_key, contents, v2=v2)
+        if not verified(_without_ids(text, units), numbers | _quoted_numbers(evidence)):
             dropped += 1
             continue
         keys = [
@@ -669,9 +691,7 @@ def _paragraphs(
                 "text": text,
                 "unit_ids": [units_by_key[k]["unit_id"] for k in dict.fromkeys(keys)],
                 "category_ids": list(dict.fromkeys(ids)),
-                "evidence": _evidence(
-                    raw.get("evidence"), units_by_key, contents, v2=v2
-                ),
+                "evidence": evidence,
             }
         )
     return paragraphs, dropped
