@@ -2,10 +2,9 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -21,6 +20,20 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/providers/contracttest"
 )
 
+// Exit codes.
+const (
+	exitOK = 0
+	// exitFailed: a case failed (upstream error, unexpected status, write
+	// error, bad fixture).
+	exitFailed = 1
+	// exitUsage: bad flags.
+	exitUsage = 2
+	// exitNothing: no recordable case matched the selection, so nothing was
+	// sent. A capped workflow pass over endpoints a provider may not have
+	// treats it as success.
+	exitNothing = 3
+)
+
 type recorder struct {
 	opts options
 	out  io.Writer
@@ -30,6 +43,9 @@ type recorder struct {
 	client *http.Client
 
 	selected, recorded, failed, skipped int
+	notRecordable, capped, copied       int
+	// byEndpoint counts the selected cases per endpoint.
+	byEndpoint map[string]int
 }
 
 func (r *recorder) printf(format string, args ...any) {
@@ -48,7 +64,7 @@ func (r *recorder) run(ctx context.Context) int {
 		found, err := providersWithFixtures(r.opts.ProvidersDir)
 		if err != nil {
 			r.fail("error: %v", err)
-			return 1
+			return exitFailed
 		}
 		for _, p := range found {
 			if _, ok := providerSpecs[p]; !ok {
@@ -60,25 +76,47 @@ func (r *recorder) run(ctx context.Context) int {
 		}
 	}
 
-	sel := selection{Models: r.opts.Models, Cases: r.opts.Cases, From: r.opts.From, As: r.opts.As, Out: r.opts.Out}
+	sel := selection{
+		Models: r.opts.Models, Cases: r.opts.Cases,
+		Endpoints: r.opts.Endpoints, Exclude: r.opts.ExcludeEndpoints,
+		MaxCases: r.opts.MaxCases, MaxModels: r.opts.MaxModels, Rotate: r.opts.Rotate,
+		From: r.opts.From, As: r.opts.As, Out: r.opts.Out,
+	}
+	r.byEndpoint = map[string]int{}
 	for _, name := range names {
 		r.provider(ctx, name, sel, explicit)
 	}
 
+	tail := fmt.Sprintf("%d not recordable (skipped), %d over the caps", r.notRecordable, r.capped)
 	switch {
 	case r.opts.DryRun:
-		r.printf("dry run: %d cases selected; nothing was sent upstream or written", r.selected)
+		r.printf("dry run: %d cases selected (%s); %s; nothing was sent upstream or written", r.selected, endpointCounts(r.byEndpoint), tail)
 	default:
-		r.printf("done: %d recorded, %d failed; %d upstream(s) skipped for missing credentials", r.recorded, r.failed, r.skipped)
-	}
-	if r.selected == 0 && r.failed == 0 {
-		r.printf("error: no case matched the selection")
-		return 1
+		r.printf("done: %d recorded, %d failed, %d copied as synthetic; %d upstream(s) skipped for missing credentials; %s",
+			r.recorded, r.failed, r.copied, r.skipped, tail)
 	}
 	if r.failed > 0 {
-		return 1
+		return exitFailed
 	}
-	return 0
+	if r.selected == 0 {
+		r.printf("nothing to record: no recordable case matched the selection")
+		return exitNothing
+	}
+	return exitOK
+}
+
+// endpointCounts is "chat 12, embeddings 2", in contracttest.Endpoints order.
+func endpointCounts(counts map[string]int) string {
+	var parts []string
+	for _, ep := range contracttest.Endpoints {
+		if n := counts[ep]; n > 0 {
+			parts = append(parts, fmt.Sprintf("%s %d", ep, n))
+		}
+	}
+	if len(parts) == 0 {
+		return "none"
+	}
+	return strings.Join(parts, ", ")
 }
 
 func (r *recorder) provider(ctx context.Context, name string, sel selection, explicit bool) {
@@ -87,17 +125,29 @@ func (r *recorder) provider(ctx context.Context, name string, sel selection, exp
 		r.fail("%s: FAILED: %v", name, err)
 		return
 	}
-	if len(pl.Jobs) == 0 {
+	r.notRecordable += len(pl.NotRecordable)
+	r.capped += len(pl.Capped)
+	if len(pl.Jobs) == 0 && len(pl.NotRecordable) == 0 && len(pl.Capped) == 0 {
 		if explicit {
 			r.printf("%s: no case matches the selection", name)
 		}
 		return
 	}
 	r.selected += len(pl.Jobs)
+	for _, j := range pl.Jobs {
+		r.byEndpoint[j.Endpoint]++
+	}
 
 	if r.opts.DryRun {
 		r.printPlan(pl)
 		return
+	}
+	for _, c := range pl.NotRecordable {
+		r.printf("%s %s/%s: skipped: case.json says \"recordable\": false (status %d); not sent, its synthetic body stays",
+			c.Provider, c.Model, c.Name, c.wantStatus())
+	}
+	if len(pl.Capped) > 0 {
+		r.printf("%s: %d cases left out by -max-cases/-max-models: %s", name, len(pl.Capped), caseList(pl.Capped))
 	}
 	recorded := make([]bool, len(pl.Jobs))
 	for _, g := range pl.groups() {
@@ -109,35 +159,57 @@ func (r *recorder) provider(ctx context.Context, name string, sel selection, exp
 	}
 }
 
-// upstreamGroup is a plan's jobs that share an upstream.
-type upstreamGroup struct {
-	Name string // see upstreamFor
-	Jobs []int  // indexes into plan.Jobs
+func caseList(cs []caseRef) string {
+	ids := make([]string, len(cs))
+	for i, c := range cs {
+		ids[i] = c.Model + "/" + c.Name
+	}
+	return strings.Join(ids, ", ")
 }
 
-// groups splits the plan's jobs by upstream, in a stable order.
+// upstreamGroup is a plan's jobs that share an upstream and an adapter
+// configuration.
+type upstreamGroup struct {
+	Name       string // see upstreamFor
+	APIVersion string // see apiVersionOf
+	Jobs       []int  // indexes into plan.Jobs
+}
+
+// groups splits the plan's jobs by upstream and api-version, in a stable
+// order.
 func (p *plan) groups() []upstreamGroup {
 	var gs []upstreamGroup
-	at := map[string]int{}
+	at := map[[2]string]int{}
 	for i, j := range p.Jobs {
-		k, ok := at[j.Upstream]
+		key := [2]string{j.Upstream, j.APIVersion}
+		k, ok := at[key]
 		if !ok {
 			k = len(gs)
-			at[j.Upstream] = k
-			gs = append(gs, upstreamGroup{Name: j.Upstream})
+			at[key] = k
+			gs = append(gs, upstreamGroup{Name: j.Upstream, APIVersion: j.APIVersion})
 		}
 		gs[k].Jobs = append(gs[k].Jobs, i)
 	}
-	sort.Slice(gs, func(a, b int) bool { return gs[a].Name < gs[b].Name })
+	sort.Slice(gs, func(a, b int) bool {
+		if gs[a].Name != gs[b].Name {
+			return gs[a].Name < gs[b].Name
+		}
+		return gs[a].APIVersion < gs[b].APIVersion
+	})
 	return gs
 }
 
-// label names a group in output: "openai", or "openai via groq".
+// label names a group in output: "openai", "openai via groq", or
+// "azure at api-version 2025-04-01-preview".
 func (p *plan) label(g upstreamGroup) string {
-	if g.Name == p.Provider {
-		return p.Provider
+	l := p.Provider
+	if g.Name != p.Provider {
+		l += " via " + g.Name
 	}
-	return p.Provider + " via " + g.Name
+	if g.APIVersion != "" {
+		l += " at api-version " + g.APIVersion
+	}
+	return l
 }
 
 // recordGroup records one upstream's jobs through one adapter and proxy.
@@ -161,6 +233,15 @@ func (r *recorder) recordGroup(ctx context.Context, pl *plan, g upstreamGroup, r
 	u := spec.build(r.env)
 	if r.opts.BaseURL != "" {
 		u.baseURL = r.opts.BaseURL
+	}
+	if g.APIVersion != "" && u.cfg.Headers["api-version"] == "" {
+		// The version the case's golden pins, unless the environment set one.
+		h := maps.Clone(u.cfg.Headers)
+		if h == nil {
+			h = map[string]string{}
+		}
+		h["api-version"] = g.APIVersion
+		u.cfg.Headers = h
 	}
 	target, err := parseBaseURL(u.baseURL)
 	if err != nil {
@@ -190,16 +271,19 @@ func (r *recorder) recordGroup(ctx context.Context, pl *plan, g upstreamGroup, r
 	}
 }
 
-// record runs one case and saves the body. It reports whether it did.
+// record runs one case and saves what decide says to. It reports whether it
+// saved anything.
 func (r *recorder) record(ctx context.Context, adapter providers.Provider, proxy *teeProxy, u upstream, j job) bool {
-	id := fmt.Sprintf("%s %s/%s", j.Provider, j.Target, j.Name)
-	if j.Patch != nil && u.signedBody {
+	id := j.ID()
+	switch {
+	case j.Bad != nil:
+		r.fail("%s: FAILED: cannot record it: %v", id, j.Bad)
+		return false
+	case j.Patch != nil && u.signedBody:
 		r.fail("%s: FAILED: %s cannot be applied: %s signs the request body (SigV4)", id, PatchFile, j.Provider)
 		return false
-	}
-	var req models.ChatCompletionRequest
-	if err := json.Unmarshal(j.Body, &req); err != nil {
-		r.fail("%s: FAILED: request.json: %v", id, err)
+	case j.Patch != nil && contracttest.MultipartEndpoint(j.Endpoint):
+		r.fail("%s: FAILED: %s cannot be applied: a %s request is a multipart form, not JSON", id, PatchFile, j.Endpoint)
 		return false
 	}
 
@@ -207,11 +291,11 @@ func (r *recorder) record(ctx context.Context, adapter providers.Provider, proxy
 	ctx, cancel := context.WithTimeout(ctx, r.opts.Timeout)
 	defer cancel()
 	ctx, shapes := common.WithShapeRecorder(ctx)
-	adapterErr := drive(ctx, adapter, &req)
+	adapterErr := drive(ctx, adapter, j.call())
 	exchanges := proxy.take()
 
 	if len(exchanges) == 0 {
-		r.fail("%s: FAILED: the adapter sent nothing upstream: %v", id, adapterErr)
+		r.fail("%s: FAILED: the adapter sent nothing upstream for endpoint %s: %v", id, j.Endpoint, adapterErr)
 		return false
 	}
 	var warnings []string
@@ -223,30 +307,20 @@ func (r *recorder) record(ctx context.Context, adapter providers.Provider, proxy
 		r.fail("%s: FAILED: %v", id, ex.Err)
 		return false
 	}
-	body, leaked := redact(ex.Body, u.secrets)
-	if ex.Status < 200 || ex.Status > 299 {
-		r.fail("%s: FAILED: upstream answered %d %s (not saved): %s", id, ex.Status, ex.ContentType, snippet(body))
+	rec, err := decide(j, ex, u.secrets)
+	if err != nil {
+		r.fail("%s: FAILED: %v", id, err)
 		return false
 	}
-	if leaked {
-		warnings = append(warnings, "the response contained a credential; it was replaced with REDACTED")
-	}
-	file := j.ResponseFile()
-	if file == contracttest.ResponseJSONFile && !json.Valid(body) {
-		r.fail("%s: FAILED: upstream answered %d %s but the body is not JSON (not saved): %s", id, ex.Status, ex.ContentType, snippet(body))
-		return false
-	}
-	if want := contentTypes[file]; !strings.Contains(strings.ToLower(ex.ContentType), want) {
-		warnings = append(warnings, fmt.Sprintf("Content-Type is %q, but %s replays as %s", ex.ContentType, file, want))
-	}
-	if adapterErr != nil {
+	warnings = append(warnings, rec.Warnings...)
+	if adapterErr != nil && !j.isError() {
 		warnings = append(warnings, fmt.Sprintf("the adapter failed on this %d response (saved; the contract test will fail on it): %v", ex.Status, adapterErr))
 	}
 	for _, s := range shapes.Shapes() {
 		warnings = append(warnings, fmt.Sprintf("the adapter reported an unknown shape: %s %q", s.Kind, s.Value))
 	}
 
-	dst, removed, err := writeRecording(j, body)
+	dst, removed, err := writeRecording(j, rec)
 	if err != nil {
 		r.fail("%s: FAILED: writing: %v", id, err)
 		return false
@@ -255,49 +329,21 @@ func (r *recorder) record(ctx context.Context, adapter providers.Provider, proxy
 		warnings = append(warnings, fmt.Sprintf("removed %s: it described the replaced fixture", f))
 	}
 	r.recorded++
-	r.printf("%s: recorded %d %s (%d bytes) -> %s", id, ex.Status, ex.ContentType, len(body), dst)
+	r.printf("%s: recorded %d %s (%d bytes) -> %s", id, ex.Status, ex.ContentType, len(rec.Body), dst)
+	if rec.Spec != nil {
+		what := "copied"
+		if len(rec.Changes) > 0 {
+			what = strings.Join(rec.Changes, "; ")
+		}
+		r.printf("  %s: %s", filepath.Join(j.OutDir, contracttest.CaseFile), what)
+		if j.isError() && !j.Live && !j.WriteRequest {
+			r.printf("  note: its notes may still describe a synthetic body; review them")
+		}
+	}
 	for _, w := range warnings {
 		r.printf("  warning: %s", w)
 	}
 	return true
-}
-
-var contentTypes = map[string]string{
-	contracttest.ResponseJSONFile:        "json",
-	contracttest.ResponseSSEFile:         "text/event-stream",
-	contracttest.ResponseEventStreamFile: "application/vnd.amazon.eventstream",
-}
-
-// drive sends req through the adapter and consumes the whole answer.
-func drive(ctx context.Context, p providers.Provider, req *models.ChatCompletionRequest) error {
-	if !req.Stream {
-		_, err := p.ChatCompletion(ctx, req)
-		return err
-	}
-	chunks, errs := p.StreamChatCompletion(ctx, req)
-	for open := true; open; {
-		select {
-		case _, open = <-chunks:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-	select {
-	case err := <-errs:
-		return err
-	case <-time.After(10 * time.Second):
-		return errors.New("the adapter closed its chunk channel but never its error channel")
-	}
-}
-
-// snippet shortens a body for a one-line error message.
-func snippet(b []byte) string {
-	const max = 512
-	s := strings.Join(strings.Fields(string(b)), " ")
-	if len(s) > max {
-		s = s[:max] + "..."
-	}
-	return s
 }
 
 func (r *recorder) writeMetas(pl *plan, recorded []bool) {
@@ -310,10 +356,13 @@ func (r *recorder) writeMetas(pl *plan, recorded []bool) {
 			}
 		}
 		if n == 0 {
+			if mw.ClonedFrom != "" && len(pl.Copies) > 0 {
+				r.printf("%s %s: nothing was recorded, so its %d not-recordable cases were not copied either", pl.Provider, mw.Model, len(pl.Copies))
+			}
 			continue
 		}
 		if mw.ClonedFrom == "" && n < mw.Cases {
-			r.printf("%s %s: %s left unchanged: %d of its %d cases were recorded, and meta.json covers them all",
+			r.printf("%s %s: %s left unchanged: %d of its %d recordable cases were recorded, and meta.json covers them all",
 				pl.Provider, mw.Model, mw.Path, n, mw.Cases)
 			continue
 		}
@@ -329,14 +378,34 @@ func (r *recorder) writeMetas(pl *plan, recorded []bool) {
 			continue
 		}
 		r.printf("%s %s: wrote %s (source recorded, recorded_at %s)", pl.Provider, mw.Model, mw.Path, date)
-		if mw.ClonedFrom == "" {
+		switch {
+		case mw.ClonedFrom != "":
+			r.printf("  cloned_from %s: the contract test diffs each case's shape against %s's", mw.ClonedFrom, mw.ClonedFrom)
+			for _, j := range pl.Copies {
+				dst, err := writeCopy(j, mw.ClonedFrom, date)
+				if err != nil {
+					r.fail("%s: FAILED: copying the not-recordable case: %v", j.ID(), err)
+					continue
+				}
+				r.copied++
+				r.printf("%s: copied the synthetic body (not recordable) -> %s; its case.json notes say so", j.ID(), dst)
+			}
+		default:
 			r.printf("  note: its notes may still describe synthetic bodies; review them")
+			if mw.Synthetic > 0 {
+				r.printf("  note: %d not-recordable cases stay synthetic; their case.json says so", mw.Synthetic)
+			}
 		}
 	}
 }
 
 func (r *recorder) printPlan(pl *plan) {
-	r.printf("%s: %d cases", pl.Provider, len(pl.Jobs))
+	byEP := map[string]int{}
+	for _, j := range pl.Jobs {
+		byEP[j.Endpoint]++
+	}
+	r.printf("%s: %d cases to record (%s); %d not recordable, %d over the caps",
+		pl.Provider, len(pl.Jobs), endpointCounts(byEP), len(pl.NotRecordable), len(pl.Capped))
 	for _, g := range pl.groups() {
 		spec := upstreamSpec(pl.Provider, g.Name)
 		head := fmt.Sprintf("  %s: %d cases", pl.label(g), len(g.Jobs))
@@ -347,25 +416,78 @@ func (r *recorder) printPlan(pl *plan) {
 		signed := spec.build(func(string) string { return "" }).signedBody
 		for _, i := range g.Jobs {
 			j := pl.Jobs[i]
-			what := j.ResponseFile()
-			if j.WriteRequest {
-				what = contracttest.RequestFile + " (model " + models.ExtractModelFromBody(j.Body) + ") + " + what
+			bad := ""
+			if j.Bad != nil {
+				bad = " (will fail: " + j.Bad.Error() + ")"
 			}
-			extra := ""
-			if j.Patch != nil {
-				extra = " [with " + PatchFile + "]"
-				if signed {
-					extra += " (will fail: SigV4-signed body)"
-				}
-			}
-			r.printf("    %s/%s -> %s: %s%s", j.Target, j.Name, j.OutDir, what, extra)
+			r.printf("    %s/%s%s -> %s: %s%s%s", j.Target, j.Name, jobTags(j), j.OutDir, jobFiles(j), patchNote(j, signed), bad)
 		}
+	}
+	if len(pl.NotRecordable) > 0 {
+		r.printf("  not recordable (case.json \"recordable\": false), not sent:")
+		for _, c := range pl.NotRecordable {
+			r.printf("    %s/%s [%s, %d]", c.Model, c.Name, c.Endpoint, c.wantStatus())
+		}
+	}
+	if len(pl.Copies) > 0 {
+		r.printf("  not recordable, copied as synthetic if the clone records anything:")
+		for _, j := range pl.Copies {
+			r.printf("    %s/%s [%s, %d] -> %s", j.Target, j.Name, j.Endpoint, j.wantStatus(), j.OutDir)
+		}
+	}
+	if len(pl.Capped) > 0 {
+		r.printf("  over -max-cases/-max-models, not sent: %s", caseList(pl.Capped))
 	}
 	for _, mw := range pl.Metas {
 		if mw.ClonedFrom != "" {
-			r.printf("  meta: %s (new: model %s, allowlists from %s, source recorded)", mw.Path, mw.Model, mw.ClonedFrom)
+			r.printf("  meta: %s (new: model %s, cloned_from %s with its allowlists, source recorded)", mw.Path, mw.Model, mw.ClonedFrom)
 		} else {
-			r.printf("  meta: %s -> source recorded, if all %d of its cases record (%d selected)", mw.Path, mw.Cases, len(mw.Jobs))
+			r.printf("  meta: %s -> source recorded, if all %d of its recordable cases record (%d selected)", mw.Path, mw.Cases, len(mw.Jobs))
 		}
 	}
+}
+
+// jobTags is " [endpoint, stream, expects N]" for what is not a plain 200
+// chat case.
+func jobTags(j job) string {
+	var tags []string
+	if j.Endpoint != contracttest.EndpointChat {
+		tags = append(tags, j.Endpoint)
+	}
+	if j.isError() {
+		tags = append(tags, fmt.Sprintf("expects %d", j.wantStatus()))
+	}
+	if len(tags) == 0 {
+		return ""
+	}
+	return " [" + strings.Join(tags, ", ") + "]"
+}
+
+// jobFiles says what a job writes.
+func jobFiles(j job) string {
+	what := j.RespFile
+	if what == "" {
+		what = "response.* (by Content-Type)"
+	}
+	if j.WriteRequest {
+		what = contracttest.RequestFile + " (model " + models.ExtractModelFromBody(j.Body) + ") + " + what
+	}
+	switch {
+	case j.isError():
+		what += " + " + contracttest.CaseFile + " (status checked, observed headers)"
+	case j.WriteRequest && j.HasSpec:
+		what += " + " + contracttest.CaseFile
+	}
+	return what
+}
+
+func patchNote(j job, signed bool) string {
+	if j.Patch == nil {
+		return ""
+	}
+	s := " [with " + PatchFile + "]"
+	if signed {
+		s += " (will fail: SigV4-signed body)"
+	}
+	return s
 }

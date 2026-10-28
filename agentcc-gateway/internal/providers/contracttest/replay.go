@@ -73,11 +73,16 @@ var transportHeaders = map[string]bool{
 }
 
 // ReplayServer starts a server, closed when t ends, that answers every
-// request with c.Body as a 200 with c.ContentType: application/json,
-// text/event-stream or application/vnd.amazon.eventstream by response file.
+// request with c.Body, with status c.Status (200 when unset), Content-Type
+// c.ContentType, and c.Headers: case.json's status, content type and
+// headers, or a 200 whose Content-Type follows the response file.
 func ReplayServer(t testing.TB, c Case) *Replay {
 	t.Helper()
 	r := &Replay{}
+	status := c.Status
+	if status == 0 {
+		status = http.StatusOK
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		body, err := io.ReadAll(req.Body)
 		if err != nil {
@@ -85,8 +90,11 @@ func ReplayServer(t testing.TB, c Case) *Replay {
 		}
 		r.record(req, body)
 
+		for name, value := range c.Headers {
+			w.Header().Set(name, value)
+		}
 		w.Header().Set("Content-Type", c.ContentType)
-		w.WriteHeader(http.StatusOK)
+		w.WriteHeader(status)
 		_, _ = w.Write(c.Body)
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()

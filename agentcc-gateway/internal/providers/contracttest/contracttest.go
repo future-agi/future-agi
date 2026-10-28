@@ -5,8 +5,10 @@
 //
 // Fixtures are keyed by exact upstream model ID, because providers change
 // response shapes per model release, not per API. See README.md for the
-// layout, the meta.json schema, how to add a model version, how to update
-// goldens, and live mode.
+// layout, the meta.json and case.json schemas, error cases, strict mode
+// (Strict: type, enum, opaque-region and shape checks), the mutation
+// self-test, how to add a model version, how to update goldens, and live
+// mode.
 //
 // The package is test support: import it only from _test.go files. The one
 // exception is cmd/contract-recorder, which uses ModelDir, Meta and the file
@@ -57,8 +59,20 @@ const (
 	// ResponseEventStreamFile is a binary AWS event-stream body (Bedrock's
 	// streaming framing), replayed as application/vnd.amazon.eventstream.
 	ResponseEventStreamFile = "response.eventstream"
-	GoldenFile              = "golden.json"
-	UpstreamGoldenFile      = "upstream_request.golden.json"
+	// ResponseBinFile is an opaque binary body, such as speech audio,
+	// replayed as application/octet-stream unless case.json says otherwise.
+	ResponseBinFile = "response.bin"
+	// ResponseTextFile is a non-JSON text body, such as an HTML 502 page from
+	// an upstream proxy, replayed as text/plain unless case.json says
+	// otherwise.
+	ResponseTextFile   = "response.txt"
+	GoldenFile         = "golden.json"
+	UpstreamGoldenFile = "upstream_request.golden.json"
+	// OpaqueGoldenFile, in the contracts root, lists every opaque region
+	// (json.RawMessage, any, a custom unmarshaler) the strict checks met
+	// across the provider's fixtures: what the adapter's structs do not
+	// watch. Written by -update; see Strict.
+	OpaqueGoldenFile = "opaque.golden.json"
 )
 
 // Values of Meta.Source.
@@ -79,23 +93,50 @@ type Case struct {
 	Dir string
 	// Meta is shared by every case of the same model.
 	Meta *Meta
-	// Request is request.json, decoded as the gateway would decode it. Each
-	// Case owns its own copy.
+	// Request is request.json, decoded as the gateway would decode it, for a
+	// chat or chat_via_responses case; nil for any other endpoint, whose test
+	// decodes RawRequest into its own request type. Each Case owns its own
+	// copy.
 	Request *models.ChatCompletionRequest
+	// RawRequest is request.json byte for byte, whatever the endpoint.
+	RawRequest []byte
 	// Body is the raw upstream response body, byte for byte.
 	Body []byte
-	// IsStream is true when the body is response.sse or response.eventstream.
+	// IsStream is true when the request asks for a stream: request.json has
+	// "stream": true, or the response file is response.sse or
+	// response.eventstream. A 2xx stream case has a stream response file; an
+	// error case's body is the error the upstream answered with instead.
 	IsStream bool
-	// ContentType is what the replay server answers with, chosen by the
-	// response file's extension.
+	// ContentType is what the replay server answers with: case.json's
+	// content_type, or the one the response file's extension implies.
 	ContentType string
 	// Live is true when the case came from LiveEnv rather than the repo.
 	Live bool
 
+	// Endpoint is the provider method the case drives (case.json; default
+	// EndpointChat).
+	Endpoint string
+	// Status is the HTTP status replayed (case.json; default 200).
+	Status int
+	// Headers are extra response headers replayed (case.json).
+	Headers map[string]string
+	// Recordable is false for a case no real request can induce (case.json).
+	Recordable bool
+	// Notes is case.json's notes.
+	Notes string
+	// SanityGaps are the sanity failures case.json expects (see ExpectGaps).
+	SanityGaps []SanityGap
+
 	// requestDir holds the request.json in use: Dir, or in live mode the
 	// repo's case directory when the recording did not bring its own.
 	requestDir string
+	// mutant marks a copy made by the mutation self-test: its checks must not
+	// count toward allowlist staleness, the opaque golden or shape diffs.
+	mutant bool
 }
+
+// IsError reports whether the case replays an error status (400-599).
+func (c Case) IsError() bool { return c.Status >= 400 }
 
 // ID is "<model>/<case>", the natural subtest name.
 func (c Case) ID() string { return c.Model + "/" + c.Name }
@@ -118,23 +159,138 @@ type Meta struct {
 	Source string `json:"source"`
 	// RecordedAt is the capture date, YYYY-MM-DD, for recorded fixtures.
 	RecordedAt *string `json:"recorded_at"`
-	Notes      string  `json:"notes"`
+	// ClonedFrom is the model this one's cases were cloned from (the
+	// recorder's -from). Strict.Check then diffs each case's shape against the
+	// same case of that model, so a new model's first capture is compared
+	// with a reviewed one instead of being accepted as it is.
+	ClonedFrom string `json:"cloned_from,omitempty"`
+	Notes      string `json:"notes"`
 	// AllowedUnknownFields lists upstream JSON paths the adapter's structs do
 	// not represent, each with the reason that is acceptable.
 	AllowedUnknownFields []AllowedField `json:"allowed_unknown_fields"`
 	// AllowedUnknownShapes lists unknown-shape reports (common.UnknownShape)
 	// the adapter is known to make on these fixtures.
 	AllowedUnknownShapes []AllowedShape `json:"allowed_unknown_shapes"`
+	// AllowedTypeMismatches lists paths whose JSON type differs from the
+	// adapter's struct (a decode would fail or drop them), each with a reason.
+	// Same rules as AllowedUnknownFields.
+	AllowedTypeMismatches []AllowedField `json:"allowed_type_mismatches,omitempty"`
+	// OptionalFields lists paths allowed to appear, disappear or change JSON
+	// type between two captures of the same case (live vs committed, or a
+	// cloned model vs its template), each with a reason. An entry covers the
+	// path and everything below it.
+	OptionalFields []AllowedField `json:"optional_fields,omitempty"`
 
 	dir   string
 	cases int
 	live  bool
+	suite *suite
+	// mutant metas belong to mutation self-test copies and record nothing.
+	mutant bool
 
-	mu            sync.Mutex
-	usedFields    map[string]bool
-	usedShapes    map[string]bool
-	auditedFields map[string]bool // case names that ran a field audit
-	auditedShapes map[string]bool // case names that ran a shape audit
+	mu      sync.Mutex
+	audited map[auditKind]map[string]bool // case names that ran each audit
+	used    map[auditKind]map[string]bool // allowlist keys each audit used
+}
+
+// auditKind names an allowlist a case's audit consults.
+type auditKind string
+
+const (
+	auditFields auditKind = "allowed_unknown_fields"
+	auditShapes auditKind = "allowed_unknown_shapes"
+	auditTypes  auditKind = "allowed_type_mismatches"
+)
+
+// mutantCopy is a Meta with m's allowlists that records nothing, for the
+// mutation self-test.
+func (m *Meta) mutantCopy() *Meta {
+	return &Meta{
+		Provider: m.Provider, Model: m.Model, Source: m.Source, RecordedAt: m.RecordedAt,
+		ClonedFrom: m.ClonedFrom, Notes: m.Notes,
+		AllowedUnknownFields: m.AllowedUnknownFields, AllowedUnknownShapes: m.AllowedUnknownShapes,
+		AllowedTypeMismatches: m.AllowedTypeMismatches, OptionalFields: m.OptionalFields,
+		dir: m.dir, cases: m.cases, live: m.live, mutant: true,
+	}
+}
+
+// suite is what one Discover call shares across its models: what the strict
+// checks and the mutation self-test met, for OpaqueGoldenFile and the
+// summary logs.
+type suite struct {
+	root  string
+	live  bool
+	cases int
+
+	mu     sync.Mutex
+	strict map[string]bool // case IDs that ran Strict.Check
+	opaque map[string]bool
+
+	// enums are the EnumSpec paths each Strict declares and the ones a
+	// case reached, for a log of declarations nothing exercised.
+	enums map[*Strict]map[string]bool
+
+	// The mutation self-test's totals, for one summary line.
+	mutCases, mutRun, mutDetected int
+	mutOpaque                     map[string]bool
+}
+
+// noteStrict records what one case's Strict.Check met.
+func (s *suite) noteStrict(st *Strict, caseID string, rep Report) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.strict == nil {
+		s.strict, s.opaque, s.enums = map[string]bool{}, map[string]bool{}, map[*Strict]map[string]bool{}
+	}
+	s.strict[caseID] = true
+	for _, p := range rep.Opaque {
+		s.opaque[p] = true
+	}
+	if s.enums[st] == nil {
+		s.enums[st] = map[string]bool{}
+	}
+	for _, p := range rep.enumHits {
+		s.enums[st][p] = true
+	}
+}
+
+// finish logs the mutation self-test's totals and, once every case ran
+// Strict.Check, the EnumSpec paths no case reached, and compares the opaque
+// regions every case met with OpaqueGoldenFile. A -run filter that selects
+// some cases skips the last two, and so does live mode, whose responses need
+// not reach every region a fixture pinned.
+func (s *suite) finish(t testing.TB) {
+	t.Helper()
+	s.mu.Lock()
+	ran, paths := len(s.strict), make([]string, 0, len(s.opaque))
+	for p := range s.opaque {
+		paths = append(paths, p)
+	}
+	if s.mutCases > 0 {
+		t.Logf("contracttest: mutation self-test: %d cases, %d of %d mutations detected, %d distinct opaque regions not mutated",
+			s.mutCases, s.mutDetected, s.mutRun, len(s.mutOpaque))
+	}
+	s.mu.Unlock()
+	var unreached []string
+	for st, hits := range s.enums {
+		for _, e := range st.Enums {
+			for _, p := range e.Paths {
+				if !hits[p] {
+					unreached = append(unreached, p)
+				}
+			}
+		}
+	}
+	if s.live || ran == 0 || ran != s.cases {
+		return
+	}
+	if len(unreached) > 0 {
+		sort.Strings(unreached)
+		t.Logf("contracttest: EnumSpec paths no fixture has a value at (fine for rare fields; a mistyped path disables its check):\n  %s",
+			strings.Join(unreached, "\n  "))
+	}
+	sort.Strings(paths)
+	AssertGolden(t, filepath.Join(s.root, OpaqueGoldenFile), paths)
 }
 
 // AllowedField is one allowlisted unknown JSON path.
@@ -178,6 +334,7 @@ func discover(t testing.TB, provider, root, fallback string, live bool) []Case {
 
 	var cases []Case
 	var metas []*Meta
+	st := &suite{root: root, live: live}
 	for _, md := range modelDirs {
 		if !md.IsDir() {
 			continue
@@ -188,32 +345,47 @@ func discover(t testing.TB, provider, root, fallback string, live bool) []Case {
 			t.Fatalf("contracttest: %s: %v", modelDir, err)
 		}
 		meta := loadMeta(t, provider, model, modelDir, fallback, live)
+		meta.suite = st
 		metas = append(metas, meta)
 
 		caseDirs, err := os.ReadDir(modelDir)
 		if err != nil {
 			t.Fatalf("contracttest: reading %s: %v", modelDir, err)
 		}
+		found := 0
 		for _, cd := range caseDirs {
 			if !cd.IsDir() {
 				continue
 			}
-			c := loadCase(t, meta, model, cd.Name(), filepath.Join(modelDir, cd.Name()), fallback, live)
+			found++
+			c, err := readCase(meta, model, cd.Name(), filepath.Join(modelDir, cd.Name()), fallback, live)
+			if err != nil {
+				t.Fatalf("contracttest: %v", err)
+			}
+			if live && !c.Recordable {
+				// Nothing real can induce this case, so a recording of it
+				// answers a different question; the committed fixture keeps
+				// testing it.
+				t.Logf("contracttest: live mode: skipping %s, which case.json marks not recordable", c.ID())
+				continue
+			}
 			cases = append(cases, c)
 			meta.cases++
 		}
-		if meta.cases == 0 {
+		if found == 0 {
 			t.Fatalf("contracttest: %s has a meta.json but no cases", modelDir)
 		}
 	}
 	if len(cases) == 0 {
 		t.Fatalf("contracttest: no cases for %s under %s", provider, root)
 	}
+	st.cases = len(cases)
 
 	t.Cleanup(func() {
 		for _, m := range metas {
 			m.checkStale(t)
 		}
+		st.finish(t)
 	})
 	return cases
 }
@@ -272,16 +444,26 @@ func loadMeta(t testing.TB, provider, model, modelDir, fallback string, live boo
 		t.Fatalf("contracttest: reading %s: %v", path, err)
 	}
 
-	meta := &Meta{dir: modelDir, live: live}
+	meta, err := decodeMeta(raw, provider, model)
+	if err != nil {
+		t.Fatalf("contracttest: %s: %v", path, err)
+	}
+	meta.dir, meta.live = modelDir, live
+	return meta
+}
+
+// decodeMeta decodes and validates a meta.json strictly.
+func decodeMeta(raw []byte, provider, model string) (*Meta, error) {
+	meta := &Meta{}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(meta); err != nil {
-		t.Fatalf("contracttest: %s: %v", path, err)
+		return nil, err
 	}
 	if err := meta.validate(provider, model); err != nil {
-		t.Fatalf("contracttest: %s: %v", path, err)
+		return nil, err
 	}
-	return meta
+	return meta, nil
 }
 
 var shapeKinds = map[common.ShapeKind]bool{
@@ -313,18 +495,17 @@ func (m *Meta) validate(provider, model string) error {
 	default:
 		return fmt.Errorf("source = %q, want %q or %q", m.Source, SourceSynthetic, SourceRecorded)
 	}
-	paths := map[string]bool{}
-	for _, f := range m.AllowedUnknownFields {
-		if !strings.Contains(f.Path, "$") {
-			return fmt.Errorf("allowed_unknown_fields path %q is not a JSON path", f.Path)
-		}
-		if strings.TrimSpace(f.Reason) == "" {
-			return fmt.Errorf("allowed_unknown_fields %q has no reason", f.Path)
-		}
-		if paths[f.Path] {
-			return fmt.Errorf("allowed_unknown_fields %q is listed twice", f.Path)
-		}
-		paths[f.Path] = true
+	if err := validatePaths("allowed_unknown_fields", m.AllowedUnknownFields); err != nil {
+		return err
+	}
+	if err := validatePaths("allowed_type_mismatches", m.AllowedTypeMismatches); err != nil {
+		return err
+	}
+	if err := validatePaths("optional_fields", m.OptionalFields); err != nil {
+		return err
+	}
+	if m.ClonedFrom == m.Model {
+		return fmt.Errorf("cloned_from is the model itself")
 	}
 	shapes := map[string]bool{}
 	for _, s := range m.AllowedUnknownShapes {
@@ -342,6 +523,25 @@ func (m *Meta) validate(provider, model string) error {
 	return nil
 }
 
+// validatePaths checks a list of path entries: JSON paths, each with a
+// reason, none twice.
+func validatePaths(list string, entries []AllowedField) error {
+	paths := map[string]bool{}
+	for _, f := range entries {
+		if !strings.Contains(f.Path, "$") {
+			return fmt.Errorf("%s path %q is not a JSON path", list, f.Path)
+		}
+		if strings.TrimSpace(f.Reason) == "" {
+			return fmt.Errorf("%s %q has no reason", list, f.Path)
+		}
+		if paths[f.Path] {
+			return fmt.Errorf("%s %q is listed twice", list, f.Path)
+		}
+		paths[f.Path] = true
+	}
+	return nil
+}
+
 // responseFiles are the response file names a case may hold, exactly one.
 var responseFiles = []struct {
 	name        string
@@ -351,32 +551,72 @@ var responseFiles = []struct {
 	{ResponseJSONFile, false, "application/json"},
 	{ResponseSSEFile, true, "text/event-stream"},
 	{ResponseEventStreamFile, true, "application/vnd.amazon.eventstream"},
+	{ResponseBinFile, false, "application/octet-stream"},
+	{ResponseTextFile, false, "text/plain; charset=utf-8"},
 }
 
-func loadCase(t testing.TB, meta *Meta, model, name, dir, fallback string, live bool) Case {
-	t.Helper()
+func responseFileNames() string {
+	names := make([]string, len(responseFiles))
+	for i, rf := range responseFiles {
+		names[i] = rf.name
+	}
+	return strings.Join(names, ", ")
+}
+
+// readCase loads one case directory. In live mode, a request.json or
+// case.json the recording did not write comes from the repo's same-named
+// case under fallback.
+func readCase(meta *Meta, model, name, dir, fallback string, live bool) (Case, error) {
 	c := Case{Name: name, Model: model, Dir: dir, Meta: meta, Live: live}
+	repoDir := ""
+	if live {
+		repoDir = filepath.Join(fallback, ModelDir(model), name)
+	}
 
 	var found []string
+	respStream := false
 	for _, rf := range responseFiles {
 		body, err := os.ReadFile(filepath.Join(dir, rf.name))
 		if os.IsNotExist(err) {
 			continue
 		}
 		if err != nil {
-			t.Fatalf("contracttest: reading %s/%s: %v", dir, rf.name, err)
+			return c, fmt.Errorf("reading %s/%s: %v", dir, rf.name, err)
 		}
 		found = append(found, rf.name)
-		c.Body, c.IsStream, c.ContentType = body, rf.stream, rf.contentType
+		c.Body, respStream, c.ContentType = body, rf.stream, rf.contentType
 	}
 	switch {
 	case len(found) == 0:
-		t.Fatalf("contracttest: %s has no response file (want one of %s, %s, %s)",
-			dir, ResponseJSONFile, ResponseSSEFile, ResponseEventStreamFile)
+		return c, fmt.Errorf("%s has no response file (want one of %s)", dir, responseFileNames())
 	case len(found) > 1:
-		t.Fatalf("contracttest: %s has more than one response file: %s", dir, strings.Join(found, ", "))
+		return c, fmt.Errorf("%s has more than one response file: %s", dir, strings.Join(found, ", "))
 	case found[0] == ResponseJSONFile && !json.Valid(c.Body):
-		t.Fatalf("contracttest: %s/%s is not valid JSON", dir, ResponseJSONFile)
+		return c, fmt.Errorf("%s/%s is not valid JSON", dir, ResponseJSONFile)
+	}
+
+	specDir := dir
+	if _, err := os.Stat(filepath.Join(dir, CaseFile)); os.IsNotExist(err) && live {
+		specDir = repoDir
+	}
+	spec, err := ReadCaseSpec(specDir)
+	if err != nil {
+		return c, err
+	}
+	c.Endpoint, c.Status = spec.Endpoint, spec.Status
+	if c.Endpoint == "" {
+		c.Endpoint = EndpointChat
+	}
+	if c.Status == 0 {
+		c.Status = 200
+	}
+	if spec.ContentType != "" {
+		c.ContentType = spec.ContentType
+	}
+	c.Headers, c.Recordable, c.Notes, c.SanityGaps = spec.Headers, spec.CanRecord(), spec.Notes, spec.SanityGaps
+	if c.IsError() && respStream {
+		return c, fmt.Errorf("%s: a %s with error status %d; an error case's body is the error the upstream answered with "+
+			"(%s or %s), and a mid-stream error is a 200 stream", dir, found[0], c.Status, ResponseJSONFile, ResponseTextFile)
 	}
 
 	c.requestDir = dir
@@ -384,50 +624,59 @@ func loadCase(t testing.TB, meta *Meta, model, name, dir, fallback string, live 
 	raw, err := os.ReadFile(reqPath)
 	if os.IsNotExist(err) && live {
 		// The recorder replays the repo's request; it need not copy it.
-		c.requestDir = filepath.Join(fallback, ModelDir(model), name)
+		c.requestDir = repoDir
 		reqPath = filepath.Join(c.requestDir, RequestFile)
 		raw, err = os.ReadFile(reqPath)
 	}
 	if err != nil {
-		t.Fatalf("contracttest: reading %s: %v", reqPath, err)
+		return c, fmt.Errorf("reading %s: %v", reqPath, err)
 	}
-	var req models.ChatCompletionRequest
-	if err := json.Unmarshal(raw, &req); err != nil {
-		t.Fatalf("contracttest: %s: %v", reqPath, err)
+	c.RawRequest = raw
+	var head map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &head); err != nil {
+		return c, fmt.Errorf("%s: not a JSON object: %v", reqPath, err)
 	}
-	if req.Stream != c.IsStream {
-		t.Fatalf("contracttest: %s: request has stream=%v, but the case's response file says stream=%v",
-			reqPath, req.Stream, c.IsStream)
+	reqStream, hasStream := false, false
+	if s, ok := head["stream"]; ok {
+		if err := json.Unmarshal(s, &reqStream); err != nil {
+			return c, fmt.Errorf(`%s: "stream" must be a boolean`, reqPath)
+		}
+		hasStream = true
 	}
-	c.Request = &req
-	return c
+	if chatEndpoints[c.Endpoint] {
+		var req models.ChatCompletionRequest
+		if err := json.Unmarshal(raw, &req); err != nil {
+			return c, fmt.Errorf("%s: %v", reqPath, err)
+		}
+		c.Request = &req
+		hasStream = true // a chat request without "stream" asks for none
+	}
+	if hasStream && !c.IsError() && reqStream != respStream {
+		return c, fmt.Errorf("%s: request has stream=%v, but the case's response file says stream=%v",
+			reqPath, reqStream, respStream)
+	}
+	c.IsStream = reqStream || respStream
+	return c, nil
 }
 
-// noteFields records that c ran a field audit and which allowlist entries it
-// used.
-func (m *Meta) noteFields(caseName string, used []string) {
+// note records that caseName ran the audit of kind and which of its
+// allowlist entries it used. A mutant meta records nothing.
+func (m *Meta) note(kind auditKind, caseName string, used []string) {
+	if m.mutant {
+		return
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.auditedFields == nil {
-		m.auditedFields = map[string]bool{}
-		m.usedFields = map[string]bool{}
+	if m.audited == nil {
+		m.audited = map[auditKind]map[string]bool{}
+		m.used = map[auditKind]map[string]bool{}
 	}
-	m.auditedFields[caseName] = true
-	for _, p := range used {
-		m.usedFields[p] = true
+	if m.audited[kind] == nil {
+		m.audited[kind], m.used[kind] = map[string]bool{}, map[string]bool{}
 	}
-}
-
-func (m *Meta) noteShapes(caseName string, used []string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.auditedShapes == nil {
-		m.auditedShapes = map[string]bool{}
-		m.usedShapes = map[string]bool{}
-	}
-	m.auditedShapes[caseName] = true
+	m.audited[kind][caseName] = true
 	for _, k := range used {
-		m.usedShapes[k] = true
+		m.used[kind][k] = true
 	}
 }
 
@@ -444,30 +693,44 @@ func (m *Meta) checkStale(t testing.TB) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if len(m.auditedFields) == m.cases {
+	lists := []struct {
+		kind auditKind
+		keys []string
+	}{
+		{auditFields, fieldKeys(m.AllowedUnknownFields)},
+		{auditShapes, shapeKeys(m.AllowedUnknownShapes)},
+		{auditTypes, fieldKeys(m.AllowedTypeMismatches)},
+	}
+	for _, l := range lists {
+		if len(m.audited[l.kind]) != m.cases {
+			continue
+		}
 		var stale []string
-		for _, f := range m.AllowedUnknownFields {
-			if !m.usedFields[f.Path] {
-				stale = append(stale, f.Path)
+		for _, k := range l.keys {
+			if !m.used[l.kind][k] {
+				stale = append(stale, k)
 			}
 		}
 		if len(stale) > 0 {
 			sort.Strings(stale)
-			t.Errorf("contracttest: %s/%s allowed_unknown_fields entries no case produced (remove them):\n  %s",
-				m.dir, MetaFile, strings.Join(stale, "\n  "))
+			t.Errorf("contracttest: %s/%s %s entries no case produced (remove them):\n  %s",
+				m.dir, MetaFile, l.kind, strings.Join(stale, "\n  "))
 		}
 	}
-	if len(m.auditedShapes) == m.cases {
-		var stale []string
-		for _, s := range m.AllowedUnknownShapes {
-			if !m.usedShapes[s.key()] {
-				stale = append(stale, s.key())
-			}
-		}
-		if len(stale) > 0 {
-			sort.Strings(stale)
-			t.Errorf("contracttest: %s/%s allowed_unknown_shapes entries no case produced (remove them):\n  %s",
-				m.dir, MetaFile, strings.Join(stale, "\n  "))
-		}
+}
+
+func fieldKeys(fs []AllowedField) []string {
+	keys := make([]string, len(fs))
+	for i, f := range fs {
+		keys[i] = f.Path
 	}
+	return keys
+}
+
+func shapeKeys(ss []AllowedShape) []string {
+	keys := make([]string, len(ss))
+	for i, s := range ss {
+		keys[i] = s.key()
+	}
+	return keys
 }

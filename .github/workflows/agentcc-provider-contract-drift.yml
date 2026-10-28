@@ -6,6 +6,17 @@
 # finish reason an adapter does not know fails the job. Goldens are not
 # compared: live text differs on every run.
 #
+# Every endpoint with fixtures is covered (each case.json names its endpoint).
+# Text endpoints (chat, embeddings, rerank, responses, the native passthroughs,
+# token counting, model lists) record every case. Media endpoints cost more per
+# call, so they record at most media_max_models models per provider and
+# endpoint and media_max_cases cases per model and endpoint, rotated weekly so
+# every model is reached over time. Assistants and vector stores are not
+# recorded here: their calls create objects in the account. Cases whose
+# case.json says "recordable": false are never sent. The gemini suite's
+# vertex@<model> fixtures are skipped: Vertex AI needs a short-lived access
+# token (VERTEX_ACCESS_TOKEN), which a repository secret cannot hold.
+#
 # Not run on pull requests: it calls paid APIs and needs secrets. The
 # committed fixtures are checked on every PR by the gateway CI's `make test`.
 # See agentcc-gateway/internal/providers/contracttest/README.md.
@@ -14,7 +25,9 @@
 # but the job fails if nothing at all was recorded.
 #   ANTHROPIC_API_KEY
 #   OPENAI_API_KEY
-#   GROQ_API_KEY, PERPLEXITY_API_KEY       the openai suite's <preset>@<model> fixtures
+#   GROQ_API_KEY, PERPLEXITY_API_KEY, MISTRAL_API_KEY, TOGETHER_API_KEY,
+#   FIREWORKS_API_KEY, CEREBRAS_API_KEY, OPENROUTER_API_KEY
+#                                          the openai suite's <preset>@<model> fixtures
 #   GEMINI_API_KEY                         Google AI Studio key
 #   COHERE_API_KEY
 #   AZURE_OPENAI_KEY, AZURE_OPENAI_ENDPOINT  both; deployments must be named as the azure fixtures' model IDs
@@ -34,6 +47,16 @@ on:
         required: false
         default: ""
         type: string
+      media_max_models:
+        description: "Media endpoints (images, speech, transcription, translation, ocr): models per provider and endpoint. 0: every model."
+        required: false
+        default: "1"
+        type: string
+      media_max_cases:
+        description: "Media endpoints: cases per model and endpoint. 0: every case."
+        required: false
+        default: "1"
+        type: string
 
 permissions:
   contents: read
@@ -46,7 +69,7 @@ jobs:
   drift:
     name: Record provider responses and check their shapes
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
@@ -56,18 +79,31 @@ jobs:
           go-version-file: agentcc-gateway/go.mod
           cache-dependency-path: agentcc-gateway/go.sum
 
-      # Writes $RUNNER_TEMP/contracts/<provider>/<model>/<case>/response.*,
-      # the layout AGENTCC_CONTRACT_FIXTURES_DIR reads. Exits non-zero if any
-      # case failed (an upstream error is reported, never saved); the next
-      # steps still run so the rest is checked and uploaded.
+      # Writes $RUNNER_TEMP/contracts/<provider>/<model>/<case>/response.*
+      # (plus case.json for error cases, with the live status and headers),
+      # the layout AGENTCC_CONTRACT_FIXTURES_DIR reads. Two passes into the
+      # same directory: text endpoints uncapped, media endpoints capped. The
+      # recorder exits 1 if any case failed (an upstream error or an
+      # unexpected status is reported, never saved) and 3 when a pass matched
+      # no case (a provider without media fixtures, say), which is fine; the
+      # next steps still run so the rest is checked and uploaded.
       - name: Record fresh upstream responses
         working-directory: agentcc-gateway
         env:
           PROVIDER_FILTER: ${{ inputs.provider }}
+          MEDIA_MAX_MODELS: ${{ inputs.media_max_models || '1' }}
+          MEDIA_MAX_CASES: ${{ inputs.media_max_cases || '1' }}
+          MEDIA_ENDPOINTS: images,speech,transcription,translation,ocr
+          STATEFUL_ENDPOINTS: assistants,vector_stores
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+          FIREWORKS_API_KEY: ${{ secrets.FIREWORKS_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
           AZURE_OPENAI_KEY: ${{ secrets.AZURE_OPENAI_KEY }}
@@ -76,11 +112,30 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_REGION: ${{ vars.AWS_REGION }}
         run: |
+          recorder="$RUNNER_TEMP/bin/contract-recorder"
+          go build -o "$recorder" ./cmd/contract-recorder
           args=(-out "$RUNNER_TEMP/contracts")
           if [ -n "$PROVIDER_FILTER" ]; then
             args+=(-provider "$PROVIDER_FILTER")
           fi
-          go run ./cmd/contract-recorder "${args[@]}"
+          # The week number moves the media window to the next models.
+          week=$(( $(date -u +%s) / 604800 ))
+          failed=0
+          pass() {
+            local rc=0
+            "$recorder" "${args[@]}" "$@" || rc=$?
+            case "$rc" in
+              0 | 3) ;;
+              *) failed=1 ;;
+            esac
+          }
+          echo "::group::Text endpoints, every case"
+          pass -exclude-endpoint "$MEDIA_ENDPOINTS,$STATEFUL_ENDPOINTS"
+          echo "::endgroup::"
+          echo "::group::Media endpoints, at most $MEDIA_MAX_MODELS models and $MEDIA_MAX_CASES cases per endpoint (0: no cap)"
+          pass -endpoint "$MEDIA_ENDPOINTS" -max-models "$MEDIA_MAX_MODELS" -max-cases "$MEDIA_MAX_CASES" -rotate "$week"
+          echo "::endgroup::"
+          exit "$failed"
 
       - name: Check the recorded shapes against the adapters
         if: ${{ !cancelled() }}

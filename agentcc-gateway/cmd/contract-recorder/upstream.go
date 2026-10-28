@@ -1,13 +1,17 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
+	"github.com/futureagi/agentcc-gateway/internal/providers/contracttest"
 )
 
 // upstream is how to reach one provider's real API: where it lives, the
@@ -50,7 +54,7 @@ var providerSpecs = map[string]providerSpec{
 	},
 	"gemini": {
 		need: []string{"GEMINI_API_KEY"},
-		help: "Google AI Studio key (generativelanguage.googleapis.com); Vertex AI is not supported by the recorder",
+		help: "Google AI Studio key (generativelanguage.googleapis.com); vertex@<model> fixtures use VERTEX_PROJECT and VERTEX_ACCESS_TOKEN instead",
 		build: func(env func(string) string) upstream {
 			return keyed("https://generativelanguage.googleapis.com", "gemini", env("GEMINI_API_KEY"))
 		},
@@ -63,7 +67,7 @@ var providerSpecs = map[string]providerSpec{
 	},
 	"azure": {
 		need: []string{"AZURE_OPENAI_KEY", "AZURE_OPENAI_ENDPOINT"},
-		help: "AZURE_OPENAI_ENDPOINT is https://<resource>.openai.azure.com; every recorded model ID must be a deployment name on that resource; AZURE_OPENAI_API_VERSION is optional",
+		help: "AZURE_OPENAI_ENDPOINT is https://<resource>.openai.azure.com; every recorded model ID must be a deployment name on that resource; AZURE_OPENAI_API_VERSION, if set, replaces the api-version each case's upstream golden pins",
 		build: func(env func(string) string) upstream {
 			u := keyed(env("AZURE_OPENAI_ENDPOINT"), "azure", env("AZURE_OPENAI_KEY"))
 			if v := env("AZURE_OPENAI_API_VERSION"); v != "" {
@@ -97,25 +101,65 @@ var providerSpecs = map[string]providerSpec{
 // and the model ID that upstream knows. The openai suite files an
 // OpenAI-compatible upstream as "<preset>@<upstream model>", the preset being
 // a providers.KnownProviders entry (groq@openai/gpt-oss-120b); its
-// request.json carries the bare upstream model. Every other key is the
-// provider's own model ID ("@" is legal in Vertex-style IDs, so the split is
-// limited to the openai provider and known presets).
+// request.json carries the bare upstream model. The gemini suite files the
+// same adapter in Vertex AI mode as "vertex@<publisher model>". Every other
+// key is the provider's own model ID ("@" is legal in Vertex-style IDs, so
+// the split is limited to these two prefixes).
 func upstreamFor(provider, key string) (name, model string) {
-	if provider == "openai" {
+	switch provider {
+	case "openai":
 		preset, model, ok := strings.Cut(key, "@")
 		if p, known := providers.KnownProviders[preset]; ok && known && model != "" && p.APIFormat == "openai" && p.BaseURL != "" {
 			return preset, model
+		}
+	case "gemini":
+		if model, ok := strings.CutPrefix(key, vertexPrefix); ok && model != "" {
+			return vertexUpstream, model
 		}
 	}
 	return provider, key
 }
 
+// The gemini suite's Vertex AI fixture keys, and the upstream they name.
+const (
+	vertexPrefix   = "vertex@"
+	vertexUpstream = "vertex"
+)
+
 // upstreamSpec is the spec for an upstream name from upstreamFor.
 func upstreamSpec(provider, name string) providerSpec {
-	if name == provider {
+	switch name {
+	case provider:
 		return providerSpecs[provider]
+	case vertexUpstream:
+		return vertexSpec
 	}
 	return compatSpec(name)
+}
+
+// vertexSpec reaches Vertex AI as the gemini suite configures it (and
+// config.example.yaml does): the gemini adapter on an aiplatform.googleapis.com
+// base URL, with x-gcp-project and x-gcp-location headers, and an OAuth
+// access token as the bearer credential.
+var vertexSpec = providerSpec{
+	need: []string{"VERTEX_PROJECT", "VERTEX_ACCESS_TOKEN"},
+	help: "for the gemini fixtures filed as vertex@<model>: VERTEX_ACCESS_TOKEN from `gcloud auth print-access-token` (it lasts an hour); VERTEX_LOCATION is optional, default global",
+	build: func(env func(string) string) upstream {
+		location := firstNonEmpty(env("VERTEX_LOCATION"), "global")
+		host := "aiplatform.googleapis.com"
+		if location != "global" {
+			host = location + "-" + host
+		}
+		return upstream{
+			baseURL: "https://" + host,
+			cfg: config.ProviderConfig{
+				APIKey:    env("VERTEX_ACCESS_TOKEN"),
+				APIFormat: "gemini",
+				Headers:   map[string]string{"x-gcp-project": env("VERTEX_PROJECT"), "x-gcp-location": location},
+			},
+			secrets: []string{env("VERTEX_ACCESS_TOKEN")},
+		}
+	},
 }
 
 // compatSpec reaches an OpenAI-compatible preset with <PRESET>_API_KEY. The
@@ -186,6 +230,32 @@ func (s providerSpec) missingEnv(env func(string) string) []string {
 		}
 	}
 	return missing
+}
+
+// apiVersionOf is the api-version an azure case is called at: the one its
+// committed upstream_request.golden.json pins (the azure suite calls
+// preview-only deployments, such as gpt-image-1, at a preview version), or ""
+// for the adapter's default when the case has no golden yet. Other providers
+// have no api-version.
+func apiVersionOf(provider, caseDir string) string {
+	if provider != "azure" {
+		return ""
+	}
+	raw, err := os.ReadFile(filepath.Join(caseDir, contracttest.UpstreamGoldenFile))
+	if err != nil {
+		return ""
+	}
+	var golden struct {
+		Query string `json:"query"`
+	}
+	if json.Unmarshal(raw, &golden) != nil {
+		return ""
+	}
+	q, err := url.ParseQuery(golden.Query)
+	if err != nil {
+		return ""
+	}
+	return q.Get("api-version")
 }
 
 // adapterConfig is the provider config the recorder hands to the gateway's

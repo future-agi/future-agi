@@ -100,7 +100,7 @@ func TestPlanInPlace(t *testing.T) {
 	}
 	j := pl.Jobs[0]
 	wantDir := filepath.Join(f.root, "anthropic", "testdata", "contracts", "claude-a", "stream_text")
-	if j.Name != "stream_text" || j.OutDir != wantDir || !j.Stream || j.ResponseFile() != "response.sse" || j.WriteRequest {
+	if j.Name != "stream_text" || j.OutDir != wantDir || !j.Stream || j.RespFile != "response.sse" || j.WriteRequest {
 		t.Errorf("job 0 = %+v, want stream_text in place at %s", j, wantDir)
 	}
 	if string(j.Body) != requestJSON("claude-a", true) {
@@ -148,7 +148,7 @@ func TestPlanEncodedModelDir(t *testing.T) {
 	if want := filepath.Join(out, "bedrock", "us.amazon.nova-2-lite-v1%3A0", "text_basic"); j.OutDir != want {
 		t.Errorf("OutDir = %s, want %s", j.OutDir, want)
 	}
-	if got := pl.Jobs[0].ResponseFile(); got != contracttest.ResponseEventStreamFile {
+	if got := pl.Jobs[0].RespFile; got != contracttest.ResponseEventStreamFile {
 		t.Errorf("bedrock stream response file = %s, want %s", got, contracttest.ResponseEventStreamFile)
 	}
 
@@ -220,7 +220,7 @@ func TestPlanClone(t *testing.T) {
 
 func TestSetModel(t *testing.T) {
 	in := "{\n  \"stream\": true,\n  \"model\": \"old\",\n  \"messages\": [{\"role\": \"user\", \"content\": \"a<b\"}],\n  \"x\": {\"n\": 1.50}\n}\n"
-	got, err := setModel([]byte(in), "new<model>")
+	got, err := setModel([]byte(in), "new<model>", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,10 +241,10 @@ func TestSetModel(t *testing.T) {
 	if string(got) != want {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want)
 	}
-	if _, err := setModel([]byte(`{"messages":[]}`), "m"); err == nil {
+	if _, err := setModel([]byte(`{"messages":[]}`), "m", true); err == nil {
 		t.Error("request without model: want an error")
 	}
-	if _, err := setModel([]byte(`[1]`), "m"); err == nil {
+	if _, err := setModel([]byte(`[1]`), "m", false); err == nil {
 		t.Error("non-object request: want an error")
 	}
 }
@@ -278,7 +278,7 @@ func TestMarkRecorded(t *testing.T) {
 		t.Fatal(err)
 	}
 	if m.Model != "claude-b" || m.Source != "recorded" || *m.RecordedAt != "2026-10-28" ||
-		len(m.AllowedUnknownFields) != 1 || !strings.Contains(m.Notes, "--from claude-a --as claude-b") {
+		len(m.AllowedUnknownFields) != 1 || !strings.Contains(m.Notes, "-from claude-a -as claude-b") || m.ClonedFrom != "claude-a" {
 		t.Errorf("cloned meta = %s", got)
 	}
 }
@@ -306,13 +306,13 @@ func TestWriteRecordingReplacesFixture(t *testing.T) {
 	f.model("bedrock", "us.amazon.nova-2-lite-v1:0", "stream_text")
 	dir := "bedrock/testdata/contracts/us.amazon.nova-2-lite-v1%3A0/stream_text/"
 	f.write(dir+"response.eventstream.json", `[{"event":"messageStart","payload":{"role":"assistant"}}]`)
-	f.write(dir+"response.json", "stray")
 
 	pl, err := planProvider(f.root, "bedrock", selection{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	dst, removed, err := writeRecording(pl.Jobs[0], []byte("recorded"))
+	f.write(dir+"response.json", "stray") // the plan refuses a case with two
+	dst, removed, err := writeRecording(pl.Jobs[0], recording{File: pl.Jobs[0].RespFile, Body: []byte("recorded")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,5 +329,19 @@ func TestWriteRecordingReplacesFixture(t *testing.T) {
 	}
 	if strings.Join(names, ",") != "request.json,response.eventstream" {
 		t.Errorf("case dir holds %q", names)
+	}
+}
+
+// responseFile names the synthetic response file a test fixture tree gives a
+// case: Bedrock streams are AWS event-stream, other streams SSE, everything
+// else JSON.
+func responseFile(provider string, stream bool) string {
+	switch {
+	case !stream:
+		return contracttest.ResponseJSONFile
+	case provider == "bedrock":
+		return contracttest.ResponseEventStreamFile
+	default:
+		return contracttest.ResponseSSEFile
 	}
 }

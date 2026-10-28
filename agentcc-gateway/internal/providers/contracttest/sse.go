@@ -77,6 +77,35 @@ func ParseSSE(body []byte) []Event {
 	return events
 }
 
+// EncodeSSE is ParseSSE's inverse: "event:" (when named) and one "data:"
+// line per line of Data, then a blank line, for each event.
+func EncodeSSE(events []Event) []byte {
+	var b bytes.Buffer
+	for _, e := range events {
+		if e.Name != "" {
+			b.WriteString("event: " + e.Name + "\n")
+		}
+		for _, line := range strings.Split(string(e.Data), "\n") {
+			b.WriteString("data: " + line + "\n")
+		}
+		b.WriteString("\n")
+	}
+	return b.Bytes()
+}
+
+// Codec splits a stream body into events and joins events back into a body,
+// for the mutation self-test. Decode(Encode(events)) must give the events
+// back. A provider whose stream is not SSE (Bedrock's AWS event-stream) sets
+// Strict.Codec to its own; Decode must yield one Event per document the
+// adapter decodes, with that document's JSON as Data.
+type Codec struct {
+	Decode func(body []byte) []Event
+	Encode func(events []Event) []byte
+}
+
+// SSE is the text/event-stream codec.
+var SSE = Codec{Decode: ParseSSE, Encode: EncodeSSE}
+
 // AssertKnownEventTypes fails for every distinct event Type() not in known.
 // It checks the fixture itself, independently of what the adapter does with
 // it, so a recording that brings a new event type fails even if the adapter

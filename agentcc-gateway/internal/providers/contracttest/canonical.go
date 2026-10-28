@@ -260,7 +260,7 @@ func AssertNoUnknownShapes(t testing.TB, c Case, shapes []common.UnknownShape) {
 			unexpected = append(unexpected, fmt.Sprintf("%s (provider %s)", key, s.Provider))
 		}
 	}
-	c.Meta.noteShapes(c.Name, used)
+	c.Meta.note(auditShapes, c.Name, used)
 	if len(unexpected) > 0 {
 		sort.Strings(unexpected)
 		t.Errorf("adapter reported response shapes it does not translate (content was dropped or defaulted):\n  %s\n"+

@@ -25,6 +25,9 @@ type exchange struct {
 	Path        string
 	Status      int
 	ContentType string
+	// Header is the upstream's response header (an error case saves a
+	// whitelisted subset).
+	Header http.Header
 	// Body is the complete upstream response body, byte for byte (after
 	// transport-level gzip decoding), even if the adapter stopped reading.
 	Body []byte
@@ -175,6 +178,7 @@ func (p *teeProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	ex.Status = resp.StatusCode
 	ex.ContentType = resp.Header.Get("Content-Type")
+	ex.Header = resp.Header.Clone()
 	copyHeaders(w.Header(), resp.Header)
 	w.Header().Del("Content-Length")
 	w.WriteHeader(resp.StatusCode)

@@ -154,7 +154,7 @@ func TestRecordPartialLeavesMeta(t *testing.T) {
 	if f.read("anthropic/testdata/contracts/claude-a/meta.json") != before {
 		t.Error("meta.json changed although only 1 of 2 cases was recorded")
 	}
-	if !strings.Contains(out, "1 of its 2 cases were recorded") {
+	if !strings.Contains(out, "1 of its 2 recordable cases were recorded") {
 		t.Errorf("output does not explain the unchanged meta:\n%s", out)
 	}
 }

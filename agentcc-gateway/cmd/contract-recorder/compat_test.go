@@ -18,8 +18,13 @@ func TestUpstreamFor(t *testing.T) {
 		{"openai", "nosuchpreset@x", "openai", "nosuchpreset@x"},
 		{"openai", "azure@gpt-4.1", "openai", "azure@gpt-4.1"}, // azure is not an OpenAI-format preset
 		{"openai", "groq@", "openai", "groq@"},
-		// "@" is part of real IDs elsewhere (Vertex): only openai splits.
+		// "@" is part of real IDs elsewhere (Vertex): only openai's presets
+		// and gemini's vertex@ split.
 		{"anthropic", "groq@claude-x", "anthropic", "groq@claude-x"},
+		{"gemini", "vertex@gemini-3.8-flash", "vertex", "gemini-3.8-flash"},
+		{"gemini", "vertex@", "gemini", "vertex@"},
+		{"gemini", "groq@x", "gemini", "groq@x"},
+		{"anthropic", "vertex@claude-x", "anthropic", "vertex@claude-x"},
 	}
 	for _, tc := range cases {
 		name, model := upstreamFor(tc.provider, tc.key)

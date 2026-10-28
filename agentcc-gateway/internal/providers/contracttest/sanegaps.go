@@ -20,12 +20,31 @@ import (
 // the model answers instead of blocking, say). With no gaps it is AssertSane.
 func AssertSaneWithGaps(t testing.TB, c Case, got Completion, expectOutput bool, gaps ...string) {
 	t.Helper()
+	expectGaps(t, c, gaps, func(tb testing.TB) { AssertSane(tb, got, expectOutput) })
+}
+
+// ExpectGaps runs check, a sanity check such as AssertSane, against the gaps
+// case.json lists under sanity_gaps: a failure a gap's Failure matches is
+// expected, any other failure fails t, and a gap that matches no failure
+// fails t as stale (except live, where a real response need not trigger it).
+// AssertSaneError applies it itself.
+func ExpectGaps(t testing.TB, c Case, check func(t testing.TB)) {
+	t.Helper()
+	gaps := make([]string, len(c.SanityGaps))
+	for i, g := range c.SanityGaps {
+		gaps[i] = g.Failure
+	}
+	expectGaps(t, c, gaps, check)
+}
+
+func expectGaps(t testing.TB, c Case, gaps []string, check func(testing.TB)) {
+	t.Helper()
 	if len(gaps) == 0 {
-		AssertSane(t, got, expectOutput)
+		check(t)
 		return
 	}
 	rec := &saneGapRecorder{TB: t}
-	AssertSane(rec, got, expectOutput)
+	check(rec)
 
 	matched := make([]bool, len(gaps))
 	for _, failure := range rec.failures() {
@@ -39,18 +58,18 @@ func AssertSaneWithGaps(t testing.TB, c Case, got Completion, expectOutput bool,
 			t.Errorf("%s", failure)
 		}
 	}
-	if c.Live {
+	if c.Live || c.mutant {
 		return
 	}
 	for i, gap := range gaps {
 		if !matched[i] {
-			t.Errorf("known sanity gap %q no longer occurs; remove it from the test's expected gaps", gap)
+			t.Errorf("known sanity gap %q no longer occurs; remove it from the case's expected gaps", gap)
 		}
 	}
 }
 
-// saneGapRecorder collects AssertSane's failures instead of failing the
-// test. AssertSane uses only Helper and Errorf; anything else reaches the
+// saneGapRecorder collects a sanity check's failures instead of failing the
+// test. The checks use only Helper and Errorf; anything else reaches the
 // embedded test.
 type saneGapRecorder struct {
 	testing.TB
