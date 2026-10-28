@@ -350,6 +350,30 @@ def _sandbox_collector_url() -> str:
     ).strip()
 
 
+def platform_model_gateway() -> tuple[str, str]:
+    """The sandbox-reachable AgentCC URL and the platform-owned key a sandbox's model calls use."""
+    url = str(
+        os.environ.get("ALK_HOSTED_AGENTCC_BASE_URL")
+        or os.environ.get("AGENTCC_BASE_URL")
+        or ""
+    ).strip()
+    # Prefer a separately scoped authoring key, while preserving compatibility
+    # with deployments that use the platform-owned internal key for both lanes.
+    key = str(
+        os.environ.get("AGENTCC_HARNESS_API_KEY")
+        or os.environ.get("AGENTCC_INTERNAL_API_KEY")
+        or ""
+    ).strip()
+    if not (url and key):
+        raise HostedHarnessError(
+            "agentcc_not_configured",
+            "hosted runs reach every model through AgentCC; configure a sandbox-reachable "
+            "AgentCC URL and a platform-owned harness or internal API key",
+            status_code=503,
+        )
+    return url.rstrip("/"), key
+
+
 def _platform_simulator_material() -> dict[str, str]:
     """Return control-process-only simulator config.
 
@@ -368,28 +392,10 @@ def _platform_simulator_material() -> dict[str, str]:
         os.environ.get("SIMULATOR_LLM_MODEL") or "vertex_ai/gemini-3.8-flash"
     ).strip()
     backend = str(os.environ.get("ALK_HARNESS") or "claude").strip()
-    agentcc_url = str(
-        os.environ.get("ALK_HOSTED_AGENTCC_BASE_URL")
-        or os.environ.get("AGENTCC_BASE_URL")
-        or ""
-    ).strip()
-    # Prefer a separately scoped authoring key, while preserving compatibility
-    # with deployments that use the platform-owned internal key for both lanes.
-    agentcc_key = str(
-        os.environ.get("AGENTCC_HARNESS_API_KEY")
-        or os.environ.get("AGENTCC_INTERNAL_API_KEY")
-        or ""
-    ).strip()
+    agentcc_url, agentcc_key = platform_model_gateway()
     agentcc_model = str(
         os.environ.get("ALK_HOSTED_AGENTCC_MODEL") or "vertex_ai/gemini-3.7-flash"
     ).strip()
-    if not (agentcc_url and agentcc_key):
-        raise HostedHarnessError(
-            "agentcc_not_configured",
-            "hosted runs reach every model through AgentCC; configure a sandbox-reachable "
-            "AgentCC URL and a platform-owned harness or internal API key",
-            status_code=503,
-        )
     unsupported_speech = sorted(
         {
             str(os.environ.get(name) or "").strip().lower()

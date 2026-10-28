@@ -1083,6 +1083,22 @@ ALK_E2B_TEMPLATE_CPU_UNITS = int(os.getenv("ALK_E2B_TEMPLATE_CPU_UNITS", "4"))
 ALK_E2B_TEMPLATE_MEMORY_MB = int(os.getenv("ALK_E2B_TEMPLATE_MEMORY_MB", "8192"))
 ALK_E2B_TEMPLATE_DISK_GB = int(os.getenv("ALK_E2B_TEMPLATE_DISK_GB", "10"))
 ALK_E2B_MAX_TTL_SECONDS = int(os.getenv("ALK_E2B_MAX_TTL_SECONDS", "0"))
+# "Fix my agent": the improvement engine runs in its own E2B template, built on the hosted ALK
+# template (the svc-control user and /opt/alk-venv the E2B bootstrap expects).
+AGENT_FIX_E2B_TEMPLATE_REFERENCE = os.getenv("AGENT_FIX_E2B_TEMPLATE_REFERENCE", "")
+AGENT_FIX_ENGINE_COMMAND = os.getenv(
+    "AGENT_FIX_ENGINE_COMMAND", "node /opt/agent-improvement/platform-entry.mjs"
+)
+# Sandboxes one fix may use in all; an engine that dies is started again from its checkpoint.
+AGENT_FIX_MAX_SANDBOX_ATTEMPTS = int(os.getenv("AGENT_FIX_MAX_SANDBOX_ATTEMPTS", "2"))
+# The engine reports at least every minute; silent this long, it is treated as dead.
+AGENT_FIX_HEARTBEAT_TIMEOUT_SECONDS = int(
+    os.getenv("AGENT_FIX_HEARTBEAT_TIMEOUT_SECONDS", "600")
+)
+# A check run reserves this much of a fix's budget for each scenario execution.
+AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = os.getenv(
+    "AGENT_FIX_WORST_CASE_USD_PER_EXECUTION", "0.05"
+)
 ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS = int(
     os.getenv("ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS", "180")
 )

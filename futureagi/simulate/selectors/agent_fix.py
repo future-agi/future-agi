@@ -1,0 +1,200 @@
+"""Reads for "Fix my agent": the engine's brief, a check run's results, the run list."""
+
+from collections.abc import Iterable, Mapping
+from datetime import timedelta
+from typing import Any
+
+from django.db.models import QuerySet
+
+from simulate.models import (
+    AgentFixRun,
+    HarnessSuiteMember,
+    HostedHarnessExecution,
+    HostedHarnessJob,
+    HostedHarnessScenario,
+)
+from simulate.models.test_execution import CallTranscript
+from simulate.pydantic_schemas.agent_fix import (
+    CheckRecord,
+    CheckRunStatus,
+    EngineBrief,
+    FixRequest,
+    InventoryScenario,
+)
+from simulate.services.harness_environment import environment_name
+
+TRANSCRIPT_CHARS = 8000
+_FINISHED = {
+    HostedHarnessJob.State.COMPLETED,
+    HostedHarnessJob.State.FAILED,
+    HostedHarnessJob.State.CANCELED,
+}
+
+
+def sub_goal_names(raw: Any) -> list[str]:
+    """Sub-goal names from an authored scenario, whichever shape it stored them in."""
+    names = []
+    for item in raw or []:
+        name = item.get("name") if isinstance(item, Mapping) else item
+        if name:
+            names.append(str(name))
+    return names
+
+
+def inventory(fix_run: AgentFixRun) -> list[InventoryScenario]:
+    """Every scenario a check run may select: the source run's pinned suite, or the
+    environment's own scenarios when the source run was not pinned."""
+    suite_version_id = (
+        fix_run.source_run.suite_version_id if fix_run.source_run else None
+    )
+    if suite_version_id:
+        members = HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version_id=suite_version_id
+        ).select_related("scenario")
+        return [
+            _scenario(member.scenario_key, member.content or {}, member.scenario)
+            for member in members.order_by("number")
+        ]
+    rows = HostedHarnessScenario.no_workspace_objects.filter(
+        job_id=fix_run.environment_id
+    ).order_by("number", "created_at")
+    return [_scenario(row.scenario_key, {}, row) for row in rows]
+
+
+def _scenario(
+    key: str, content: Mapping[str, Any], row: HostedHarnessScenario | None
+) -> InventoryScenario:
+    def field(name: str) -> Any:
+        return content.get(name) or (getattr(row, name, None) if row else None) or ""
+
+    return InventoryScenario(
+        key=key,
+        name=str(field("name")),
+        tests=str(field("tests")),
+        use_case=str(field("use_case")),
+        sub_goals=sub_goal_names(
+            content.get("sub_goals") or getattr(row, "sub_goals", None)
+        ),
+    )
+
+
+def engine_brief(fix_run: AgentFixRun) -> EngineBrief:
+    source = (fix_run.source_run.payload or {}).get("source") or {}
+    request = FixRequest.model_validate(fix_run.request)
+    deadline = (fix_run.started_at or fix_run.created_at) + timedelta(
+        minutes=request.max_minutes
+    )
+    return EngineBrief(
+        fix_run_id=str(fix_run.id),
+        environment_name=environment_name(fix_run.environment),
+        base_agent_version_id=str(fix_run.base_agent_version_id),
+        base_commit=str(source.get("commit_sha") or ""),
+        request=request,
+        inventory=inventory(fix_run),
+        has_checkpoint=bool(fix_run.checkpoint_key),
+        deadline_at=deadline.isoformat(),
+    )
+
+
+def check_run_status(run: HostedHarnessJob) -> CheckRunStatus:
+    """A check run's finished trials as engine records. A trial without a receipt yet is
+    left out; ``finished`` says when no more will come."""
+    executions = list(
+        HostedHarnessExecution.no_workspace_objects.filter(job=run)
+        .select_related("source_scenario", "call_execution")
+        .order_by("execution_key")
+    )
+    calls = [execution.call_execution for execution in executions]
+    transcripts = _transcripts(call.id for call in calls)
+    records = []
+    for execution in executions:
+        receipt = (execution.call_execution.call_metadata or {}).get(
+            "hosted_harness_receipt"
+        )
+        if not isinstance(receipt, Mapping):
+            continue
+        records.append(
+            _record(
+                execution.source_scenario.scenario_key,
+                execution.trial_index,
+                receipt,
+                transcripts.get(execution.call_execution_id, ""),
+            )
+        )
+    return CheckRunStatus(
+        run_id=str(run.id),
+        state=run.state,
+        finished=run.state in _FINISHED,
+        total=len(executions),
+        records=records,
+    )
+
+
+def _record(
+    scenario_key: str, trial: int, receipt: Mapping[str, Any], transcript: str
+) -> CheckRecord:
+    checks = [one for one in receipt.get("sub_goals") or [] if isinstance(one, Mapping)]
+    judged = {str(one["name"]): one.get("held") for one in checks if one.get("name")}
+    undecided = [name for name, held in judged.items() if not isinstance(held, bool)]
+    if not judged:
+        error = f"the trial ended {receipt.get('status') or 'without a result'}"
+    elif undecided:
+        error = f"the judge decided nothing on {', '.join(undecided)}"
+    else:
+        error = ""
+    return CheckRecord(
+        scenario_key=scenario_key,
+        trial=trial,
+        status="error" if error else "ok",
+        error=error,
+        sub_goals={
+            name: held for name, held in judged.items() if isinstance(held, bool)
+        },
+        reasons={
+            str(one["name"]): str(one.get("reason") or "")
+            for one in checks
+            if one.get("name")
+        },
+        transcript=transcript,
+    )
+
+
+def _transcripts(call_ids: Iterable[Any]) -> dict[Any, str]:
+    lines: dict[Any, list[str]] = {}
+    rows = CallTranscript.no_workspace_objects.filter(
+        call_execution_id__in=list(call_ids)
+    ).order_by("call_execution_id", "start_time_ms", "created_at")
+    for row in rows.values_list("call_execution_id", "speaker_role", "content"):
+        lines.setdefault(row[0], []).append(f"{row[1]}: {row[2]}")
+    return {
+        call_id: "\n".join(turns)[:TRANSCRIPT_CHARS] for call_id, turns in lines.items()
+    }
+
+
+def failing_sub_goals(
+    source_run: HostedHarnessJob, scenario_keys: list[str]
+) -> list[str]:
+    """The sub-goals that did not hold on the given scenarios of a finished run."""
+    executions = HostedHarnessExecution.no_workspace_objects.filter(
+        job=source_run, source_scenario__scenario_key__in=scenario_keys
+    ).select_related("call_execution")
+    failing: list[str] = []
+    for execution in executions:
+        receipt = (execution.call_execution.call_metadata or {}).get(
+            "hosted_harness_receipt"
+        )
+        for one in (receipt or {}).get("sub_goals") or []:
+            if isinstance(one, Mapping) and one.get("held") is False:
+                name = str(one.get("name") or "")
+                if name and name not in failing:
+                    failing.append(name)
+    return failing
+
+
+def fix_runs_for_environment(environment: HostedHarnessJob) -> QuerySet[AgentFixRun]:
+    return (
+        AgentFixRun.no_workspace_objects.filter(environment=environment)
+        .select_related("base_agent_version", "source_run")
+        .prefetch_related("candidates__agent_version")
+        .order_by("-created_at")
+    )

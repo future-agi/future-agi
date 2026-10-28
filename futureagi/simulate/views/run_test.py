@@ -52,6 +52,7 @@ from simulate.models.test_execution import (
     CallExecutionSnapshot,
     EvalExplanationSummaryStatus,
 )
+from simulate.selectors.runs import user_runs
 from simulate.serializers.requests.call_execution import (
     CallExecutionFilterSerializer,
     CallExecutionStatusUpdateSerializer,
@@ -5516,9 +5517,9 @@ def _covered_scenario_count(run_test) -> int:
     runs, where each entry in ``scenario_ids`` is a scenario of its own.
     """
     covered: set[str] = set()
-    rows = TestExecution.objects.filter(run_test=run_test, deleted=False).values_list(
-        "scenario_ids", "execution_metadata__selected_scenario_keys"
-    )
+    rows = TestExecution.objects.filter(
+        user_runs("hosted_harness_job__"), run_test=run_test, deleted=False
+    ).values_list("scenario_ids", "execution_metadata__selected_scenario_keys")
     for scenario_ids, keys in rows:
         covered.update(str(item) for item in (keys or scenario_ids or []))
     return len(covered)
@@ -5538,7 +5539,9 @@ def _version_labels(labels: dict[str, Any], execution_id: Any) -> dict[str, Any]
 def _execution_summaries(request, run_test, status_filter: str) -> Response:
     """A page of the run test's executions, newest first, as id, status and pins."""
     executions = (
-        TestExecution.objects.filter(run_test=run_test, deleted=False)
+        TestExecution.objects.filter(
+            user_runs("hosted_harness_job__"), run_test=run_test, deleted=False
+        )
         .only("id", "status", "created_at")
         .order_by("-created_at")
     )
@@ -5614,7 +5617,9 @@ class RunTestExecutionsView(APIView):
             # every aggregate has to leave soft-deleted calls out itself.
             visible_calls = models.Q(calls__deleted=False)
             test_executions = (
-                TestExecution.objects.filter(run_test=run_test, deleted=False)
+                TestExecution.objects.filter(
+                    user_runs("hosted_harness_job__"), run_test=run_test, deleted=False
+                )
                 .select_related(
                     "agent_definition",
                     "agent_version",

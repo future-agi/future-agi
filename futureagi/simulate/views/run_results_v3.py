@@ -24,6 +24,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from simulate.models import CallExecution, TestExecution
+from simulate.selectors.runs import user_runs
 from simulate.serializers.response.run_test import RunVersionLabelSerializer
 from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
@@ -600,7 +601,9 @@ def _execution_payload(
     version = execution.agent_version or execution.run_test.agent_version
     pinned = run_version_labels([execution.id]).get(str(execution.id)) or {}
     ordinal = TestExecution.objects.filter(
-        run_test=execution.run_test, created_at__lte=execution.created_at
+        user_runs("hosted_harness_job__"),
+        run_test=execution.run_test,
+        created_at__lte=execution.created_at,
     ).count()
     return {
         "id": str(execution.id),

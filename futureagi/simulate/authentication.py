@@ -122,6 +122,62 @@ class HarnessAttemptAuthentication(BaseAuthentication):
         return HarnessAttemptUser(attempt), attempt
 
 
+class AgentFixEngineUser:
+    is_authenticated = True
+    is_agent_fix_engine = True
+
+    def __init__(self, fix_run) -> None:
+        self.fix_run = fix_run
+        self.organization = fix_run.organization
+
+
+class AgentFixEngineAuthentication(BaseAuthentication):
+    """Authenticate the improvement engine's sandbox against its one fix run.
+
+    Every refusal is a 401: a sandbox whose run ended, or whose credentials a relaunch
+    rotated, has nothing left to do and exits.
+    """
+
+    def authenticate(self, request):
+        from django.utils import timezone
+
+        from simulate.models import AgentFixRun
+        from simulate.services.hosted_harness import HostedHarnessError, hash_secret
+
+        def refuse(code: str, message: str) -> HostedHarnessError:
+            return HostedHarnessError(code, message, status_code=401)
+
+        resolver_match = getattr(request, "resolver_match", None)
+        fix_run_id = (getattr(resolver_match, "kwargs", None) or {}).get("pk")
+        parts = get_authorization_header(request).split()
+        if not fix_run_id or len(parts) != 2 or parts[0].lower() != b"bearer":
+            raise refuse("authentication_required", "a fix run bearer is required")
+        try:
+            token = parts[1].decode("utf-8")
+            fix_run = AgentFixRun.no_workspace_objects.select_related(
+                "organization"
+            ).get(id=fix_run_id)
+        except (UnicodeDecodeError, ValueError, AgentFixRun.DoesNotExist) as exc:
+            raise refuse(
+                "authentication_invalid", "the fix run bearer is invalid"
+            ) from exc
+        fence = request.headers.get("X-Fix-Fence", "")
+        if not fix_run.token_hash or not secrets.compare_digest(
+            fix_run.token_hash, hash_secret(token)
+        ):
+            raise refuse("authentication_invalid", "the fix run bearer is invalid")
+        if not fence or not secrets.compare_digest(
+            fix_run.fence_hash, hash_secret(fence)
+        ):
+            raise refuse("fix_sandbox_replaced", "a newer sandbox runs this fix")
+        if (
+            fix_run.token_expires_at is None
+            or timezone.now() >= fix_run.token_expires_at
+        ):
+            raise refuse("authentication_expired", "the fix run bearer has expired")
+        return AgentFixEngineUser(fix_run), fix_run
+
+
 class HarnessConversationUser:
     is_authenticated = True
     is_harness_conversation = True

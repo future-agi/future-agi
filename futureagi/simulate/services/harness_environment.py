@@ -27,6 +27,7 @@ from simulate.models import (
     HostedHarnessStageOutput,
     TestExecution,
 )
+from simulate.selectors.runs import user_runs
 from simulate.utils.ended_reason import canonical_ended_reasons
 
 # The four states the list's status pill knows. The pipeline reports far finer
@@ -87,12 +88,15 @@ def annotate_for_list(
             ),
             simulation_run_count=Count(
                 "simulation_runs",
-                filter=Q(simulation_runs__deleted=False),
+                filter=Q(simulation_runs__deleted=False)
+                & user_runs("simulation_runs__"),
                 distinct=True,
             ),
             last_execution_id=Subquery(
                 TestExecution.no_workspace_objects.filter(
-                    run_test=OuterRef("run_test"), deleted=False
+                    user_runs("hosted_harness_job__"),
+                    run_test=OuterRef("run_test"),
+                    deleted=False,
                 )
                 .order_by("-created_at")
                 .values("id")[:1]
@@ -116,7 +120,7 @@ def environment_row(job: HostedHarnessJob) -> dict[str, Any]:
     contract = _contract_data(job)
     runs_count = getattr(job, "simulation_run_count", None)
     if runs_count is None:
-        runs_count = job.simulation_runs.filter(deleted=False).count()
+        runs_count = job.simulation_runs.filter(user_runs(), deleted=False).count()
     return {
         "id": str(job.id),
         "name": environment_name(job),
@@ -968,7 +972,9 @@ def _agent(job: HostedHarnessJob) -> dict[str, Any] | None:
 
 def _run_link(job: HostedHarnessJob) -> dict[str, Any]:
     latest_run = (
-        job.simulation_runs.filter(deleted=False).order_by("-created_at", "-id").first()
+        job.simulation_runs.filter(user_runs(), deleted=False)
+        .order_by("-created_at", "-id")
+        .first()
     )
     run_test_id = str(job.run_test_id) if job.run_test_id else None
     test_execution_id = (

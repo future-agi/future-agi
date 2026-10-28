@@ -22,6 +22,7 @@ from simulate.models import (
     HostedHarnessJob,
     TestExecution,
 )
+from simulate.selectors.runs import user_runs
 from simulate.services.harness_environment import environment_name, run_summaries
 
 ENVIRONMENTS_PER_ROW = 5
@@ -118,7 +119,10 @@ def recent_agent_runs(agent: AgentDefinition, limit: int) -> list[dict[str, Any]
     # exists, and the environment count already leaves those environments out.
     executions = list(
         TestExecution.no_workspace_objects.filter(
-            agent_definition=agent, deleted=False, run_test__deleted=False
+            user_runs("hosted_harness_job__"),
+            agent_definition=agent,
+            deleted=False,
+            run_test__deleted=False,
         )
         .exclude(hosted_harness_job__deleted=True)
         .exclude(hosted_harness_job__environment__deleted=True)

@@ -121,6 +121,15 @@ class HostedHarnessJob(BaseModel):
         blank=True,
         related_name="+",
     )
+    # Set on a Run that a "Fix my agent" run started to check a candidate; such Runs are
+    # kept out of the environment's run history.
+    fix_run = models.ForeignKey(
+        "simulate.AgentFixRun",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="check_runs",
+    )
 
     class Meta:
         db_table = "simulate_hosted_harness_job"

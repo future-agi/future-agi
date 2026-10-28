@@ -1,6 +1,7 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
+from simulate.views.agent_fix import AgentFixEngineViewSet, AgentFixRunViewSet
 from simulate.views.agent_prompt_optimiser import AgentPromptOptimiserRunViewSet
 from simulate.views.call_transcript import (
     CallBranchAnalysisView,
@@ -143,6 +144,8 @@ router.register(
     basename="agent-definition-operations",
 )
 router.register(r"agent-prompt-optimiser", AgentPromptOptimiserRunViewSet)
+router.register(r"agent-fix-runs", AgentFixRunViewSet, basename="agent-fix-run")
+router.register(r"agent-fix-engine", AgentFixEngineViewSet, basename="agent-fix-engine")
 router.register(
     r"alk-simulate", ALKSimulateIngestionViewSet, basename="alk-simulate-ingestion"
 )
