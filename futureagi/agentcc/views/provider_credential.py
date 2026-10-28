@@ -153,7 +153,9 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
     def partial_update(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
-            serializer = AgentccProviderCredentialUpdateSerializer(data=request.data)
+            serializer = AgentccProviderCredentialUpdateSerializer(
+                instance, data=request.data
+            )
             if not serializer.is_valid():
                 return self._gm.bad_request(serializer.errors)
             try:

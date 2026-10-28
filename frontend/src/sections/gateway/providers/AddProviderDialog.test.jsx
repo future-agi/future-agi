@@ -934,6 +934,111 @@ describe("AddProviderDialog System One presets", () => {
     ).toBeGreaterThan(0);
   });
 
+  it.each(["", "   "])("saves a keyless custom System One endpoint with clear optional-key help (key %j)", async (apiKey) => {
+    renderCreateDialog();
+    await pickPreset("Custom System One endpoint");
+    fireEvent.change(screen.getByLabelText(/^Base URL/), {
+      target: { value: "https://decider.example.com" },
+    });
+    fireEvent.change(screen.getByLabelText(/^API Key/), {
+      target: { value: apiKey },
+    });
+    expect(screen.getByLabelText(/^API Key/).required).toBe(false);
+    expect(
+      screen.getByText(/Optional for a self-hosted System One endpoint/),
+    ).toBeTruthy();
+    await userEvent.type(
+      screen.getByPlaceholderText(/comma-separated model IDs/i),
+      "strands-decider{enter}",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+
+    expect(updateMutate).toHaveBeenCalledTimes(1);
+    expect(updateMutate.mock.calls[0][0]).toEqual({
+      gatewayId: "gw-1",
+      name: "custom-systemone",
+      config: {
+        base_url: "https://decider.example.com",
+        api_format: "systemone",
+        models: ["strands-decider"],
+      },
+    });
+    expect(fetchMutate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "",
+    "https://",
+    "https://bad host.invalid",
+    "https://decider.example.com:invalid",
+  ])("refuses a keyless endpoint with invalid Base URL %j", async (baseUrl) => {
+    renderCreateDialog();
+    await pickPreset("Custom System One endpoint");
+    fireEvent.change(screen.getByLabelText(/^Base URL/), {
+      target: { value: baseUrl },
+    });
+    expect(screen.getByLabelText(/^API Key/).required).toBe(true);
+    await userEvent.type(
+      screen.getByPlaceholderText(/comma-separated model IDs/i),
+      "strands-decider{enter}",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+    expect(updateMutate).not.toHaveBeenCalled();
+    expect(screen.getByLabelText(/^Base URL/).getAttribute("aria-invalid")).toBe(
+      "true",
+    );
+  });
+
+  it.each(["TypeSafe", "Perplexity Decider", "OpenAI"])(
+    "still requires an API key for %s",
+    async (label) => {
+      renderCreateDialog();
+      await pickPreset(label);
+      expect(screen.getByLabelText(/^API Key/).required).toBe(true);
+      if (label === "OpenAI") {
+        await userEvent.type(
+          screen.getByPlaceholderText(/type manually/i),
+          "gpt-4o{enter}",
+        );
+      }
+      await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+      expect(updateMutate).not.toHaveBeenCalled();
+      expect(screen.getAllByText("API key is required").length).toBeGreaterThan(0);
+    },
+  );
+
+  it.each([
+    "https://API.TypeSafe.AI./v1",
+    "https://api.perplexity.ai",
+    "https://api.openai.com/v1",
+  ])("requires a key when a custom System One endpoint uses vendor URL %s", async (baseUrl) => {
+    renderCreateDialog();
+    await pickPreset("Custom System One endpoint");
+    fireEvent.change(screen.getByLabelText(/^Base URL/), {
+      target: { value: baseUrl },
+    });
+    expect(screen.getByLabelText(/^API Key/).required).toBe(true);
+    expect(screen.queryByText(/Optional for a self-hosted/)).toBeNull();
+    await userEvent.type(
+      screen.getByPlaceholderText(/comma-separated model IDs/i),
+      "strands-decider{enter}",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+    expect(updateMutate).not.toHaveBeenCalled();
+  });
+
+  it("resaves a keyless custom System One provider without adding a key", async () => {
+    renderEditDialogFor("custom-systemone", {
+      base_url: "https://decider.example.com",
+      api_format: "systemone",
+      models: ["strands-decider"],
+    });
+    expect(screen.getByText(/Optional for a self-hosted/)).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Save Changes" }));
+    expect(updateMutate.mock.calls[0][0].config).not.toHaveProperty("api_key");
+    expect(fetchMutate).not.toHaveBeenCalled();
+  });
+
   it("saves a custom System One endpoint with the URL and typed model", async () => {
     renderCreateDialog();
     await pickPreset("Custom System One endpoint");

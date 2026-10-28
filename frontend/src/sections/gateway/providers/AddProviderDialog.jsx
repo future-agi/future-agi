@@ -177,6 +177,29 @@ const systemOneModelsFor = (providerName) => {
   return isSystemOneFormat(preset?.apiFormat) ? [...preset.models] : [];
 };
 
+const parseProviderBaseUrl = (value) => {
+  const url = value.trim();
+  if (!/^https?:\/\//i.test(url) || /\s/.test(url)) return null;
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+// Mirror the gateway's vendor recognition: a custom label cannot turn a
+// TypeSafe, Perplexity or OpenAI endpoint into a keyless self-hosted provider.
+const allowsKeylessSystemOne = (name, apiFormat, baseUrl) => {
+  if (!isSystemOneFormat(apiFormat)) return false;
+  const url = parseProviderBaseUrl(baseUrl);
+  if (!url || /^(typesafe|perplexity|openai)/i.test(name)) return false;
+  const host = url.hostname.toLowerCase().replace(/\.$/, "");
+  return !["typesafe.ai", "perplexity.ai", "openai.com"].some(
+    (vendor) => host === vendor || host.endsWith(`.${vendor}`),
+  );
+};
+
 const AWS_REGIONS = [
   { value: "us-east-1", label: "US East (N. Virginia)" },
   { value: "us-west-2", label: "US West (Oregon)" },
@@ -451,6 +474,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   const isAwsAuth = PROVIDER_PRESETS[name]?.authType === "aws";
   const isVertexAuth = PROVIDER_PRESETS[name]?.authType === "gcp";
   const isSystemOne = isSystemOneFormat(apiFormat);
+  const keyIsOptional = allowsKeylessSystemOne(name, apiFormat, baseUrl);
 
   // Auto-fetch when an API key is entered (debounced). Edit mode included: a
   // typed key replaces the stored one, so it has to list models before Save.
@@ -737,10 +761,12 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       }
       if (baseUrl.trim() && !/^https?:\/\//i.test(baseUrl.trim())) {
         newErrors.baseUrl = `Base URL must start with http:// or https:// (got "${baseUrl.trim()}")`;
+      } else if (baseUrl.trim() && !parseProviderBaseUrl(baseUrl)) {
+        newErrors.baseUrl = "Enter a valid http(s) base URL with a host and valid port";
       }
 
-      // API key required for new providers
-      if (!isEditMode && !apiKey.trim()) {
+      // Only Generic System One with an explicit valid endpoint may be keyless.
+      if (!isEditMode && !keyIsOptional && !apiKey.trim()) {
         newErrors.apiKey = "API key is required";
       }
 
@@ -776,7 +802,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
     }
 
     const config = withApiPathPrefix(
-      { base_url: baseUrl, api_format: apiFormat },
+      { base_url: baseUrl.trim(), api_format: apiFormat },
       apiFormat,
       apiPathPrefix,
     );
@@ -789,8 +815,8 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       if (awsSecretAccessKey) config.aws_secret_access_key = awsSecretAccessKey;
       if (awsRegion) config.aws_region = awsRegion;
       if (awsSessionToken) config.aws_session_token = awsSessionToken;
-    } else if (apiKey) {
-      config.api_key = apiKey;
+    } else if (apiKey.trim()) {
+      config.api_key = apiKey.trim();
     }
     if (models.length > 0) config.models = models;
     if (timeoutSeconds !== null) config.default_timeout = timeoutSeconds;
@@ -1060,7 +1086,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
               <TextField
                 label="API Key"
                 fullWidth
-                required={!isEditMode}
+                required={!isEditMode && !keyIsOptional}
                 type="password"
                 value={apiKey}
                 onChange={(e) => {
@@ -1080,7 +1106,10 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
                 helperText={
                   errors.apiKey ||
                   keyFetchError ||
-                  (savedKeyUnverified ? STORED_KEY_UNVERIFIED : undefined)
+                  (savedKeyUnverified ? STORED_KEY_UNVERIFIED : undefined) ||
+                  (keyIsOptional
+                    ? "Optional for a self-hosted System One endpoint that does not require authentication. Known vendors still require an API key."
+                    : undefined)
                 }
               />
             </>

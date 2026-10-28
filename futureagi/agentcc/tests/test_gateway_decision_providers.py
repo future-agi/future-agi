@@ -115,6 +115,268 @@ class TestDecisionProvidersReachTheGateway:
 
 @pytest.mark.integration
 @pytest.mark.api
+class TestKeylessGenericSystemOneProviders:
+    @pytest.fixture(autouse=True)
+    def dns(self, provider_dns):
+        return provider_dns(CASES["dns"])
+
+    def _save(self, client, endpoint, config, name="custom-systemone"):
+        if endpoint == "gateway":
+            return client.post(
+                "/agentcc/gateways/default/update-provider/",
+                {"name": name, "config": config},
+                format="json",
+            )
+        return client.post(
+            "/agentcc/provider-credentials/",
+            {
+                "provider_name": name,
+                "credentials": {"api_key": config["api_key"]}
+                if "api_key" in config
+                else {},
+                "base_url": config.get("base_url", ""),
+                "api_format": config.get("api_format", "openai"),
+                "models_list": config.get("models", []),
+            },
+            format="json",
+        )
+
+    @pytest.mark.parametrize("endpoint", ["gateway", "credentials"])
+    @pytest.mark.parametrize("api_format", ["systemone", "typesafe"])
+    @pytest.mark.parametrize("key_config", [{}, {"api_key": ""}, {"api_key": "   "}])
+    def test_create_and_update_push_a_keyless_generic_provider(
+        self, auth_client, organization, gateway, endpoint, api_format, key_config
+    ):
+        config = {
+            "base_url": "https://decider.example.com",
+            "api_format": api_format,
+            "models": ["strands-decider"],
+            **key_config,
+        }
+        response = self._save(auth_client, endpoint, config)
+        expected_status = 200 if endpoint == "gateway" else 201
+        assert response.status_code == expected_status, response.json()
+        assert response.json()["result"]["gateway_synced"] is True
+        credential = AgentccProviderCredential.no_workspace_objects.get(
+            organization=organization, provider_name="custom-systemone", deleted=False
+        )
+        stored = CredentialManager.decrypt(bytes(credential.encrypted_credentials))
+        assert not stored.get("api_key")
+        pushed = _pushed_providers(gateway, organization)["custom-systemone"]
+        assert pushed["enabled"] is True
+        assert pushed["base_url"] == config["base_url"]
+        assert pushed["api_format"] == api_format
+        assert pushed["models"] == config["models"]
+        assert not pushed.get("api_key")
+
+        if endpoint == "gateway":
+            response = self._save(
+                auth_client, endpoint, config | {"models": ["new-decider"]}
+            )
+        else:
+            response = auth_client.patch(
+                f"/agentcc/provider-credentials/{credential.id}/",
+                {"models_list": ["new-decider"]},
+                format="json",
+            )
+        assert response.status_code == 200, response.json()
+        assert response.json()["result"]["gateway_synced"] is True
+        pushed = _pushed_providers(gateway, organization)["custom-systemone"]
+        assert pushed["models"] == ["new-decider"]
+        assert not pushed.get("api_key")
+
+    @pytest.mark.parametrize("endpoint", ["gateway", "credentials"])
+    @pytest.mark.parametrize("key_config", [{}, {"api_key": ""}, {"api_key": "   "}])
+    @pytest.mark.parametrize(
+        "name,api_format,base_url",
+        [
+            ("typesafe", "systemone", "https://api.typesafe.ai"),
+            ("typesafe-proxy", "systemone", "https://decider.example.com"),
+            ("perplexity-decider", "systemone", "https://decider.example.com"),
+            ("openai", "openai", "https://api.openai.com/v1"),
+            ("openai", "systemone", "https://decider.example.com"),
+            ("custom", "openai", "https://decider.example.com"),
+            ("custom-systemone", "systemone", "https://API.TypeSafe.AI./v1"),
+            ("custom-systemone", "systemone", "https://api.perplexity.ai"),
+            ("custom-systemone", "systemone", "https://api.openai.com/v1"),
+        ],
+    )
+    def test_other_providers_still_require_a_key(
+        self,
+        auth_client,
+        organization,
+        gateway,
+        endpoint,
+        key_config,
+        name,
+        api_format,
+        base_url,
+    ):
+        response = self._save(
+            auth_client,
+            endpoint,
+            {"base_url": base_url, "api_format": api_format, **key_config},
+            name=name,
+        )
+        assert response.status_code == 400, response.json()
+        assert not AgentccProviderCredential.no_workspace_objects.filter(
+            organization=organization, provider_name=name, deleted=False
+        ).exists()
+        gateway.set_org_config.assert_not_called()
+
+    @pytest.mark.parametrize("endpoint", ["gateway", "credentials"])
+    @pytest.mark.parametrize(
+        "base_url",
+        [
+            "",
+            "   ",
+            "ftp://decider.example.com",
+            "https://",
+            "https://bad host.invalid",
+            "https://decider.example.com:invalid",
+            "http://127.0.0.1:8080",
+            "http://169.254.169.254",
+            "http://10.0.0.12:8080",
+        ],
+    )
+    def test_keyless_generic_requires_a_valid_explicit_base_url(
+        self, auth_client, organization, gateway, endpoint, base_url
+    ):
+        response = self._save(
+            auth_client,
+            endpoint,
+            {"base_url": base_url, "api_format": "systemone"},
+        )
+        assert response.status_code == 400, response.json()
+        assert not AgentccProviderCredential.no_workspace_objects.filter(
+            organization=organization, provider_name="custom-systemone", deleted=False
+        ).exists()
+        gateway.set_org_config.assert_not_called()
+
+    @pytest.mark.parametrize("endpoint", ["gateway", "credentials"])
+    def test_keyless_generic_respects_private_endpoint_opt_in(
+        self, auth_client, organization, gateway, endpoint, monkeypatch
+    ):
+        monkeypatch.setenv("AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS", "true")
+        response = self._save(
+            auth_client,
+            endpoint,
+            {"base_url": "http://10.0.0.12:8080", "api_format": "systemone"},
+        )
+        expected_status = 200 if endpoint == "gateway" else 201
+        assert response.status_code == expected_status, response.json()
+        pushed = _pushed_providers(gateway, organization)["custom-systemone"]
+        assert pushed["base_url"] == "http://10.0.0.12:8080"
+        assert not pushed.get("api_key")
+
+    @pytest.mark.parametrize("api_key", [False, {}, []])
+    def test_keyless_exception_does_not_accept_malformed_credentials(
+        self, auth_client, organization, gateway, api_key
+    ):
+        response = self._save(
+            auth_client,
+            "gateway",
+            {
+                "base_url": "https://decider.example.com",
+                "api_format": "systemone",
+                "api_key": api_key,
+            },
+        )
+        assert response.status_code == 400, response.json()
+        assert not AgentccProviderCredential.no_workspace_objects.filter(
+            organization=organization, provider_name="custom-systemone", deleted=False
+        ).exists()
+        gateway.set_org_config.assert_not_called()
+
+    @pytest.mark.parametrize("base_url", ["https://", "https://bad host.invalid"])
+    def test_gateway_still_validates_the_url_when_a_key_is_supplied(
+        self, auth_client, organization, gateway, base_url
+    ):
+        response = self._save(
+            auth_client,
+            "gateway",
+            {"base_url": base_url, "api_format": "systemone", "api_key": "key"},
+        )
+        assert response.status_code == 400, response.json()
+        assert not AgentccProviderCredential.no_workspace_objects.filter(
+            organization=organization, provider_name="custom-systemone", deleted=False
+        ).exists()
+        gateway.set_org_config.assert_not_called()
+
+    @pytest.mark.parametrize("endpoint", ["gateway", "credentials"])
+    @pytest.mark.parametrize("stored_credentials", [{}, {"region": "us-east-1"}])
+    @pytest.mark.parametrize(
+        "patch_config",
+        [
+            {"base_url": ""},
+            {"base_url": "https://api.typesafe.ai"},
+            {"base_url": "https://api.openai.com/v1"},
+            {"api_format": "openai"},
+        ],
+    )
+    def test_keyless_update_cannot_remove_the_exception_requirements(
+        self,
+        auth_client,
+        organization,
+        gateway,
+        endpoint,
+        patch_config,
+        stored_credentials,
+    ):
+        config = {"base_url": "https://decider.example.com", "api_format": "systemone"}
+        credential = AgentccProviderCredential.no_workspace_objects.create(
+            organization=organization,
+            provider_name="custom-systemone",
+            encrypted_credentials=CredentialManager.encrypt(stored_credentials),
+            **config,
+        )
+        if endpoint == "gateway":
+            response = self._save(auth_client, endpoint, config | patch_config)
+        else:
+            response = auth_client.patch(
+                f"/agentcc/provider-credentials/{credential.id}/",
+                patch_config,
+                format="json",
+            )
+        assert response.status_code == 400, response.json()
+        credential.refresh_from_db()
+        assert credential.base_url == config["base_url"]
+        assert credential.api_format == config["api_format"]
+        gateway.set_org_config.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "name,api_format,base_url",
+        [
+            ("typesafe", "systemone", "https://api.typesafe.ai"),
+            ("openai", "openai", "https://api.openai.com/v1"),
+        ],
+    )
+    def test_updating_a_vendor_cannot_blank_its_key(
+        self, auth_client, organization, gateway, name, api_format, base_url
+    ):
+        credential = AgentccProviderCredential.no_workspace_objects.create(
+            organization=organization,
+            provider_name=name,
+            encrypted_credentials=CredentialManager.encrypt({"api_key": "stored-key"}),
+            base_url=base_url,
+            api_format=api_format,
+        )
+        response = self._save(
+            auth_client,
+            "gateway",
+            {"base_url": base_url, "api_format": api_format, "api_key": ""},
+            name=name,
+        )
+        assert response.status_code == 400, response.json()
+        credential.refresh_from_db()
+        assert CredentialManager.decrypt(bytes(credential.encrypted_credentials)) == {
+            "api_key": "stored-key"
+        }
+        gateway.set_org_config.assert_not_called()
+
+
+@pytest.mark.integration
+@pytest.mark.api
 class TestDecisionProvidersAreNeverProbed:
     """A listing call is not free on every decision vendor, so fetch_models
     answers for a System One provider without calling it."""
