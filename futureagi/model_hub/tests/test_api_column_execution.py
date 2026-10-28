@@ -12,7 +12,9 @@ from accounts.models.workspace import Workspace
 from model_hub.models.api_key import SecretModel
 from model_hub.views import dynamic_columns as columns
 from tfc.middleware.workspace_context import clear_workspace_context
-from tfc.tests.outbound_fixture import outbound_wire  # noqa: F401
+from tfc.tests import outbound_fixture
+
+outbound_wire = outbound_fixture.outbound_wire
 
 ERROR = ("destination not allowed or unreachable", {"response_status": 400})
 

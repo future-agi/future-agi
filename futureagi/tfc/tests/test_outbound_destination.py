@@ -6,8 +6,10 @@ from unittest.mock import Mock
 
 import pytest
 
-from tfc.tests.outbound_fixture import outbound_wire  # noqa: F401
+from tfc.tests import outbound_fixture
 from tfc.utils import outbound_destination as destination
+
+outbound_wire = outbound_fixture.outbound_wire
 
 
 def test_public_request_preserves_host_method_query_and_body(outbound_wire):
