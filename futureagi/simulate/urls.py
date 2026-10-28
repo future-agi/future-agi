@@ -103,6 +103,7 @@ from .views.agent_version import (
     RestoreAgentVersionView,
 )
 from .views.alk_simulate_ingestion import ALKSimulateIngestionViewSet
+from .views.certification import CertificationCampaignViewSet
 from .views.harness_environment import HarnessEnvironmentViewSet
 from .views.harness_job import HarnessJobViewSet
 from .views.hosted_harness import (
@@ -160,6 +161,11 @@ router.register(
     r"harness/conversations",
     HostedHarnessConversationViewSet,
     basename="hosted-harness-conversation",
+)
+router.register(
+    r"certification-campaigns",
+    CertificationCampaignViewSet,
+    basename="certification-campaign",
 )
 
 urlpatterns = [

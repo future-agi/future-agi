@@ -161,6 +161,7 @@ class CertificationCase(BaseModel):
 
     class Meta:
         db_table = "simulate_certification_case"
+        ordering = ["sequence"]
         constraints = [
             models.UniqueConstraint(
                 fields=["campaign", "case_key"],

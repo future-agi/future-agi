@@ -896,6 +896,11 @@ ERROR_LOGS_WEBHOOK = os.getenv("ERROR_LOGS_WEBHOOK", "").strip()
 PRODUCTION_CERTIFICATION_SLACK_WEBHOOK = os.getenv(
     "PRODUCTION_CERTIFICATION_SLACK_WEBHOOK", ""
 ).strip()
+# Comma-separated organization UUIDs allowed to create certification
+# campaigns. Empty = feature denied for everyone (safe until approved).
+PRODUCTION_CERTIFICATION_ORG_ALLOWLIST = os.getenv(
+    "PRODUCTION_CERTIFICATION_ORG_ALLOWLIST", ""
+).strip()
 
 AIRBYTE_HEADERS = {
     "Content-Type": "application/json",
