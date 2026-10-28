@@ -1,0 +1,115 @@
+# Weekly check that real provider responses still match what the gateway's
+# adapters understand. It records fresh responses from every provider whose
+# credentials are configured, through the gateway's own adapters (so each
+# request is exactly the one the gateway sends), then replays them through the
+# provider contract tests in live mode. A field, content block, stream event or
+# finish reason an adapter does not know fails the job. Goldens are not
+# compared: live text differs on every run.
+#
+# Not run on pull requests: it calls paid APIs and needs secrets. The
+# committed fixtures are checked on every PR by the gateway CI's `make test`.
+# See agentcc-gateway/internal/providers/contracttest/README.md.
+#
+# Repository secrets, each optional. A provider without its secret is skipped,
+# but the job fails if nothing at all was recorded.
+#   ANTHROPIC_API_KEY
+#   OPENAI_API_KEY
+#   GROQ_API_KEY, PERPLEXITY_API_KEY       the openai suite's <preset>@<model> fixtures
+#   GEMINI_API_KEY                         Google AI Studio key
+#   COHERE_API_KEY
+#   AZURE_OPENAI_KEY, AZURE_OPENAI_ENDPOINT  both; deployments must be named as the azure fixtures' model IDs
+#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY Bedrock; both, with model access to the bedrock fixtures' models
+# Repository variable, optional:
+#   AWS_REGION                             Bedrock region, default us-east-1
+name: AgentCC Provider Contract Drift
+
+on:
+  schedule:
+    # Mondays, 05:23 UTC.
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: "Providers to record, comma-separated (e.g. anthropic,gemini). Empty: every provider with a secret."
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agentcc-provider-contract-drift
+  cancel-in-progress: false
+
+jobs:
+  drift:
+    name: Record provider responses and check their shapes
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: agentcc-gateway/go.mod
+          cache-dependency-path: agentcc-gateway/go.sum
+
+      # Writes $RUNNER_TEMP/contracts/<provider>/<model>/<case>/response.*,
+      # the layout AGENTCC_CONTRACT_FIXTURES_DIR reads. Exits non-zero if any
+      # case failed (an upstream error is reported, never saved); the next
+      # steps still run so the rest is checked and uploaded.
+      - name: Record fresh upstream responses
+        working-directory: agentcc-gateway
+        env:
+          PROVIDER_FILTER: ${{ inputs.provider }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
+          AZURE_OPENAI_KEY: ${{ secrets.AZURE_OPENAI_KEY }}
+          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          args=(-out "$RUNNER_TEMP/contracts")
+          if [ -n "$PROVIDER_FILTER" ]; then
+            args+=(-provider "$PROVIDER_FILTER")
+          fi
+          go run ./cmd/contract-recorder "${args[@]}"
+
+      - name: Check the recorded shapes against the adapters
+        if: ${{ !cancelled() }}
+        working-directory: agentcc-gateway
+        run: |
+          shopt -s nullglob
+          pkgs=()
+          for dir in "$RUNNER_TEMP"/contracts/*/; do
+            provider=$(basename "$dir")
+            tests=("internal/providers/$provider"/*_test.go)
+            if [ ${#tests[@]} -eq 0 ] || ! grep -qs '^func TestContract(' "${tests[@]}"; then
+              echo "::error::Recorded $provider, but internal/providers/$provider has no TestContract to check it."
+              exit 1
+            fi
+            pkgs+=("./internal/providers/$provider/")
+          done
+          if [ ${#pkgs[@]} -eq 0 ]; then
+            echo "::error::Nothing was recorded, so nothing was checked. Set at least one provider secret (see the top of this workflow)."
+            exit 1
+          fi
+          AGENTCC_CONTRACT_FIXTURES_DIR="$RUNNER_TEMP/contracts" \
+            go test "${pkgs[@]}" -run '^TestContract$' -count=1 -v
+
+      # Always, so a failure can be diffed against the committed fixtures.
+      - name: Upload the recordings
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: provider-contract-recordings-${{ github.run_id }}
+          path: ${{ runner.temp }}/contracts
+          if-no-files-found: ignore
+          retention-days: 30
