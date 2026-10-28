@@ -12,9 +12,9 @@ from rest_framework import status
 from tfc.temporal.eval_tasks.client import WF_ABSENT, WF_CLOSED, WF_PROGRESSING
 from tfc.temporal.insights.activities import _sweep_lost_runs as sweep
 from tracer.models.insights import InsightConfig, InsightRun
+from tracer.services import insight_lost_runs as lost
 from tracer.tests.test_insights_api import CONFIGS, RUNS, population
 from tracer.tests.test_insights_api import insight_enabled as insight_enabled
-from tracer.views import insights as views
 
 
 @pytest.fixture
@@ -82,7 +82,7 @@ def test_a_run_whose_workflow_is_gone_is_marked_failed_once(
     assert workflow["asked"] == []
     sweep()
     result = _detail(auth_client, stuck_run)
-    assert (result["status"], result["error"]) == ("failed", views.LOST_ERROR)
+    assert (result["status"], result["error"]) == ("failed", lost.LOST_ERROR)
     assert result["finished_at"] is not None
     assert workflow["asked"] == [f"insight-run-{stuck_run.id}"]
     # A failed run isn't asked about again.

@@ -169,7 +169,7 @@ def _sweep_lost_runs() -> None:
     from django.utils import timezone
 
     from tracer.models.insights import InsightRun
-    from tracer.views.insights import LOST_AFTER, settle_lost_runs
+    from tracer.services.insight_lost_runs import LOST_AFTER, settle_lost_runs
 
     # Stream quiet runs without loading every report into the worker.
     runs = InsightRun.no_workspace_objects.filter(

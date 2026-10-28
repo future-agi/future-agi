@@ -15,12 +15,12 @@ from tfc.temporal.insights.activities import _sweep_lost_runs
 from tfc.temporal.schedules.manager import _build_schedule_for_config
 from tfc.temporal.schedules.tracer import TRACER_SCHEDULES
 from tracer.models.insights import InsightRun
+from tracer.services import insight_lost_runs as lost
 from tracer.tests.conftest import observe_project as observe_project
 from tracer.tests.test_insights_api import CONFIGS, RUNS, population
 from tracer.tests.test_insights_api import insight_enabled as insight_enabled
 from tracer.tests.test_insights_lost_runs import stuck_run as stuck_run
 from tracer.tests.test_insights_lost_runs import workflow as workflow
-from tracer.views import insights as views
 
 
 @pytest.mark.django_db
@@ -49,7 +49,7 @@ def test_sweep_fails_lost_runs_once_and_run_again_can_start(
     workflow["answer"] = answer
     _sweep_lost_runs()
     stuck_run.refresh_from_db()
-    assert (stuck_run.status, stuck_run.error) == ("failed", views.LOST_ERROR)
+    assert (stuck_run.status, stuck_run.error) == ("failed", lost.LOST_ERROR)
     finished = stuck_run.finished_at
     _sweep_lost_runs()
     stuck_run.refresh_from_db()
@@ -125,7 +125,7 @@ def test_scheduled_sweep_runs_through_the_task_runner(stuck_run, workflow, monke
     assert result.status == "completed"
     assert result.result == {"result": None, "status": "completed"}
     stuck_run.refresh_from_db()
-    assert (stuck_run.status, stuck_run.error) == ("failed", views.LOST_ERROR)
+    assert (stuck_run.status, stuck_run.error) == ("failed", lost.LOST_ERROR)
     assert workflow["asked"] == [f"insight-run-{stuck_run.id}"]
     assert schedule.action.args[0].time_limit == 300
     assert schedule.action.args[0].max_retries == 0

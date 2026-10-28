@@ -47,6 +47,7 @@ from tracer.models.project import Project
 from tracer.serializers.filters import SessionFilterListField
 from tracer.services import instant_eval_rows as rows_service
 from tracer.services import instant_eval_users as users_service
+from tracer.services.insight_lost_runs import settle_lost_runs
 from tracer.services.user_filter_capabilities import (
     validate_users_filter_capabilities,
 )
@@ -527,56 +528,6 @@ def _distribution(run) -> list[dict]:
         }
         for c in tops
     ]
-
-
-# A run in flight this quiet has its workflow looked up (at most every
-# LOST_CHECK_TTL seconds): one whose workflow is gone, as after a Temporal
-# restart, stopped before it finished and would otherwise run forever.
-LOST_AFTER = timedelta(minutes=2)
-LOST_CHECK_TTL = 20
-LOST_ERROR = "This report stopped before it finished. Run it again."
-
-
-def _workflow_lost(run) -> bool:
-    key = f"insight-wf-lost:{run.id}"
-    known = cache.get(key)
-    if known is not None:
-        return known
-    from tfc.temporal.eval_tasks.client import WF_ABSENT, WF_CLOSED
-    from tfc.temporal.insights import client
-
-    try:
-        lost = client.describe_insight_run_sync(
-            run.workflow_id or client.workflow_id_for(run.id)
-        ) in (WF_ABSENT, WF_CLOSED)
-    except Exception:
-        # An unreachable Temporal is not an answer: the run is left running.
-        logger.warning("insight_describe_failed", run_id=str(run.id))
-        lost = False
-    cache.set(key, lost, LOST_CHECK_TTL)
-    return lost
-
-
-def settle_lost_runs(runs) -> None:
-    """Mark failed, once, the runs still pending or running whose workflow is
-    gone, so the report offers Run again. Runs that changed lately aren't
-    looked up; the update only takes a run still in flight."""
-    now = timezone.now()
-    for run in runs:
-        if run.status not in ("pending", "running"):
-            continue
-        if run.updated_at and now - run.updated_at < LOST_AFTER:
-            continue
-        if not _workflow_lost(run):
-            continue
-        if InsightRun.no_workspace_objects.filter(
-            id=run.id,
-            status__in=["pending", "running"],
-            deleted=False,
-            updated_at__lte=now - LOST_AFTER,
-        ).update(status="failed", error=LOST_ERROR, finished_at=now, updated_at=now):
-            logger.info("insight_run_lost", run_id=str(run.id), stage=run.stage)
-        run.refresh_from_db(fields=["status", "error", "finished_at", "updated_at"])
 
 
 def _error_code(run) -> str:
