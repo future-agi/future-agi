@@ -104,6 +104,8 @@ class CandidateVerdict(BaseModel):
     target_pass_rate: tuple[float, float] | None = None
     held_back_pass_rate: tuple[float, float] | None = None
     must_pass_regressions: list[str] = Field(default_factory=list)
+    # Must-pass checks that dropped within the baseline's own noise: shown, not counted.
+    must_pass_within_noise: list[str] = Field(default_factory=list)
 
 
 class CandidateUpdate(BaseModel):

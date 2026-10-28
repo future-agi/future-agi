@@ -835,7 +835,10 @@ class TestReport:
             for owner in (fix_run, other)
         )
         verdict = CandidateVerdict(
-            accepted=False, reason="held-back regressed", target_pass_rate=(0.2, 0.6)
+            accepted=False,
+            reason="held-back regressed",
+            target_pass_rate=(0.2, 0.6),
+            must_pass_within_noise=["patel-clinic-days: patel_days_told"],
         )
 
         engine.apply_report(

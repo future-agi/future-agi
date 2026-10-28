@@ -43,6 +43,9 @@ class AgentFixVerdictSerializer(serializers.Serializer):
         child=serializers.FloatField(), allow_null=True, required=False
     )
     must_pass_regressions = serializers.ListField(child=serializers.CharField())
+    must_pass_within_noise = serializers.ListField(
+        child=serializers.CharField(), required=False, default=list
+    )
 
 
 class AgentFixReportSerializer(serializers.Serializer):
