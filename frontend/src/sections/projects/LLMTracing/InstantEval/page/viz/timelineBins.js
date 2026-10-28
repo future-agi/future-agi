@@ -313,7 +313,7 @@ export function rangeText(startMs, endMs) {
   const wholeDays =
     localMidnight(startMs) === startMs && localMidnight(endMs) === endMs;
   if (wholeDays) {
-    const lastDay = endMs - DAY;
+    const lastDay = localMidnight(endMs - 1);
     return lastDay <= startMs
       ? dayText(startMs)
       : `${dayText(startMs)} – ${dayText(lastDay)}`;

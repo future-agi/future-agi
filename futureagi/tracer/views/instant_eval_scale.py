@@ -364,10 +364,12 @@ class InstantEvalRowsQuerySerializer(InstantEvalRunQuerySerializer):
     time_from = serializers.CharField(max_length=64, required=False)
     time_to = serializers.CharField(max_length=64, required=False)
     # "<dim>:<key>"; repeat the parameter for any of several groups. A key is
-    # taken whole (it may hold a comma). A pattern over a long range selects
-    # one key per day, so a selection may carry a few hundred.
+    # taken whole (it may hold a comma). A pattern can select one key per
+    # answered row, even when its custom range spans more than 400 days.
     group = serializers.ListField(
-        child=serializers.CharField(max_length=300), required=False, max_length=400
+        child=serializers.CharField(max_length=300),
+        required=False,
+        max_length=max_rows(),
     )
     user = serializers.CharField(max_length=255, required=False)
     model = serializers.CharField(max_length=255, required=False)

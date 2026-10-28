@@ -1,13 +1,22 @@
 /* global process */
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { DAY, buildTimeline } from "../timelineBins";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+
+let DAY;
+let buildTimeline;
+let rangeText;
+let selectColumns;
 
 // A zone with a DST change inside the window (US clocks go back on 1 Nov 2026).
 const ZONE = "America/New_York";
 let previous;
-beforeAll(() => {
+beforeAll(async () => {
   previous = process.env.TZ;
   process.env.TZ = ZONE;
+  // The date formatters capture the zone when the module loads.
+  vi.resetModules();
+  ({ DAY, buildTimeline, rangeText, selectColumns } = await import(
+    "../timelineBins"
+  ));
 });
 afterAll(() => {
   // Assigning undefined would set the zone to the string "undefined".
@@ -23,6 +32,22 @@ const QUESTION = {
 };
 
 describe("day columns across a DST change", () => {
+  it("labels the last included calendar day across spring-forward", () => {
+    const start = new Date(2026, 2, 7).getTime();
+    const end = new Date(2026, 2, 9).getTime();
+    expect(end - start).toBe(47 * 60 * 60 * 1000);
+    expect(rangeText(start, end)).toBe("Mar 7 – Mar 8");
+    expect(rangeText(new Date(2026, 2, 8).getTime(), end)).toBe("Mar 8");
+    expect(selectColumns([{ start, end, n: 3 }], 0, 0)).toEqual({
+      count: 3,
+      filter: {
+        time_from: "2026-03-07T05:00:00.000Z",
+        time_to: "2026-03-09T04:00:00.000Z",
+      },
+      label: "Mar 7 – Mar 8",
+    });
+  });
+
   it("runs in a zone that changes its clocks in the window", () => {
     // Without the zone the test below passes whatever the code does.
     expect(new Date("2026-10-20T12:00:00Z").getTimezoneOffset()).toBe(240);

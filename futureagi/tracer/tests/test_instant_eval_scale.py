@@ -657,6 +657,89 @@ def test_rows_page_through_every_row_and_filter_like_the_charts(
 
 
 @pytest.mark.django_db
+def test_rows_select_a_time_pattern_over_401_matching_days(
+    auth_client, observe_project, yes_no, started, monkeypatch
+):
+    start = datetime(2024, 1, 1, tzinfo=UTC)
+    end = start + timedelta(days=401)
+    view = FakeView(402, start=start)
+    monkeypatch.setattr(
+        rows_service,
+        "count_population",
+        lambda project_id, unit, filters: rows_service.Population(
+            402, False, start, end, filters
+        ),
+    )
+    monkeypatch.setattr(rows_service, "pick_rows", view.pick)
+
+    def facets(project_id, row_type, ids, **kwargs):
+        return {
+            sid: {
+                **view.facets(project_id, row_type, [sid])[sid],
+                "time": start + timedelta(days=int(uuid.UUID(sid)) - 1, hours=6)
+                if int(uuid.UUID(sid)) <= 401
+                else start + timedelta(hours=15),
+                "model": "model, with comma",
+                "end_user_id": None,
+                "user_label": "",
+                "turns": None,
+                "duration_ms": None,
+                "error": False,
+                "excerpt": "",
+                "trace_id": None,
+            }
+            for sid in ids
+        }
+
+    monkeypatch.setattr(rows_service, "read_facets", facets)
+    filters = [
+        {
+            "column_id": "created_at",
+            "filter_config": {
+                "filter_type": "datetime",
+                "filter_op": "between",
+                "filter_value": [start.isoformat(), end.isoformat()],
+            },
+        }
+    ]
+    result = _start(auth_client, observe_project, [yes_no], filters=filters).json()[
+        "result"
+    ]
+    task = EvalTask.objects.get(id=result["task_id"])
+    resolve_desired_rows(task)
+    _read_everything(task)
+    groups = [
+        f"hour3:{(start + timedelta(days=d)).date().isoformat()}|06"
+        for d in range(401)
+    ]
+    base = {
+        "project_id": str(observe_project.id),
+        "eval_task_id": str(task.id),
+        "tz": "UTC",
+    }
+    response = auth_client.get(
+        ROWS, {**base, "group": groups, "compact": True, "page_size": 1500}
+    )
+    assert response.status_code == 200, response.content
+    rows = response.json()["result"]
+    assert rows["total"] == 401
+    assert {r["id"] for r in rows["rows"]} == set(view.ids[:401])
+    # The higher count bound keeps the per-key guard and comma-safe encoding.
+    comma = auth_client.get(ROWS, {**base, "group": ["model:model, with comma"]})
+    assert comma.json()["result"]["total"] == 402
+    too_long = auth_client.get(ROWS, {**base, "group": ["model:" + "x" * 300]})
+    assert too_long.status_code == 400
+
+
+def test_group_count_is_bounded_by_the_supported_run_size():
+    field = instant_eval_scale.InstantEvalRowsQuerySerializer().fields["group"]
+    groups = ["weekday:1"] * run_service.max_rows()
+    assert field.run_validation(groups) == groups
+    with pytest.raises(instant_eval_scale.serializers.ValidationError):
+        field.run_validation(groups + ["weekday:1"])
+
+
+@pytest.mark.django_db
 def test_export_streams_every_selected_row(
     auth_client, observe_project, yes_no, category, answered_run
 ):

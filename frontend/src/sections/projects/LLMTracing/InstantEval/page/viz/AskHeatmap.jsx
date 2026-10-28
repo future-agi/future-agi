@@ -1,6 +1,13 @@
 import React, { useDeferredValue, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
-import { Box, MenuItem, Stack, TextField, Typography } from "@mui/material";
+import {
+  Box,
+  Button,
+  MenuItem,
+  Stack,
+  TextField,
+  Typography,
+} from "@mui/material";
 import { alpha, getContrastRatio, useTheme } from "@mui/material/styles";
 import { UNITS } from "src/sections/projects/observePopulation";
 import { formatCount, formatShare, isYesNo, resolveFocus } from "./askAnswers";
@@ -627,6 +634,8 @@ export default function AskHeatmap({
   running,
   window: viewWindow,
   unit: unitProp,
+  onReadMore,
+  readingMore,
 }) {
   const { summary, questions, sample, unit } = useRunData({
     summary: given,
@@ -700,6 +709,40 @@ export default function AskHeatmap({
   );
   if (!question) return null;
   const plural = (UNITS[unit] || UNITS.sessions).plural;
+  if (
+    pivot === "dayHour" &&
+    !grid.rows.some((row) =>
+      grid.columns.some(
+        (column) =>
+          (grid.cells.get(`${row.key}|${column.key}`)?.answered || 0) >=
+          SMALL_N,
+      ),
+    )
+  )
+    return (
+      <VizCard title="Heatmap" label="Heatmap of answers">
+        <Stack spacing={1} alignItems="flex-start">
+          <Typography variant="subtitle2">
+            Not enough answers for time patterns
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Each time cell needs at least {SMALL_N} answers. Use the timeline
+            and answer split for now.
+            {!onReadMore &&
+              !running &&
+              " Start a new question with a larger scope to read more."}
+          </Typography>
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={onReadMore}
+            disabled={!onReadMore || running || readingMore}
+          >
+            Read more
+          </Button>
+        </Stack>
+      </VizCard>
+    );
   const run = runTally(summary, question);
   const overallShare =
     shown && run.answered ? (run.byLabel.get(shown) || 0) / run.answered : null;
@@ -842,4 +885,6 @@ AskHeatmap.propTypes = {
   running: PropTypes.bool,
   unit: PropTypes.oneOf(["traces", "spans", "sessions", "users"]),
   window: PropTypes.array,
+  onReadMore: PropTypes.func,
+  readingMore: PropTypes.bool,
 };

@@ -44,6 +44,7 @@ import {
   useInstantEvals,
 } from "../useInstantEval";
 import { answerLabels } from "../instantEvalPayloads";
+import { draftsFromQuestions } from "../instantEvalUnits";
 import AskComposer from "./AskComposer";
 import AskRail from "./AskRail";
 import AskRunView from "./AskRunView";
@@ -86,6 +87,8 @@ function RunPane({
   rerunning,
   runAgainConfirm,
   onCancelRunAgain,
+  configsById = {},
+  configsLoading = false,
 }) {
   const run = useAskRun({
     projectId,
@@ -121,7 +124,8 @@ function RunPane({
           ? (options) => onRunAgain(run, options)
           : undefined
       }
-      rerunning={rerunning}
+      rerunning={rerunning || configsLoading}
+      needsEvaluator={run.questions.some((q) => !configsById[q.configId])}
       runAgainConfirm={runAgainConfirm}
       onCancelRunAgain={onCancelRunAgain}
     />
@@ -139,6 +143,8 @@ RunPane.propTypes = {
   rerunning: PropTypes.bool,
   runAgainConfirm: PropTypes.object,
   onCancelRunAgain: PropTypes.func,
+  configsById: PropTypes.object,
+  configsLoading: PropTypes.bool,
 };
 
 function Welcome({ onNew }) {
@@ -221,6 +227,7 @@ export default function AskPage() {
   // unit (it mounts again) instead of being cleared.
   const typedQuestions = useRef(null);
   const [carriedQuestions, setCarriedQuestions] = useState(null);
+  const [draftVersion, setDraftVersion] = useState(0);
   const onQuestionsChange = useCallback((next) => {
     if (typedQuestions.current && typedQuestions.current !== next)
       setComposerConfirm(null);
@@ -309,6 +316,24 @@ export default function AskPage() {
   const startOver = (nextUnit = unit) => {
     setEdited(null);
     setCarriedQuestions(null);
+    newQuestion(nextUnit);
+  };
+  const recreateQuestions = (questions, nextUnit) => {
+    setDraftVersion((version) => version + 1);
+    setEdited({
+      key: "own",
+      scope: seedScope(null, nextUnit),
+      notice:
+        "The saved evaluator is no longer available. Review the question, labels, inputs and date range before creating a new evaluator.",
+    });
+    setCarriedQuestions(
+      draftsFromQuestions(
+        questions.map((question) => ({
+          ...question,
+          question: question.fullQuestion || question.question,
+        })),
+      ),
+    );
     newQuestion(nextUnit);
   };
   // Another unit keeps the date; filters it can't read are dropped, and the
@@ -434,6 +459,10 @@ export default function AskPage() {
   // confirmed (or than whoever started the run confirmed), so a run past
   // the confirm size restates its credits here first, as the composer does.
   const runAgain = async (run, { confirm = false } = {}) => {
+    if (run.questions.some((question) => !configsById[question.configId])) {
+      recreateQuestions(run.questions, run.unit);
+      return;
+    }
     // What the person confirmed: the server asks again if it would read more.
     const confirmedRows = confirm ? rerunConfirm?.rows : undefined;
     const asked = run.summary?.scope || {};
@@ -503,7 +532,7 @@ export default function AskPage() {
         </ToggleButtonGroup>
       )}
       <AskComposer
-        key={`${scopeKey}-${unit}`}
+        key={`${scopeKey}-${unit}-${draftVersion}`}
         projectId={observeId}
         unit={unit}
         seed={handedOff}
@@ -563,6 +592,8 @@ export default function AskPage() {
           rerunConfirm?.taskId === runId ? rerunConfirm : undefined
         }
         onCancelRunAgain={() => setRerunConfirm(null)}
+        configsById={configsById}
+        configsLoading={saved.isLoading}
       />
     );
   } else if (!latest.isLoading && !latest.runs.length) {
@@ -580,6 +611,7 @@ export default function AskPage() {
         collapsed={collapsed}
         onToggle={toggleRail}
         onNew={() => startOver()}
+        onRecreate={(runItem) => recreateQuestions(runItem.items, runItem.unit)}
         onOpen={(runItem) =>
           go({
             [ASK_RUN_PARAM]: runItem.taskId,

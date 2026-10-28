@@ -43,11 +43,13 @@ import AskRowsTable from "./AskRowsTable";
 import { runScopeWords, runTime } from "./askFormat";
 import {
   answerFilter,
+  answeredSplit,
   creditCount,
   creditWords,
   describeFilter,
   etaWords,
   rateWords,
+  savedAnswerCount,
   sampleEstimate,
   boundWords,
   unansweredBounds,
@@ -83,6 +85,7 @@ function StatusLine({ run, unit, creating }) {
   const live = LIVE_STATES.has(run.status);
   const noun = (n) => (n === 1 ? meta.noun : meta.plural);
   const settled = run.answered + run.failed;
+  const answersSaved = savedAnswerCount(run.summary?.counts);
   const failedRows =
     run.failed > 0
       ? `${run.failed.toLocaleString()} ${run.failed === 1 ? "row" : "rows"} couldn't be fully answered`
@@ -95,9 +98,11 @@ function StatusLine({ run, unit, creating }) {
   else if (run.status === "stalled")
     text = `This run stopped before finishing: ${run.answered.toLocaleString()} of ${run.total.toLocaleString()} answered`;
   else if (run.status === "failed")
-    text = settled
-      ? `This run failed: ${run.answered.toLocaleString()} of ${run.total.toLocaleString()} answered. Run it again.`
-      : "This run failed before Jev could read the rows. Run it again.";
+    text = !answersSaved
+      ? "Failed before answering"
+      : run.answered > 0
+        ? `This run failed: ${run.answered.toLocaleString()} of ${run.total.toLocaleString()} answered. Run it again.`
+        : `This run failed: ${answersSaved.toLocaleString()} ${answersSaved === 1 ? "answer" : "answers"} saved. Run it again.`;
   else if (run.status === "done")
     text = `${run.answered.toLocaleString()}${
       run.answered < run.total ? ` of ${run.total.toLocaleString()}` : ""
@@ -629,6 +634,7 @@ export default function AskRunView({
   creating,
   onRunAgain,
   rerunning,
+  needsEvaluator = false,
   runAgainConfirm,
   onCancelRunAgain,
 }) {
@@ -664,8 +670,24 @@ export default function AskRunView({
   const question =
     questions.find((item) => item.configId === focus.configId) || questions[0];
   const live = run.status === "running" || run.status === "preparing";
+  const failedBeforeAnswering =
+    run.status === "failed" && !savedAnswerCount(summary?.counts);
   const running = live || Boolean(creating);
   const reads = question?.reads || run.reads;
+  const split = question
+    ? answeredSplit(question, summary?.counts?.[question.configId])
+    : null;
+  const lowConfidence = Object.values(
+    summary?.unsure?.[question?.configId] || {},
+  ).reduce((sum, count) => sum + count, 0);
+  const answerHeadline =
+    split?.labels
+      .filter((entry) => entry.count > 0)
+      .map(
+        (entry) => `${entry.count.toLocaleString()} ${answerText(entry.label)}`,
+      ) || [];
+  if (lowConfidence > 0)
+    answerHeadline.push(`${lowConfidence.toLocaleString()} low-confidence`);
   const metaLine = [
     sourceViewTitle(unit),
     runScopeWords(scope?.label || summary?.scope?.label, run.window),
@@ -1040,7 +1062,13 @@ export default function AskRunView({
                   startIcon={<Iconify icon="mdi:refresh" width={16} />}
                   onClick={() => onRunAgain()}
                 >
-                  {rerunning ? "Starting…" : "Run again"}
+                  {rerunning
+                    ? "Starting…"
+                    : needsEvaluator
+                      ? "Recreate question"
+                      : failedBeforeAnswering
+                        ? "Retry"
+                        : "Run again"}
                 </Button>
               )}
               {(unit === "traces" || unit === "spans") &&
@@ -1098,7 +1126,51 @@ export default function AskRunView({
           </Typography>
         </Box>
 
+        {answerHeadline.length > 0 && !failedBeforeAnswering && (
+          <Box>
+            <Typography variant="h5" component="p" aria-label="Answer summary">
+              {answerHeadline.join(" · ")}
+            </Typography>
+            {lowConfidence > 0 && (
+              <Typography variant="body2" color="text.secondary">
+                Low-confidence answers are included in these counts, not extra
+                answers. Jev reported confidence below 60%.
+              </Typography>
+            )}
+            {unit === "users" && (
+              <Typography variant="body2" color="text.secondary">
+                Each user counts once, with the most common answer across their
+                answered sessions. Ties use the latest session among the tied
+                answers. Unanswered sessions do not vote. Users wait while
+                sessions are pending; a cancelled run uses only the sessions
+                already answered. Confidence is the mean for sessions with the
+                winning answer.
+              </Typography>
+            )}
+          </Box>
+        )}
         <StatusLine run={run} unit={unit} creating={creating} />
+        {failedBeforeAnswering && (
+          <Alert
+            severity="error"
+            action={questions
+              .filter((item) => item.templateId)
+              .map((item, index, editable) => (
+                <Button
+                  key={item.configId}
+                  size="small"
+                  component={RouterLink}
+                  to={`/dashboard/evaluations/${item.templateId}`}
+                >
+                  Fix evaluator{editable.length > 1 ? ` ${index + 1}` : ""}
+                </Button>
+              ))}
+          >
+            {needsEvaluator
+              ? "No answers were saved. The saved evaluator is no longer available. Recreate the question to run it again."
+              : "No answers were saved. Check the evaluator or retry the run."}
+          </Alert>
+        )}
         {copied && (
           <Alert severity="success" onClose={() => setCopied(false)}>
             Link copied. It opens this run with its answers.
@@ -1170,7 +1242,7 @@ export default function AskRunView({
         )}
 
         {/* A run that failed before reading a row has no sample to estimate from. */}
-        {!(run.status === "failed" && !(run.answered + run.failed)) && (
+        {!failedBeforeAnswering && (
           <SampleBanner
             run={run}
             unit={unit}
@@ -1209,7 +1281,25 @@ export default function AskRunView({
               </AskChartBoundary>
             )}
             <AskChartBoundary name="Heatmap" resetKey={summary}>
-              <AskHeatmap {...chartProps} />
+              <AskHeatmap
+                {...chartProps}
+                onReadMore={
+                  run.sample?.can_extend && run.status !== "cancelled"
+                    ? () =>
+                        control(
+                          "read_more",
+                          run.sample.next_size > 0
+                            ? { more: run.sample.next_size }
+                            : {},
+                        )
+                    : undefined
+                }
+                readingMore={
+                  acting ||
+                  (PAUSED_STATES.has(run.status) &&
+                    run.pending + run.notRead > 0)
+                }
+              />
             </AskChartBoundary>
             <AskRowsTable
               records={tableRows}
@@ -1289,6 +1379,7 @@ AskRunView.propTypes = {
   // Run again; `{confirm: true}` once the person confirmed its credits.
   onRunAgain: PropTypes.func,
   rerunning: PropTypes.bool,
+  needsEvaluator: PropTypes.bool,
   // A Run again held back for the person to confirm: {rows, credits}.
   runAgainConfirm: PropTypes.shape({
     rows: PropTypes.number,

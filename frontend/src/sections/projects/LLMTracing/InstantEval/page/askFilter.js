@@ -54,6 +54,18 @@ export function filterParams(filter = {}) {
   return params;
 }
 
+/** Successful question answers, not settled rows or fully answered rows. */
+export function savedAnswerCount(counts = {}) {
+  return Object.values(counts).reduce(
+    (total, answers) =>
+      total +
+      Object.entries(answers || {})
+        .filter(([label]) => !label.startsWith("__"))
+        .reduce((sum, [, count]) => sum + count, 0),
+    0,
+  );
+}
+
 /** The filter of a focused answer on the legend. */
 export const answerFilter = (configId, answer) =>
   configId && answer ? { config_id: configId, answer } : null;

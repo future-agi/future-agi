@@ -14,6 +14,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { palette } from "src/theme/palette";
+import axios, { endpoints } from "src/utils/axios";
 import { askLink, readHandoff } from "src/sections/projects/observeHandoff";
 
 const fakes = vi.hoisted(() => ({
@@ -31,6 +32,7 @@ const fakes = vi.hoisted(() => ({
   keep: [],
   // The rows a filter selects, when more than the run's records.
   rowsTotal: null,
+  saved: [],
 }));
 
 vi.mock("src/components/iconify", () => ({ default: () => null }));
@@ -94,7 +96,11 @@ vi.mock("../../useInstantEval", async (importOriginal) => ({
   ...(await importOriginal()),
   startAskRun: fakes.startAskRun,
   estimateAsk: fakes.estimate,
-  useInstantEvals: () => ({ all: [], items: [], isLoading: false }),
+  useInstantEvals: () => ({
+    all: fakes.saved,
+    items: fakes.saved,
+    isLoading: false,
+  }),
   useInstantEvalHistory: () => ({
     runs: fakes.runs,
     isLoading: false,
@@ -451,6 +457,7 @@ beforeEach(() => {
   fakes.denied = new Set();
   fakes.keep = [];
   fakes.rowsTotal = null;
+  fakes.saved = QUESTIONS;
   globalThis.sessionStorage?.clear?.();
   globalThis.localStorage?.clear?.();
 });
@@ -2228,13 +2235,10 @@ describe("a sample size typed in", () => {
 });
 
 describe("a run that failed before reading a row", () => {
-  it("says so in red and offers Run again", async () => {
-    fakes.askRuns["task-sessions"] = runOf({
-      status: "failed",
-      total: 0,
-      answered: 0,
-      records: [],
-    });
+  it("says so in red and offers Retry", async () => {
+    const run = runOf({ status: "failed", total: 0, answered: 0, records: [] });
+    run.summary.counts = {};
+    fakes.askRuns["task-sessions"] = run;
     fakes.startAskRun.mockResolvedValue({
       taskId: "task-again",
       questions: QUESTIONS,
@@ -2242,20 +2246,125 @@ describe("a run that failed before reading a row", () => {
     renderAt(
       `/dashboard/observe/${PROJECT}/ask?run=task-sessions&unit=sessions&tab=sessions`,
     );
-    const status = screen.getByText(
-      "This run failed before Jev could read the rows. Run it again.",
-    );
+    const status = screen.getByText("Failed before answering");
     expect(status).toBeInTheDocument();
     expect(screen.queryByText(/answered in/)).toBeNull();
     // Nothing was read, so there is no sample to read more of.
     expect(screen.queryByRole("button", { name: /^Read all/ })).toBeNull();
-    const again = screen.getByRole("button", { name: "Run again" });
+    const again = screen.getByRole("button", { name: "Retry" });
     expect(again).toHaveClass("MuiButton-contained");
     await act(async () => {
       fireEvent.click(again);
     });
     expect(fakes.startAskRun).toHaveBeenCalledTimes(1);
   });
+});
+
+describe("recreating a deleted evaluator", () => {
+  afterEach(() => {
+    axios.get.mockRestore();
+    axios.post.mockRestore();
+  });
+
+  it.each(["run", "history", "category run", "open composer"])(
+    "starts with a new evaluator id after recreating from %s",
+    async (source) => {
+      fakes.saved = [];
+      fakes.estimate.mockResolvedValue(smallEstimate(3));
+      const run = runOf({
+        status: "failed",
+        total: 3,
+        answered: 0,
+        failed: 3,
+        records: [],
+      });
+      run.summary.counts = { [CONFIG]: { __error__: 3 } };
+      if (source === "category run") {
+        run.questions = [
+          {
+            ...QUESTIONS[0],
+            answerType: "category",
+            labels: ["Resolved", "Unresolved"],
+          },
+        ];
+      }
+      fakes.askRuns["task-sessions"] = run;
+      const fromHistory = source === "history" || source === "open composer";
+      if (fromHistory) {
+        globalThis.localStorage.setItem("ask-rail-collapsed", "0");
+        const { historyRun } = await vi.importActual("../../useInstantEval");
+        fakes.runs = [
+          historyRun({
+            task_id: run.taskId,
+            status: "failed",
+            unit: "sessions",
+            rows: 3,
+            answered: 3,
+            config_ids: [CONFIG],
+            questions: [QUESTION],
+            counts: run.summary.counts,
+          }),
+        ];
+      }
+      const actual = await vi.importActual("../../useInstantEval");
+      fakes.startAskRun.mockImplementation(actual.startAskRun);
+      vi.spyOn(axios, "get").mockResolvedValue({ data: { result: [] } });
+      const post = vi
+        .spyOn(axios, "post")
+        .mockImplementation(async (url, body) => {
+          if (url === endpoints.develop.eval.createEvalTemplateV2) {
+            if (source === "category run")
+              expect(body.choice_scores).toEqual({
+                Resolved: 1,
+                Unresolved: 1,
+              });
+            return { data: { result: { id: "replacement-template" } } };
+          }
+          if (url === endpoints.project.createEvalTaskConfig())
+            return { data: { result: { id: "replacement-config" } } };
+          expect(url).toBe(endpoints.project.instantEvalStart());
+          expect(body.config_ids).toEqual(["replacement-config"]);
+          return {
+            data: { result: { task_id: "task-recovered", rows_requested: 3 } },
+          };
+        });
+      renderAt(
+        `/dashboard/observe/${PROJECT}/ask?${source === "open composer" ? "new=1" : "run=task-sessions"}&unit=sessions&tab=sessions`,
+      );
+      if (source === "open composer") {
+        fireEvent.change(
+          await screen.findByRole("textbox", { name: "Question 1" }),
+          {
+            target: { value: "A different question?" },
+          },
+        );
+      }
+      const region = fromHistory
+        ? screen.getByRole("navigation", { name: "Past questions" })
+        : document.body;
+      expect(
+        within(region).queryByRole("button", { name: "Retry" }),
+      ).toBeNull();
+      fireEvent.click(
+        within(region).getByRole("button", { name: "Recreate question" }),
+      );
+      expect(
+        await screen.findByRole("textbox", { name: "Question 1" }),
+      ).toHaveValue(QUESTION);
+      expect(
+        screen.getByText(/Review the question, labels, inputs and date range/),
+      ).toBeInTheDocument();
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Ask Jev about 3 sessions" }),
+      );
+      await waitFor(() => expect(where().params.run).toBe("task-recovered"));
+      expect(
+        post.mock.calls.find(
+          ([url]) => url === endpoints.project.instantEvalStart(),
+        )[1].config_ids,
+      ).toEqual(["replacement-config"]);
+    },
+  );
 });
 
 describe("a run that failed partway", () => {

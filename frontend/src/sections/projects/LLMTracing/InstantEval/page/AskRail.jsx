@@ -13,6 +13,7 @@ import {
   Typography,
 } from "@mui/material";
 import { alpha, keyframes, useTheme } from "@mui/material/styles";
+import { Link as RouterLink } from "react-router-dom";
 import Iconify from "src/components/iconify";
 import { unitWord } from "src/sections/projects/observePopulation";
 import { isLiveRun, useInstantEvalHistory } from "../useInstantEval";
@@ -22,7 +23,7 @@ import { answerColor } from "../results/answerColors";
 import { dayGroup } from "./askFormat";
 import { sourceViewTitle } from "./askLinks";
 import { displayQuestions } from "./useAskRun";
-import { answeredSplit } from "./askFilter";
+import { answeredSplit, savedAnswerCount } from "./askFilter";
 
 const ASK_RAIL_WIDTH = 320;
 const SEARCH_DEBOUNCE_MS = 250;
@@ -31,8 +32,6 @@ const pulse = keyframes`
   0%, 100% { opacity: 0.35; }
   50% { opacity: 1; }
 `;
-
-const percent = (share) => `${Math.round(share * 100)}%`;
 
 // The first question's answers as a thin bar, with the rows Jev couldn't
 // answer hatched in red at its end.
@@ -89,17 +88,23 @@ function topAnswer(item, counts) {
   const top = [...answeredSplit(item, counts).labels].sort(
     (a, b) => b.count - a.count,
   )[0];
-  return top?.count ? `${answerText(top.label)} ${percent(top.share)}` : "";
+  return top?.count
+    ? `${top.count.toLocaleString()} ${answerText(top.label)}`
+    : "";
 }
 
 // One past run: its question, view, size, split and age.
-function RunCard({ runItem, selected, onOpen }) {
+function RunCard({ runItem, selected, onOpen, onRecreate }) {
   const item = runItem.items[0];
   // As the run's header shows them: without the run's name in front.
   const [question] = displayQuestions(
     runItem.items.map((entry) => entry.question),
   );
   const live = isLiveRun(runItem);
+  const failed = runItem.status === "failed";
+  const answersSaved = savedAnswerCount(runItem.counts);
+  const failedBeforeAnswering = failed && !answersSaved;
+  const editable = runItem.items.filter((entry) => entry.templateId);
   // A user question counts users, each once; it also says how many of
   // their sessions it read.
   const rows = runItem.rows;
@@ -131,7 +136,8 @@ function RunCard({ runItem, selected, onOpen }) {
       aria-label={`Open the run: ${question}`}
       onClick={open}
       onKeyDown={(event) => {
-        if (event.key === "Enter") open();
+        if (event.key === "Enter" && event.target === event.currentTarget)
+          open();
       }}
       sx={{
         p: 1.5,
@@ -197,6 +203,44 @@ function RunCard({ runItem, selected, onOpen }) {
       >
         {meta}
       </Typography>
+      {failed && (
+        <Stack spacing={0.5} sx={{ mt: 1 }}>
+          <Typography variant="caption" color="error.main" fontWeight={600}>
+            {failedBeforeAnswering
+              ? "Failed before answering"
+              : `Failed · ${answersSaved.toLocaleString()} ${answersSaved === 1 ? "answer" : "answers"} saved`}
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            {failedBeforeAnswering
+              ? "No answers were saved. Check the evaluator or recreate the question."
+              : "The run stopped before finishing. Its saved answers are still available."}
+          </Typography>
+          {editable.map((entry, index) => (
+            <Button
+              key={entry.configId}
+              size="small"
+              component={RouterLink}
+              to={`/dashboard/evaluations/${entry.templateId}`}
+              onClick={(event) => event.stopPropagation()}
+              sx={{ alignSelf: "flex-start" }}
+            >
+              Fix evaluator{editable.length > 1 ? ` ${index + 1}` : ""}
+            </Button>
+          ))}
+          {editable.length < runItem.items.length && onRecreate && (
+            <Button
+              size="small"
+              onClick={(event) => {
+                event.stopPropagation();
+                onRecreate(runItem);
+              }}
+              sx={{ alignSelf: "flex-start" }}
+            >
+              Recreate question
+            </Button>
+          )}
+        </Stack>
+      )}
       {item && runItem.counts?.[item.configId] && (
         <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1 }}>
           <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -219,6 +263,7 @@ RunCard.propTypes = {
   runItem: PropTypes.object.isRequired,
   selected: PropTypes.bool,
   onOpen: PropTypes.func.isRequired,
+  onRecreate: PropTypes.func,
 };
 
 /**
@@ -233,6 +278,7 @@ export default function AskRail({
   onToggle,
   onNew,
   onOpen,
+  onRecreate,
 }) {
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
@@ -391,6 +437,7 @@ export default function AskRail({
                       runItem={runItem}
                       selected={runItem.taskId === selectedId}
                       onOpen={onOpen}
+                      onRecreate={onRecreate}
                     />
                   ))}
                 </Stack>
@@ -427,4 +474,5 @@ AskRail.propTypes = {
   onToggle: PropTypes.func.isRequired,
   onNew: PropTypes.func.isRequired,
   onOpen: PropTypes.func.isRequired,
+  onRecreate: PropTypes.func,
 };

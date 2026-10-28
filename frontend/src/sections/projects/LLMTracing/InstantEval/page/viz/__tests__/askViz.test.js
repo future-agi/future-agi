@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { filterParams } from "../../askFilter";
 import {
   answerCounts,
   answerState,
@@ -16,6 +17,7 @@ import {
 import { matchesFilter, summarizeRecords, tally } from "../askSummary";
 import {
   benjaminiHochberg,
+  buildGroups,
   findPatterns,
   fisherExact,
   hoursText,
@@ -53,6 +55,41 @@ afterAll(() => vi.useRealTimers());
 const HOUR = 60 * 60 * 1000;
 const run = syntheticRun();
 const live = syntheticRun({ answered: 0.6 });
+
+describe("long-range time pattern selections", () => {
+  it("keeps every matching day when Show spans 401 dates", () => {
+    const question = QUESTIONS[0];
+    const records = Array.from({ length: 401 }, (_, i) => ({
+      id: `morning-${i}`,
+      time: new Date(2024, 0, 1 + i, 6).toISOString(),
+      answers: {
+        [question.configId]: {
+          answer: "No",
+          confidence: 0.9,
+          status: "completed",
+        },
+      },
+      facets: {},
+    }));
+    const afternoon = {
+      ...records[0],
+      id: "afternoon",
+      time: new Date(2024, 0, 1, 15).toISOString(),
+    };
+    const summary = summarizeRecords({
+      records: [...records, afternoon],
+      questions: [question],
+    });
+    const { groups } = buildGroups(summary, [question], question, "sessions");
+    const morning = groups.find((group) => group.key === "tod:6");
+    expect(morning.filter.group).toHaveLength(401);
+    expect(filterParams(morning.filter).group).toEqual(morning.filter.group);
+    expect(
+      records.every((record) => matchesFilter(record, morning.filter)),
+    ).toBe(true);
+    expect(matchesFilter(afternoon, morning.filter)).toBe(false);
+  });
+});
 
 describe("answerState", () => {
   const record = (entry) => ({ id: "r", answers: entry ? { q: entry } : {} });

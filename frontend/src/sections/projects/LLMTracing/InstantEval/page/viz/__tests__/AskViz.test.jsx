@@ -436,6 +436,45 @@ describe("AskPatterns", () => {
 });
 
 describe("AskHeatmap", () => {
+  it("replaces sparse time cells with a read-more state, without the pivot controls", () => {
+    const records = run.records.slice(0, 5).map((record, i) => ({
+      ...record,
+      time: new Date(2026, 8, 20 + i * 5, 10).toISOString(),
+    }));
+    const onReadMore = vi.fn();
+    renderViz(AskHeatmap, {
+      records,
+      window: [
+        new Date(2026, 8, 15).toISOString(),
+        new Date(2026, 9, 16).toISOString(),
+      ],
+      onReadMore,
+    });
+    const card = screen.getByRole("region", { name: "Heatmap of answers" });
+    expect(
+      within(card).getByText("Not enough answers for time patterns"),
+    ).toBeInTheDocument();
+    expect(within(card).queryByRole("img")).toBeNull();
+    expect(within(card).queryByRole("combobox")).toBeNull();
+    fireEvent.click(within(card).getByRole("button", { name: "Read more" }));
+    expect(onReadMore).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the heatmap once a populated cell has three answers", () => {
+    const records = run.records.slice(0, 3).map((record) => ({
+      ...record,
+      time: new Date(2026, 9, 13, 10).toISOString(),
+    }));
+    renderViz(AskHeatmap, { records });
+    expect(
+      screen.queryByText("Not enough answers for time patterns"),
+    ).toBeNull();
+    expect(screen.getByRole("combobox", { name: "Rows" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("img", { name: /^Share of “No” by day/ }),
+    ).toBeInTheDocument();
+  });
+
   it("shows Day × Hour and selects a cell's rows", () => {
     const { onSelect } = renderViz(AskHeatmap);
     const svg = screen.getByRole("img", {
