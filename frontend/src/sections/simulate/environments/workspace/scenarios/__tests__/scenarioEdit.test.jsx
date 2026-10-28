@@ -142,7 +142,7 @@ describe("ScenarioEditor persona choices", () => {
     expect(await screen.findByRole("option", { name: "Indian" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Scottish" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("option", { name: "Indian" }));
-    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Save scenario" }));
     expect(onSave.mock.calls[0][0].changes).toEqual([
       { op: "set_persona", scenario: "s1", persona: { accent: "Indian" } },
     ]);

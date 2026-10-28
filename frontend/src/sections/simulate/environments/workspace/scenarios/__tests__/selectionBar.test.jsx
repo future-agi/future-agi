@@ -26,16 +26,26 @@ describe("SelectionBar", () => {
     expect(props.onClear).toHaveBeenCalledTimes(1);
   });
 
-  it("wires Delete to its handler and shows no Edit button", () => {
+  it("wires Delete to its handler", () => {
     const props = base();
     render(<SelectionBar {...props} />);
-
-    // Editing is per-row (the pencil drawer), not a bulk action — the bar
-    // carries no Edit button.
-    expect(screen.queryByText("Edit")).not.toBeInTheDocument();
-
     fireEvent.click(screen.getByText("Delete"));
     expect(props.onDelete).toHaveBeenCalledTimes(1);
+  });
+
+  it("Edit in chat hands the selection to the builder", () => {
+    const onEditInChat = vi.fn();
+    render(<SelectionBar {...base()} onEditInChat={onEditInChat} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit in chat" }));
+    expect(onEditInChat).toHaveBeenCalledTimes(1);
+  });
+
+  it("Must-pass is flagged UI only and sends nothing", () => {
+    const onMustPass = vi.fn();
+    render(<SelectionBar {...base()} onMustPass={onMustPass} />);
+    expect(screen.getByLabelText("UI only")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Must-pass/ }));
+    expect(onMustPass).toHaveBeenCalledTimes(1);
   });
 
   it("runs the selection × the current k", () => {

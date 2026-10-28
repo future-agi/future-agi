@@ -30,6 +30,8 @@ import { useHarnessScenarios } from "src/api/simulate-environments/scenariosHook
 import { useDebounce } from "src/hooks/use-debounce";
 import useSelection from "./useSelection";
 import PagedScenarioViews from "./PagedScenarioViews";
+import { injectComposerScaffold } from "src/sections/simulate/environments/buildEnvironment/console/composerScaffoldBus";
+import { UI_ONLY_SAVED } from "../gaps/NeedsInputButton";
 import GroupByMenu, { SUB_GOALS_MODE, groupOptionsOf } from "./GroupByMenu";
 import NeedsReviewMenu from "./NeedsReviewMenu";
 import QualityReviewDrawer from "./QualityReviewDrawer";
@@ -510,6 +512,8 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
                       count={sel.count}
                       onDelete={bulkDelete}
                       onClear={sel.clear}
+                      onEditInChat={() => injectComposerScaffold(`Edit ${sel.count} scenario${sel.count === 1 ? "" : "s"}`)}
+                      onMustPass={() => enqueueSnackbar(UI_ONLY_SAVED, { variant: "info" })}
                       onRun={canRun && onStartRun ? handleRunSelected : undefined}
                       runBlockedReason={onStartRun && !canRun ? runBlockedReason : undefined}
                       trials={trials}
@@ -580,9 +584,11 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
         row={openRow}
         onClose={() => setOpenRow(null)}
         onEdit={(row) => { setOpenRow(null); setEditing(row); }}
+        onRemove={(id) => { setOpenRow(null); removeScenario(id); }}
         locked={locked}
       />
       <ScenarioEditor
+        env={env}
         open={!!editing}
         onClose={() => setEditing(null)}
         row={editing}
