@@ -212,14 +212,19 @@ def charge(
     spend=None,
     event_id: str | None = None,
     unpriced: bool = False,
+    models: dict | None = None,
 ) -> float:
     """Emit the usage event for model calls that cost ``cost_usd``. Returns
     the credits charged (0 when nothing was spent). Never raises: the user's
     report must not fail because metering did. ``unpriced`` marks a cost
-    partly at the ceiling price of a model nothing priced."""
+    partly at the ceiling price of a model nothing priced. ``models`` are the
+    models the step ran on, by tier: the agent's for a step on the agent
+    (empty when it couldn't say), else (None) this deployment's."""
     amount = credits(cost_usd)
     if not org_id or amount <= 0:
         return 0.0
+    if models is None:
+        models = {FAST: model_for(FAST), THINKING: model_for(THINKING)}
     try:
         from ee.usage.schemas.events import UsageEvent
         from ee.usage.services.emitter import emit
@@ -228,8 +233,8 @@ def charge(
             "source": source,
             "source_id": str(source_id),
             "raw_cost_usd": str(cost_usd),
-            "fast_model": model_for(FAST),
-            "thinking_model": model_for(THINKING),
+            "fast_model": models.get(FAST) or "",
+            "thinking_model": models.get(THINKING) or "",
         }
         if spend is not None:
             properties.update(
@@ -256,7 +261,9 @@ def charge(
 
 
 def charge_run(run) -> float:
-    """Charge a written report its model cost so far, once per run."""
+    """Charge a written report its model cost so far, once per run, with the
+    models it was started on (``models_used``: its engine's, or this
+    deployment's for the built-in engine)."""
     flags = (getattr(run, "settings", None) or {}).get("spend_flags") or {}
     return charge(
         run.organization_id,
@@ -265,4 +272,5 @@ def charge_run(run) -> float:
         source_id=str(run.id),
         event_id=str(uuid.uuid5(_EVENT_NAMESPACE, f"run:{run.id}")),
         unpriced=bool(flags.get("unpriced")),
+        models=getattr(run, "models_used", None) or None,
     )

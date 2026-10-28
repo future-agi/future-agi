@@ -661,11 +661,12 @@ def _billing():
 
 
 def _charge(
-    org, cost_usd, source: str, source_id, *, unpriced=False, spend=None
+    org, cost_usd, source: str, source_id, *, unpriced=False, spend=None, models=None
 ) -> None:
     """Charge a step's model spend as AI credits (a no-op without billing).
     ``spend`` puts its calls and tokens on the usage event, and its flag for
-    a cost priced at the ceiling."""
+    a cost priced at the ceiling; ``models`` are the models it ran on
+    (``_ran_on``)."""
     billing = _billing()
     if billing is not None:
         billing.charge(
@@ -675,7 +676,22 @@ def _charge(
             source_id=str(source_id),
             spend=spend,
             unpriced=unpriced,
+            models=models,
         )
+
+
+def _ran_on(engine: dict | None = None) -> dict | None:
+    """The models a step ran on, for its usage event: on the agent, the
+    models of ``engine`` (a report's, for its questions), else the ones the
+    agent reports (empty when it can't say); None on the built-in engine,
+    which runs on this deployment's tier models."""
+    try:
+        from ee.agenthub.insights.agent import enabled, expected_models, is_omega
+    except ImportError:
+        return None
+    if not enabled() or (engine is not None and not is_omega(engine)):
+        return None
+    return (engine or {}).get("models") or expected_models() or {}
 
 
 CREDIT_CHECK_UNAVAILABLE = (
@@ -1226,7 +1242,12 @@ class InsightPreviewView(InsightsLicenseRequired, APIView):
                 code="insight_unavailable",
             )
         _charge(
-            org, spend.cost_usd, "insights_preview", data["project_id"], spend=spend
+            org,
+            spend.cost_usd,
+            "insights_preview",
+            data["project_id"],
+            spend=spend,
+            models=_ran_on(),
         )
         return self._gm.success_response({"units": units})
 
@@ -1670,5 +1691,12 @@ class InsightRunAskView(InsightsLicenseRequired, APIView):
                 status.HTTP_503_SERVICE_UNAVAILABLE, str(exc), code="model_unavailable"
             )
         add_spend(run.id, spend)
-        _charge(org, spend.cost_usd, "insights_ask", run.id, spend=spend)
+        _charge(
+            org,
+            spend.cost_usd,
+            "insights_ask",
+            run.id,
+            spend=spend,
+            models=_ran_on(pinned(run.settings)),
+        )
         return self._gm.success_response(answer)

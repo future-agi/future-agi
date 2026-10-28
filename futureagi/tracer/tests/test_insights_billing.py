@@ -235,6 +235,27 @@ class TestCharging:
         assert first.event_id == again.event_id
 
     @pytest.mark.django_db
+    def test_a_report_is_charged_with_the_models_it_ran_on(
+        self, auth_client, observe_project, emitted
+    ):
+        """Cloud's agent writes on Claude while this deployment's tier models
+        are Turing: the event names the models the report was started on."""
+        response = auth_client.post(RUNS, new_run_body(observe_project), format="json")
+        run = InsightRun.objects.get(id=response.json()["result"]["run_id"])
+        run.cost_usd = 0.42
+        run.models_used = {"fast": "claude-haiku-5-5", "thinking": "claude-sonnet-5-5"}
+        billing.charge_run(run)
+        # A run from before models were kept: this deployment's models.
+        run.models_used = {}
+        billing.charge_run(run)
+        on_agent, built_in = (
+            (e.properties["fast_model"], e.properties["thinking_model"])
+            for e in emitted
+        )
+        assert on_agent == ("claude-haiku-5-5", "claude-sonnet-5-5")
+        assert built_in == (llm.model_for(llm.FAST), llm.model_for(llm.THINKING))
+
+    @pytest.mark.django_db
     def test_a_report_that_spent_nothing_is_not_charged(
         self, auth_client, observe_project, emitted
     ):
@@ -456,6 +477,36 @@ def test_a_preview_is_charged_with_its_tokens_and_ceiling_flag(
         event.properties["prompt_tokens"],
         event.properties["completion_tokens"],
     ) == (1, 6_793, 1_896)
+    # No agent here: the built-in engine read it, on this deployment's models.
+    assert event.properties["fast_model"] == llm.model_for(llm.FAST)
+
+
+@pytest.mark.parametrize(
+    ("enabled", "engine", "ran_on"),
+    [
+        # A preview on the agent: the models it reports.
+        (True, None, {"fast": "claude-haiku-5-5", "thinking": "claude-sonnet-5-5"}),
+        # A question about a report written on the agent: the report's models.
+        (
+            True,
+            {"kind": "omega", "models": {"fast": "f", "thinking": "t"}},
+            {"fast": "f", "thinking": "t"},
+        ),
+        # A report the built-in engine wrote, or no agent: this deployment's.
+        (True, {"kind": "builtin"}, None),
+        (False, None, None),
+    ],
+)
+def test_a_step_names_the_models_it_ran_on(monkeypatch, enabled, engine, ran_on):
+    from ee.agenthub.insights import agent
+
+    monkeypatch.setattr(agent, "enabled", lambda: enabled)
+    monkeypatch.setattr(
+        agent,
+        "expected_models",
+        lambda: {"fast": "claude-haiku-5-5", "thinking": "claude-sonnet-5-5"},
+    )
+    assert views._ran_on(engine) == ran_on
 
 
 def test_the_estimate_carries_the_credit_fields(monkeypatch, refuse):
