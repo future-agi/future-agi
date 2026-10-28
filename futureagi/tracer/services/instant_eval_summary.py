@@ -414,9 +414,12 @@ def _span(view: RunView, tmin, tmax) -> tuple[datetime, datetime]:
 # ─── Users ───────────────────────────────────────────────────────────────────
 # A user's answer to a question is the most common answer among their
 # sessions Jev answered; a tie goes to the tied answer whose latest session
-# started last. Sessions Jev couldn't answer don't vote, and a user with none
-# answered couldn't be answered. A user waits for their answer until every
-# one of their sessions has its own (a cancelled run rolls up what it read).
+# started last, and is low-confidence: its confidence is scaled by its share
+# of the sessions (a 2–2 tie at 100% reads 50%), so a coin flip never reads
+# as a sure answer. Sessions Jev couldn't answer don't vote, and a user with
+# none answered couldn't be answered. A user waits for their answer until
+# every one of their sessions has its own (a cancelled run rolls up what it
+# read).
 
 
 def _user_rollup(view: RunView, *, sessions: str = "") -> str:
@@ -440,10 +443,16 @@ def _user_rollup(view: RunView, *, sessions: str = "") -> str:
     votes = "".join(
         f""",
 ur_v{i} AS (
-  SELECT DISTINCT ON (end_user_id) end_user_id, label, conf FROM (
-    SELECT end_user_id, l{i} AS label, count(*) AS n, max(time) AS t, avg(c{i}) AS conf
-    FROM ur_s WHERE l{i} NOT IN ('{PENDING}', '{ERROR}', '{SKIPPED}')
-    GROUP BY end_user_id, l{i}
+  SELECT DISTINCT ON (end_user_id) end_user_id, label, tied > 1 AS tie,
+         CASE WHEN tied > 1 THEN conf * n / answered ELSE conf END AS conf
+  FROM (
+    SELECT g.*, count(*) OVER (PARTITION BY end_user_id, n) AS tied,
+           sum(n) OVER (PARTITION BY end_user_id)::float8 AS answered
+    FROM (
+      SELECT end_user_id, l{i} AS label, count(*) AS n, max(time) AS t, avg(c{i}) AS conf
+      FROM ur_s WHERE l{i} NOT IN ('{PENDING}', '{ERROR}', '{SKIPPED}')
+      GROUP BY end_user_id, l{i}
+    ) g
   ) x
   ORDER BY end_user_id, n DESC, t DESC NULLS LAST, label
 )"""
@@ -457,7 +466,8 @@ ur_v{i} AS (
             f"CASE WHEN {waiting} THEN '{PENDING}' WHEN v{i}.label IS NOT NULL "
             f"THEN v{i}.label WHEN u.p{i} THEN '{PENDING}' ELSE '{ERROR}' END AS l{i}, "
             f"CASE WHEN NOT {waiting} THEN v{i}.conf END AS c{i}, "
-            f"NOT {waiting} AND COALESCE(v{i}.conf < {UNSURE_BELOW}, false) AS u{i}"
+            f"NOT {waiting} AND (COALESCE(v{i}.conf < {UNSURE_BELOW}, false) "
+            f"OR COALESCE(v{i}.tie, false)) AS u{i}"
         )
     columns = "".join(f",\n         {r}" for r in rolled)
     vote_joins = "".join(

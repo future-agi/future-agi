@@ -1,7 +1,8 @@
 """A user question counts each user once, under one answer per question:
 the most common answer among the sessions Jev answered, a tie going to the
-tied answer whose latest session started last. The summary, the rows and
-their filters, the exports and History all read that one rollup."""
+tied answer whose latest session started last, as a low-confidence answer.
+The summary, the rows and their filters, the exports and History all read
+that one rollup."""
 
 import csv
 import io
@@ -216,8 +217,9 @@ def test_a_user_counts_once_under_their_rolled_up_answer(
     cross = s["cross"][yn][cat]
     assert sum(n for by in cross.values() for n in by.values()) == 6
     assert cross["No"] == {ORDER: 1, REFUND: 2}
-    # Unsure: the sessions behind cy's answer averaged 0.4 confident.
-    assert s["unsure"][yn] == {"Yes": 1, "No": 0}
+    # Unsure: the sessions behind cy's answer averaged 0.4 confident, and
+    # ben's and cy's answers are 1–1 ties, which never read as sure.
+    assert s["unsure"][yn] == {"Yes": 1, "No": 1}
 
 
 @pytest.mark.django_db
@@ -234,6 +236,12 @@ def test_rows_list_each_user_with_the_answer_the_charts_count(
         assert by_user[name]["answers"][cat]["answer"] == EXPECTED_CATEGORY[name], name
     # The evidence behind an answer: the sessions per answer.
     assert by_user["ana"]["answers"][yn]["counts"] == {"No": 2, "Yes": 1}
+    # A tie is the winning answer's share of the sessions as sure as they
+    # were: half of 0.9 for ben's 1–1, two fifths for dee's 2–2–1. A clear
+    # majority keeps its sessions' confidence.
+    assert by_user["ben"]["answers"][yn]["confidence"] == pytest.approx(0.45)
+    assert by_user["dee"]["answers"][cat]["confidence"] == pytest.approx(0.36)
+    assert by_user["ana"]["answers"][yn]["confidence"] == pytest.approx(0.9)
     assert by_user["ana"]["sessions"] == 3
     assert by_user["eve"]["answers"][yn]["counts"] == {"__error__": 2, "Yes": 1}
     # The latest session gives the user's time and excerpt.
@@ -261,7 +269,7 @@ def test_rows_list_each_user_with_the_answer_the_charts_count(
     )
     assert {r["user_id"] for r in both["rows"]} == {"ben", "gus"}
     unsure = _rows(auth_client, observe_project, task, unsure="true")
-    assert [r["user_id"] for r in unsure["rows"]] == ["cy"]
+    assert {r["user_id"] for r in unsure["rows"]} == {"ben", "cy", "dee"}
     errored = _rows(auth_client, observe_project, task, group="error:error")
     assert [r["user_id"] for r in errored["rows"]] == ["ana"]
     # A user sits at their latest session: ana's last one is at 11:00.

@@ -1199,10 +1199,11 @@ export default function AskRunView({
               <Typography variant="body2" color="text.secondary">
                 Each user counts once, with the most common answer across their
                 answered sessions. Ties use the latest session among the tied
-                answers. Unanswered sessions do not vote. Users wait while
-                sessions are pending; a cancelled run uses only the sessions
-                already answered. Confidence is the mean for sessions with the
-                winning answer.
+                answers and count as low-confidence. Unanswered sessions do not
+                vote. Users wait while sessions are pending; a cancelled run
+                uses only the sessions already answered. Confidence is the mean
+                for sessions with the winning answer, scaled by its share of the
+                sessions when tied.
               </Typography>
             )}
           </Box>

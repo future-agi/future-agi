@@ -48,7 +48,7 @@ const QUESTION = {
   labels: ["Yes", "No"],
 };
 
-const user = (id, answer, counts) =>
+const user = (id, answer, counts, confidence = 0.9) =>
   toRecord(
     {
       id,
@@ -59,7 +59,7 @@ const user = (id, answer, counts) =>
       sessions: Object.values(counts).reduce((s, v) => s + v, 0),
       facets: { model: "gpt-4.1", turns: 4, error: false },
       answers: {
-        q1: { answer, counts, confidence: 0.9, status: "completed" },
+        q1: { answer, counts, confidence, status: "completed" },
       },
     },
     "users",
@@ -99,6 +99,23 @@ describe("the rows table of a user question", () => {
     // A user Jev couldn't answer has no answer to show sessions for.
     expect(rows[2]).toHaveTextContent("Failed");
     expect(rows[2]).not.toHaveTextContent("of 2 sessions");
+  });
+
+  it("shows a tie as low-confidence, and says it is a tie", () => {
+    // cust_004's sessions split 2–2: the server scales the answer's
+    // confidence by its share (1.0 × 2/4), as it does for any tie.
+    renderTable({
+      records: [user("cust_004", "Yes", { No: 2, Yes: 2 }, 0.5)],
+      total: 1,
+    });
+    const [row] = screen.getAllByRole("row").slice(1);
+    expect(row).toHaveTextContent("Yes· 2 of 4 sessions");
+    expect(
+      within(row).getByLabelText(
+        "Tied across sessions (No 2 · Yes 2), so it counts as low-confidence",
+      ),
+    ).toBeInTheDocument();
+    expect(within(row).queryByLabelText(/Jev was unsure/)).toBeNull();
   });
 
   it("exports the users, or their sessions", () => {

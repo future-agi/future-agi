@@ -37,21 +37,26 @@ const percent = (value) => `${Math.round(value * 100)}%`;
 
 // A user's answer is the most common one across their sessions: "4 of 5
 // sessions" says how many gave it, of the sessions Jev read; the title
-// lists every answer they got.
+// lists every answer they got. A tie is low-confidence, and says why.
 function sessionsBehind(entry, answer) {
   const counts = entry?.counts;
   if (!counts || typeof counts !== "object") return null;
   const n = Object.values(counts).reduce((sum, v) => sum + (v || 0), 0);
   if (!n) return null;
   const k = counts[answer] || 0;
-  const all = Object.entries(counts)
+  const answers = Object.entries(counts)
     .filter(([, v]) => v > 0)
-    .sort((a, b) => b[1] - a[1])
+    .sort((a, b) => b[1] - a[1]);
+  const all = answers
     .map(([label, v]) => `${answerText(label)} ${v}`)
     .join(" · ");
   return {
     text: `${k} of ${n} session${n === 1 ? "" : "s"}`,
     title: `Sessions read: ${all}`,
+    tied: answers.some(
+      ([label, v]) => label !== answer && !isFailure(label) && v === k,
+    ),
+    all,
   };
 }
 
@@ -125,7 +130,13 @@ function AnswerCell({ record, question, isUser }) {
         </Typography>
       )}
       {unsure && (
-        <Tooltip title={`Jev was unsure (${percent(confidence)} confident)`}>
+        <Tooltip
+          title={
+            behind?.tied
+              ? `Tied across sessions (${behind.all}), so it counts as low-confidence`
+              : `Jev was unsure (${percent(confidence)} confident)`
+          }
+        >
           <Box component="span" sx={{ display: "inline-flex" }}>
             <Iconify
               icon="mdi:help-circle-outline"
