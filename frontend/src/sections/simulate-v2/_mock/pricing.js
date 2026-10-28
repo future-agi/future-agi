@@ -56,12 +56,13 @@ const DEFAULT_POLICY = {
   maxRunCredits: 5000,
   alertAt: 0.8,
   /* Monthly credit limits an admin set. What's been used of each is read
-     from the usage ledger, never stored here. null: no limit. */
-  workspaceLimit: 250000,
+     from the usage ledger, never stored here. null: no limit. Sized for
+     runs and improvements together — both count against them. */
+  workspaceLimit: 500000,
   projects: {
-    Support: { limit: 200000 },
-    Billing: { limit: 10000 },
-    Travel: { limit: 10000 },
+    Support: { limit: 400000 },
+    Billing: { limit: 20000 },
+    Travel: { limit: 50000 },
     General: { limit: null },
   },
   /* Per-person limits, by the name a run records; anyone not listed has none. */
@@ -608,6 +609,41 @@ export const platformUsdOf = (envState, minutes) => {
  * on the customer's own trainer, so its cost is theirs and unknown here.
  *   → { parts: [{ id, label, detail, credits|null }], total, episodesInBudget }
  */
+/**
+ * A world package's validation (`world validate`): reference episodes that
+ * must pass, negative and exploit controls that must fail, and the start,
+ * reset and isolation checks — episodes priced like a run's, the sandbox
+ * measured but not billed in beta. → { total, parts: [{ label, detail, credits }] }
+ */
+export const estimatePackageValidation = ({
+  voice = false,
+  reference = 5,
+  controls = 10,
+} = {}) => {
+  const R = RATE_PLAN.rates;
+  const perEpisode = voice
+    ? ((CALL_MINUTES[0] + CALL_MINUTES[1]) / 2) * R.voice_sim_minutes.credits
+    : (TOKENS_PER_TRIAL / R.text_sim_tokens.per) * R.text_sim_tokens.credits;
+  const parts = [
+    {
+      label: "Reference runs",
+      detail: `${reference} episodes that must pass`,
+      credits: reference * perEpisode,
+    },
+    {
+      label: "Negative and exploit controls",
+      detail: `${controls} episodes that must fail`,
+      credits: controls * perEpisode,
+    },
+    {
+      label: "Start, reset and isolation",
+      detail: "sandbox minutes · measured, not billed in beta",
+      credits: 0,
+    },
+  ];
+  return { total: parts.reduce((n, p) => n + p.credits, 0), parts };
+};
+
 export const estimateTrainingPlan = ({
   env,
   episodes = 1000,

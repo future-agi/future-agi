@@ -20,6 +20,7 @@ import { CopyField } from "../components/primitives";
 import {
   RATE_PLAN,
   WORKSPACE_POLICY,
+  estimatePackageValidation,
   estimateTrainingPlan,
   fmtCredits,
   rangeLabel,
@@ -78,6 +79,7 @@ const TABS = [
   { id: "node", label: "Node" },
   { id: "ci", label: "CI" },
   { id: "mcp", label: "Your agent (MCP)" },
+  { id: "improve", label: "Improve" },
   { id: "train", label: "Train (RL)" },
   { id: "package", label: "Package" },
 ];
@@ -282,6 +284,85 @@ jobs:
           FI_API_KEY: \${{ secrets.FI_API_KEY }}
           BASELINE_RUN: \${{ vars.BASELINE_RUN }}   # e.g. main's last run`;
 
+  /* An improvement experiment from code — the same experiment the
+     Improvements page shows, by the ID on its page. */
+  const improveSteps = [
+    {
+      title: "Create the experiment",
+      body: "From a run's failures, with what it may change and the scenarios it's checked on. Nothing runs yet.",
+      hint: "--suggest-only diagnoses and suggests a change without trials. Surfaces it can't change yet are refused, not ignored.",
+      cmd: `agent-learn improve create --baseline <run-id> --goal "Fix the failing cases" \\\n  --allow prompt,skill,config --suite ${id}/target --holdout ${id}/holdout \\\n  --budget 2000 --budget-unit credits --max-candidates 3`,
+    },
+    {
+      title: "Run it",
+      body: "Tries the candidates on the target scenarios and checks the finalists on held-out ones.",
+      hint: "--candidate picks some; a higher cap needs a new review.",
+      cmd: "agent-learn improve run <experiment-id>",
+    },
+    {
+      title: "Read what it found",
+      body: "Each candidate's evidence, the held-out result, trade-offs and a recommendation — nothing ships on its own.",
+      cmd: "agent-learn improve results <experiment-id>",
+    },
+    {
+      title: "Promote the one you choose",
+      body: "As a new agent version, a pull request, or an exported patch.",
+      hint: "--target patch-pr opens a PR; --target export --destination ./patch writes it to a file.",
+      cmd: "agent-learn improve promote <experiment-id> --candidate <candidate-id> --target agent-version",
+    },
+  ];
+
+  /* Improve, train and package from Python and Node — the same experiments
+     and jobs by the same IDs; final signatures ship with the release. */
+  const pythonMore = `# Improve: an experiment from a run's failures
+exp = client.improvements.create(
+    baseline="<run-id>", goal="Fix the failing cases",
+    allow=["prompt", "skill", "config"],
+    suite="${id}/target", holdout="${id}/holdout",
+    budget={"amount": 2000, "unit": "credits"},
+)
+client.improvements.run(exp.id)
+found = client.improvements.wait(exp.id)      # candidates, held-out, recommendation
+client.improvements.promote(exp.id, candidate=found.recommended, target="agent-version")
+
+# Train: the TRL path, checked on held-out cases
+job = client.training.create(
+    environment="${id}", trainer="trl", base_model="<base-model>", mode="rollout",
+    train_split="${id}/train", dev_split="${id}/dev", holdout="${id}/holdout",
+    reward="${id}/reward", budget={"amount": 5000, "unit": "credits"},
+)
+client.training.start(job.id, idempotency_key="train-${id}-1")  # a retry returns this job
+client.training.cancel(job.id)                # or pause / resume, where supported
+print(client.training.results(job.id))        # trained model vs the original
+
+# Package: check and publish a private world
+check = client.worlds.validate("./my-world", budget={"amount": 100, "unit": "credits"})
+client.worlds.publish("./my-world", visibility="workspace", version="1.0.0", validation=check.id)`;
+
+  const nodeMore = `// Improve
+const exp = await client.improvements.create({
+  baseline: "<run-id>", goal: "Fix the failing cases",
+  allow: ["prompt", "skill", "config"],
+  suite: "${id}/target", holdout: "${id}/holdout",
+  budget: { amount: 2000, unit: "credits" }
+});
+await client.improvements.run(exp.id);
+const found = await client.improvements.wait(exp.id);
+await client.improvements.promote(exp.id, { candidate: found.recommended, target: "agent-version" });
+
+// Train
+const job = await client.training.create({
+  environment: "${id}", trainer: "trl", baseModel: "<base-model>", mode: "rollout",
+  trainSplit: "${id}/train", devSplit: "${id}/dev", holdout: "${id}/holdout",
+  reward: "${id}/reward", budget: { amount: 5000, unit: "credits" }
+});
+await client.training.start(job.id, { idempotencyKey: "train-${id}-1" });
+console.log(await client.training.results(job.id));
+
+// Package
+const check = await client.worlds.validate("./my-world", { budget: { amount: 100, unit: "credits" } });
+await client.worlds.publish("./my-world", { visibility: "workspace", version: "1.0.0", validation: check.id });`;
+
   /* A private world package: start one, preview and check it, publish it
      to the workspace, and adopt it — the same steps whoever runs them. */
   const packageSteps = [
@@ -298,7 +379,25 @@ jobs:
     {
       title: "Check it",
       body: "Starts, resets, a reference run passes, deliberate mistakes fail, and episodes stay apart. Publishing needs every check.",
-      cmd: "agent-learn world validate ./my-world --budget 50",
+      cmd: "agent-learn world validate ./my-world --budget 100",
+      after: (
+        <Box sx={{ mt: 1 }}>
+          <CodeBlock
+            code={(() => {
+              const v = estimatePackageValidation();
+              return [
+                ...v.parts.map(
+                  (p) =>
+                    `  ${p.label.padEnd(30)}${p.credits ? `${Math.round(p.credits)} credits` : "measured, not billed"}   ${p.detail}`,
+                ),
+                `Estimate  ≈ ${Math.round(v.total)} credits`,
+                "Limit     100 credits — checks past it don't start; the ones done are kept",
+                `Rates     ${RATE_PLAN.name} · ${RATE_PLAN.version}`,
+              ].join("\n");
+            })()}
+          />
+        </Box>
+      ),
     },
     {
       title: "Publish it privately",
@@ -560,14 +659,40 @@ jobs:
                   <Label>Or test your local agent, without deploying it</Label>
                   <CodeBlock code={pythonOwnAgent} />
                 </Box>
+                <Box>
+                  <Label>Improve, train and package</Label>
+                  <CodeBlock code={pythonMore} />
+                </Box>
               </Stack>
             )}
 
             {tab === "node" && (
-              <Box>
-                <Label>Preview, run and read what it cost</Label>
-                <CodeBlock code={node} />
-              </Box>
+              <Stack spacing={2}>
+                <Box>
+                  <Label>Preview, run and read what it cost</Label>
+                  <CodeBlock code={node} />
+                </Box>
+                <Box>
+                  <Label>Improve, train and package</Label>
+                  <CodeBlock code={nodeMore} />
+                </Box>
+              </Stack>
+            )}
+
+            {tab === "improve" && (
+              <Stack spacing={1.5}>
+                <Typography
+                  sx={{
+                    fontSize: 13,
+                    lineHeight: "20px",
+                    color: "text.secondary",
+                  }}
+                >
+                  The same experiment as on the Improvements page — copy its ID
+                  there to read or promote it from here.
+                </Typography>
+                <LocalSteps steps={improveSteps} />
+              </Stack>
             )}
 
             {tab === "ci" && (
@@ -618,7 +743,10 @@ jobs:
                   The reward is this environment&apos;s evals. The first trainer
                   is TRL. Training, development and held-out cases stay apart,
                   and the trained model is checked on held-out cases it never
-                  saw — no improvement is a valid result.
+                  saw — no improvement is a valid result. A create missing a
+                  split, reward or resources, or a resume the trainer can&apos;t
+                  do, stops with exit 2 and says what&apos;s missing — nothing
+                  starts and nothing is charged.
                 </Typography>
               </Stack>
             )}

@@ -1,14 +1,17 @@
 /*
   The workspace's simulation usage this period, as ledger entries — one per
   finished run, priced with the same per-call rules as the run's Cost tab, so
-  the two never disagree. Grouped by environment, agent, project, user or
-  action for Settings → Usage.
+  the two never disagree, and one per finished improvement for what its
+  search spent. Grouped by environment, agent, project, user or action for
+  Settings → Usage.
 */
 import { rebuildRun } from "./comparison";
 import { envOf } from "./runGroup";
 import { resolveEval } from "./evals";
 import { judgeCreditsOf, judgesOf, projectOf, usageOfTask } from "./pricing";
 import { FREE_TIER, RATE_PLAN } from "./rates";
+import { creditsForUsd } from "./metering";
+import { improvementSpendParts, OPT_STATUS } from "./optimizationRuns";
 
 export { projectOf };
 
@@ -105,6 +108,46 @@ export const usageEntries = (state, { since = null } = {}) => {
           stopped: run.budget?.stoppedBy || null,
         });
       });
+    /* Improvements, finished or stopped: what each spent past its first run
+       — that run is a row of its own — the trials, held-out check, baseline,
+       must-pass and any coding-agent attempts, as its Cost tab itemizes. */
+    (es.optimizations || [])
+      .filter((o) => o.status !== OPT_STATUS.RUNNING && o.status !== "draft")
+      .forEach((o) => {
+        const at = o.completedAt || o.createdAt;
+        if (!at || (since && Date.parse(at) < since)) return;
+        const parts = improvementSpendParts(o, env.surface).filter(
+          (p) => p.id !== "reproduce",
+        );
+        const usd = parts.reduce((n, p) => n + (p.usd || 0), 0);
+        if (!usd) return;
+        const credits = creditsForUsd(usd);
+        out.push({
+          id: o.id,
+          kind: "improvement",
+          envId,
+          environment: env.name,
+          agent: `${es.agent?.name || env.agentName || "Agent"} · ${o.baseAgentVersion || "—"}`,
+          project: projectOf(env),
+          user: o.startedBy || "Not recorded",
+          label: o.name || "Improvement",
+          finishedAt: at,
+          calls: parts.reduce((n, p) => n + (p.conversations || 0), 0),
+          sim: 0,
+          evals: 0,
+          analysis: 0,
+          improvement: credits,
+          credits,
+          qty: 0,
+          unit: ["voice", "multi"].includes(env?.surface) ? "minutes" : "tokens",
+          stopped:
+            o.status === OPT_STATUS.STOPPED
+              ? "stopped"
+              : o.stoppedAtBudget
+                ? "at limit"
+                : null,
+        });
+      });
   });
   return out.sort(
     (a, b) => Date.parse(b.finishedAt) - Date.parse(a.finishedAt),
@@ -124,6 +167,10 @@ export const groupUsage = (entries, by) => {
       {
         key: "Failure analysis",
         credits: entries.reduce((a, e) => a + (e.analysis || 0), 0),
+      },
+      {
+        key: "Improvement searches",
+        credits: entries.reduce((a, e) => a + (e.improvement || 0), 0),
       },
       { key: "Seeded world and tools", credits: 0, note: "included" },
     ];
@@ -159,7 +206,8 @@ export const groupUsage = (entries, by) => {
 /** An itemized CSV of the entries, for export. */
 export const usageCsv = (entries) => {
   const head = [
-    "run",
+    "kind",
+    "name",
     "environment",
     "agent",
     "project",
@@ -169,11 +217,13 @@ export const usageCsv = (entries) => {
     "simulation_credits",
     "eval_credits",
     "analysis_credits",
+    "improvement_credits",
     "total_credits",
   ];
   const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
   const lines = entries.map((e) =>
     [
+      e.kind || "run",
       e.label,
       e.environment,
       e.agent,
@@ -184,6 +234,7 @@ export const usageCsv = (entries) => {
       Math.round(e.sim),
       Math.round(e.evals),
       Math.round(e.analysis || 0),
+      Math.round(e.improvement || 0),
       Math.round(e.credits),
     ]
       .map(q)

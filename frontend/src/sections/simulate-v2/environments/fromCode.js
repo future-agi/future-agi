@@ -40,6 +40,7 @@ export const trainCmd = (id = "my-environment") => `agent-learn train create --e
   --reward ${id}/reward --resources ./resources.yaml --budget 5000
 agent-learn train start <experiment-id>
 agent-learn train status <experiment-id> --watch
+agent-learn train pause <experiment-id>     # resume / cancel the same way, where the trainer supports it
 agent-learn train results <experiment-id>   # held-out: trained model vs the original`;
 
 /* A permitted copy of the environment for a trainer on another machine. */

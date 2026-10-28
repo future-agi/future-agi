@@ -124,6 +124,15 @@ export default function ImprovementRunsView({
   );
   const [selected, setSelected] = useState([]);
   const [picking, setPicking] = useState(false);
+  /* The experiment's ID — what agent-learn improve results / promote and
+     the SDK take, so code reads this same experiment. */
+  const experimentId = `${env.id}/${record.id}`;
+  const [idCopied, setIdCopied] = useState(false);
+  const copyId = () => {
+    navigator.clipboard?.writeText(experimentId).catch(() => {});
+    setIdCopied(true);
+    setTimeout(() => setIdCopied(false), 1500);
+  };
   /* Stop: asked first, with what has run and what it has cost so far. */
   const [stopAsk, setStopAsk] = useState(false);
   const stopNow = () => {
@@ -566,6 +575,33 @@ export default function ImprovementRunsView({
               </Dialog>
             </>
           )}
+          <Tooltip
+            arrow
+            title={
+              idCopied
+                ? "Copied"
+                : `Copy experiment ID · ${experimentId} — for agent-learn improve results and the SDK`
+            }
+          >
+            <IconButton
+              size="small"
+              aria-label="Copy experiment ID"
+              onClick={copyId}
+              sx={{
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: 1,
+                flexShrink: 0,
+              }}
+            >
+              <Iconify
+                icon={
+                  idCopied ? "solar:check-circle-linear" : "solar:copy-linear"
+                }
+                width={16}
+              />
+            </IconButton>
+          </Tooltip>
           {/* The whole experiment as a file — baseline, scenarios, changes,
               trials, result and spend; no credentials. */}
           {!running && (
@@ -643,7 +679,9 @@ export default function ImprovementRunsView({
                 variant="contained"
                 color="primary"
                 onClick={() => setRebaseOpen(true)}
-                startIcon={<Iconify icon="solar:git-pull-request-linear" width={14} />}
+                startIcon={
+                  <Iconify icon="solar:git-pull-request-linear" width={14} />
+                }
                 sx={{ flexShrink: 0 }}
               >
                 Review rebase

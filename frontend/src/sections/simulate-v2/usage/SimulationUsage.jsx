@@ -21,6 +21,7 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
+import { improvementPath } from "../improvements/improvementNav";
 import { useSimStore } from "../store";
 import {
   GROUPS,
@@ -175,6 +176,7 @@ export default function SimulationUsage() {
     [range],
   );
   const entries = useMemo(() => usageEntries(state, { since }), [state, since]);
+  const improvements = entries.filter((e) => e.kind === "improvement").length;
   const rows = useMemo(() => groupUsage(entries, by), [entries, by]);
   const total = entries.reduce((a, e) => a + e.credits, 0);
   const calls = entries.reduce((a, e) => a + e.calls, 0);
@@ -204,9 +206,12 @@ export default function SimulationUsage() {
     });
   const setUser = (k, limit) =>
     edit({ users: { ...draft.users, [k]: { ...draft.users[k], limit } } });
+  /* A run opens on its Cost tab; an improvement on its own page. */
   const openRun = (e) =>
     navigate(
-      `${paths.dashboard.simulate.simulationRun(e.envId, e.id)}?tab=cost`,
+      e.kind === "improvement"
+        ? improvementPath(e.envId, e.id)
+        : `${paths.dashboard.simulate.simulationRun(e.envId, e.id)}?tab=cost`,
     );
   const groupLabel = GROUPS.find((g) => g.id === by)?.label;
   const expandable = by !== "action";
@@ -225,7 +230,7 @@ export default function SimulationUsage() {
             Simulation
           </Typography>
           <Typography noWrap sx={{ typography: "s2", color: "text.secondary" }}>
-            {`${RANGES.find((r) => r.id === range).label} · ${fmt(total)} credits over ${entries.length} runs and ${fmt(calls)} calls · priced as each run's Cost tab`}
+            {`${RANGES.find((r) => r.id === range).label} · ${fmt(total)} credits over ${fmt(entries.length - improvements)} runs${improvements ? `, ${fmt(improvements)} improvements` : ""} and ${fmt(calls)} calls · priced as each one's Cost tab`}
           </Typography>
         </Box>
         <Stack direction="row" alignItems="center" gap={1} flexShrink={0}>
@@ -279,7 +284,7 @@ export default function SimulationUsage() {
         <TableHead>
           <TableRow>
             <TableCell>{groupLabel}</TableCell>
-            <TableCell sx={right}>Runs</TableCell>
+            <TableCell sx={right}>Jobs</TableCell>
             <TableCell sx={right}>Calls</TableCell>
             <TableCell sx={right}>Credits</TableCell>
             <TableCell sx={right}>Per call</TableCell>
@@ -399,7 +404,11 @@ export default function SimulationUsage() {
                       <TableCell sx={num}>{fmt(e.calls)}</TableCell>
                       <TableCell sx={num}>{fmt(e.credits)}</TableCell>
                       <TableCell sx={num} colSpan={2}>
-                        {e.stopped ? "at limit" : ""}
+                        {e.stopped
+                          ? e.stopped === "stopped"
+                            ? "stopped"
+                            : "at limit"
+                          : ""}
                       </TableCell>
                     </TableRow>
                   ))}
