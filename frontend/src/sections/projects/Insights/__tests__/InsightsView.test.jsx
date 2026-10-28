@@ -1465,6 +1465,8 @@ describe("InsightsView", () => {
     expect(body).not.toHaveProperty("population");
   });
 
+  // Drives the date drawer, two pickers and the filter bar end to end: well
+  // past the default timeout on a busy runner.
   it("edits a saved report's date and filters for its next run", async () => {
     mocks.patch.mockImplementation((url, body) =>
       ok({ ...sessionsConfig, ...body }),
@@ -1491,7 +1493,7 @@ describe("InsightsView", () => {
       expect.objectContaining({ column_id: "total_cost" }),
       windowItem(presetWindow("30D")),
     ]);
-  });
+  }, 60000);
 
   it("asks for a name instead of saving a blank one", async () => {
     renderAt(`?report=${CONFIG_ID}`);
