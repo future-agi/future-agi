@@ -107,8 +107,14 @@ describe("ConnectAgentPage", () => {
     expect(screen.getByRole("heading", { name: "Vapi" })).toBeInTheDocument();
     expect(screen.getAllByPlaceholderText("Paste the key")[0]).toBeVisible();
     expect(screen.queryByRole("tab", { name: /Hosted platforms/ })).toBeNull();
+    // One way back: the header's arrow, which now returns to the list.
+    expect(screen.getAllByRole("button", { name: /^Back/ })).toHaveLength(1);
+    expect(screen.queryByRole("heading", { name: "New agent" })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Back to New agent" }));
+    expect(
+      screen.getByRole("heading", { name: "New agent" }),
+    ).toBeInTheDocument();
 
     expect(screen.queryByRole("heading", { name: "Vapi" })).toBeNull();
     expect(tab("Hosted platforms")).toHaveAttribute("aria-selected", "true");

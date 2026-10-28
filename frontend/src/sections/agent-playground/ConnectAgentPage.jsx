@@ -1,23 +1,14 @@
 import React, { useLayoutEffect, useRef, useState } from "react";
 import { Helmet } from "react-helmet-async";
 import { useLocation, useNavigate } from "react-router-dom";
-import {
-  Box,
-  Button,
-  ButtonBase,
-  IconButton,
-  Stack,
-  Typography,
-} from "@mui/material";
+import { Box, ButtonBase, IconButton, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { pageBackButtonSx } from "src/sections/settings/integrations/styles";
 import ConnectSection from "src/sections/simulate/environments/buildDrawer/ConnectSection";
 import LogoTile from "src/sections/simulate/environments/buildDrawer/LogoTile";
 import { FORMS_BY_PANEL } from "src/sections/simulate/environments/buildDrawer/forms/formsByPanel";
 import {
   LINK_SX,
   T12,
-  T14,
 } from "src/sections/simulate/environments/buildDrawer/drawerStyles";
 import UiOnlyFlag from "src/sections/simulate/environments/components/UiOnlyFlag";
 import useCanEditAgent from "./hooks/useCanEditAgent";
@@ -82,92 +73,68 @@ export default function ConnectAgentPage() {
   const Form = picked ? FORMS_BY_PANEL[picked.setup.panel] : null;
 
   return (
-    <Box
-      ref={scrollRef}
-      sx={{ height: "100%", overflow: "auto", px: 2, pt: 2, pb: 4 }}
-    >
+    // The padding sits inside the scroller: a sticky form footer measures
+    // from the scroller's padding edge, so padding here would lift it off
+    // the bottom and show the form beneath it.
+    <Box ref={scrollRef} sx={{ height: "100%", overflow: "auto" }}>
       <Helmet>
         <title>New agent</title>
       </Helmet>
-      <Stack
-        direction="row"
-        alignItems="flex-start"
-        spacing={1}
-        sx={{ mb: 2.5 }}
-      >
-        <IconButton
-          size="small"
-          aria-label="Back"
-          onClick={leave}
-          disabled={busy}
-          sx={{ mt: 0.25 }}
+      <Box sx={{ px: 2, pt: 2, pb: 4 }}>
+        {/* One header and one way back: the list leaves the page, a picked
+            way returns to the list. */}
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1.5}
+          sx={{ mb: 2.5 }}
         >
-          <Iconify icon="solar:alt-arrow-left-linear" width={20} />
-        </IconButton>
-        <Box>
-          <Typography
-            component="h1"
-            typography="m2"
-            fontWeight="fontWeightMedium"
-          >
-            New agent
-          </Typography>
-          <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-            Connect it from where it runs today, or build one here.
-          </Typography>
-        </Box>
-      </Stack>
-
-      <Box hidden={!!picked}>
-        <ConnectSection
-          head={false}
-          onPick={pick}
-          aside={canCreate ? <BuildOneLine /> : null}
-        />
-      </Box>
-
-      {picked && (
-        <Box>
-          <Button
+          <IconButton
             ref={backRef}
-            variant="outlined"
-            startIcon={<Iconify icon="formkit:left" width={16} height={16} />}
-            onClick={back}
+            size="small"
+            aria-label={picked ? "Back to New agent" : "Back"}
+            onClick={picked ? back : leave}
             disabled={busy}
-            sx={{ mb: 2, ...pageBackButtonSx }}
           >
-            Back to New agent
-          </Button>
-          <Stack
-            direction="row"
-            alignItems="center"
-            spacing={1.5}
-            sx={{ mb: 2 }}
-          >
-            {(picked.logo || picked.icon) && (
-              <LogoTile logo={picked.logo} icon={picked.icon} size={36} />
-            )}
-            <Box flex={1} minWidth={0}>
-              <Stack direction="row" alignItems="center" spacing={1}>
-                <Typography
-                  component="h2"
-                  noWrap
-                  sx={{ ...T14, fontWeight: 600, minWidth: 0 }}
-                >
-                  {picked.setup.title || picked.name}
-                </Typography>
-                {picked.setup.uiOnly && <UiOnlyFlag />}
-              </Stack>
-              {picked.setup.subtitle && (
-                <Typography noWrap sx={{ ...T12, color: "text.secondary" }}>
-                  {picked.setup.subtitle}
-                </Typography>
-              )}
-            </Box>
-          </Stack>
-          <Form item={picked} onBusyChange={setBusy} />
+            <Iconify icon="solar:alt-arrow-left-linear" width={20} />
+          </IconButton>
+          {picked && (picked.logo || picked.icon) && (
+            <LogoTile logo={picked.logo} icon={picked.icon} size={36} />
+          )}
+          <Box flex={1} minWidth={0}>
+            <Stack direction="row" alignItems="center" spacing={1}>
+              <Typography
+                component="h1"
+                noWrap
+                typography="m2"
+                fontWeight="fontWeightMedium"
+                sx={{ minWidth: 0 }}
+              >
+                {picked ? picked.setup.title || picked.name : "New agent"}
+              </Typography>
+              {picked?.setup.uiOnly && <UiOnlyFlag />}
+            </Stack>
+            <Typography
+              noWrap={!!picked}
+              sx={{ typography: "s1", color: "text.secondary" }}
+            >
+              {picked
+                ? picked.setup.subtitle
+                : "Connect it from where it runs today, or build one here."}
+            </Typography>
+          </Box>
+        </Stack>
+
+        <Box hidden={!!picked}>
+          <ConnectSection
+            head={false}
+            onPick={pick}
+            aside={canCreate ? <BuildOneLine /> : null}
+          />
         </Box>
-      )}
+
+        {picked && <Form item={picked} onBusyChange={setBusy} />}
+      </Box>
     </Box>
   );
 }
