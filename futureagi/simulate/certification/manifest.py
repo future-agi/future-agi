@@ -26,6 +26,7 @@ import hashlib
 import json
 import re
 from collections.abc import Iterator, Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,7 @@ COMMIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 SCENARIO_REF_RE = re.compile(r"^scenarios:[A-Za-z0-9_.\-/]+$")
 
 SUITE_DIR = Path(__file__).resolve().parent / "suites"
+REPO_ROOT = SUITE_DIR.parents[2]
 
 TARGET_KINDS = frozenset({"local_test", "hosted_service"})
 AGENT_CONNECTORS = frozenset(
@@ -46,6 +48,7 @@ RUN_TEST_IDS = frozenset({"l2_audio_room_speak_l2", "l1_chat_top_voice"})
 SECRET_REF_MANAGERS = frozenset({"platform-vault"})
 APPROVED_CALL_STATES = frozenset({"approved"})
 PENDING_CALL_STATES = frozenset({"pending", "rejected"})
+TARGET_OWNERSHIP = frozenset({"futureagi", "provider_test", "external"})
 
 # Free-text patterns that indicate raw credential material anywhere it does not
 # belong (target refs, notes, scenario refs, tool specs, ...).
@@ -273,6 +276,8 @@ def _validate_authorization(value: Any, where: str, target_kind: str) -> dict:
     calls = value.get("automated_production_calls")
     approved_by = value.get("approved_by")
     approved_at = value.get("approved_at")
+    ownership = value.get("target_ownership")
+    expires_at = value.get("expires_at")
     if not isinstance(owner, str) or not owner.strip():
         _fail(
             "authorization_missing",
@@ -298,6 +303,18 @@ def _validate_authorization(value: Any, where: str, target_kind: str) -> dict:
             where,
             "authorization.approved_at must record the approval timestamp",
         )
+    if ownership not in TARGET_OWNERSHIP:
+        _fail(
+            "authorization_unverified",
+            where,
+            f"authorization.target_ownership must be one of {sorted(TARGET_OWNERSHIP)}",
+        )
+    if ownership == "external" and expires_at is None:
+        _fail(
+            "authorization_unverified",
+            where,
+            "external targets require authorization.expires_at",
+        )
     if target_kind == "hosted_service" and not value.get("target_endpoint_reviewed"):
         _fail(
             "authorization_unverified",
@@ -310,11 +327,89 @@ def _validate_authorization(value: Any, where: str, target_kind: str) -> dict:
         "automated_production_calls": calls,
         "approved_by": approved_by.strip(),
         "approved_at": str(approved_at),
+        "target_ownership": ownership,
+        **({"expires_at": str(expires_at)} if expires_at is not None else {}),
         **(
             {"target_endpoint_reviewed": bool(value["target_endpoint_reviewed"])}
             if "target_endpoint_reviewed" in value
             else {}
         ),
+    }
+
+
+def _load_agent_config(path: Path, where: str) -> dict:
+    try:
+        value = yaml.safe_load(path.read_text())
+    except (OSError, UnicodeError, yaml.YAMLError) as exc:
+        _fail("config_unmaterialized", where, f"cannot parse config_ref: {exc}")
+    if not isinstance(value, Mapping):
+        _fail("invalid_config_ref", where, "config_ref must contain a YAML mapping")
+    value = dict(value)
+    if set(value) - {"mode", "call_direction", "config"}:
+        _fail(
+            "invalid_config_ref",
+            where,
+            "config_ref supports only mode, call_direction, and config",
+        )
+    if value.get("mode") not in {
+        None,
+        "connect_only",
+        "environment_backed",
+        "provider_import",
+    }:
+        _fail("invalid_config_ref", where, "config_ref contains an invalid mode")
+    if value.get("call_direction") not in {None, "inbound", "outbound"}:
+        _fail(
+            "invalid_config_ref",
+            where,
+            "config_ref contains an invalid call_direction",
+        )
+    config = value.get("config", {})
+    if not isinstance(config, Mapping):
+        _fail("invalid_config_ref", where, "config_ref.config must be a mapping")
+    config = dict(config)
+    _assert_no_secret_material(config, f"{where}.config")
+    secret_names = ("token", "secret", "password", "api_key", "private_key")
+    secret_keys = [
+        str(key)
+        for key in config
+        if any(marker in str(key).lower() for marker in secret_names)
+    ]
+    if secret_keys:
+        _fail(
+            "raw_secret_material",
+            where,
+            "config_ref.config contains secret-bearing keys: "
+            + ", ".join(sorted(secret_keys)),
+        )
+    invalid = [
+        str(key)
+        for key, item in config.items()
+        if not isinstance(item, (str, int, float, bool))
+        and not (
+            key == "dynamic_variables"
+            and isinstance(item, Mapping)
+            and all(
+                isinstance(name, str) and isinstance(entry, (str, int, float, bool))
+                for name, entry in item.items()
+            )
+        )
+    ]
+    if invalid:
+        _fail(
+            "invalid_config_ref",
+            where,
+            "config_ref.config values must be scalar; invalid keys: "
+            + ", ".join(sorted(invalid)),
+        )
+    return {
+        **({"mode": value["mode"]} if value.get("mode") else {}),
+        **(
+            {"call_direction": value["call_direction"]}
+            if value.get("call_direction")
+            else {}
+        ),
+        "config": config,
     }
 
 
@@ -402,15 +497,14 @@ def _validate_interaction(
                 "config_ref must be a repo-relative path without '..'",
             )
         config_sha256 = raw.get("config_sha256")
-        if config_sha256 is not None:
-            if not isinstance(config_sha256, str) or not re.fullmatch(
-                r"[0-9a-f]{64}", config_sha256
-            ):
-                _fail(
-                    "invalid_config_ref",
-                    w,
-                    "config_sha256 must be a lowercase 64-hex sha256",
-                )
+        if not isinstance(config_sha256, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", config_sha256
+        ):
+            _fail(
+                "invalid_config_ref",
+                w,
+                "config_sha256 must be a lowercase 64-hex sha256",
+            )
         if repo_root is not None:
             resolved = (repo_root / config_ref).resolve()
             try:
@@ -424,7 +518,7 @@ def _validate_interaction(
                     f"config_ref {config_ref!r} does not exist in the repository; "
                     "scenario material must be committed at manifest freeze",
                 )
-            elif config_sha256:
+            else:
                 actual = hashlib.sha256(resolved.read_bytes()).hexdigest()
                 if actual != config_sha256:
                     _fail(
@@ -433,10 +527,10 @@ def _validate_interaction(
                         f"config_ref {config_ref!r} sha256 mismatch "
                         f"(manifest {config_sha256[:12]}… != file {actual[:12]}…)",
                     )
+                out["agent_config"] = _load_agent_config(resolved, w)
         out["scenario_ref"] = scenario_ref
         out["config_ref"] = config_ref
-        if config_sha256:
-            out["config_sha256"] = config_sha256
+        out["config_sha256"] = config_sha256
         out["seed"] = _req(raw, "seed", w)
         if not isinstance(out["seed"], int):
             _fail("invalid_schema", w, "seed must be an integer")
@@ -529,6 +623,17 @@ def _validate_case(raw: Any, index: int, where: str, repo_root: Path | None) -> 
                 f"duplicate interaction number {item['interaction']}",
             )
         seen_i.add(item["interaction"])
+    materialized_configs = [
+        item.get("agent_config") for item in interactions if item.get("agent_config")
+    ]
+    if materialized_configs and any(
+        item != materialized_configs[0] for item in materialized_configs[1:]
+    ):
+        _fail(
+            "conflicting_agent_config",
+            w,
+            "all interactions in one case must use the same executable agent config",
+        )
 
     if enabled:
         pending = raw.get("pending")
@@ -683,7 +788,19 @@ def expand_enabled_cases(normalized_suite: Mapping[str, Any]) -> list[dict]:
     return specs
 
 
-def require_admission_ready(normalized_suite: Mapping[str, Any]) -> None:
+def _parse_timestamp(value: str, where: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        _fail("authorization_unverified", where, f"invalid timestamp {value!r}")
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def require_admission_ready(
+    normalized_suite: Mapping[str, Any], *, now: datetime | None = None
+) -> None:
     """Production admission gate: a suite must expose enabled cases.
 
     Disabled placeholders exist only to record the audited 25-agent set and its
@@ -691,7 +808,7 @@ def require_admission_ready(normalized_suite: Mapping[str, Any]) -> None:
     """
 
     enabled = sum(1 for c in normalized_suite["cases"] if c["enabled"])
-    if enabled == 0:
+    if enabled != len(normalized_suite["cases"]):
         pending: dict[str, list[str]] = {}
         for c in normalized_suite["cases"]:
             for p in c.get("pending", []):
@@ -701,9 +818,34 @@ def require_admission_ready(normalized_suite: Mapping[str, Any]) -> None:
         )
         raise CertificationManifestError(
             "suite_not_admission_ready",
-            f"suite {normalized_suite['suite_key']!r} has no enabled cases; "
+            f"suite {normalized_suite['suite_key']!r} has {enabled}/"
+            f"{len(normalized_suite['cases'])} enabled cases; "
             f"pending reasons — {reasons}",
         )
+    now = (now or datetime.now(UTC)).astimezone(UTC)
+    for case in normalized_suite["cases"]:
+        authorization = case["authorization"]
+        _parse_timestamp(
+            authorization["approved_at"],
+            f"case {case['case_key']}.authorization.approved_at",
+        )
+        if authorization.get("target_ownership") == "external":
+            expires_at = _parse_timestamp(
+                authorization["expires_at"],
+                f"case {case['case_key']}.authorization.expires_at",
+            )
+            if expires_at <= now:
+                _fail(
+                    "authorization_expired",
+                    f"case {case['case_key']}",
+                    f"production-call approval expired at {expires_at.isoformat()}",
+                )
+        if any("agent_config" not in item for item in case["interactions"]):
+            _fail(
+                "config_unmaterialized",
+                f"case {case['case_key']}",
+                "every enabled interaction must have materialized executable config",
+            )
 
 
 def pending_summary(normalized_suite: Mapping[str, Any]) -> dict:

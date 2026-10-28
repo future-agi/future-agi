@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -45,6 +46,7 @@ def _enabled_case(**overrides):
                 "interaction": 1,
                 "scenario_ref": "scenarios:samples/agents.yaml",
                 "config_ref": "futureagi/simulate/certification/fixtures/ride.yaml",
+                "config_sha256": "0" * 64,
                 "seed": 11,
                 "secret_ref_set": [
                     {
@@ -58,6 +60,7 @@ def _enabled_case(**overrides):
                 "interaction": 2,
                 "scenario_ref": "scenarios:samples/agents.yaml",
                 "config_ref": "futureagi/simulate/certification/fixtures/ride.yaml",
+                "config_sha256": "0" * 64,
                 "seed": 22,
                 "secret_ref_set": [],
             },
@@ -67,6 +70,7 @@ def _enabled_case(**overrides):
             "automated_production_calls": "approved",
             "approved_by": "qa-oncall",
             "approved_at": "2026-10-01",
+            "target_ownership": "futureagi",
         },
     }
     case.update(overrides)
@@ -116,8 +120,15 @@ def test_unknown_suite_key_rejected():
 # ---------------------------------------------------------------------------
 
 
-def test_enabled_case_validates_and_expands():
-    normalized = validate_manifest(_doc([_enabled_case()]))
+def test_enabled_case_validates_and_expands(tmp_path: Path):
+    fixture = tmp_path / "agent.yaml"
+    content = b"mode: environment_backed\nconfig:\n  target_ref: local-ride-agent\n"
+    fixture.write_bytes(content)
+    case = _enabled_case()
+    for interaction in case["interactions"]:
+        interaction["config_ref"] = "agent.yaml"
+        interaction["config_sha256"] = hashlib.sha256(content).hexdigest()
+    normalized = validate_manifest(_doc([case]), repo_root=tmp_path)
     specs = expand_enabled_cases(normalized)
     assert len(specs) == 1
     spec = specs[0]
@@ -127,6 +138,10 @@ def test_enabled_case_validates_and_expands():
         "ride_booking__veh002_single__interaction_01",
         "ride_booking__veh002_single__interaction_02",
     ]
+    assert spec["interactions"][0]["agent_config"] == {
+        "mode": "environment_backed",
+        "config": {"target_ref": "local-ride-agent"},
+    }
     require_admission_ready(normalized)
 
 
@@ -236,6 +251,32 @@ def test_hosted_service_requires_endpoint_review():
     assert normalized["cases"][0]["target"]["kind"] == "hosted_service"
 
 
+def test_external_target_requires_live_expiry(tmp_path: Path):
+    content = b"mode: connect_only\nconfig:\n  assistant_id: asst-1\n"
+    (tmp_path / "agent.yaml").write_bytes(content)
+    case = _enabled_case()
+    case["authorization"].update(
+        target_ownership="external", expires_at="2026-10-27T00:00:00Z"
+    )
+    for interaction in case["interactions"]:
+        interaction["config_ref"] = "agent.yaml"
+        interaction["config_sha256"] = hashlib.sha256(content).hexdigest()
+    normalized = validate_manifest(_doc([case]), repo_root=tmp_path)
+    _err(
+        lambda: require_admission_ready(
+            normalized, now=datetime(2026, 10, 28, tzinfo=UTC)
+        ),
+        "authorization_expired",
+    )
+
+
+def test_partial_suite_is_not_admission_ready():
+    disabled = _enabled_case(case_key="second", enabled=False)
+    disabled["pending"] = ["source_commit_unverified"]
+    normalized = validate_manifest(_doc([_enabled_case(), disabled]))
+    _err(lambda: require_admission_ready(normalized), "suite_not_admission_ready")
+
+
 def test_rejects_single_interaction():
     case = _enabled_case()
     case["interactions"] = case["interactions"][:1]
@@ -262,13 +303,67 @@ def test_rejects_config_ref_escape():
 def test_config_ref_materialized_from_repo(tmp_path: Path):
     fixture = tmp_path / "conf" / "ride.yaml"
     fixture.parent.mkdir(parents=True)
-    fixture.write_bytes(b"scenario: ride\n")
+    fixture.write_bytes(b"mode: connect_only\nconfig:\n  assistant_id: ride\n")
     case = _enabled_case()
     for i in case["interactions"]:
         i["config_ref"] = "conf/ride.yaml"
-        i["config_sha256"] = hashlib.sha256(b"scenario: ride\n").hexdigest()
+        i["config_sha256"] = hashlib.sha256(
+            b"mode: connect_only\nconfig:\n  assistant_id: ride\n"
+        ).hexdigest()
     normalized = validate_manifest(_doc([case]), repo_root=tmp_path)
     assert normalized["cases"][0]["interactions"][0]["config_ref"] == "conf/ride.yaml"
+    assert normalized["cases"][0]["interactions"][0]["agent_config"]["config"] == {
+        "assistant_id": "ride"
+    }
+
+
+def test_config_content_changes_suite_digest(tmp_path: Path):
+    path = tmp_path / "agent.yaml"
+    case = _enabled_case()
+    for interaction in case["interactions"]:
+        interaction["config_ref"] = "agent.yaml"
+    path.write_bytes(b"config:\n  assistant_id: first\n")
+    first_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+    for interaction in case["interactions"]:
+        interaction["config_sha256"] = first_hash
+    first = validate_manifest(_doc([case]), repo_root=tmp_path)
+    path.write_bytes(b"config:\n  assistant_id: second\n")
+    second_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+    for interaction in case["interactions"]:
+        interaction["config_sha256"] = second_hash
+    second = validate_manifest(_doc([case]), repo_root=tmp_path)
+    assert canonical_digest(first) != canonical_digest(second)
+
+
+def test_config_file_rejects_secret_bearing_keys(tmp_path: Path):
+    content = b"config:\n  api_key: raw-credential\n"
+    (tmp_path / "agent.yaml").write_bytes(content)
+    case = _enabled_case()
+    for interaction in case["interactions"]:
+        interaction["config_ref"] = "agent.yaml"
+        interaction["config_sha256"] = hashlib.sha256(content).hexdigest()
+    _err(
+        lambda: validate_manifest(_doc([case]), repo_root=tmp_path),
+        "raw_secret_material",
+    )
+
+
+def test_conflicting_interaction_configs_rejected(tmp_path: Path):
+    case = _enabled_case()
+    for name, value, interaction in zip(
+        ("one.yaml", "two.yaml"),
+        ("one", "two"),
+        case["interactions"],
+        strict=True,
+    ):
+        content = f"config:\n  assistant_id: {value}\n".encode()
+        (tmp_path / name).write_bytes(content)
+        interaction["config_ref"] = name
+        interaction["config_sha256"] = hashlib.sha256(content).hexdigest()
+    _err(
+        lambda: validate_manifest(_doc([case]), repo_root=tmp_path),
+        "conflicting_agent_config",
+    )
 
 
 def test_config_sha_mismatch_rejected(tmp_path: Path):

@@ -18,7 +18,7 @@ version: 1
 suite_key: production_agents_v1
 defaults:
   interaction_count: 2
-  max_duration_seconds: 7200
+  max_duration_seconds: 1800
   artifacts:
     level: full
   trace_reference: https://traces.internal/certification/production_agents_v1
