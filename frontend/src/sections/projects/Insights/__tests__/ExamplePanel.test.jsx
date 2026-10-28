@@ -9,7 +9,8 @@ import { ReportProvider } from "../reportContext";
 import { useCitedImage, useRunUnit } from "../insightsApi";
 
 vi.mock("src/components/iconify", () => ({ default: () => null }));
-vi.mock("react-router", () => ({ useNavigate: () => vi.fn() }));
+const { navigate } = vi.hoisted(() => ({ navigate: vi.fn() }));
+vi.mock("react-router", () => ({ useNavigate: () => navigate }));
 vi.mock("../insightsApi", () => ({
   useRunUnit: vi.fn(),
   useCitedImage: vi.fn(),
@@ -51,11 +52,11 @@ const unit = (overrides = {}) => ({
   ...overrides,
 });
 
-const renderPanel = (data) => {
+const renderPanel = (data, context = report) => {
   useRunUnit.mockReturnValue({ data, isLoading: false, isError: false });
   return render(
     <ThemeProvider theme={theme}>
-      <ReportProvider value={report}>
+      <ReportProvider value={context}>
         <ExamplePanel open unitId={data.unit_id} onClose={() => {}} />
       </ReportProvider>
     </ThemeProvider>,
@@ -201,6 +202,19 @@ describe("ExamplePanel", () => {
     expect(
       screen.getByRole("img", { name: "Image cited as evidence" }),
     ).toHaveAttribute("src", "blob:shot");
+  });
+
+  it("opens the example's user on the report's days, not on Today", () => {
+    const window = ["2026-10-22T00:00:00+00:00", "2026-10-23T23:59:59+00:00"];
+    renderPanel(unit(), { ...report, runWindow: window });
+    fireEvent.click(screen.getByRole("button", { name: "Open user" }));
+    const url = new URL(navigate.mock.calls[0][0], "https://app.test");
+    expect(url.pathname).toBe("/dashboard/users/cust_006");
+    const dates = JSON.parse(url.searchParams.get("sessionDateFilter"));
+    expect(dates.dateOption).toBe("Custom");
+    expect(dates.dateFilter.map((value) => new Date(value).getTime())).toEqual(
+      window.map((value) => new Date(value).getTime()),
+    );
   });
 
   it("says plainly when the image can't be shown", () => {

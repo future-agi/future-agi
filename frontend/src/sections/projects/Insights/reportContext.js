@@ -70,8 +70,11 @@ export function useReportModel(config, run) {
     () => changeByCategory(result?.changes),
     [result?.changes],
   );
+  // The [from, to] the run read, so a user opens on those days.
+  const runWindow = run?.scope?.window;
   return {
     mode,
+    runWindow,
     categories,
     categoriesById,
     echoes,

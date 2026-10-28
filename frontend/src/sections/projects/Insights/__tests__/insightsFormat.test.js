@@ -19,7 +19,7 @@ import {
   runReadAny,
 } from "../insightsFormat";
 import { attributeError, facetChips } from "../insightsLenses";
-import { sessionTracesLink, unitLink } from "../insightsLinks";
+import { sessionTracesLink, unitLink, userPageLink } from "../insightsLinks";
 
 describe("a run that ended without a report", () => {
   it("accounts for every unit it read", () => {
@@ -247,7 +247,7 @@ describe("unit facets and links", () => {
     );
     expect(
       unitLink("p1", "users", { unit_id: "uuid", user_id: "cust 1" }).href,
-    ).toBe("/dashboard/users/cust%201");
+    ).toBe("/dashboard/users/cust%201?userTab=sessions");
     const session = new URL(
       sessionTracesLink("p1", "s1", "2026-10-09T10:31:29Z"),
       "https://app.test",
@@ -267,5 +267,60 @@ describe("unit facets and links", () => {
       "Custom",
     );
     expect(unitLink("p1", "users", { unit_id: "uuid" })).toBeNull();
+  });
+
+  // The user page's Sessions list opens on Today unless the link says
+  // otherwise, and shows "No Rows To Show" for an older example.
+  const userWindow = (href) => {
+    const url = new URL(href, "https://app.test");
+    const dates = JSON.parse(url.searchParams.get("sessionDateFilter"));
+    expect(url.searchParams.get("userTab")).toBe("sessions");
+    expect(dates.dateOption).toBe("Custom");
+    return dates.dateFilter.map((value) => new Date(value).getTime());
+  };
+  const REPORT = ["2026-10-22T00:00:00+00:00", "2026-10-23T23:59:59+00:00"];
+
+  it("opens a user on the report's days", () => {
+    expect(
+      userWindow(
+        userPageLink("cust_009", {
+          window: REPORT,
+          time: "2026-10-22T18:51:20Z",
+        }),
+      ),
+    ).toEqual(REPORT.map((value) => new Date(value).getTime()));
+    const link = unitLink(
+      "p1",
+      "users",
+      { unit_id: "uuid", user_id: "cust_009", time: "2026-10-23T09:00:00Z" },
+      { window: REPORT },
+    );
+    expect(new URL(link.href, "https://app.test").pathname).toBe(
+      "/dashboard/users/cust_009",
+    );
+    expect(userWindow(link.href)).toEqual(
+      REPORT.map((value) => new Date(value).getTime()),
+    );
+  });
+
+  it("opens a user on a window that holds the example", () => {
+    const at = new Date("2026-10-22T18:51:20Z").getTime();
+    // No report window: a day either side of the example.
+    expect(
+      userWindow(userPageLink("cust_009", { time: "2026-10-22T18:51:20Z" })),
+    ).toEqual([at - 24 * 3600 * 1000, at + 24 * 3600 * 1000]);
+    // An example outside the window stretches it.
+    const [from, to] = userWindow(
+      userPageLink("cust_009", {
+        window: ["2026-10-23T00:00:00Z", "2026-10-24T00:00:00Z"],
+        time: "2026-10-22T18:51:20Z",
+      }),
+    );
+    expect(from).toBe(at);
+    expect(to).toBe(new Date("2026-10-24T00:00:00Z").getTime());
+    // Nothing to go on: the page's own default.
+    expect(userPageLink("cust_009")).toBe(
+      "/dashboard/users/cust_009?userTab=sessions",
+    );
   });
 });

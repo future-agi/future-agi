@@ -1035,7 +1035,9 @@ export default function CategoryExplorer({
     });
 
   const openItem = (row) => {
-    const link = unitLink(report.projectId, unit, row);
+    const link = unitLink(report.projectId, unit, row, {
+      window: report.runWindow,
+    });
     if (link) navigate(link.href);
     else report.openExample(row.unit_id);
   };

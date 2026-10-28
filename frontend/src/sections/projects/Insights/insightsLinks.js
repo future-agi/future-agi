@@ -4,7 +4,8 @@ import { formatDate } from "src/utils/report-utils";
 //   trace   -> the trace page
 //   session -> the Traces list filtered to that session (the Sessions view
 //              opens a session only from a grid click; it has no URL for one)
-//   user    -> the cross-project user page, keyed by the external user id
+//   user    -> the cross-project user page, keyed by the external user id,
+//              on the report's days (its own default is Today)
 
 // Same name as OBSERVE_LINK_FILTER_PARAM in LLMTracing/common.js, which the
 // trace list hydrates its filter chips from.
@@ -44,8 +45,45 @@ export function sessionTracesLink(projectId, sessionId, time) {
   return `/dashboard/observe/${projectId}/llm-tracing?${params.toString()}`;
 }
 
-/** {href, label} to open a unit, or null when it cannot be opened. */
-export function unitLink(projectId, unit, row) {
+// A window that holds an example: the report's own, else a day either side
+// of the example. Null when neither is known.
+function exampleWindow(window, time) {
+  const at = time ? new Date(time).getTime() : NaN;
+  const [from, to] = (window?.length === 2 ? window : []).map((value) =>
+    new Date(value).getTime(),
+  );
+  if (Number.isFinite(from) && Number.isFinite(to) && from <= to)
+    return Number.isFinite(at)
+      ? [Math.min(from, at), Math.max(to, at)]
+      : [from, to];
+  if (!Number.isFinite(at)) return null;
+  return [at - DAY_MS, Math.max(at, Math.min(Date.now(), at + DAY_MS))];
+}
+
+/**
+ * The cross-project user page, its Sessions list set to a window that holds
+ * the example (`window`: the report's [from, to]; `time`: the example's). The
+ * page's own default is Today, which misses an older example.
+ */
+export function userPageLink(userId, { window, time } = {}) {
+  const params = new URLSearchParams({ userTab: "sessions" });
+  const range = exampleWindow(window, time);
+  if (range)
+    params.set(
+      "sessionDateFilter",
+      JSON.stringify({
+        dateFilter: range.map((ms) => formatDate(new Date(ms))),
+        dateOption: "Custom",
+      }),
+    );
+  return `/dashboard/users/${encodeURIComponent(userId)}?${params.toString()}`;
+}
+
+/**
+ * {href, label} to open a unit, or null when it cannot be opened. `window`
+ * is the report's, so a user opens on the days it covers.
+ */
+export function unitLink(projectId, unit, row, { window } = {}) {
   if (!row) return null;
   if (unit === "traces" && row.unit_id)
     return {
@@ -63,7 +101,7 @@ export function unitLink(projectId, unit, row) {
     };
   if (unit === "users" && row.user_id)
     return {
-      href: `/dashboard/users/${encodeURIComponent(row.user_id)}`,
+      href: userPageLink(row.user_id, { window, time: row.time }),
       label: "Open user",
     };
   return null;

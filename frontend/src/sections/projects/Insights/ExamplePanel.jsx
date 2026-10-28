@@ -31,7 +31,7 @@ import {
   formatSpan,
   formatWhen,
 } from "./insightsFormat";
-import { unitLink } from "./insightsLinks";
+import { unitLink, userPageLink } from "./insightsLinks";
 import { useReport } from "./reportContext";
 import { AttributePills, ErrorState, FacetChips, Swatch } from "./parts";
 
@@ -348,7 +348,9 @@ export default function ExamplePanel({ open, unitId, onClose }) {
   const data = query.data;
   const unit = report.unit;
   const noun = (UNITS[unit] || UNITS.traces).noun;
-  const link = unitLink(report.projectId, unit, data);
+  const link = unitLink(report.projectId, unit, data, {
+    window: report.runWindow,
+  });
   // "Top › Sub", or one name when the sub is folded into its top.
   const path = data
     ? categoriesFor(
@@ -635,7 +637,10 @@ export default function ExamplePanel({ open, unitId, onClose }) {
                 variant="outlined"
                 onClick={() =>
                   navigate(
-                    `/dashboard/users/${encodeURIComponent(data.user_id)}`,
+                    userPageLink(data.user_id, {
+                      window: report.runWindow,
+                      time: data.time,
+                    }),
                   )
                 }
               >
