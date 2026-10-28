@@ -1,0 +1,74 @@
+{
+  "assembled": {
+    "content": "The three primary colors are red, yellow, and blue.",
+    "finish_reason": "stop",
+    "usage": {
+      "completion_tokens": 12,
+      "prompt_tokens": 6,
+      "total_tokens": 18
+    }
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "The three primary colors"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "gen-<generated>",
+      "model": "gemini-3.1-flash-lite",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 4,
+        "prompt_tokens": 6,
+        "total_tokens": 10
+      }
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": " are red, yellow"
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "gen-<generated>",
+      "model": "gemini-3.1-flash-lite",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 8,
+        "prompt_tokens": 6,
+        "total_tokens": 14
+      }
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": ", and blue."
+          },
+          "finish_reason": "stop",
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "gen-<generated>",
+      "model": "gemini-3.1-flash-lite",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 12,
+        "prompt_tokens": 6,
+        "total_tokens": 18
+      }
+    }
+  ],
+  "error": null
+}

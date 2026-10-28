@@ -1,0 +1,28 @@
+{
+  "provider": "gemini",
+  "model": "gemini-4-argon",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: authored by hand, 2026-10-28. ai.google.dev and docs.cloud.google.com were blocked by this session's network policy, so the field names and enums come from the machine-readable form of the official REST reference (ai.google.dev/api/generate-content): the generativelanguage v1beta discovery document, revision 20261028 (GenerateContentResponse, Candidate, Part, UsageMetadata, GroundingMetadata, UrlContextMetadata, PromptFeedback, SafetyRating, FinishReason). Body layout (key order, index, responseId, modelVersion, promptTokensDetails, groundingMetadata contents) follows the recorded outputs in the official google-gemini/cookbook (quickstarts/rest/Search_Grounding, Batch_mode, Audio_REST); the stream framing, mid-stream error chunk and continuation protocol follow the official googleapis/go-genai SDK (api_client.go scan / iterateResponseStream, continuation.go). Model behaviour comes from search excerpts of the ai.google.dev pages named per model below; read them directly before trusting a detail they alone support. Ids, signatures, continuation tokens, token counts and text are invented. SSE bodies are data-only (alt=sse) with CRLF line endings; go-genai's splitter accepts CRLF and LF, so a recording will settle which the API sends. Replace each case with a recorded capture (source: recorded) when the live recorder runs. Model: Gemini 4 Argon (ai.google.dev/gemini-api/docs/models/gemini-4-argon, docs/generate-content/latest-model, docs/generate-content/long-decode; cookbook Get_started_Generate_Content 'What's new in Gemini 4 Argon'). What differs from 3.8 Flash in the response: long decode. A single request stops at a per-request cap (32,768 output tokens non-streaming, 65,536 streaming, thinking included) with finishReason CONTINUATION and a candidate continuationToken; a stream also carries checkpoint continuationTokens on intermediate chunks with no finishReason; and a request whose own maxOutputTokens runs out stops with MAX_TOKENS and still carries a continuationToken (max_tokens_continuation: all 4096 tokens spent thinking, no parts). Argon thinks by default (medium), so thoughtsTokenCount and a signed final part appear without includeThoughts; it rejects thinkingBudget and minimal. stream_error is the mid-stream error chunk go-genai raises as an APIError; the adapter ends the stream with it as the stream's error.",
+  "allowed_unknown_fields": [
+    {
+      "path": "$.candidates[].continuationToken",
+      "reason": "known gap G2: the long-decode continuationToken is dropped. The gateway neither follows it (the official SDKs do by default) nor lets a client send it back, so output past the per-request cap (32,768 tokens non-streaming, 65,536 streaming) or past a too-small max_tokens is unreachable through /v1/chat/completions"
+    },
+    {
+      "path": "$.responseId",
+      "reason": "known gap G12: Gemini's responseId is dropped and the canonical id is a gateway-generated gen-<nanos>, so a response cannot be traced back to Google (support cases, logs)"
+    },
+    {
+      "path": "$.usageMetadata.promptTokensDetails",
+      "reason": "known gap G13: the per-modality prompt token breakdown (TEXT / IMAGE / AUDIO / VIDEO / DOCUMENT) is dropped; Gemini prices audio input above text and OpenAI's prompt_tokens_details.audio_tokens has a slot for it, so audio prompts are costed as text"
+    }
+  ],
+  "allowed_unknown_shapes": [
+    {
+      "kind": "unmapped_finish_reason",
+      "value": "CONTINUATION",
+      "reason": "known gap G1: CONTINUATION (the per-request output cap was hit with budget left) falls back to \"stop\", so a truncated answer looks complete; \"length\" is the honest canonical reason"
+    }
+  ]
+}

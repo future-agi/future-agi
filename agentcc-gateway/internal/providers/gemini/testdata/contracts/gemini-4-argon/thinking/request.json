@@ -1,0 +1,10 @@
+{
+  "model": "gemini-4-argon",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Is 2^31 - 1 a prime number? Answer yes or no with one line of justification."
+    }
+  ],
+  "reasoning_effort": "high"
+}

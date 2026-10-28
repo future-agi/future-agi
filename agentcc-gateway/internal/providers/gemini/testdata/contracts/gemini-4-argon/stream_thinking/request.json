@@ -1,0 +1,11 @@
+{
+  "model": "gemini-4-argon",
+  "messages": [
+    {
+      "role": "user",
+      "content": "What is the derivative of x^x?"
+    }
+  ],
+  "reasoning_effort": "high",
+  "stream": true
+}

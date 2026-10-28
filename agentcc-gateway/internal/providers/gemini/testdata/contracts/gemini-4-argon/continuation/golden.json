@@ -1,0 +1,21 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "# CalcLang: a statically typed expression compiler\n\n## Stage 1: Lexical analysis\n\n```python\nclass TokenKind(Enum):\n    INT_LIT = auto()\n    FLOAT_LIT = auto()\n    IDENT = auto()\n```\n\n## Stage 2: Pratt parser\n\nThe parser assigns each token a binding power and",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "gen-<generated>",
+  "model": "gemini-4-argon",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 32768,
+    "prompt_tokens": 41,
+    "total_tokens": 32809
+  }
+}

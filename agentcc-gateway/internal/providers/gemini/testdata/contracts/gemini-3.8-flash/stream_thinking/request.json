@@ -1,0 +1,11 @@
+{
+  "model": "gemini-3.8-flash",
+  "messages": [
+    {
+      "role": "user",
+      "content": "How many times does the letter r appear in the word strawberry?"
+    }
+  ],
+  "reasoning_effort": "medium",
+  "stream": true
+}

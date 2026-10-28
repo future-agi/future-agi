@@ -1,0 +1,40 @@
+{
+  "choices": [
+    {
+      "finish_reason": "tool_calls",
+      "index": 0,
+      "message": {
+        "content": null,
+        "reasoning_content": "**Fetching both cities**\n\nI need the current weather for Paris and for Tokyo; the two lookups are independent, so I'll request them together.",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{\n                \"location\": \"Paris, France\"\n              }",
+              "name": "get_weather"
+            },
+            "id": "call_0::sig::ac1r+7rHlOic8GSQNbsdobMiInRpaUSQRLmMatbfQI+fPPldHOKfbr09+MJaFh54FKtdTWjgbCSj2Vd4MRDjlUS1o+HclYGsTFhAZlhojGNtEEYohUBITCmKpA7D/U3e",
+            "type": "function"
+          },
+          {
+            "function": {
+              "arguments": "{\n                \"location\": \"Tokyo, Japan\"\n              }",
+              "name": "get_weather"
+            },
+            "id": "call_1",
+            "type": "function"
+          }
+        ]
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "gen-<generated>",
+  "model": "gemini-3.8-flash",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 130,
+    "prompt_tokens": 71,
+    "total_tokens": 201
+  }
+}

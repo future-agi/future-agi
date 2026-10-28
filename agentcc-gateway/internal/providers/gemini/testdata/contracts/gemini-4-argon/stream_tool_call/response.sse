@@ -1,0 +1,2 @@
+data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"get_weather","args":{"location":"Madrid, Spain"}},"thoughtSignature":"ExgTrXOtL8L1iHxF7bsRXY4iae1MKh1KFN7regvxS7lz8CHX5qm8XazZGGn6EHfbgOQO6MEz1Cj1c36WxY5cJFKqwCl4B5EEzO6Jql0MeBoX6jdnIiscqZbDNMSAwx51"}],"role":"model"},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":62,"candidatesTokenCount":17,"thoughtsTokenCount":208,"totalTokenCount":287,"promptTokensDetails":[{"modality":"TEXT","tokenCount":62}]},"modelVersion":"gemini-4-argon","responseId":"x8W3b1j-BwRGVwm1osBlX6g"}
+

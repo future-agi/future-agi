@@ -1,0 +1,45 @@
+{
+  "provider": "gemini",
+  "model": "gemini-3.1-flash-lite",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: authored by hand, 2026-10-28. ai.google.dev and docs.cloud.google.com were blocked by this session's network policy, so the field names and enums come from the machine-readable form of the official REST reference (ai.google.dev/api/generate-content): the generativelanguage v1beta discovery document, revision 20261028 (GenerateContentResponse, Candidate, Part, UsageMetadata, GroundingMetadata, UrlContextMetadata, PromptFeedback, SafetyRating, FinishReason). Body layout (key order, index, responseId, modelVersion, promptTokensDetails, groundingMetadata contents) follows the recorded outputs in the official google-gemini/cookbook (quickstarts/rest/Search_Grounding, Batch_mode, Audio_REST); the stream framing, mid-stream error chunk and continuation protocol follow the official googleapis/go-genai SDK (api_client.go scan / iterateResponseStream, continuation.go). Model behaviour comes from search excerpts of the ai.google.dev pages named per model below; read them directly before trusting a detail they alone support. Ids, signatures, continuation tokens, token counts and text are invented. SSE bodies are data-only (alt=sse) with CRLF line endings; go-genai's splitter accepts CRLF and LF, so a recording will settle which the API sends. Replace each case with a recorded capture (source: recorded) when the live recorder runs. Model: Gemini 3.1 Flash-Lite, the no-thought-parts baseline. Its default thinking level is minimal, so simple prompts come back without thought parts or thoughtsTokenCount, but function calls are still signed (Gemini 3 signs the first functionCall part even at minimal) (ai.google.dev/gemini-api/docs/gemini-3, docs/thinking, docs/generate-content/thought-signatures). Chosen over gemini-2.0-flash (shut down 2026-06-01) and gemini-2.5-flash/-lite (shutdown dates in July/October 2026 per the deprecations page and forum reports), which a recorder could no longer refresh. Covers safety blocks: a candidate stopped with finishReason SAFETY (no content, safetyRatings with blocked: true) and a prompt blocked before generation (promptFeedback, no candidates; sent in the first and only stream chunk), plus MALFORMED_FUNCTION_CALL with finishMessage.",
+  "allowed_unknown_fields": [
+    {
+      "path": "$.candidates[].finishMessage",
+      "reason": "known gap G3: finishMessage, the text explaining why generation stopped (here the malformed call the model wrote), is dropped, and MALFORMED_FUNCTION_CALL itself is unmapped (see allowed_unknown_shapes)"
+    },
+    {
+      "path": "$.candidates[].safetyRatings",
+      "reason": "known gap G11: per-category safety ratings, including which category blocked the answer (blocked: true), are dropped; finish_reason content_filter says only that something was filtered"
+    },
+    {
+      "path": "$.promptFeedback",
+      "reason": "known gap G4: a blocked prompt's promptFeedback (blockReason, safetyRatings) is dropped. With no candidates the non-stream response has an empty choices array and the stream emits nothing (see sanityGaps in contract_test.go)"
+    },
+    {
+      "path": "$.responseId",
+      "reason": "known gap G12: Gemini's responseId is dropped and the canonical id is a gateway-generated gen-<nanos>, so a response cannot be traced back to Google (support cases, logs)"
+    },
+    {
+      "path": "$.usageMetadata.candidatesTokensDetails",
+      "reason": "known gap G13: the per-modality output token breakdown is dropped. For text-only output it repeats candidatesTokenCount, but image and audio output are priced differently and OpenAI's completion_tokens_details.audio_tokens has a slot for audio"
+    },
+    {
+      "path": "$.usageMetadata.promptTokensDetails",
+      "reason": "known gap G13: the per-modality prompt token breakdown (TEXT / IMAGE / AUDIO / VIDEO / DOCUMENT) is dropped; Gemini prices audio input above text and OpenAI's prompt_tokens_details.audio_tokens has a slot for it, so audio prompts are costed as text"
+    }
+  ],
+  "allowed_unknown_shapes": [
+    {
+      "kind": "unknown_event",
+      "value": "promptFeedback",
+      "reason": "known gap G4: a blocked prompt streams one chunk with promptFeedback and no candidates; the parser emits nothing for it, so the stream has no chunk, no finish_reason, no usage and no error"
+    },
+    {
+      "kind": "unmapped_finish_reason",
+      "value": "MALFORMED_FUNCTION_CALL",
+      "reason": "known gap G3: the model's function call was invalid; the reason falls back to \"stop\" with no content and no tool call, so the caller sees an empty, normal-looking completion (finishMessage, which says what went wrong, is dropped too)"
+    }
+  ]
+}

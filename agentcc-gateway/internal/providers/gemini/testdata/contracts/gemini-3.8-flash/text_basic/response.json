@@ -1,0 +1,31 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "text": "No. 9.9 is larger than 9.11, because 0.90 is greater than 0.11.",
+            "thoughtSignature": "K00s6KW7oPjt3cZdM3VwjrbUXc0quT4er4ylYLfSssK73HjfCjvfxQBpykGiQ/ejurSS4QljxljkH6fSZKFjcDNS3U81wd693y9EdyEIN/3KI5Dxm31fKWAhuTPI3aK3"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 14,
+    "candidatesTokenCount": 21,
+    "thoughtsTokenCount": 187,
+    "totalTokenCount": 222,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 14
+      }
+    ]
+  },
+  "modelVersion": "gemini-3.8-flash",
+  "responseId": "mi5flL4A2eLQodHMfO2DMZw"
+}

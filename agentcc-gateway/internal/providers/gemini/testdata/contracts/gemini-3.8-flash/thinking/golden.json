@@ -1,0 +1,22 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "The ball costs **$0.05** (5 cents), and the bat costs $1.05.",
+        "reasoning_content": "**Setting up the equations**\n\nLet the ball cost x. The bat then costs x + 1.00, and together they cost 2x + 1.00 = 1.10, so 2x = 0.10 and x = 0.05. The intuitive answer of $0.10 would make the total $1.20, so it is wrong.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "gen-<generated>",
+  "model": "gemini-3.8-flash",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 421,
+    "prompt_tokens": 33,
+    "total_tokens": 454
+  }
+}

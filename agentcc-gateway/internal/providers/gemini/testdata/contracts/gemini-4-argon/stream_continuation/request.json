@@ -1,0 +1,11 @@
+{
+  "model": "gemini-4-argon",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Write a complete, production-ready compiler in Python for a statically typed expression language, including lexer, parser, type checker, bytecode emitter, virtual machine, and test suite."
+    }
+  ],
+  "max_tokens": 262144,
+  "stream": true
+}

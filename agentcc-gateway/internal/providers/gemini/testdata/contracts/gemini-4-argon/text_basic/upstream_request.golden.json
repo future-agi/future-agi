@@ -1,0 +1,21 @@
+{
+  "body": {
+    "contents": [
+      {
+        "parts": [
+          {
+            "text": "In one sentence, what does a compiler do?"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "generationConfig": {}
+  },
+  "headers": {
+    "content-type": "application/json",
+    "x-goog-api-key": "REDACTED"
+  },
+  "method": "POST",
+  "path": "/v1beta/models/gemini-4-argon:generateContent"
+}

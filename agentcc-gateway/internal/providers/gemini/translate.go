@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -827,7 +828,11 @@ func parseDataURI(uri string) (mediaType, data string) {
 	return mediaType, data
 }
 
-func translateResponse(resp *geminiResponse, model string) *models.ChatCompletionResponse {
+// translateResponse converts a generateContent response. shape receives a
+// report for every part kind and finish reason this function does not
+// translate; nil is allowed. Parts of a kind geminiPart does not know at all
+// are reported by reportBlankParts, which needs the raw body.
+func translateResponse(resp *geminiResponse, model string, shape *common.ShapeReporter) *models.ChatCompletionResponse {
 	result := &models.ChatCompletionResponse{
 		ID:      fmt.Sprintf("gen-%d", time.Now().UnixNano()),
 		Object:  "chat.completion",
@@ -884,6 +889,7 @@ func translateResponse(resp *geminiResponse, model string) *models.ChatCompletio
 				})
 				toolCallIdx++
 			}
+			reportUntranslatedPart(shape, part)
 		}
 
 		if len(audioParts) > 0 {
@@ -947,7 +953,7 @@ func translateResponse(resp *geminiResponse, model string) *models.ChatCompletio
 			{
 				Index:        0,
 				Message:      msg,
-				FinishReason: mapGeminiFinishReasonWithToolCalls(candidate.FinishReason, len(toolCalls) > 0),
+				FinishReason: finishReason(shape, candidate.FinishReason, len(toolCalls) > 0),
 			},
 		}
 	}
@@ -980,27 +986,125 @@ func mapRoleToGemini(role string) string {
 }
 
 func mapGeminiFinishReason(reason string) string {
-	switch reason {
-	case "STOP":
-		return "stop"
-	case "MAX_TOKENS":
-		return "length"
-	case "SAFETY":
-		return "content_filter"
-	case "RECITATION":
-		return "content_filter"
-	case "OTHER":
-		return "stop"
-	default:
-		return "stop"
-	}
+	finish, _ := lookupGeminiFinishReason(reason)
+	return finish
 }
 
 func mapGeminiFinishReasonWithToolCalls(reason string, hasToolCalls bool) string {
+	return finishReason(nil, reason, hasToolCalls)
+}
+
+// finishReason is mapGeminiFinishReasonWithToolCalls for a live response: a
+// finish reason with no mapping still becomes "stop", and is reported so the
+// default is visible. A turn with tool calls is "tool_calls" whatever Gemini
+// said, so its finish reason is not consulted and not reported.
+func finishReason(shape *common.ShapeReporter, reason string, hasToolCalls bool) string {
 	if hasToolCalls {
 		return "tool_calls"
 	}
-	return mapGeminiFinishReason(reason)
+	finish, ok := lookupGeminiFinishReason(reason)
+	if !ok {
+		shape.Report(common.ShapeUnmappedFinishReason, reason)
+	}
+	return finish
+}
+
+// lookupGeminiFinishReason maps a Gemini finishReason to an OpenAI
+// finish_reason. ok is false for a reason with no mapping, which falls back to
+// "stop".
+func lookupGeminiFinishReason(reason string) (finish string, ok bool) {
+	switch reason {
+	case "STOP":
+		return "stop", true
+	case "MAX_TOKENS":
+		return "length", true
+	case "SAFETY":
+		return "content_filter", true
+	case "RECITATION":
+		return "content_filter", true
+	case "OTHER":
+		return "stop", true
+	default:
+		return "stop", false
+	}
+}
+
+// knownPartKeys are the JSON keys geminiPart decodes.
+var knownPartKeys = map[string]bool{
+	"text": true, "thought": true, "thoughtSignature": true, "inlineData": true,
+	"fileData": true, "functionCall": true, "functionResponse": true,
+}
+
+// partIsBlank reports whether p decoded with none of geminiPart's fields set:
+// an empty text part, or a part of a kind geminiPart does not know.
+func partIsBlank(p geminiPart) bool {
+	return p.Text == "" && !p.Thought && p.ThoughtSignature == "" && p.InlineData == nil &&
+		p.FileData == nil && p.FunctionCall == nil && p.FunctionResponse == nil
+}
+
+// reportBlankParts reports each part of candidate 0 that decoded blank but
+// carries keys geminiPart does not know: a part kind added after this adapter
+// was written (executableCode, toolCall, ...), whose content translation
+// drops. Parts are an untagged union, so the kind is named by those keys,
+// sorted and comma-joined. raw is the JSON resp was decoded from; it is only
+// re-read when a blank part exists, so the common case costs nothing. A known
+// field next to an unknown one (a thoughtSignature beside an executableCode)
+// makes the part not blank and is not caught here; the contract tests' field
+// audit catches it instead.
+func reportBlankParts(shape *common.ShapeReporter, resp *geminiResponse, raw []byte) {
+	if shape == nil || len(resp.Candidates) == 0 {
+		return
+	}
+	parts := resp.Candidates[0].Content.Parts
+	blank := false
+	for _, p := range parts {
+		if partIsBlank(p) {
+			blank = true
+			break
+		}
+	}
+	if !blank {
+		return
+	}
+	var probe struct {
+		Candidates []struct {
+			Content struct {
+				Parts []map[string]json.RawMessage `json:"parts"`
+			} `json:"content"`
+		} `json:"candidates"`
+	}
+	if json.Unmarshal(raw, &probe) != nil || len(probe.Candidates) == 0 {
+		return
+	}
+	rawParts := probe.Candidates[0].Content.Parts
+	for i, p := range parts {
+		if !partIsBlank(p) || i >= len(rawParts) {
+			continue
+		}
+		var unknown []string
+		for k := range rawParts[i] {
+			if !knownPartKeys[k] {
+				unknown = append(unknown, k)
+			}
+		}
+		if len(unknown) == 0 {
+			continue // an empty text part, or {}
+		}
+		sort.Strings(unknown)
+		shape.Report(common.ShapeUnknownBlock, strings.Join(unknown, ","))
+	}
+}
+
+// reportUntranslatedPart reports a response part of a kind geminiPart knows
+// (because requests carry it) but response translation does not read, so its
+// content is dropped.
+func reportUntranslatedPart(shape *common.ShapeReporter, p geminiPart) {
+	if p.FileData != nil {
+		shape.Report(common.ShapeUnknownBlock, "fileData")
+	}
+	if p.FunctionResponse != nil {
+		shape.Report(common.ShapeUnknownBlock, "functionResponse")
+	}
 }
 
 func parseGeminiError(status int, body []byte) *models.APIError {

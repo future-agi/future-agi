@@ -1,0 +1,42 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "parts": [
+          {
+            "functionCall": {
+              "name": "get_weather",
+              "args": {
+                "location": "Paris, France",
+                "unit": "celsius"
+              }
+            },
+            "thoughtSignature": "lj6MGhTWlPjtPyTNetoMpPzM+SJ/Ztl1Ukx+PV7b4tCcxwQuIPXOB+TsFjlxqxufCZthRXCB98gRhiKRmoxHx53SWD+V9vSJDxB2gciMvuLmh24A8WdyVnojtvlh0UVX"
+          }
+        ],
+        "role": "model"
+      },
+      "finishReason": "STOP",
+      "index": 0
+    }
+  ],
+  "usageMetadata": {
+    "promptTokenCount": 58,
+    "candidatesTokenCount": 22,
+    "totalTokenCount": 80,
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 58
+      }
+    ],
+    "candidatesTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 22
+      }
+    ]
+  },
+  "modelVersion": "gemini-3.1-flash-lite",
+  "responseId": "xx7K-Xzlpy0SmqQGOqTiTLg"
+}
