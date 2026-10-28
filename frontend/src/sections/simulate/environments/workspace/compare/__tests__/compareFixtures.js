@@ -65,3 +65,62 @@ export const environmentResult = (env = ENV) => ({
   error: null,
   isLoading: false,
 });
+
+// One raw `results[]` row of the v3 calls list.
+export const callRow = (id, key, outcome, overrides = {}) => ({
+  id,
+  source_scenario_key: key,
+  scenario: key,
+  goal: "Billing",
+  persona: "Dana",
+  trial_index: 1,
+  outcome,
+  duration_seconds: 30,
+  tokens: 1000,
+  csat: 4,
+  turn_count: 8,
+  latency_ms: 900,
+  evaluations: [
+    {
+      id: "ev-task",
+      name: "Task done",
+      score: outcome === "passed" ? 0.9 : 0.2,
+      passed: outcome === "passed",
+    },
+  ],
+  sub_goal_results: [],
+  ...overrides,
+});
+
+export const EVAL_COLUMNS = [{ id: "ev-task", name: "Task done" }];
+
+// A calls-list page as `fetchRunCalls` resolves it.
+export const callsPage = (results, { count, totalPages = 1 } = {}) => ({
+  results,
+  count: count ?? results.length,
+  total_pages: totalPages,
+  evaluation_columns: EVAL_COLUMNS,
+});
+
+// Run 1 (baseline) against Run 3: refund was fixed, address regressed, greet
+// passed in both, and cancel only ran in Run 3.
+export const CALLS = {
+  r1: [
+    callRow("c1-refund", "refund", "failed"),
+    callRow("c1-address", "address", "passed", { goal: "Account" }),
+    callRow("c1-greet", "greet", "passed", { goal: "Account" }),
+  ],
+  r3: [
+    callRow("c3-refund-2", "refund", "passed", { trial_index: 2 }),
+    callRow("c3-refund-1", "refund", "passed", { duration_seconds: 20 }),
+    callRow("c3-address", "address", "failed", { goal: "Account" }),
+    callRow("c3-greet", "greet", "passed", { goal: "Account" }),
+    callRow("c3-cancel", "cancel", "passed"),
+  ],
+};
+
+// Resolves each run's calls from CALLS, one page each.
+export const fetchCallsFrom =
+  (calls = CALLS) =>
+  (executionId) =>
+    Promise.resolve(callsPage(calls[executionId] || []));

@@ -105,6 +105,7 @@ describe("Compare runs header", () => {
     });
 
     renderPage("?runs=r1,r3");
+    await screen.findByText("No calls yet");
     fireEvent.click(screen.getByRole("button", { name: "Export comparison" }));
     expect(click).toHaveBeenCalledTimes(1);
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:compare");

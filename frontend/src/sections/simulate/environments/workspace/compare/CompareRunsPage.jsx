@@ -1,3 +1,4 @@
+import PropTypes from "prop-types";
 import { useMemo, useState } from "react";
 import { enqueueSnackbar } from "notistack";
 import {
@@ -6,7 +7,15 @@ import {
   useParams,
   useSearchParams,
 } from "react-router-dom";
-import { Box, Button, IconButton, Stack, Typography } from "@mui/material";
+import {
+  Box,
+  Button,
+  CircularProgress,
+  IconButton,
+  Stack,
+  Typography,
+} from "@mui/material";
+import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import { LoadingScreen } from "src/components/loading-screen";
@@ -21,13 +30,64 @@ import EmptyState from "../../components/EmptyState";
 import WorkspaceErrorBoundary from "../WorkspaceErrorBoundary";
 import RunPills from "./RunPills";
 import AddRunMenu from "./AddRunMenu";
+import CompareActions, {
+  CompareSearchBar,
+  SavedViews,
+} from "./CompareControls";
+import CompareTable from "./CompareTable";
+import { CALL_CAP, useComparison } from "./useComparison";
 import { comparisonPayload, downloadComparison } from "./exportComparison";
 import { coverageFromRuns, subtitleText, withIdentity } from "./compareFormat";
+import {
+  ROW_HEIGHTS,
+  applyQuick,
+  bandRows,
+  defaultView,
+  loadDefaultView,
+  loadSavedViews,
+  newViewId,
+  searchRows,
+  snapshotsEqual,
+  sortRows,
+  storeDefaultView,
+  storeSavedViews,
+  viewSnapshot,
+} from "./compareView";
 
 // The most runs the page reads for its pills and the Add run menu.
 const RUN_CAP = 200;
 
 const ICON_SX = { color: "text.subtitle" };
+
+function CountChip({ count, label, color }) {
+  return (
+    <Typography
+      component="span"
+      sx={{
+        px: 0.75,
+        py: 0.125,
+        borderRadius: "4px",
+        typography: "s3",
+        fontWeight: "fontWeightSemiBold",
+        color: count ? color : "text.subtitle",
+        bgcolor: (t) =>
+          alpha(
+            count
+              ? t.palette[color.split(".")[0]].main
+              : t.palette.text.primary,
+            0.08,
+          ),
+      }}
+    >
+      {`${count} ${label}`}
+    </Typography>
+  );
+}
+CountChip.propTypes = {
+  count: PropTypes.number.isRequired,
+  label: PropTypes.string.isRequired,
+  color: PropTypes.string.isRequired,
+};
 
 /**
  * Two or more runs of one environment, side by side.
@@ -42,6 +102,7 @@ function CompareRuns() {
   const from = useLocation().state?.back || null;
   const [params, setParams] = useSearchParams();
   const [addAnchor, setAddAnchor] = useState(null);
+  const [query, setQuery] = useState("");
 
   const { env, bootstrapState, notFound, error, refetch, isLoading } =
     useEnvironment(envId);
@@ -75,6 +136,86 @@ function CompareRuns() {
     () => envRuns.filter((r) => !runIds.includes(r.id)).map(withIdentity),
     [envRuns, runIds],
   );
+  const comparedIds = useMemo(
+    () => (runs.length >= 2 ? runs.map((r) => r.id) : []),
+    [runs],
+  );
+  const comparison = useComparison(envId, comparedIds);
+
+  // Saved views live in this browser, per environment; the active one rides
+  // in the URL, so a link carries the reading as well as the runs.
+  const [savedViews, setSavedViews] = useState(() => loadSavedViews(envId));
+  const [storedDefault, setStoredDefault] = useState(() =>
+    loadDefaultView(envId),
+  );
+  const [viewOverride, setViewOverride] = useState(null);
+  const activeViewId = params.get("view") || null;
+  const activeView = savedViews.find((v) => v.id === activeViewId) || null;
+  const view =
+    viewOverride ||
+    (activeView
+      ? { ...defaultView(), ...activeView.config.view }
+      : storedDefault);
+  const dirty = !snapshotsEqual(
+    viewSnapshot(view),
+    activeView ? activeView.config : viewSnapshot(storedDefault),
+  );
+
+  const setActiveView = (id) => {
+    const next = new URLSearchParams(params);
+    if (id) next.set("view", id);
+    else next.delete("view");
+    setParams(next, { replace: true });
+  };
+  const writeViews = (next) => {
+    setSavedViews(next);
+    storeSavedViews(envId, next);
+  };
+  const applyView = (id) => {
+    const v = savedViews.find((x) => x.id === id);
+    setViewOverride(v ? { ...defaultView(), ...v.config.view } : storedDefault);
+    setActiveView(id);
+  };
+  const saveView = (name) => {
+    const id = newViewId(name, savedViews);
+    writeViews([...savedViews, { id, name, config: viewSnapshot(view) }]);
+    setViewOverride(view);
+    setActiveView(id);
+    enqueueSnackbar(`View "${name}" saved`, { variant: "success" });
+  };
+  const updateView = (id) => {
+    writeViews(
+      savedViews.map((v) =>
+        v.id === id ? { ...v, config: viewSnapshot(view) } : v,
+      ),
+    );
+    enqueueSnackbar("View updated", { variant: "success" });
+  };
+  const renameView = (id, name) =>
+    writeViews(savedViews.map((v) => (v.id === id ? { ...v, name } : v)));
+  const deleteView = (id) => {
+    writeViews(savedViews.filter((v) => v.id !== id));
+    if (id === activeViewId) setActiveView(null);
+  };
+
+  const rows = useMemo(
+    () =>
+      sortRows(
+        applyQuick(searchRows(comparison.rows, query), view.quick),
+        view.sort,
+        comparedIds,
+      ),
+    [comparison.rows, query, view.quick, view.sort, comparedIds],
+  );
+  const groups = useMemo(
+    () =>
+      bandRows(rows, {
+        group: view.group,
+        sort: view.sort,
+        runIds: comparedIds,
+      }),
+    [rows, view.group, view.sort, comparedIds],
+  );
 
   const back = () =>
     from?.to
@@ -90,7 +231,13 @@ function CompareRuns() {
   };
 
   const exportComparison = () =>
-    downloadComparison(comparisonPayload({ env, runs }));
+    downloadComparison(
+      comparisonPayload({
+        env,
+        runs,
+        comparison: comparison.isLoading ? null : { rows },
+      }),
+    );
 
   const copyLink = () => {
     navigator.clipboard?.writeText(window.location.href);
@@ -148,6 +295,14 @@ function CompareRuns() {
     );
   }
 
+  const coverage = comparison.rows.length
+    ? comparison.coverage
+    : coverageFromRuns(runs);
+  // The calls are in, and none of them failed to load.
+  const callsReady = !comparison.isLoading && !comparison.error;
+  const rowPad = ROW_HEIGHTS.find((h) => h.id === view.rowHeight)?.py ?? 1.5;
+  const runLabel = (id) => runs.find((r) => r.id === id)?.label ?? id;
+
   return (
     <Stack sx={{ height: "100%", minHeight: 0 }}>
       <Box
@@ -175,7 +330,7 @@ function CompareRuns() {
               {env.name}
             </Typography>
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-              {subtitleText(runs, coverageFromRuns(runs))}
+              {subtitleText(runs, coverage)}
             </Typography>
           </Box>
           <Box flex={1} />
@@ -221,6 +376,38 @@ function CompareRuns() {
           >
             Add run
           </Button>
+          <Box flex={1} />
+          <SavedViews
+            views={savedViews}
+            activeId={activeView ? activeViewId : null}
+            dirty={dirty}
+            onApply={applyView}
+            onSave={saveView}
+            onUpdate={updateView}
+            onRename={renameView}
+            onDelete={deleteView}
+          />
+          <CompareActions
+            view={view}
+            onView={setViewOverride}
+            onSaveDefault={() => {
+              storeDefaultView(envId, view);
+              setStoredDefault(view);
+              enqueueSnackbar(
+                "Saved as the default view for this environment",
+                {
+                  variant: "success",
+                },
+              );
+            }}
+            onResetView={() => {
+              storeDefaultView(envId, null);
+              setStoredDefault(defaultView());
+              setViewOverride(defaultView());
+            }}
+            onExport={exportComparison}
+            onCopyLink={copyLink}
+          />
         </Stack>
       </Box>
 
@@ -231,6 +418,117 @@ function CompareRuns() {
         capped={count > RUN_CAP}
         onAdd={(ids) => setRuns([...runIds, ...ids])}
       />
+
+      <Box sx={{ flex: 1, minHeight: 0, overflow: "auto", p: 2 }}>
+        {comparison.cappedRuns.map(({ runId, count: calls }) => (
+          <Typography
+            key={runId}
+            sx={{ typography: "s2", color: "warning.main", mb: 1 }}
+          >
+            {`${runLabel(runId)} has ${calls.toLocaleString()} calls. Comparing the first ${CALL_CAP.toLocaleString()}.`}
+          </Typography>
+        ))}
+
+        <Box
+          sx={{
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: "8px",
+            bgcolor: "background.paper",
+            overflow: "hidden",
+          }}
+        >
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={2}
+            sx={{ px: 2.5, py: 1.25 }}
+          >
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+              <Stack direction="row" alignItems="center" spacing={1}>
+                <Typography
+                  sx={{ typography: "s1", fontWeight: "fontWeightSemiBold" }}
+                >
+                  Scenario by scenario
+                </Typography>
+                {callsReady && (
+                  <>
+                    <CountChip
+                      count={comparison.flips.fixed}
+                      label="fixed"
+                      color="success.main"
+                    />
+                    <CountChip
+                      count={comparison.flips.regressed}
+                      label="regressed"
+                      color="error.main"
+                    />
+                  </>
+                )}
+              </Stack>
+              {callsReady && (
+                <Typography
+                  noWrap
+                  sx={{ typography: "s3", color: "text.subtitle" }}
+                >
+                  {`${comparison.changed} of ${comparison.rows.length} ended differently`}
+                  {comparison.flips.regressed
+                    ? ` · ${comparison.flips.regressed} passed → failed`
+                    : ""}
+                  {` · showing ${rows.length}`}
+                </Typography>
+              )}
+            </Box>
+            <CompareSearchBar query={query} onQuery={setQuery} />
+          </Stack>
+
+          <Box sx={{ borderTop: "1px solid", borderColor: "divider" }}>
+            {comparison.isLoading ? (
+              <Stack alignItems="center" spacing={1} sx={{ py: 6 }}>
+                <CircularProgress size={20} />
+                <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+                  Loading calls
+                </Typography>
+              </Stack>
+            ) : comparison.error ? (
+              <EmptyState
+                icon="solar:danger-triangle-linear"
+                title="Couldn't load the calls"
+                body={comparison.error.message}
+                action={
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    onClick={comparison.refetch}
+                  >
+                    Retry
+                  </Button>
+                }
+              />
+            ) : rows.length === 0 ? (
+              <EmptyState
+                icon="solar:filter-linear"
+                title={
+                  comparison.rows.length ? "No scenarios match" : "No calls yet"
+                }
+                body={
+                  comparison.rows.length
+                    ? "Loosen the filters, or clear the search."
+                    : "These runs have no calls to compare."
+                }
+              />
+            ) : (
+              <CompareTable
+                groups={groups}
+                runs={runs}
+                evals={comparison.evals}
+                view={view}
+                rowPad={rowPad}
+              />
+            )}
+          </Box>
+        </Box>
+      </Box>
     </Stack>
   );
 }
