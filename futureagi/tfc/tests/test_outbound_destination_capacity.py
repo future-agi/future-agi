@@ -45,8 +45,10 @@ def test_worker_admission_is_bounded_and_queue_uses_deadline(monkeypatch):
     with ThreadPoolExecutor(max_workers=32) as executor:
         futures = [
             executor.submit(
-                destination.request, method="GET",
-                url="http://public.fixture.test/held", timeout=10,
+                destination.request,
+                method="GET",
+                url="http://public.fixture.test/held",
+                timeout=10,
             )
             for _ in range(32)
         ]
@@ -61,9 +63,12 @@ def test_worker_admission_is_bounded_and_queue_uses_deadline(monkeypatch):
         finally:
             release.set()
         assert all(future.result().status_code == 200 for future in futures)
-    assert destination.request(
-        method="GET", url="http://public.fixture.test/available", timeout=1
-    ).status_code == 200
+    assert (
+        destination.request(
+            method="GET", url="http://public.fixture.test/available", timeout=1
+        ).status_code
+        == 200
+    )
     assert spawn.call_count == 33
 
 
@@ -82,7 +87,8 @@ def test_protocol_assignment_range_is_explicitly_refused(monkeypatch):
     # Emulate older interpreter classification, leaving the production guard intact.
     for name in ("is_global", "is_private", "is_reserved"):
         monkeypatch.setattr(
-            destination.ipaddress.IPv4Address, name,
+            destination.ipaddress.IPv4Address,
+            name,
             property(lambda self, value=name == "is_global": value),
         )
     spawn = Mock(side_effect=AssertionError("preflight must precede worker startup"))
@@ -102,14 +108,21 @@ def test_https_keeps_requests_default_ca_bundle(monkeypatch):
     response.getheaders.return_value = []
     response.read.return_value = b""
     monkeypatch.setattr(destination.ssl, "create_default_context", make_context)
-    monkeypatch.setattr(destination.http.client, "HTTPSConnection", Mock(return_value=connection))
     monkeypatch.setattr(
-        destination, "_resolve",
+        destination.http.client, "HTTPSConnection", Mock(return_value=connection)
+    )
+    monkeypatch.setattr(
+        destination,
+        "_resolve",
         lambda *args: destination.ipaddress.ip_address("93.184.216.34"),
     )
-    destination._exchange({
-        "method": "GET", "url": "https://public.fixture.test/",
-        "timeout": 1, "max_bytes": 20,
-    })
+    destination._exchange(
+        {
+            "method": "GET",
+            "url": "https://public.fixture.test/",
+            "timeout": 1,
+            "max_bytes": 20,
+        }
+    )
     make_context.assert_called_once_with(cafile=requests.certs.where())
     assert connection._create_connection is not None

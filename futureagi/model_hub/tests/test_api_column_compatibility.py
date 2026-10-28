@@ -63,21 +63,32 @@ def test_public_request_caller_headers_override_defaults(outbound_wire):
     ],
 )
 def test_stored_secret_workspace_visibility(
-    organization, workspace, outbound_wire, location, secret_scope, dataset_scope, allowed
+    organization,
+    workspace,
+    outbound_wire,
+    location,
+    secret_scope,
+    dataset_scope,
+    allowed,
 ):
     assert workspace.is_default
     sibling = Workspace.objects.create(
-        name="compat-sibling", organization=organization, created_by=workspace.created_by
+        name="compat-sibling",
+        organization=organization,
+        created_by=workspace.created_by,
     )
     scopes = {"default": workspace.id, "sibling": sibling.id, "null": None}
     secret = SecretModel.no_workspace_objects.create(
-        name="compat-secret", organization=organization, workspace=workspace,
+        name="compat-secret",
+        organization=organization,
+        workspace=workspace,
         key="fixture-value",
     )
     # update avoids BaseModel's automatic middleware workspace assignment.
     secret_org = (
         Organization.objects.create(name="compat-other-org")
-        if secret_scope.startswith("foreign-") else organization
+        if secret_scope.startswith("foreign-")
+        else organization
     )
     SecretModel.no_workspace_objects.filter(id=secret.id).update(
         workspace_id=scopes[secret_scope.split("-")[-1]],
@@ -111,9 +122,12 @@ def test_remote_status_has_url_free_error(monkeypatch, status):
     response.status_code = status
     response.url = "http://public.fixture.test/private-value"
     response._content = b"private response body"
-    monkeypatch.setattr(columns.outbound_destination, "request", Mock(return_value=response))
+    monkeypatch.setattr(
+        columns.outbound_destination, "request", Mock(return_value=response)
+    )
     assert columns.AddApiColumnView()._make_api_call(None, config(response.url)) == (
-        "upstream request failed", {"response_status": 400}
+        "upstream request failed",
+        {"response_status": 400},
     )
 
 
@@ -121,7 +135,9 @@ def test_invalid_json_has_url_free_error(monkeypatch):
     response = requests.Response()
     response.status_code = 200
     response._content = b"private invalid JSON"
-    monkeypatch.setattr(columns.outbound_destination, "request", Mock(return_value=response))
+    monkeypatch.setattr(
+        columns.outbound_destination, "request", Mock(return_value=response)
+    )
     assert columns.AddApiColumnView()._make_api_call(
         None, config("http://public.fixture.test/private-value")
     ) == ("upstream response could not be decoded", {"response_status": 400})

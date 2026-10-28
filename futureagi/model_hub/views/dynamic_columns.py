@@ -9,9 +9,12 @@ import structlog
 from django.db import close_old_connections, transaction
 from django.db.models import Q
 from drf_yasg.utils import swagger_auto_schema
+from requests.exceptions import HTTPError
+from requests.exceptions import JSONDecodeError as ResponseJSONDecodeError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from accounts.models.workspace import Workspace
 from agentic_eval.core.embeddings.embedding_manager import (
     model_manager,
 )
@@ -65,10 +68,10 @@ from model_hub.views.run_prompt import populate_placeholders
 # Define a Celery task for running the evaluation
 from tfc.telemetry import wrap_for_thread
 from tfc.temporal import temporal_activity
+from tfc.utils import outbound_destination
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
-from tfc.utils import outbound_destination
 
 logger = structlog.get_logger(__name__)
 
@@ -1091,10 +1094,20 @@ class AddApiColumnView(APIView):
         if dataset is None or dataset.organization_id is None:
             raise outbound_destination.DestinationError("secret_scope_missing")
         # Background threads have no reliable middleware workspace context.
-        return SecretModel.no_workspace_objects.get(
+        scope = Q(workspace_id=dataset.workspace_id)
+        if dataset.workspace_id is None or Workspace.no_workspace_objects.filter(
+            id=dataset.workspace_id,
+            organization_id=dataset.organization_id,
+            is_default=True,
+        ).exists():
+            # Match the default-workspace visibility rule, including legacy rows.
+            scope |= Q(workspace__isnull=True) | Q(
+                workspace__is_default=True,
+                workspace__organization_id=dataset.organization_id,
+            )
+        return SecretModel.no_workspace_objects.filter(scope).get(
             id=secret_id,
             organization_id=dataset.organization_id,
-            workspace_id=dataset.workspace_id,
             deleted=False,
         ).actual_key
 
@@ -1206,6 +1219,10 @@ class AddApiColumnView(APIView):
                 else type(e).__name__
             )
             logger.warning("API column request refused or failed", reason=reason)
+            if isinstance(e, HTTPError):
+                return "upstream request failed", {"response_status": 400}
+            if isinstance(e, ResponseJSONDecodeError):
+                return "upstream response could not be decoded", {"response_status": 400}
             return outbound_destination.PUBLIC_ERROR, {"response_status": 400}
 
     @validated_request(
