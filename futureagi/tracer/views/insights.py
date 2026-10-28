@@ -1599,8 +1599,8 @@ class InsightRunStopView(InsightsLicenseRequired, APIView):
         responses={200: InsightRunStopResponseSerializer, **ERROR_RESPONSES},
     )
     def post(self, request, run_id):
-        """Stop a run in flight: it reads nothing more and is neither written
-        nor charged. Stopping a stopped run again answers the same."""
+        """Stop a run in flight: it reads nothing more and isn't written. The
+        work it already did is charged. Stopping it again answers the same."""
         modules = _pipeline()
         if modules is None:
             return _unavailable(self._gm)

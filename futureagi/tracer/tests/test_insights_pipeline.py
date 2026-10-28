@@ -905,3 +905,93 @@ def test_a_stopped_run_fails_once_and_reads_no_further_units(
         pipeline.organise(str(run.id))
     run.refresh_from_db()
     assert (run.status, run.error) == ("failed", "Stopped by Ada.")
+
+
+class InlinePool:
+    """A ThreadPoolExecutor that reads each unit on this thread, so a stop
+    made while a unit is read sees this test's transaction."""
+
+    def __init__(self, max_workers=None):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def map(self, fn, items):
+        return [fn(item) for item in items]
+
+
+@pytest.mark.django_db
+def test_a_stopped_run_is_charged_the_units_it_read_and_no_more(
+    report, user, model, loaded, monkeypatch
+):
+    """Stopped during its second batch, after k = 3 units (two in the first
+    batch, one in the second): the stop charges what the run had spent, the
+    batch under way adds its one unit when it ends, and nothing else is
+    charged, however often it is stopped. A run that fails on its own still
+    isn't charged."""
+    from ee.agenthub.insights import billing
+    from ee.agenthub.insights.llm import Spend
+
+    UNIT_COST = 0.01
+    charged = []
+
+    def charge(org_id, cost_usd, *, source, source_id, event_id=None, **_):
+        charged.append((str(org_id), round(cost_usd, 6), source, source_id))
+        return cost_usd
+
+    monkeypatch.setattr(billing, "charge", charge)
+    monkeypatch.setattr(pipeline, "ThreadPoolExecutor", InlinePool)
+    run = pipeline.create_run(
+        config=report,
+        scope={"window": WINDOW, "preset": "Custom"},
+        population=[{"id": unit_id} for unit_id in ids(order=6)],
+        sample_size=6,
+        user=user,
+    )
+    ready = pipeline.prepare(str(run.id))
+    fake = facets.chat_json
+    read = []
+
+    def extract_and_pay(system, prompt, *, spend=None, **kwargs):
+        reply = fake(system, prompt, **kwargs)
+        spend.add(UNIT_COST)
+        read.append(1)
+        if len(read) == 3:
+            assert pipeline.stop(str(run.id), "Stopped by Ada.")
+        return reply
+
+    monkeypatch.setattr(facets, "chat_json", extract_and_pay)
+    pipeline.extract_batch(str(run.id), ready[:2])
+    assert charged == []
+    pipeline.extract_batch(str(run.id), ready[2:])
+
+    assert len(read) == 3
+    org, run_id = str(run.organization_id), str(run.id)
+    assert charged == [
+        (org, 0.02, "insights_report", run_id),
+        (org, 0.01, "insights_report", run_id),
+    ]
+    assert not pipeline.stop(run_id, "Stopped by Bo.")
+    with pytest.raises(pipeline.InsightRunNotRunning):
+        pipeline.organise(run_id)
+    assert len(charged) == 2
+    run.refresh_from_db()
+    assert run.cost_usd == pytest.approx(3 * UNIT_COST)
+
+    # Failed on its own, with spend added after: not charged.
+    other = pipeline.create_run(
+        config=report,
+        scope={"window": WINDOW, "preset": "Custom"},
+        population=[{"id": unit_id} for unit_id in ids(human=2)],
+        sample_size=2,
+        user=user,
+    )
+    pipeline.fail(str(other.id), "The report could not be completed.")
+    spend = Spend()
+    spend.add(0.5)
+    pipeline.add_spend(str(other.id), spend)
+    assert len(charged) == 2

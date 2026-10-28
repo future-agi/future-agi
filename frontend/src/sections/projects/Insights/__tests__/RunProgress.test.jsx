@@ -11,9 +11,12 @@ import {
 import RunProgress from "../RunProgress";
 import { insightsKeys } from "../insightsApi";
 
-const mocks = vi.hoisted(() => ({ post: vi.fn() }));
+const mocks = vi.hoisted(() => ({ post: vi.fn(), cloud: false }));
 
 vi.mock("src/components/iconify", () => ({ default: () => null }));
+vi.mock("src/hooks/useDeploymentMode", () => ({
+  useDeploymentMode: () => ({ isCloud: mocks.cloud }),
+}));
 vi.mock("src/utils/axios", () => ({
   default: { post: (...args) => mocks.post(...args) },
   readQuery: vi.fn(),
@@ -65,6 +68,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.clearAllMocks();
+  mocks.cloud = false;
 });
 
 describe("RunProgress", () => {
@@ -130,6 +134,26 @@ describe("RunProgress", () => {
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
+
+  it.each([
+    [
+      true,
+      "It stops reading now and won't write a report. You'll be charged for the work already done. You can run it again later.",
+    ],
+    [
+      false,
+      "It stops reading now and won't write a report. You can run it again later.",
+    ],
+  ])(
+    "says before stopping whether the work done is charged (Cloud: %s)",
+    async (cloud, says) => {
+      mocks.cloud = cloud;
+      renderProgress(running());
+      fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+      const dialog = await screen.findByRole("dialog");
+      expect(within(dialog).getByText(says)).toBeInTheDocument();
+    },
+  );
 
   it("keeps the dialog open with the reason when the run can't be stopped", async () => {
     mocks.post.mockRejectedValue({

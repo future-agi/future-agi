@@ -13,6 +13,7 @@ import { keyframes } from "@mui/material/styles";
 import { useQueryClient } from "@tanstack/react-query";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import Iconify from "src/components/iconify";
+import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import { UNITS } from "src/sections/projects/observePopulation";
 import { insightsKeys, stopRun } from "./insightsApi";
 import { formatCount, formatSpan } from "./insightsFormat";
@@ -84,9 +85,11 @@ function StageRail({ current }) {
 StageRail.propTypes = { current: PropTypes.number.isRequired };
 
 // Stop, behind a confirmation: the run fails as "Stopped by <you>" and the
-// page shows it at once.
+// page shows it at once. On Cloud the work already done is charged; how
+// much isn't known yet (calls under way still add to it), so no figure.
 function StopRun({ run }) {
   const queryClient = useQueryClient();
+  const { isCloud } = useDeploymentMode();
   const [open, setOpen] = useState(false);
   const stopping = useCancellable(
     "The run could not be stopped.",
@@ -126,8 +129,9 @@ function StopRun({ run }) {
         content={
           <Stack spacing={1}>
             <Typography variant="body2">
-              It stops reading now and won&apos;t write a report. You can run it
-              again later.
+              It stops reading now and won&apos;t write a report.
+              {isCloud && " You'll be charged for the work already done."} You
+              can run it again later.
             </Typography>
             {stopping.state.status === "error" && (
               <Alert severity="error">{stopping.state.error}</Alert>

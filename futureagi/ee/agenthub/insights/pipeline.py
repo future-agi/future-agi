@@ -170,6 +170,8 @@ def add_spend(run_id, spend: Spend) -> None:
         if _flag_spend(run, spend):
             fields.append("settings")
         run.save(update_fields=fields)
+    if _stopped(run):
+        _charge_after_stop(run, spend)
 
 
 def set_progress(
@@ -450,6 +452,8 @@ def extract_batch(run_id: str, unit_pks: list[int]) -> dict:
         if _flag_spend(locked, spend):
             fields.append("settings")
         locked.save(update_fields=fields)
+    if _stopped(locked):
+        _charge_after_stop(locked, spend)
     _log_spend(run_id, "read", spend)
     if error is not None:
         # What was read is kept; Temporal retries the units still pending,
@@ -655,12 +659,10 @@ def organise(run_id: str) -> dict:
     result["taxonomy"] = {"tops": tops, "subs": subs}
     result["clustering"] = info
     run.result = result
-    run.cost_usd = (run.cost_usd or 0) + spend.cost_usd
     run.analysed_count = len(units)
-    fields = ["result", "cost_usd", "analysed_count", "taxonomy_mode", "updated_at"]
-    if _flag_spend(run, spend):
-        fields.append("settings")
-    run.save(update_fields=fields)
+    run.save(update_fields=["result", "analysed_count", "taxonomy_mode", "updated_at"])
+    # Under the run's lock, so a run stopped while it grouped is charged it.
+    add_spend(run_id, spend)
     _log_spend(run_id, "organise", spend)
     return {"categories": len(tops), "subcategories": len(subs)}
 
@@ -996,7 +998,10 @@ STOP_KEY_TTL_S = 2 * 3600
 def stop(run_id, message: str) -> bool:
     """Stop a run still in flight: it fails with ``message`` and the code
     STOPPED, and a stage under way reads no further units. False when it
-    had already ended. A stopped run is never completed or charged."""
+    had already ended. A stopped run is never completed, but the work it
+    did is charged, as a written report's is: its spend so far here, under
+    the run's lock, and the calls already under way as their stage adds
+    them (``_charge_after_stop``). A run that fails on its own isn't."""
     from django.core.cache import cache
 
     InsightRun, _ = _models()
@@ -1009,12 +1014,30 @@ def stop(run_id, message: str) -> bool:
         if run is None:
             return False
         _end(run, message, STOPPED, timezone.now())
+    billing.charge_run(run)
     try:
         cache.set(STOP_KEY.format(run_id), True, timeout=STOP_KEY_TTL_S)
     except Exception:
         # Each stage still checks the run before it starts.
         logger.warning("insight_stop_flag_failed", run_id=str(run_id))
     return True
+
+
+def _stopped(run) -> bool:
+    return run.status == "failed" and (run.progress or {}).get("error_code") == STOPPED
+
+
+def _charge_after_stop(run, spend: Spend) -> None:
+    """Charge spend a stage added to its run after the run was stopped (the
+    calls under way when it stopped), on its own: stop() charged what was
+    there before."""
+    billing.charge(
+        run.organization_id,
+        spend.cost_usd,
+        source="insights_report",
+        source_id=str(run.id),
+        spend=spend,
+    )
 
 
 def stop_requested(run_id) -> bool:

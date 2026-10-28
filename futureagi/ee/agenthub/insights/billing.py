@@ -1,7 +1,8 @@
 """Billing for Insights, the way Falcon AI is billed: what the model calls
 cost, times the platform markup, as AI credits.
 
-A report is charged once, when it is written; a failed report is not. A
+A report is charged once, when it is written; a failed report is not,
+unless someone stopped it: then the work it did is charged. A
 follow-up question, a drafted setup and a preview are charged when they
 answer. Before any of them runs, the organization's credit cap is checked
 against an estimate. Emits are no-ops where billing is off (OSS, self-hosted).
