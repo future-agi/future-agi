@@ -561,6 +561,7 @@ import type {
   GenerateScenarioApi,
   GetAnnotationLabelsResponseApi,
   GetTraceAnnotationValuesResponseApi,
+  GitHubInstallResponseApi,
   GraphCreateApi,
   GraphDetailApi,
   GraphExecutionDetailResponseApi,
@@ -671,6 +672,7 @@ import type {
   IntegrationMessageResponseApi,
   IntegrationValidationResponseApi,
   IntegrationsConnectionsListParams,
+  IntegrationsConnectionsRepositoriesListParams,
   IntegrationsConnectionsSlackChannelsListParams,
   IntegrationsSyncLogsListParams,
   InvestigationControlErrorApi,
@@ -1211,6 +1213,8 @@ import type {
   SlackChannelsResponseApi,
   SlackInstallApi,
   SlackInstallResponseApi,
+  SourceBranchesResponseApi,
+  SourceRepositoriesResponseApi,
   SpanAttributeDetailResponseApi,
   SpanAttributeKeysResponseApi,
   SpanAttributeValuesResponseApi,
@@ -21375,6 +21379,113 @@ export const integrationsConnectionsValidateCredentials = async (
   );
 };
 
+export type integrationsConnectionsRepositoriesListResponse200 = {
+  data: SourceRepositoriesResponseApi;
+  status: 200;
+};
+
+export type integrationsConnectionsRepositoriesListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type integrationsConnectionsRepositoriesListResponseSuccess =
+  integrationsConnectionsRepositoriesListResponse200 & {
+    headers: Headers;
+  };
+export type integrationsConnectionsRepositoriesListResponseError =
+  integrationsConnectionsRepositoriesListResponseDefault & {
+    headers: Headers;
+  };
+
+export type integrationsConnectionsRepositoriesListResponse =
+  | integrationsConnectionsRepositoriesListResponseSuccess
+  | integrationsConnectionsRepositoriesListResponseError;
+
+export const getIntegrationsConnectionsRepositoriesListUrl = (
+  connectionId: string,
+  params?: IntegrationsConnectionsRepositoriesListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/integrations/connections/${connectionId}/repositories/?${stringifiedParams}`
+    : `/integrations/connections/${connectionId}/repositories/`;
+};
+
+export const integrationsConnectionsRepositoriesList = async (
+  connectionId: string,
+  params?: IntegrationsConnectionsRepositoriesListParams,
+  options?: RequestInit,
+): Promise<integrationsConnectionsRepositoriesListResponse> => {
+  return apiMutator<integrationsConnectionsRepositoriesListResponse>(
+    getIntegrationsConnectionsRepositoriesListUrl(connectionId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type integrationsConnectionsRepositoriesBranchesListResponse200 = {
+  data: SourceBranchesResponseApi;
+  status: 200;
+};
+
+export type integrationsConnectionsRepositoriesBranchesListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type integrationsConnectionsRepositoriesBranchesListResponseSuccess =
+  integrationsConnectionsRepositoriesBranchesListResponse200 & {
+    headers: Headers;
+  };
+export type integrationsConnectionsRepositoriesBranchesListResponseError =
+  integrationsConnectionsRepositoriesBranchesListResponseDefault & {
+    headers: Headers;
+  };
+
+export type integrationsConnectionsRepositoriesBranchesListResponse =
+  | integrationsConnectionsRepositoriesBranchesListResponseSuccess
+  | integrationsConnectionsRepositoriesBranchesListResponseError;
+
+export const getIntegrationsConnectionsRepositoriesBranchesListUrl = (
+  connectionId: string,
+  repositoryId: string,
+) => {
+  return `/integrations/connections/${connectionId}/repositories/${repositoryId}/branches/`;
+};
+
+export const integrationsConnectionsRepositoriesBranchesList = async (
+  connectionId: string,
+  repositoryId: string,
+  options?: RequestInit,
+): Promise<integrationsConnectionsRepositoriesBranchesListResponse> => {
+  return apiMutator<integrationsConnectionsRepositoriesBranchesListResponse>(
+    getIntegrationsConnectionsRepositoriesBranchesListUrl(
+      connectionId,
+      repositoryId,
+    ),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type integrationsConnectionsSlackChannelsListResponse200 = {
   data: SlackChannelsResponseApi;
   status: 200;
@@ -21881,6 +21992,48 @@ export const integrationsConnectionsSyncNow = async (
 ): Promise<integrationsConnectionsSyncNowResponse> => {
   return apiMutator<integrationsConnectionsSyncNowResponse>(
     getIntegrationsConnectionsSyncNowUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(integrationEmptyRequestApi),
+    },
+  );
+};
+
+export type integrationsGithubInstallCreateResponse200 = {
+  data: GitHubInstallResponseApi;
+  status: 200;
+};
+
+export type integrationsGithubInstallCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type integrationsGithubInstallCreateResponseSuccess =
+  integrationsGithubInstallCreateResponse200 & {
+    headers: Headers;
+  };
+export type integrationsGithubInstallCreateResponseError =
+  integrationsGithubInstallCreateResponseDefault & {
+    headers: Headers;
+  };
+
+export type integrationsGithubInstallCreateResponse =
+  | integrationsGithubInstallCreateResponseSuccess
+  | integrationsGithubInstallCreateResponseError;
+
+export const getIntegrationsGithubInstallCreateUrl = () => {
+  return `/integrations/github/install/`;
+};
+
+export const integrationsGithubInstallCreate = async (
+  integrationEmptyRequestApi: IntegrationEmptyRequestApi,
+  options?: RequestInit,
+): Promise<integrationsGithubInstallCreateResponse> => {
+  return apiMutator<integrationsGithubInstallCreateResponse>(
+    getIntegrationsGithubInstallCreateUrl(),
     {
       ...options,
       method: "POST",
@@ -61976,7 +62129,7 @@ export const getSimulateApiHarnessGithubWebhookCreateUrl = () => {
 };
 
 /**
- * GitHub App push webhook, signed with X-Hub-Signature-256. Answers 204, or 429 when throttled.
+ * GitHub App webhook for push and installation events, signed with X-Hub-Signature-256. Answers 204, or 429 when throttled.
  */
 export const simulateApiHarnessGithubWebhookCreate = async (
   options?: RequestInit,

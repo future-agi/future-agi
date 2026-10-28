@@ -10747,6 +10747,20 @@ export const IntegrationsConnectionsListQueryParams = zod.object({
     .min(1)
     .max(integrationsConnectionsListQueryPageSizeMax)
     .default(integrationsConnectionsListQueryPageSizeDefault),
+  platform: zod
+    .enum([
+      "langfuse",
+      "datadog",
+      "posthog",
+      "pagerduty",
+      "mixpanel",
+      "cloud_storage",
+      "message_queue",
+      "linear",
+      "slack",
+      "github",
+    ])
+    .optional(),
 });
 
 export const integrationsConnectionsListResponseStatusDefault = true;
@@ -10793,6 +10807,7 @@ export const IntegrationsConnectionsListResponse = zod.object({
           "message_queue",
           "linear",
           "slack",
+          "github",
         ]),
         display_name: zod
           .string()
@@ -10897,6 +10912,7 @@ export const IntegrationsConnectionsCreateBody = zod.object({
     "message_queue",
     "linear",
     "slack",
+    "github",
   ]),
   host_url: zod
     .string()
@@ -10981,6 +10997,7 @@ export const IntegrationsConnectionsValidateCredentialsBody = zod.object({
     "message_queue",
     "linear",
     "slack",
+    "github",
   ]),
   host_url: zod
     .string()
@@ -11043,6 +11060,63 @@ export const IntegrationsConnectionsValidateCredentialsResponse = zod.object({
       .optional(),
   }),
 });
+
+export const IntegrationsConnectionsRepositoriesListParams = zod.object({
+  connection_id: zod.string(),
+});
+
+export const integrationsConnectionsRepositoriesListQueryQDefault = ``;
+export const integrationsConnectionsRepositoriesListQueryQMax = 100;
+
+export const integrationsConnectionsRepositoriesListQueryPageDefault = 1;
+export const integrationsConnectionsRepositoriesListQueryPageMax = 200;
+
+export const IntegrationsConnectionsRepositoriesListQueryParams = zod.object({
+  q: zod
+    .string()
+    .max(integrationsConnectionsRepositoriesListQueryQMax)
+    .default(integrationsConnectionsRepositoriesListQueryQDefault),
+  page: zod
+    .number()
+    .min(1)
+    .max(integrationsConnectionsRepositoriesListQueryPageMax)
+    .default(integrationsConnectionsRepositoriesListQueryPageDefault),
+});
+
+export const IntegrationsConnectionsRepositoriesListResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    repositories: zod.array(
+      zod.object({
+        id: zod.number(),
+        full_name: zod.string().min(1),
+        default_branch: zod.string(),
+        private: zod.boolean(),
+      }),
+    ),
+    next_page: zod.number(),
+  }),
+});
+
+export const IntegrationsConnectionsRepositoriesBranchesListParams = zod.object(
+  {
+    connection_id: zod.string(),
+    repository_id: zod.string(),
+  },
+);
+
+export const IntegrationsConnectionsRepositoriesBranchesListResponse =
+  zod.object({
+    status: zod.boolean(),
+    result: zod.object({
+      branches: zod.array(
+        zod.object({
+          name: zod.string().min(1),
+          is_default: zod.boolean(),
+        }),
+      ),
+    }),
+  });
 
 export const IntegrationsConnectionsSlackChannelsListParams = zod.object({
   connection_id: zod.string(),
@@ -11109,6 +11183,7 @@ export const IntegrationsConnectionsReadResponse = zod.object({
     "message_queue",
     "linear",
     "slack",
+    "github",
   ]),
   display_name: zod
     .string()
@@ -11245,6 +11320,7 @@ export const IntegrationsConnectionsUpdateResponse = zod.object({
       "message_queue",
       "linear",
       "slack",
+      "github",
     ]),
     display_name: zod
       .string()
@@ -11382,6 +11458,7 @@ export const IntegrationsConnectionsPartialUpdateResponse = zod.object({
       "message_queue",
       "linear",
       "slack",
+      "github",
     ]),
     display_name: zod
       .string()
@@ -11505,6 +11582,7 @@ export const IntegrationsConnectionsPauseResponse = zod.object({
       "message_queue",
       "linear",
       "slack",
+      "github",
     ]),
     display_name: zod
       .string()
@@ -11603,6 +11681,7 @@ export const IntegrationsConnectionsResumeResponse = zod.object({
       "message_queue",
       "linear",
       "slack",
+      "github",
     ]),
     display_name: zod
       .string()
@@ -11674,6 +11753,15 @@ export const IntegrationsConnectionsSyncNowResponse = zod.object({
     .default(integrationsConnectionsSyncNowResponseStatusDefault),
   result: zod.object({
     message: zod.string().min(1),
+  }),
+});
+
+export const IntegrationsGithubInstallCreateBody = zod.object({});
+
+export const IntegrationsGithubInstallCreateResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    install_url: zod.string().url().min(1),
   }),
 });
 

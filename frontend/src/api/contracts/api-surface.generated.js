@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1089,
+  endpointCount: 1092,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -284,11 +284,15 @@ export const API_SURFACE_CONTRACT = Object.freeze({
     integrations: {
       "/integrations/connections/": ["get", "post"],
       "/integrations/connections/validate/": ["post"],
+      "/integrations/connections/{connection_id}/repositories/": ["get"],
+      "/integrations/connections/{connection_id}/repositories/{repository_id}/branches/":
+        ["get"],
       "/integrations/connections/{connection_id}/slack/channels/": ["get"],
       "/integrations/connections/{id}/": ["delete", "get", "patch", "put"],
       "/integrations/connections/{id}/pause/": ["post"],
       "/integrations/connections/{id}/resume/": ["post"],
       "/integrations/connections/{id}/sync_now/": ["post"],
+      "/integrations/github/install/": ["post"],
       "/integrations/slack/install/": ["post"],
       "/integrations/sync-logs/": ["get"],
       "/integrations/sync-logs/{id}/": ["get"],
@@ -1634,11 +1638,15 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/health/": ["get"],
   "/integrations/connections/": ["get", "post"],
   "/integrations/connections/validate/": ["post"],
+  "/integrations/connections/{connection_id}/repositories/": ["get"],
+  "/integrations/connections/{connection_id}/repositories/{repository_id}/branches/":
+    ["get"],
   "/integrations/connections/{connection_id}/slack/channels/": ["get"],
   "/integrations/connections/{id}/": ["delete", "get", "patch", "put"],
   "/integrations/connections/{id}/pause/": ["post"],
   "/integrations/connections/{id}/resume/": ["post"],
   "/integrations/connections/{id}/sync_now/": ["post"],
+  "/integrations/github/install/": ["post"],
   "/integrations/slack/install/": ["post"],
   "/integrations/sync-logs/": ["get"],
   "/integrations/sync-logs/{id}/": ["get"],

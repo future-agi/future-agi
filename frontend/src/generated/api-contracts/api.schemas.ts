@@ -5039,6 +5039,7 @@ export const IntegrationConnectionListApiPlatform = {
   message_queue: "message_queue",
   linear: "linear",
   slack: "slack",
+  github: "github",
 } as const;
 
 export type IntegrationConnectionListApiStatus =
@@ -5158,6 +5159,7 @@ export const IntegrationConnectionCreateApiPlatform = {
   message_queue: "message_queue",
   linear: "linear",
   slack: "slack",
+  github: "github",
 } as const;
 
 export type IntegrationConnectionCreateApiCredentials = {
@@ -5226,6 +5228,7 @@ export const IntegrationConnectionDetailApiPlatform = {
   message_queue: "message_queue",
   linear: "linear",
   slack: "slack",
+  github: "github",
 } as const;
 
 export type IntegrationConnectionDetailApiStatus =
@@ -5320,6 +5323,7 @@ export const ValidateCredentialsApiPlatform = {
   message_queue: "message_queue",
   linear: "linear",
   slack: "slack",
+  github: "github",
 } as const;
 
 export type ValidateCredentialsApiCredentials = { [key: string]: unknown };
@@ -5368,6 +5372,39 @@ export interface IntegrationValidationResultApi {
 export interface IntegrationValidationResponseApi {
   status?: boolean;
   result: IntegrationValidationResultApi;
+}
+
+export interface SourceRepositoryApi {
+  id: number;
+  /** @minLength 1 */
+  full_name: string;
+  default_branch: string;
+  private: boolean;
+}
+
+export interface SourceRepositoriesResultApi {
+  repositories: SourceRepositoryApi[];
+  next_page: number;
+}
+
+export interface SourceRepositoriesResponseApi {
+  status: boolean;
+  result: SourceRepositoriesResultApi;
+}
+
+export interface SourceBranchApi {
+  /** @minLength 1 */
+  name: string;
+  is_default: boolean;
+}
+
+export interface SourceBranchesResultApi {
+  branches: SourceBranchApi[];
+}
+
+export interface SourceBranchesResponseApi {
+  status: boolean;
+  result: SourceBranchesResultApi;
 }
 
 export interface SlackChannelApi {
@@ -5431,6 +5468,16 @@ export interface IntegrationMessageResultApi {
 export interface IntegrationMessageResponseApi {
   status?: boolean;
   result: IntegrationMessageResultApi;
+}
+
+export interface GitHubInstallResultApi {
+  /** @minLength 1 */
+  install_url: string;
+}
+
+export interface GitHubInstallResponseApi {
+  status: boolean;
+  result: GitHubInstallResultApi;
 }
 
 export interface SlackInstallApi {
@@ -34552,6 +34599,35 @@ export type IntegrationsConnectionsListParams = {
    * @maximum 100
    */
   page_size?: number;
+  platform?: IntegrationsConnectionsListPlatform;
+};
+
+export type IntegrationsConnectionsListPlatform =
+  (typeof IntegrationsConnectionsListPlatform)[keyof typeof IntegrationsConnectionsListPlatform];
+
+export const IntegrationsConnectionsListPlatform = {
+  langfuse: "langfuse",
+  datadog: "datadog",
+  posthog: "posthog",
+  pagerduty: "pagerduty",
+  mixpanel: "mixpanel",
+  cloud_storage: "cloud_storage",
+  message_queue: "message_queue",
+  linear: "linear",
+  slack: "slack",
+  github: "github",
+} as const;
+
+export type IntegrationsConnectionsRepositoriesListParams = {
+  /**
+   * @maxLength 100
+   */
+  q?: string;
+  /**
+   * @minimum 1
+   * @maximum 200
+   */
+  page?: number;
 };
 
 export type IntegrationsConnectionsSlackChannelsListParams = {

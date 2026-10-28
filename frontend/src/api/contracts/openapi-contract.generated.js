@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1089,
+  endpointCount: 1092,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -9762,6 +9762,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
               default: 20,
             },
           },
+          platform: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: [
+                "langfuse",
+                "datadog",
+                "posthog",
+                "pagerduty",
+                "mixpanel",
+                "cloud_storage",
+                "message_queue",
+                "linear",
+                "slack",
+                "github",
+              ],
+            },
+          },
         },
         responses: {
           200: {
@@ -9836,6 +9854,59 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/integrations/connections/{connection_id}/repositories/": {
+      get: {
+        operationId: "integrations_connections_repositories_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          q: {
+            required: false,
+            schema: {
+              type: "string",
+              maxLength: 100,
+              default: "",
+            },
+          },
+          page: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 200,
+              default: 1,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/SourceRepositoriesResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/integrations/connections/{connection_id}/repositories/{repository_id}/branches/":
+      {
+        get: {
+          operationId: "integrations_connections_repositories_branches_list",
+          runtimeRequestValidation: false,
+          runtimeResponseValidation: true,
+          requestBody: null,
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/SourceBranchesResponse",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
     "/integrations/connections/{connection_id}/slack/channels/": {
       get: {
         operationId: "integrations_connections_slack_channels_list",
@@ -10040,6 +10111,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           500: {
             $ref: "#/definitions/IntegrationErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/integrations/github/install/": {
+      post: {
+        operationId: "integrations_github_install_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/IntegrationEmptyRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/GitHubInstallResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -63098,6 +63188,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    GitHubInstallResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/GitHubInstallResult",
+        },
+      },
+    },
     GraphCreate: {
       required: ["name"],
       type: "object",
@@ -66062,6 +66165,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "message_queue",
             "linear",
             "slack",
+            "github",
           ],
         },
         host_url: {
@@ -66181,6 +66285,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "message_queue",
             "linear",
             "slack",
+            "github",
           ],
         },
         display_name: {
@@ -78432,6 +78537,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SourceBranchesResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/SourceBranchesResult",
+        },
+      },
+    },
+    SourceRepositoriesResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/SourceRepositoriesResult",
+        },
+      },
+    },
     SpanAttributeDetailResponse: {
       required: [
         "key",
@@ -84390,6 +84521,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "message_queue",
             "linear",
             "slack",
+            "github",
           ],
         },
         host_url: {
@@ -93807,6 +93939,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/TraceAnnotationNoteResponse",
           },
+        },
+      },
+    },
+    GitHubInstallResult: {
+      required: ["install_url"],
+      type: "object",
+      properties: {
+        install_url: {
+          title: "Install url",
+          type: "string",
+          format: "uri",
+          minLength: 1,
         },
       },
     },
@@ -104987,6 +105131,35 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SourceBranchesResult: {
+      required: ["branches"],
+      type: "object",
+      properties: {
+        branches: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SourceBranch",
+          },
+        },
+      },
+    },
+    SourceRepositoriesResult: {
+      required: ["repositories", "next_page"],
+      type: "object",
+      properties: {
+        repositories: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SourceRepository",
+          },
+        },
+        next_page: {
+          title: "Next page",
+          type: "integer",
+          "x-nullable": true,
+        },
+      },
+    },
     SpanAttributeNumericStats: {
       type: "object",
       properties: {
@@ -113821,6 +113994,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "message_queue",
             "linear",
             "slack",
+            "github",
           ],
         },
         display_name: {
@@ -117665,6 +117839,44 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         is_member: {
           title: "Is member",
+          type: "boolean",
+        },
+      },
+    },
+    SourceBranch: {
+      required: ["name", "is_default"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        is_default: {
+          title: "Is default",
+          type: "boolean",
+        },
+      },
+    },
+    SourceRepository: {
+      required: ["id", "full_name", "default_branch", "private"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "integer",
+        },
+        full_name: {
+          title: "Full name",
+          type: "string",
+          minLength: 1,
+        },
+        default_branch: {
+          title: "Default branch",
+          type: "string",
+        },
+        private: {
+          title: "Private",
           type: "boolean",
         },
       },

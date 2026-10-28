@@ -17170,6 +17170,24 @@
                         "default": 20,
                         "maximum": 100,
                         "minimum": 1
+                    },
+                    {
+                        "name": "platform",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "langfuse",
+                            "datadog",
+                            "posthog",
+                            "pagerduty",
+                            "mixpanel",
+                            "cloud_storage",
+                            "message_queue",
+                            "linear",
+                            "slack",
+                            "github"
+                        ]
                     }
                 ],
                 "responses": {
@@ -17316,6 +17334,97 @@
                 "x-runtime-response-validation": true
             },
             "parameters": []
+        },
+        "/integrations/connections/{connection_id}/repositories/": {
+            "get": {
+                "operationId": "integrations_connections_repositories_list",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "q",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "default": "",
+                        "maxLength": 100
+                    },
+                    {
+                        "name": "page",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 1,
+                        "maximum": 200,
+                        "minimum": 1
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SourceRepositoriesResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "integrations"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "connection_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/integrations/connections/{connection_id}/repositories/{repository_id}/branches/": {
+            "get": {
+                "operationId": "integrations_connections_repositories_branches_list",
+                "description": "",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SourceBranchesResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "integrations"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "connection_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "repository_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
         },
         "/integrations/connections/{connection_id}/slack/channels/": {
             "get": {
@@ -17736,6 +17845,42 @@
                     "type": "string"
                 }
             ]
+        },
+        "/integrations/github/install/": {
+            "post": {
+                "operationId": "integrations_github_install_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/IntegrationEmptyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GitHubInstallResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "integrations"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
         },
         "/integrations/slack/install/": {
             "post": {
@@ -53419,7 +53564,7 @@
         "/simulate/api/harness/github/webhook/": {
             "post": {
                 "operationId": "simulate_api_harness_github_webhook_create",
-                "description": "GitHub App push webhook, signed with X-Hub-Signature-256. Answers 204, or 429 when throttled.",
+                "description": "GitHub App webhook for push and installation events, signed with X-Hub-Signature-256. Answers 204, or 429 when throttled.",
                 "parameters": [
                     {
                         "name": "data",
@@ -94276,7 +94421,8 @@
                         "cloud_storage",
                         "message_queue",
                         "linear",
-                        "slack"
+                        "slack",
+                        "github"
                     ]
                 },
                 "display_name": {
@@ -94483,7 +94629,8 @@
                         "cloud_storage",
                         "message_queue",
                         "linear",
-                        "slack"
+                        "slack",
+                        "github"
                     ]
                 },
                 "host_url": {
@@ -94604,7 +94751,8 @@
                         "cloud_storage",
                         "message_queue",
                         "linear",
-                        "slack"
+                        "slack",
+                        "github"
                     ]
                 },
                 "display_name": {
@@ -94771,7 +94919,8 @@
                         "cloud_storage",
                         "message_queue",
                         "linear",
-                        "slack"
+                        "slack",
+                        "github"
                     ]
                 },
                 "host_url": {
@@ -94888,6 +95037,118 @@
                 },
                 "result": {
                     "$ref": "#/definitions/IntegrationValidationResult"
+                }
+            }
+        },
+        "SourceRepository": {
+            "required": [
+                "id",
+                "full_name",
+                "default_branch",
+                "private"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "integer"
+                },
+                "full_name": {
+                    "title": "Full name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "default_branch": {
+                    "title": "Default branch",
+                    "type": "string"
+                },
+                "private": {
+                    "title": "Private",
+                    "type": "boolean"
+                }
+            }
+        },
+        "SourceRepositoriesResult": {
+            "required": [
+                "repositories",
+                "next_page"
+            ],
+            "type": "object",
+            "properties": {
+                "repositories": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SourceRepository"
+                    }
+                },
+                "next_page": {
+                    "title": "Next page",
+                    "type": "integer",
+                    "x-nullable": true
+                }
+            }
+        },
+        "SourceRepositoriesResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SourceRepositoriesResult"
+                }
+            }
+        },
+        "SourceBranch": {
+            "required": [
+                "name",
+                "is_default"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "is_default": {
+                    "title": "Is default",
+                    "type": "boolean"
+                }
+            }
+        },
+        "SourceBranchesResult": {
+            "required": [
+                "branches"
+            ],
+            "type": "object",
+            "properties": {
+                "branches": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SourceBranch"
+                    }
+                }
+            }
+        },
+        "SourceBranchesResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SourceBranchesResult"
                 }
             }
         },
@@ -95028,6 +95289,36 @@
                 },
                 "result": {
                     "$ref": "#/definitions/IntegrationMessageResult"
+                }
+            }
+        },
+        "GitHubInstallResult": {
+            "required": [
+                "install_url"
+            ],
+            "type": "object",
+            "properties": {
+                "install_url": {
+                    "title": "Install url",
+                    "type": "string",
+                    "format": "uri",
+                    "minLength": 1
+                }
+            }
+        },
+        "GitHubInstallResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/GitHubInstallResult"
                 }
             }
         },
