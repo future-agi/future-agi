@@ -8,7 +8,6 @@ from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import WorkspaceMembership
 from accounts.tests.key_scope_helpers import (
     ROLES,
-    key_scope,  # noqa: F401
     make_key,
     session_client,
 )

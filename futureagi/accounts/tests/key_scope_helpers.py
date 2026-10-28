@@ -7,7 +7,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from accounts.authentication import generate_encrypted_message
-from accounts.models import OrgApiKey, Organization, User
+from accounts.models import Organization, OrgApiKey, User
 from accounts.models.auth_token import AuthToken, AuthTokenType
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import Workspace, WorkspaceMembership

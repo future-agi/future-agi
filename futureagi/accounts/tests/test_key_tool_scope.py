@@ -4,7 +4,7 @@ import pytest
 
 from accounts.models import OrgApiKey
 from accounts.models.organization_membership import OrganizationMembership
-from accounts.tests.key_scope_helpers import ROLES, key_scope, make_key  # noqa: F401
+from accounts.tests.key_scope_helpers import ROLES, make_key
 from ai_tools.base import ToolContext
 from ai_tools.tools.users.create_api_key import CreateApiKeyInput, CreateApiKeyTool
 from ai_tools.tools.users.list_api_keys import ListApiKeysInput, ListApiKeysTool

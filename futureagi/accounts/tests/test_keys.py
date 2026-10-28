@@ -126,13 +126,14 @@ def other_org_client(other_org_user):
 def member_user(user, db):
     """User with member role (not owner)."""
     from accounts.models.organization_membership import OrganizationMembership
+    from tfc.constants.levels import Level
 
     user.organization_role = "member"
     user.save(update_fields=["organization_role"])
     # Also update the OrganizationMembership (source of truth for role checks)
     OrganizationMembership.no_workspace_objects.filter(
         user=user, is_active=True
-    ).update(role="Member", level=3)
+    ).update(role="Member", level=Level.MEMBER)
     return user
 
 

@@ -11,7 +11,6 @@ from accounts.models.workspace import WorkspaceMembership
 from accounts.tests.key_scope_helpers import (
     ROLES,
     key_client,
-    key_scope,  # noqa: F401
     make_key,
     session_client,
 )

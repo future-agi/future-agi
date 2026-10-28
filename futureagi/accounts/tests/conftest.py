@@ -28,6 +28,8 @@ from unittest.mock import patch
 
 import pytest
 
+from accounts.tests.key_scope_helpers import key_scope as key_scope
+
 
 @pytest.fixture(autouse=True)
 def _allow_custom_role_gate_for_accounts_tests(monkeypatch):
