@@ -62,7 +62,7 @@ import {
 } from "./askFilter";
 import { MAX_HANDOVER } from "./askPopulation";
 import { downloadRowsCsv, fetchRowIds, useAskRows } from "./useAskRows";
-import { RERUNNABLE_STATES, isNotFound } from "./useAskRun";
+import { RERUNNABLE_STATES, SUMMARY_POLL_MS, isNotFound } from "./useAskRun";
 import {
   GRID_LINK_MAX,
   answerGridLink,
@@ -718,6 +718,17 @@ export default function AskRunView({
   const question =
     questions.find((item) => item.configId === focus.configId) || questions[0];
   const live = run.status === "running" || run.status === "preparing";
+  // While Cancel asks, the answers it says are kept are counted again from
+  // the moment it opens and every 2 s: they land in bursts, and a busy
+  // server's summary is otherwise read only every 5 or 10 s.
+  const askingCancel = confirmCancel && (live || run.status === "pausing");
+  const { readNow } = run;
+  useEffect(() => {
+    if (!askingCancel || !readNow) return undefined;
+    readNow();
+    const timer = setInterval(readNow, SUMMARY_POLL_MS);
+    return () => clearInterval(timer);
+  }, [askingCancel, readNow]);
   const failedBeforeAnswering =
     run.status === "failed" && !savedAnswerCount(summary?.counts);
   // Every row failed: why (the reason its rows give), the fix and a retry

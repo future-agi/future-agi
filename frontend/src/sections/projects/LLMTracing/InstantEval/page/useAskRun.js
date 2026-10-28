@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { useInstantEvals } from "../useInstantEval";
@@ -18,6 +18,7 @@ import { useInstantEvals } from "../useInstantEval";
 //     questions: [{ configId, question, answerType, labels, ... }],
 //     total, answered, failed, pending, notRead, rate, eta, sample,
 //     startedAt, elapsedMs, window: [isoStart, isoEnd] | null,
+//     readNow(),                 // read the summary now, between polls
 //     control(action, options),  // pause | resume | cancel | retry_failed | read_more
 //   }
 
@@ -396,6 +397,14 @@ export function useAskRun({
 
   const window = useMemo(() => summaryWindow(summary), [summary]);
 
+  // Read the summary now, joining a read already in flight rather than
+  // cancelling it (a slow server would otherwise never answer one).
+  const { refetch: refetchSummary } = summaryQuery;
+  const readNow = useCallback(
+    () => refetchSummary({ cancelRefetch: false }),
+    [refetchSummary],
+  );
+
   const control = async (action, options = {}) => {
     const response = await controlRun({
       projectId,
@@ -441,6 +450,7 @@ export function useAskRun({
       summaryQuery.refetch();
       if (wantRecords) recordsQuery.refetch();
     },
+    readNow,
     control,
   };
 }

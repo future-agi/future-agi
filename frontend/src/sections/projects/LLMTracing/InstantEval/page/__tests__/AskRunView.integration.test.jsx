@@ -10,7 +10,7 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import { MemoryRouter, useLocation } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { palette } from "src/theme/palette";
 import { readHandoff } from "src/sections/projects/observeHandoff";
 
@@ -209,6 +209,74 @@ describe("the live rows table with real paging and handoff", () => {
       await within(table).findByText("Customer question 0"),
     ).toBeInTheDocument();
     expect(http.get).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("cancelling a live run", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("counts the answers it keeps again while it asks", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    http.get.mockResolvedValue(response([], 0));
+    const readNow = vi.fn();
+    const live = (answers) => {
+      const run = runOf({
+        status: "running",
+        total: 115,
+        answered: answers,
+        pending: 115 - answers,
+        readNow,
+      });
+      run.summary = {
+        ...run.summary,
+        total: 115,
+        counts: { [CONFIG]: answers ? { No: answers } : {} },
+      };
+      return run;
+    };
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const wrap = (run) => (
+      <QueryClientProvider client={client}>
+        <ThemeProvider theme={theme}>
+          <MemoryRouter>
+            <AskRunView projectId="project-1" run={run} unit={run.unit} />
+          </MemoryRouter>
+        </ThemeProvider>
+      </QueryClientProvider>
+    );
+    const view = render(wrap(live(0)));
+    // Polled at its usual pace, nothing extra is read before Cancel asks.
+    expect(readNow).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(
+      screen.getByText(
+        "Cancel this run? Nothing has been answered yet, and it can't be resumed.",
+      ),
+    ).toBeInTheDocument();
+    // Read at once, then every 2 s while it asks.
+    expect(readNow).toHaveBeenCalledTimes(1);
+    act(() => {
+      vi.advanceTimersByTime(4000);
+    });
+    expect(readNow).toHaveBeenCalledTimes(3);
+    // Sixteen answers landed meanwhile: the count it keeps says so.
+    view.rerender(wrap(live(16)));
+    expect(
+      screen.getByText(
+        "Cancel this run? The 16 answers so far are kept; it can't be resumed.",
+      ),
+    ).toBeInTheDocument();
+    // Back keeps it running and stops the extra reads.
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    act(() => {
+      vi.advanceTimersByTime(10000);
+    });
+    expect(readNow).toHaveBeenCalledTimes(3);
+    await waitFor(() => expect(http.get).toHaveBeenCalled());
   });
 });
 

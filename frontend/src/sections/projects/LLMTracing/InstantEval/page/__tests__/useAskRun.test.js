@@ -347,6 +347,41 @@ describe("useAskRun", () => {
     );
   });
 
+  it("reads the summary now without cancelling a read in flight", async () => {
+    let reply;
+    http.get.mockResolvedValueOnce(
+      ok(summary({ status: "running", total: 9000, answered: 10 })),
+    );
+    const { result } = renderHook(
+      () => useAskRun({ projectId: "p1", taskId: "task-1", unit: "sessions" }),
+      { wrapper: wrapper() },
+    );
+    await tick(0);
+    expect(calls("/summary")).toHaveLength(1);
+    // A slow read is in flight; readNow joins it rather than starting over.
+    http.get.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          reply = resolve;
+        }),
+    );
+    await tick(SUMMARY_POLL_MS);
+    expect(calls("/summary")).toHaveLength(2);
+    const readNow = result.current.readNow;
+    await act(async () => {
+      readNow();
+    });
+    expect(calls("/summary")).toHaveLength(2);
+    expect(calls("/summary")[1][1].signal.aborted).toBe(false);
+    await act(async () => {
+      reply(ok(summary({ status: "running", total: 9000, answered: 40 })));
+    });
+    await tick(0);
+    expect(result.current.answered).toBe(40);
+    // The same function from one render to the next.
+    expect(result.current.readNow).toBe(readNow);
+  });
+
   it("pauses through the control endpoint and reads the summary again", async () => {
     let status = "running";
     http.get.mockImplementation(() =>
