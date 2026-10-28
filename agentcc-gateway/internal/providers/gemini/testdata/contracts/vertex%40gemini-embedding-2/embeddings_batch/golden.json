@@ -1,0 +1,6 @@
+{
+  "code": "provider_NOT_FOUND",
+  "message": "Method not found.",
+  "status": 404,
+  "type": "not_found"
+}

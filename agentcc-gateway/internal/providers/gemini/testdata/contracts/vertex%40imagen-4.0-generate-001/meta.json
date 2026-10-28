@@ -1,0 +1,9 @@
+{
+  "provider": "gemini",
+  "model": "vertex@imagen-4.0-generate-001",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: authored by hand, 2026-10-28; ai.google.dev and cloud.google.com were blocked, so field names and enums come from the machine-readable references named per case in case.json notes. Values (ids, signatures, token counts, vectors, audio, text) are invented. Naming: see vertex@gemini-3.8-flash. Imagen 4 on Vertex AI through /v1/images/generations (Provider.CreateImage, publishers.models.predict).",
+  "allowed_unknown_fields": [],
+  "allowed_unknown_shapes": []
+}

@@ -1,0 +1,12 @@
+{
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "text": "Write a one-line haiku about autumn rain."
+        }
+      ]
+    }
+  ]
+}

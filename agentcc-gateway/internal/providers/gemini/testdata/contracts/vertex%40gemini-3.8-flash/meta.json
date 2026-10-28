@@ -1,0 +1,38 @@
+{
+  "provider": "gemini",
+  "model": "vertex@gemini-3.8-flash",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: authored by hand, 2026-10-28; ai.google.dev and cloud.google.com were blocked, so field names and enums come from the machine-readable references named per case in case.json notes. Values (ids, signatures, token counts, vectors, audio, text) are invented. Naming: vertex@<model> is the gemini adapter in Vertex AI mode (base URL on aiplatform.googleapis.com, OAuth bearer token, publisher-model paths) serving publisher model <model>; the directory is that key as contracttest.ModelDir encodes it (vertex%40...). request.json carries the bare model, as the gateway sends it. The suite configures the provider as config.example.yaml does (x-gcp-project / x-gcp-location headers, so New builds .../v1beta1/projects/<p>/locations/<l>) and reaches the replay server through ProviderConfig.DialContext, so the adapter's own Vertex AI detection runs unchanged. Bodies follow the aiplatform v1beta1 discovery document, revision 20261012 (GoogleCloudAiplatformV1beta1GenerateContentResponse and its Candidate, UsageMetadata, PromptFeedback, SafetyRating). Differences from the Gemini API: createTime, usageMetadata.trafficType, promptFeedback.blockReasonMessage, no candidate index. Vertex AI configured with a base URL ending in /v1/projects/... speaks v1, whose schema differs in small ways. The recorder reaches Vertex AI with VERTEX_PROJECT and VERTEX_ACCESS_TOKEN (see contracttest/README.md); the scheduled jobs skip vertex@ models, because the access token lasts an hour, so record them locally. The error cases nothing real induces stay synthetic (recordable: false).",
+  "allowed_unknown_fields": [
+    {
+      "path": "error:$.error.details",
+      "reason": "known gap G19: error.details is dropped (geminiErrorDetail has code, message and status only): RetryInfo.retryDelay, so a 429 carries no retry hint and the gateway retries on its own schedule; ErrorInfo.reason (API_KEY_INVALID, SERVICE_DISABLED, IAM_PERMISSION_DENIED, ACCESS_TOKEN_EXPIRED), so a failure of the gateway's own credential or project cannot be told from the client's mistake; QuotaFailure (which quota, which limit), BadRequest field violations and Help links"
+    },
+    {
+      "path": "vertex:$.createTime",
+      "reason": "no canonical field: createTime is when Vertex AI received the request; the canonical created is the gateway's own clock, seconds apart at most"
+    },
+    {
+      "path": "vertex:$.promptFeedback",
+      "reason": "known gap G4: a blocked prompt's promptFeedback (blockReason, and on Vertex AI blockReasonMessage, the readable explanation) is dropped; with no candidates the response has an empty choices array"
+    },
+    {
+      "path": "vertex:$.responseId",
+      "reason": "known gap G12: Gemini's responseId is dropped and the canonical id is a gateway-generated gen-<nanos>, so a response cannot be traced back to Google (support cases, logs)"
+    },
+    {
+      "path": "vertex:$.usageMetadata.candidatesTokensDetails",
+      "reason": "known gap G13: the per-modality output token breakdown is dropped; image and audio output are priced differently from text, and OpenAI's completion_tokens_details.audio_tokens has a slot for audio"
+    },
+    {
+      "path": "vertex:$.usageMetadata.promptTokensDetails",
+      "reason": "known gap G13: the per-modality prompt token breakdown (TEXT / IMAGE / AUDIO / VIDEO / DOCUMENT) is dropped; Gemini prices audio input above text and OpenAI's prompt_tokens_details.audio_tokens has a slot for it, so audio prompts are costed as text"
+    },
+    {
+      "path": "vertex:$.usageMetadata.trafficType",
+      "reason": "known gap V1: Vertex AI's usageMetadata.trafficType (ON_DEMAND, ON_DEMAND_PRIORITY, ON_DEMAND_FLEX, PROVISIONED_THROUGHPUT, ...) is dropped, so a request served from pre-paid provisioned throughput, or at the priority or flex rate, is priced as pay-as-you-go on-demand"
+    }
+  ],
+  "allowed_unknown_shapes": []
+}

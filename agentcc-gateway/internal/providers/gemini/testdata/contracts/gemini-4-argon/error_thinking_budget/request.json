@@ -1,0 +1,10 @@
+{
+  "model": "gemini-4-argon",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Explain why B-trees stay balanced."
+    }
+  ],
+  "thinking_budget": 2048
+}

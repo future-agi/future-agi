@@ -1,0 +1,6 @@
+{
+  "code": "provider_PERMISSION_DENIED",
+  "message": "Generative Language API has not been used in project 123456789012 before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/generativelanguage.googleapis.com/overview?project=123456789012 then retry.",
+  "status": 403,
+  "type": "permission_error"
+}

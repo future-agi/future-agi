@@ -1,0 +1,12 @@
+{
+  "sanity_gaps": [
+    {
+      "failure": "finish_reason \"\" is not canonical",
+      "reason": "known gap G4: a blocked prompt (promptFeedback.blockReason, no candidates) becomes a 200 with an empty choices array, so an OpenAI client indexing choices[0] fails; there is no content_filter finish_reason and the block reason is dropped"
+    },
+    {
+      "failure": "usage is missing",
+      "reason": "known gap G4: FromResponse reads usage only beside a choice, and there is none; the canonical response does carry usage (see the golden)"
+    }
+  ]
+}

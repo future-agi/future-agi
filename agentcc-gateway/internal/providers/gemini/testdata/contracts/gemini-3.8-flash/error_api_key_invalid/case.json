@@ -1,0 +1,5 @@
+{
+  "status": 400,
+  "recordable": false,
+  "notes": "What the Gemini API answers for a bad API key: 400 INVALID_ARGUMENT, not 401 (message as in google-gemini/gemini-cli packages/core/src/utils/errorParsing.test.ts; ErrorInfo API_KEY_INVALID as google/api/error_reason.proto documents it). Not recordable: the recorder sends a valid key. The error body is google.rpc.Status in its HTTP JSON mapping ({\"error\": {code, message, status, details}}); status names and their HTTP codes come from googleapis google/rpc/code.proto, details from google/rpc/error_details.proto and google/api/error_reason.proto (read 2026-10-28)."
+}

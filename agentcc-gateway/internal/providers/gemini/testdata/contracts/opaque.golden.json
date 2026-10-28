@@ -1,0 +1,8 @@
+[
+  "count_tokens:$",
+  "genai:$.candidates",
+  "genai:$.responseId",
+  "genai_embed:$",
+  "genai_error:$",
+  "list_models:$"
+]

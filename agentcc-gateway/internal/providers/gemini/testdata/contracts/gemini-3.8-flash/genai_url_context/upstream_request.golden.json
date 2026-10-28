@@ -1,0 +1,25 @@
+{
+  "body": {
+    "contents": [
+      {
+        "parts": [
+          {
+            "text": "Summarize https://www.rfc-editor.org/rfc/rfc9110.html in two sentences."
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "tools": [
+      {
+        "urlContext": {}
+      }
+    ]
+  },
+  "headers": {
+    "content-type": "application/json",
+    "x-goog-api-key": "REDACTED"
+  },
+  "method": "POST",
+  "path": "/v1beta/models/gemini-3.8-flash:generateContent"
+}

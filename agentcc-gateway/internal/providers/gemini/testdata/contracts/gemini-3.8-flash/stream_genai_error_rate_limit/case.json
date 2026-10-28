@@ -1,0 +1,16 @@
+{
+  "endpoint": "genai_generate",
+  "status": 429,
+  "recordable": false,
+  "notes": "Native google-genai passthrough: request.json is the raw generateContent body a google-genai client sends to the gateway's /v1beta/models/{model}:{action} route; the adapter relays the upstream body untouched and the server bills from it with genaifmt.ExtractUsageMetadata / StreamUsageScanner (server/handlers_genai.go applyGenAIUsage). The same 429 answered to streamGenerateContent (the stream_ prefix makes the case a stream, as the recorder's streamOf does: a native body has no stream key). Not recordable. The error body is google.rpc.Status in its HTTP JSON mapping ({\"error\": {code, message, status, details}}); status names and their HTTP codes come from googleapis google/rpc/code.proto, details from google/rpc/error_details.proto and google/api/error_reason.proto (read 2026-10-28).",
+  "sanity_gaps": [
+    {
+      "failure": "upstream status 429 became 502",
+      "reason": "known gap G22: StreamGenerateContent turns an upstream 4xx into ErrUpstreamProvider, a 502 whose message is the raw upstream body; the native stream route answers the google-genai client a 502 INTERNAL instead of relaying the 429, so the SDK's retry and quota handling never see a rate limit (the non-streaming call relays it: genai_error_rate_limit)"
+    },
+    {
+      "failure": "RetryInfo retryDelay",
+      "reason": "known gap G22: the relayed RetryInfo is lost with the body"
+    }
+  ]
+}

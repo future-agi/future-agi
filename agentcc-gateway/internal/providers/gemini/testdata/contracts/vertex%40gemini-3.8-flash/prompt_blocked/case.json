@@ -1,0 +1,13 @@
+{
+  "notes": "A blocked prompt on Vertex AI: promptFeedback with blockReason and Vertex's blockReasonMessage (GenerateContentResponsePromptFeedback, v1beta1), no candidates. Recordable through cmd/contract-recorder's Vertex AI upstream (VERTEX_PROJECT and VERTEX_ACCESS_TOKEN, optional VERTEX_LOCATION); the scheduled jobs skip vertex@ models, because the access token lasts an hour, so record it locally.",
+  "sanity_gaps": [
+    {
+      "failure": "is not canonical",
+      "reason": "known gap G4: a blocked prompt (promptFeedback.blockReason, no candidates) becomes a 200 with an empty choices array: no content_filter finish_reason, and the block reason and Vertex's blockReasonMessage are dropped"
+    },
+    {
+      "failure": "usage is missing",
+      "reason": "known gap G4: FromResponse reads usage only beside a choice, and there is none (the canonical response does carry usage, see the golden)"
+    }
+  ]
+}

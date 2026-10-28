@@ -1,0 +1,15 @@
+{
+  "status": 429,
+  "recordable": false,
+  "notes": "An error wrapped in a one-element JSON array, the framing streamGenerateContent uses without alt=sse; googleapis/python-genai google/genai/errors.py (APIError.__init__) unwraps exactly this. Whether the alt=sse endpoint the gateway calls ever answers so is unverified; the inventory's probe found it becomes a 502. The error body is google.rpc.Status in its HTTP JSON mapping ({\"error\": {code, message, status, details}}); status names and their HTTP codes come from googleapis google/rpc/code.proto, details from google/rpc/error_details.proto and google/api/error_reason.proto (read 2026-10-28).",
+  "sanity_gaps": [
+    {
+      "failure": "upstream status 429 became 502",
+      "reason": "known gap G21: parseGeminiError decodes only a bare {\"error\": ...} object; an array-wrapped body falls through to a 502 whose message is the raw body, so a rate limit is retried at once and fails over"
+    },
+    {
+      "failure": "RetryInfo retryDelay",
+      "reason": "known gap G19: error.details, RetryInfo included, are dropped"
+    }
+  ]
+}

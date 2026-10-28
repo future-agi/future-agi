@@ -1,0 +1,3 @@
+{
+  "notes": "A streamed signed function call on Vertex AI; the finish reason arrives in a separate final chunk. Recordable through cmd/contract-recorder's Vertex AI upstream (VERTEX_PROJECT and VERTEX_ACCESS_TOKEN, optional VERTEX_LOCATION); the scheduled jobs skip vertex@ models, because the access token lasts an hour, so record it locally."
+}

@@ -1,0 +1,76 @@
+{
+  "body": {
+    "contents": [
+      {
+        "parts": [
+          {
+            "text": "What's the weather in Paris?"
+          }
+        ],
+        "role": "user"
+      },
+      {
+        "parts": [
+          {
+            "functionCall": {
+              "args": {
+                "location": "Paris, France"
+              },
+              "name": "get_weather"
+            }
+          }
+        ],
+        "role": "model"
+      },
+      {
+        "parts": [
+          {
+            "functionResponse": {
+              "name": "get_weather",
+              "response": {
+                "result": "{\"temperature\":14,\"unit\":\"celsius\",\"condition\":\"light rain\"}"
+              }
+            }
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "generationConfig": {},
+    "tools": [
+      {
+        "functionDeclarations": [
+          {
+            "description": "Get the current weather in a given location",
+            "name": "get_weather",
+            "parametersJsonSchema": {
+              "properties": {
+                "location": {
+                  "description": "The city and country, e.g. Paris, France",
+                  "type": "string"
+                },
+                "unit": {
+                  "enum": [
+                    "celsius",
+                    "fahrenheit"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "location"
+              ],
+              "type": "object"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "headers": {
+    "content-type": "application/json",
+    "x-goog-api-key": "REDACTED"
+  },
+  "method": "POST",
+  "path": "/v1beta/models/gemini-3.8-flash:generateContent"
+}

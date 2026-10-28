@@ -1,0 +1,11 @@
+{
+  "status": 429,
+  "recordable": false,
+  "notes": "A real Gemini API 429 body, as captured in google-gemini/gemini-cli packages/core/src/utils/googleErrors.test.ts (paid-tier input-token quota: DebugInfo, QuotaFailure, Help, RetryInfo 40s), with the quota's model set to this one. No retry-after header: the retry hint is RetryInfo.retryDelay in the body. Not recordable. The error body is google.rpc.Status in its HTTP JSON mapping ({\"error\": {code, message, status, details}}); status names and their HTTP codes come from googleapis google/rpc/code.proto, details from google/rpc/error_details.proto and google/api/error_reason.proto (read 2026-10-28).",
+  "sanity_gaps": [
+    {
+      "failure": "RetryInfo retryDelay",
+      "reason": "known gap G19: RetryInfo.retryDelay (40s) is dropped with the rest of error.details, so the gateway retries a quota 429 on its own backoff schedule and the client gets no retry hint"
+    }
+  ]
+}

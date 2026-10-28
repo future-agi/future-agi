@@ -1,0 +1,21 @@
+{
+  "body": {
+    "cachedContent": "cachedContents/qidqwuaxdqz4",
+    "contents": [
+      {
+        "parts": [
+          {
+            "text": "Please summarize this transcript"
+          }
+        ],
+        "role": "user"
+      }
+    ]
+  },
+  "headers": {
+    "content-type": "application/json",
+    "x-goog-api-key": "REDACTED"
+  },
+  "method": "POST",
+  "path": "/v1beta/models/gemini-3.8-flash:generateContent"
+}

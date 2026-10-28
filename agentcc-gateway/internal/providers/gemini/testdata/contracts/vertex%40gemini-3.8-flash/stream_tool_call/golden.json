@@ -1,0 +1,67 @@
+{
+  "assembled": {
+    "content": "",
+    "finish_reason": "tool_calls",
+    "tool_calls": [
+      {
+        "function": {
+          "arguments": "{\"location\":\"Paris, France\"}",
+          "name": "get_weather"
+        },
+        "id": "call_0::sig::wg1BrD+N/jR0pjHl4GFPS2NgOIWuoRsEQeka9cqifH9t1OO/jyxWQqVCMIM0P5IGYJ7OhnYVspywfU5/fBVjKRu+mORRKQ6unRn7HKAT3aleMSGXpznS/z92UakABp2E",
+        "type": "function"
+      }
+    ],
+    "usage": {
+      "completion_tokens": 83,
+      "prompt_tokens": 58,
+      "total_tokens": 141
+    }
+  },
+  "chunks": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "{\"location\":\"Paris, France\"}",
+                  "name": "get_weather"
+                },
+                "id": "call_0::sig::wg1BrD+N/jR0pjHl4GFPS2NgOIWuoRsEQeka9cqifH9t1OO/jyxWQqVCMIM0P5IGYJ7OhnYVspywfU5/fBVjKRu+mORRKQ6unRn7HKAT3aleMSGXpznS/z92UakABp2E",
+                "index": 0,
+                "type": "function"
+              }
+            ]
+          },
+          "finish_reason": null,
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "gen-<generated>",
+      "model": "gemini-3.8-flash",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {},
+          "finish_reason": "tool_calls",
+          "index": 0
+        }
+      ],
+      "created": "<nonzero>",
+      "id": "gen-<generated>",
+      "model": "gemini-3.8-flash",
+      "object": "chat.completion.chunk",
+      "usage": {
+        "completion_tokens": 83,
+        "prompt_tokens": 58,
+        "total_tokens": 141
+      }
+    }
+  ],
+  "error": null
+}

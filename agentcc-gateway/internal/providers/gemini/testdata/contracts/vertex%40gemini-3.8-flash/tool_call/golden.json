@@ -1,0 +1,31 @@
+{
+  "choices": [
+    {
+      "finish_reason": "tool_calls",
+      "index": 0,
+      "message": {
+        "content": null,
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{\n                \"location\": \"Paris, France\"\n              }",
+              "name": "get_weather"
+            },
+            "id": "call_0::sig::hvxWxVJ+Qtd/qF3O7JXBrZD72PbXi2CztFQ3JrPNUaPleltBf54iyl8/9mJdtnUXOi4Ca3wZPXoNpUkUUeBlq5D75Q/GZ2Bp1MjM/m8DZQ/QVjg36YkGgDSMwaiW5Jfw",
+            "type": "function"
+          }
+        ]
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "gen-<generated>",
+  "model": "gemini-3.8-flash",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 83,
+    "prompt_tokens": 58,
+    "total_tokens": 141
+  }
+}

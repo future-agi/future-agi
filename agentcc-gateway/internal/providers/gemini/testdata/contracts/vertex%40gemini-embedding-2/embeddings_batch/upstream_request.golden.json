@@ -1,0 +1,36 @@
+{
+  "body": {
+    "requests": [
+      {
+        "content": {
+          "parts": [
+            {
+              "text": "What is the meaning of life?"
+            }
+          ]
+        },
+        "model": "models/gemini-embedding-2",
+        "outputDimensionality": 128
+      },
+      {
+        "content": {
+          "parts": [
+            {
+              "text": "How does the brain work?"
+            }
+          ]
+        },
+        "model": "models/gemini-embedding-2",
+        "outputDimensionality": 128
+      }
+    ]
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json",
+    "x-gcp-location": "global",
+    "x-gcp-project": "test-project"
+  },
+  "method": "POST",
+  "path": "/v1beta1/projects/test-project/locations/global/publishers/google/models/gemini-embedding-2:batchEmbedContents"
+}

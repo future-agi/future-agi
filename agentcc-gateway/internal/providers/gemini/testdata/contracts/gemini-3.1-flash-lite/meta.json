@@ -15,7 +15,7 @@
     },
     {
       "path": "$.promptFeedback",
-      "reason": "known gap G4: a blocked prompt's promptFeedback (blockReason, safetyRatings) is dropped. With no candidates the non-stream response has an empty choices array and the stream emits nothing (see sanityGaps in contract_test.go)"
+      "reason": "known gap G4: a blocked prompt's promptFeedback (blockReason, safetyRatings) is dropped. With no candidates the non-stream response has an empty choices array and the stream emits nothing (see the case's case.json sanity_gaps)"
     },
     {
       "path": "$.responseId",

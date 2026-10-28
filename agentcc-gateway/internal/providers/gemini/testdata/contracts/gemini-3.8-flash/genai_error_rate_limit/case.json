@@ -1,0 +1,6 @@
+{
+  "endpoint": "genai_generate",
+  "status": 429,
+  "recordable": false,
+  "notes": "Native google-genai passthrough: request.json is the raw generateContent body a google-genai client sends to the gateway's /v1beta/models/{model}:{action} route; the adapter relays the upstream body untouched and the server bills from it with genaifmt.ExtractUsageMetadata / StreamUsageScanner (server/handlers_genai.go applyGenAIUsage). A 429 to a non-streaming native call: relayed with its status and body. Not recordable. The error body is google.rpc.Status in its HTTP JSON mapping ({\"error\": {code, message, status, details}}); status names and their HTTP codes come from googleapis google/rpc/code.proto, details from google/rpc/error_details.proto and google/api/error_reason.proto (read 2026-10-28)."
+}

@@ -1,0 +1,9 @@
+{
+  "billed": {
+    "input_tokens": 11,
+    "model": "gemini-3.8-flash",
+    "output_tokens": 129
+  },
+  "relayed": true,
+  "status": 200
+}
