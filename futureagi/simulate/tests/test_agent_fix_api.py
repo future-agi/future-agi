@@ -312,7 +312,7 @@ class TestEngineModelCalls:
         ) as post:
             yield post
 
-    def _complete(self, client, fix_run, *, fence=FENCE, **body):
+    def _complete(self, client, fix_run, *, fence=FENCE, HTTP_ACCEPT="*/*", **body):
         return _engine(
             client,
             "post",
@@ -321,6 +321,7 @@ class TestEngineModelCalls:
             fence=fence,
             data=json.dumps({"model": ENGINE_MODEL, "messages": [], **body}),
             content_type="application/json",
+            HTTP_ACCEPT=HTTP_ACCEPT,
         )
 
     def test_a_call_goes_out_on_the_platform_key_and_is_metered(
@@ -377,6 +378,21 @@ class TestEngineModelCalls:
         response = self._complete(api_client, fix_run, **body)
 
         assert (response.status_code, response.json()["error"]) == refusal
+        gateway.assert_not_called()
+
+    def test_a_client_asking_for_a_stream_is_told_why(
+        self, api_client, source_run, gateway
+    ):
+        fix_run = _armed(_fix_run(source_run))
+
+        response = self._complete(
+            api_client, fix_run, stream=True, HTTP_ACCEPT="text/event-stream"
+        )
+
+        assert (response.status_code, response.json()["error"]) == (
+            400,
+            "fix_model_stream_unsupported",
+        )
         gateway.assert_not_called()
 
     def test_an_unreachable_gateway_is_retryable(self, api_client, source_run, gateway):

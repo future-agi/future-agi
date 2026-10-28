@@ -6,6 +6,7 @@ from drf_yasg.utils import swagger_auto_schema
 from pydantic import ValidationError as PydanticValidationError
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.negotiation import BaseContentNegotiation
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -312,12 +313,24 @@ class AgentFixEngineViewSet(viewsets.ViewSet):
         return HttpResponse(body, content_type="application/json")
 
 
+class _GatewayReply(BaseContentNegotiation):
+    """A model reply is the gateway's bytes as sent, so the client's Accept header is not
+    negotiated: a client that asks for a stream gets the service's refusal, not a 406."""
+
+    def select_parser(self, request, parsers):
+        return parsers[0]
+
+    def select_renderer(self, request, renderers, format_suffix=None):
+        return renderers[0], renderers[0].media_type
+
+
 class AgentFixModelView(APIView):
     """The engine's model calls, at the path an OpenAI-compatible client builds from its
     base URL: no trailing slash, so it is routed on its own, not by the router."""
 
     authentication_classes = [AgentFixModelAuthentication]
     permission_classes = [IsAuthenticated]
+    content_negotiation_class = _GatewayReply
 
     def handle_exception(self, exc):
         return _error_response(exc) or super().handle_exception(exc)
