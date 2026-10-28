@@ -3,11 +3,13 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { toRun } from "src/api/agents/agentDetail";
 import { ENVIRONMENT_RUN } from "src/api/agents/_fixtures/agentDetail";
-import AgentEnvironmentsTab from "../AgentEnvironmentsTab";
+import AgentEnvironmentsTab, { productionAhead } from "../AgentEnvironmentsTab";
 
 const envState = { current: {} };
 const envCalls = [];
-const agentState = { current: { environmentCount: 2 } };
+const agentState = {
+  current: { environmentCount: 2, activeVersionNumber: 3 },
+};
 
 vi.mock("src/api/agents/agentDetail", async () => {
   const actual = await vi.importActual("src/api/agents/agentDetail");
@@ -48,44 +50,60 @@ const renderTab = () =>
 
 const twoHoursAgo = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
 
+const TESTED = {
+  id: "e5391b8a",
+  name: "ride-voice-agent",
+  status: "ready",
+  agentVersion: { id: "93956ae6", number: 3 },
+  lastRun: toRun({
+    ...ENVIRONMENT_RUN,
+    outcome_passed: 8,
+    outcome_failed: 2,
+    completed_at: twoHoursAgo,
+  }),
+};
+const UNTESTED = {
+  id: "e9999999",
+  name: "Refund edge cases",
+  status: "failed",
+  agentVersion: null,
+  lastRun: null,
+};
+
 beforeEach(() => {
   envCalls.length = 0;
-  agentState.current = { environmentCount: 2 };
+  agentState.current = { environmentCount: 2, activeVersionNumber: 3 };
   envState.current = {
     isLoading: false,
     isError: false,
-    data: [
-      {
-        id: "e5391b8a",
-        name: "ride-voice-agent",
-        status: "ready",
-        lastRun: toRun({
-          ...ENVIRONMENT_RUN,
-          outcome_passed: 8,
-          outcome_failed: 2,
-          completed_at: twoHoursAgo,
-        }),
-      },
-      {
-        id: "e9999999",
-        name: "Refund edge cases",
-        status: "failed",
-        lastRun: null,
-      },
-    ],
+    data: [TESTED, UNTESTED],
   };
 });
 
-describe("AgentEnvironmentsTab", () => {
-  it("has the contract's columns plus Status, and no actions", () => {
-    renderTab();
-    ["Environment", "Status", "Testing", "Last result"].forEach((h) =>
-      expect(screen.getByText(h)).toBeInTheDocument(),
-    );
-    expect(screen.queryByText("Open")).toBeNull();
+describe("productionAhead", () => {
+  it("is nothing while the environment tests the version in production", () => {
+    expect(productionAhead(TESTED, { activeVersionNumber: 3 })).toBeNull();
   });
 
-  it("shows each environment's status like My Environments does", () => {
+  it("names the version in production once it has moved past the pin", () => {
+    expect(productionAhead(TESTED, { activeVersionNumber: 5 })).toBe(5);
+  });
+
+  it("has nothing to say for an environment with no pin", () => {
+    expect(productionAhead(UNTESTED, { activeVersionNumber: 5 })).toBeNull();
+  });
+});
+
+describe("AgentEnvironmentsTab", () => {
+  it("has the designed columns and an Open action per row", () => {
+    renderTab();
+    ["Environment", "Testing", "Last result", "Status"].forEach((h) =>
+      expect(screen.getByText(h)).toBeInTheDocument(),
+    );
+    expect(screen.getAllByRole("button", { name: "Open" })).toHaveLength(2);
+  });
+
+  it("shows each environment's build state in the Status column", () => {
     renderTab();
     expect(screen.getByTestId("env-status-e5391b8a")).toHaveTextContent(
       "Ready",
@@ -95,12 +113,36 @@ describe("AgentEnvironmentsTab", () => {
     );
   });
 
-  it("shows the version tested and the last result", () => {
+  it("shows the version each environment is pinned to, not its last run's", () => {
+    envState.current = {
+      isLoading: false,
+      isError: false,
+      data: [{ ...TESTED, agentVersion: { id: "v2", number: 2 } }, UNTESTED],
+    };
     renderTab();
-    expect(screen.getByText("v3")).toBeInTheDocument();
+    expect(screen.getByTestId("testing-e5391b8a")).toHaveTextContent("v2");
+    expect(screen.getByTestId("testing-e9999999")).toHaveTextContent("—");
+  });
+
+  it("names the last result as agent × environment", () => {
+    renderTab();
     expect(screen.getByTestId("last-result-e5391b8a")).toHaveTextContent(
-      "80% · agent v3 · 2h ago",
+      "80% · agent v3 × environment v7 · 2h ago",
     );
+  });
+
+  it("says when production has moved past an environment's pin", () => {
+    agentState.current = { environmentCount: 2, activeVersionNumber: 5 };
+    renderTab();
+    expect(screen.getByTestId("production-ahead-e5391b8a")).toHaveTextContent(
+      "v5 in production",
+    );
+    expect(screen.queryByTestId("production-ahead-e9999999")).toBeNull();
+  });
+
+  it("says nothing extra while the pin is the version in production", () => {
+    renderTab();
+    expect(screen.queryByTestId("production-ahead-e5391b8a")).toBeNull();
   });
 
   it("shows no pass rate while the last run is still going", () => {
@@ -109,8 +151,7 @@ describe("AgentEnvironmentsTab", () => {
       isError: false,
       data: [
         {
-          id: "e5391b8a",
-          name: "ride-voice-agent",
+          ...TESTED,
           status: "running",
           lastRun: toRun({
             ...ENVIRONMENT_RUN,
@@ -144,6 +185,21 @@ describe("AgentEnvironmentsTab", () => {
     );
   });
 
+  it("opens the environment from its Open button", () => {
+    renderTab();
+    fireEvent.click(screen.getAllByRole("button", { name: "Open" })[1]);
+    expect(currentLocation.pathname).toBe(
+      "/dashboard/simulate/environments/e9999999",
+    );
+  });
+
+  it("offers Build environment as a disabled Coming soon action", () => {
+    renderTab();
+    const button = screen.getByRole("button", { name: "Build environment" });
+    expect(button).toBeDisabled();
+    expect(screen.getAllByLabelText("Coming soon").length).toBeGreaterThan(0);
+  });
+
   it("holds the table's shape with skeleton rows while it loads", () => {
     envState.current = { isLoading: true, isError: false, data: undefined };
     renderTab();
@@ -157,8 +213,11 @@ describe("AgentEnvironmentsTab", () => {
     envState.current = { isLoading: false, isError: false, data: [] };
     renderTab();
     expect(
-      screen.getByText("No environments test this agent yet"),
+      screen.getByText("Not used in any environment yet"),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Build environment" }),
+    ).toBeDisabled();
   });
 
   it("shows a load error as an error", () => {

@@ -7,9 +7,10 @@ import {
   within,
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import axios from "src/utils/axios";
 import {
+  AGENT_ENVIRONMENTS,
   CODE_AGENT_DETAIL,
   CODE_VERSION_DETAIL,
   HOSTED_AGENT_DETAIL,
@@ -21,6 +22,17 @@ import AgentDefinitionTab from "../AgentDefinitionTab";
 
 const auth = { role: "Owner" };
 vi.mock("src/auth/hooks", () => ({ useAuthContext: () => auth }));
+
+const environments = { current: AGENT_ENVIRONMENTS };
+vi.mock("src/api/simulate-environments/harnessEnvironments", () => ({
+  listHarnessEnvironments: () => Promise.resolve(environments.current),
+}));
+
+let currentLocation;
+const LocationProbe = () => {
+  currentLocation = useLocation();
+  return null;
+};
 
 vi.mock("src/utils/axios", () => ({
   default: { get: vi.fn(), put: vi.fn() },
@@ -84,13 +96,16 @@ const renderAt = (agent, search = "") =>
             path="/dashboard/agents/connected/:agentId/definition"
             element={<AgentDefinitionTab />}
           />
+          <Route path="*" element={null} />
         </Routes>
+        <LocationProbe />
       </MemoryRouter>
     </QueryClientProvider>,
   );
 
 beforeEach(() => {
   auth.role = "Owner";
+  environments.current = AGENT_ENVIRONMENTS;
   axios.get.mockReset();
   axios.put.mockReset();
 });
@@ -99,12 +114,49 @@ describe("AgentDefinitionTab", () => {
   it("shows a hosted agent's configuration for the active version", async () => {
     serve(HOSTED_AGENT_DETAIL, { "v2-id": HOSTED_VERSION_DETAIL });
     renderAt(HOSTED_AGENT_DETAIL);
-    expect(await screen.findByText("What we read")).toBeInTheDocument();
-    expect(await screen.findByText("· v2")).toBeInTheDocument();
+    expect(await screen.findByText("Configuration")).toBeInTheDocument();
+    expect(await screen.findByText("v2")).toBeInTheDocument();
+    expect(screen.getByText("Read-only · read from Vapi")).toBeInTheDocument();
     expect(await screen.findByText("sk-a...9f2c")).toBeInTheDocument();
+    expect(screen.getByText("gpt-4o")).toBeInTheDocument();
+  });
+
+  it("lays out Identity, Source and Reach from the version", async () => {
+    serve(HOSTED_AGENT_DETAIL, { "v2-id": HOSTED_VERSION_DETAIL });
+    renderAt(HOSTED_AGENT_DETAIL);
+    await screen.findByText("sk-a...9f2c");
+    ["Identity", "Source", "Reach", "Configuration", "Links"].forEach((t) =>
+      expect(screen.getByText(t)).toBeInTheDocument(),
+    );
+    expect(screen.getByText("Northwind Pharmacy")).toBeInTheDocument();
+    // The type under Identity, and the Voice row under Reach.
+    expect(screen.getAllByText("Voice")).toHaveLength(2);
+    expect(screen.getByText("es")).toBeInTheDocument();
+    expect(screen.getByText("Vapi")).toBeInTheDocument();
     expect(
-      screen.getByText("Inbound · caller speaks first"),
+      screen.getByText("Phone call · inbound · caller speaks first"),
     ).toBeInTheDocument();
+    expect(screen.getByText("+14155550100")).toBeInTheDocument();
+  });
+
+  it("links the environments testing the agent", async () => {
+    serve(HOSTED_AGENT_DETAIL, { "v2-id": HOSTED_VERSION_DETAIL });
+    renderAt(HOSTED_AGENT_DETAIL);
+    const link = await screen.findByRole("link", { name: "ride-voice-agent" });
+    expect(
+      screen.getByRole("link", { name: "Refund edge cases" }),
+    ).toBeInTheDocument();
+    fireEvent.click(link);
+    expect(currentLocation.pathname).toBe(
+      "/dashboard/simulate/environments/e5391b8a",
+    );
+  });
+
+  it("says when no environment tests the agent yet", async () => {
+    environments.current = { ...AGENT_ENVIRONMENTS, results: [] };
+    serve(HOSTED_AGENT_DETAIL, { "v2-id": HOSTED_VERSION_DETAIL });
+    renderAt(HOSTED_AGENT_DETAIL);
+    expect(await screen.findByText("None yet")).toBeInTheDocument();
   });
 
   it("reads the version picked in ?v=", async () => {
@@ -118,7 +170,7 @@ describe("AgentDefinitionTab", () => {
       "v2-id": HOSTED_VERSION_DETAIL,
     });
     renderAt(HOSTED_AGENT_DETAIL, "?v=v1-id");
-    expect(await screen.findByText("· v1")).toBeInTheDocument();
+    expect(await screen.findByText("v1")).toBeInTheDocument();
     expect(await screen.findByText("Not saved")).toBeInTheDocument();
   });
 
@@ -129,10 +181,17 @@ describe("AgentDefinitionTab", () => {
       { [CODE_VERSION_DETAIL.id]: STORED_AGENT },
     );
     renderAt(CODE_AGENT_DETAIL);
-    expect(await screen.findByText("Source")).toBeInTheDocument();
     expect(
-      screen.getByText("Stored by SDK 0.2.3 on 14-10-2026"),
+      await screen.findByText("Stored by SDK 0.2.3 on 14-10-2026"),
     ).toBeInTheDocument();
+    expect(screen.getByText("Kind")).toBeInTheDocument();
+    expect(screen.getByText("create_guest_rider")).toBeInTheDocument();
+    expect(
+      screen.getByText("github.com/acme/uber-voice-agent"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("3f9a2c1")).toBeInTheDocument();
+    expect(screen.getByText("Phone call · inbound")).toBeInTheDocument();
+    expect(screen.getByText("+14155550199")).toBeInTheDocument();
     expect(screen.queryByText("uber_voice_agent")).toBeNull();
     expect(screen.queryByText(/may be out of date/i)).toBeNull();
   });
@@ -168,7 +227,7 @@ describe("AgentDefinitionTab", () => {
       { [CODE_VERSION_DETAIL.id]: STORED_AGENT },
     );
     renderAt(CODE_AGENT_DETAIL);
-    await screen.findByText("Source");
+    await screen.findByText("Stored by SDK 0.2.3 on 14-10-2026");
     expect(axios.get).toHaveBeenCalledWith(
       `/simulate/agent-definitions/${CODE_AGENT_DETAIL.id}/versions/${CODE_VERSION_DETAIL.id}/agent/`,
     );
@@ -217,9 +276,25 @@ describe("AgentDefinitionTab", () => {
         : Promise.resolve({ data: HOSTED_AGENT_DETAIL }),
     );
     renderAt(HOSTED_AGENT_DETAIL);
+    // Once the agent is in, Identity, Source and Reach still wait for the
+    // version, two rows each, beside Configuration's four.
+    await waitFor(() =>
+      expect(screen.getAllByTestId("definition-row-skeleton")).toHaveLength(10),
+    );
+    expect(screen.queryByText("Northwind Pharmacy")).toBeNull();
+  });
+
+  it("shows none of the agent's current facts when the version can't load", async () => {
+    axios.get.mockImplementation((url) =>
+      url.includes("/versions/")
+        ? Promise.reject({ message: "Version unavailable" })
+        : Promise.resolve({ data: HOSTED_AGENT_DETAIL }),
+    );
+    renderAt(HOSTED_AGENT_DETAIL);
     expect(
-      await screen.findAllByTestId("definition-row-skeleton"),
-    ).toHaveLength(4);
+      (await screen.findAllByText("Couldn't load this version")).length,
+    ).toBeGreaterThanOrEqual(3);
+    expect(screen.queryByText("+14155550100")).toBeNull();
   });
 
   it("says what observability does while it's off", async () => {

@@ -1,43 +1,59 @@
 import PropTypes from "prop-types";
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { format } from "date-fns";
+import { useLocation, useNavigate } from "react-router-dom";
+import { useSnackbar } from "notistack";
 import { Box, Button, Skeleton, Stack, Typography } from "@mui/material";
 import { useScrollEnd } from "src/hooks/use-scroll-end";
-import { alpha } from "@mui/material/styles";
+import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import EmptyState from "src/sections/simulate/environments/components/EmptyState";
+import { useActivateVersion } from "src/api/agents/agentDetail";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import ComingSoonCard from "./ComingSoonCard";
 import { Card, LineSkeleton } from "./bits";
+import { agentDetailPath } from "./agentDetailTabs";
 import { MONO } from "./format";
 import useAgentRoute from "./useAgentRoute";
 import usePinnedVersions from "./usePinnedVersions";
 
-function Chip({ label, tone }) {
+const VERSION_ACTION = { typography: "s2", minWidth: 0, height: 24, px: 1 };
+
+// The row is a button too; keys pressed on an action stay with the action.
+const actionProps = (onClick) => ({
+  size: "small",
+  variant: "outlined",
+  color: "inherit",
+  sx: VERSION_ACTION,
+  onClick: (e) => {
+    e.stopPropagation();
+    onClick();
+  },
+  onKeyDown: (e) => e.stopPropagation(),
+});
+
+function Chip({ label }) {
   return (
     <Box
       sx={{
         px: 0.75,
-        height: 18,
+        height: 20,
         display: "inline-flex",
         alignItems: "center",
         borderRadius: 0.75,
-        bgcolor: (t) =>
-          tone === "primary"
-            ? alpha(
-                t.palette.primary.main,
-                t.palette.mode === "dark" ? 0.16 : 0.1,
-              )
-            : alpha(t.palette.text.primary, 0.07),
-        color: tone === "primary" ? "primary.main" : "text.secondary",
+        bgcolor: "action.selected",
+        color: "text.secondary",
       }}
     >
-      <Typography sx={{ typography: "s3", fontWeight: 700 }}>
+      <Typography sx={{ typography: "s2", fontWeight: 500, color: "inherit" }}>
         {label}
       </Typography>
     </Box>
   );
 }
 
-Chip.propTypes = { label: PropTypes.string, tone: PropTypes.string };
+Chip.propTypes = { label: PropTypes.string };
 
 // A timeline row while it loads, laid out like a real one: the dot and its
 // line, then label, message and date at the same sizes and spacing.
@@ -57,10 +73,10 @@ function VersionSkeleton() {
         <Typography sx={{ typography: "s2" }}>
           <LineSkeleton width={36} />
         </Typography>
-        <Typography sx={{ typography: "s3", mt: 0.375 }}>
+        <Typography sx={{ typography: "s2", mt: 0.375 }}>
           <LineSkeleton width="80%" />
         </Typography>
-        <Typography sx={{ typography: "s3", mt: 0.25 }}>
+        <Typography sx={{ typography: "s2", mt: 0.25 }}>
           <LineSkeleton width={110} />
         </Typography>
       </Box>
@@ -75,11 +91,20 @@ const skeletons = (n) =>
   ));
 
 /**
- * Versions: a read-only timeline from the paginated versions list (the one
- * the Agent Definition page uses), newest first, and Compare (coming soon).
+ * Versions: a timeline from the paginated versions list (the one the Agent
+ * Definition page uses), newest first. Each version can be viewed on the
+ * Definition tab or made the one in production; environments keep the
+ * version each is pinned to. Compare is coming soon.
  */
 export default function AgentVersionsTab() {
   const { agentId, agent, versionId, selectVersion } = useAgentRoute();
+  const navigate = useNavigate();
+  const { search } = useLocation();
+  const { enqueueSnackbar } = useSnackbar();
+  const activate = useActivateVersion(agentId);
+  const { role } = useAuthContext();
+  const canEdit = !!RolePermission.SIMULATION_AGENT[PERMISSIONS.UPDATE][role];
+  const [toActivate, setToActivate] = useState(null);
   const {
     versions,
     loaded,
@@ -117,12 +142,47 @@ export default function AgentVersionsTab() {
   ]);
   const total = agent?.versionCount;
 
+  // The Definition tab for a version: `?v=` as the picker writes it, so the
+  // version in production keeps a clean URL.
+  const viewDefinition = (v) => {
+    const params = new URLSearchParams(search);
+    if (v.id === agent?.activeVersionId) params.delete("v");
+    else params.set("v", v.id);
+    const query = params.toString();
+    navigate(
+      `${agentDetailPath(agentId, "definition")}${query ? `?${query}` : ""}`,
+    );
+  };
+
+  const makeActive = () => {
+    const v = toActivate;
+    activate.mutate(
+      { versionId: v.id },
+      {
+        onSuccess: () => {
+          setToActivate(null);
+          enqueueSnackbar(
+            `${v.label} is now in production. Environments keep the version each is pinned to.`,
+            { variant: "success" },
+          );
+        },
+        onError: (e) =>
+          enqueueSnackbar(
+            errorMessage(e) || `Couldn't set ${v.label} as production`,
+            {
+              variant: "error",
+            },
+          ),
+      },
+    );
+  };
+
   return (
     <Box
       sx={{
         display: "grid",
         gap: 2,
-        gridTemplateColumns: "300px 1fr",
+        gridTemplateColumns: "minmax(300px, 1fr) 1fr",
         alignItems: "start",
         // The timeline fills the tab's height and scrolls inside, at any width.
         height: "100%",
@@ -157,6 +217,7 @@ export default function AgentVersionsTab() {
               action={
                 <Button
                   variant="outlined"
+                  color="inherit"
                   size="small"
                   onClick={() => refetch()}
                 >
@@ -172,6 +233,7 @@ export default function AgentVersionsTab() {
             </Typography>
           )}
           {versions.map((v, i) => {
+            const selected = v.id === versionId;
             return (
               <Stack
                 key={v.id}
@@ -180,7 +242,7 @@ export default function AgentVersionsTab() {
                 spacing={1.5}
                 role="button"
                 tabIndex={0}
-                aria-current={v.id === versionId ? "true" : undefined}
+                aria-current={selected ? "true" : undefined}
                 onClick={() => selectVersion(v.id)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") {
@@ -196,11 +258,9 @@ export default function AgentVersionsTab() {
                   mb: i === versions.length - 1 ? 0 : 0.75,
                   borderRadius: 1,
                   cursor: "pointer",
-                  bgcolor:
-                    v.id === versionId ? "action.selected" : "transparent",
+                  bgcolor: selected ? "action.selected" : "transparent",
                   "&:hover": {
-                    bgcolor:
-                      v.id === versionId ? "action.selected" : "action.hover",
+                    bgcolor: selected ? "action.selected" : "action.hover",
                   },
                   "&:focus-visible": {
                     outline: "2px solid",
@@ -211,16 +271,14 @@ export default function AgentVersionsTab() {
                 <Stack alignItems="center" sx={{ flexShrink: 0, pt: 0.25 }}>
                   <Box
                     data-testid="version-dot"
-                    data-selected={v.id === versionId ? "true" : undefined}
+                    data-selected={selected ? "true" : undefined}
                     sx={{
                       width: 10,
                       height: 10,
                       borderRadius: "50%",
-                      bgcolor:
-                        v.id === versionId ? "primary.main" : "transparent",
+                      bgcolor: selected ? "primary.main" : "transparent",
                       border: "2px solid",
-                      borderColor:
-                        v.id === versionId ? "primary.main" : "text.disabled",
+                      borderColor: selected ? "primary.main" : "text.disabled",
                     }}
                   />
                   {i < versions.length - 1 && (
@@ -241,19 +299,20 @@ export default function AgentVersionsTab() {
                       data-testid="version-label"
                       sx={{
                         typography: "s2",
-                        fontWeight: 700,
+                        fontWeight: 500,
                         fontFamily: MONO,
                       }}
                     >
                       {v.label}
                     </Typography>
-                    {v.isLatest && <Chip label="Latest" tone="primary" />}
-                    {v.isActive && <Chip label="Active" />}
+                    {v.isLatest && <Chip label="Latest" />}
+                    {v.isActive && <Chip label="In production" />}
+                    {v.isDraft && !v.isActive && <Chip label="Draft" />}
                   </Stack>
                   {v.commitMessage && (
                     <Typography
                       sx={{
-                        typography: "s3",
+                        typography: "s2",
                         color: "text.secondary",
                         mt: 0.375,
                       }}
@@ -264,7 +323,7 @@ export default function AgentVersionsTab() {
                   {v.createdAt && (
                     <Typography
                       sx={{
-                        typography: "s3",
+                        typography: "s2",
                         color: "text.subtitle",
                         mt: 0.25,
                       }}
@@ -272,6 +331,22 @@ export default function AgentVersionsTab() {
                       {format(new Date(v.createdAt), "dd-MM-yyyy, h:mm a")}
                     </Typography>
                   )}
+                  <Stack
+                    direction="row"
+                    alignItems="center"
+                    gap={0.75}
+                    flexWrap="wrap"
+                    sx={{ mt: 0.75 }}
+                  >
+                    <Button {...actionProps(() => viewDefinition(v))}>
+                      View definition
+                    </Button>
+                    {!v.isActive && canEdit && (
+                      <Button {...actionProps(() => setToActivate(v))}>
+                        Set as production
+                      </Button>
+                    )}
+                  </Stack>
                 </Box>
               </Stack>
             );
@@ -282,6 +357,29 @@ export default function AgentVersionsTab() {
       <ComingSoonCard
         title="Compare"
         description="Compare any two versions to see exactly what changed."
+      />
+      <ConfirmDialog
+        open={!!toActivate}
+        onClose={() => (activate.isPending ? null : setToActivate(null))}
+        closeDisabled={activate.isPending}
+        title={toActivate ? `Set ${toActivate.label} as production?` : ""}
+        content={
+          <Typography sx={{ typography: "s2_1", color: "text.secondary" }}>
+            It becomes the version in production. Environments keep the version
+            each is pinned to; switch them from their own page.
+          </Typography>
+        }
+        action={
+          <Button
+            size="small"
+            variant="contained"
+            color="primary"
+            disabled={activate.isPending}
+            onClick={makeActive}
+          >
+            Set as production
+          </Button>
+        }
       />
     </Box>
   );
