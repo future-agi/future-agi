@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
 import structlog
@@ -107,54 +107,78 @@ def _dispatch_webhook_events(org, logs):
             logger.exception("webhook_immediate_delivery_failed", org_id=str(org.id))
 
 
-MAX_BODY_SIZE = 65536  # 64KB
-MAX_SESSION_ID_LEN = 255  # matches VARCHAR(255) DB column
-
-
 def _send_email_alerts(org, logs):
-    """Email each active alert of the org for the first entry that raises one
-    of its events. send_alert_email holds the alert's cooldown, so a busy
-    batch sends one email per alert, not one per request.
+    """Start an email for each active alert of the org whose events a log
+    entry raises, at most once per the alert's cooldown.
+
+    The cooldown starts here, when the alert fires: a conditional update claims
+    it, so two ingests cannot both send, and a provider that keeps failing is
+    not retried on every batch. The send runs as a background activity, so
+    ingestion never waits on a mail provider.
 
     The events that need a threshold (error.rate_spike, latency.spike,
     cost.threshold) are not sent: an alert has no threshold to compare with.
     """
-    from agentcc.models import AgentccEmailAlert
-    from agentcc.services.email_sender import send_alert_email
+    from django.db.models import Q
 
-    alerts = list(
-        AgentccEmailAlert.no_workspace_objects.filter(
-            organization=org, is_active=True, deleted=False
-        )
+    from agentcc.models import AgentccEmailAlert
+    from agentcc.services.email_sender import send_alert_email_activity
+
+    now = datetime.now(timezone.utc)
+    alerts = AgentccEmailAlert.no_workspace_objects.filter(
+        organization=org, is_active=True, deleted=False
     )
     for alert in alerts:
         wanted = set(alert.events or [])
-        for entry in logs:
-            if not isinstance(entry, dict):
-                continue
-            event_type = next((e for e in _event_types(entry) if e in wanted), None)
-            if event_type is None:
-                continue
-            result = send_alert_email(
-                alert,
-                event_type,
-                context={
-                    "request_id": entry.get("request_id", ""),
-                    "model": entry.get("model", ""),
-                    "provider": entry.get("provider", ""),
-                    "status_code": entry.get("status_code", ""),
-                    "error_code": entry.get("error_code", ""),
-                    "error_message": entry.get("error_message", ""),
-                },
+        fired = next(
+            (
+                (event_type, entry)
+                for entry in logs
+                if isinstance(entry, dict)
+                for event_type in _event_types(entry)
+                if event_type in wanted
+            ),
+            None,
+        )
+        if fired is None:
+            continue
+        event_type, entry = fired
+        cooled = Q(last_triggered_at__isnull=True) | Q(
+            last_triggered_at__lte=now - timedelta(minutes=alert.cooldown_minutes)
+        )
+        claimed = (
+            AgentccEmailAlert.no_workspace_objects.filter(id=alert.id)
+            .filter(cooled)
+            .update(last_triggered_at=now)
+        )
+        if not claimed:
+            continue
+        try:
+            send_alert_email_activity.apply_async(
+                args=(
+                    str(alert.id),
+                    event_type,
+                    {
+                        "request_id": entry.get("request_id", ""),
+                        "model": entry.get("model", ""),
+                        "provider": entry.get("provider", ""),
+                        "status_code": entry.get("status_code", ""),
+                        "error_code": entry.get("error_code", ""),
+                        "error_message": entry.get("error_message", ""),
+                    },
+                ),
+                dispatch_timeout_seconds=5,
             )
-            if not result.get("success"):
-                logger.info(
-                    "email_alert_not_sent",
-                    alert_id=str(alert.id),
-                    event_type=event_type,
-                    reason=result.get("error"),
-                )
-            break
+        except Exception:
+            logger.exception(
+                "email_alert_dispatch_failed",
+                alert_id=str(alert.id),
+                event_type=event_type,
+            )
+
+
+MAX_BODY_SIZE = 65536  # 64KB
+MAX_SESSION_ID_LEN = 255  # matches VARCHAR(255) DB column
 
 
 def _parse_datetime(value):

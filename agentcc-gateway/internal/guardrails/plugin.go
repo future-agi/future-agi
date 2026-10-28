@@ -93,7 +93,11 @@ func (p *GuardrailPlugin) ProcessResponse(ctx context.Context, rc *models.Reques
 		result := p.engine.RunPost(ctx, input, keyPolicy, reqPolicy)
 
 		if result.Blocked {
-			rc.Response = nil
+			// The content goes; the usage stays. The upstream billed the
+			// request, so cost, budgets and credits must still count it.
+			if rc.Response != nil {
+				rc.Response = &models.ChatCompletionResponse{Model: rc.Response.Model, Usage: rc.Response.Usage}
+			}
 			rc.Flags.GuardrailTriggered = true
 			if len(result.Triggered) > 0 {
 				tg := result.Triggered[0]
@@ -224,8 +228,6 @@ func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.Reque
 	return pipeline.ResultContinue()
 }
 
-// getGuardrail resolves a guardrail implementation by name.
-// Checks the static registry first, then the dynamic cache, and finally
 // checkInput is what a guardrail checks. On a route that forwards the client's
 // own body, Request is nil and Response holds usage only; the handler puts the
 // text in GuardrailRequest and GuardrailResponse instead.
@@ -247,6 +249,8 @@ func checkInput(rc *models.RequestContext, withResponse bool) *CheckInput {
 	return input
 }
 
+// getGuardrail resolves a guardrail implementation by name.
+// Checks the static registry first, then the dynamic cache, and finally
 // tries to create a new dynamic guardrail from the check config.
 func (p *GuardrailPlugin) getGuardrail(orgID, name string, check *tenant.GuardrailCheck) Guardrail {
 	preferDynamic := check != nil && len(check.Config) > 0 && p.dynamicFactory != nil
