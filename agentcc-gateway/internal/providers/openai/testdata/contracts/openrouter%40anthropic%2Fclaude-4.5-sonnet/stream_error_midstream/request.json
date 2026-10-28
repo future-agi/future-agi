@@ -1,0 +1,14 @@
+{
+  "model": "anthropic/claude-4.5-sonnet",
+  "messages": [
+    {
+      "role": "user",
+      "content": "What is the capital of France? Think it through briefly."
+    }
+  ],
+  "max_tokens": 1024,
+  "reasoning": {
+    "max_tokens": 512
+  },
+  "stream": true
+}

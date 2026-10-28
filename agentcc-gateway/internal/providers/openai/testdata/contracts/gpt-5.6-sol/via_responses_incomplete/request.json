@@ -1,0 +1,10 @@
+{
+  "model": "gpt-5.6-sol",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Tell me a three sentence bedtime story about a unicorn."
+    }
+  ],
+  "max_completion_tokens": 40
+}

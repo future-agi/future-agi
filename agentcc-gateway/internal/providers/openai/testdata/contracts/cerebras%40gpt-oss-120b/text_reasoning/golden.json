@@ -1,0 +1,35 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "Fast inference keeps interactive apps responsive and makes multi-step agents affordable.",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "chatcmpl-5b2c3d4e-6f7a-4b8c-9d0e-1f2a3b4c5d6e",
+  "model": "gpt-oss-120b",
+  "object": "chat.completion",
+  "system_fingerprint": "fp_70185065a4",
+  "time_info": {
+    "completion_time": 0.026478,
+    "created": "<nonzero>",
+    "prompt_time": 0.002831,
+    "queue_time": 0.000208,
+    "total_time": 0.031233
+  },
+  "usage": {
+    "completion_tokens": 58,
+    "completion_tokens_details": {
+      "reasoning_tokens": 21
+    },
+    "prompt_tokens": 72,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "total_tokens": 130
+  }
+}

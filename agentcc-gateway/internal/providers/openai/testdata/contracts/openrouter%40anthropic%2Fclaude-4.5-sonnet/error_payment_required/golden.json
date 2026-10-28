@@ -1,0 +1,6 @@
+{
+  "code": "provider_402",
+  "message": "provider error (HTTP 402): {\n  \"error\": {\n    \"code\": 402,\n    \"message\": \"Insufficient credits. Add more using https://openrouter.ai/credits\"\n  }\n}\n",
+  "status": 502,
+  "type": "upstream_error"
+}

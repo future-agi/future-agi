@@ -1,0 +1,10 @@
+{
+  "endpoint": "transcription",
+  "notes": "Request-side: the spec's \"Logprobs\" example request (include[]=logprobs). include is not forwarded, so the answer is the plain json of transcription_json, not the example's logprobs. Recordable with real audio. The upload, audio.mp3, is 3.2 s of English speech (\"The beach was a popular spot on a hot summer day.\") generated for this suite with espeak-ng 1.51 (voice en-us, 165 words a minute) and encoded with ffmpeg (libmp3lame, 16 kHz mono, 24 kbit/s, metadata stripped, bit-exact): synthetic, so free of licence terms. The same file is in every case that names it; a real recording of a person may replace it.",
+  "sanity_gaps": [
+    {
+      "failure": "request.json key \"include\"",
+      "reason": "known gap O22: models.TranscriptionRequest has no field for it, so include [\"logprobs\"], stream, chunking_strategy, known_speaker_names / known_speaker_references, languages and keywords never reach OpenAI: no token logprobs, no streamed transcript, no diarization hints"
+    }
+  ]
+}

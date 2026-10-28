@@ -1,0 +1,260 @@
+{
+  "provider": "openrouter",
+  "note": "The openrouter preset's spec (contractspec/subsets/openrouter) against what the openai adapter decodes; see spec_allowlist.json for the official API. Its contract fixtures are the openrouter@<model> directories under testdata/contracts.",
+  "unmapped": [
+    {
+      "subset": "openrouter/chat",
+      "path": "$.choices[].message.audio",
+      "reason": "known gap O9: audio output (id, data, transcript, expires_at) is dropped; models.Message / models.Delta have no audio field"
+    },
+    {
+      "subset": "openrouter/chat",
+      "path": "$.choices[].message.images",
+      "reason": "known gap OR3: images an image-output model generates (message.images) are dropped; models.Message has no slot, so an image-generation chat through OpenRouter returns text only"
+    },
+    {
+      "subset": "openrouter/chat",
+      "path": "$.choices[].message.model",
+      "reason": "no canonical field: the model that wrote the message, which the response's model also names"
+    },
+    {
+      "subset": "openrouter/chat",
+      "path": "$.choices[].message.reasoning",
+      "reason": "known gap OR2: OpenRouter's normalized reasoning (message.reasoning) and reasoning_details are dropped; models.Message has reasoning_content and thinking_blocks, but nothing maps them, so reasoning (and the signatures and encrypted blocks needed to continue a reasoning conversation) never reach the client"
+    },
+    {
+      "subset": "openrouter/chat",
+      "path": "$.choices[].message.reasoning_details",
+      "reason": "known gap OR2: see message.reasoning"
+    },
+    {
+      "subset": "openrouter/chat",
+      "path": "$.choices[].message.refusal",
+      "reason": "known gap O1: message.refusal is dropped (models.Message has no refusal field); a structured-outputs refusal reaches the client as content null with no explanation"
+    },
+    {
+      "subset": "openrouter/chat_stream",
+      "path": "chunk:$.choices[].delta.audio",
+      "reason": "known gap O9: audio output (id, data, transcript, expires_at) is dropped; models.Message / models.Delta have no audio field"
+    },
+    {
+      "subset": "openrouter/chat_stream",
+      "path": "chunk:$.choices[].delta.reasoning",
+      "reason": "known gap OR2: streamed reasoning is dropped, as on the non-stream path"
+    },
+    {
+      "subset": "openrouter/chat_stream",
+      "path": "chunk:$.choices[].delta.reasoning_details",
+      "reason": "known gap OR2: streamed reasoning_details are dropped"
+    },
+    {
+      "subset": "openrouter/chat_stream",
+      "path": "chunk:$.choices[].delta.refusal",
+      "reason": "known gap O2: delta.refusal is dropped (models.Delta has no refusal field), so a streamed refusal reaches the client as empty deltas"
+    },
+    {
+      "subset": "openrouter/chat_stream",
+      "path": "chunk:$.choices[].logprobs",
+      "reason": "known gap O3: streamed choice logprobs are dropped (models.StreamChoice has no logprobs field), so a stream with logprobs: true carries none to the client"
+    },
+    {
+      "subset": "openrouter/embeddings",
+      "path": "$.id",
+      "reason": "no canonical field: models.EmbeddingResponse has no id"
+    },
+    {
+      "subset": "openrouter/embeddings",
+      "path": "$.usage.cost",
+      "reason": "known gap OR4: OpenRouter's embedding usage (cost, cost_details, is_byok, prompt_tokens_details) is dropped: models.EmbeddingUsage has no Extra, unlike chat's models.Usage, so the client loses the cost OpenRouter charged"
+    },
+    {
+      "subset": "openrouter/embeddings",
+      "path": "$.usage.cost_details",
+      "reason": "known gap OR4: see usage.cost"
+    },
+    {
+      "subset": "openrouter/embeddings",
+      "path": "$.usage.is_byok",
+      "reason": "known gap OR4: see usage.cost"
+    },
+    {
+      "subset": "openrouter/embeddings",
+      "path": "$.usage.prompt_tokens_details",
+      "reason": "known gap OR4: see usage.cost"
+    },
+    {
+      "subset": "openrouter/errors",
+      "path": "$.error.metadata",
+      "reason": "known gap OR5: the error's metadata (the upstream provider's raw error, the moderation reasons of a 403, error_type) is dropped, so a client cannot tell which provider failed or why"
+    },
+    {
+      "subset": "openrouter/errors",
+      "path": "$.openrouter_metadata",
+      "reason": "no canonical field: OpenRouter's routing record of the failed request"
+    },
+    {
+      "subset": "openrouter/errors",
+      "path": "$.user_id",
+      "reason": "no canonical field: the OpenRouter user the key belongs to"
+    },
+    {
+      "subset": "openrouter/models",
+      "path": "$.data[].alias_target",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; OpenRouter's catalog metadata has no slot. ListModels has no production caller (new-model detection reads the catalog itself, internal/providers/contractwatch)"
+    },
+    {
+      "subset": "openrouter/models",
+      "path": "$.data[].architecture",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; OpenRouter's catalog metadata has no slot. ListModels has no production caller (new-model detection reads the catalog itself, internal/providers/contractwatch)"
+    },
+    {
+      "subset": "openrouter/models",
+      "path": "$.data[].benchmarks",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; OpenRouter's catalog metadata has no slot. ListModels has no production caller (new-model detection reads the catalog itself, internal/providers/contractwatch)"
+    },
+    {
+      "subset": "openrouter/models",
+      "path": "$.data[].canonical_slug",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; OpenRouter's catalog metadata has no slot. ListModels has no production caller (new-model detection reads the catalog itself, internal/providers/contractwatch)"
+    },
+    {
+      "subset": "openrouter/models",
+      "path": "$.data[].context_length",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; OpenRouter's catalog metadata has no slot. ListModels has no production caller (new-model detection reads the catalog itself, internal/providers/contractwatch)"
+    },
+    {
+      "subset": "openrouter/models",
+      "path": "$.data[].default_parameters",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; OpenRouter's catalog metadata has no slot. ListModels has no production caller (new-model detection reads the catalog itself, internal/providers/contractwatch)"
+    },
+    {
+      "subset": "openrouter/models",
+      "path": "$.data[].description",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; OpenRouter's catalog metadata has no slot. ListModels has no production caller (new-model detection reads the catalog itself, internal/providers/contractwatch)"
+    },
+    {
+      "subset": "openrouter/models",
+      "path": "$.data[].expiration_date",
+      "reason": "known gap O23: the date the model is retired (OpenRouter's expiration_date, OpenAI's shutdown_date) is dropped; models.ModelObject has no field for it"
+    },
+    {
+      "subset": "openrouter/models",
+      "path": "$.data[].hugging_face_id",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; OpenRouter's catalog metadata has no slot. ListModels has no production caller (new-model detection reads the catalog itself, internal/providers/contractwatch)"
+    },
+    {
+      "subset": "openrouter/models",
+      "path": "$.data[].knowledge_cutoff",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; OpenRouter's catalog metadata has no slot. ListModels has no production caller (new-model detection reads the catalog itself, internal/providers/contractwatch)"
+    },
+    {
+      "subset": "openrouter/models",
+      "path": "$.data[].links",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; OpenRouter's catalog metadata has no slot. ListModels has no production caller (new-model detection reads the catalog itself, internal/providers/contractwatch)"
+    },
+    {
+      "subset": "openrouter/models",
+      "path": "$.data[].name",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; OpenRouter's catalog metadata has no slot. ListModels has no production caller (new-model detection reads the catalog itself, internal/providers/contractwatch)"
+    },
+    {
+      "subset": "openrouter/models",
+      "path": "$.data[].per_request_limits",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; OpenRouter's catalog metadata has no slot. ListModels has no production caller (new-model detection reads the catalog itself, internal/providers/contractwatch)"
+    },
+    {
+      "subset": "openrouter/models",
+      "path": "$.data[].pricing",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; OpenRouter's catalog metadata has no slot. ListModels has no production caller (new-model detection reads the catalog itself, internal/providers/contractwatch)"
+    },
+    {
+      "subset": "openrouter/models",
+      "path": "$.data[].reasoning",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; OpenRouter's catalog metadata has no slot. ListModels has no production caller (new-model detection reads the catalog itself, internal/providers/contractwatch)"
+    },
+    {
+      "subset": "openrouter/models",
+      "path": "$.data[].supported_parameters",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; OpenRouter's catalog metadata has no slot. ListModels has no production caller (new-model detection reads the catalog itself, internal/providers/contractwatch)"
+    },
+    {
+      "subset": "openrouter/models",
+      "path": "$.data[].supported_voices",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; OpenRouter's catalog metadata has no slot. ListModels has no production caller (new-model detection reads the catalog itself, internal/providers/contractwatch)"
+    },
+    {
+      "subset": "openrouter/models",
+      "path": "$.data[].top_provider",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; OpenRouter's catalog metadata has no slot. ListModels has no production caller (new-model detection reads the catalog itself, internal/providers/contractwatch)"
+    },
+    {
+      "subset": "openrouter/models",
+      "path": "$.links",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; OpenRouter's catalog metadata has no slot. ListModels has no production caller (new-model detection reads the catalog itself, internal/providers/contractwatch)"
+    },
+    {
+      "subset": "openrouter/models",
+      "path": "$.total_count",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; OpenRouter's catalog metadata has no slot. ListModels has no production caller (new-model detection reads the catalog itself, internal/providers/contractwatch)"
+    }
+  ],
+  "opaque": [
+    {
+      "subset": "openrouter/chat",
+      "path": "$.choices[].logprobs",
+      "reason": "forwarded verbatim: the canonical type keeps this as raw JSON and the client receives it unchanged"
+    },
+    {
+      "subset": "openrouter/chat",
+      "path": "$.choices[].message.content",
+      "reason": "forwarded verbatim: the canonical type keeps this as raw JSON and the client receives it unchanged (a string, or an array of parts)"
+    },
+    {
+      "subset": "openrouter/chat",
+      "path": "$.usage.completion_tokens_details",
+      "reason": "forwarded verbatim: models.Usage keeps the token details as raw JSON, which the client receives unchanged"
+    },
+    {
+      "subset": "openrouter/chat",
+      "path": "$.usage.prompt_tokens_details",
+      "reason": "forwarded verbatim: models.Usage keeps the token details as raw JSON, which the client receives unchanged"
+    },
+    {
+      "subset": "openrouter/chat_stream",
+      "path": "chunk:$.usage.completion_tokens_details",
+      "reason": "forwarded verbatim: models.Usage keeps the token details as raw JSON, which the client receives unchanged"
+    },
+    {
+      "subset": "openrouter/chat_stream",
+      "path": "chunk:$.usage.prompt_tokens_details",
+      "reason": "forwarded verbatim: models.Usage keeps the token details as raw JSON, which the client receives unchanged"
+    },
+    {
+      "subset": "openrouter/embeddings",
+      "path": "$.data[].embedding",
+      "reason": "the vector (a float array, or base64 text for encoding_format base64) is kept as raw JSON and forwarded unchanged"
+    }
+  ],
+  "enums": [
+    {
+      "subset": "openrouter/chat",
+      "path": "$.choices[].finish_reason",
+      "value": "error",
+      "reason": "known gap OR6: finish_reason \"error\" (the upstream provider failed mid-generation) passes through as a non-canonical finish reason; reportFinishReason reports it, but the request ends as a success with whatever text came before"
+    },
+    {
+      "subset": "openrouter/chat_stream",
+      "path": "chunk:$.choices[].finish_reason",
+      "value": "error",
+      "reason": "known gap OR6: finish_reason \"error\" (the upstream provider failed mid-generation) passes through as a non-canonical finish reason; reportFinishReason reports it, but the request ends as a success with whatever text came before"
+    }
+  ],
+  "events": [],
+  "kinds": [
+    {
+      "subset": "openrouter/errors",
+      "path": "$.error.code",
+      "reason": "known gap OR1: OpenRouter's error code is an integer (the HTTP status) and models.ErrorDetail.Code a string, so parseProviderError fails to decode every OpenRouter error body and falls back to a 502: a 400, 401, 402 or 429 is retried, failed over and counted against the circuit breaker, and its message is the raw body"
+    }
+  ]
+}

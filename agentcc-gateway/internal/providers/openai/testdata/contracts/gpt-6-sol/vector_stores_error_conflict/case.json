@@ -1,0 +1,15 @@
+{
+  "endpoint": "vector_stores",
+  "status": 409,
+  "headers": {
+    "retry-after": "30"
+  },
+  "recordable": false,
+  "notes": "The 409 the spec documents for POST /vector_stores/{vector_store_id}/file_batches, with its Retry-After (\"When this change is blocked by a vector store migration, the number of seconds to wait before retrying\"); message invented, ErrorResponse shape. The only 409 the spec documents on an endpoint the gateway proxies (ProxyVectorStoresRequest; nothing else of the vector stores API is parsed). Filed under gpt-6-sol because the request names no model. Needs a store mid-migration.",
+  "sanity_gaps": [
+    {
+      "failure": "carries no retry hint",
+      "reason": "known gap O6: the retry-after header is dropped (and retry-after-ms and x-request-id, which openai-python reads too); models.APIError has no retry field, so the gateway retries and fails over on its own schedule instead of when OpenAI says, and the client loses the hint"
+    }
+  ]
+}

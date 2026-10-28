@@ -1,0 +1,16 @@
+{
+  "body": {
+    "input": "Hello!",
+    "instructions": "You are a helpful assistant.",
+    "max_output_tokens": 3,
+    "model": "gpt-6-sol",
+    "stream": true
+  },
+  "headers": {
+    "accept": "text/event-stream",
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/responses"
+}

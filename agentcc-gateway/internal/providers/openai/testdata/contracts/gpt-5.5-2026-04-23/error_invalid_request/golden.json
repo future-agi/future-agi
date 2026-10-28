@@ -1,0 +1,6 @@
+{
+  "code": "unknown_parameter",
+  "message": "Unknown parameter: 'frobnicate'.",
+  "status": 400,
+  "type": "invalid_request_error"
+}

@@ -1,0 +1,15 @@
+{
+  "body": {
+    "model": "dall-e-3",
+    "n": 1,
+    "prompt": "A cute baby sea otter",
+    "response_format": "url",
+    "size": "1024x1024"
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/images/generations"
+}

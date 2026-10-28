@@ -1,0 +1,16 @@
+{
+  "body": {
+    "document": {
+      "document_url": "https://arxiv.org/pdf/2201.04234",
+      "type": "document_url"
+    },
+    "include_image_base64": true,
+    "model": "mistral-ocr-latest"
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/ocr"
+}

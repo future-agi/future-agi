@@ -1,0 +1,6 @@
+{
+  "code": "provider_429",
+  "message": "provider error (HTTP 429): {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"Rate limit exceeded\"\n  }\n}\n",
+  "status": 502,
+  "type": "upstream_error"
+}

@@ -1,0 +1,17 @@
+{
+  "created": "<nonzero>",
+  "data": [
+    {
+      "b64_json": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    }
+  ],
+  "usage": {
+    "input_tokens": 50,
+    "input_tokens_details": {
+      "image_tokens": 40,
+      "text_tokens": 10
+    },
+    "output_tokens": 50,
+    "total_tokens": 100
+  }
+}

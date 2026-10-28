@@ -1,0 +1,3 @@
+{
+  "notes": "reasoning in the request is OpenRouter's reasoning parameter, forwarded through ChatCompletionRequest.Extra. Recordable."
+}

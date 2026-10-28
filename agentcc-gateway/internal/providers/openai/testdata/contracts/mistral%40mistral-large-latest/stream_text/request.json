@@ -1,0 +1,15 @@
+{
+  "model": "mistral-large-latest",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a helpful assistant."
+    },
+    {
+      "role": "user",
+      "content": "What is the best French cheese?"
+    }
+  ],
+  "max_tokens": 512,
+  "stream": true
+}

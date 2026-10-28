@@ -3,7 +3,7 @@
   "model": "gpt-5.5-2026-04-23",
   "source": "synthetic",
   "recorded_at": null,
-  "notes": "Synthetic: authored from the OpenAI OpenAPI spec as published in github.com/openai/openai-python api_reference/openapi.transformed.yml and the types generated from it (src/openai/types/chat/chat_completion.py, chat_completion_chunk.py, completion_usage.py, shared/chat_model.py), commit 35fc9f3 of 2026-10-28; SSE framing and per-chunk field order follow the live-recorded stream snapshots in that repo (.inline-snapshot/external/*.bin, recorded from api.openai.com). platform.openai.com and developers.openai.com were not reachable from the authoring sandbox. The reasoning-model shape: reasoning_effort in the request (forwarded from Extra), max_tokens rewritten to max_completion_tokens for the official API, no temperature, completion_tokens_details.reasoning_tokens counted inside completion_tokens, and reasoning_length: a budget spent entirely on reasoning, so content \"\" with finish_reason \"length\". Chat Completions returns no reasoning text, only its token count. Stream requests carry include_usage as server/handlers.go forces it.",
+  "notes": "Synthetic: authored from the OpenAI OpenAPI spec as published in github.com/openai/openai-python api_reference/openapi.transformed.yml and the types generated from it (src/openai/types/chat/chat_completion.py, chat_completion_chunk.py, completion_usage.py, shared/chat_model.py), commit 35fc9f3 of 2026-10-28; SSE framing and per-chunk field order follow the live-recorded stream snapshots in that repo (.inline-snapshot/external/*.bin, recorded from api.openai.com). platform.openai.com and developers.openai.com were not reachable from the authoring sandbox. The reasoning-model shape: reasoning_effort in the request (forwarded from Extra), max_tokens rewritten to max_completion_tokens for the official API, no temperature, completion_tokens_details.reasoning_tokens counted inside completion_tokens, and reasoning_length: a budget spent entirely on reasoning, so content \"\" with finish_reason \"length\". Chat Completions returns no reasoning text, only its token count. Stream requests carry include_usage as server/handlers.go forces it. Error cases (case.json), all under this model because OpenAI's error contract does not vary by model: error_invalid_request (400, recordable), error_authentication (401), error_permission (403, a text/plain body), error_not_found (404), error_rate_limit (429 slow_down with Retry-After), error_insufficient_quota (429), error_server (500), error_overloaded (503 with Retry-After), stream_error_rate_limit (429 before a stream starts) and stream_error_midstream (an error frame after the stream started). OpenAI documents no 409 or 422 on /chat/completions; gpt-6-sol/vector_stores_error_conflict covers 409 where it is documented.",
   "allowed_unknown_fields": [
     {
       "path": "$.choices[].message.refusal",
@@ -16,6 +16,10 @@
     {
       "path": "chunk:$.choices[].logprobs",
       "reason": "known gap O3: streamed choice logprobs are dropped (models.StreamChoice has no logprobs field), so a stream with logprobs: true carries none to the client; the non-stream path keeps them. null unless logprobs were requested"
+    },
+    {
+      "path": "error:$.status",
+      "reason": "no canonical field: the 403 text body repeats the HTTP status, which the canonical error already carries"
     }
   ],
   "allowed_unknown_shapes": []

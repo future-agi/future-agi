@@ -1,0 +1,3 @@
+{
+  "notes": "reasoning_effort is forwarded through ChatCompletionRequest.Extra. Recordable."
+}

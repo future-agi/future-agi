@@ -1,0 +1,8 @@
+{
+  "input": [
+    "The food was delicious and the waiter...",
+    "The service was slow."
+  ],
+  "model": "text-embedding-3-large",
+  "dimensions": 4
+}

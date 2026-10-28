@@ -1,0 +1,10 @@
+data: {"id":"6f1c1a9e-4a73-4b8e-9f2d-1c3e5a7b9d10","object":"chat.completion.chunk","created":1793170600,"model":"accounts/fireworks/models/kimi-k2-instruct-0905","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"6f1c1a9e-4a73-4b8e-9f2d-1c3e5a7b9d10","object":"chat.completion.chunk","created":1793170600,"model":"accounts/fireworks/models/kimi-k2-instruct-0905","choices":[{"index":0,"delta":{"content":"This is"},"finish_reason":null}]}
+
+data: {"id":"6f1c1a9e-4a73-4b8e-9f2d-1c3e5a7b9d10","object":"chat.completion.chunk","created":1793170600,"model":"accounts/fireworks/models/kimi-k2-instruct-0905","choices":[{"index":0,"delta":{"content":" a test."},"finish_reason":null}]}
+
+data: {"id":"6f1c1a9e-4a73-4b8e-9f2d-1c3e5a7b9d10","object":"chat.completion.chunk","created":1793170600,"model":"accounts/fireworks/models/kimi-k2-instruct-0905","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":13,"total_tokens":19,"completion_tokens":6}}
+
+data: [DONE]
+

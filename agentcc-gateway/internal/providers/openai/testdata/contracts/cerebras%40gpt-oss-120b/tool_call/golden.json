@@ -1,0 +1,39 @@
+{
+  "choices": [
+    {
+      "finish_reason": "tool_calls",
+      "index": 0,
+      "message": {
+        "content": null,
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "function": {
+              "arguments": "{\"city\": \"Paris\"}",
+              "name": "get_weather"
+            },
+            "id": "b5a1c9e3d",
+            "type": "function"
+          }
+        ]
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "chatcmpl-7d4e5f6a-8b9c-4d0e-1f2a-3b4c5d6e7f80",
+  "model": "gpt-oss-120b",
+  "object": "chat.completion",
+  "system_fingerprint": "fp_70185065a4",
+  "time_info": {
+    "completion_time": 0.026478,
+    "created": "<nonzero>",
+    "prompt_time": 0.002831,
+    "queue_time": 0.000208,
+    "total_time": 0.031233
+  },
+  "usage": {
+    "completion_tokens": 31,
+    "prompt_tokens": 140,
+    "total_tokens": 171
+  }
+}

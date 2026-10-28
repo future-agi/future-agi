@@ -1,0 +1,10 @@
+{
+  "status": 422,
+  "sanity_gaps": [
+    {
+      "failure": "a client error turned into a retryable server error",
+      "reason": "known gap MI2: Mistral's 422 is a validation error {\"detail\": [{\"loc\", \"msg\", \"type\"}]}; parseProviderError finds no error.message and falls back to a 502, so a bad request is retried and failed over"
+    }
+  ],
+  "notes": "HTTPValidationError: detail[] of ValidationError (loc, msg, type, input, ctx). Recordable: the request's negative max_tokens is rejected by validation; the msg and type values are illustrative."
+}

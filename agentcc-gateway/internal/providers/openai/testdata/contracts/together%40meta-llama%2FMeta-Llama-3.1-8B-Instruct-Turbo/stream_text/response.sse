@@ -1,0 +1,10 @@
+data: {"id":"8f2c3a1b7d9e4f06-SJC","object":"chat.completion.chunk","created":1793170600,"model":"meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo","choices":[{"index":0,"delta":{"role":"assistant","content":"This"},"finish_reason":null,"logprobs":null,"seed":null}],"usage":null}
+
+data: {"id":"8f2c3a1b7d9e4f06-SJC","object":"chat.completion.chunk","created":1793170600,"model":"meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo","choices":[{"index":0,"delta":{"role":"assistant","content":" is a"},"finish_reason":null,"logprobs":null,"seed":null}],"usage":null}
+
+data: {"id":"8f2c3a1b7d9e4f06-SJC","object":"chat.completion.chunk","created":1793170600,"model":"meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo","choices":[{"index":0,"delta":{"role":"assistant","content":" test!"},"finish_reason":null,"logprobs":null,"seed":null}],"usage":null}
+
+data: {"id":"8f2c3a1b7d9e4f06-SJC","object":"chat.completion.chunk","created":1793170600,"model":"meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":"stop","logprobs":null,"seed":7146325802817445000}],"usage":{"prompt_tokens":14,"completion_tokens":6,"total_tokens":20}}
+
+data: [DONE]
+

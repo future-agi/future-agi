@@ -1,0 +1,15 @@
+{
+  "endpoint": "speech",
+  "content_type": "audio/mpeg",
+  "notes": "Request-side: the spec's \"SSE Stream Format\" example request (stream_format \"sse\") plus instructions. Neither is forwarded, so OpenAI answers raw audio (the default); response.bin is that answer. Recordable.",
+  "sanity_gaps": [
+    {
+      "failure": "request.json key \"stream_format\"",
+      "reason": "known gap O21: models.SpeechRequest has no field for it and no Extra, so instructions (voice steering for gpt-4o-mini-tts) and stream_format \"sse\" (speech.audio.delta / speech.audio.done events, the only TTS response that reports token usage) never reach OpenAI"
+    },
+    {
+      "failure": "request.json key \"instructions\"",
+      "reason": "known gap O21: models.SpeechRequest has no field for it and no Extra, so instructions (voice steering for gpt-4o-mini-tts) and stream_format \"sse\" (speech.audio.delta / speech.audio.done events, the only TTS response that reports token usage) never reach OpenAI"
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+{
+  "recordable": false,
+  "notes": "A ChatStreamingResponse chunk carrying error {code, message, metadata {error_type, provider_code}} and finish_reason \"error\" after output started; the stream ends there (no [DONE]). The 502 example's message; metadata values from the spec's enums. Nothing a client sends induces it."
+}

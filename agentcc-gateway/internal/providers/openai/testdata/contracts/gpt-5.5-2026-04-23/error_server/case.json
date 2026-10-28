@@ -1,0 +1,5 @@
+{
+  "status": 500,
+  "recordable": false,
+  "notes": "Synthetic: /chat/completions 500 \"The chat completion could not be processed due to an internal error\" (github.com/openai/openai-openapi openapi.json at 26a299159673d20d5cf0faf10e691beed3fed52d (2026-10-28)) with the documented server_error type; message invented. Nothing a client sends induces it."
+}

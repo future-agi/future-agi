@@ -1,0 +1,4 @@
+{
+  "endpoint": "responses",
+  "notes": "The spec's \"Reasoning\" example but for the model, with a reasoning item and a cached prompt: input_tokens_details.cached_tokens and cache_write_tokens and output_tokens_details.reasoning_tokens (ResponseUsage), the counters the server's usage extraction ignores. Recordable with a repeated long prompt."
+}

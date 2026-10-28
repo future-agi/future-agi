@@ -1,0 +1,32 @@
+{
+  "provider": "openai",
+  "model": "together@meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: authored from Together's OpenAPI spec as embedded in its official SDK, github.com/togethercomputer/together-py scripts/mock at 3428f80 (2026-10-28; pinned as contractspec/subsets/together): ChatCompletionResponse, ChatCompletionChoicesData, ChatCompletionMessage, ToolChoice (with index), UsageData, ChatCompletionChunk and FinishReason (stop, eos, length, tool_calls, function_call). The model is the one the SDK README uses. text_basic ends with \"eos\", which Together documents and OpenAI does not. No error case: ErrorData's type and code are free strings Together documents no values for. docs.together.ai was not reachable from the authoring sandbox.",
+  "allowed_unknown_fields": [
+    {
+      "path": "$.choices[].message.tool_calls[].index",
+      "reason": "no canonical field: the call's position, which its place in tool_calls already gives"
+    },
+    {
+      "path": "$.choices[].seed",
+      "reason": "no canonical field: the sampling seed used, echoed per choice"
+    },
+    {
+      "path": "chunk:$.choices[].seed",
+      "reason": "no canonical field: the sampling seed used, echoed per choice"
+    },
+    {
+      "path": "chunk:$.choices[].logprobs",
+      "reason": "known gap O3: streamed choice logprobs are dropped (models.StreamChoice has no logprobs field). Null unless logprobs were requested"
+    }
+  ],
+  "allowed_unknown_shapes": [
+    {
+      "kind": "unmapped_finish_reason",
+      "value": "eos",
+      "reason": "known gap TG4: Together's \"eos\" (end of sequence, its natural stop) passes through unmapped: not a canonical finish reason, so the inbound translators (Anthropic, Gemini) fall back to a default and clients that switch on finish_reason miss it"
+    }
+  ]
+}

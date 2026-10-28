@@ -1,0 +1,22 @@
+{
+  "body": {
+    "max_tokens": 512,
+    "messages": [
+      {
+        "content": "You are a helpful assistant.",
+        "role": "system"
+      },
+      {
+        "content": "What is the best French cheese?",
+        "role": "user"
+      }
+    ],
+    "model": "mistral-large-latest"
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/chat/completions"
+}

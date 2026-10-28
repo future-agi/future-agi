@@ -1,0 +1,8 @@
+{
+  "model": "gpt-4o-mini-transcribe-2025-12-15",
+  "file": "audio.mp3",
+  "response_format": "json",
+  "include": [
+    "logprobs"
+  ]
+}

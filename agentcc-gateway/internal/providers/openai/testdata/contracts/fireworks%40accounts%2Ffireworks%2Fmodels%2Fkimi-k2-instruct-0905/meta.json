@@ -1,0 +1,9 @@
+{
+  "provider": "openai",
+  "model": "fireworks@accounts/fireworks/models/kimi-k2-instruct-0905",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: authored from Fireworks' official SDK, github.com/fw-ai-external/python-sdk at 374be9a (2026-10-21), whose types Stainless generates from Fireworks' spec (the spec itself is not public): types/chat/completion_create_response.py (id, choices, created, model, object, usage; Choice with message, finish_reason, logprobs), types/chat/chat_completion_chunk.py (ChoiceDelta content, reasoning_content, role, tool_calls; finish_reason stop, length, function_call, tool_calls), types/shared/chat_message.py, usage_info.py, prompt_tokens_details.py and chat_completion_message_tool_call.py. The model is the one the SDK README uses. docs.fireworks.ai was not reachable from the authoring sandbox. Not covered: streamed tool calls, whose SDK chunk type has no index; and arguments as an object, which the SDK also allows and which would fail the whole decode.",
+  "allowed_unknown_fields": [],
+  "allowed_unknown_shapes": []
+}

@@ -1,0 +1,60 @@
+{
+  "provider": "openai",
+  "model": "openrouter@anthropic/claude-4.5-sonnet",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: authored from OpenRouter's OpenAPI spec as vendored in its official SDK, github.com/OpenRouterTeam/python-sdk .speakeasy/in.openapi.yaml at 328d3cac (2026-10-28; pinned as contractspec/subsets/openrouter): ChatResult, ChatStreamingResponse (whose data is the chunk), ChatAssistantMessage (reasoning, reasoning_details of type reasoning.text with signature and format), ChatUsage (cost, is_byok, cost_details, prompt_tokens_details with cache_write_tokens), and the error responses of POST /chat/completions with their examples. openrouter.ai was not reachable from the authoring sandbox. Naming: the openrouter preset (providers/presets.go) serving anthropic/claude-4.5-sonnet, the model the SDK README uses; the directory is that key as contracttest.ModelDir encodes it. Error bodies are the spec's examples verbatim (integer code). The mid-stream error chunk follows ChatStreamingResponse, which carries error {code, message, metadata {error_type, provider_code}} beside the chunk fields and finish_reason \"error\". Not covered: message.images (OR3), embeddings usage (OR4) and finish_reason \"error\" without an error object (OR6), all in testdata/spec_allowlist.openrouter.json.",
+  "allowed_unknown_fields": [
+    {
+      "path": "$.choices[].message.reasoning",
+      "reason": "known gap OR2: OpenRouter's normalized reasoning (reasoning) and reasoning_details are dropped: models.Message / models.Delta have reasoning_content and thinking_blocks but nothing maps them, so the reasoning, and the signature needed to continue an Anthropic reasoning conversation, never reach the client"
+    },
+    {
+      "path": "$.choices[].message.reasoning_details",
+      "reason": "known gap OR2: OpenRouter's normalized reasoning (reasoning) and reasoning_details are dropped: models.Message / models.Delta have reasoning_content and thinking_blocks but nothing maps them, so the reasoning, and the signature needed to continue an Anthropic reasoning conversation, never reach the client"
+    },
+    {
+      "path": "$.choices[].message.refusal",
+      "reason": "known gap O1: message.refusal is dropped (models.Message has no refusal field); a structured-outputs refusal reaches the client as content null with no explanation. Null here"
+    },
+    {
+      "path": "chunk:$.choices[].delta.reasoning",
+      "reason": "known gap OR2: OpenRouter's normalized reasoning (reasoning) and reasoning_details are dropped: models.Message / models.Delta have reasoning_content and thinking_blocks but nothing maps them, so the reasoning, and the signature needed to continue an Anthropic reasoning conversation, never reach the client"
+    },
+    {
+      "path": "chunk:$.choices[].delta.reasoning_details",
+      "reason": "known gap OR2: OpenRouter's normalized reasoning (reasoning) and reasoning_details are dropped: models.Message / models.Delta have reasoning_content and thinking_blocks but nothing maps them, so the reasoning, and the signature needed to continue an Anthropic reasoning conversation, never reach the client"
+    },
+    {
+      "path": "error:$.error.metadata",
+      "reason": "known gap OR5: the error's metadata (the upstream provider's error_type and raw code) is dropped, so a client cannot tell which provider failed or why"
+    },
+    {
+      "path": "error:$.id",
+      "reason": "no canonical field: the chunk envelope (id, object, created, model, choices) around OpenRouter's mid-stream error; parseProviderError reads the error object and the stream ends with it"
+    },
+    {
+      "path": "error:$.object",
+      "reason": "no canonical field: the chunk envelope (id, object, created, model, choices) around OpenRouter's mid-stream error; parseProviderError reads the error object and the stream ends with it"
+    },
+    {
+      "path": "error:$.created",
+      "reason": "no canonical field: the chunk envelope (id, object, created, model, choices) around OpenRouter's mid-stream error; parseProviderError reads the error object and the stream ends with it"
+    },
+    {
+      "path": "error:$.model",
+      "reason": "no canonical field: the chunk envelope (id, object, created, model, choices) around OpenRouter's mid-stream error; parseProviderError reads the error object and the stream ends with it"
+    },
+    {
+      "path": "error:$.choices",
+      "reason": "no canonical field: the chunk envelope (id, object, created, model, choices) around OpenRouter's mid-stream error; parseProviderError reads the error object and the stream ends with it"
+    }
+  ],
+  "allowed_unknown_shapes": [],
+  "allowed_type_mismatches": [
+    {
+      "path": "error:$.error.code",
+      "reason": "known gap OR1: OpenRouter's error code is an integer (the HTTP status) and models.ErrorDetail.Code a string, so parseProviderError cannot decode any OpenRouter error body and falls back to a 502: a 400, 401, 402 or 429 is retried, failed over and counted against the circuit breaker, and the client gets the raw body as the message"
+    }
+  ]
+}

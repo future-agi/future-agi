@@ -1,0 +1,35 @@
+{
+  "id": "8f2c3a1b7d9e4f07-SJC",
+  "object": "chat.completion",
+  "created": 1793170700,
+  "model": "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
+  "prompt": [],
+  "choices": [
+    {
+      "index": 0,
+      "seed": 1520849233418395100,
+      "finish_reason": "tool_calls",
+      "logprobs": null,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "index": 0,
+            "id": "call_9a8b7c6d5e4f3a2b1c0d9e8f",
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "arguments": "{\"city\":\"Paris\"}"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 201,
+    "completion_tokens": 19,
+    "total_tokens": 220
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "body": {
+    "max_tokens": 64,
+    "messages": [
+      {
+        "content": "Say this is a test!",
+        "role": "user"
+      }
+    ],
+    "model": "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
+    "stream": true,
+    "stream_options": {
+      "include_usage": true
+    }
+  },
+  "headers": {
+    "accept": "text/event-stream",
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/chat/completions"
+}

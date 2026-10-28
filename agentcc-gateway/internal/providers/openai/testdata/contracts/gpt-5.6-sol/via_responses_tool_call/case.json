@@ -1,0 +1,4 @@
+{
+  "endpoint": "chat_via_responses",
+  "notes": "A gpt-5.6 tool call with reasoning on, the case ChatNeedsResponses sends to /v1/responses. Response: the spec's \"Functions\" example but for the model and the reasoning effort. Recordable."
+}

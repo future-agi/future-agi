@@ -1,0 +1,4 @@
+{
+  "recordable": false,
+  "notes": "Synthetic: the 200 description of /chat/completions (github.com/openai/openai-openapi openapi.json at 26a299159673d20d5cf0faf10e691beed3fed52d (2026-10-28)): \"If a failure occurs after streaming has started, a data frame may contain a JSON object with an error field instead of a completion chunk ... An interrupted stream may end without the marker.\" Chunks as in the other gpt-5.5 streams; the error object is the ErrorResponse shape with the documented server_error type. Nothing a client sends induces it."
+}

@@ -1,0 +1,40 @@
+{
+  "body": {
+    "input": "What is the weather like in Boston today?",
+    "model": "gpt-6-sol",
+    "tool_choice": "auto",
+    "tools": [
+      {
+        "description": "Get the current weather in a given location",
+        "name": "get_current_weather",
+        "parameters": {
+          "properties": {
+            "location": {
+              "description": "The city and state, e.g. San Francisco, CA",
+              "type": "string"
+            },
+            "unit": {
+              "enum": [
+                "celsius",
+                "fahrenheit"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "location",
+            "unit"
+          ],
+          "type": "object"
+        },
+        "type": "function"
+      }
+    ]
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/responses"
+}

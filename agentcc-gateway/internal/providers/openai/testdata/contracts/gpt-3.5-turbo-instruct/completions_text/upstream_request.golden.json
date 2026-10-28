@@ -1,0 +1,14 @@
+{
+  "body": {
+    "max_tokens": 7,
+    "model": "gpt-3.5-turbo-instruct",
+    "prompt": "Say this is a test",
+    "temperature": 0
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/completions"
+}

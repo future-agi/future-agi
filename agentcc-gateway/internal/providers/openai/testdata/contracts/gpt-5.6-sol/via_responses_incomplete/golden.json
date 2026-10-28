@@ -1,0 +1,27 @@
+{
+  "choices": [
+    {
+      "finish_reason": "length",
+      "index": 0,
+      "message": {
+        "content": "In a peaceful grove beneath a silver moon, a unicorn named Lumina",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "resp_68a1f3c2b4e08190a7c9d1e3f5b7a9c1072912b2993db808",
+  "model": "gpt-5.6-sol",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 40,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "prompt_tokens": 36,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
+    "total_tokens": 76
+  }
+}

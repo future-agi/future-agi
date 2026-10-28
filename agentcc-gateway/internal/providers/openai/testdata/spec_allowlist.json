@@ -1,0 +1,922 @@
+{
+  "provider": "openai",
+  "note": "Spec paths, blobs, enum values and events the adapter does not map, with why. Checked by TestSpecCoverage (internal/providers/contractspec).",
+  "unmapped": [
+    {
+      "subset": "openai/chat",
+      "path": "$.choices[].message.audio",
+      "reason": "known gap O9: audio output (id, data, transcript, expires_at) is dropped; models.Message / models.Delta have no audio field"
+    },
+    {
+      "subset": "openai/chat",
+      "path": "$.choices[].message.function_call",
+      "reason": "known gap O32: the legacy function_call (deprecated functions parameter) is dropped; the canonical message has only tool_calls"
+    },
+    {
+      "subset": "openai/chat",
+      "path": "$.choices[].message.refusal",
+      "reason": "known gap O1: message.refusal is dropped (models.Message has no refusal field); a structured-outputs refusal reaches the client as content null with no explanation"
+    },
+    {
+      "subset": "openai/chat",
+      "path": "$.choices[].message.tool_calls[].custom",
+      "reason": "known gap O4: a custom tool call's payload (custom.name and custom.input) is dropped: models.ToolCall only has function"
+    },
+    {
+      "subset": "openai/chat_stream",
+      "path": "chunk:$.choices[].delta.audio",
+      "reason": "known gap O9: audio output (id, data, transcript, expires_at) is dropped; models.Message / models.Delta have no audio field"
+    },
+    {
+      "subset": "openai/chat_stream",
+      "path": "chunk:$.choices[].delta.function_call",
+      "reason": "known gap O32: the legacy function_call (deprecated functions parameter) is dropped; the canonical message has only tool_calls"
+    },
+    {
+      "subset": "openai/chat_stream",
+      "path": "chunk:$.choices[].delta.refusal",
+      "reason": "known gap O2: delta.refusal is dropped (models.Delta has no refusal field), so a streamed refusal reaches the client as empty deltas"
+    },
+    {
+      "subset": "openai/chat_stream",
+      "path": "chunk:$.choices[].logprobs",
+      "reason": "known gap O3: streamed choice logprobs are dropped (models.StreamChoice has no logprobs field), so a stream with logprobs: true carries none to the client"
+    },
+    {
+      "subset": "openai/errors",
+      "path": "$.error.misalignment",
+      "reason": "known gap O24: error.misalignment (the safety-misalignment detail of a refused request) is dropped; models.ErrorDetail keeps only message, type, param and code"
+    },
+    {
+      "subset": "openai/images",
+      "path": "$.background",
+      "reason": "known gap O19: models.ImageResponse has no field for the image response metadata (background, output_format, quality, size) or usage.output_tokens_details, so the client loses what the image was rendered as and image vs text output tokens cannot be priced apart"
+    },
+    {
+      "subset": "openai/images",
+      "path": "$.output_format",
+      "reason": "known gap O19: models.ImageResponse has no field for the image response metadata (background, output_format, quality, size) or usage.output_tokens_details, so the client loses what the image was rendered as and image vs text output tokens cannot be priced apart"
+    },
+    {
+      "subset": "openai/images",
+      "path": "$.quality",
+      "reason": "known gap O19: models.ImageResponse has no field for the image response metadata (background, output_format, quality, size) or usage.output_tokens_details, so the client loses what the image was rendered as and image vs text output tokens cannot be priced apart"
+    },
+    {
+      "subset": "openai/images",
+      "path": "$.safety_identifier",
+      "reason": "no canonical field: an echo of the request's safety_identifier"
+    },
+    {
+      "subset": "openai/images",
+      "path": "$.size",
+      "reason": "known gap O19: models.ImageResponse has no field for the image response metadata (background, output_format, quality, size) or usage.output_tokens_details, so the client loses what the image was rendered as and image vs text output tokens cannot be priced apart"
+    },
+    {
+      "subset": "openai/images",
+      "path": "$.usage.output_tokens_details",
+      "reason": "known gap O19: models.ImageResponse has no field for the image response metadata (background, output_format, quality, size) or usage.output_tokens_details, so the client loses what the image was rendered as and image vs text output tokens cannot be priced apart"
+    },
+    {
+      "subset": "openai/models",
+      "path": "$.data[].shutdown_date",
+      "reason": "known gap O23: models.ModelObject has no shutdown_date, so the date OpenAI retires a model is dropped from ListModels"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.access_programs",
+      "reason": "no canonical field: the access programs the request ran under (cyber); not response content"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.background",
+      "reason": "no canonical field: an echo of a request parameter the client itself sent; a chat completion has no slot for it"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.completed_at",
+      "reason": "no canonical field: the completion time; created carries created_at"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.conversation",
+      "reason": "no canonical field: an echo of a request parameter the client itself sent; a chat completion has no slot for it"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.error.misalignment",
+      "reason": "known gap O24: error.misalignment (the safety-misalignment detail of a refused request) is dropped; models.ErrorDetail keeps only message, type, param and code"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.error.param",
+      "reason": "known gap O30: a failed Responses response keeps only error.message; error.type and error.param are dropped and the stream ends with a generic 502"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.error.type",
+      "reason": "known gap O30: a failed Responses response keeps only error.message; error.type and error.param are dropped and the stream ends with a generic 502"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.instructions",
+      "reason": "no canonical field: an echo of a request parameter the client itself sent; a chat completion has no slot for it"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.max_output_tokens",
+      "reason": "no canonical field: an echo of a request parameter the client itself sent; a chat completion has no slot for it"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.max_tool_calls",
+      "reason": "no canonical field: an echo of a request parameter the client itself sent; a chat completion has no slot for it"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.metadata",
+      "reason": "no canonical field: an echo of a request parameter the client itself sent; a chat completion has no slot for it"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.moderation",
+      "reason": "known gap O27: the Responses-to-chat translator drops response fields the chat path forwards (service_tier, moderation, tool_usage, prompt_cache_diagnostics), so the client and cost accounting lose them on this route"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.object",
+      "reason": "no canonical field: always \"response\"; the chat completion's object is \"chat.completion\""
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].async",
+      "reason": "known gap O29: a function_call item's namespace, caller (programmatic tool calling) and async flag are dropped; a namespaced tool reaches the client without its namespace"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].caller",
+      "reason": "known gap O29: a function_call item's namespace, caller (programmatic tool calling) and async flag are dropped; a namespaced tool reaches the client without its namespace"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].content[].annotations",
+      "reason": "known gap O13: output_text annotations (url_citation, file_citation) are dropped; models.Message.annotations exists but the Responses translator never fills it, so web-search citations vanish"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].content[].logprobs",
+      "reason": "known gap O14: output_text logprobs are dropped, so a chat request with logprobs served on the Responses API returns none"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].namespace",
+      "reason": "known gap O29: a function_call item's namespace, caller (programmatic tool calling) and async flag are dropped; a namespaced tool reaches the client without its namespace"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].phase",
+      "reason": "known gap O28: a message item's phase (commentary vs final_answer) is dropped and commentary text is concatenated into the answer"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].role",
+      "reason": "no canonical field: a message item from the model is always the assistant's"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].status",
+      "reason": "no canonical field: the item's status is implied by the response's status, which becomes finish_reason"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output_text",
+      "reason": "no canonical field: output_text is the SDK convenience concatenation of the message items' text, which toChat rebuilds"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.parallel_tool_calls",
+      "reason": "no canonical field: an echo of a request parameter the client itself sent; a chat completion has no slot for it"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.previous_response_id",
+      "reason": "no canonical field: an echo of a request parameter the client itself sent; a chat completion has no slot for it"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.prompt",
+      "reason": "no canonical field: an echo of a request parameter the client itself sent; a chat completion has no slot for it"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.prompt_cache_diagnostics",
+      "reason": "known gap O27: the Responses-to-chat translator drops response fields the chat path forwards (service_tier, moderation, tool_usage, prompt_cache_diagnostics), so the client and cost accounting lose them on this route"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.prompt_cache_key",
+      "reason": "no canonical field: an echo of a request parameter the client itself sent; a chat completion has no slot for it"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.prompt_cache_options",
+      "reason": "no canonical field: an echo of a request parameter the client itself sent; a chat completion has no slot for it"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.prompt_cache_retention",
+      "reason": "no canonical field: an echo of a request parameter the client itself sent; a chat completion has no slot for it"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.reasoning",
+      "reason": "no canonical field: an echo of a request parameter the client itself sent; a chat completion has no slot for it"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.safety_identifier",
+      "reason": "no canonical field: an echo of a request parameter the client itself sent; a chat completion has no slot for it"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.service_tier",
+      "reason": "known gap O27: the Responses-to-chat translator drops response fields the chat path forwards (service_tier, moderation, tool_usage, prompt_cache_diagnostics), so the client and cost accounting lose them on this route"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.temperature",
+      "reason": "no canonical field: an echo of a request parameter the client itself sent; a chat completion has no slot for it"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.text",
+      "reason": "no canonical field: an echo of a request parameter the client itself sent; a chat completion has no slot for it"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.tool_choice",
+      "reason": "no canonical field: an echo of a request parameter the client itself sent; a chat completion has no slot for it"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.tool_usage",
+      "reason": "known gap O27: the Responses-to-chat translator drops response fields the chat path forwards (service_tier, moderation, tool_usage, prompt_cache_diagnostics), so the client and cost accounting lose them on this route"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.tools",
+      "reason": "no canonical field: an echo of a request parameter the client itself sent; a chat completion has no slot for it"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.top_logprobs",
+      "reason": "no canonical field: an echo of a request parameter the client itself sent; a chat completion has no slot for it"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.top_p",
+      "reason": "no canonical field: an echo of a request parameter the client itself sent; a chat completion has no slot for it"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.truncation",
+      "reason": "no canonical field: an echo of a request parameter the client itself sent; a chat completion has no slot for it"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.usage.input_tokens_details.cache_write_tokens",
+      "reason": "known gap O11: input_tokens_details.cache_write_tokens is dropped (responsesUsage reads cached_tokens only), so prompt-cache writes, which gpt-5.6 and later bill separately, cannot be priced"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.user",
+      "reason": "no canonical field: an echo of a request parameter the client itself sent; a chat completion has no slot for it"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "path": "error:$.param",
+      "reason": "known gap O30: a failed Responses response keeps only error.message; error.type and error.param are dropped and the stream ends with a generic 502"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "path": "error:$.sequence_number",
+      "reason": "no canonical field: the event's sequence number; SSE order already carries it"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "path": "response.completed:$.sequence_number",
+      "reason": "no canonical field: the event's sequence number; SSE order already carries it"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "path": "response.created:$.sequence_number",
+      "reason": "no canonical field: the event's sequence number; SSE order already carries it"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "path": "response.failed:$.sequence_number",
+      "reason": "no canonical field: the event's sequence number; SSE order already carries it"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "path": "response.function_call_arguments.delta:$.output_index",
+      "reason": "no canonical field: an index into the response's output or content parts; the translator keys tool calls by item_id and concatenates text in arrival order"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "path": "response.function_call_arguments.delta:$.sequence_number",
+      "reason": "no canonical field: the event's sequence number; SSE order already carries it"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "path": "response.incomplete:$.sequence_number",
+      "reason": "no canonical field: the event's sequence number; SSE order already carries it"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "path": "response.output_item.added:$.output_index",
+      "reason": "no canonical field: an index into the response's output or content parts; the translator keys tool calls by item_id and concatenates text in arrival order"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "path": "response.output_item.added:$.sequence_number",
+      "reason": "no canonical field: the event's sequence number; SSE order already carries it"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "path": "response.output_text.delta:$.content_index",
+      "reason": "no canonical field: an index into the response's output or content parts; the translator keys tool calls by item_id and concatenates text in arrival order"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "path": "response.output_text.delta:$.logprobs",
+      "reason": "known gap O14: output_text logprobs are dropped, so a chat request with logprobs served on the Responses API returns none"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "path": "response.output_text.delta:$.output_index",
+      "reason": "no canonical field: an index into the response's output or content parts; the translator keys tool calls by item_id and concatenates text in arrival order"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "path": "response.output_text.delta:$.sequence_number",
+      "reason": "no canonical field: the event's sequence number; SSE order already carries it"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "path": "response.refusal.delta:$.content_index",
+      "reason": "no canonical field: an index into the response's output or content parts; the translator keys tool calls by item_id and concatenates text in arrival order"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "path": "response.refusal.delta:$.output_index",
+      "reason": "no canonical field: an index into the response's output or content parts; the translator keys tool calls by item_id and concatenates text in arrival order"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "path": "response.refusal.delta:$.sequence_number",
+      "reason": "no canonical field: the event's sequence number; SSE order already carries it"
+    },
+    {
+      "subset": "openai/transcription",
+      "path": "$.duration",
+      "reason": "no canonical field: the transcription body is passed through to the client verbatim (TranscriptionResponse.Body); the gateway reads only text"
+    },
+    {
+      "subset": "openai/transcription",
+      "path": "$.language",
+      "reason": "no canonical field: the transcription body is passed through to the client verbatim (TranscriptionResponse.Body); the gateway reads only text"
+    },
+    {
+      "subset": "openai/transcription",
+      "path": "$.languages",
+      "reason": "no canonical field: the transcription body is passed through to the client verbatim (TranscriptionResponse.Body); the gateway reads only text"
+    },
+    {
+      "subset": "openai/transcription",
+      "path": "$.logprobs",
+      "reason": "no canonical field: the transcription body is passed through to the client verbatim (TranscriptionResponse.Body); the gateway reads only text"
+    },
+    {
+      "subset": "openai/transcription",
+      "path": "$.segments",
+      "reason": "no canonical field: the transcription body is passed through to the client verbatim (TranscriptionResponse.Body); the gateway reads only text"
+    },
+    {
+      "subset": "openai/transcription",
+      "path": "$.task",
+      "reason": "no canonical field: the transcription body is passed through to the client verbatim (TranscriptionResponse.Body); the gateway reads only text"
+    },
+    {
+      "subset": "openai/transcription",
+      "path": "$.usage",
+      "reason": "known gap O18: transcription usage (token or duration usage of gpt-4o-transcribe and later) reaches the client in the passed-through body but is never read; the server prices transcription from the uploaded WAV's duration, so token-billed models are priced by the wrong unit and non-WAV uploads are unpriced"
+    },
+    {
+      "subset": "openai/transcription",
+      "path": "$.words",
+      "reason": "no canonical field: the transcription body is passed through to the client verbatim (TranscriptionResponse.Body); the gateway reads only text"
+    },
+    {
+      "subset": "openai/translation",
+      "path": "$.duration",
+      "reason": "no canonical field: the transcription body is passed through to the client verbatim (TranscriptionResponse.Body); the gateway reads only text"
+    },
+    {
+      "subset": "openai/translation",
+      "path": "$.language",
+      "reason": "no canonical field: the transcription body is passed through to the client verbatim (TranscriptionResponse.Body); the gateway reads only text"
+    },
+    {
+      "subset": "openai/translation",
+      "path": "$.segments",
+      "reason": "no canonical field: the transcription body is passed through to the client verbatim (TranscriptionResponse.Body); the gateway reads only text"
+    }
+  ],
+  "opaque": [
+    {
+      "subset": "openai/chat",
+      "path": "$.choices[].logprobs",
+      "reason": "forwarded verbatim: the canonical type keeps this as raw JSON and the client receives it unchanged"
+    },
+    {
+      "subset": "openai/chat",
+      "path": "$.choices[].message.annotations",
+      "reason": "forwarded verbatim: the canonical type keeps this as raw JSON and the client receives it unchanged"
+    },
+    {
+      "subset": "openai/chat",
+      "path": "$.usage.completion_tokens_details",
+      "reason": "forwarded verbatim: models.Usage keeps the token details as raw JSON, which the client receives unchanged"
+    },
+    {
+      "subset": "openai/chat",
+      "path": "$.usage.prompt_tokens_details",
+      "reason": "forwarded verbatim: models.Usage keeps the token details as raw JSON, which the client receives unchanged"
+    },
+    {
+      "subset": "openai/chat_stream",
+      "path": "chunk:$.usage.completion_tokens_details",
+      "reason": "forwarded verbatim: models.Usage keeps the token details as raw JSON, which the client receives unchanged"
+    },
+    {
+      "subset": "openai/chat_stream",
+      "path": "chunk:$.usage.prompt_tokens_details",
+      "reason": "forwarded verbatim: models.Usage keeps the token details as raw JSON, which the client receives unchanged"
+    },
+    {
+      "subset": "openai/completions",
+      "path": "$.choices[].logprobs",
+      "reason": "forwarded verbatim: the canonical type keeps this as raw JSON and the client receives it unchanged"
+    },
+    {
+      "subset": "openai/completions",
+      "path": "$.usage.completion_tokens_details",
+      "reason": "forwarded verbatim: models.Usage keeps the token details as raw JSON, which the client receives unchanged"
+    },
+    {
+      "subset": "openai/completions",
+      "path": "$.usage.prompt_tokens_details",
+      "reason": "forwarded verbatim: models.Usage keeps the token details as raw JSON, which the client receives unchanged"
+    },
+    {
+      "subset": "openai/embeddings",
+      "path": "$.data[].embedding",
+      "reason": "the vector (a float array, or base64 text for encoding_format base64) is kept as raw JSON and forwarded unchanged"
+    }
+  ],
+  "enums": [
+    {
+      "subset": "openai/responses",
+      "path": "$.incomplete_details.reason",
+      "value": "max_messages",
+      "reason": "known gap O26: an incomplete Responses response whose reason is not max_output_tokens or content_filter finishes as \"stop\", so the truncated answer looks complete"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.incomplete_details.reason",
+      "value": "steered",
+      "reason": "known gap O26: an incomplete Responses response whose reason is not max_output_tokens or content_filter finishes as \"stop\", so the truncated answer looks complete"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].type",
+      "value": "additional_tools",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].type",
+      "value": "apply_patch_call",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].type",
+      "value": "apply_patch_call_output",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].type",
+      "value": "code_interpreter_call",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].type",
+      "value": "compaction",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].type",
+      "value": "computer_call",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].type",
+      "value": "computer_call_output",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].type",
+      "value": "custom_tool_call",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].type",
+      "value": "custom_tool_call_output",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].type",
+      "value": "file_search_call",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].type",
+      "value": "function_call_output",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].type",
+      "value": "image_generation_call",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].type",
+      "value": "local_shell_call",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].type",
+      "value": "local_shell_call_output",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].type",
+      "value": "mcp_approval_request",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].type",
+      "value": "mcp_approval_response",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].type",
+      "value": "mcp_call",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].type",
+      "value": "mcp_list_tools",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].type",
+      "value": "program",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].type",
+      "value": "program_output",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].type",
+      "value": "reasoning",
+      "reason": "known gap O10: the Responses translator drops reasoning output items and events (summary, reasoning text, encrypted_content); a chat client of a Responses-served route gets no reasoning_content"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].type",
+      "value": "shell_call",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].type",
+      "value": "shell_call_output",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].type",
+      "value": "tool_search_call",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].type",
+      "value": "tool_search_output",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].type",
+      "value": "web_search_call",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    }
+  ],
+  "events": [
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.audio.delta",
+      "reason": "known gap O9: audio output (id, data, transcript, expires_at) is dropped; models.Message / models.Delta have no audio field"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.audio.done",
+      "reason": "known gap O9: audio output (id, data, transcript, expires_at) is dropped; models.Message / models.Delta have no audio field"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.audio.transcript.delta",
+      "reason": "known gap O9: audio output (id, data, transcript, expires_at) is dropped; models.Message / models.Delta have no audio field"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.audio.transcript.done",
+      "reason": "known gap O9: audio output (id, data, transcript, expires_at) is dropped; models.Message / models.Delta have no audio field"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.code_interpreter_call.completed",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.code_interpreter_call.in_progress",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.code_interpreter_call.interpreting",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.code_interpreter_call_code.delta",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.code_interpreter_call_code.done",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.compaction.compacting",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.content_part.added",
+      "reason": "no content: a lifecycle event whose content already arrived as deltas (or arrives with output_item.added / response.completed)"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.content_part.done",
+      "reason": "no content: a lifecycle event whose content already arrived as deltas (or arrives with output_item.added / response.completed)"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.custom_tool_call_input.delta",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.custom_tool_call_input.done",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.file_search_call.completed",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.file_search_call.in_progress",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.file_search_call.searching",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.function_call_arguments.done",
+      "reason": "no content: a lifecycle event whose content already arrived as deltas (or arrives with output_item.added / response.completed)"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.image_generation_call.completed",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.image_generation_call.generating",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.image_generation_call.in_progress",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.image_generation_call.partial_image",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.in_progress",
+      "reason": "no content: a lifecycle event whose content already arrived as deltas (or arrives with output_item.added / response.completed)"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.mcp_call.completed",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.mcp_call.failed",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.mcp_call.in_progress",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.mcp_call_arguments.delta",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.mcp_call_arguments.done",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.mcp_list_tools.completed",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.mcp_list_tools.failed",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.mcp_list_tools.in_progress",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.output_item.done",
+      "reason": "no content: a lifecycle event whose content already arrived as deltas (or arrives with output_item.added / response.completed)"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.output_text.annotation.added",
+      "reason": "known gap O13: output_text annotations (url_citation, file_citation) are dropped; models.Message.annotations exists but the Responses translator never fills it, so web-search citations vanish"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.output_text.done",
+      "reason": "no content: a lifecycle event whose content already arrived as deltas (or arrives with output_item.added / response.completed)"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.queued",
+      "reason": "no content: a lifecycle event whose content already arrived as deltas (or arrives with output_item.added / response.completed)"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.reasoning_summary_part.added",
+      "reason": "known gap O10: the Responses translator drops reasoning output items and events (summary, reasoning text, encrypted_content); a chat client of a Responses-served route gets no reasoning_content"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.reasoning_summary_part.done",
+      "reason": "known gap O10: the Responses translator drops reasoning output items and events (summary, reasoning text, encrypted_content); a chat client of a Responses-served route gets no reasoning_content"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.reasoning_summary_text.delta",
+      "reason": "known gap O10: the Responses translator drops reasoning output items and events (summary, reasoning text, encrypted_content); a chat client of a Responses-served route gets no reasoning_content"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.reasoning_summary_text.done",
+      "reason": "known gap O10: the Responses translator drops reasoning output items and events (summary, reasoning text, encrypted_content); a chat client of a Responses-served route gets no reasoning_content"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.reasoning_text.delta",
+      "reason": "known gap O10: the Responses translator drops reasoning output items and events (summary, reasoning text, encrypted_content); a chat client of a Responses-served route gets no reasoning_content"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.reasoning_text.done",
+      "reason": "known gap O10: the Responses translator drops reasoning output items and events (summary, reasoning text, encrypted_content); a chat client of a Responses-served route gets no reasoning_content"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.refusal.done",
+      "reason": "no content: a lifecycle event whose content already arrived as deltas (or arrives with output_item.added / response.completed)"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.shell_call_command.added",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.shell_call_command.delta",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.shell_call_command.done",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.shell_call_output_content.delta",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.shell_call_output_content.done",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.web_search_call.completed",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.web_search_call.in_progress",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    },
+    {
+      "subset": "openai/responses_stream",
+      "event": "response.web_search_call.searching",
+      "reason": "known gap O25: the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report"
+    }
+  ],
+  "kinds": [
+    {
+      "subset": "openai/responses",
+      "path": "$.created_at",
+      "reason": "latent: the spec types created_at as number (format unixtime) but every response sends whole seconds, which int64 decodes; a fractional value would fail the whole decode"
+    },
+    {
+      "subset": "openai/responses",
+      "path": "$.output[].arguments",
+      "reason": "known gap O31: responsesOutputItem.Arguments is a string, but a tool_search_call item carries arguments as any JSON; an object there fails json.Unmarshal of the whole Responses body, so the chat request errors instead of skipping the item"
+    }
+  ]
+}
