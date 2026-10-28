@@ -1,0 +1,10 @@
+{
+  "model": "global.anthropic.claude-sonnet-4-6",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Summarize the plot of Hamlet in two sentences."
+    }
+  ],
+  "max_tokens": 1000000
+}

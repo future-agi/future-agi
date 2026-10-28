@@ -1,0 +1,8 @@
+{
+  "status": 400,
+  "headers": {
+    "x-amzn-ErrorType": "ValidationException",
+    "x-amzn-RequestId": "5e3c1a7d-2b9f-4c86-a1d4-7f0e9b6c2a35"
+  },
+  "notes": "Synthetic, from the Bedrock Runtime Smithy model (github.com/aws/api-models-aws bedrock-runtime 2023-09-30, commit e10d6a1c5ac36af7c0c61d1f67b3c3ebbe41de49: the exception's @httpError status and members, and the operation's error list) and the restJson1 protocol (smithy-lang/smithy docs/source-2.0/aws/protocols/aws-restjson1-protocol.rst: the exception name in the X-Amzn-Errortype header, the members in the JSON body). ValidationException is 400. Recordable: request.json asks for max_tokens 1000000, above the model's output limit, which Converse rejects with a ValidationException; the message wording and request ID are invented, so a recording should replace them."
+}

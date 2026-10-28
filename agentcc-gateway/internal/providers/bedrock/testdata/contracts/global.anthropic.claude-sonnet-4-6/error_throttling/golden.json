@@ -1,0 +1,6 @@
+{
+  "code": "provider_429",
+  "message": "Too many requests, please wait before trying again.",
+  "status": 429,
+  "type": "rate_limit_error"
+}

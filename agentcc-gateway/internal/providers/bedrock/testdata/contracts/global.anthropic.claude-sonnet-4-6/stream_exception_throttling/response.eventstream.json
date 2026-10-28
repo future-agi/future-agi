@@ -1,0 +1,23 @@
+[
+  {
+    "event": "messageStart",
+    "payload": {
+      "role": "assistant"
+    }
+  },
+  {
+    "event": "contentBlockDelta",
+    "payload": {
+      "delta": {
+        "text": "Hamlet, Prince of Denmark,"
+      },
+      "contentBlockIndex": 0
+    }
+  },
+  {
+    "exception": "throttlingException",
+    "payload": {
+      "message": "Too many tokens, please wait before trying again."
+    }
+  }
+]

@@ -1,0 +1,6 @@
+{
+  "code": "provider_424",
+  "message": "The model encountered an error while processing the request. Try your request again.",
+  "status": 424,
+  "type": "invalid_request_error"
+}

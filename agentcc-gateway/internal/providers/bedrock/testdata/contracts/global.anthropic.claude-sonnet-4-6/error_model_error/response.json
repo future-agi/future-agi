@@ -1,0 +1,5 @@
+{
+  "message": "The model encountered an error while processing the request. Try your request again.",
+  "originalStatusCode": 500,
+  "resourceName": "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-6"
+}

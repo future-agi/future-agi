@@ -14,6 +14,10 @@
       "reason": "known gap B2: Converse reasoningContent blocks are dropped whole: the reasoning text (reasoning_content), its signature and redactedContent (thinking_blocks). Nova 2 redacts the text today (\"[REDACTED]\"), but the block still tells a client reasoning ran and was billed"
     },
     {
+      "path": "contentBlockDelta:$.delta.reasoningContent",
+      "reason": "known gap B2: ConverseStream reasoningContent deltas (text, signature, redactedContent) are decoded into converseBlockDeltaEvent, which has no field for them, and dropped (also reported as unknown_delta); streamed responses carry no reasoning_content"
+    },
+    {
       "path": "metadata:$.metrics",
       "reason": "no canonical field: Bedrock's server-side latency (metrics.latencyMs) has no slot in the OpenAI response"
     }

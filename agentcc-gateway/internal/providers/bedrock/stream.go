@@ -189,6 +189,41 @@ type bedrockStreamEvent struct {
 	Usage   *bedrockUsage   `json:"usage,omitempty"`
 }
 
+// The payloads parseStreamPayload decodes from an event's raw fields, by
+// event type: message_start's message, a content_block_start's content
+// block (decoded from the whole payload, invokeBlockStartPayload), a
+// content_block_delta's delta by its type, and message_delta's delta.
+
+type invokeMessageStart struct {
+	ID    string       `json:"id"`
+	Model string       `json:"model"`
+	Usage bedrockUsage `json:"usage"`
+}
+
+type invokeBlockStartPayload struct {
+	ContentBlock invokeContentBlock `json:"content_block"`
+}
+
+type invokeContentBlock struct {
+	Type string `json:"type"`
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name,omitempty"`
+}
+
+type invokeTextDelta struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+type invokeInputJSONDelta struct {
+	Type        string `json:"type"`
+	PartialJSON string `json:"partial_json"`
+}
+
+type invokeMessageDelta struct {
+	StopReason string `json:"stop_reason"`
+}
+
 // parseStreamPayload parses a Bedrock event stream payload into a StreamChunk.
 func (s *bedrockStreamState) parseStreamPayload(msg *eventStreamMessage) (*models.StreamChunk, bool, error) {
 	messageType := msg.Headers[":message-type"]
@@ -198,6 +233,8 @@ func (s *bedrockStreamState) parseStreamPayload(msg *eventStreamMessage) (*model
 	}
 
 	if messageType != "event" {
+		// Neither an event nor an exception: nothing this parser reads.
+		s.shape.Report(common.ShapeUnknownEvent, ":message-type "+messageType)
 		return nil, false, nil
 	}
 
@@ -212,13 +249,11 @@ func (s *bedrockStreamState) parseStreamPayload(msg *eventStreamMessage) (*model
 
 	switch event.Type {
 	case "message_start":
-		var msgStart struct {
-			ID    string       `json:"id"`
-			Model string       `json:"model"`
-			Usage bedrockUsage `json:"usage"`
-		}
+		var msgStart invokeMessageStart
 		if event.Message != nil {
-			json.Unmarshal(event.Message, &msgStart)
+			if err := json.Unmarshal(event.Message, &msgStart); err != nil {
+				s.shape.Report(common.ShapeMalformed, "message_start")
+			}
 		}
 		s.messageID = msgStart.ID
 		if msgStart.Model != "" {
@@ -241,10 +276,7 @@ func (s *bedrockStreamState) parseStreamPayload(msg *eventStreamMessage) (*model
 		if event.Delta == nil {
 			return nil, false, nil
 		}
-		var textDelta struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		}
+		var textDelta invokeTextDelta
 		json.Unmarshal(event.Delta, &textDelta)
 		if textDelta.Type == "text_delta" && textDelta.Text != "" {
 			content := textDelta.Text
@@ -259,10 +291,7 @@ func (s *bedrockStreamState) parseStreamPayload(msg *eventStreamMessage) (*model
 			}, false, nil
 		}
 
-		var inputJSONDelta struct {
-			Type        string `json:"type"`
-			PartialJSON string `json:"partial_json"`
-		}
+		var inputJSONDelta invokeInputJSONDelta
 		deltaErr := json.Unmarshal(event.Delta, &inputJSONDelta)
 		if inputJSONDelta.Type == "input_json_delta" {
 			tcIdx, ok := s.blockIndexToToolCallIndex[event.Index]
@@ -296,22 +325,11 @@ func (s *bedrockStreamState) parseStreamPayload(msg *eventStreamMessage) (*model
 		if event.Message != nil {
 			return nil, false, nil
 		}
-		var block struct {
-			Type string `json:"type"`
-			ID   string `json:"id,omitempty"`
-			Name string `json:"name,omitempty"`
-		}
-		var payload struct {
-			ContentBlock struct {
-				Type string `json:"type"`
-				ID   string `json:"id,omitempty"`
-				Name string `json:"name,omitempty"`
-			} `json:"content_block"`
-		}
+		var payload invokeBlockStartPayload
 		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
 			s.shape.Report(common.ShapeMalformed, "content_block_start")
 		}
-		block = payload.ContentBlock
+		block := payload.ContentBlock
 		if block.Type == "tool_use" {
 			idx := s.toolCallIndex
 			s.toolCallIndex++
@@ -340,9 +358,7 @@ func (s *bedrockStreamState) parseStreamPayload(msg *eventStreamMessage) (*model
 		if event.Delta == nil {
 			return nil, false, nil
 		}
-		var delta struct {
-			StopReason string `json:"stop_reason"`
-		}
+		var delta invokeMessageDelta
 		if err := json.Unmarshal(event.Delta, &delta); err != nil {
 			s.shape.Report(common.ShapeMalformed, "message_delta")
 		}

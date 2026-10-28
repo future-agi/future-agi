@@ -3,7 +3,7 @@
   "model": "global.anthropic.claude-sonnet-4-6",
   "source": "synthetic",
   "recorded_at": null,
-  "notes": "Synthetic: authored by hand from the Amazon Bedrock Runtime API model (Converse, ConverseStream, ContentBlock, ReasoningContentBlock, ContentBlockDelta, TokenUsage, StopReason; read from the AWS Smithy model github.com/aws/api-models-aws bedrock-runtime 2023-09-30 and aws-sdk-go-v2 service/bedrockruntime v1.63.8, the source of the published API reference, since docs.aws.amazon.com was not reachable from the authoring session) and the AWS event-stream framing (prelude, string headers :event-type / :content-type / :message-type, payload, CRC32), and platform.claude.com/docs/en/build-with-claude/claude-on-amazon-bedrock-legacy (Claude Sonnet 4.6 is served through InvokeModel and Converse under this ARN-versioned ID; global. is its cross-region inference profile, which routes the gateway to Converse), read 2026-10-28. Field names, event types and stop reasons are the documented ones; ids, signatures, token counts and text are invented. Replace each case with a recorded capture (source: recorded) when the live recorder runs. Reasoning cases carry reasoning_effort in request.json because a client would send it, but the gateway forwards nothing that enables reasoning on Bedrock (no additionalModelRequestFields; see upstream_request.golden.json), so they pin what the adapter would do with a reasoning response. The guardrail cases show the default blocked-output message of a guardrail that applies without a guardrailConfig in the request (account-enforced). Usage carries cacheReadInputTokens/cacheWriteInputTokens as Claude responses do; their exact presence when 0 is unverified. Real ConverseStream payloads may carry fields outside the API model (e.g. padding); a recording will show them.",
+  "notes": "Synthetic: authored by hand from the Amazon Bedrock Runtime API model (Converse, ConverseStream, ContentBlock, ReasoningContentBlock, ContentBlockDelta, TokenUsage, StopReason; read from the AWS Smithy model github.com/aws/api-models-aws bedrock-runtime 2023-09-30 and aws-sdk-go-v2 service/bedrockruntime v1.63.8, the source of the published API reference, since docs.aws.amazon.com was not reachable from the authoring session) and the AWS event-stream framing (prelude, string headers :event-type / :content-type / :message-type, payload, CRC32), and platform.claude.com/docs/en/build-with-claude/claude-on-amazon-bedrock-legacy (Claude Sonnet 4.6 is served through InvokeModel and Converse under this ARN-versioned ID; global. is its cross-region inference profile, which routes the gateway to Converse), read 2026-10-28. Field names, event types and stop reasons are the documented ones; ids, signatures, token counts and text are invented. Replace each case with a recorded capture (source: recorded) when the live recorder runs. Reasoning cases carry reasoning_effort in request.json because a client would send it, but the gateway forwards nothing that enables reasoning on Bedrock (no additionalModelRequestFields; see upstream_request.golden.json), so they pin what the adapter would do with a reasoning response. The guardrail cases show the default blocked-output message of a guardrail that applies without a guardrailConfig in the request (account-enforced). Usage carries cacheReadInputTokens/cacheWriteInputTokens as Claude responses do; their exact presence when 0 is unverified. Real ConverseStream payloads may carry fields outside the API model (e.g. padding); a recording will show them. Error cases (error_*, stream_error_throttling) and mid-stream exceptions (stream_exception_*) follow the Smithy model's exception shapes and HTTP statuses and the restJson1 error protocol (exception name in the x-amzn-ErrorType header, members in the JSON body), and the ConverseStreamOutput exception members; see each case.json. Their messages and request IDs are invented.",
   "allowed_unknown_fields": [
     {
       "path": "$.metrics",
@@ -20,6 +20,18 @@
     {
       "path": "$.usage.cacheWriteInputTokens",
       "reason": "known gap B8: prompt-cache write tokens (cacheWriteInputTokens), billed at a premium, are dropped from usage. 0 on the canonical path today, which never sends a cachePoint block"
+    },
+    {
+      "path": "contentBlockDelta:$.delta.reasoningContent",
+      "reason": "known gap B2: ConverseStream reasoningContent deltas (text, signature, redactedContent) are decoded into converseBlockDeltaEvent, which has no field for them, and dropped (also reported as unknown_delta); streamed responses carry no reasoning_content"
+    },
+    {
+      "path": "error:$.originalStatusCode",
+      "reason": "known gap B17: a ModelErrorException's originalStatusCode (the status the model itself failed with) is dropped; parseBedrockError keeps only message, so the canonical error cannot say whether the model failed with a 4xx or a 5xx"
+    },
+    {
+      "path": "error:$.resourceName",
+      "reason": "known gap B17: a ModelErrorException's resourceName (the model resource that failed) is dropped; parseBedrockError keeps only message"
     },
     {
       "path": "metadata:$.metrics",

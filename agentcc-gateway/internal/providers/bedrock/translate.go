@@ -675,12 +675,17 @@ func lookupStopReason(reason string) (finish string, ok bool) {
 	}
 }
 
+// bedrockErrorResponse is what parseBedrockError decodes an error body as.
+// Bedrock's restJson1 errors carry the exception name in the
+// x-amzn-ErrorType header, not in the body.
+type bedrockErrorResponse struct {
+	Message string `json:"message"`
+	Type    string `json:"type"`
+}
+
 func parseBedrockError(status int, body []byte) *models.APIError {
 	// Try Bedrock error format.
-	var errResp struct {
-		Message string `json:"message"`
-		Type    string `json:"type"`
-	}
+	var errResp bedrockErrorResponse
 	if err := json.Unmarshal(body, &errResp); err == nil && errResp.Message != "" {
 		return &models.APIError{
 			Status:  mapBedrockStatus(status),

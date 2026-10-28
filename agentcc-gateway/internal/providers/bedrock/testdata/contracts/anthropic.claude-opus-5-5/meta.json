@@ -3,7 +3,7 @@
   "model": "anthropic.claude-opus-5-5",
   "source": "synthetic",
   "recorded_at": null,
-  "notes": "Synthetic: authored by hand from platform.claude.com/docs/en/build-with-claude/claude-on-amazon-bedrock-legacy (Opus 4.7 and later are reachable through InvokeModel on bedrock-runtime under their dateless base IDs), build-with-claude/claude-in-amazon-bedrock (the same Messages API body shape), api/messages and build-with-claude/streaming, plus the Bedrock Runtime API model for InvokeModelWithResponseStream (ResponseStream chunk = PayloadPart {bytes: base64-encoded payload}; Smithy model github.com/aws/api-models-aws bedrock-runtime 2023-09-30), read 2026-10-28. A base model ID routes the gateway to InvokeModel with an Anthropic body. Bodies keep the long-standing Messages API fields (stop_details, service_tier, speed and inference_geo are left out because their presence on Bedrock is unverified). Bedrock-specific details: msg_bdrk_/toolu_bdrk_ ids, model \"claude-opus-5-5\" in the body, and amazon-bedrock-invocationMetrics on the final message_stop chunk are from memory of real Bedrock responses, not from a page read this session. Ids, signatures, token counts and text are invented. Replace each case with a recorded capture (source: recorded) when the live recorder runs.",
+  "notes": "Synthetic: authored by hand from platform.claude.com/docs/en/build-with-claude/claude-on-amazon-bedrock-legacy (Opus 4.7 and later are reachable through InvokeModel on bedrock-runtime under their dateless base IDs), build-with-claude/claude-in-amazon-bedrock (the same Messages API body shape), api/messages and build-with-claude/streaming, plus the Bedrock Runtime API model for InvokeModelWithResponseStream (ResponseStream chunk = PayloadPart {bytes: base64-encoded payload}; Smithy model github.com/aws/api-models-aws bedrock-runtime 2023-09-30), read 2026-10-28. A base model ID routes the gateway to InvokeModel with an Anthropic body. Bodies keep the long-standing Messages API fields (stop_details, service_tier, speed and inference_geo are left out because their presence on Bedrock is unverified). Bedrock-specific details: msg_bdrk_/toolu_bdrk_ ids, model \"claude-opus-5-5\" in the body, and amazon-bedrock-invocationMetrics on the final message_stop chunk are from memory of real Bedrock responses, not from a page read this session. Ids, signatures, token counts and text are invented. Replace each case with a recorded capture (source: recorded) when the live recorder runs. Error cases (error_service_quota, stream_error_access_denied) and mid-stream exceptions (stream_exception_*) follow the Bedrock Runtime Smithy model's exception shapes and HTTP statuses, the restJson1 error protocol (exception name in the x-amzn-ErrorType header, members in the JSON body) and the ResponseStream exception members; see each case.json. Their messages and request IDs are invented.",
   "allowed_unknown_fields": [
     {
       "path": "$.content[].signature",
@@ -28,6 +28,22 @@
     {
       "path": "chunk:$.bytes",
       "reason": "known gap B1: parseStreamPayload decodes the chunk payload {\"bytes\": \"<base64 Anthropic event>\"} as if it were the Anthropic event and never reads bytes, so every InvokeModel stream yields no content, no finish_reason and no usage (see invokeStreamSanityGaps in contract_test.go)"
+    },
+    {
+      "path": "chunk:$.bytes.amazon-bedrock-invocationMetrics",
+      "reason": "no canonical field: the invocation metrics Bedrock appends to the final chunk (inputTokenCount and outputTokenCount, which repeat message_start / message_delta usage, plus invocationLatency and firstByteLatency) have no slot in the OpenAI stream. Like everything inside chunk bytes it is unread today (gap B1); this entry is about what the parser would drop once it reads them"
+    },
+    {
+      "path": "chunk:$.bytes.delta.stop_sequence",
+      "reason": "no canonical field: OpenAI has no slot for which stop sequence matched; finish_reason \"stop\" carries the outcome (as $.stop_sequence on the non-stream path)"
+    },
+    {
+      "path": "chunk:$.bytes.message.usage.cache_creation_input_tokens",
+      "reason": "known gap B9: message_start usage cache-write tokens would not be added to prompt_tokens even once chunk bytes are read (gap B1), so streamed usage and cost under-count cached requests, as on the non-stream path"
+    },
+    {
+      "path": "chunk:$.bytes.message.usage.cache_read_input_tokens",
+      "reason": "known gap B9: message_start usage cache-read tokens would be dropped even once chunk bytes are read (gap B1), so streamed usage and cost under-count cached requests, as on the non-stream path"
     }
   ],
   "allowed_unknown_shapes": [

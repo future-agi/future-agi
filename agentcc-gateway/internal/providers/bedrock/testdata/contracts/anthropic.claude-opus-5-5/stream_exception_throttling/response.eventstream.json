@@ -1,0 +1,29 @@
+[
+  {
+    "event": "chunk",
+    "chunk": {
+      "type": "message_start",
+      "message": {
+        "id": "msg_bdrk_01Hn5cV7wQ2xL9tF3kR8yB6m",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-opus-5-5",
+        "content": [],
+        "stop_reason": null,
+        "stop_sequence": null,
+        "usage": {
+          "input_tokens": 18,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "output_tokens": 1
+        }
+      }
+    }
+  },
+  {
+    "exception": "throttlingException",
+    "payload": {
+      "message": "Too many tokens, please wait before trying again."
+    }
+  }
+]

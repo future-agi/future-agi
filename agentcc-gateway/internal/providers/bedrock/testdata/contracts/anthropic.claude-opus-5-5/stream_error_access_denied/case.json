@@ -1,0 +1,9 @@
+{
+  "status": 403,
+  "headers": {
+    "x-amzn-ErrorType": "AccessDeniedException",
+    "x-amzn-RequestId": "81d6b3f0-5e9a-4c27-8b14-a7e2f0c6d953"
+  },
+  "recordable": false,
+  "notes": "Synthetic, from the Bedrock Runtime Smithy model (github.com/aws/api-models-aws bedrock-runtime 2023-09-30, commit e10d6a1c5ac36af7c0c61d1f67b3c3ebbe41de49: the exception's @httpError status and members, and the operation's error list) and the restJson1 protocol (smithy-lang/smithy docs/source-2.0/aws/protocols/aws-restjson1-protocol.rst: the exception name in the X-Amzn-Errortype header, the members in the JSON body). An InvokeModelWithResponseStream request answered 403 AccessDeniedException before the stream starts, which pins the InvokeModel stream's pre-stream error path. Not recordable: it needs an account without access to the model. The golden pins type authentication_error (gap B15)."
+}

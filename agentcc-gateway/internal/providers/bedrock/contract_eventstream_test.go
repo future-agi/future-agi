@@ -9,6 +9,7 @@ import (
 	"hash/crc32"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/futureagi/agentcc-gateway/internal/providers/contracttest"
@@ -118,6 +119,120 @@ func encodeEventStreamSource(src []byte) ([]byte, error) {
 		out.Write(encodeEventStreamMessage(headers, payload.Bytes()))
 	}
 	return out.Bytes(), nil
+}
+
+// eventStreamCodec splits Bedrock event-stream bodies into events and joins
+// them back, for the strict checks and the mutation self-test
+// (contracttest.Strict.Codec): decodeEventStreamBody and
+// encodeEventStreamEvents.
+var eventStreamCodec = contracttest.Codec{
+	Decode: func(body []byte) []contracttest.Event {
+		events, _ := decodeEventStreamBody(body)
+		return events
+	},
+	Encode: encodeEventStreamEvents,
+}
+
+// decodeEventStreamBody splits a binary event-stream body into one event per
+// message, using the adapter's own decoder. Name is the message's
+// :event-type, or for an exception its :exception-type; Data is the payload,
+// except that an InvokeModelWithResponseStream chunk's base64 "bytes" (the
+// Anthropic stream event the chunk carries) is replaced by the JSON it
+// encodes, so the strict walk and the mutation self-test reach inside it:
+// {"bytes":"eyJ0eXBlIjoi..."} becomes {"bytes":{"type":"message_stop"}}.
+// It returns the events read before any decoding error.
+func decodeEventStreamBody(body []byte) ([]contracttest.Event, error) {
+	var events []contracttest.Event
+	r := bytes.NewReader(body)
+	for {
+		msg, err := readEventStreamMessage(r)
+		if err != nil {
+			return events, err
+		}
+		if msg == nil {
+			return events, nil
+		}
+		name := msg.Headers[":event-type"]
+		if msg.Headers[":message-type"] == "exception" {
+			name = msg.Headers[":exception-type"]
+		}
+		data := msg.Payload
+		if name == "chunk" {
+			data = inlineChunkBytes(data)
+		}
+		events = append(events, contracttest.Event{Name: name, Data: data})
+	}
+}
+
+// encodeEventStreamEvents is decodeEventStreamBody's inverse: an event
+// message per event (an exception message for a name ending in
+// "Exception"), with a chunk's inlined bytes base64-encoded again.
+func encodeEventStreamEvents(events []contracttest.Event) []byte {
+	var out bytes.Buffer
+	for _, e := range events {
+		headers := []eventStreamHeader{{":event-type", e.Name}, {":content-type", "application/json"}, {":message-type", "event"}}
+		if strings.HasSuffix(e.Name, "Exception") {
+			headers = []eventStreamHeader{{":exception-type", e.Name}, {":content-type", "application/json"}, {":message-type", "exception"}}
+		}
+		payload := e.Data
+		if e.Name == "chunk" {
+			payload = wrapChunkBytes(payload)
+		}
+		out.Write(encodeEventStreamMessage(headers, payload))
+	}
+	return out.Bytes()
+}
+
+// inlineChunkBytes replaces a chunk payload's base64 "bytes" with the JSON
+// they encode. A payload that is not an object, or whose bytes are not
+// base64-encoded JSON, is returned unchanged.
+func inlineChunkBytes(payload []byte) []byte {
+	var outer map[string]json.RawMessage
+	if json.Unmarshal(payload, &outer) != nil {
+		return payload
+	}
+	var inner []byte
+	if json.Unmarshal(outer["bytes"], &inner) != nil || !json.Valid(inner) {
+		return payload
+	}
+	outer["bytes"] = inner
+	return marshalUnescaped(outer, payload)
+}
+
+// wrapChunkBytes is inlineChunkBytes' inverse: inlined JSON bytes (an object
+// or an array) are compacted and base64-encoded again. Anything else, a
+// mutation's string say, is left as it is.
+func wrapChunkBytes(data []byte) []byte {
+	var outer map[string]json.RawMessage
+	if json.Unmarshal(data, &outer) != nil {
+		return data
+	}
+	raw := bytes.TrimSpace(outer["bytes"])
+	if len(raw) == 0 || (raw[0] != '{' && raw[0] != '[') {
+		return data
+	}
+	var inner bytes.Buffer
+	if json.Compact(&inner, raw) != nil {
+		return data
+	}
+	b64, err := json.Marshal(inner.Bytes())
+	if err != nil {
+		return data
+	}
+	outer["bytes"] = b64
+	return marshalUnescaped(outer, data)
+}
+
+// marshalUnescaped marshals v compactly without HTML escaping, or returns
+// fallback if it cannot.
+func marshalUnescaped(v any, fallback []byte) []byte {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if enc.Encode(v) != nil {
+		return fallback
+	}
+	return bytes.TrimSuffix(b.Bytes(), []byte("\n"))
 }
 
 // updateFlag reports whether -update was passed. contracttest defines the

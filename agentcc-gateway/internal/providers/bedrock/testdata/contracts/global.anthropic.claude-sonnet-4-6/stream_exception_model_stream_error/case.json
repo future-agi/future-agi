@@ -1,0 +1,10 @@
+{
+  "recordable": false,
+  "notes": "Synthetic, from the ConverseStreamOutput / ResponseStream unions of the same model (an exception is an event-stream message with :message-type exception and :exception-type <member>, its members as the JSON payload), and the event-stream framing described in contract_eventstream_test.go. modelStreamErrorException is a member of ConverseStreamOutput (ModelStreamErrorException, 424, with originalStatusCode and originalMessage). Not recordable: it reports a failure inside the model. Message, original status and original message invented.",
+  "sanity_gaps": [
+    {
+      "failure": "upstream status 424 became 502",
+      "reason": "known gap B16: a mid-stream exception becomes a 502 upstream_error (code provider_0) whatever the exception, with the raw payload JSON as its message; a modelStreamErrorException is a 424 (a model failure the client is told to retry), so it should not turn into a gateway-side 502"
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "code": "provider_503",
+  "message": "Bedrock is unable to process your request.",
+  "status": 502,
+  "type": "upstream_error"
+}

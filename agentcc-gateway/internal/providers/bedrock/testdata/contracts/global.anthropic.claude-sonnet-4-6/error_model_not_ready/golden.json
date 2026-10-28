@@ -1,0 +1,6 @@
+{
+  "code": "provider_429",
+  "message": "Model is not ready for inference. Wait and try your request again.",
+  "status": 429,
+  "type": "rate_limit_error"
+}
