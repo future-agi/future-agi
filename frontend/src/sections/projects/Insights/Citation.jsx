@@ -19,9 +19,17 @@ import { Swatch } from "./parts";
 const OPEN_DELAY = 220;
 const CLOSE_DELAY = 160;
 
+// A fragment of JSON or code (`"status": "failed"`, `{"sent": true}`) is
+// shown as written, in monospace; a quote that carries its own quote marks
+// is not wrapped in more.
+const CODE_LIKE = /^\s*[[{]|"[^"\n]*"\s*:/;
+const OWN_QUOTES = /^\s*["'“‘][\s\S]*["'”’]\s*$/;
+
 /** A quote set off as evidence: a tinted block with an accent rule. */
 export function EvidenceQuote({ quote, dense, sx }) {
   if (!quote) return null;
+  const code = CODE_LIKE.test(quote);
+  const bare = code || OWN_QUOTES.test(quote);
   return (
     <Box
       component="blockquote"
@@ -34,14 +42,18 @@ export function EvidenceQuote({ quote, dense, sx }) {
         borderRadius: "0 4px 4px 0",
         bgcolor: (theme) => alpha(theme.palette.warning.main, 0.1),
         color: "text.primary",
-        fontSize: dense ? 12 : 13,
+        fontSize: (dense ? 12 : 13) - (code ? 1 : 0),
         lineHeight: 1.55,
-        fontStyle: "italic",
+        fontStyle: code ? "normal" : "italic",
+        ...(code && {
+          fontFamily: "ui-monospace, SFMono-Regular, monospace",
+          whiteSpace: "pre-wrap",
+        }),
         overflowWrap: "anywhere",
         ...sx,
       }}
     >
-      “{quote}”
+      {bare ? quote : `“${quote}”`}
     </Box>
   );
 }
