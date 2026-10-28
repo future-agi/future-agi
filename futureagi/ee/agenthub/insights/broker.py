@@ -782,6 +782,33 @@ def _refused(reason: str) -> BrokerError:
     return BrokerError(_MEDIA_STATUS.get(code, 422), code)
 
 
+def cited_image(run, row, alias) -> Media:
+    """An image ``row``'s evidence cites (a ``kind: media`` item naming
+    ``alias``), for the report page: the view the agent had of it. A run's
+    snapshots go when it ends, so the unit is built again as ingested when
+    the run was created (the same aliases), one of this process's
+    MAX_BUILDS, and never stored. Anything the evidence does not cite, or
+    that is not an image, is not served."""
+    cited = any(
+        item.get("kind") == "media" and item.get("media") == alias
+        for item in (row.facets or {}).get("evidence") or []
+        if isinstance(item, dict)
+    )
+    if not cited:
+        raise BrokerError(404, "unknown_media")
+    key = str(row.pk)
+    cached = evidence_store.recall(run.id, key) or _once(
+        f"cited/{run.id}/{key}", lambda: _build(run, row, SLOT_WAIT_S)
+    )
+    entry = next(
+        (m for m in cached.document["manifest"]["media"] if m["alias"] == alias),
+        None,
+    )
+    if entry is not None and entry["kind"] != "image":
+        raise _refused("unexpected_content_type")
+    return media(cached, alias, project_id=str(run.project_id))
+
+
 def downscale(content: bytes) -> Media:
     """An image the agent may view: its first frame, the longest side at most
     ``MAX_IMAGE_SIDE``, re-encoded without metadata (PNG, JPEG and WebP keep

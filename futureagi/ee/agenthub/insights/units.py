@@ -4,8 +4,9 @@ A trace reads as one exchange, a session as its turns in order, and a user as
 their recent sessions. Text is clipped on turn boundaries (first turns and the
 last ones are kept) so long conversations stay within the extraction budget.
 An insights-agent/v2 run reads each unit's whole span graph itself
-(``evidence.py``) and takes only the metrics and the final output from here,
-for units whose roots carry no input or output too (``keep_empty``).
+(``evidence.py``) and takes the metrics and the text from here only to show,
+for units whose roots carry no input or output too (``keep_empty``, with no
+text).
 """
 
 from __future__ import annotations
@@ -116,12 +117,17 @@ def load_traces(
     units = {}
     for trace_id, span in latest.items():
         text_in, text_out = _io(span)
-        if not (keep_empty or text_in.strip() or text_out.strip()):
+        readable = text_in.strip() or text_out.strip()
+        if not (keep_empty or readable):
             continue
         user = labels.get(str(span.end_user_id or ""), "")
         units[trace_id] = UnitText(
             unit_id=trace_id,
-            content=f"User: {_clip(text_in, 3500)}\n\nAssistant: {_clip(text_out, 3500)}",
+            content=(
+                f"User: {_clip(text_in, 3500)}\n\nAssistant: {_clip(text_out, 3500)}"
+                if readable
+                else ""
+            ),
             excerpt=_clip(text_in, EXCERPT_CHARS),
             label=span.trace_name or span.name or "",
             user_id=user,
@@ -153,7 +159,8 @@ def load_sessions(
     for session_id, traces in by_session.items():
         spans = sorted(traces.values(), key=lambda s: s.start_time)
         turns = [_io(s) for s in spans]
-        if not (keep_empty or any(u.strip() or a.strip() for u, a in turns)):
+        readable = any(u.strip() or a.strip() for u, a in turns)
+        if not (keep_empty or readable):
             continue
         first, last = spans[0], spans[-1]
         user = next(
@@ -162,7 +169,7 @@ def load_sessions(
         end = last.end_time or last.start_time
         units[session_id] = UnitText(
             unit_id=session_id,
-            content=_turns_text(turns, SESSION_CHARS),
+            content=_turns_text(turns, SESSION_CHARS) if readable else "",
             excerpt=_clip(turns[0][0], EXCERPT_CHARS),
             label=_clip(turns[0][0], 80),
             user_id=user or "",

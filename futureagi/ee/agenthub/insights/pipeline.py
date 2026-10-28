@@ -48,9 +48,6 @@ EXTRACT_WORKERS = 8
 # calls go a few at a time.
 V2_UNITS_PER_CALL = 8
 V2_PARALLEL_CALLS = 3
-# What a v2 unit keeps of its own text: an excerpt of its final output, for
-# display. The agent never gets it back; it reads the unit itself.
-V2_CONTENT_CHARS = 600
 # How long finishing or failing a run waits for its snapshots to be deleted,
 # however slow the store (the fail stage has 30 s in all); the store's sweep
 # deletes whatever is left.
@@ -326,7 +323,9 @@ def prepare(run_id: str) -> list[int]:
             unit.status = "skipped"
             unit.error = "No readable input or output."
         else:
-            unit.content = text.output[:V2_CONTENT_CHARS] if v2 else text.content
+            # A v2 unit's text is for the example panel only (its turns, as
+            # the built-in engine reads them): the agent reads the unit itself.
+            unit.content = text.content
             unit.excerpt = text.excerpt
             unit.label = text.label[:255]
             unit.user_id = (text.user_id or unit.user_id)[:255]

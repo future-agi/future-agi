@@ -1,8 +1,10 @@
-import React, { useEffect, useMemo, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
   Button,
+  ButtonBase,
+  Dialog,
   Drawer,
   IconButton,
   Skeleton,
@@ -14,7 +16,7 @@ import { useNavigate } from "react-router";
 import Iconify from "src/components/iconify";
 import { UNITS } from "src/sections/projects/observePopulation";
 import { EvidenceQuote } from "./Citation";
-import { useRunUnit } from "./insightsApi";
+import { useCitedImage, useRunUnit } from "./insightsApi";
 import { categoriesFor } from "./insightsDistribution";
 import {
   evidenceRanges,
@@ -75,37 +77,48 @@ Label.propTypes = { children: PropTypes.node };
 
 // "Customer:" / "Assistant:" at the start of a line, optionally after a
 // "[Turn 2]" marker: the marker is quiet, the speaker semibold.
-const SPEAKER = /(^|\n)(\[Turn \d+\] )?([A-Z][\w .'-]{0,24}:)(?= )/g;
+const SPEAKER = /(^|\n)(\[Turn (\d+)\] )?([A-Z][\w .'-]{0,24}:)(?= )/g;
 
-function withSpeakers(text) {
+function withSpeakers(text, brokeAt) {
   const parts = [];
   let at = 0;
   for (const match of text.matchAll(SPEAKER)) {
     const start = match.index + match[1].length;
     parts.push(text.slice(at, start));
+    const broke = match[3] && Number(match[3]) === brokeAt;
     if (match[2])
       parts.push(
         <Box
           component="span"
           key={`t${start}`}
-          sx={{ color: "text.disabled", fontSize: 12 }}
+          data-turn={match[3]}
+          title={broke ? "The turn where it broke" : undefined}
+          sx={
+            broke
+              ? { color: "error.main", fontSize: 12, fontWeight: 600 }
+              : { color: "text.disabled", fontSize: 12 }
+          }
         >
           {match[2]}
         </Box>,
       );
     parts.push(
       <Box component="b" key={`s${start}`} sx={{ fontWeight: 600 }}>
-        {match[3]}
+        {match[4]}
       </Box>,
     );
-    at = start + (match[2] || "").length + match[3].length;
+    at = start + (match[2] || "").length + match[4].length;
   }
   parts.push(text.slice(at));
   return parts;
 }
 
-/** The unit's full content with every evidence quote marked. */
-function HighlightedContent({ content, evidence }) {
+/**
+ * The unit's full content with every evidence quote marked. A long
+ * conversation scrolls in its own box, opened at the turn where it broke
+ * (else the first mark), so the panel keeps its summary in view.
+ */
+function HighlightedContent({ content, evidence, brokeAt }) {
   const ranges = useMemo(
     () => evidenceRanges(content, evidence),
     [content, evidence],
@@ -116,13 +129,25 @@ function HighlightedContent({ content, evidence }) {
   );
   const box = useRef(null);
   useEffect(() => {
-    const first = box.current?.querySelector("mark");
-    first?.scrollIntoView?.({ block: "center" });
-  }, [segments]);
+    const container = box.current;
+    if (!container) return;
+    const turn =
+      Number.isFinite(brokeAt) &&
+      container.querySelector(`[data-turn="${brokeAt}"]`);
+    const target = turn || container.querySelector("mark");
+    if (!target) return;
+    container.scrollTop = turn
+      ? Math.max(0, target.offsetTop - 12)
+      : Math.max(0, target.offsetTop - container.clientHeight / 3);
+  }, [segments, brokeAt]);
   return (
     <Box
       ref={box}
+      data-testid="example-conversation"
       sx={{
+        position: "relative",
+        maxHeight: "min(60vh, 520px)",
+        overflowY: "auto",
         p: 1.5,
         border: "1px solid",
         borderColor: "divider",
@@ -152,7 +177,7 @@ function HighlightedContent({ content, evidence }) {
           </mark>
         ) : (
           <React.Fragment key={index}>
-            {withSpeakers(segment.text)}
+            {withSpeakers(segment.text, brokeAt)}
           </React.Fragment>
         ),
       )}
@@ -163,6 +188,145 @@ function HighlightedContent({ content, evidence }) {
 HighlightedContent.propTypes = {
   content: PropTypes.string.isRequired,
   evidence: PropTypes.array,
+  brokeAt: PropTypes.number,
+};
+
+const IMAGE_ALT = "Image cited as evidence";
+
+/**
+ * An image the unit's evidence cites, with what the analysis saw in it: a
+ * thumbnail that opens full size. The bytes come from the report's own
+ * endpoint, as the agent viewed them.
+ */
+function CitedImage({ runId, unitId, item }) {
+  const [open, setOpen] = useState(false);
+  const image = useCitedImage(runId, unitId, item.media);
+  const caption = item.observation || "";
+  return (
+    <Box component="figure" sx={{ m: 0 }}>
+      {image.url ? (
+        <ButtonBase
+          onClick={() => setOpen(true)}
+          aria-label="Enlarge image"
+          sx={{
+            display: "block",
+            maxWidth: "100%",
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: 1,
+            overflow: "hidden",
+            bgcolor: "background.neutral",
+            cursor: "zoom-in",
+          }}
+        >
+          <Box
+            component="img"
+            src={image.url}
+            alt={IMAGE_ALT}
+            sx={{
+              display: "block",
+              maxWidth: "100%",
+              maxHeight: 200,
+              objectFit: "contain",
+            }}
+          />
+        </ButtonBase>
+      ) : image.isError ? (
+        <Box
+          sx={{
+            px: 1.25,
+            py: 1,
+            border: "1px dashed",
+            borderColor: "divider",
+            borderRadius: 1,
+            fontSize: 12,
+            color: "text.secondary",
+          }}
+        >
+          This image can&apos;t be shown here. It is in the traces of this
+          example.
+        </Box>
+      ) : (
+        <Skeleton
+          variant="rounded"
+          width={240}
+          height={140}
+          aria-label="Loading image"
+        />
+      )}
+      {(caption || item.supports) && (
+        <Typography
+          component="figcaption"
+          variant="caption"
+          color="text.secondary"
+          sx={{ display: "block", mt: 0.5 }}
+        >
+          {caption && (
+            <>
+              What the analysis saw:{" "}
+              <Box component="span" sx={{ color: "text.primary" }}>
+                {caption}
+              </Box>
+            </>
+          )}
+          {caption && item.supports && <br />}
+          {item.supports && `Supports: ${item.supports}`}
+        </Typography>
+      )}
+      <Dialog
+        open={open && Boolean(image.url)}
+        onClose={() => setOpen(false)}
+        maxWidth={false}
+        PaperProps={{ "aria-label": IMAGE_ALT }}
+      >
+        <Box sx={{ position: "relative", p: 1.5 }}>
+          <IconButton
+            aria-label="Close image"
+            onClick={() => setOpen(false)}
+            size="small"
+            sx={{
+              position: "absolute",
+              top: 8,
+              right: 8,
+              bgcolor: "background.paper",
+              "&:hover": { bgcolor: "background.neutral" },
+            }}
+          >
+            <Iconify icon="mdi:close" width={18} />
+          </IconButton>
+          <Box
+            component="img"
+            src={image.url || undefined}
+            alt={caption || IMAGE_ALT}
+            sx={{
+              display: "block",
+              maxWidth: "min(90vw, 1568px)",
+              maxHeight: "80vh",
+              objectFit: "contain",
+            }}
+          />
+          {caption && (
+            <Typography
+              variant="body2"
+              sx={{ mt: 1, maxWidth: 640, fontSize: 13 }}
+            >
+              {caption}
+            </Typography>
+          )}
+        </Box>
+      </Dialog>
+    </Box>
+  );
+}
+
+CitedImage.propTypes = {
+  runId: PropTypes.string,
+  unitId: PropTypes.string,
+  item: PropTypes.shape({
+    media: PropTypes.string.isRequired,
+    observation: PropTypes.string,
+    supports: PropTypes.string,
+  }).isRequired,
 };
 
 /**
@@ -195,7 +359,13 @@ export default function ExamplePanel({ open, unitId, onClose }) {
     (data?.summary ? highlightTitle({ summary: data.summary }) : "") ||
     data?.unit_id;
   const content = typeof data?.content === "string" ? data.content : "";
-  const loose = content ? unplacedEvidence(content, evidence) : evidence;
+  // Quotes are marked in the content where they are found and listed when
+  // not; an image (v2 media evidence) is always shown on its own.
+  const quotes = evidence.filter((item) => item?.quote);
+  const images = evidence.filter(
+    (item) => item?.kind === "media" && item.media,
+  );
+  const loose = content ? unplacedEvidence(content, quotes) : quotes;
   const metrics = metricParts(data?.metrics, unit);
 
   return (
@@ -353,10 +523,18 @@ export default function ExamplePanel({ open, unitId, onClose }) {
                 </Typography>
               )}
 
-              {loose.length > 0 && (
+              {images.length + loose.length > 0 && (
                 <Box>
                   <Label>Evidence</Label>
                   <Stack spacing={0.75}>
+                    {images.map((item) => (
+                      <CitedImage
+                        key={item.media}
+                        runId={report.runId}
+                        unitId={data.unit_id}
+                        item={item}
+                      />
+                    ))}
                     {loose.map((item, index) => (
                       <Box key={index}>
                         <EvidenceQuote quote={item.quote} dense />
@@ -385,13 +563,21 @@ export default function ExamplePanel({ open, unitId, onClose }) {
                     <Label>
                       {unit === "traces" ? "Trace" : "Conversation"}
                     </Label>
-                    {evidence.length > loose.length && (
+                    {quotes.length > loose.length && (
                       <Typography variant="caption" color="text.secondary">
                         Evidence is highlighted
                       </Typography>
                     )}
                   </Stack>
-                  <HighlightedContent content={content} evidence={evidence} />
+                  <HighlightedContent
+                    content={content}
+                    evidence={quotes}
+                    brokeAt={
+                      Number.isFinite(facets.broke_at_turn)
+                        ? facets.broke_at_turn
+                        : undefined
+                    }
+                  />
                 </Box>
               ) : data.excerpt ? (
                 <Box>

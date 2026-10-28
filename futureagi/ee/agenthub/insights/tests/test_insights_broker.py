@@ -557,6 +557,47 @@ class TestSnapshotCache:
         assert (refused.value.status, refused.value.code) == (503, "deadline_exceeded")
 
 
+class TestCitedImage:
+    """The report page shows an image a unit's evidence cites after the run
+    ended and its snapshots went."""
+
+    @staticmethod
+    def row(*evidence):
+        return SimpleNamespace(pk=17, unit_id="T1", facets={"evidence": list(evidence)})
+
+    def test_a_completed_runs_cited_image_is_built_again_and_not_stored(self, world):
+        world.run.status = "completed"
+        row = self.row({"kind": "media", "media": "m1", "observation": "A box."})
+
+        image = broker.cited_image(world.run, row, "m1")
+
+        assert image.mime == "image/png" and image.original == (1, 1)
+        with Image.open(io.BytesIO(image.content)) as shown:
+            assert shown.size == (1, 1)
+        assert world.builds == 1
+        assert not run_dir().exists()
+
+    def test_only_media_the_evidence_cites_is_served(self, world):
+        world.run.status = "completed"
+        text = {"kind": "text", "quote": "Is this damaged?", "span": "s1"}
+        for row, alias in (
+            (self.row(text), "m1"),
+            (self.row({"kind": "media", "media": "m2"}), "m1"),
+            (SimpleNamespace(pk=17, unit_id="T1", facets={}), "m1"),
+        ):
+            with pytest.raises(broker.BrokerError) as refused:
+                broker.cited_image(world.run, row, alias)
+            assert (refused.value.status, refused.value.code) == (404, "unknown_media")
+        assert world.builds == 0
+
+    def test_a_cited_alias_the_rebuild_lacks_is_refused(self, world):
+        world.run.status = "completed"
+        row = self.row({"kind": "media", "media": "m9"})
+        with pytest.raises(broker.BrokerError) as refused:
+            broker.cited_image(world.run, row, "m9")
+        assert refused.value.code == "unknown_media"
+
+
 def cached(fields, media=(), sources=None):
     spans = [
         {"alias": alias, "fields": {name: {} for name in texts}}

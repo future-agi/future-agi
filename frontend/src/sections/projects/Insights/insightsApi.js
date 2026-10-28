@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints, readQuery } from "src/utils/axios";
 import {
@@ -348,6 +348,41 @@ export function useRunUnit(
     staleTime: 60_000,
     meta: { errorHandled: true },
   });
+}
+
+/**
+ * An image a unit's evidence cites (its `media` alias), as an object URL for
+ * an <img>: the endpoint needs the session's credentials, so it is fetched,
+ * never linked. The URL is revoked once the image is no longer shown.
+ */
+export function useCitedImage(runId, unitId, media) {
+  const query = useQuery({
+    queryKey: ["insights", "media", runId, unitId, media],
+    queryFn: async ({ signal }) =>
+      (
+        await readQuery(endpoints.project.insightsRunMedia(runId), {
+          params: { unit_id: unitId, media },
+          responseType: "blob",
+          signal,
+        })
+      ).data,
+    enabled: Boolean(runId && unitId && media),
+    staleTime: Infinity,
+    // A busy server (503) is worth one more try; a refusal is final.
+    retry: (count, error) => errorStatus(error) === 503 && count < 1,
+    meta: { errorHandled: true },
+  });
+  const [url, setUrl] = useState(null);
+  useEffect(() => {
+    if (!(query.data instanceof Blob)) return undefined;
+    const next = URL.createObjectURL(query.data);
+    setUrl(next);
+    return () => {
+      URL.revokeObjectURL(next);
+      setUrl(null);
+    };
+  }, [query.data]);
+  return { url, isError: query.isError };
 }
 
 /**

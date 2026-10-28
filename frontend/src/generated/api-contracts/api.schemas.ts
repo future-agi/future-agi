@@ -37768,6 +37768,19 @@ export type TracerInsightsConfigsListParams = {
   project_id: string;
 };
 
+export type TracerInsightsRunsMediaListParams = {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  unit_id: string;
+  /**
+   * @minLength 1
+   * @pattern ^m\d{1,6}$
+   */
+  media: string;
+};
+
 export type TracerInsightsRunsUnitsListParams = {
   /**
    * @maxLength 64

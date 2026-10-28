@@ -869,6 +869,9 @@ class TestUnitTextForV2:
             def roots_by_trace_ids(self, ids, project_id):
                 return [root("T1", "", ""), root("T2", "hi", "final answer")]
 
+            def roots_by_session_ids(self, ids, project_id):
+                return [root("T2", "hi", "final answer"), root("T3", "and?", "")]
+
         monkeypatch.setattr("tracer.services.clickhouse.v2.get_reader", Reader)
         monkeypatch.setattr(units_module, "_user_labels", lambda ids: {})
 
@@ -876,3 +879,12 @@ class TestUnitTextForV2:
         kept = units_module.load_units("traces", PROJECT, ["T1", "T2"], keep_empty=True)
         assert set(kept) == {"T1", "T2"}
         assert kept["T2"].output == "final answer" and kept["T1"].output == ""
+        # What the example panel shows: the exchange, or nothing for a root
+        # without text (never empty "User:" lines).
+        assert kept["T2"].content == "User: hi\n\nAssistant: final answer"
+        assert kept["T1"].content == ""
+        session = units_module.load_units("sessions", PROJECT, ["S1"], keep_empty=True)
+        assert session["S1"].content == (
+            "[Turn 1] User: hi\nAssistant: final answer\n\n"
+            "[Turn 2] User: and?\nAssistant: "
+        )

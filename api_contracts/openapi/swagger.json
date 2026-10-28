@@ -63854,6 +63854,99 @@
                 }
             ]
         },
+        "/tracer/insights/runs/{run_id}/media/": {
+            "get": {
+                "operationId": "tracer_insights_runs_media_list",
+                "description": "An image an analysed unit's evidence cites, as the agent viewed it\n(at most 1,568 px on its longest side and 5 MiB), for the example\npanel. Only a unit of this organization's run that the report kept,\nand only media its evidence names.",
+                "parameters": [
+                    {
+                        "name": "unit_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "maxLength": 255,
+                        "minLength": 1
+                    },
+                    {
+                        "name": "media",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "pattern": "^m\\d{1,6}$",
+                        "minLength": 1
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The image, downscaled and without metadata.",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "402": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "run_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/tracer/insights/runs/{run_id}/units/": {
             "get": {
                 "operationId": "tracer_insights_runs_units_list",

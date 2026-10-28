@@ -45,6 +45,7 @@ from tracer.views.insights import (
     InsightRunAskView,
     InsightRunCreateView,
     InsightRunDetailView,
+    InsightRunMediaView,
     InsightRunUnitsView,
 )
 from tracer.views.insights_evidence import InsightEvidenceView
@@ -276,6 +277,11 @@ urlpatterns = [
         "insights/runs/<uuid:run_id>/units/",
         InsightRunUnitsView.as_view(),
         name="insight-run-units",
+    ),
+    path(
+        "insights/runs/<uuid:run_id>/media/",
+        InsightRunMediaView.as_view(),
+        name="insight-run-media",
     ),
     path(
         "insights/runs/<uuid:run_id>/ask/",

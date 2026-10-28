@@ -11,6 +11,7 @@ POST   /tracer/insights/estimate/               unit counts and action credit co
 POST   /tracer/insights/runs/                   start a run (new or saved report)
 GET    /tracer/insights/runs/<id>/              run status and results
 GET    /tracer/insights/runs/<id>/units/        analysed units, by category
+GET    /tracer/insights/runs/<id>/media/        an image a unit's evidence cites
 POST   /tracer/insights/runs/<id>/ask/          a question about a run's report
 
 A run reads a sample of a scope: the rows of a Traces, Sessions or Users view
@@ -23,7 +24,9 @@ from datetime import timedelta
 import structlog
 from django.core.cache import cache
 from django.db.models import Count, Q
+from django.http import HttpResponse
 from django.utils import timezone
+from drf_yasg import openapi
 from rest_framework import serializers, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
@@ -280,6 +283,11 @@ class InsightUnitsQuerySerializer(serializers.Serializer):
     # The unit's full text (what the model read), for showing its evidence in
     # place. Only for small pages.
     include_content = serializers.BooleanField(required=False, default=False)
+
+
+class InsightMediaQuerySerializer(serializers.Serializer):
+    unit_id = serializers.CharField(max_length=255)
+    media = serializers.RegexField(r"^m\d{1,6}$")
 
 
 class InsightAskMessageSerializer(serializers.Serializer):
@@ -1604,6 +1612,58 @@ class InsightRunUnitsView(InsightsLicenseRequired, APIView):
                 "total": total,
             }
         )
+
+
+class InsightRunMediaView(InsightsLicenseRequired, APIView):
+    permission_classes = [IsAuthenticated]
+    _gm = GeneralMethods()
+
+    @validated_request(
+        query_serializer=InsightMediaQuerySerializer,
+        responses={
+            200: openapi.Response(
+                description="The image, downscaled and without metadata.",
+                schema=openapi.Schema(type=openapi.TYPE_FILE),
+            ),
+            **ERROR_RESPONSES,
+        },
+    )
+    def get(self, request, run_id):
+        """An image an analysed unit's evidence cites, as the agent viewed it
+        (at most 1,568 px on its longest side and 5 MiB), for the example
+        panel. Only a unit of this organization's run that the report kept,
+        and only media its evidence names."""
+        try:
+            from ee.agenthub.insights import broker
+        except ImportError:
+            return _unavailable(self._gm)
+
+        run = InsightRun.objects.filter(
+            id=run_id, organization=_org(request), deleted=False, project__deleted=False
+        ).first()
+        if run is None:
+            return self._gm.not_found("Report run not found")
+        params = request.validated_query_data
+        row = InsightUnit.objects.filter(
+            run=run, unit_id=params["unit_id"], status="done", included=True
+        ).first()
+        if row is None:
+            return self._gm.not_found("This example is not part of the report.")
+        try:
+            image = broker.cited_image(run, row, params["media"])
+        except broker.BrokerError as refused:
+            if refused.status == 503:
+                return self._gm.custom_error_response(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "The image can't be loaded right now. Please retry.",
+                    code=refused.code,
+                )
+            return self._gm.not_found("This image can't be shown.")
+        response = HttpResponse(image.content, content_type=image.mime)
+        response["Cache-Control"] = "private, max-age=3600"
+        response["X-Content-Type-Options"] = "nosniff"
+        response["Content-Security-Policy"] = "default-src 'none'; sandbox"
+        return response
 
 
 class InsightAskEvidenceSerializer(serializers.Serializer):

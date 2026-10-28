@@ -1355,6 +1355,7 @@ import type {
   TracerGetAnnotationLabelsListParams,
   TracerImagineAnalysisListParams,
   TracerInsightsConfigsListParams,
+  TracerInsightsRunsMediaListParams,
   TracerInsightsRunsUnitsListParams,
   TracerInstantEvalExportListParams,
   TracerInstantEvalRowsListParams,
@@ -73852,6 +73853,118 @@ export const tracerInsightsRunsAskCreate = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(insightAskApi),
+    },
+  );
+};
+
+export type tracerInsightsRunsMediaListResponse200 = {
+  data: Blob;
+  status: 200;
+};
+
+export type tracerInsightsRunsMediaListResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerInsightsRunsMediaListResponse402 = {
+  data: ApiErrorResponseApi;
+  status: 402;
+};
+
+export type tracerInsightsRunsMediaListResponse403 = {
+  data: ApiErrorResponseApi;
+  status: 403;
+};
+
+export type tracerInsightsRunsMediaListResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerInsightsRunsMediaListResponse429 = {
+  data: ApiErrorResponseApi;
+  status: 429;
+};
+
+export type tracerInsightsRunsMediaListResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerInsightsRunsMediaListResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerInsightsRunsMediaListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 402 | 403 | 404 | 429 | 500 | 503
+  >;
+};
+
+export type tracerInsightsRunsMediaListResponseSuccess =
+  tracerInsightsRunsMediaListResponse200 & {
+    headers: Headers;
+  };
+export type tracerInsightsRunsMediaListResponseError = (
+  | tracerInsightsRunsMediaListResponse400
+  | tracerInsightsRunsMediaListResponse402
+  | tracerInsightsRunsMediaListResponse403
+  | tracerInsightsRunsMediaListResponse404
+  | tracerInsightsRunsMediaListResponse429
+  | tracerInsightsRunsMediaListResponse500
+  | tracerInsightsRunsMediaListResponse503
+  | tracerInsightsRunsMediaListResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerInsightsRunsMediaListResponse =
+  | tracerInsightsRunsMediaListResponseSuccess
+  | tracerInsightsRunsMediaListResponseError;
+
+export const getTracerInsightsRunsMediaListUrl = (
+  runId: string,
+  params: TracerInsightsRunsMediaListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/insights/runs/${runId}/media/?${stringifiedParams}`
+    : `/tracer/insights/runs/${runId}/media/`;
+};
+
+/**
+ * An image an analysed unit's evidence cites, as the agent viewed it
+(at most 1,568 px on its longest side and 5 MiB), for the example
+panel. Only a unit of this organization's run that the report kept,
+and only media its evidence names.
+ */
+export const tracerInsightsRunsMediaList = async (
+  runId: string,
+  params: TracerInsightsRunsMediaListParams,
+  options?: RequestInit,
+): Promise<tracerInsightsRunsMediaListResponse> => {
+  return apiMutator<tracerInsightsRunsMediaListResponse>(
+    getTracerInsightsRunsMediaListUrl(runId, params),
+    {
+      ...options,
+      method: "GET",
     },
   );
 };

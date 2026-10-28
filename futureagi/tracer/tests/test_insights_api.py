@@ -245,6 +245,90 @@ def test_run_units_give_v2_evidence_as_the_list_the_report_page_reads(
 
 
 @pytest.mark.django_db
+def test_a_cited_image_is_served_to_its_own_organization_only(
+    auth_client, observe_project, monkeypatch
+):
+    """The example panel shows the screenshot a finding rests on: rebuilt
+    from the unit as the run read it, for this organization's kept unit and
+    the media its evidence names, and nothing else."""
+    import base64
+    import io
+
+    from PIL import Image
+
+    from ee.agenthub.insights import broker
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (2400, 1200), "blue").save(buffer, "PNG")
+    entry = {
+        "alias": "m1",
+        "span": "s2",
+        "field": "input",
+        "kind": "image",
+        "mime": "image/png",
+        "accessible": True,
+        "reason": None,
+    }
+    source = ["data_uri", base64.b64encode(buffer.getvalue()).decode(), "image/png"]
+    built = []
+
+    def build(run, row):
+        built.append(row.unit_id)
+        manifest = {"unit": {"key": str(row.pk)}, "spans": [], "media": [entry]}
+        return broker.Cached({"manifest": manifest, "fields": {}}, {"m1": source})
+
+    monkeypatch.setattr(broker, "build", build)
+    created = auth_client.post(
+        RUNS, new_run_body(observe_project), format="json"
+    ).json()["result"]
+    InsightRun.objects.filter(id=created["run_id"]).update(status="completed")
+    kept, left_out = InsightUnit.objects.filter(run_id=created["run_id"]).order_by(
+        "id"
+    )[:2]
+    image = {
+        "kind": "media",
+        "evidence_id": f"ev2m|{kept.pk}|m1|full",
+        "media": "m1",
+        "span": "s2",
+        "observation": "Card declined, code 51.",
+    }
+    for unit, included in ((kept, True), (left_out, False)):
+        unit.status, unit.included = "done", included
+        unit.facets = {"evidence": [image]}
+        unit.save(update_fields=["status", "included", "facets"])
+    url = f"{RUNS}{created['run_id']}/media/"
+
+    response = auth_client.get(url, {"unit_id": kept.unit_id, "media": "m1"})
+
+    assert response.status_code == 200
+    assert response["Content-Type"] == "image/png"
+    assert response["X-Content-Type-Options"] == "nosniff"
+    assert response["Cache-Control"].startswith("private")
+    with Image.open(io.BytesIO(response.content)) as shown:
+        assert max(shown.size) == broker.MAX_IMAGE_SIDE
+    assert built == [kept.unit_id]
+
+    # Media the evidence doesn't name, a unit the report left out, and a
+    # malformed alias are refused before anything is built.
+    for params, code in (
+        ({"unit_id": kept.unit_id, "media": "m2"}, 404),
+        ({"unit_id": left_out.unit_id, "media": "m1"}, 404),
+        ({"unit_id": kept.unit_id, "media": "../m1"}, 400),
+    ):
+        assert auth_client.get(url, params).status_code == code
+    assert built == [kept.unit_id]
+
+    # Another organization's run is not found, whatever it cites.
+    other = Organization.objects.create(name="Other org")
+    InsightRun.objects.filter(id=created["run_id"]).update(organization=other)
+    assert (
+        auth_client.get(url, {"unit_id": kept.unit_id, "media": "m1"}).status_code
+        == 404
+    )
+    assert built == [kept.unit_id]
+
+
+@pytest.mark.django_db
 def test_saved_reports_list_their_latest_run(auth_client, observe_project):
     created = auth_client.post(
         RUNS, new_run_body(observe_project), format="json"

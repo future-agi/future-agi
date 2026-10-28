@@ -57229,6 +57229,29 @@ export const TracerInsightsRunsAskCreateResponse = zod.object({
 });
 
 /**
+ * An image an analysed unit's evidence cites, as the agent viewed it
+(at most 1,568 px on its longest side and 5 MiB), for the example
+panel. Only a unit of this organization's run that the report kept,
+and only media its evidence names.
+ */
+export const TracerInsightsRunsMediaListParams = zod.object({
+  run_id: zod.string(),
+});
+
+export const tracerInsightsRunsMediaListQueryUnitIdMax = 255;
+
+export const tracerInsightsRunsMediaListQueryMediaRegExp = new RegExp(
+  "^m\\d{1,6}$",
+);
+
+export const TracerInsightsRunsMediaListQueryParams = zod.object({
+  unit_id: zod.string().min(1).max(tracerInsightsRunsMediaListQueryUnitIdMax),
+  media: zod.string().min(1).regex(tracerInsightsRunsMediaListQueryMediaRegExp),
+});
+
+export const TracerInsightsRunsMediaListResponse = zod.instanceof(File);
+
+/**
  * Analysed units of a run, optionally one category's, oldest first.
  */
 export const TracerInsightsRunsUnitsListParams = zod.object({

@@ -444,6 +444,52 @@ def test_later_runs_classify_into_the_frozen_categories(report, user, model, loa
 
 
 @pytest.mark.django_db
+def test_a_v2_unit_keeps_its_conversation_to_show(report, user, monkeypatch):
+    """The agent reads a v2 unit itself; what prepare keeps is for the
+    example panel, so it is the unit's turns, not only its last answer."""
+    turns = "\n\n".join(
+        f"[Turn {n}] User: Is field {n} included?\nAssistant: Yes, field {n} is."
+        for n in range(1, 31)
+    )
+    asked = []
+
+    def load_units(unit, project_id, unit_ids, since, until, *, keep_empty=False):
+        asked.append(keep_empty)
+        return {
+            unit_ids[0]: UnitText(
+                unit_id=unit_ids[0],
+                content=turns,
+                output="Yes, field 30 is.",
+                time=datetime(2026, 10, 2, tzinfo=UTC),
+            ),
+            unit_ids[1]: UnitText(unit_id=unit_ids[1]),
+        }
+
+    monkeypatch.setattr(pipeline, "load_units", load_units)
+    run = pipeline.create_run(
+        config=report,
+        scope={"window": WINDOW, "preset": "Custom"},
+        population=[{"id": "long-0"}, {"id": "spans-only-0"}],
+        sample_size=10,
+        user=user,
+    )
+    run.settings = {
+        **run.settings,
+        "engine": {"kind": "omega", "contract": agent.CONTRACT_V2},
+    }
+    run.save(update_fields=["settings"])
+
+    ready = pipeline.prepare(str(run.id))
+
+    units = units_of(run)
+    assert asked == [True] and len(ready) == 2
+    assert units["long-0"].content == turns
+    # A unit whose roots hold no text is still read, with nothing to show.
+    assert units["spans-only-0"].status == "pending"
+    assert units["spans-only-0"].content == ""
+
+
+@pytest.mark.django_db
 def test_a_retried_finish_does_not_write_or_charge_the_report_twice(
     report, user, model, loaded, monkeypatch
 ):
