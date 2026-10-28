@@ -232,7 +232,8 @@ describe.each([
   ["voice", "call"],
   ["text", "conversation"],
 ])("run detail header on a %s run", (agentType, unit) => {
-  it('subline reads "N scenarios × K repeats · finished 2m ago" with duration and cost', () => {
+  it('subline reads "N scenarios × K repeats · 2m ago"; run time and cost sit behind the info icon', async () => {
+    const user = userEvent.setup();
     useRunDetail.mockReturnValue({
       identity: identity(),
       stats: stats({ agentType }),
@@ -243,13 +244,17 @@ describe.each([
     expect(screen.getByText("Run 3")).toBeInTheDocument();
     const subline = screen.getByTestId("run-subline");
     expect(subline).toHaveTextContent(
-      "Refund Copilot · agent v2 · 4 scenarios × 3 repeats · finished 2m ago",
+      "Refund Copilot · agent v2 · 4 scenarios × 3 repeats · 2m ago",
     );
-    expect(subline).toHaveTextContent("took 10m 30s");
-    expect(subline).toHaveTextContent("cost $1.20");
+    expect(subline).not.toHaveTextContent(/finished|took|cost/);
+
+    await user.hover(screen.getByLabelText("Run time and cost"));
+    expect(await screen.findByText("Took 10m 30s")).toBeInTheDocument();
+    expect(screen.getByText("Cost $1.20")).toBeInTheDocument();
   });
 
-  it("subline shows a dash for a cost the API doesn't send", () => {
+  it("the info hover shows a dash for a cost the API doesn't send", async () => {
+    const user = userEvent.setup();
     useRunDetail.mockReturnValue({
       identity: identity({ trials: 1 }),
       stats: stats({ agentType, cost: null }),
@@ -258,9 +263,10 @@ describe.each([
     renderDetail();
 
     const subline = screen.getByTestId("run-subline");
-    expect(subline).toHaveTextContent("12 scenarios · finished 2m ago");
+    expect(subline).toHaveTextContent("12 scenarios · 2m ago");
     expect(subline).not.toHaveTextContent("repeats");
-    expect(subline).toHaveTextContent("cost -");
+    await user.hover(screen.getByLabelText("Run time and cost"));
+    expect(await screen.findByText("Cost -")).toBeInTheDocument();
   });
 
   it('a live run shows the progress bar and "x/y done · P passed · F failed · elapsed"', () => {
@@ -409,21 +415,26 @@ describe("run detail header", () => {
     expect(listMatchingCalls).not.toHaveBeenCalled();
   });
 
-  it("offers no header re-run on a run with nothing failing and calls to tick", () => {
+  it("offers the whole-run Re-run on a run with nothing failing", () => {
     useRunDetail.mockReturnValue({
       identity: identity(),
       stats: stats({ failed: 0, passed: 12 }),
       isLoading: false,
     });
     renderDetail({ onStartRun: vi.fn() });
-    expect(screen.queryByRole("button", { name: /Re-run/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "Re-run" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Re-run what didn't pass" }),
+    ).toBeNull();
   });
 
-  it("Share menu: Export (real) first, read-only link and PDF flagged", async () => {
+  it("Share is an icon button; its menu has Export (real) first, read-only link and PDF flagged", async () => {
     const user = userEvent.setup();
     renderDetail();
 
-    await user.click(screen.getByRole("button", { name: "Share" }));
+    const share = screen.getByRole("button", { name: "Share" });
+    expect(share).not.toHaveTextContent("Share");
+    await user.click(share);
     const items = screen.getAllByRole("menuitem");
     expect(items[0]).toHaveTextContent("Export results");
     expect(within(items[0]).queryByLabelText("UI only")).toBeNull();

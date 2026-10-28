@@ -265,11 +265,11 @@ export default function RunDetail({
       );
   };
 
-  // A run whose calls carry their scenario re-runs the failing ones; one whose
-  // calls don't (made before calls carried it) can only re-run whole.
-  // Nothing shows until the table has said which.
+  // A run whose calls carry their scenario re-runs the failing ones; any other
+  // run (nothing failed, or calls made before they carried their scenario)
+  // re-runs whole. Nothing shows until the table has said which.
   const rerunFailing = hasTickableCalls === true && stats.failed > 0;
-  const rerunWhole = hasTickableCalls === false;
+  const rerunWhole = hasTickableCalls !== null && !rerunFailing;
   const rerunDisabledReason = live
     ? "Wait for this run to finish before re-running it"
     : runStarting
@@ -356,7 +356,12 @@ export default function RunDetail({
             {identity || !runLoading ? (
               <Typography
                 noWrap
-                sx={{ typography: "s1_2", fontWeight: 700, flexShrink: 0 }}
+                sx={{
+                  fontSize: 16,
+                  lineHeight: "24px",
+                  fontWeight: 600,
+                  flexShrink: 0,
+                }}
               >
                 {identity ? `Run ${identity.ordinal}` : "Run"}
               </Typography>
@@ -397,12 +402,10 @@ export default function RunDetail({
                 }`,
               )}
             {finished && finishedLabel
-              ? dot(`finished ${finishedLabel}`)
+              ? dot(finishedLabel)
               : startedLabel
                 ? dot(`started ${startedLabel}`)
                 : null}
-            {finished && dot(`took ${tookLabel ?? "-"}`)}
-            {identity && dot(`cost ${costLabel(stats.cost)}`)}
             {notScored > 0 &&
               dot(
                 <CustomTooltip
@@ -433,6 +436,38 @@ export default function RunDetail({
               )}
             {showProvenance && (
               <UiOnlyFlag sx={{ ml: 0.75, verticalAlign: "middle" }} />
+            )}
+            {/* What the run took and cost: one hover, not two more clauses. */}
+            {identity && (
+              <CustomTooltip
+                show
+                arrow
+                size="small"
+                placement="bottom-start"
+                title={
+                  <Box sx={{ "& > div": { py: 0.125 } }}>
+                    {finished && <div>{`Took ${tookLabel ?? "-"}`}</div>}
+                    <div>{`Cost ${costLabel(stats.cost)}`}</div>
+                  </Box>
+                }
+              >
+                <Box
+                  component="span"
+                  aria-label="Run time and cost"
+                  sx={{
+                    display: "inline-flex",
+                    verticalAlign: "middle",
+                    ml: 0.75,
+                    cursor: "default",
+                  }}
+                >
+                  <Iconify
+                    icon="solar:info-circle-linear"
+                    width={14}
+                    sx={{ color: "text.subtitle" }}
+                  />
+                </Box>
+              </CustomTooltip>
             )}
           </Typography>
         </Box>

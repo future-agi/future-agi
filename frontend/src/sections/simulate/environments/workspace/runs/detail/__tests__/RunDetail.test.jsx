@@ -928,12 +928,33 @@ describe("RunDetail", () => {
     });
     renderDetail({ onStartRun: vi.fn() });
 
-    // The header re-runs the failing scenarios only; whole runs go through
-    // the ticked calls.
+    // With failures, the header's one click re-runs them; the whole run is
+    // behind the caret.
     expect(screen.queryByRole("button", { name: "Re-run" })).toBeNull();
     expect(
       screen.getByRole("button", { name: "Re-run what didn't pass" }),
     ).toBeInTheDocument();
+  });
+
+  it("offers Re-run for the whole run when nothing failed", async () => {
+    stubTickable = true;
+    const user = userEvent.setup();
+    const onStartRun = vi.fn();
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: { ...STATS, failed: 0 },
+      isLoading: false,
+    });
+    renderDetail({ onStartRun });
+
+    expect(
+      screen.queryByRole("button", { name: "Re-run what didn't pass" }),
+    ).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Re-run" }));
+    await user.click(
+      screen.getByRole("menuitem", { name: /Run as configured now/ }),
+    );
+    expect(onStartRun).toHaveBeenCalledWith(["scenario-a", "scenario-b"], 3);
   });
 
   it("re-runs the whole run from the header when no call can be ticked", async () => {

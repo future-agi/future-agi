@@ -13,6 +13,7 @@ import {
 } from "@mui/material";
 
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import { exportRunResults } from "src/api/simulate-environments/runAnalytics";
 
 import UiOnlyFlag from "../../../components/UiOnlyFlag";
@@ -84,29 +85,31 @@ export default function ShareMenu({ executionId, disabled = false }) {
 
   return (
     <>
-      <Button
-        variant="outlined"
+      <CustomTooltip
+        show
+        arrow
         size="small"
-        onClick={(e) => setAnchor(e.currentTarget)}
-        disabled={disabled || exporting}
-        startIcon={<Iconify icon="solar:share-linear" width={15} />}
-        endIcon={
-          <Iconify
-            icon="solar:alt-arrow-down-linear"
-            width={12}
-            sx={{ color: "text.subtitle" }}
-          />
-        }
-        sx={{
-          color: "text.primary",
-          borderColor: "divider",
-          typography: "s2",
-          fontWeight: 600,
-          flexShrink: 0,
-        }}
+        title={exporting ? "Exporting…" : "Share"}
       >
-        {exporting ? "Exporting…" : "Share"}
-      </Button>
+        {/* A disabled button fires no hover events; the box carries the tip. */}
+        <Box sx={{ display: "flex", flexShrink: 0 }}>
+          <Button
+            variant="outlined"
+            size="small"
+            aria-label="Share"
+            onClick={(e) => setAnchor(e.currentTarget)}
+            disabled={disabled || exporting}
+            sx={{
+              minWidth: 0,
+              px: 0.75,
+              color: "text.primary",
+              borderColor: "divider",
+            }}
+          >
+            <Iconify icon="solar:share-linear" width={16} />
+          </Button>
+        </Box>
+      </CustomTooltip>
       <Menu
         anchorEl={anchor}
         open={!!anchor}
