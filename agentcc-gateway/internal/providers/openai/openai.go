@@ -379,9 +379,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 			var chunk models.StreamChunk
 			if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 				slog.Warn("failed to parse stream chunk",
-					"error", err,
-					"data", data,
-					"provider", p.id,
+					"provider", p.id, "model", actualModel, "status", resp.StatusCode,
 				)
 				continue
 			}

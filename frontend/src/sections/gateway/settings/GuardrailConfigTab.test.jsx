@@ -11,6 +11,45 @@ vi.mock("src/utils/logger", () => ({
 }));
 
 describe("GuardrailConfigTab", () => {
+  it.each([true, false])(
+    "preserves retry controls when toggling a rule with enabled=%s",
+    (enabled) => {
+      const onChange = vi.fn();
+      const check = {
+        enabled,
+        action: "block",
+        stage: "post",
+        mode: "sync",
+        config: {
+          stage: "post",
+          on_block: "reflect",
+          reflect_max_attempts: 2,
+          reflect_debug: true,
+          words: ["unsafe"],
+          mode: "provider-mode",
+          api_key: "__encrypted__",
+          custom_option: { keep: true },
+        },
+      };
+      render(
+        <GuardrailConfigTab
+          guardrails={{ checks: { "keyword-blocklist": check } }}
+          onChange={onChange}
+        />,
+      );
+      const card = screen
+        .getByText("Keyword Blocklist")
+        .closest(".MuiCard-root");
+      fireEvent.click(within(card).getByRole("checkbox"));
+
+      expect(onChange).toHaveBeenCalledWith({
+        checks: {
+          "keyword-blocklist": { ...check, enabled: !enabled },
+        },
+      });
+    },
+  );
+
   it("shows keyword input and saves keyword-blocklist words", async () => {
     const onChange = vi.fn();
 

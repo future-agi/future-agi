@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	gatewayadmin "github.com/futureagi/agentcc-gateway/internal/contracts/generated"
+	"github.com/futureagi/agentcc-gateway/internal/guardrails"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
@@ -78,18 +79,20 @@ func gatewayContractOrgConfigMapToTenant(configs map[string]*gatewayadmin.OrgCon
 
 // OrgConfigHandlers provides admin CRUD for per-org gateway configurations.
 type OrgConfigHandlers struct {
-	store            *tenant.Store
-	adminToken       string
-	orgProviderCache *providers.OrgProviderCache // nil-safe
-	onConfigChange   func(orgID string)          // called after org config changes (e.g. invalidate caches)
+	store                    *tenant.Store
+	adminToken               string
+	orgProviderCache         *providers.OrgProviderCache // nil-safe
+	onConfigChange           func(orgID string)          // called after org config changes (e.g. invalidate caches)
+	validateReflectionConfig func(*tenant.OrgConfig) error
 }
 
 // NewOrgConfigHandlers creates org config admin handlers.
 func NewOrgConfigHandlers(store *tenant.Store, adminToken string, orgProviderCache *providers.OrgProviderCache) *OrgConfigHandlers {
 	return &OrgConfigHandlers{
-		store:            store,
-		adminToken:       adminToken,
-		orgProviderCache: orgProviderCache,
+		store:                    store,
+		adminToken:               adminToken,
+		orgProviderCache:         orgProviderCache,
+		validateReflectionConfig: guardrails.NewPlugin(nil, nil, nil, nil, nil).ValidateOrgReflectionConfig,
 	}
 }
 
@@ -137,6 +140,12 @@ func (h *OrgConfigHandlers) SetOrgConfig(w http.ResponseWriter, r *http.Request)
 	cfg, err := gatewayContractOrgConfigToTenant(&contractCfg)
 	if err != nil {
 		models.WriteError(w, models.ErrBadRequest("invalid_contract", "Invalid gateway org config: "+err.Error()))
+		return
+	}
+
+	if err := h.validateReflectionConfig(cfg); err != nil {
+		slog.Warn("org config rejected", "org_id", orgID, "reason", "invalid_guardrail_config")
+		models.WriteError(w, models.ErrBadRequest("invalid_guardrail_config", "Invalid guardrail retry configuration"))
 		return
 	}
 

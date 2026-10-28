@@ -95,14 +95,14 @@ func buildRecord(rc *models.RequestContext, cfg config.RequestLoggingConfig) Tra
 	rec.AuthKeyName = rc.Metadata["auth_key_name"]
 	rec.AuthKeyOwner = rc.Metadata["auth_key_owner"]
 
-	// Response metrics.
+	// Response metrics survive blocked candidates without retaining their body.
+	if usage := rc.ResponseUsage(); usage != nil {
+		rec.PromptTokens = usage.PromptTokens
+		rec.CompletionTokens = usage.CompletionTokens
+		rec.TotalTokens = usage.TotalTokens
+	}
 	if rc.Response != nil {
 		rec.StatusCode = 200
-		if rc.Response.Usage != nil {
-			rec.PromptTokens = rc.Response.Usage.PromptTokens
-			rec.CompletionTokens = rc.Response.Usage.CompletionTokens
-			rec.TotalTokens = rc.Response.Usage.TotalTokens
-		}
 		if len(rc.Response.Choices) > 0 {
 			rec.FinishReason = rc.Response.Choices[0].FinishReason
 		}

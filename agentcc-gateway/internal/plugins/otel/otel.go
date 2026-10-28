@@ -233,8 +233,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 	}
 
 	// Token usage.
-	if rc.Response != nil && rc.Response.Usage != nil {
-		usage := rc.Response.Usage
+	if usage := rc.ResponseUsage(); usage != nil {
 		span.SetAttribute("gen_ai.usage.input_tokens", usage.PromptTokens)
 		span.SetAttribute("gen_ai.usage.output_tokens", usage.CompletionTokens)
 		span.SetAttribute("gen_ai.usage.total_tokens", usage.PromptTokens+usage.CompletionTokens)
@@ -337,9 +336,9 @@ func classifyEndpoint(endpointType string) (kind, operation string) {
 
 // recordMetrics records metrics for non-sampled requests.
 func (p *Plugin) recordMetrics(rc *models.RequestContext) {
-	if rc.Response != nil && rc.Response.Usage != nil {
-		p.metrics.InputTokens.Add(int64(rc.Response.Usage.PromptTokens))
-		p.metrics.OutputTokens.Add(int64(rc.Response.Usage.CompletionTokens))
+	if usage := rc.ResponseUsage(); usage != nil {
+		p.metrics.InputTokens.Add(int64(usage.PromptTokens))
+		p.metrics.OutputTokens.Add(int64(usage.CompletionTokens))
 	}
 	if cacheStatus, ok := rc.Metadata["cache_status"]; ok {
 		if strings.HasPrefix(cacheStatus, "hit") {

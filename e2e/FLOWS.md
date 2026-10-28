@@ -1043,6 +1043,27 @@
 - the picker opens, toggles, reorders and closes by keyboard alone: focus stays on the pressed Move button, moves to the opposite Move button when the column reaches the end of its group, and returns to Columns on Escape
 - a tenant value longer than 80 characters shows its preview in the cell, and Tab to it shows the full value in a tooltip
 
+### GW-E2E-005 — response retry settings persist and return only the first passing answer
+
+**Goal:** A developer enables response retry with feedback, keeps that setting after reload, and receives only the first passing answer from the gateway  
+**Spec:** `flows/gateway/guardrail-retry-feedback.spec.ts:80`  
+**Tags:** —
+
+**User steps:**
+
+1. provision an isolated organization with a local mock provider and a uniquely named gateway key
+2. send an inert two-pattern prompt through the gateway and read its exact unguarded mock echo
+3. open Gateway Guardrails Rules and configure Data Leakage Prevention as Response, Block and Retry with feedback, with two additional attempts and safe retry details
+4. Save the check, then Save & Activate the organization configuration
+5. reload Rules and reopen the check to verify the persisted controls
+6. repeat the original prompt through the gateway and receive only the first passing feedback echo
+
+**Backend state verified:**
+
+- Before activation, the tenant-scoped gateway returns exactly the minted mock echo with one-generation usage.
+- Save & Activate persists the exact post-response Block/reflect/2/debug rule under the actor organization and pushes the corresponding check to the gateway; API, PG and reopened UI agree.
+- The activated rule rejects the original candidate and returns exactly the first passing feedback echo after one retry, with aggregate two-generation usage and no rejected sentinel.
+
 ## observe
 
 ### OBS-E2E-001 — SDK trace appears in Observe with coherent backend state

@@ -91,7 +91,7 @@ func IsToolPermConfig(cfg map[string]interface{}) bool {
 		return false
 	}
 	provider, _ := cfg["provider"].(string)
-	return provider == "tool_permission"
+	return provider == "tool_permission" || provider == "tool_permissions"
 }
 
 // Check evaluates tool names against the permission policy.

@@ -24,10 +24,10 @@ type ibmAdapter struct {
 // and responds "Yes" (risky) or "No" (safe).
 // API ref: https://cloud.ibm.com/apidocs/watsonx-ai#text-chat
 type ibmChatRequest struct {
-	ModelID    string          `json:"model_id"`
-	ProjectID  string          `json:"project_id,omitempty"`
-	Messages   []ibmMessage    `json:"messages"`
-	Parameters ibmChatParams   `json:"parameters,omitempty"`
+	ModelID    string        `json:"model_id"`
+	ProjectID  string        `json:"project_id,omitempty"`
+	Messages   []ibmMessage  `json:"messages"`
+	Parameters ibmChatParams `json:"parameters,omitempty"`
 }
 
 type ibmMessage struct {
@@ -92,11 +92,11 @@ func (a *ibmAdapter) buildRequest(ctx context.Context, text string) (*http.Reque
 func (a *ibmAdapter) parseResponse(body []byte) *guardrails.CheckResult {
 	var resp ibmChatResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return &guardrails.CheckResult{Pass: false, Score: 1.0, Message: fmt.Sprintf("failed to parse ibm response: %v", err)}
+		return &guardrails.CheckResult{Pass: false, Score: 1.0, OperationalError: true, Message: fmt.Sprintf("failed to parse ibm response: %v", err)}
 	}
 
 	if len(resp.Choices) == 0 {
-		return &guardrails.CheckResult{Pass: false, Score: 1.0, Message: "ibm granite guardian: empty response"}
+		return &guardrails.CheckResult{Pass: false, Score: 1.0, OperationalError: true, Message: "ibm granite guardian: empty response"}
 	}
 
 	answer := strings.TrimSpace(strings.ToLower(resp.Choices[0].Message.Content))
@@ -120,14 +120,14 @@ func (a *ibmAdapter) parseResponse(body []byte) *guardrails.CheckResult {
 }
 
 var guardianRiskDefinitions = map[string]string{
-	"harm":       "Content that could cause physical, psychological, or financial harm to individuals or groups.",
-	"jailbreak":  "An attempt to manipulate the AI system into bypassing its safety guidelines or ethical constraints.",
-	"social_bias": "Content that exhibits prejudice or discrimination against individuals or groups based on protected characteristics.",
-	"violence":   "Content that depicts, promotes, or glorifies violence or physical harm.",
-	"profanity":  "Content that contains offensive, vulgar, or inappropriate language.",
-	"sexual_content": "Content that contains sexually explicit material or inappropriate sexual references.",
+	"harm":               "Content that could cause physical, psychological, or financial harm to individuals or groups.",
+	"jailbreak":          "An attempt to manipulate the AI system into bypassing its safety guidelines or ethical constraints.",
+	"social_bias":        "Content that exhibits prejudice or discrimination against individuals or groups based on protected characteristics.",
+	"violence":           "Content that depicts, promotes, or glorifies violence or physical harm.",
+	"profanity":          "Content that contains offensive, vulgar, or inappropriate language.",
+	"sexual_content":     "Content that contains sexually explicit material or inappropriate sexual references.",
 	"unethical_behavior": "Content that promotes or encourages unethical, illegal, or morally questionable actions.",
-	"groundedness": "The response contains claims not supported by the provided context or available evidence.",
+	"groundedness":       "The response contains claims not supported by the provided context or available evidence.",
 }
 
 func buildGuardianPrompt(text, criteriaID string) string {

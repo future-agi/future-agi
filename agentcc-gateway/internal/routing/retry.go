@@ -62,6 +62,11 @@ func (r *Retryer) ShouldRetry(err error) bool {
 		return false
 	}
 
+	var admission *models.AdmissionError
+	if errors.As(err, &admission) {
+		return false
+	}
+
 	var apiErr *models.APIError
 	if errors.As(err, &apiErr) {
 		return r.codes[apiErr.Status]

@@ -88,11 +88,11 @@ func (a *dynamoaiAdapter) buildRequest(ctx context.Context, text string) (*http.
 func (a *dynamoaiAdapter) parseResponse(body []byte) *guardrails.CheckResult {
 	var resp dynamoaiResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return &guardrails.CheckResult{Pass: false, Score: 1.0, Message: fmt.Sprintf("failed to parse dynamoai response: %v", err)}
+		return &guardrails.CheckResult{Pass: false, Score: 1.0, OperationalError: true, Message: fmt.Sprintf("failed to parse dynamoai response: %v", err)}
 	}
 
 	if resp.Error != "" {
-		return &guardrails.CheckResult{Pass: false, Score: 1.0, Message: fmt.Sprintf("dynamoai error: %s", resp.Error)}
+		return &guardrails.CheckResult{Pass: false, Score: 1.0, OperationalError: true, Message: fmt.Sprintf("dynamoai error: %s", resp.Error)}
 	}
 
 	if resp.FinalAction == "" || resp.FinalAction == "NONE" {

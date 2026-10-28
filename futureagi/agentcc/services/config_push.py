@@ -15,6 +15,11 @@ from agentcc.contracts.gateway_admin import (
 from agentcc.contracts.gateway_admin import AlertRuleConfig as GatewayAlertRuleConfig
 from agentcc.contracts.gateway_admin import OrgConfig as GatewayOrgConfig
 from agentcc.contracts.gateway_admin import ProviderConfig as GatewayProviderConfig
+from agentcc.guardrail_options import (
+    GuardrailOptionsError,
+    guardrail_wire_config,
+    validate_guardrail_collection,
+)
 from agentcc.models import AgentccOrgConfig
 from agentcc.org_config_defaults import normalize_cache_config
 from agentcc.services.gateway_client import GatewayClientError, get_gateway_client
@@ -203,6 +208,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
     if not guardrails_data:
         return guardrails_data
 
+    validate_guardrail_collection(guardrails_data)
     guardrails_data = copy.deepcopy(guardrails_data)
     raw_checks = guardrails_data.get("checks")
     rules = guardrails_data.get("rules")
@@ -216,7 +222,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
         for rule in raw_checks:
             rule_name = rule.get("name", "")
             registry_name = _RULE_TO_REGISTRY.get(rule_name, rule_name)
-            cfg = dict(rule.get("config") or {})
+            cfg = guardrail_wire_config(rule, registry_name)
             if rule_name in _RULE_PROVIDER_DEFAULTS and "provider" not in cfg:
                 cfg["provider"] = _RULE_PROVIDER_DEFAULTS[rule_name]
             _normalize_eval_ids(cfg)
@@ -253,7 +259,14 @@ def _transform_guardrails(guardrails_data, org_id=None):
                 if isinstance(cfg, dict)
                 else cfg
             )
-            inner = clean_cfg.get("config") if isinstance(clean_cfg, dict) else None
+            inner = guardrail_wire_config(clean_cfg, registry_name)
+            clean_cfg["config"] = inner
+            if inner.get("on_block") == "reflect":
+                clean_cfg.setdefault("action", "block")
+            # Stage is carried in config only when explicit or newly opted in.
+            # Dynamic checks run synchronously; these UI fields are not wire keys.
+            for field in ("stage", "phase", "mode"):
+                clean_cfg.pop(field, None)
             _normalize_eval_ids(inner)
             mapped[registry_name] = clean_cfg
         if org_id:
@@ -271,7 +284,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
     for rule in rules:
         rule_name = rule.get("name", "")
         registry_name = _RULE_TO_REGISTRY.get(rule_name, rule_name)
-        cfg = dict(rule.get("config") or {})
+        cfg = guardrail_wire_config(rule, registry_name)
         if rule_name in _RULE_PROVIDER_DEFAULTS and "provider" not in cfg:
             cfg["provider"] = _RULE_PROVIDER_DEFAULTS[rule_name]
         _normalize_eval_ids(cfg)
@@ -675,6 +688,10 @@ def validate_org_config(config):
     """
     try:
         _build_payload(str(config.organization_id), config)
+    except GuardrailOptionsError as error:
+        raise OrgConfigRejected(
+            f"The gateway cannot accept this config. {error}"
+        ) from error
     except ValidationError as e:
         fields = "; ".join(
             f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}"

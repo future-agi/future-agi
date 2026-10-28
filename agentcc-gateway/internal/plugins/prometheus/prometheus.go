@@ -24,8 +24,8 @@ func New(registry *metrics.Registry, enabled bool) *Plugin {
 	}
 }
 
-func (p *Plugin) Name() string     { return "prometheus" }
-func (p *Plugin) Priority() int    { return 998 }
+func (p *Plugin) Name() string         { return "prometheus" }
+func (p *Plugin) Priority() int        { return 998 }
 func (p *Plugin) IsPostParallel() bool { return true } // Counter updates, safe to parallelize.
 
 // ProcessRequest is a no-op for the Prometheus plugin.
@@ -69,24 +69,27 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		p.registry.CounterInc("agentcc_errors_total", "Total errors", modelProviderLabels)
 	}
 
-	// Token usage.
-	if rc.Response != nil && rc.Response.Usage != nil {
-		usage := rc.Response.Usage
-		if usage.PromptTokens > 0 {
-			p.registry.CounterAdd("agentcc_tokens_input_total", "Total input tokens", modelProviderLabels, int64(usage.PromptTokens))
+	// One request record, but tokens and cost retain the actual serving model
+	// for every attempt, including blocked candidates and transport fallbacks.
+	recordUsage := func(labels map[string]string, usage *models.Usage, costStr string) {
+		if usage != nil {
+			if usage.PromptTokens > 0 {
+				p.registry.CounterAdd("agentcc_tokens_input_total", "Total input tokens", labels, int64(usage.PromptTokens))
+			}
+			if usage.CompletionTokens > 0 {
+				p.registry.CounterAdd("agentcc_tokens_output_total", "Total output tokens", labels, int64(usage.CompletionTokens))
+			}
 		}
-		if usage.CompletionTokens > 0 {
-			p.registry.CounterAdd("agentcc_tokens_output_total", "Total output tokens", modelProviderLabels, int64(usage.CompletionTokens))
+		if cost, err := strconv.ParseFloat(costStr, 64); err == nil && cost > 0 {
+			p.registry.CounterAdd("agentcc_cost_microdollars_total", "Total cost in microdollars", labels, int64(cost*1_000_000))
 		}
 	}
-
-	// Cost.
-	if costStr, ok := rc.Metadata["cost"]; ok {
-		if cost, err := strconv.ParseFloat(costStr, 64); err == nil && cost > 0 {
-			// Store as microdollars for integer precision.
-			microdollars := int64(cost * 1_000_000)
-			p.registry.CounterAdd("agentcc_cost_microdollars_total", "Total cost in microdollars", modelProviderLabels, microdollars)
+	if rc.Attempts != nil && len(rc.Attempts.Attempts) > 0 {
+		for _, a := range rc.Attempts.Attempts {
+			recordUsage(map[string]string{"model": a.Model, "provider": a.Provider}, a.Usage, a.Cost)
 		}
+	} else {
+		recordUsage(modelProviderLabels, rc.ResponseUsage(), rc.Metadata["cost"])
 	}
 
 	// Cache status.

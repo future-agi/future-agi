@@ -70,6 +70,12 @@ func (f *Failover) ShouldFailover(err error) bool {
 		return false
 	}
 
+	// A local quota denial is not upstream overload; switching providers cannot help.
+	var admission *models.AdmissionError
+	if errors.As(err, &admission) {
+		return false
+	}
+
 	// Check APIError status code.
 	var apiErr *models.APIError
 	if errors.As(err, &apiErr) {

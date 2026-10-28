@@ -1,5 +1,9 @@
 from rest_framework import serializers
 
+from agentcc.guardrail_options import (
+    GuardrailOptionsError,
+    validate_guardrail_collection,
+)
 from agentcc.models import AgentccOrgConfig
 from agentcc.org_config_defaults import (
     default_cache_config,
@@ -81,8 +85,10 @@ class AgentccOrgConfigWriteSerializer(serializers.Serializer):
     )
 
     def validate_guardrails(self, value):
-        if not isinstance(value, dict):
-            raise serializers.ValidationError("guardrails must be a JSON object")
+        try:
+            validate_guardrail_collection(value)
+        except GuardrailOptionsError as error:
+            raise serializers.ValidationError(str(error)) from error
         return value
 
     def validate_routing(self, value):

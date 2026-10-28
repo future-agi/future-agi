@@ -3,8 +3,9 @@ import copy
 import structlog
 from rest_framework import serializers
 
-from integrations.services.credentials import CredentialManager
+from agentcc.guardrail_options import GuardrailOptionsError, validate_guardrail_options
 from agentcc.models.guardrail_policy import AgentccGuardrailPolicy
+from integrations.services.credentials import CredentialManager
 
 logger = structlog.get_logger(__name__)
 
@@ -93,6 +94,12 @@ class AgentccGuardrailPolicySerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     f"Check at index {i} must have a 'name' field"
                 )
+            try:
+                validate_guardrail_options(check)
+            except GuardrailOptionsError as error:
+                raise serializers.ValidationError(
+                    f"Check at index {i}: {error}"
+                ) from error
         return value
 
     def validate_scope(self, value):

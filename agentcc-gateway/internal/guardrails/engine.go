@@ -8,15 +8,18 @@ import (
 
 	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/guardrails/policy"
+	"github.com/futureagi/agentcc-gateway/internal/reflexion"
 )
 
 // resolvedRule is a guardrail bound to its config-driven parameters.
 type resolvedRule struct {
-	guardrail Guardrail
-	mode      string // "sync" or "async"
-	action    Action
-	threshold float64
-	timeout   time.Duration
+	guardrail  Guardrail
+	mode       string // "sync" or "async"
+	action     Action
+	threshold  float64
+	timeout    time.Duration
+	reflection reflexion.Policy
+	configErr  error
 }
 
 // maxAsyncGuardrails limits the number of concurrent async guardrail goroutines.
@@ -29,6 +32,7 @@ type Engine struct {
 	failOpen       bool
 	defaultTimeout time.Duration
 	asyncSem       chan struct{} // bounds async goroutine count
+	configErr      error
 }
 
 // NewEngine creates a guardrail engine from config and a registry of guardrail implementations.
@@ -44,7 +48,10 @@ func NewEngine(cfg config.GuardrailsConfig, registry map[string]Guardrail) *Engi
 
 	for _, rule := range cfg.Rules {
 		g, ok := registry[rule.Name]
-		if !ok {
+		if !ok || g == nil {
+			if rule.Config["on_block"] == "reflect" && e.configErr == nil {
+				e.configErr = fmt.Errorf("reflect check %q has no registered implementation", rule.Name)
+			}
 			slog.Warn("guardrail not found in registry, skipping",
 				"name", rule.Name,
 			)
@@ -56,12 +63,15 @@ func NewEngine(cfg config.GuardrailsConfig, registry map[string]Guardrail) *Engi
 			timeout = e.defaultTimeout
 		}
 
+		reflection, configErr := reflexion.Validate(rule.Config, rule.Name, rule.Stage, rule.Action, rule.Mode)
 		resolved := resolvedRule{
-			guardrail: g,
-			mode:      rule.Mode,
-			action:    parseAction(rule.Action),
-			threshold: rule.Threshold,
-			timeout:   timeout,
+			reflection: reflection,
+			configErr:  configErr,
+			guardrail:  g,
+			mode:       rule.Mode,
+			action:     parseAction(rule.Action),
+			threshold:  rule.Threshold,
+			timeout:    timeout,
 		}
 
 		switch rule.Stage {
@@ -115,40 +125,26 @@ func (e *Engine) run(ctx context.Context, rules []resolvedRule, input *CheckInpu
 	}
 
 	for _, rule := range rules {
-		// Apply per-key policy overrides.
-		effectiveAction := rule.action
-		effectiveThreshold := rule.threshold
-
-		if p != nil {
-			if ov, ok := p.Overrides[rule.guardrail.Name()]; ok {
-				if ov.Disabled {
-					continue // skip this guardrail for this key
-				}
-				if ov.Action != "" {
-					effectiveAction = parseAction(ov.Action)
-				}
-				if ov.Threshold != nil {
-					effectiveThreshold = *ov.Threshold
-				}
-			}
-		}
-
-		// Apply per-request policy overrides (take precedence over per-key).
-		switch rp {
-		case policy.RequestPolicyLogOnly:
-			effectiveAction = ActionLog
-		case policy.RequestPolicyStrict:
-			effectiveAction = ActionBlock
-			effectiveThreshold = 0
-		}
-
-		if rule.mode == "async" {
-			e.runAsync(rule, input)
+		effectiveAction, effectiveThreshold, enabled := effectiveCheckPolicy(rule.guardrail.Name(), rule.action, rule.threshold, p, rp)
+		if !enabled {
 			continue
 		}
 
+		if rule.mode == "async" {
+			if !input.DeferAsync {
+				e.runAsync(rule, input)
+			}
+			continue
+		}
+
+		// Retry-enabled content checks validate the candidate, not the immutable
+		// prompt. Legacy static rules retain their existing mixed-input behavior.
+		checkInput := input
+		if rule.reflection.Enabled {
+			checkInput = responseOnlyInput(rule.guardrail, input)
+		}
 		// Sync execution with per-guardrail timeout.
-		checkResult := e.runSync(ctx, rule, input)
+		checkResult := e.runSync(ctx, rule, checkInput)
 		if checkResult == nil {
 			continue
 		}
@@ -160,26 +156,37 @@ func (e *Engine) run(ctx context.Context, rules []resolvedRule, input *CheckInpu
 		}
 
 		tg := TriggeredGuardrail{
-			Name:      rule.guardrail.Name(),
-			Score:     checkResult.Score,
-			Threshold: effectiveThreshold,
-			Action:    effectiveAction,
-			Message:   checkResult.Message,
+			Name:             rule.guardrail.Name(),
+			Score:            checkResult.Score,
+			Threshold:        effectiveThreshold,
+			Action:           effectiveAction,
+			Message:          checkResult.Message,
+			OperationalError: checkResult.OperationalError,
+		}
+		if !checkResult.OperationalError && effectiveAction == ActionBlock {
+			tg.Reflection = rule.reflection
 		}
 		result.Triggered = append(result.Triggered, tg)
 
 		switch effectiveAction {
 		case ActionBlock:
 			result.Blocked = true
-			return result // Short-circuit on block.
+			// Continue only while a later reject could still veto repair.
+			if input.Response == nil || !tg.Reflection.Enabled {
+				return result
+			}
 		case ActionWarn:
 			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %s", rule.guardrail.Name(), checkResult.Message))
 		case ActionLog:
+			message := checkResult.Message
+			if input.Response != nil {
+				message = "response check triggered"
+			}
 			slog.Info("guardrail triggered (log mode)",
 				"guardrail", rule.guardrail.Name(),
 				"score", checkResult.Score,
 				"threshold", effectiveThreshold,
-				"message", checkResult.Message,
+				"message", message,
 			)
 		}
 	}
@@ -188,6 +195,12 @@ func (e *Engine) run(ctx context.Context, rules []resolvedRule, input *CheckInpu
 }
 
 func (e *Engine) runSync(ctx context.Context, rule resolvedRule, input *CheckInput) *CheckResult {
+	original := input
+	owned, err := snapshotInput(input)
+	if err != nil {
+		return &CheckResult{Pass: false, Score: 1, Message: "invalid guardrail input", OperationalError: true}
+	}
+	input = owned
 	checkCtx, cancel := context.WithTimeout(ctx, rule.timeout)
 	defer cancel()
 
@@ -214,9 +227,13 @@ func (e *Engine) runSync(ctx context.Context, rule resolvedRule, input *CheckInp
 
 	select {
 	case res := <-ch:
+		if checkCtx.Err() != nil {
+			return e.handleError(rule, checkCtx.Err())
+		}
 		if res.err != nil {
 			return e.handleError(rule, res.err)
 		}
+		applyCheckMutations(original, owned)
 		return res.cr
 	case <-checkCtx.Done():
 		slog.Warn("guardrail timed out",
@@ -228,16 +245,17 @@ func (e *Engine) runSync(ctx context.Context, rule resolvedRule, input *CheckInp
 			return nil // pass
 		}
 		return &CheckResult{
-			Pass:    false,
-			Score:   1.0,
-			Action:  rule.action,
-			Message: fmt.Sprintf("guardrail %q timed out", rule.guardrail.Name()),
+			Pass:             false,
+			Score:            1.0,
+			Action:           rule.action,
+			Message:          fmt.Sprintf("guardrail %q timed out", rule.guardrail.Name()),
+			OperationalError: true,
 		}
 	}
 }
 
 func (e *Engine) runAsync(rule resolvedRule, input *CheckInput) {
-	// Acquire semaphore slot to bound concurrency. Drop if full.
+	// Acquire semaphore slot before cloning the payload. Drop if full.
 	select {
 	case e.asyncSem <- struct{}{}:
 	default:
@@ -247,6 +265,14 @@ func (e *Engine) runAsync(rule resolvedRule, input *CheckInput) {
 		)
 		return
 	}
+
+	owned, err := snapshotInput(input)
+	if err != nil {
+		<-e.asyncSem
+		slog.Warn("async guardrail snapshot failed", "guardrail", rule.guardrail.Name())
+		return
+	}
+	input = owned
 
 	go func() {
 		defer func() { <-e.asyncSem }()
@@ -283,10 +309,11 @@ func (e *Engine) handleError(rule resolvedRule, err error) *CheckResult {
 		return nil
 	}
 	return &CheckResult{
-		Pass:    false,
-		Score:   1.0,
-		Action:  rule.action,
-		Message: fmt.Sprintf("guardrail %q error: %v", rule.guardrail.Name(), err),
+		Pass:             false,
+		Score:            1.0,
+		Action:           rule.action,
+		Message:          fmt.Sprintf("guardrail %q error: %v", rule.guardrail.Name(), err),
+		OperationalError: true,
 	}
 }
 

@@ -262,9 +262,11 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 			chunk, done, err := state.parseStreamPayload(msg)
 			if err != nil {
+				// Exception messages can echo private repair input. Log identifiers
+				// only; the controller sanitizes the returned error separately.
 				slog.Warn("bedrock: error parsing stream event",
-					"error", err,
-					"provider", p.id,
+					"provider", p.id, "model", modelID, "status", resp.StatusCode,
+					"exception", msg.Headers[":message-type"] == "exception",
 				)
 				// Bedrock exceptions are fatal.
 				if msg.Headers[":message-type"] == "exception" {

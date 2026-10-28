@@ -35,11 +35,11 @@ type grayswanMessage struct {
 }
 
 type grayswanResponse struct {
-	Violation                float64                    `json:"violation"`
-	ViolatedRules            []int                      `json:"violated_rules"`
-	Mutation                 bool                       `json:"mutation"`
-	IPI                      bool                       `json:"ipi"`
-	ViolatedRuleDescriptions []grayswanRuleDescription  `json:"violated_rule_descriptions"`
+	Violation                float64                   `json:"violation"`
+	ViolatedRules            []int                     `json:"violated_rules"`
+	Mutation                 bool                      `json:"mutation"`
+	IPI                      bool                      `json:"ipi"`
+	ViolatedRuleDescriptions []grayswanRuleDescription `json:"violated_rule_descriptions"`
 }
 
 type grayswanRuleDescription struct {
@@ -98,7 +98,7 @@ func (a *grayswanAdapter) buildRequest(ctx context.Context, text string) (*http.
 func (a *grayswanAdapter) parseResponse(body []byte) *guardrails.CheckResult {
 	var resp grayswanResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return &guardrails.CheckResult{Pass: false, Score: 1.0, Message: fmt.Sprintf("failed to parse grayswan response: %v", err)}
+		return &guardrails.CheckResult{Pass: false, Score: 1.0, OperationalError: true, Message: fmt.Sprintf("failed to parse grayswan response: %v", err)}
 	}
 
 	if resp.Violation < 0.5 && len(resp.ViolatedRules) == 0 && !resp.IPI {

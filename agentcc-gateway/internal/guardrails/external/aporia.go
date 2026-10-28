@@ -28,8 +28,8 @@ type aporiaMessage struct {
 }
 
 type aporiaResponse struct {
-	Action   string          `json:"action"`
-	Explain  []aporiaExplain `json:"explain_log"`
+	Action  string          `json:"action"`
+	Explain []aporiaExplain `json:"explain_log"`
 }
 
 type aporiaExplain struct {
@@ -63,7 +63,7 @@ func (a *aporiaAdapter) buildRequest(ctx context.Context, text string) (*http.Re
 func (a *aporiaAdapter) parseResponse(body []byte) *guardrails.CheckResult {
 	var resp aporiaResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return &guardrails.CheckResult{Pass: false, Score: 1.0, Message: fmt.Sprintf("failed to parse aporia response: %v", err)}
+		return &guardrails.CheckResult{Pass: false, Score: 1.0, OperationalError: true, Message: fmt.Sprintf("failed to parse aporia response: %v", err)}
 	}
 
 	if resp.Action == "passthrough" || resp.Action == "" {
@@ -87,7 +87,7 @@ func (a *aporiaAdapter) parseResponse(body []byte) *guardrails.CheckResult {
 		Score:   1.0,
 		Message: msg,
 		Details: map[string]interface{}{
-			"action":     resp.Action,
+			"action":      resp.Action,
 			"explain_log": resp.Explain,
 		},
 	}

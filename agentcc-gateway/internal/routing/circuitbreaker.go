@@ -185,6 +185,12 @@ func (cb *CircuitBreaker) isFailure(err error) bool {
 	if err == nil {
 		return false
 	}
+	// A local admission refusal did not execute an upstream call and says
+	// nothing about provider health, even when its wrapped status is 429.
+	var admission *models.AdmissionError
+	if errors.As(err, &admission) {
+		return false
+	}
 	var apiErr *models.APIError
 	if errors.As(err, &apiErr) {
 		return cb.codes[apiErr.Status]

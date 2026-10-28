@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/futureagi/agentcc-gateway/internal/reflexion"
 	"gopkg.in/yaml.v3"
 )
 
@@ -1014,7 +1015,7 @@ func DefaultConfig() *Config {
 			MaxEntries: 10000,
 		},
 		Guardrails: GuardrailsConfig{
-			Enabled:        false,
+			Enabled:        false, // opt-in: set guardrails.enabled: true in YAML to activate
 			FailOpen:       true,
 			DefaultTimeout: 5 * time.Second,
 		},
@@ -1312,6 +1313,12 @@ func (c *Config) Validate() error {
 		}
 		if p.APIFormat == "" {
 			return fmt.Errorf("provider %q: api_format is required", name)
+		}
+	}
+
+	for _, rule := range c.Guardrails.Rules {
+		if _, err := reflexion.Validate(rule.Config, rule.Name, rule.Stage, rule.Action, rule.Mode); err != nil {
+			return fmt.Errorf("guardrail %q: %w", rule.Name, err)
 		}
 	}
 

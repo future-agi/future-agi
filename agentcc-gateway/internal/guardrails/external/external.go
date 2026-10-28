@@ -92,7 +92,7 @@ func New(name string, cfg map[string]interface{}) *ExternalGuardrail {
 	return g
 }
 
-func (g *ExternalGuardrail) Name() string           { return g.name }
+func (g *ExternalGuardrail) Name() string            { return g.name }
 func (g *ExternalGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
 // Check evaluates text against the external provider.
@@ -117,9 +117,10 @@ func (g *ExternalGuardrail) Check(ctx context.Context, input *guardrails.CheckIn
 	respBody, err := g.callProvider(ctx, text)
 	if err != nil {
 		return &guardrails.CheckResult{
-			Pass:    false,
-			Score:   1.0,
-			Message: fmt.Sprintf("external guardrail call failed: %v", err),
+			Pass:             false,
+			Score:            1.0,
+			Message:          fmt.Sprintf("external guardrail call failed: %v", err),
+			OperationalError: true,
 		}
 	}
 

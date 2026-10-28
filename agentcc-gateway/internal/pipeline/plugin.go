@@ -21,6 +21,8 @@ type PluginResult struct {
 	Action   Action
 	Response *models.ChatCompletionResponse
 	Error    *models.APIError
+	// Reflection is private control data, never included in errors or logs.
+	Reflection *ReflectionDecision
 }
 
 // ResultContinue returns a result that continues the pipeline.
@@ -73,6 +75,35 @@ type Plugin interface {
 type PostParallel interface {
 	// IsPostParallel returns true if ProcessResponse is safe to run concurrently.
 	IsPostParallel() bool
+}
+
+// AttemptAccounting plugins settle each actual provider attempt, before response
+// validation can discard its body. They are not run again by final observers.
+type AttemptAccounting interface {
+	IsAttemptAccounting() bool
+}
+
+// RetryAdmission identifies gates that must be checked before additional calls.
+// Authentication, transformations and cache lookup must not be repeated.
+type RetryAdmission interface {
+	IsRetryAdmission() bool
+}
+
+// ResponseValidator is a synchronous security gate, unlike nonfatal observers.
+// ObserveResponse runs asynchronous checks only on the final accepted response.
+type ResponseValidator interface {
+	Plugin
+	BufferResponse(rc *models.RequestContext) bool
+	ReflectionDebug(rc *models.RequestContext) bool
+	ObserveResponse(ctx context.Context, rc *models.RequestContext)
+}
+
+// ReflectionDecision is a failed check's repair allowance. Reason is used only
+// in a private model request, not in headers, metadata, errors, or snapshots.
+type ReflectionDecision struct {
+	MaxAttempts int
+	Reason      string
+	Debug       bool
 }
 
 // SkipOnCacheHit is an optional interface plugins can implement to indicate

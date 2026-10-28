@@ -54,7 +54,7 @@ func (a *azureAdapter) buildRequest(ctx context.Context, text string) (*http.Req
 func (a *azureAdapter) parseResponse(body []byte) *guardrails.CheckResult {
 	var resp azureResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return &guardrails.CheckResult{Pass: false, Score: 1.0, Message: fmt.Sprintf("failed to parse azure response: %v", err)}
+		return &guardrails.CheckResult{Pass: false, Score: 1.0, OperationalError: true, Message: fmt.Sprintf("failed to parse azure response: %v", err)}
 	}
 
 	var triggered []string

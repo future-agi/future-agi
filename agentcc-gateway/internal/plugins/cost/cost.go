@@ -60,8 +60,9 @@ func New(enabled bool, modelDBGetter func() *modeldb.ModelDB, tenantStore *tenan
 	}
 }
 
-func (p *Plugin) Name() string           { return "cost" }
-func (p *Plugin) Priority() int          { return 500 }
+func (p *Plugin) IsAttemptAccounting() bool  { return true }
+func (p *Plugin) Name() string               { return "cost" }
+func (p *Plugin) Priority() int              { return 500 }
 func (p *Plugin) ShouldSkipOnCacheHit() bool { return true } // No cost to calculate on cache hits.
 
 // ProcessRequest is a no-op for the cost plugin.

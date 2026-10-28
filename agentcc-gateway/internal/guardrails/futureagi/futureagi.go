@@ -148,7 +148,7 @@ func New(name string, cfg map[string]interface{}) *FutureAGIGuardrail {
 	return g
 }
 
-func (g *FutureAGIGuardrail) Name() string           { return g.name }
+func (g *FutureAGIGuardrail) Name() string            { return g.name }
 func (g *FutureAGIGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
 // Check evaluates text against the Future AGI evaluation API.
@@ -183,9 +183,10 @@ func (g *FutureAGIGuardrail) Check(ctx context.Context, input *guardrails.CheckI
 	resp, err := g.callAPI(ctx, text)
 	if err != nil {
 		return &guardrails.CheckResult{
-			Pass:    false,
-			Score:   1.0,
-			Message: fmt.Sprintf("futureagi evaluation failed: %v", err),
+			Pass:             false,
+			Score:            1.0,
+			Message:          fmt.Sprintf("futureagi evaluation failed: %v", err),
+			OperationalError: true,
 		}
 	}
 
