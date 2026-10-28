@@ -42,8 +42,15 @@ else
     printf '%s\n' 'Dispatch already attempted. Inspect job status before any new attempt.' >&2; exit 2;
   }
 fi
+driver="$repo/scripts/key-role-checks/run.sh"
+# Optional lane-owned copy of the approved browser recipe; shared harness stays unchanged.
+if [[ -n ${KEY_ROLE_BROWSER_SCRIPTS:-} ]]; then
+  test -f "$KEY_ROLE_BROWSER_SCRIPTS/combined-proof.sh"
+  args+=(--ship "$KEY_ROLE_BROWSER_SCRIPTS")
+  driver="$KEY_ROLE_BROWSER_SCRIPTS/combined-proof.sh"
+fi
 printf 'base=git:%s red=git:%s head=git:%s dev=git:%s\n' "$base" "$red" "$head" "$dev"
-"$cloud" "${args[@]}" -- bash "$repo/scripts/key-role-checks/run.sh" "$repo" "$base" "$red" "$dev" "$head" "$removal" "$history"
+"$cloud" "${args[@]}" -- bash "$driver" "$repo" "$base" "$red" "$dev" "$head" "$removal" "$history"
 printf 'Next: omega-cloud job status --lane %s\n' "$lane"
 printf 'Then: omega-cloud job wait --lane %s --timeout 540\n' "$lane"
 printf 'After completion and result pull: omega-cloud lease release --lane %s\n' "$lane"
