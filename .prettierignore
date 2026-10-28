@@ -8,3 +8,6 @@ deploy/helm/futureagi/README.md
 # Written by scripts/generate-mcp-tools.py; its `--check` (backend-contracts CI)
 # fails on any other formatting.
 futureagi/mcp_server/catalog/tools.generated.json
+# Provider contract-test fixtures: goldens are written by `go test -update` and
+# compared byte for byte, and recorded bodies are kept as the provider sent them.
+agentcc-gateway/internal/providers/*/testdata/contracts/
