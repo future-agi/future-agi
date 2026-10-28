@@ -140,7 +140,7 @@ def test_https_keeps_requests_default_ca_bundle(monkeypatch):
     monkeypatch.setattr(
         destination,
         "_resolve",
-        lambda *args: destination.ipaddress.ip_address("93.184.216.34"),
+        lambda *args: (destination.ipaddress.ip_address("93.184.216.34"),),
     )
     destination._exchange(
         {

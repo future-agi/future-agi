@@ -84,7 +84,7 @@ def test_https_uses_hostname_for_sni_and_certificate_verification(monkeypatch):
     monkeypatch.setattr(
         destination,
         "_resolve",
-        lambda *args: destination.ipaddress.ip_address("93.184.216.34"),
+        lambda *args: (destination.ipaddress.ip_address("93.184.216.34"),),
     )
     monkeypatch.setattr(destination, "_connect", lambda *args: sock)
     monkeypatch.setattr(
