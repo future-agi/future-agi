@@ -993,6 +993,7 @@ ALK_HARNESS_SANDBOX_URL = os.getenv("ALK_HARNESS_SANDBOX_URL", "")
 ALK_HARNESS_SANDBOX_TOKEN = os.getenv("ALK_HARNESS_SANDBOX_TOKEN", "")
 GITHUB_APP_ID = os.getenv("GITHUB_APP_ID", "")
 GITHUB_APP_PRIVATE_KEY = os.getenv("GITHUB_APP_PRIVATE_KEY", "")
+GITHUB_APP_WEBHOOK_SECRET = os.getenv("GITHUB_APP_WEBHOOK_SECRET", "")
 ALK_HOSTED_SOURCE_MAX_BYTES = int(
     os.getenv("ALK_HOSTED_SOURCE_MAX_BYTES", str(256 * 1024 * 1024))
 )
@@ -1100,6 +1101,23 @@ HARNESS_PARALLELISM_ENABLED = os.getenv("HARNESS_PARALLELISM_ENABLED", "").lower
     "yes",
 )
 HARNESS_MAX_WORLD_SLOTS = int(os.getenv("HARNESS_MAX_WORLD_SLOTS", "8"))
+# Environment versioning: decides whether an environment without versions starts getting
+# them, and gates their UI. An environment that has versions always records new ones, and
+# readers decide by data (pins present or not), never by this flag.
+HARNESS_VERSIONING_ENABLED = os.getenv("HARNESS_VERSIONING_ENABLED", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+# A pinned run that misses the bundle cache certifies its own bundle; off, it runs the
+# environment's default pair as before.
+HARNESS_BUNDLE_CERTIFY_ENABLED = os.getenv(
+    "HARNESS_BUNDLE_CERTIFY_ENABLED", ""
+).lower() in ("1", "true", "yes")
+# Raising agent-change nudges; only takes effect while versioning is enabled.
+HARNESS_VERSIONING_NUDGES_ENABLED = os.getenv(
+    "HARNESS_VERSIONING_NUDGES_ENABLED", ""
+).lower() in ("1", "true", "yes")
 # Most scenarios × trials one simulation Run may submit.
 HARNESS_MAX_EXECUTIONS_PER_RUN = int(os.getenv("HARNESS_MAX_EXECUTIONS_PER_RUN", "200"))
 # Each profile is an operator-certified size/connector/snapshot combination.

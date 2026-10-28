@@ -112,6 +112,9 @@ SENSITIVE_KEY_SUBSTRINGS = (
     "relay_state",
     "fai_saml_b",
     "candidate",
+    # A rerun's changed credential values, and an agent version check's.
+    "environment_values",
+    "credential_values",
 )
 _REDACTED = "[Filtered]"
 

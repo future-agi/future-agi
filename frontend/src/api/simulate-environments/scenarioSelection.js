@@ -32,7 +32,16 @@ export const resolveScenarioSelection = async (
   return picked;
 };
 
+// A row added only in the unsaved changes has nothing saved to run yet.
+export const runnableScenarioKey = (r) =>
+  r.draft_change === "added" ? null : r.scenario_key;
+
 // Every scenario key in the suite — the run route needs keys, and an empty
 // selection is refused, so "run all" names them explicitly.
-export const listAllScenarioKeys = (jobId) =>
-  resolveScenarioSelection(jobId, { mode: "all", pick: (r) => r.scenario_key });
+export const listAllScenarioKeys = async (jobId) =>
+  (
+    await resolveScenarioSelection(jobId, {
+      mode: "all",
+      pick: runnableScenarioKey,
+    })
+  ).filter(Boolean);

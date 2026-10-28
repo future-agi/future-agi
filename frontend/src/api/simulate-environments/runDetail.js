@@ -225,6 +225,10 @@ export function useRunDetail(
         ? execution.selected_scenario_keys
         : undefined,
       trials: execution.trials ?? 1,
+      pinnedAgentVersion: execution.pinned_agent_version ?? null,
+      environmentVersion: execution.environment_version ?? null,
+      suiteVersion: execution.suite_version ?? null,
+      agentDiffers: Boolean(execution.agent_differs),
     };
   }, [execution, envName, summary]);
   const stats = useMemo(

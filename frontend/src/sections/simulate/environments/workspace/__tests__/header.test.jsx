@@ -1,6 +1,5 @@
-import { useRef, useState } from "react";
-import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -11,12 +10,102 @@ import EnvVersionPin from "../EnvVersionPin";
 import SystemBanners from "../SystemBanners";
 import VersionBar from "../VersionBar";
 
+// The versions query is stubbed: each test sets the response it wants here,
+// or "loading" / "error" / "disabled" for those states. "disabled" is the
+// server switching versioning off after the page loaded: the last answer is
+// still cached, but the refetch failed with versioning_disabled.
+const versionsResponse = { current: undefined };
+// What a move of the default answers: "pending", { error } or { versions } (the
+// list the server returns, which the stubbed versions query then serves).
+const moveAnswer = { current: undefined };
+const moveCalls = [];
+const refreshCalls = [];
+vi.mock("src/api/simulate-environments/versions", async () => {
+  const actual = await vi.importActual(
+    "src/api/simulate-environments/versions",
+  );
+  const { useState } = await import("react");
+  return {
+    ...actual,
+    useMoveDefault: vi.fn(() => {
+      const [status, setStatus] = useState({});
+      return {
+        isPending: Boolean(status.pending),
+        isError: Boolean(status.error),
+        error: status.error || null,
+        reset: () => setStatus({}),
+        mutate: (variables, { onSettled } = {}) => {
+          moveCalls.push(variables);
+          const answer = moveAnswer.current;
+          if (answer === "pending") {
+            setStatus({ pending: true });
+            return;
+          }
+          if (answer?.versions) versionsResponse.current = answer.versions;
+          setStatus(answer?.error ? { error: answer.error } : {});
+          onSettled?.();
+        },
+      };
+    }),
+    useRefreshWhenChecked: vi.fn((envId, versions) =>
+      refreshCalls.push({ envId, versions }),
+    ),
+    useEnvironmentVersions: vi.fn((envId, { enabled } = {}) => {
+      const answer = versionsResponse.current;
+      if (!enabled || !answer) return { data: undefined, isSuccess: false };
+      if (answer === "loading") return { data: undefined, isLoading: true, isSuccess: false };
+      if (answer === "error") return { data: undefined, isError: true, isSuccess: false };
+      if (answer.refreshFailed) {
+        // An earlier answer is cached; the latest refresh failed.
+        return {
+          data: actual.toVersions(answer.refreshFailed),
+          isError: true,
+          isSuccess: false,
+          error: { statusCode: 500 },
+        };
+      }
+      if (answer === "disabled") {
+        return {
+          data: actual.toVersions({ agent: [], environment: [], suite: [] }),
+          isError: true,
+          isSuccess: false,
+          error: { statusCode: 404, error: "versioning_disabled" },
+        };
+      }
+      return { data: actual.toVersions(answer), isSuccess: true };
+    }),
+  };
+});
+
 const ENV = {
   id: "env-1",
   name: "Refund Copilot",
   tagline: "Handles refund conversations",
   surface: "voice",
   buildStatus: "ready",
+};
+const VERSIONED_ENV = { ...ENV, versioning: { enabled: true, nudges_enabled: false } };
+
+const item = (overrides) => ({
+  id: overrides.id,
+  label: overrides.label,
+  status: "active",
+  is_default: false,
+  created_at: "2026-10-15T10:00:00Z",
+  created_by: null,
+  origin: "backfill",
+  summary: "",
+  hash: null,
+  parent_id: null,
+  ...overrides,
+});
+const VERSIONS = {
+  agent: [item({ id: "a1", label: "v4", is_default: true })],
+  environment: [
+    item({ id: "e2", label: "v2", is_default: true, summary: "1 tool added", created_by: { id: "u1", name: "Asha" } }),
+    item({ id: "e1", label: "v1", summary: "First version" }),
+  ],
+  suite: [item({ id: "s3", label: "v3", is_default: true, scenario_count: 12 })],
 };
 
 // WorkspaceHeader now uses a react-query mutation (§2 delete), so wrap in a client.
@@ -64,66 +153,283 @@ describe("LivePill", () => {
 });
 
 describe("EnvVersionPin", () => {
-  it("is read-only for a seeded template — no chevron, clicking opens nothing", async () => {
-    const user = userEvent.setup();
-    const patch = vi.fn();
-    render(
-      <EnvVersionPin env={ENV} envState={{ scenarios: [1, 2, 3] }} patch={patch} readOnly />
-    );
-
-    expect(screen.queryByTestId("env-version-chevron")).toBeNull();
-    expect(screen.queryByRole("button", { name: /env v3/i })).toBeNull();
-
-    await user.click(screen.getByText(/env v3/i));
-    expect(screen.queryByText("Environment versions")).toBeNull();
-    expect(patch).not.toHaveBeenCalled();
+  afterEach(() => {
+    versionsResponse.current = undefined;
+    moveAnswer.current = undefined;
+    moveCalls.length = 0;
   });
 
-  it("opens a menu of every version and switches on pick", async () => {
-    const user = userEvent.setup();
-    const patch = vi.fn();
-    render(<EnvVersionPin env={ENV} envState={{ scenarios: [1, 2, 3] }} patch={patch} />);
+  it("renders nothing while versioning is off", () => {
+    versionsResponse.current = VERSIONS;
+    const { container } = render(<EnvVersionPin env={ENV} />);
+    expect(container).toBeEmptyDOMElement();
+  });
 
-    await user.click(screen.getByRole("button", { name: /env v3/i }));
+  it("renders nothing when the server has switched versioning off", () => {
+    versionsResponse.current = "disabled";
+    const { container } = render(<EnvVersionPin env={VERSIONED_ENV} />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it.each(["loading", "error"])("renders nothing while the versions are %s", (answer) => {
+    versionsResponse.current = answer;
+    const { container } = render(<EnvVersionPin env={VERSIONED_ENV} />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("keeps showing the default when a refresh fails after an answer", () => {
+    versionsResponse.current = { refreshFailed: VERSIONS };
+    render(<EnvVersionPin env={VERSIONED_ENV} />);
+    expect(screen.getByRole("button", { name: /env v2/ })).toBeInTheDocument();
+  });
+
+  it("names an unnumbered default version", () => {
+    versionsResponse.current = {
+      ...VERSIONS,
+      environment: [item({ id: "e9", label: null, is_default: true })],
+    };
+    render(<EnvVersionPin env={VERSIONED_ENV} />);
+    expect(screen.getByRole("button", { name: "env Unnumbered version" })).toBeInTheDocument();
+  });
+
+  it("opens from the keyboard and returns focus to the pin on close", async () => {
+    const user = userEvent.setup();
+    versionsResponse.current = VERSIONS;
+    render(<EnvVersionPin env={VERSIONED_ENV} />);
+    const trigger = screen.getByRole("button", { name: /env v2/i });
+
+    trigger.focus();
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("dialog", { name: "Environment versions" })).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(trigger).toHaveFocus();
+
+    await user.keyboard(" ");
+    expect(screen.getByRole("dialog", { name: "Environment versions" })).toBeInTheDocument();
+  });
+
+  it("renders nothing when the environment has no versions yet", () => {
+    versionsResponse.current = { agent: [], environment: [], suite: [] };
+    const { container } = render(<EnvVersionPin env={VERSIONED_ENV} />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("names the default version and lists every version", async () => {
+    const user = userEvent.setup();
+    versionsResponse.current = VERSIONS;
+    render(<EnvVersionPin env={VERSIONED_ENV} />);
+
+    await user.click(screen.getByRole("button", { name: /env v2/i }));
 
     expect(screen.getByText("Environment versions")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^v3/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^v2/ })).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: /^v1/ }));
-    expect(patch).toHaveBeenCalledWith({ activeEnvVersion: "v1" });
+    const items = screen.getAllByTestId("env-version-item");
+    expect(items).toHaveLength(2);
+    expect(items[0]).toHaveTextContent("v2");
+    expect(items[0]).toHaveTextContent("default");
+    expect(items[0]).toHaveTextContent("1 tool added");
+    expect(items[0]).toHaveTextContent("by Asha");
+    expect(items[1]).toHaveTextContent("v1");
+    expect(items[1]).not.toHaveTextContent(/\bdefault\b/);
+    expect(
+      screen.getByText(/You can roll back to an earlier one/),
+    ).toBeInTheDocument();
   });
-});
 
-describe("off-latest flow", () => {
-  it("shows the switch-back banner once an older version is pinned", async () => {
+  const openPin = async (user) => {
+    render(<EnvVersionPin env={VERSIONED_ENV} />);
+    await user.click(screen.getByRole("button", { name: /env v2/i }));
+  };
+  const rollBackToV1 = async (user) => {
+    await openPin(user);
+    await user.click(screen.getByRole("button", { name: "Roll back to v1" }));
+  };
+  const confirmButton = () =>
+    screen.getByRole("button", { name: /^Mak(e|ing) default/ });
+
+  it("offers a move only on active versions that aren't the default", async () => {
     const user = userEvent.setup();
+    versionsResponse.current = {
+      ...VERSIONS,
+      environment: [
+        item({ id: "e3", label: "v3" }),
+        ...VERSIONS.environment,
+        item({ id: "e0", label: "v0", status: "discarded" }),
+        item({ id: "e4", label: "v4", status: "draft" }),
+      ],
+    };
+    await openPin(user);
 
-    function Harness() {
-      const [envState, setEnvState] = useState({ scenarios: [1, 2, 3] });
-      const patchRef = useRef(null);
-      if (!patchRef.current) {
-        patchRef.current = vi.fn((p) => setEnvState((s) => ({ ...s, ...p })));
-      }
-      const patch = patchRef.current;
-      Harness.patch = patch;
-      return (
-        <>
-          <EnvVersionPin env={ENV} envState={envState} patch={patch} />
-          <SystemBanners env={ENV} envState={envState} patch={patch} />
-        </>
-      );
+    const items = screen.getAllByTestId("env-version-item");
+    // Newer than the default is a plain move; older is a roll back.
+    expect(
+      within(items[0]).getByRole("button", { name: "Make v3 the default" }),
+    ).toBeInTheDocument();
+    expect(within(items[1]).queryByRole("button")).toBeNull();
+    expect(
+      within(items[2]).getByRole("button", { name: "Roll back to v1" }),
+    ).toBeInTheDocument();
+    expect(within(items[3]).queryByRole("button")).toBeNull();
+    expect(within(items[4]).queryByRole("button")).toBeNull();
+  });
+
+  it("asks first, then makes the version the default against the default shown", async () => {
+    const user = userEvent.setup();
+    versionsResponse.current = VERSIONS;
+    moveAnswer.current = {
+      versions: {
+        ...VERSIONS,
+        environment: [
+          { ...VERSIONS.environment[0], is_default: false },
+          { ...VERSIONS.environment[1], is_default: true },
+        ],
+      },
+    };
+    await rollBackToV1(user);
+
+    const confirm = screen.getByRole("dialog", {
+      name: "Make v1 the default environment?",
+    });
+    expect(confirm).toHaveTextContent(
+      "New runs use it. If this combination hasn't run before, the next run prepares it first.",
+    );
+    expect(moveCalls).toEqual([]);
+
+    await user.click(confirmButton());
+
+    expect(moveCalls).toEqual([
+      { piece: "environment", versionId: "e1", expectedDefaultId: "e2" },
+    ]);
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", {
+          name: "Make v1 the default environment?",
+        }),
+      ).toBeNull(),
+    );
+    const items = screen.getAllByTestId("env-version-item");
+    expect(items[1]).toHaveTextContent("default");
+    expect(within(items[1]).queryByRole("button")).toBeNull();
+    // The pin under the open list names the new default.
+    expect(
+      screen.getByRole("button", { name: "env v1", hidden: true }),
+    ).toBeInTheDocument();
+  });
+
+  it("does nothing when the confirmation is cancelled", async () => {
+    const user = userEvent.setup();
+    versionsResponse.current = VERSIONS;
+    await rollBackToV1(user);
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", {
+          name: "Make v1 the default environment?",
+        }),
+      ).toBeNull(),
+    );
+    expect(moveCalls).toEqual([]);
+  });
+
+  it("keeps the confirmation open and busy while the move is pending", async () => {
+    const user = userEvent.setup();
+    versionsResponse.current = VERSIONS;
+    moveAnswer.current = "pending";
+    await rollBackToV1(user);
+    await user.click(confirmButton());
+
+    expect(
+      screen.getByRole("dialog", { name: "Make v1 the default environment?" }),
+    ).toBeInTheDocument();
+    expect(confirmButton()).toHaveTextContent("Making default…");
+    expect(confirmButton()).toBeDisabled();
+    // Cancel and the close X are visibly off too, not just ignored.
+    const dialog = screen.getByRole("dialog", {
+      name: "Make v1 the default environment?",
+    });
+    const buttons = within(dialog).getAllByRole("button");
+    expect(buttons).toHaveLength(3);
+    for (const button of buttons) {
+      expect(button).toBeDisabled();
     }
+  });
 
-    render(<Harness />);
-    expect(screen.queryByText(/Switch to v3/)).toBeNull();
+  it.each([
+    [
+      "the default moved since the list was opened",
+      {
+        statusCode: 409,
+        error: "version_conflict",
+        message: "The default changed to v3 since you opened this; pick again",
+        piece: "environment",
+      },
+      "The default changed to v3 since you opened this; pick again",
+    ],
+    [
+      "the combination isn't prepared",
+      {
+        statusCode: 422,
+        error: "rollback_unavailable",
+        message: "This combination hasn't been prepared yet",
+        piece: "environment",
+      },
+      "This combination hasn't been prepared yet",
+    ],
+    [
+      "the environment is being built or extended",
+      {
+        statusCode: 409,
+        error: "environment_busy",
+        message:
+          "The environment is being built or extended; try again when it finishes",
+      },
+      "The environment is being built or extended; try again when it finishes",
+    ],
+    [
+      "the server gives no reason",
+      { statusCode: 500 },
+      "Couldn't change the default. Try again in a moment.",
+    ],
+  ])("says why in the list when %s", async (_, error, text) => {
+    const user = userEvent.setup();
+    versionsResponse.current = VERSIONS;
+    moveAnswer.current = { error };
+    await rollBackToV1(user);
+    await user.click(confirmButton());
 
-    await user.click(screen.getByRole("button", { name: /env v3/i }));
-    await user.click(screen.getByRole("button", { name: /^v1/ }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", {
+          name: "Make v1 the default environment?",
+        }),
+      ).toBeNull(),
+    );
+    const list = screen.getByRole("dialog", { name: "Environment versions" });
+    expect(within(list).getByRole("alert")).toHaveTextContent(text);
+    expect(screen.getAllByTestId("env-version-item")[0]).toHaveTextContent(
+      "default",
+    );
+  });
 
-    expect(Harness.patch).toHaveBeenCalledWith({ activeEnvVersion: "v1" });
-    expect(await screen.findByText(/Switch to v3/)).toBeInTheDocument();
-    expect(screen.getByText(/Editing off v1/)).toBeInTheDocument();
+  it("announces the list it opens and marks draft or discarded versions", async () => {
+    const user = userEvent.setup();
+    versionsResponse.current = {
+      ...VERSIONS,
+      environment: [...VERSIONS.environment, item({ id: "e0", label: null, status: "discarded" })],
+    };
+    render(<EnvVersionPin env={VERSIONED_ENV} />);
+    const trigger = screen.getByRole("button", { name: /env v2/i });
+    expect(trigger).toHaveAttribute("aria-haspopup", "dialog");
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+
+    await user.click(trigger);
+
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("dialog", { name: "Environment versions" })).toBeInTheDocument();
+    const items = screen.getAllByTestId("env-version-item");
+    expect(items[2]).toHaveTextContent("Unnumbered version");
+    expect(items[2]).toHaveTextContent("discarded");
   });
 });
 
@@ -132,27 +438,26 @@ describe("SystemBanners", () => {
     render(
       <SystemBanners
         env={{ ...ENV, buildStatus: "building", buildProgress: { done: 5, total: 7 } }}
-        envState={{ scenarios: [1, 2, 3] }}
-        patch={vi.fn()}
       />
     );
     expect(screen.getByText("Environment is still being built")).toBeInTheDocument();
     expect(screen.getByText(/5 of 7 steps done/)).toBeInTheDocument();
   });
 
-  it("renders nothing on a latest, ready environment", () => {
-    const { container } = render(
-      <SystemBanners env={ENV} envState={{ scenarios: [1, 2, 3] }} patch={vi.fn()} />
-    );
+  it("renders nothing on a ready environment", () => {
+    const { container } = render(<SystemBanners env={ENV} />);
     expect(container).toBeEmptyDOMElement();
   });
 });
 
 describe("WorkspaceHeader", () => {
+  afterEach(() => {
+    versionsResponse.current = undefined;
+  });
+
   const baseProps = {
     env: ENV,
     envState: { scenarios: [1, 2, 3], evals: [{ id: "e1" }] },
-    patch: vi.fn(),
     canRun: true,
     runBlockedReason: "",
     onFork: vi.fn(),
@@ -189,9 +494,16 @@ describe("WorkspaceHeader", () => {
     expect(screen.queryByRole("button", { name: /Cancel build/ })).toBeNull();
   });
 
-  it("does not render the mock env-version pin (hidden until the contract has a real version)", () => {
+  it("shows no version pin while versioning is off", () => {
+    versionsResponse.current = VERSIONS;
     render(withRouter(<WorkspaceHeader {...baseProps} />));
-    expect(screen.queryByText(/env v3/i)).toBeNull();
+    expect(screen.queryByText(/env v2/i)).toBeNull();
+  });
+
+  it("shows the default environment version when versioning is on", () => {
+    versionsResponse.current = VERSIONS;
+    render(withRouter(<WorkspaceHeader {...baseProps} env={VERSIONED_ENV} />));
+    expect(screen.getByRole("button", { name: /env v2/i })).toBeInTheDocument();
   });
 
   it("shows the rename pencil for a backend-backed env and opens the dialog", async () => {
@@ -286,6 +598,111 @@ describe("WorkspaceHeader", () => {
 });
 
 describe("VersionBar", () => {
+  afterEach(() => {
+    versionsResponse.current = undefined;
+  });
+
+  it("states only the scenario count while versioning is off", () => {
+    render(<VersionBar env={ENV} envState={{ scenarios: [1, 2, 3, 4] }} />);
+    expect(screen.getByText("4 scenarios, shared across agent versions")).toBeInTheDocument();
+    expect(screen.queryByText("Default")).toBeNull();
+  });
+
+  it("follows agent checks while mounted, the drawer open or not", () => {
+    versionsResponse.current = VERSIONS;
+    refreshCalls.length = 0;
+    render(<VersionBar env={VERSIONED_ENV} envState={{ scenarios: [1, 2] }} />);
+    expect(refreshCalls.at(-1).envId).toBe(VERSIONED_ENV.id);
+    expect(refreshCalls.at(-1).versions).toHaveLength(1);
+  });
+
+  it("states the default agent, environment and scenario versions", () => {
+    versionsResponse.current = VERSIONS;
+    render(<VersionBar env={VERSIONED_ENV} envState={{ scenarios: [1, 2] }} />);
+    expect(screen.getByText("v2")).toBeInTheDocument();
+    expect(screen.getByText("v4")).toBeInTheDocument();
+    expect(screen.getByText("v3")).toBeInTheDocument();
+    // The count is the default suite's, not the client store's.
+    expect(screen.getByText("12 scenarios, shared across agent versions")).toBeInTheDocument();
+  });
+
+  it("says before versioning when the environment has no versions yet", () => {
+    versionsResponse.current = { agent: [], environment: [], suite: [] };
+    render(<VersionBar env={VERSIONED_ENV} envState={{ scenarios: [1] }} />);
+    expect(screen.getAllByText("before versioning")).toHaveLength(1);
+    expect(screen.getByText("1 scenario, shared across agent versions")).toBeInTheDocument();
+  });
+
+  it("says none, not before versioning, when there is no default agent", () => {
+    versionsResponse.current = { ...VERSIONS, agent: [] };
+    render(<VersionBar env={VERSIONED_ENV} envState={{ scenarios: [1] }} />);
+    expect(screen.getByText("none")).toBeInTheDocument();
+    expect(screen.queryByText("before versioning")).toBeNull();
+    expect(screen.getByText("Default")).toBeInTheDocument();
+  });
+
+  it("names an unnumbered default instead of printing null", () => {
+    versionsResponse.current = {
+      ...VERSIONS,
+      environment: [item({ id: "e9", label: null, is_default: true })],
+    };
+    render(<VersionBar env={VERSIONED_ENV} envState={{ scenarios: [1] }} />);
+    expect(screen.getByText("Unnumbered version")).toBeInTheDocument();
+    expect(screen.queryByText(/null/)).toBeNull();
+  });
+
+  it("drops the pairing when the server has switched versioning off", () => {
+    versionsResponse.current = "disabled";
+    render(<VersionBar env={VERSIONED_ENV} envState={{ scenarios: [1, 2] }} />);
+    expect(screen.queryByText("Default")).toBeNull();
+    expect(screen.getByText("2 scenarios, shared across agent versions")).toBeInTheDocument();
+  });
+
+  it("calls the agent the environment's default, not the one runs test", async () => {
+    const user = userEvent.setup();
+    versionsResponse.current = VERSIONS;
+    render(<VersionBar env={VERSIONED_ENV} envState={{ scenarios: [1, 2] }} />);
+    await user.hover(screen.getByText("v2"));
+    const tip = await screen.findByRole("tooltip");
+    expect(tip).toHaveTextContent("default agent version is v4");
+    expect(tip).not.toHaveTextContent(/Runs test agent/);
+  });
+
+  it("says plainly when there is no default agent version", async () => {
+    const user = userEvent.setup();
+    versionsResponse.current = { ...VERSIONS, agent: [] };
+    render(<VersionBar env={VERSIONED_ENV} envState={{ scenarios: [1] }} />);
+    await user.hover(screen.getByText("v2"));
+    const tip = await screen.findByRole("tooltip");
+    expect(tip).toHaveTextContent("No default agent version is set for this environment.");
+    expect(tip).not.toHaveTextContent(/is none/);
+  });
+
+  it("says plainly when there is no environment version yet", async () => {
+    const user = userEvent.setup();
+    versionsResponse.current = { ...VERSIONS, environment: [] };
+    render(<VersionBar env={VERSIONED_ENV} envState={{ scenarios: [1] }} />);
+    await user.hover(screen.getByText("v4"));
+    const tip = await screen.findByRole("tooltip");
+    expect(tip).toHaveTextContent("This environment has no environment version yet.");
+    expect(tip).not.toHaveTextContent(/replay environment before versioning/);
+  });
+
+  it("keeps the pairing when a refresh fails after an answer", () => {
+    versionsResponse.current = { refreshFailed: VERSIONS };
+    render(<VersionBar env={VERSIONED_ENV} envState={{ scenarios: [1, 2] }} />);
+    expect(screen.getByText("Default")).toBeInTheDocument();
+    expect(screen.getByText("v4")).toBeInTheDocument();
+  });
+
+  it.each(["loading", "error"])("states no pairing while the versions are %s", (answer) => {
+    versionsResponse.current = answer;
+    render(<VersionBar env={VERSIONED_ENV} envState={{ scenarios: [1, 2] }} />);
+    expect(screen.queryByText("before versioning")).toBeNull();
+    expect(screen.queryByText("Default")).toBeNull();
+    expect(screen.getByText("2 scenarios, shared across agent versions")).toBeInTheDocument();
+  });
+
   const SUBJECT = {
     id: "agent-1",
     name: "Single Prompt Agent",
