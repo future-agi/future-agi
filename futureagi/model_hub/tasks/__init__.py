@@ -4,6 +4,7 @@ from tracer.utils.observability_provider import fetch_observability_logs
 from tracer.utils.span import run_evals_on_spans
 
 from .annotation_automation import *  # noqa: F403
+from .annotation_export import *  # noqa: F403
 from .agent import *  # noqa: F403
 from .develop_dataset import delete_unused_compare_folder
 from .experiment_runner import *  # noqa: F403

@@ -8,6 +8,8 @@ from accounts.models.organization import Organization
 from accounts.models.user import User
 from accounts.models.workspace import Workspace
 from model_hub.models.choices import (
+    AnnotationExportFormat,
+    AnnotationExportJobStatus,
     AnnotationQueueStatusChoices,
     AnnotatorRole,
     AssignmentStrategy,
@@ -979,3 +981,70 @@ class AnnotationNotificationState(BaseModel):
 
     def __str__(self):
         return f"AnnotationNotificationState({self.user_id})"
+
+
+class AnnotationExportJob(BaseModel):
+    """A queue export that runs on a worker instead of inside the request.
+
+    Small exports stay synchronous. Above ``EXPORT_SYNC_MAX_ITEMS`` the view
+    creates one of these, hands the work to a Temporal activity and returns
+    202; the client polls this row until it carries a ``file_url``.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    queue = models.ForeignKey(
+        AnnotationQueue,
+        on_delete=models.CASCADE,
+        related_name="export_jobs",
+    )
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.CASCADE,
+        related_name="annotation_export_jobs",
+    )
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name="annotation_export_jobs",
+        null=True,
+        blank=True,
+    )
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        related_name="annotation_export_jobs",
+        null=True,
+        blank=True,
+    )
+    export_format = models.CharField(
+        max_length=10,
+        choices=AnnotationExportFormat.get_choices(),
+        default=AnnotationExportFormat.JSON.value,
+    )
+    # The queue-item status the export was filtered to, as sent by the client.
+    # Kept so a finished file can be traced back to what was asked for.
+    status_filter = models.CharField(max_length=50, null=True, blank=True)
+    status = models.CharField(
+        max_length=20,
+        choices=AnnotationExportJobStatus.get_choices(),
+        default=AnnotationExportJobStatus.PENDING.value,
+        db_index=True,
+    )
+    item_count = models.PositiveIntegerField(null=True, blank=True)
+    file_url = models.TextField(null=True, blank=True)
+    file_name = models.CharField(max_length=255, null=True, blank=True)
+    # Populated only on failure. Surfaced to the client so a failed export
+    # shows the real reason instead of a generic download error.
+    error = models.TextField(null=True, blank=True)
+    workflow_id = models.CharField(max_length=255, null=True, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["queue", "status"]),
+        ]
+
+    def __str__(self):
+        return f"Export {self.id} ({self.status}) for queue {self.queue_id}"

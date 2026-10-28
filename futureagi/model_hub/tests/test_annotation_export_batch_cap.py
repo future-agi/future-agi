@@ -2,8 +2,8 @@
 
 Regression guard for the export endpoint that timed out at the gateway: the
 dataset-row cell read must be batched (one ``row_id__in`` query, not a per-item
-N+1), and an oversize queue must be rejected up front instead of materializing
-and resolving the whole queue synchronously.
+N+1), and an oversize queue must be handed to the background export up front
+instead of materializing and resolving the whole queue synchronously.
 """
 
 from __future__ import annotations
@@ -19,12 +19,14 @@ from rest_framework import status
 
 from model_hub.models.annotation_queues import (
     FULL_ACCESS_QUEUE_ROLES,
+    AnnotationExportJob,
     AnnotationQueue,
     AnnotationQueueAnnotator,
     AnnotationQueueLabel,
     QueueItem,
 )
 from model_hub.models.choices import (
+    AnnotationExportJobStatus,
     AnnotationQueueStatusChoices,
     AnnotatorRole,
     DatasetSourceChoices,
@@ -36,10 +38,16 @@ from model_hub.models.choices import (
 )
 from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
+from model_hub.models.run_prompt import RunPrompter
 from model_hub.utils.annotation_queue_helpers import (
+    CollectorSourceCache,
     dataset_cells_by_row,
     resolve_source_content,
 )
+from simulate.models.agent_definition import AgentDefinition
+from simulate.models.run_test import RunTest
+from simulate.models.scenarios import Scenarios
+from simulate.models.test_execution import CallExecution, TestExecution
 from tracer.models.project import Project, ProjectSourceChoices
 from tracer.services.clickhouse.v2.span_reader import CHSpan
 
@@ -175,25 +183,70 @@ def test_export_csv_batches_dataset_cells(auth_client, organization, workspace, 
 
 @pytest.mark.django_db
 @override_settings(ANNOTATION_EXPORT_SYNC_MAX=2)
-def test_export_rejects_oversize_queue_before_resolving(
+def test_export_oversize_schedules_background_job_before_resolving(
     auth_client, organization, workspace, user
 ):
     seed = _build_dataset_queue(
         organization=organization, workspace=workspace, user=user, n_rows=3
     )
-    with CaptureQueriesContext(connection) as cap:
+    with mock.patch(
+        "tfc.temporal.drop_in.runner.start_activity_sync",
+        return_value="wf-json",
+    ) as start:
+        with CaptureQueriesContext(connection) as cap:
+            resp = auth_client.get(
+                EXPORT_URL.format(queue_id=seed["queue"].id) + "?export_format=json"
+            )
+
+    assert resp.status_code == status.HTTP_202_ACCEPTED
+    # Handed off up front: no cell resolution happened in the request.
+    assert _cell_queries(cap) == []
+
+    job = AnnotationExportJob.objects.get(pk=resp.data["job_id"])
+    assert job.queue_id == seed["queue"].id
+    assert job.export_format == "json"
+    assert job.status == AnnotationExportJobStatus.PENDING.value
+    assert job.workflow_id == "wf-json"
+    assert start.call_args.kwargs["activity_name"] == "export_annotation_queue_async"
+    assert start.call_args.kwargs["kwargs"] == {"job_id": str(job.id)}
+
+    # CSV takes the same branch (it is decided before the format branch).
+    with mock.patch(
+        "tfc.temporal.drop_in.runner.start_activity_sync",
+        return_value="wf-csv",
+    ):
+        resp_csv = auth_client.get(
+            EXPORT_URL.format(queue_id=seed["queue"].id) + "?export_format=csv"
+        )
+    assert resp_csv.status_code == status.HTTP_202_ACCEPTED
+    assert (
+        AnnotationExportJob.objects.get(pk=resp_csv.data["job_id"]).export_format
+        == "csv"
+    )
+
+
+@pytest.mark.django_db
+@override_settings(ANNOTATION_EXPORT_SYNC_MAX=2)
+def test_export_schedule_failure_is_recorded_on_the_job(
+    auth_client, organization, workspace, user
+):
+    """A scheduling failure must leave a readable reason, not a pending row."""
+    seed = _build_dataset_queue(
+        organization=organization, workspace=workspace, user=user, n_rows=3
+    )
+    with mock.patch(
+        "tfc.temporal.drop_in.runner.start_activity_sync",
+        side_effect=RuntimeError("temporal unreachable"),
+    ):
         resp = auth_client.get(
             EXPORT_URL.format(queue_id=seed["queue"].id) + "?export_format=json"
         )
-    assert resp.status_code == status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
-    # Rejected up front: no cell resolution happened.
-    assert _cell_queries(cap) == []
 
-    # CSV hits the same guard (it is checked before the format branch).
-    resp_csv = auth_client.get(
-        EXPORT_URL.format(queue_id=seed["queue"].id) + "?export_format=csv"
-    )
-    assert resp_csv.status_code == status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
+    assert resp.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    job = AnnotationExportJob.objects.filter(queue=seed["queue"]).latest("created_at")
+    assert job.status == AnnotationExportJobStatus.FAILED.value
+    assert "temporal unreachable" in job.error
+    assert job.finished_at is not None
 
 
 @pytest.mark.django_db
@@ -381,6 +434,194 @@ def _build_trace_queue(*, organization, workspace, user, n_items):
             order=order,
         )
     return {"queue": queue, "roots": roots}
+
+
+def _queue_with_annotator(*, organization, workspace, user, project, dataset=None):
+    """A minimal active queue with one manager annotator — the shared shell every
+    source-type builder needs before it attaches its own items."""
+    label = AnnotationsLabels.objects.create(
+        name=f"export label {uuid.uuid4().hex[:8]}",
+        type="star",
+        settings={"no_of_stars": 5},
+        organization=organization,
+        workspace=workspace,
+    )
+    queue = AnnotationQueue.objects.create(
+        name=f"export queue {uuid.uuid4().hex[:8]}",
+        status=AnnotationQueueStatusChoices.ACTIVE.value,
+        organization=organization,
+        workspace=workspace,
+        project=project,
+        dataset=dataset,
+        created_by=user,
+    )
+    AnnotationQueueLabel.objects.create(queue=queue, label=label, order=0)
+    AnnotationQueueAnnotator.objects.update_or_create(
+        queue=queue,
+        user=user,
+        deleted=False,
+        defaults={
+            "role": AnnotatorRole.MANAGER.value,
+            "roles": FULL_ACCESS_QUEUE_ROLES,
+        },
+    )
+    return queue
+
+
+def _build_call_execution_queue(*, organization, workspace, user, n_items):
+    """Seed a queue of ``n_items`` call-execution items — the widest source rows,
+    and the only source whose transcripts are prefetched. Returns the queue plus
+    its CallExecution objects."""
+    project = Project.objects.create(
+        name=f"export ce project {uuid.uuid4().hex[:8]}",
+        organization=organization,
+        workspace=workspace,
+        model_type="GenerativeLLM",
+        trace_type="observe",
+        source=ProjectSourceChoices.SIMULATOR.value,
+    )
+    agent_def = AgentDefinition.objects.create(
+        agent_name=f"ce-agent-{uuid.uuid4().hex[:8]}",
+        inbound=True,
+        description="fixture agent",
+        organization=organization,
+        workspace=workspace,
+    )
+    run_test = RunTest.objects.create(name="ce-run-test", organization=organization)
+    test_execution = TestExecution.objects.create(
+        run_test=run_test, agent_definition=agent_def
+    )
+    scenario = Scenarios.objects.create(
+        name="ce-scenario",
+        source="test source",
+        organization=organization,
+        workspace=workspace,
+    )
+    queue = _queue_with_annotator(
+        organization=organization, workspace=workspace, user=user, project=project
+    )
+    calls = []
+    for order in range(n_items):
+        call = CallExecution.objects.create(
+            test_execution=test_execution, scenario=scenario
+        )
+        QueueItem.objects.create(
+            queue=queue,
+            source_type=QueueItemSourceType.CALL_EXECUTION.value,
+            call_execution=call,
+            organization=organization,
+            workspace=workspace,
+            project=project,
+            status=QueueItemStatus.PENDING.value,
+            order=order,
+        )
+        calls.append(call)
+    return {"queue": queue, "calls": calls}
+
+
+def _build_prototype_run_queue(*, organization, workspace, user, n_items):
+    """Seed a queue of ``n_items`` prototype-run items. Returns the queue and its
+    RunPrompter objects."""
+    project = Project.objects.create(
+        name=f"export pr project {uuid.uuid4().hex[:8]}",
+        organization=organization,
+        workspace=workspace,
+        model_type="GenerativeLLM",
+        trace_type="observe",
+    )
+    dataset = Dataset.objects.create(
+        name=f"export pr dataset {uuid.uuid4().hex[:8]}",
+        source=DatasetSourceChoices.BUILD.value,
+        organization=organization,
+        workspace=workspace,
+        user=user,
+    )
+    queue = _queue_with_annotator(
+        organization=organization,
+        workspace=workspace,
+        user=user,
+        project=project,
+        dataset=dataset,
+    )
+    runs = []
+    for order in range(n_items):
+        run = RunPrompter.objects.create(
+            dataset=dataset,
+            model="gpt-4o-mini",
+            name=f"prototype run {order}",
+            organization=organization,
+            workspace=workspace,
+        )
+        QueueItem.objects.create(
+            queue=queue,
+            source_type=QueueItemSourceType.PROTOTYPE_RUN.value,
+            prototype_run=run,
+            organization=organization,
+            workspace=workspace,
+            project=project,
+            status=QueueItemStatus.PENDING.value,
+            order=order,
+        )
+        runs.append(run)
+    return {"queue": queue, "runs": runs}
+
+
+def _build_ch_source_queue(*, organization, workspace, user, source_type, n_items):
+    """Seed a queue of ``n_items`` items of a ClickHouse-native source
+    (``trace`` / ``observation_span`` / ``trace_session``) and return the queue
+    plus a ``CollectorSourceCache`` pre-populated for them.
+
+    The tracer sources resolve CH-only, so patch ``CollectorSourceCache.for_items``
+    to return this cache: both the sync download and the async render then read the
+    same content and can be compared byte for byte without a live ClickHouse.
+    """
+    project = Project.objects.create(
+        name=f"export ch project {uuid.uuid4().hex[:8]}",
+        organization=organization,
+        workspace=workspace,
+        model_type="GenerativeLLM",
+        trace_type="observe",
+    )
+    queue = _queue_with_annotator(
+        organization=organization, workspace=workspace, user=user, project=project
+    )
+    spans, sessions, trace_roots = {}, {}, {}
+    for order in range(n_items):
+        item = QueueItem(
+            queue=queue,
+            source_type=source_type,
+            organization=organization,
+            workspace=workspace,
+            project=project,
+            status=QueueItemStatus.PENDING.value,
+            order=order,
+        )
+        soft_id = str(uuid.uuid4())
+        if source_type == QueueItemSourceType.TRACE.value:
+            item.trace_id = soft_id
+            trace_roots[soft_id] = _make_root_chspan(
+                project_id=project.id, trace_id=soft_id
+            )
+        elif source_type == QueueItemSourceType.OBSERVATION_SPAN.value:
+            item.observation_span_id = soft_id
+            spans[soft_id] = _make_root_chspan(
+                project_id=project.id, trace_id=str(uuid.uuid4())
+            )
+        elif source_type == QueueItemSourceType.TRACE_SESSION.value:
+            item.trace_session_id = soft_id
+            sessions[soft_id] = {
+                "first_seen": datetime(2025, 5, 1, 10, 0, 0, tzinfo=UTC),
+                "display_name": f"session {order}",
+                "external_session_id": f"ext-{order}",
+                "project_id": project.id,
+            }
+        else:  # pragma: no cover - guards a typo in the caller
+            raise ValueError(f"not a CH source type: {source_type}")
+        item.save()
+    cache = CollectorSourceCache(
+        spans=spans, sessions=sessions, trace_roots=trace_roots
+    )
+    return {"queue": queue, "cache": cache}
 
 
 def _project_point_reads(captured):
