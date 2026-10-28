@@ -351,6 +351,21 @@ function focusRing(element) {
   );
 }
 
+// The transition the element's own rule ends with: emotion writes a Button's
+// theme styles and its sx into one class.
+function transitionOf(element) {
+  return Array.from(document.styleSheets)
+    .flatMap((sheet) => Array.from(sheet.cssRules))
+    .filter((rule) =>
+      Array.from(element.classList).some(
+        (name) => rule.selectorText === `.${name}`,
+      ),
+    )
+    .map((rule) => rule.style.transition)
+    .filter(Boolean)
+    .pop();
+}
+
 describe("ModelSelector Jev transitions and accessible controls", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -457,10 +472,14 @@ describe("ModelSelector Jev transitions and accessible controls", () => {
     for (const name of [
       "Evaluation mode: Quick",
       "Evaluation model: Jev 1.13 (pinned)",
-    ])
-      expect(focusRing(screen.getByRole("button", { name }))).toMatch(
-        /outline: 2px solid/,
-      );
+    ]) {
+      const pill = screen.getByRole("button", { name });
+      expect(focusRing(pill)).toMatch(/outline: 2px solid/);
+      // The ring shows at once: a transition on "all" grew it from a 0 px
+      // outline in the text colour, which read as a darker border.
+      expect(transitionOf(pill)).toMatch(/0\.15s/);
+      expect(transitionOf(pill)).not.toMatch(/\ball\b|outline/);
+    }
   });
 
   it("opens mode, model and configuration with native keyboard button activation", async () => {
