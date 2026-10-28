@@ -9,7 +9,7 @@ import {
   within,
 } from "@testing-library/react";
 import RunProgress from "../RunProgress";
-import { insightsKeys, runStopping, useInsightsRun } from "../insightsApi";
+import { insightsKeys, useInsightsRun } from "../insightsApi";
 
 const mocks = vi.hoisted(() => ({
   post: vi.fn(),
@@ -140,19 +140,19 @@ describe("RunProgress", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
-  it("closes once the stopped run is read again, so its counts never show before the reads under way are saved", async () => {
+  it("closes once the stopped run is read again, so the page goes straight to its counts", async () => {
     const stopped = {
       id: "run-1",
       status: "failed",
       error: "Stopped by Ada.",
       error_code: "stopped",
     };
-    // Stopped with a batch still being read: no counts yet.
+    // Read again after the stop: what had been read before it, final.
     const reread = {
-      ...running(),
+      ...running({ progress: { done: 8 } }),
       ...stopped,
+      analysed_count: 8,
       finished_at: new Date(NOW).toISOString(),
-      progress: { stage: "summarising", in_flight: { 7: ago(0) } },
     };
     let answer;
     mocks.read
@@ -169,7 +169,7 @@ describe("RunProgress", () => {
       const { data } = useInsightsRun("run-1");
       if (!data) return null;
       if (data.status === "running") return <RunProgress run={data} />;
-      return <p>{runStopping(data) ? "Stopping…" : "Stopped · 0 analysed"}</p>;
+      return <p>{`Stopped · ${data.analysed_count ?? 0} analysed`}</p>;
     }
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
@@ -187,10 +187,10 @@ describe("RunProgress", () => {
     expect(mocks.post).toHaveBeenCalledTimes(1);
     // Stopped, but not read again yet: still the dialog, no counts.
     expect(screen.getByRole("dialog")).toBeInTheDocument();
-    expect(screen.queryByText("Stopped · 0 analysed")).toBeNull();
+    expect(screen.queryByText(/^Stopped · /)).toBeNull();
 
     answer();
-    expect(await screen.findByText("Stopping…")).toBeInTheDocument();
+    expect(await screen.findByText("Stopped · 8 analysed")).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(screen.queryByText("Stopped · 0 analysed")).toBeNull();
   });
@@ -198,14 +198,14 @@ describe("RunProgress", () => {
   it.each([
     [
       true,
-      "It stops reading now and won't write a report. You'll be charged for the work already done. You can run it again later.",
+      "It stops reading now and won't write a report. You'll be charged for the work finished before you stop. You can run it again later.",
     ],
     [
       false,
       "It stops reading now and won't write a report. You can run it again later.",
     ],
   ])(
-    "says before stopping whether the work done is charged (Cloud: %s)",
+    "says before stopping that the work finished before it is charged (Cloud: %s)",
     async (cloud, says) => {
       mocks.cloud = cloud;
       renderProgress(running());

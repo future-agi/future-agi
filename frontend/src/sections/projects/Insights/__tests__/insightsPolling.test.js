@@ -20,7 +20,6 @@ vi.mock("src/utils/axios", () => ({
 
 import {
   failedRunNext,
-  runStopping,
   useInsightsConfig,
   useInsightsConfigs,
   useInsightsRun,
@@ -128,106 +127,14 @@ describe("failedRunNext", () => {
   });
 });
 
-describe("runStopping", () => {
-  const stopped = (overrides = {}) => ({
-    status: "failed",
-    error_code: "stopped",
-    finished_at: "2026-10-28T08:00:00Z",
-    progress: { in_flight: { 7: "2026-10-28T07:59:58Z" } },
-    ...overrides,
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it("holds a stopped run's counts while the server lists reads under way, whatever this browser's clock says", () => {
-    vi.useFakeTimers();
-    // An hour ahead of the server, then an hour behind: the server says
-    // when it has waited long enough (a worker lost meanwhile).
-    vi.setSystemTime(new Date("2026-10-28T09:00:00Z"));
-    expect(runStopping(stopped())).toBe(true);
-    vi.setSystemTime(new Date("2026-10-28T07:00:00Z"));
-    expect(runStopping(stopped())).toBe(true);
-    expect(runStopping(stopped({ progress: { in_flight: {} } }))).toBe(false);
-    expect(runStopping(stopped({ progress: {} }))).toBe(false);
-    // Failed on its own, or still running: never stopping.
-    expect(runStopping(stopped({ error_code: "" }))).toBe(false);
-    expect(runStopping(stopped({ status: "running" }))).toBe(false);
-  });
-});
-
 describe("a run being stopped", () => {
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it("is read again until the reads under way are saved, then the reports refresh", async () => {
-    vi.useFakeTimers();
-    const stopping = {
-      id: "r1",
-      config_id: "c1",
-      status: "failed",
-      error_code: "stopped",
-      finished_at: new Date().toISOString(),
-      analysed_count: 0,
-      progress: { in_flight: { 7: new Date().toISOString() } },
-    };
-    const saved = {
-      ...stopping,
-      analysed_count: 4,
-      progress: { in_flight: {} },
-    };
-    http.read.mockReset();
-    http.read
-      .mockImplementationOnce(() => ok(stopping))
-      .mockImplementationOnce(() => ok(stopping))
-      .mockImplementation(() => ok(saved));
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-    const refreshed = vi.spyOn(client, "invalidateQueries");
-    const Wrapper = ({ children }) =>
-      React.createElement(QueryClientProvider, { client }, children);
-    Wrapper.propTypes = { children: PropTypes.node };
-    const { result } = renderHook(() => useInsightsRun("r1"), {
-      wrapper: Wrapper,
-    });
-    const wait = async (ms) => {
-      for (let left = ms; left > 0; left -= 1000) {
-        // eslint-disable-next-line no-await-in-loop
-        await act(async () => {
-          await vi.advanceTimersByTimeAsync(Math.min(1000, left));
-        });
-      }
-    };
-    await wait(100);
-    expect(result.current.data.analysed_count).toBe(0);
-    expect(refreshed).not.toHaveBeenCalled();
-    await wait(4500);
-    expect(result.current.data.analysed_count).toBe(4);
-    expect(refreshed).toHaveBeenCalledWith({
-      queryKey: ["insights", "configs"],
-    });
-    expect(refreshed).toHaveBeenCalledWith({
-      queryKey: ["insights", "config", "c1"],
-    });
-    const reads = http.read.mock.calls.length;
-    await wait(10_000);
-    expect(http.read).toHaveBeenCalledTimes(reads);
-  });
-
-  it("refreshes the reports as soon as it stops working, and again once the reads under way are saved", async () => {
+  it("refreshes the reports once it stops, and is read no more: its counts are final", async () => {
     vi.useFakeTimers();
     const run = { id: "r1", config_id: "c1", status: "running" };
-    const stopping = {
-      ...run,
-      status: "failed",
-      error_code: "stopped",
-      finished_at: new Date().toISOString(),
-      analysed_count: 0,
-      progress: { in_flight: { 7: new Date().toISOString() } },
-    };
     let read = run;
     http.read.mockReset();
     http.read.mockImplementation(() => ok(read));
@@ -250,25 +157,29 @@ describe("a run being stopped", () => {
     });
     expect(result.current.data.status).toBe("running");
 
-    // Stopped: the header's Run button and the rail card can't wait for
-    // the reads under way, nor for their own poll.
-    read = stopping;
+    read = {
+      ...run,
+      status: "failed",
+      error_code: "stopped",
+      analysed_count: 8,
+      // Written by a build that waited for the reads under way: nothing
+      // is saved after a stop now.
+      progress: { in_flight: { 7: new Date().toISOString() } },
+    };
     await tick();
-    expect(result.current.data.status).toBe("failed");
+    expect(result.current.data.analysed_count).toBe(8);
     const refreshes = (key) =>
       refreshed.mock.calls.filter(
         ([filters]) => JSON.stringify(filters.queryKey) === JSON.stringify(key),
       ).length;
     expect(refreshes(["insights", "configs"])).toBe(1);
     expect(refreshes(["insights", "config", "c1"])).toBe(1);
-    await tick();
+    const reads = http.read.mock.calls.length;
+    for (let i = 0; i < 5; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await tick();
+    }
+    expect(http.read).toHaveBeenCalledTimes(reads);
     expect(refreshes(["insights", "configs"])).toBe(1);
-
-    // The reads under way saved: their counts.
-    read = { ...stopping, analysed_count: 4, progress: { in_flight: {} } };
-    await tick();
-    expect(result.current.data.analysed_count).toBe(4);
-    expect(refreshes(["insights", "configs"])).toBe(2);
-    expect(refreshes(["insights", "config", "c1"])).toBe(2);
   });
 });

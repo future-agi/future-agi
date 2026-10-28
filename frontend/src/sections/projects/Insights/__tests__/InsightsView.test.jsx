@@ -1,13 +1,8 @@
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  QueryClient,
-  QueryClientProvider,
-  focusManager,
-} from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import {
-  act,
   fireEvent,
   render,
   screen,
@@ -62,6 +57,7 @@ vi.mock("src/utils/axios", () => ({
       insightsRun: (id) => `/tracer/insights/runs/${id}/`,
       insightsRunUnits: (id) => `/tracer/insights/runs/${id}/units/`,
       insightsRunAsk: (id) => `/tracer/insights/runs/${id}/ask/`,
+      insightsRunStop: (id) => `/tracer/insights/runs/${id}/stop/`,
       insightsEstimate: () => "/tracer/insights/estimate/",
     },
   },
@@ -429,99 +425,76 @@ describe("InsightsView", () => {
       expect(await screen.findByRole("dialog")).toBeInTheDocument();
     });
 
-    it("reads a run just stopped as stopping, with no counts, until the reads under way are saved", async () => {
-      // Stopped while 4 sessions were being read: none saved yet, then all 4.
-      serveFailed("Stopped by Ada.", "stopped");
-      const base = mocks.readQuery.getMockImplementation();
-      const stopping = {
+    it("counts reads as they come back, and after Stop gives the page and the rail the same counts at once", async () => {
+      // 18 sessions: two calls of 8 had come back when Ada pressed Stop;
+      // 11 of those 16 showed a failure.
+      const run = (overrides) => ({
         ...runFixture.result,
+        sample_size: 18,
+        ...overrides,
+      });
+      const running = run({
+        status: "running",
+        stage: "summarising",
+        progress: { stage: "summarising", done: 16, total: 18 },
+      });
+      const stopped = run({
         status: "failed",
         error: "Stopped by Ada.",
         error_code: "stopped",
-        finished_at: new Date().toISOString(),
-        analysed_count: 0,
+        analysed_count: 11,
         skipped_count: 0,
-        progress: { stage: "summarising", in_flight: { 11: "now" } },
-      };
-      let saved = false;
+        progress: { ...running.progress, error_code: "stopped" },
+      });
+      let current = running;
+      const base = mocks.readQuery.getMockImplementation();
       mocks.readQuery.mockImplementation((url, options) => {
-        if (url === `/tracer/insights/runs/${RUN_ID}/`)
-          return ok(
-            saved
-              ? {
-                  ...stopping,
-                  analysed_count: 4,
-                  progress: { stage: "summarising", in_flight: {} },
-                }
-              : stopping,
-          );
-        // The list, read again once they are saved, hasn't answered yet.
-        if (saved && url === "/tracer/insights/configs/")
-          return new Promise(() => {});
+        if (url === "/tracer/insights/configs/")
+          return ok({
+            configs: configsFixture.result.configs.map((config) =>
+              config.id === CONFIG_ID
+                ? { ...config, latest_run: current }
+                : config,
+            ),
+          });
+        if (url === `/tracer/insights/configs/${CONFIG_ID}/`)
+          return ok({ ...configDetail, latest_run: current, runs: [current] });
+        if (url === `/tracer/insights/runs/${RUN_ID}/`) return ok(current);
         return base(url, options);
       });
+      mocks.post.mockImplementation((url) => {
+        if (url !== `/tracer/insights/runs/${RUN_ID}/stop/`)
+          return Promise.reject(new Error(`unexpected ${url}`));
+        current = stopped;
+        return ok({
+          id: RUN_ID,
+          status: "failed",
+          error: "Stopped by Ada.",
+          error_code: "stopped",
+        });
+      });
       renderAt(`?report=${CONFIG_ID}`);
-      expect(await screen.findAllByText("Stopping…")).toHaveLength(2);
       expect(
-        screen.getByText("Finishing the reads already under way."),
+        await screen.findByText("Summarising each item: 16 of 18 sessions"),
       ).toBeInTheDocument();
-      expect(screen.queryByText(/analysed · /)).toBeNull();
-      expect(screen.queryByText("Last run stopped")).toBeNull();
 
-      saved = true;
-      // Page and rail alike, though the list still read 0 when it stopped.
+      fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+      fireEvent.click(
+        within(await screen.findByRole("dialog")).getByRole("button", {
+          name: "Stop run",
+        }),
+      );
       await waitFor(
         () =>
-          expect(screen.getAllByText("4 analysed · 0 skipped")).toHaveLength(2),
+          expect(screen.getAllByText("11 analysed · 0 skipped")).toHaveLength(
+            2,
+          ),
         { timeout: 5000 },
       );
-      expect(screen.queryByText("Stopping…")).toBeNull();
       expect(screen.getByText("Stopped")).toBeInTheDocument();
       expect(screen.getByText("Last run stopped")).toBeInTheDocument();
-      expect(screen.queryByText("0 analysed · 0 skipped")).toBeNull();
-    });
-
-    it("gives a stopped run's card the list's counts once the list is read after the page's run", async () => {
-      // The page stopped waiting before a batch was saved (its 0 stays);
-      // the list, read again later, has the batch's 4.
-      serveFailed("Stopped by Ada.", "stopped");
-      const base = mocks.readQuery.getMockImplementation();
-      let saved = false;
-      mocks.readQuery.mockImplementation((url, options) => {
-        if (saved && url === "/tracer/insights/configs/") {
-          const config = configsFixture.result.configs[1];
-          const run = {
-            ...runFixture.result,
-            status: "failed",
-            error: "Stopped by Ada.",
-            error_code: "stopped",
-            analysed_count: 4,
-            skipped_count: 0,
-          };
-          return ok({ configs: [{ ...config, latest_run: run, runs: [run] }] });
-        }
-        return base(url, options);
-      });
-      renderAt(`?report=${CONFIG_ID}`);
-      const card = await screen.findByRole("link", {
-        name: `Open report ${sessionsConfig.name}`,
-      });
-      expect(
-        await within(card).findByText("0 analysed · 0 skipped"),
-      ).toBeInTheDocument();
-
-      saved = true;
-      try {
-        await act(async () => {
-          focusManager.setFocused(false);
-          focusManager.setFocused(true);
-        });
-        expect(
-          await within(card).findByText("4 analysed · 0 skipped"),
-        ).toBeInTheDocument();
-      } finally {
-        focusManager.setFocused(undefined);
-      }
+      expect(screen.queryByText("Stopping…")).toBeNull();
+      expect(screen.queryByText(/0 analysed/)).toBeNull();
     });
   });
 

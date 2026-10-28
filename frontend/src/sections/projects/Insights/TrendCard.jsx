@@ -455,6 +455,12 @@ export default function TrendCard({
   const current = rows.find((row) => row.runId === runId);
   const chart = rows.length >= 2;
   const breaks = rows.filter((row, i) => i > 0 && row.fresh).length;
+  // The pager below counts every run: beside it, say that the others
+  // stopped, failed or still run, rather than that there is only one.
+  const soFar =
+    runs.length > 1
+      ? `Only one of ${formatCount(runs.length)} runs completed so far.`
+      : "One run so far.";
 
   if (!chart && !currentSegments?.length) return null;
 
@@ -507,7 +513,7 @@ export default function TrendCard({
             onSegmentClick={onCategory}
           />
           <Typography variant="caption" color="text.secondary">
-            One run so far.{" "}
+            {soFar}{" "}
             {onRunNow ? (
               <Box
                 component="button"

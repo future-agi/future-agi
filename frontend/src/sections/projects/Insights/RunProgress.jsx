@@ -85,11 +85,11 @@ function StageRail({ current }) {
 
 StageRail.propTypes = { current: PropTypes.number.isRequired };
 
-// Stop, behind a confirmation: the run fails as "Stopped by <you>". The
-// dialog closes once the stopped run has been read again, so the page goes
-// straight to "Stopping…" (reads under way still being saved) or to its
-// final counts. On Cloud the work already done is charged; how much isn't
-// known yet (calls under way still add to it), so no figure.
+// Stop, behind a confirmation: the run fails as "Stopped by <you>", with the
+// counts of what had been read before it, final at once (reads under way are
+// dropped). The dialog closes once the stopped run has been read again, so
+// no count from before the stop shows in between. On Cloud the work finished
+// before the stop is charged, and nothing after it.
 function StopRun({ run }) {
   const queryClient = useQueryClient();
   const { isCloud } = useDeploymentMode();
@@ -140,8 +140,9 @@ function StopRun({ run }) {
           <Stack spacing={1}>
             <Typography variant="body2">
               It stops reading now and won&apos;t write a report.
-              {isCloud && " You'll be charged for the work already done."} You
-              can run it again later.
+              {isCloud &&
+                " You'll be charged for the work finished before you stop."}{" "}
+              You can run it again later.
             </Typography>
             {stopping.state.status === "error" && (
               <Alert severity="error">{stopping.state.error}</Alert>

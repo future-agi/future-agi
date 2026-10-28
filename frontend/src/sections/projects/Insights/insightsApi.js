@@ -239,17 +239,6 @@ export function failedRunNext(run, { cloud = false } = {}) {
   };
 }
 
-/**
- * A run just stopped whose reads already under way are still being saved
- * (`progress.in_flight`): its counts aren't final yet, so it reads as
- * stopping, with none, until they are. The server lists them for a couple
- * of minutes at most (a worker lost meanwhile), judged on its own clock.
- */
-export function runStopping(run) {
-  if (run?.status !== "failed" || run.error_code !== "stopped") return false;
-  return Object.keys(run.progress?.in_flight || {}).length > 0;
-}
-
 const creditsFrom = (data) =>
   data?.credits_estimate != null
     ? {
@@ -317,13 +306,10 @@ export function useInsightsConfig(configId) {
   });
 }
 
-const runLive = (run) => isRunActive(run?.status) || runStopping(run);
-
 /**
- * A run, polled every two seconds while it works or is being stopped. When
- * it stops working (the header's Run button, the rail card) and again when
- * the reads under way are saved (their counts), the report's run list
- * (pager, trend) and the reports home refresh.
+ * A run, polled every two seconds while it works. When it ends (a stopped
+ * run's counts are final at once), the report's run list (pager, trend) and
+ * the reports home refresh.
  */
 export function useInsightsRun(runId) {
   const queryClient = useQueryClient();
@@ -332,51 +318,26 @@ export function useInsightsRun(runId) {
     queryFn: ({ signal }) => fetchRun(runId, signal),
     enabled: Boolean(runId),
     refetchInterval: (q) =>
-      q.state.status !== "error" && runLive(q.state.data) ? RUN_POLL_MS : false,
+      q.state.status !== "error" && isRunActive(q.state.data?.status)
+        ? RUN_POLL_MS
+        : false,
     refetchOnWindowFocus: false,
     meta: { errorHandled: true },
   });
   const status = query.data?.status;
-  const active = isRunActive(status);
-  const live = runLive(query.data);
   const configId = query.data?.config_id;
-  const previous = useRef({ active, live });
+  const previous = useRef(status);
   useEffect(() => {
-    const was = previous.current;
-    if (status && ((was.active && !active) || (was.live && !live))) {
+    if (isRunActive(previous.current) && status && !isRunActive(status)) {
       if (configId)
         queryClient.invalidateQueries({
           queryKey: insightsKeys.config(configId),
         });
       queryClient.invalidateQueries({ queryKey: ["insights", "configs"] });
     }
-    previous.current = { active, live };
-  }, [status, active, live, configId, queryClient]);
+    previous.current = status;
+  }, [status, configId, queryClient]);
   return query;
-}
-
-/**
- * The run a report card shows, as the report page last read it (`readAt`),
- * read again while it is being stopped: the card says "Stopping" as the
- * page does and then gives the same counts. Reads nothing for a run the
- * page hasn't read.
- */
-export function useStoppingRun(runId) {
-  const stopping = (q) => runStopping(q.state.data);
-  const query = useQuery({
-    queryKey: insightsKeys.run(runId),
-    queryFn: ({ signal }) => fetchRun(runId, signal),
-    enabled: (q) => Boolean(runId) && stopping(q),
-    refetchInterval: (q) =>
-      q.state.status !== "error" && stopping(q) ? RUN_POLL_MS : false,
-    refetchOnWindowFocus: false,
-    meta: { errorHandled: true },
-  });
-  return {
-    run: query.data,
-    readAt: query.dataUpdatedAt,
-    stopping: runStopping(query.data),
-  };
 }
 
 export function useRunUnits(runId, params, { enabled = true } = {}) {

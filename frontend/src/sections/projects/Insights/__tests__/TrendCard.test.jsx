@@ -5,6 +5,7 @@ import { ThemeProvider, createTheme } from "@mui/material/styles";
 import { palette } from "src/theme/palette";
 import { typography } from "src/theme/typography";
 import TrendCard from "../TrendCard";
+import { buildSegments, runTops } from "../insightsDistribution";
 
 vi.mock("src/components/iconify", () => ({ default: () => null }));
 
@@ -152,5 +153,46 @@ describe("TrendCard chart", () => {
         minute: "2-digit",
       }),
     );
+  });
+});
+
+describe("TrendCard with one completed run", () => {
+  const single = (list) =>
+    render(
+      <ThemeProvider theme={theme}>
+        <TrendCard
+          runs={list}
+          runId="run-1"
+          order={["a", "b"]}
+          currentSegments={buildSegments(runTops(runs[2]), {
+            order: ["a", "b"],
+          })}
+          onSelectRun={() => {}}
+          onRunNow={() => {}}
+        />
+      </ThemeProvider>,
+    );
+
+  it("says so of a report's only run", () => {
+    single([runs[2]]);
+    expect(screen.getByText(/^One run so far\./)).toBeInTheDocument();
+  });
+
+  it("doesn't call it the only run beside a pager counting a stopped one", () => {
+    const stopped = {
+      id: "run-2",
+      status: "failed",
+      error_code: "stopped",
+      created_at: "2026-10-28T06:08:00Z",
+      finished_at: "2026-10-28T06:09:00Z",
+      analysed_count: 8,
+      distribution: [],
+    };
+    single([stopped, runs[2]]);
+    expect(
+      screen.getByText(/^Only one of 2 runs completed so far\./),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/One run so far/)).toBeNull();
+    expect(screen.getByText(/Run 1 of 2/)).toBeInTheDocument();
   });
 });
