@@ -54,7 +54,7 @@ type dynamoaiPolicy struct {
 	Action      string `json:"action"`
 }
 
-func newDynamoaiAdapter(cfg map[string]interface{}) *dynamoaiAdapter {
+func newDynamoaiAdapter(cfg adapterConfig) *dynamoaiAdapter {
 	return &dynamoaiAdapter{
 		apiKey:    getStringConfig(cfg, "api_key", ""),
 		endpoint:  getStringConfig(cfg, "endpoint", "https://api.dynamofl.com/moderation/analyze"),

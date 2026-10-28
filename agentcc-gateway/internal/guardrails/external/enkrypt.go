@@ -29,7 +29,7 @@ type enkryptResponse struct {
 	ResultMessage *string                `json:"result_message"`
 }
 
-func newEnkryptAdapter(cfg map[string]interface{}) *enkryptAdapter {
+func newEnkryptAdapter(cfg adapterConfig) *enkryptAdapter {
 	detectors := buildEnkryptDetectors(cfg)
 	return &enkryptAdapter{
 		apiKey:    getStringConfig(cfg, "api_key", ""),
@@ -38,8 +38,8 @@ func newEnkryptAdapter(cfg map[string]interface{}) *enkryptAdapter {
 	}
 }
 
-func buildEnkryptDetectors(cfg map[string]interface{}) map[string]interface{} {
-	if raw, ok := cfg["detectors"]; ok {
+func buildEnkryptDetectors(cfg adapterConfig) map[string]interface{} {
+	if raw, ok := cfg.values["detectors"]; ok {
 		if m, ok := raw.(map[string]interface{}); ok {
 			return m
 		}

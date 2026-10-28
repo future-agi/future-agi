@@ -36,7 +36,7 @@ type pangeaFinding struct {
 	Details string  `json:"details"`
 }
 
-func newPangeaAdapter(cfg map[string]interface{}) *pangeaAdapter {
+func newPangeaAdapter(cfg adapterConfig) *pangeaAdapter {
 	return &pangeaAdapter{
 		token:    getStringConfig(cfg, "token", ""),
 		domain:   getStringConfig(cfg, "domain", "aws.us.pangea.cloud"),

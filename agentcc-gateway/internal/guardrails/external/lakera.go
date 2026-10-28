@@ -26,7 +26,7 @@ type lakeraResponse struct {
 	CategoryScores map[string]float64 `json:"category_scores"`
 }
 
-func newLakeraAdapter(cfg map[string]interface{}) *lakeraAdapter {
+func newLakeraAdapter(cfg adapterConfig) *lakeraAdapter {
 	return &lakeraAdapter{
 		apiKey:     getStringConfig(cfg, "api_key", ""),
 		endpoint:   getStringConfig(cfg, "endpoint", "https://api.lakera.ai/v2/guard"),

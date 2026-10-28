@@ -32,9 +32,9 @@ type lassoMessage struct {
 }
 
 type lassoResponse struct {
-	ViolationsDetected bool                       `json:"violations_detected"`
-	Deputies           map[string]bool            `json:"deputies"`
-	Findings           map[string][]lassoFinding  `json:"findings"`
+	ViolationsDetected bool                      `json:"violations_detected"`
+	Deputies           map[string]bool           `json:"deputies"`
+	Findings           map[string][]lassoFinding `json:"findings"`
 }
 
 type lassoFinding struct {
@@ -42,7 +42,7 @@ type lassoFinding struct {
 	Severity string `json:"severity"`
 }
 
-func newLassoAdapter(cfg map[string]interface{}) *lassoAdapter {
+func newLassoAdapter(cfg adapterConfig) *lassoAdapter {
 	endpoint := getStringConfig(cfg, "endpoint", "https://server.lasso.security/gateway/v3")
 	endpoint = strings.TrimRight(endpoint, "/")
 	if !strings.HasSuffix(endpoint, "/classify") {

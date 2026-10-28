@@ -34,7 +34,7 @@ type llamaGuardResponse struct {
 	} `json:"choices"`
 }
 
-func newLlamaGuardAdapter(cfg map[string]interface{}) *llamaGuardAdapter {
+func newLlamaGuardAdapter(cfg adapterConfig) *llamaGuardAdapter {
 	return &llamaGuardAdapter{
 		endpoint: getStringConfig(cfg, "endpoint", ""),
 		apiKey:   getStringConfig(cfg, "api_key", ""),

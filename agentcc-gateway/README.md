@@ -661,6 +661,14 @@ Already have a preferred safety stack? Point the `external` guardrail at it. Eac
 | CrowdStrike | `crowdstrike.go` |
 | Zscaler | `zscaler.go` |
 
+#### Tenant guardrail egress
+
+Tenant-managed webhooks, external evaluators, and CrowdStrike OAuth connect **directly**, bypassing `HTTPS_PROXY`, `HTTP_PROXY`, and `NO_PROXY` (including lowercase variants). This is deliberate: a proxy resolving the destination would bypass the gateway's connection-time address checks. Redirect destinations are checked too. **Proxy-only egress deployments are not supported for tenant guardrails**; operators must provide direct egress to the evaluator endpoints. Trusted operator-configured guardrails retain environment-proxy support.
+
+Private destinations require the operator's `org_providers.allow_private_urls` opt-in; loopback, link-local, and metadata addresses remain blocked. This setting does not enable proxies. Dial timeouts use the check's configured `timeout`; CrowdStrike token acquisition uses its separate 10-second timeout, with the enclosing check deadline still applying.
+
+Tenant configuration values are literal: `${ENV_VAR}` is not expanded, and FutureAGI checks never inherit the gateway's `FI_API_KEY` or `FI_SECRET_KEY`. A tenant FutureAGI check missing either credential is an operational failure, logged and handled by the gateway's `guardrails.fail_open` setting rather than silently passing; with `fail_open: false`, a blocking check rejects the request regardless of its confidence threshold. FutureAGI check destinations are not address-checked yet, because the backend points them at the platform's own `BASE_URL`, which is loopback or private on many self-hosted installs. Trusted operator configuration retains environment expansion and credential fallbacks.
+
 Chainable with our 18 built-in scanners in the same pipeline — same decision layer, same metric histogram, same audit events. Example config:
 
 ```yaml
