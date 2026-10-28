@@ -28,9 +28,7 @@ def test_public_request_preserves_host_method_query_and_body(outbound_wire):
         "body": '{"value": 3}',
     }
     assert outbound_wire.received[0][2]["Accept-Encoding"] == "identity"
-    events = [
-        json.loads(line) for line in outbound_wire.events.read_text().splitlines()
-    ]
+    events = [json.loads(line) for line in outbound_wire.events.read_text().splitlines()]
     assert events == [
         ["dns", "public.fixture.test"],
         ["connect", ["93.184.216.34", outbound_wire.port]],
