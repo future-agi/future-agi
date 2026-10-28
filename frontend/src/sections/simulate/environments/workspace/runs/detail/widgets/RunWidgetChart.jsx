@@ -6,15 +6,14 @@ import ReactApexChart from "react-apexcharts";
 import ChartLegend from "src/sections/dashboards/ChartLegend";
 import WidgetPieCharts from "src/sections/dashboards/WidgetPieCharts";
 import {
-  formatValueWithConfig,
   getSeriesScalar,
-  getUnitRendering,
   groupPieSeries,
 } from "src/sections/dashboards/widgetUtils";
 import {
   buildSeriesColorMap,
   getSeriesColor,
 } from "src/sections/dashboards/widgetEditorConstants";
+import { formatRunWidgetValue } from "./formatRunWidgetValue";
 
 /**
  * Draws a run widget's query result with the same chart types, palette,
@@ -42,9 +41,6 @@ export function useSeriesColors(series) {
   );
   return (name) => getSeriesColor(name, map);
 }
-
-const fmtFor = (axis, unit) =>
-  unit && !axis?.unit ? { ...axis, ...getUnitRendering(unit) } : axis;
 
 function Message({ children }) {
   return (
@@ -119,10 +115,7 @@ function SeriesTableChart({ series, buckets, leftY, xLabel }) {
                     <td key={col} style={{ ...cell, textAlign: "right" }}>
                       {value == null
                         ? "-"
-                        : formatValueWithConfig(
-                            value,
-                            fmtFor(leftY, item.unit),
-                          )}
+                        : formatRunWidgetValue(value, leftY, item.unit)}
                     </td>
                   );
                 })}
@@ -169,9 +162,10 @@ function SeriesTableChart({ series, buckets, leftY, xLabel }) {
                 <td key={item.key} style={{ ...cell, textAlign: "right" }}>
                   {item.data[index]?.y == null
                     ? "-"
-                    : formatValueWithConfig(
+                    : formatRunWidgetValue(
                         item.data[index].y,
-                        fmtFor(leftY, item.unit),
+                        leftY,
+                        item.unit,
                       )}
                 </td>
               ))}
@@ -247,7 +241,7 @@ export default function RunWidgetChart({
               >
                 {value == null
                   ? "-"
-                  : formatValueWithConfig(value, fmtFor(leftY, item.unit))}
+                  : formatRunWidgetValue(value, leftY, item.unit)}
               </Typography>
               <Typography
                 typography="s2"
@@ -304,8 +298,7 @@ export default function RunWidgetChart({
       .filter(([, side]) => side === "right")
       .map(([index]) => Number(index)),
   );
-  const yFmt = (value) =>
-    formatValueWithConfig(value, fmtFor(leftY, shown[0]?.unit));
+  const yFmt = (value) => formatRunWidgetValue(value, leftY, shown[0]?.unit);
 
   // One bucket, one metric split by a breakdown: a column per value reads
   // better than one cluster. Numeric values (CSAT 0-10) stay in order,
@@ -396,7 +389,7 @@ export default function RunWidgetChart({
             labels: {
               style: labelStyle,
               formatter: (value) =>
-                formatValueWithConfig(value, fmtFor(cfg, shown[index]?.unit)),
+                formatRunWidgetValue(value, cfg, shown[index]?.unit),
             },
             ...bound(cfg, "min"),
             ...bound(cfg, "max"),
@@ -497,12 +490,10 @@ export default function RunWidgetChart({
         formatter: (value, { seriesIndex } = {}) =>
           value == null
             ? "-"
-            : formatValueWithConfig(
+            : formatRunWidgetValue(
                 value,
-                fmtFor(
-                  rightIdx.has(seriesIndex) ? rightY : leftY,
-                  (rankBars ? shown[0] : shown[seriesIndex])?.unit,
-                ),
+                rightIdx.has(seriesIndex) ? rightY : leftY,
+                (rankBars ? shown[0] : shown[seriesIndex])?.unit,
               ),
       },
     },
