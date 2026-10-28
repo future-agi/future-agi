@@ -731,6 +731,125 @@ def test_rows_select_a_time_pattern_over_401_matching_days(
     assert too_long.status_code == 400
 
 
+@pytest.mark.django_db
+@pytest.mark.parametrize("endpoint", [ROWS, EXPORT])
+def test_large_selection_post_reads_the_same_rows_as_get(
+    auth_client, observe_project, answered_run, endpoint
+):
+    task, _ = answered_run
+    InstantEvalRow.objects.filter(task_id=task.id, model="gpt-4.1-mini").update(
+        model="model, with comma"
+    )
+    base = {
+        "project_id": str(observe_project.id),
+        "eval_task_id": str(task.id),
+        "tz": "UTC",
+        "group": ["model:model, with comma"],
+        "error": False,
+        **({"compact": True, "page_size": 1500} if endpoint == ROWS else {}),
+    }
+    expected = auth_client.get(endpoint, base)
+    # A key per matching day/item, with additional days outside this run's
+    # window. This exceeds both Django's 1,000 fields and nginx's 8 KB URL.
+    groups = base["group"] + [
+        f"day:{(datetime(2010, 1, 1) + timedelta(days=d)).date().isoformat()}"
+        for d in range(1100)
+    ]
+    response = auth_client.post(endpoint, {**base, "group": groups}, format="json")
+    assert expected.status_code == response.status_code == 200, response.content
+    if endpoint == EXPORT:
+        assert response.streaming
+        assert response["Content-Type"] == "text/csv; charset=utf-8"
+        assert response["Content-Disposition"] == expected["Content-Disposition"]
+        assert b"".join(response.streaming_content) == b"".join(
+            expected.streaming_content
+        )
+    else:
+        assert response.json() == expected.json()
+        assert 0 < response.json()["result"]["total"] < 12
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("endpoint", [ROWS, EXPORT])
+def test_get_with_too_many_selection_fields_is_a_clear_bad_request(
+    auth_client, observe_project, answered_run, endpoint, settings
+):
+    settings.DATA_UPLOAD_MAX_NUMBER_FIELDS = 1000
+    task, _ = answered_run
+    response = auth_client.get(
+        endpoint,
+        {
+            "project_id": str(observe_project.id),
+            "eval_task_id": str(task.id),
+            "group": ["model:gpt-4.1-mini"] * 1001,
+        },
+    )
+    assert response.status_code == 400
+    assert "POST" in response.json()["result"]
+    assert "JSON" in response.json()["result"]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("endpoint", [ROWS, EXPORT])
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"group": ["model:" + "x" * 300]},
+        {"group": {"model": "gpt-4.1-mini"}},
+        {"page_size": 1501},
+        {"unexpected": True},
+    ],
+)
+def test_selection_post_uses_the_query_serializer(
+    auth_client, observe_project, answered_run, endpoint, extra
+):
+    task, _ = answered_run
+    response = auth_client.post(
+        endpoint,
+        {
+            "project_id": str(observe_project.id),
+            "eval_task_id": str(task.id),
+            **extra,
+        },
+        format="json",
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("endpoint", [ROWS, EXPORT])
+def test_selection_post_requires_authentication(api_client, endpoint):
+    response = api_client.post(
+        endpoint,
+        {"project_id": str(uuid.uuid4()), "eval_task_id": str(uuid.uuid4())},
+        format="json",
+    )
+    assert response.status_code in (401, 403)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("endpoint", [ROWS, EXPORT])
+def test_selection_post_refuses_a_task_outside_the_project(
+    auth_client, observe_project, answered_run, endpoint
+):
+    from tracer.models.project import Project
+
+    task, _ = answered_run
+    other = Project.objects.create(
+        name="Another project",
+        organization=observe_project.organization,
+        workspace=observe_project.workspace,
+        model_type=observe_project.model_type,
+        trace_type="observe",
+    )
+    response = auth_client.post(
+        endpoint,
+        {"project_id": str(other.id), "eval_task_id": str(task.id)},
+        format="json",
+    )
+    assert response.status_code == 404
+
+
 def test_group_count_is_bounded_by_the_supported_run_size():
     field = instant_eval_scale.InstantEvalRowsQuerySerializer().fields["group"]
     groups = ["weekday:1"] * run_service.max_rows()
@@ -827,7 +946,13 @@ def test_an_exported_excerpt_that_starts_like_a_formula_is_quoted(
 
 
 @pytest.mark.django_db
-def test_summary_of_another_organizations_run_is_not_found(auth_client, answered_run):
+@pytest.mark.parametrize(
+    "method, endpoint",
+    [("get", SUMMARY), ("get", ROWS), ("get", EXPORT), ("post", ROWS), ("post", EXPORT)],
+)
+def test_read_of_another_organizations_run_is_not_found(
+    auth_client, answered_run, method, endpoint
+):
     from accounts.models.organization import Organization
     from model_hub.models.ai_model import AIModel
     from tracer.models.project import Project
@@ -840,8 +965,10 @@ def test_summary_of_another_organizations_run_is_not_found(auth_client, answered
         model_type=AIModel.ModelTypes.GENERATIVE_LLM,
         trace_type="observe",
     )
-    response = auth_client.get(
-        SUMMARY, {"project_id": str(project.id), "eval_task_id": str(task.id)}
+    response = getattr(auth_client, method)(
+        endpoint,
+        {"project_id": str(project.id), "eval_task_id": str(task.id)},
+        **({"format": "json"} if method == "post" else {}),
     )
     assert response.status_code == status.HTTP_404_NOT_FOUND
 

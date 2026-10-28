@@ -4,14 +4,24 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const http = vi.hoisted(() => ({ get: vi.fn() }));
+const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
 
 vi.mock("src/utils/axios", () => ({
-  default: { get: http.get },
-  endpoints: { project: { instantEvalRows: () => "/rows" } },
+  default: http,
+  endpoints: {
+    project: {
+      instantEvalRows: () => "/rows",
+      instantEvalExport: () => "/export",
+    },
+  },
 }));
 
-import { ROWS_PAGE, fetchRowIds, useAskRows } from "../useAskRows";
+import {
+  ROWS_PAGE,
+  downloadRowsCsv,
+  fetchRowIds,
+  useAskRows,
+} from "../useAskRows";
 
 const page = (start, next) => ({
   status: 200,
@@ -131,6 +141,136 @@ describe("useAskRows over a chart's selection", () => {
       unit: "traces",
     });
     expect(sent(http.get.mock.calls[0]).getAll("group")).toEqual(groups);
+  });
+
+  it.each([
+    // A day per pattern match: well beyond URL and Django field limits.
+    ["many groups", Array.from({ length: 1100 }, (_, i) => `user:user-${i}`)],
+    // Far fewer than 1,000 fields, but over 8 KB after URL encoding.
+    ["long encoded keys", Array(40).fill(`model:${"模型, ".repeat(15)}`)],
+  ])("posts %s as JSON while paging the table", async (_, selection) => {
+    http.post.mockReset();
+    http.post.mockImplementation((url, body) =>
+      Promise.resolve(body.cursor ? page(ROWS_PAGE, null) : page(0, "c1")),
+    );
+    const { result } = renderHook(
+      () =>
+        useAskRows({
+          projectId: "p1",
+          taskId: "t1",
+          unit: "traces",
+          tz: "UTC",
+          filter: { group: selection },
+          version: "done",
+        }),
+      { wrapper: wrapper() },
+    );
+    await waitFor(() => expect(result.current.rows).toHaveLength(ROWS_PAGE));
+    await act(async () => result.current.loadMore());
+    await waitFor(() =>
+      expect(result.current.rows).toHaveLength(2 * ROWS_PAGE),
+    );
+    expect(http.get).not.toHaveBeenCalled();
+    expect(http.post).toHaveBeenCalledTimes(2);
+    expect(http.post.mock.calls[0]).toEqual([
+      "/rows",
+      {
+        project_id: "p1",
+        eval_task_id: "t1",
+        tz: "UTC",
+        sort: "-time",
+        page_size: ROWS_PAGE,
+        group: selection,
+      },
+      { signal: expect.any(AbortSignal) },
+    ]);
+    expect(http.post.mock.calls[1][1]).toMatchObject({
+      group: selection,
+      cursor: "c1",
+    });
+  });
+
+  it("hands a large selection to Insights using JSON on every page", async () => {
+    const selection = Array.from({ length: 1100 }, (_, i) => `user:user-${i}`);
+    http.post.mockReset();
+    http.post
+      .mockResolvedValueOnce(page(0, "c1"))
+      .mockResolvedValueOnce(page(ROWS_PAGE, null));
+    const rows = await fetchRowIds({
+      projectId: "p1",
+      taskId: "t1",
+      tz: "UTC",
+      filter: { group: selection, error: false },
+      limit: 2 * ROWS_PAGE,
+      unit: "traces",
+    });
+    expect(rows).toHaveLength(2 * ROWS_PAGE);
+    expect(http.get).not.toHaveBeenCalled();
+    expect(http.post).toHaveBeenCalledTimes(2);
+    expect(http.post.mock.calls[1]).toEqual([
+      "/rows",
+      expect.objectContaining({
+        group: selection,
+        error: false,
+        compact: true,
+        page_size: ROWS_PAGE,
+        cursor: "c1",
+      }),
+      {},
+    ]);
+  });
+
+  it.each([false, true])("downloads CSV with a %s large selection", async (large) => {
+    const selection = large ? Array(1100).fill("model:model, with comma") : groups;
+    const blob = new Blob(["id,answer\nr1,Yes"], { type: "text/csv" });
+    http.post.mockReset();
+    http.post.mockResolvedValue({ data: blob });
+    http.get.mockResolvedValue({ data: blob });
+    const create = vi.fn(() => "blob:csv");
+    const revoke = vi.fn();
+    const originalCreate = URL.createObjectURL;
+    const originalRevoke = URL.revokeObjectURL;
+    URL.createObjectURL = create;
+    URL.revokeObjectURL = revoke;
+    const click = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(function () {
+        expect(this.href).toBe("blob:csv");
+        expect(this.download).toBe("selection.csv");
+      });
+    vi.useFakeTimers();
+    try {
+      await downloadRowsCsv({
+        projectId: "p1",
+        taskId: "t1",
+        tz: "UTC",
+        filter: { group: selection },
+        sessions: true,
+        name: "selection.csv",
+      });
+      if (large) {
+        expect(http.get).not.toHaveBeenCalled();
+        expect(http.post).toHaveBeenCalledWith(
+          "/export",
+          expect.objectContaining({ group: selection, sessions: true }),
+          { responseType: "blob" },
+        );
+      } else {
+        expect(http.post).not.toHaveBeenCalled();
+        expect(sent(http.get.mock.calls[0]).getAll("group")).toEqual(groups);
+        expect(http.get.mock.calls[0][1].responseType).toBe("blob");
+      }
+      expect(create).toHaveBeenCalledWith(blob);
+      expect(click).toHaveBeenCalledTimes(1);
+      expect(document.querySelector("a[download]")).toBeNull();
+      vi.advanceTimersByTime(1000);
+      expect(revoke).toHaveBeenCalledWith("blob:csv");
+    } finally {
+      click.mockRestore();
+      URL.createObjectURL = originalCreate;
+      URL.revokeObjectURL = originalRevoke;
+      vi.useRealTimers();
+    }
   });
 
   it("says a refused read failed, without retrying it", async () => {

@@ -56427,8 +56427,10 @@ export const TracerInsightsConfigsListResponse = zod.object({
           population_size: zod.number(),
           sample_size: zod.number(),
           analysed_count: zod.number(),
+          skipped_count: zod.number(),
           taxonomy_mode: zod.string().min(1),
           distribution: zod.array(zod.object({}).passthrough()),
+          error: zod.string(),
           scope: zod.object({}).passthrough(),
         }),
         runs: zod
@@ -56442,8 +56444,10 @@ export const TracerInsightsConfigsListResponse = zod.object({
               population_size: zod.number(),
               sample_size: zod.number(),
               analysed_count: zod.number(),
+              skipped_count: zod.number(),
               taxonomy_mode: zod.string().min(1),
               distribution: zod.array(zod.object({}).passthrough()),
+              error: zod.string(),
               scope: zod.object({}).passthrough(),
             }),
           )
@@ -56487,8 +56491,10 @@ export const TracerInsightsConfigsReadResponse = zod.object({
       population_size: zod.number(),
       sample_size: zod.number(),
       analysed_count: zod.number(),
+      skipped_count: zod.number(),
       taxonomy_mode: zod.string().min(1),
       distribution: zod.array(zod.object({}).passthrough()),
+      error: zod.string(),
       scope: zod.object({}).passthrough(),
     }),
     runs: zod
@@ -56502,8 +56508,10 @@ export const TracerInsightsConfigsReadResponse = zod.object({
           population_size: zod.number(),
           sample_size: zod.number(),
           analysed_count: zod.number(),
+          skipped_count: zod.number(),
           taxonomy_mode: zod.string().min(1),
           distribution: zod.array(zod.object({}).passthrough()),
+          error: zod.string(),
           scope: zod.object({}).passthrough(),
         }),
       )
@@ -56657,8 +56665,10 @@ export const TracerInsightsConfigsPartialUpdateResponse = zod.object({
       population_size: zod.number(),
       sample_size: zod.number(),
       analysed_count: zod.number(),
+      skipped_count: zod.number(),
       taxonomy_mode: zod.string().min(1),
       distribution: zod.array(zod.object({}).passthrough()),
+      error: zod.string(),
       scope: zod.object({}).passthrough(),
     }),
     runs: zod
@@ -56672,8 +56682,10 @@ export const TracerInsightsConfigsPartialUpdateResponse = zod.object({
           population_size: zod.number(),
           sample_size: zod.number(),
           analysed_count: zod.number(),
+          skipped_count: zod.number(),
           taxonomy_mode: zod.string().min(1),
           distribution: zod.array(zod.object({}).passthrough()),
+          error: zod.string(),
           scope: zod.object({}).passthrough(),
         }),
       )
@@ -56717,8 +56729,10 @@ export const TracerInsightsConfigsDeleteResponse = zod.object({
       population_size: zod.number(),
       sample_size: zod.number(),
       analysed_count: zod.number(),
+      skipped_count: zod.number(),
       taxonomy_mode: zod.string().min(1),
       distribution: zod.array(zod.object({}).passthrough()),
+      error: zod.string(),
       scope: zod.object({}).passthrough(),
     }),
     runs: zod
@@ -56732,8 +56746,10 @@ export const TracerInsightsConfigsDeleteResponse = zod.object({
           population_size: zod.number(),
           sample_size: zod.number(),
           analysed_count: zod.number(),
+          skipped_count: zod.number(),
           taxonomy_mode: zod.string().min(1),
           distribution: zod.array(zod.object({}).passthrough()),
+          error: zod.string(),
           scope: zod.object({}).passthrough(),
         }),
       )
@@ -56787,6 +56803,7 @@ export const TracerInsightsDraftCreateResponse = zod.object({
  * How many units a scope holds, and how many a report on it reads.
 Rows handed over by id are only sized: they have no window to count.
  */
+export const tracerInsightsEstimateCreateBodyActionDefault = `run`;
 export const tracerInsightsEstimateCreateBodyScopeLabelMax = 300;
 
 export const tracerInsightsEstimateCreateBodyScopePresetMax = 16;
@@ -56802,7 +56819,10 @@ export const tracerInsightsEstimateCreateBodySampleSizeMax = 1000;
 
 export const TracerInsightsEstimateCreateBody = zod.object({
   project_id: zod.string().uuid(),
-  unit: zod.enum(["traces", "sessions", "users"]),
+  action: zod
+    .enum(["run", "ask", "draft", "preview"])
+    .default(tracerInsightsEstimateCreateBodyActionDefault),
+  unit: zod.enum(["traces", "sessions", "users"]).optional(),
   scope: zod
     .object({
       filters: zod.array(zod.object({}).passthrough()).optional(),
@@ -56851,6 +56871,7 @@ export const TracerInsightsEstimateCreateResponse = zod.object({
     sample_ids: zod.array(zod.string().min(1)),
     credits_estimate: zod.number(),
     credit_limited: zod.boolean(),
+    credit_check_unavailable: zod.boolean().optional(),
     credits_left: zod.number(),
     credit_max_sample: zod.number(),
     credit_message: zod.string().min(1),
@@ -57125,6 +57146,7 @@ export const TracerInsightsRunsReadResponse = zod.object({
     population_size: zod.number(),
     sample_size: zod.number(),
     analysed_count: zod.number(),
+    skipped_count: zod.number(),
     taxonomy_mode: zod.string().min(1),
     result: zod.object({}).passthrough(),
     models_used: zod.object({}).passthrough(),
@@ -57488,7 +57510,7 @@ export const tracerInstantEvalExportListQueryTimeToMax = 64;
 
 export const tracerInstantEvalExportListQueryGroupItemMax = 300;
 
-export const tracerInstantEvalExportListQueryGroupMax = 400;
+export const tracerInstantEvalExportListQueryGroupMax = 100000;
 
 export const tracerInstantEvalExportListQueryUserMax = 255;
 
@@ -57582,9 +57604,120 @@ export const TracerInstantEvalExportListQueryParams = zod.object({
 export const TracerInstantEvalExportListResponse = zod.string();
 
 /**
- * One page of a run's rows with their answers, filtered by what the
-charts select: an answer, a time range, a group, unsure answers or text.
+ * Every row the filter selects, with each question's answer,
+confidence and explanation, streamed as CSV. A user question writes
+a line per user (their rolled-up answers and the sessions behind
+them), or with ``sessions`` a line per session of those users.
  */
+export const tracerInstantEvalExportCreateBodyConfigIdsMax = 2000;
+
+export const tracerInstantEvalExportCreateBodyTzDefault = `UTC`;
+export const tracerInstantEvalExportCreateBodyTzMax = 64;
+
+export const tracerInstantEvalExportCreateBodyAnswerMax = 500;
+
+export const tracerInstantEvalExportCreateBodyAnswersMax = 4000;
+
+export const tracerInstantEvalExportCreateBodyTimeFromMax = 64;
+
+export const tracerInstantEvalExportCreateBodyTimeToMax = 64;
+
+export const tracerInstantEvalExportCreateBodyGroupItemMax = 300;
+
+export const tracerInstantEvalExportCreateBodyGroupMax = 100000;
+
+export const tracerInstantEvalExportCreateBodyUserMax = 255;
+
+export const tracerInstantEvalExportCreateBodyModelMax = 255;
+
+export const tracerInstantEvalExportCreateBodyUnsureDefault = false;
+export const tracerInstantEvalExportCreateBodyQMax = 200;
+
+export const tracerInstantEvalExportCreateBodyCursorMax = 500;
+
+export const tracerInstantEvalExportCreateBodyPageSizeDefault = 50;
+export const tracerInstantEvalExportCreateBodyPageSizeMax = 1500;
+
+export const tracerInstantEvalExportCreateBodyCompactDefault = false;
+export const tracerInstantEvalExportCreateBodySortDefault = `-time`;
+export const tracerInstantEvalExportCreateBodySessionsDefault = false;
+
+export const TracerInstantEvalExportCreateBody = zod.object({
+  project_id: zod.string().uuid(),
+  eval_task_id: zod.string().uuid(),
+  unit: zod.enum(["traces", "spans", "sessions", "users"]).optional(),
+  config_ids: zod
+    .string()
+    .max(tracerInstantEvalExportCreateBodyConfigIdsMax)
+    .optional(),
+  tz: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalExportCreateBodyTzMax)
+    .default(tracerInstantEvalExportCreateBodyTzDefault),
+  config_id: zod.string().uuid().optional(),
+  answer: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalExportCreateBodyAnswerMax)
+    .optional(),
+  answers: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalExportCreateBodyAnswersMax)
+    .optional(),
+  time_from: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalExportCreateBodyTimeFromMax)
+    .optional(),
+  time_to: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalExportCreateBodyTimeToMax)
+    .optional(),
+  group: zod
+    .array(
+      zod.string().min(1).max(tracerInstantEvalExportCreateBodyGroupItemMax),
+    )
+    .max(tracerInstantEvalExportCreateBodyGroupMax)
+    .optional(),
+  user: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalExportCreateBodyUserMax)
+    .optional(),
+  model: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalExportCreateBodyModelMax)
+    .optional(),
+  error: zod.boolean().optional(),
+  unsure: zod.boolean().default(tracerInstantEvalExportCreateBodyUnsureDefault),
+  q: zod.string().max(tracerInstantEvalExportCreateBodyQMax).optional(),
+  cursor: zod
+    .string()
+    .max(tracerInstantEvalExportCreateBodyCursorMax)
+    .optional(),
+  page_size: zod
+    .number()
+    .min(1)
+    .max(tracerInstantEvalExportCreateBodyPageSizeMax)
+    .default(tracerInstantEvalExportCreateBodyPageSizeDefault),
+  compact: zod
+    .boolean()
+    .default(tracerInstantEvalExportCreateBodyCompactDefault),
+  sort: zod
+    .enum(["time", "-time", "confidence"])
+    .default(tracerInstantEvalExportCreateBodySortDefault),
+  sessions: zod
+    .boolean()
+    .default(tracerInstantEvalExportCreateBodySessionsDefault),
+});
+
+export const TracerInstantEvalExportCreateResponse =
+  TracerInstantEvalExportListResponse;
+
 export const tracerInstantEvalRowsListQueryConfigIdsMax = 2000;
 
 export const tracerInstantEvalRowsListQueryTzDefault = `UTC`;
@@ -57600,7 +57733,7 @@ export const tracerInstantEvalRowsListQueryTimeToMax = 64;
 
 export const tracerInstantEvalRowsListQueryGroupItemMax = 300;
 
-export const tracerInstantEvalRowsListQueryGroupMax = 400;
+export const tracerInstantEvalRowsListQueryGroupMax = 100000;
 
 export const tracerInstantEvalRowsListQueryUserMax = 255;
 
@@ -57692,8 +57825,109 @@ export const TracerInstantEvalRowsListResponse = zod.object({
 });
 
 /**
- * Past Instant eval runs of a project, newest first, with their answer split.
+ * One page of a run's rows with their answers, filtered by what the
+charts select: an answer, a time range, a group, unsure answers or text.
  */
+export const tracerInstantEvalRowsCreateBodyConfigIdsMax = 2000;
+
+export const tracerInstantEvalRowsCreateBodyTzDefault = `UTC`;
+export const tracerInstantEvalRowsCreateBodyTzMax = 64;
+
+export const tracerInstantEvalRowsCreateBodyAnswerMax = 500;
+
+export const tracerInstantEvalRowsCreateBodyAnswersMax = 4000;
+
+export const tracerInstantEvalRowsCreateBodyTimeFromMax = 64;
+
+export const tracerInstantEvalRowsCreateBodyTimeToMax = 64;
+
+export const tracerInstantEvalRowsCreateBodyGroupItemMax = 300;
+
+export const tracerInstantEvalRowsCreateBodyGroupMax = 100000;
+
+export const tracerInstantEvalRowsCreateBodyUserMax = 255;
+
+export const tracerInstantEvalRowsCreateBodyModelMax = 255;
+
+export const tracerInstantEvalRowsCreateBodyUnsureDefault = false;
+export const tracerInstantEvalRowsCreateBodyQMax = 200;
+
+export const tracerInstantEvalRowsCreateBodyCursorMax = 500;
+
+export const tracerInstantEvalRowsCreateBodyPageSizeDefault = 50;
+export const tracerInstantEvalRowsCreateBodyPageSizeMax = 1500;
+
+export const tracerInstantEvalRowsCreateBodyCompactDefault = false;
+export const tracerInstantEvalRowsCreateBodySortDefault = `-time`;
+
+export const TracerInstantEvalRowsCreateBody = zod.object({
+  project_id: zod.string().uuid(),
+  eval_task_id: zod.string().uuid(),
+  unit: zod.enum(["traces", "spans", "sessions", "users"]).optional(),
+  config_ids: zod
+    .string()
+    .max(tracerInstantEvalRowsCreateBodyConfigIdsMax)
+    .optional(),
+  tz: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalRowsCreateBodyTzMax)
+    .default(tracerInstantEvalRowsCreateBodyTzDefault),
+  config_id: zod.string().uuid().optional(),
+  answer: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalRowsCreateBodyAnswerMax)
+    .optional(),
+  answers: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalRowsCreateBodyAnswersMax)
+    .optional(),
+  time_from: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalRowsCreateBodyTimeFromMax)
+    .optional(),
+  time_to: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalRowsCreateBodyTimeToMax)
+    .optional(),
+  group: zod
+    .array(zod.string().min(1).max(tracerInstantEvalRowsCreateBodyGroupItemMax))
+    .max(tracerInstantEvalRowsCreateBodyGroupMax)
+    .optional(),
+  user: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalRowsCreateBodyUserMax)
+    .optional(),
+  model: zod
+    .string()
+    .min(1)
+    .max(tracerInstantEvalRowsCreateBodyModelMax)
+    .optional(),
+  error: zod.boolean().optional(),
+  unsure: zod.boolean().default(tracerInstantEvalRowsCreateBodyUnsureDefault),
+  q: zod.string().max(tracerInstantEvalRowsCreateBodyQMax).optional(),
+  cursor: zod.string().max(tracerInstantEvalRowsCreateBodyCursorMax).optional(),
+  page_size: zod
+    .number()
+    .min(1)
+    .max(tracerInstantEvalRowsCreateBodyPageSizeMax)
+    .default(tracerInstantEvalRowsCreateBodyPageSizeDefault),
+  compact: zod.boolean().default(tracerInstantEvalRowsCreateBodyCompactDefault),
+  sort: zod
+    .enum(["time", "-time", "confidence"])
+    .default(tracerInstantEvalRowsCreateBodySortDefault),
+});
+
+export const tracerInstantEvalRowsCreateResponseStatusDefault = true;
+
+export const TracerInstantEvalRowsCreateResponse =
+  TracerInstantEvalRowsListResponse;
+
 export const tracerInstantEvalRunsListQuerySearchMax = 200;
 
 export const tracerInstantEvalRunsListQueryPageNumberDefault = 0;

@@ -26702,9 +26702,11 @@ export interface InsightRunSummaryApi {
   population_size: number;
   sample_size: number;
   analysed_count: number;
+  skipped_count: number;
   /** @minLength 1 */
   taxonomy_mode: string;
   distribution: InsightRunSummaryApiDistributionItem[];
+  error: string;
   scope: InsightRunSummaryApiScope;
 }
 
@@ -26875,6 +26877,16 @@ export interface InsightDraftResponseApi {
   result: InsightDraftResultApi;
 }
 
+export type InsightEstimateRequestApiAction =
+  (typeof InsightEstimateRequestApiAction)[keyof typeof InsightEstimateRequestApiAction];
+
+export const InsightEstimateRequestApiAction = {
+  run: "run",
+  ask: "ask",
+  draft: "draft",
+  preview: "preview",
+} as const;
+
 export type InsightEstimateRequestApiUnit =
   (typeof InsightEstimateRequestApiUnit)[keyof typeof InsightEstimateRequestApiUnit];
 
@@ -26886,7 +26898,8 @@ export const InsightEstimateRequestApiUnit = {
 
 export interface InsightEstimateRequestApi {
   project_id: string;
-  unit: InsightEstimateRequestApiUnit;
+  action?: InsightEstimateRequestApiAction;
+  unit?: InsightEstimateRequestApiUnit;
   scope?: InsightScopeApi;
   /** @minimum 1 */
   population_size?: number;
@@ -26907,6 +26920,7 @@ export interface InsightEstimateResultApi {
   sample_ids: string[];
   credits_estimate: number;
   credit_limited: boolean;
+  credit_check_unavailable?: boolean;
   credits_left: number;
   credit_max_sample: number;
   /** @minLength 1 */
@@ -27046,6 +27060,7 @@ export interface InsightRunDetailApi {
   population_size: number;
   sample_size: number;
   analysed_count: number;
+  skipped_count: number;
   /** @minLength 1 */
   taxonomy_mode: string;
   result: InsightRunDetailApiResult;
@@ -27397,6 +27412,85 @@ export interface InstantEvalEstimateResponseApi {
   result: InstantEvalEstimateApi;
 }
 
+export type InstantEvalExportQueryApiUnit =
+  (typeof InstantEvalExportQueryApiUnit)[keyof typeof InstantEvalExportQueryApiUnit];
+
+export const InstantEvalExportQueryApiUnit = {
+  traces: "traces",
+  spans: "spans",
+  sessions: "sessions",
+  users: "users",
+} as const;
+
+export type InstantEvalExportQueryApiSort =
+  (typeof InstantEvalExportQueryApiSort)[keyof typeof InstantEvalExportQueryApiSort];
+
+export const InstantEvalExportQueryApiSort = {
+  time: "time",
+  "-time": "-time",
+  confidence: "confidence",
+} as const;
+
+export interface InstantEvalExportQueryApi {
+  project_id: string;
+  eval_task_id: string;
+  unit?: InstantEvalExportQueryApiUnit;
+  /** @maxLength 2000 */
+  config_ids?: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  tz?: string;
+  config_id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  answer?: string;
+  /**
+   * @minLength 1
+   * @maxLength 4000
+   */
+  answers?: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  time_from?: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  time_to?: string;
+  /** @maxItems 100000 */
+  group?: string[];
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  user?: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  model?: string;
+  error?: boolean;
+  unsure?: boolean;
+  /** @maxLength 200 */
+  q?: string;
+  /** @maxLength 500 */
+  cursor?: string;
+  /**
+   * @minimum 1
+   * @maximum 1500
+   */
+  page_size?: number;
+  compact?: boolean;
+  sort?: InstantEvalExportQueryApiSort;
+  sessions?: boolean;
+}
+
 export type InstantEvalRowsResultApiRowsItem = { [key: string]: unknown };
 
 export interface InstantEvalRowsResultApi {
@@ -27409,6 +27503,84 @@ export interface InstantEvalRowsResultApi {
 export interface InstantEvalRowsResponseApi {
   status?: boolean;
   result: InstantEvalRowsResultApi;
+}
+
+export type InstantEvalRowsQueryApiUnit =
+  (typeof InstantEvalRowsQueryApiUnit)[keyof typeof InstantEvalRowsQueryApiUnit];
+
+export const InstantEvalRowsQueryApiUnit = {
+  traces: "traces",
+  spans: "spans",
+  sessions: "sessions",
+  users: "users",
+} as const;
+
+export type InstantEvalRowsQueryApiSort =
+  (typeof InstantEvalRowsQueryApiSort)[keyof typeof InstantEvalRowsQueryApiSort];
+
+export const InstantEvalRowsQueryApiSort = {
+  time: "time",
+  "-time": "-time",
+  confidence: "confidence",
+} as const;
+
+export interface InstantEvalRowsQueryApi {
+  project_id: string;
+  eval_task_id: string;
+  unit?: InstantEvalRowsQueryApiUnit;
+  /** @maxLength 2000 */
+  config_ids?: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  tz?: string;
+  config_id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  answer?: string;
+  /**
+   * @minLength 1
+   * @maxLength 4000
+   */
+  answers?: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  time_from?: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  time_to?: string;
+  /** @maxItems 100000 */
+  group?: string[];
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  user?: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  model?: string;
+  error?: boolean;
+  unsure?: boolean;
+  /** @maxLength 200 */
+  q?: string;
+  /** @maxLength 500 */
+  cursor?: string;
+  /**
+   * @minimum 1
+   * @maximum 1500
+   */
+  page_size?: number;
+  compact?: boolean;
+  sort?: InstantEvalRowsQueryApiSort;
 }
 
 export type InstantEvalRunApiCounts = {
@@ -37657,7 +37829,7 @@ export type TracerInstantEvalExportListParams = {
    */
   time_to?: string;
   /**
-   * @maxItems 400
+   * @maxItems 100000
    */
   group?: string[];
   /**
@@ -37744,7 +37916,7 @@ export type TracerInstantEvalRowsListParams = {
    */
   time_to?: string;
   /**
-   * @maxItems 400
+   * @maxItems 100000
    */
   group?: string[];
   /**

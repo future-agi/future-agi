@@ -14,6 +14,23 @@ export const ROWS_PAGE = 50;
 
 const result = (response) => response?.data?.result;
 
+// Stay below nginx's 8 KB request-line limit and Django's 1,000 GET fields.
+// The same selection is used for the table, Insights hand-overs and exports.
+function readSelection(url, params, options = {}) {
+  const serializer = paramsSerializer();
+  if (
+    (params.group?.length || 0) >= 500 ||
+    url.length + 1 + serializer.serialize(params).length > 6000
+  ) {
+    return axios.post(url, params, options);
+  }
+  return axios.get(url, {
+    ...options,
+    params,
+    paramsSerializer: serializer,
+  });
+}
+
 export function rowsParams({ projectId, taskId, tz, filter, sort }) {
   return {
     project_id: projectId,
@@ -44,15 +61,15 @@ export function useAskRows({
     enabled: active,
     initialPageParam: null,
     queryFn: async ({ pageParam, signal }) => {
-      const response = await axios.get(endpoints.project.instantEvalRows(), {
-        params: {
+      const response = await readSelection(
+        endpoints.project.instantEvalRows(),
+        {
           ...params,
           page_size: ROWS_PAGE,
           ...(pageParam ? { cursor: pageParam } : {}),
         },
-        paramsSerializer: paramsSerializer(),
-        signal,
-      });
+        { signal },
+      );
       const data = result(response) || {};
       return {
         rows: (data.rows || []).map((row) => toRecord(row, unit)),
@@ -102,14 +119,11 @@ export async function fetchRowIds({
   let cursor = null;
   do {
     // eslint-disable-next-line no-await-in-loop
-    const response = await axios.get(endpoints.project.instantEvalRows(), {
-      params: {
-        ...rowsParams({ projectId, taskId, tz, filter }),
-        compact: true,
-        page_size: Math.min(1500, limit - out.length),
-        ...(cursor ? { cursor } : {}),
-      },
-      paramsSerializer: paramsSerializer(),
+    const response = await readSelection(endpoints.project.instantEvalRows(), {
+      ...rowsParams({ projectId, taskId, tz, filter }),
+      compact: true,
+      page_size: Math.min(1500, limit - out.length),
+      ...(cursor ? { cursor } : {}),
     });
     const data = result(response) || {};
     out.push(...(data.rows || []).map((row) => toRecord(row, unit)));
@@ -130,14 +144,14 @@ export async function downloadRowsCsv({
   name,
   sessions = false,
 }) {
-  const response = await axios.get(endpoints.project.instantEvalExport(), {
-    params: {
+  const response = await readSelection(
+    endpoints.project.instantEvalExport(),
+    {
       ...rowsParams({ projectId, taskId, tz, filter }),
       ...(sessions ? { sessions: true } : {}),
     },
-    paramsSerializer: paramsSerializer(),
-    responseType: "blob",
-  });
+    { responseType: "blob" },
+  );
   const url = URL.createObjectURL(response.data);
   const link = document.createElement("a");
   link.href = url;

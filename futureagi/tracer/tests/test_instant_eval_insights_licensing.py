@@ -169,8 +169,8 @@ def assert_refused(response, feature, code):
 def test_the_routes_cover_every_view_and_method():
     instant = endpoints("instant-eval/")
     insights = endpoints("insights/")
-    # Estimate, start, summary, rows, export, control, runs.
-    assert len(instant) == 7
+    # Estimate, start, summary, rows (GET/POST), export (GET/POST), control, runs.
+    assert len(instant) == 9
     # Config list, config get/patch/delete, draft, preview, estimate, run
     # create, run detail, run units, ask.
     assert len(insights) == 11

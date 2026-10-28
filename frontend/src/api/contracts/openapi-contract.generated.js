@@ -35809,7 +35809,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 maxLength: 300,
                 minLength: 1,
               },
-              maxItems: 400,
+              maxItems: 100000,
             },
           },
           user: {
@@ -35887,6 +35887,39 @@ export const OPENAPI_CONTRACT = Object.freeze({
             },
           },
         },
+        responses: {
+          200: {
+            type: "string",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      post: {
+        operationId: "tracer_instant-eval_export_create",
+        readQueryPost: true,
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/InstantEvalExportQuery",
+        },
+        queryParameters: {},
         responses: {
           200: {
             type: "string",
@@ -36004,7 +36037,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 maxLength: 300,
                 minLength: 1,
               },
-              maxItems: 400,
+              maxItems: 100000,
             },
           },
           user: {
@@ -36075,6 +36108,39 @@ export const OPENAPI_CONTRACT = Object.freeze({
             },
           },
         },
+        responses: {
+          200: {
+            $ref: "#/definitions/InstantEvalRowsResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      post: {
+        operationId: "tracer_instant-eval_rows_create",
+        readQueryPost: true,
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/InstantEvalRowsQuery",
+        },
+        queryParameters: {},
         responses: {
           200: {
             $ref: "#/definitions/InstantEvalRowsResponse",
@@ -66682,13 +66748,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     InsightEstimateRequest: {
-      required: ["project_id", "unit"],
+      required: ["project_id"],
       type: "object",
       properties: {
         project_id: {
           title: "Project id",
           type: "string",
           format: "uuid",
+        },
+        action: {
+          title: "Action",
+          type: "string",
+          enum: ["run", "ask", "draft", "preview"],
+          default: "run",
         },
         unit: {
           title: "Unit",
@@ -67121,6 +67193,132 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    InstantEvalExportQuery: {
+      required: ["project_id", "eval_task_id"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        eval_task_id: {
+          title: "Eval task id",
+          type: "string",
+          format: "uuid",
+        },
+        unit: {
+          title: "Unit",
+          type: "string",
+          enum: ["traces", "spans", "sessions", "users"],
+        },
+        config_ids: {
+          title: "Config ids",
+          type: "string",
+          maxLength: 2000,
+        },
+        tz: {
+          title: "Tz",
+          type: "string",
+          default: "UTC",
+          maxLength: 64,
+          minLength: 1,
+        },
+        config_id: {
+          title: "Config id",
+          type: "string",
+          format: "uuid",
+        },
+        answer: {
+          title: "Answer",
+          type: "string",
+          maxLength: 500,
+          minLength: 1,
+        },
+        answers: {
+          title: "Answers",
+          type: "string",
+          maxLength: 4000,
+          minLength: 1,
+        },
+        time_from: {
+          title: "Time from",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+        time_to: {
+          title: "Time to",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+        group: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 300,
+            minLength: 1,
+          },
+          maxItems: 100000,
+        },
+        user: {
+          title: "User",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        model: {
+          title: "Model",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        error: {
+          title: "Error",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        unsure: {
+          title: "Unsure",
+          type: "boolean",
+          default: false,
+        },
+        q: {
+          title: "Q",
+          type: "string",
+          maxLength: 200,
+        },
+        cursor: {
+          title: "Cursor",
+          type: "string",
+          maxLength: 500,
+        },
+        page_size: {
+          title: "Page size",
+          type: "integer",
+          default: 50,
+          maximum: 1500,
+          minimum: 1,
+        },
+        compact: {
+          title: "Compact",
+          type: "boolean",
+          default: false,
+        },
+        sort: {
+          title: "Sort",
+          type: "string",
+          enum: ["time", "-time", "confidence"],
+          default: "-time",
+        },
+        sessions: {
+          title: "Sessions",
+          type: "boolean",
+          default: false,
+        },
+      },
+    },
     InstantEvalLimitError: {
       type: "object",
       properties: {
@@ -67156,6 +67354,127 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         result: {
           $ref: "#/definitions/InstantEvalLimitDetail",
+        },
+      },
+    },
+    InstantEvalRowsQuery: {
+      required: ["project_id", "eval_task_id"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        eval_task_id: {
+          title: "Eval task id",
+          type: "string",
+          format: "uuid",
+        },
+        unit: {
+          title: "Unit",
+          type: "string",
+          enum: ["traces", "spans", "sessions", "users"],
+        },
+        config_ids: {
+          title: "Config ids",
+          type: "string",
+          maxLength: 2000,
+        },
+        tz: {
+          title: "Tz",
+          type: "string",
+          default: "UTC",
+          maxLength: 64,
+          minLength: 1,
+        },
+        config_id: {
+          title: "Config id",
+          type: "string",
+          format: "uuid",
+        },
+        answer: {
+          title: "Answer",
+          type: "string",
+          maxLength: 500,
+          minLength: 1,
+        },
+        answers: {
+          title: "Answers",
+          type: "string",
+          maxLength: 4000,
+          minLength: 1,
+        },
+        time_from: {
+          title: "Time from",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+        time_to: {
+          title: "Time to",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+        group: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 300,
+            minLength: 1,
+          },
+          maxItems: 100000,
+        },
+        user: {
+          title: "User",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        model: {
+          title: "Model",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        error: {
+          title: "Error",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        unsure: {
+          title: "Unsure",
+          type: "boolean",
+          default: false,
+        },
+        q: {
+          title: "Q",
+          type: "string",
+          maxLength: 200,
+        },
+        cursor: {
+          title: "Cursor",
+          type: "string",
+          maxLength: 500,
+        },
+        page_size: {
+          title: "Page size",
+          type: "integer",
+          default: 50,
+          maximum: 1500,
+          minimum: 1,
+        },
+        compact: {
+          title: "Compact",
+          type: "boolean",
+          default: false,
+        },
+        sort: {
+          title: "Sort",
+          type: "string",
+          enum: ["time", "-time", "confidence"],
+          default: "-time",
         },
       },
     },
@@ -98130,6 +98449,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Credit limited",
           type: "boolean",
         },
+        credit_check_unavailable: {
+          title: "Credit check unavailable",
+          type: "boolean",
+        },
         credits_left: {
           title: "Credits left",
           type: "number",
@@ -98262,6 +98585,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "population_size",
         "sample_size",
         "analysed_count",
+        "skipped_count",
         "taxonomy_mode",
         "result",
         "models_used",
@@ -98327,6 +98651,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         analysed_count: {
           title: "Analysed count",
+          type: "integer",
+        },
+        skipped_count: {
+          title: "Skipped count",
           type: "integer",
         },
         taxonomy_mode: {
@@ -115515,8 +115843,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "population_size",
         "sample_size",
         "analysed_count",
+        "skipped_count",
         "taxonomy_mode",
         "distribution",
+        "error",
         "scope",
       ],
       type: "object",
@@ -115559,6 +115889,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Analysed count",
           type: "integer",
         },
+        skipped_count: {
+          title: "Skipped count",
+          type: "integer",
+        },
         taxonomy_mode: {
           title: "Taxonomy mode",
           type: "string",
@@ -115569,6 +115903,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             type: "object",
           },
+        },
+        error: {
+          title: "Error",
+          type: "string",
         },
         scope: {
           title: "Scope",

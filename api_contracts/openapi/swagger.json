@@ -64235,7 +64235,7 @@
                             "maxLength": 300,
                             "minLength": 1
                         },
-                        "maxItems": 400
+                        "maxItems": 100000
                     },
                     {
                         "name": "user",
@@ -64367,6 +64367,70 @@
                 "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
             },
+            "post": {
+                "operationId": "tracer_instant-eval_export_create",
+                "description": "Every row the filter selects, with each question's answer,\nconfidence and explanation, streamed as CSV. A user question writes\na line per user (their rolled-up answers and the sessions behind\nthem), or with ``sessions`` a line per session of those users.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/InstantEvalExportQuery"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Every selected row with its answers, as CSV.",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true,
+                "x-read-query-post": true
+            },
             "parameters": []
         },
         "/tracer/instant-eval/rows/": {
@@ -64465,7 +64529,7 @@
                             "maxLength": 300,
                             "minLength": 1
                         },
-                        "maxItems": 400
+                        "maxItems": 100000
                     },
                     {
                         "name": "user",
@@ -64589,6 +64653,70 @@
                 ],
                 "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
+            },
+            "post": {
+                "operationId": "tracer_instant-eval_rows_create",
+                "description": "One page of a run's rows with their answers, filtered by what the\ncharts select: an answer, a time range, a group, unsure answers or text.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/InstantEvalRowsQuery"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/InstantEvalRowsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true,
+                "x-read-query-post": true
             },
             "parameters": []
         },
@@ -148950,8 +149078,10 @@
                 "population_size",
                 "sample_size",
                 "analysed_count",
+                "skipped_count",
                 "taxonomy_mode",
                 "distribution",
+                "error",
                 "scope"
             ],
             "type": "object",
@@ -148994,6 +149124,10 @@
                     "title": "Analysed count",
                     "type": "integer"
                 },
+                "skipped_count": {
+                    "title": "Skipped count",
+                    "type": "integer"
+                },
                 "taxonomy_mode": {
                     "title": "Taxonomy mode",
                     "type": "string",
@@ -149004,6 +149138,10 @@
                     "items": {
                         "type": "object"
                     }
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string"
                 },
                 "scope": {
                     "title": "Scope",
@@ -149390,8 +149528,7 @@
         },
         "InsightEstimateRequest": {
             "required": [
-                "project_id",
-                "unit"
+                "project_id"
             ],
             "type": "object",
             "properties": {
@@ -149399,6 +149536,17 @@
                     "title": "Project id",
                     "type": "string",
                     "format": "uuid"
+                },
+                "action": {
+                    "title": "Action",
+                    "type": "string",
+                    "enum": [
+                        "run",
+                        "ask",
+                        "draft",
+                        "preview"
+                    ],
+                    "default": "run"
                 },
                 "unit": {
                     "title": "Unit",
@@ -149471,6 +149619,10 @@
                 },
                 "credit_limited": {
                     "title": "Credit limited",
+                    "type": "boolean"
+                },
+                "credit_check_unavailable": {
+                    "title": "Credit check unavailable",
                     "type": "boolean"
                 },
                 "credits_left": {
@@ -149744,6 +149896,7 @@
                 "population_size",
                 "sample_size",
                 "analysed_count",
+                "skipped_count",
                 "taxonomy_mode",
                 "result",
                 "models_used",
@@ -149809,6 +149962,10 @@
                 },
                 "analysed_count": {
                     "title": "Analysed count",
+                    "type": "integer"
+                },
+                "skipped_count": {
+                    "title": "Skipped count",
                     "type": "integer"
                 },
                 "taxonomy_mode": {
@@ -150807,6 +150964,144 @@
                 }
             }
         },
+        "InstantEvalExportQuery": {
+            "required": [
+                "project_id",
+                "eval_task_id"
+            ],
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "eval_task_id": {
+                    "title": "Eval task id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "unit": {
+                    "title": "Unit",
+                    "type": "string",
+                    "enum": [
+                        "traces",
+                        "spans",
+                        "sessions",
+                        "users"
+                    ]
+                },
+                "config_ids": {
+                    "title": "Config ids",
+                    "type": "string",
+                    "maxLength": 2000
+                },
+                "tz": {
+                    "title": "Tz",
+                    "type": "string",
+                    "default": "UTC",
+                    "maxLength": 64,
+                    "minLength": 1
+                },
+                "config_id": {
+                    "title": "Config id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "answer": {
+                    "title": "Answer",
+                    "type": "string",
+                    "maxLength": 500,
+                    "minLength": 1
+                },
+                "answers": {
+                    "title": "Answers",
+                    "type": "string",
+                    "maxLength": 4000,
+                    "minLength": 1
+                },
+                "time_from": {
+                    "title": "Time from",
+                    "type": "string",
+                    "maxLength": 64,
+                    "minLength": 1
+                },
+                "time_to": {
+                    "title": "Time to",
+                    "type": "string",
+                    "maxLength": 64,
+                    "minLength": 1
+                },
+                "group": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 300,
+                        "minLength": 1
+                    },
+                    "maxItems": 100000
+                },
+                "user": {
+                    "title": "User",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "model": {
+                    "title": "Model",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "boolean",
+                    "x-nullable": true
+                },
+                "unsure": {
+                    "title": "Unsure",
+                    "type": "boolean",
+                    "default": false
+                },
+                "q": {
+                    "title": "Q",
+                    "type": "string",
+                    "maxLength": 200
+                },
+                "cursor": {
+                    "title": "Cursor",
+                    "type": "string",
+                    "maxLength": 500
+                },
+                "page_size": {
+                    "title": "Page size",
+                    "type": "integer",
+                    "default": 50,
+                    "maximum": 1500,
+                    "minimum": 1
+                },
+                "compact": {
+                    "title": "Compact",
+                    "type": "boolean",
+                    "default": false
+                },
+                "sort": {
+                    "title": "Sort",
+                    "type": "string",
+                    "enum": [
+                        "time",
+                        "-time",
+                        "confidence"
+                    ],
+                    "default": "-time"
+                },
+                "sessions": {
+                    "title": "Sessions",
+                    "type": "boolean",
+                    "default": false
+                }
+            }
+        },
         "InstantEvalRowsResult": {
             "required": [
                 "rows",
@@ -150846,6 +151141,139 @@
                 },
                 "result": {
                     "$ref": "#/definitions/InstantEvalRowsResult"
+                }
+            }
+        },
+        "InstantEvalRowsQuery": {
+            "required": [
+                "project_id",
+                "eval_task_id"
+            ],
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "eval_task_id": {
+                    "title": "Eval task id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "unit": {
+                    "title": "Unit",
+                    "type": "string",
+                    "enum": [
+                        "traces",
+                        "spans",
+                        "sessions",
+                        "users"
+                    ]
+                },
+                "config_ids": {
+                    "title": "Config ids",
+                    "type": "string",
+                    "maxLength": 2000
+                },
+                "tz": {
+                    "title": "Tz",
+                    "type": "string",
+                    "default": "UTC",
+                    "maxLength": 64,
+                    "minLength": 1
+                },
+                "config_id": {
+                    "title": "Config id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "answer": {
+                    "title": "Answer",
+                    "type": "string",
+                    "maxLength": 500,
+                    "minLength": 1
+                },
+                "answers": {
+                    "title": "Answers",
+                    "type": "string",
+                    "maxLength": 4000,
+                    "minLength": 1
+                },
+                "time_from": {
+                    "title": "Time from",
+                    "type": "string",
+                    "maxLength": 64,
+                    "minLength": 1
+                },
+                "time_to": {
+                    "title": "Time to",
+                    "type": "string",
+                    "maxLength": 64,
+                    "minLength": 1
+                },
+                "group": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 300,
+                        "minLength": 1
+                    },
+                    "maxItems": 100000
+                },
+                "user": {
+                    "title": "User",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "model": {
+                    "title": "Model",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "boolean",
+                    "x-nullable": true
+                },
+                "unsure": {
+                    "title": "Unsure",
+                    "type": "boolean",
+                    "default": false
+                },
+                "q": {
+                    "title": "Q",
+                    "type": "string",
+                    "maxLength": 200
+                },
+                "cursor": {
+                    "title": "Cursor",
+                    "type": "string",
+                    "maxLength": 500
+                },
+                "page_size": {
+                    "title": "Page size",
+                    "type": "integer",
+                    "default": 50,
+                    "maximum": 1500,
+                    "minimum": 1
+                },
+                "compact": {
+                    "title": "Compact",
+                    "type": "boolean",
+                    "default": false
+                },
+                "sort": {
+                    "title": "Sort",
+                    "type": "string",
+                    "enum": [
+                        "time",
+                        "-time",
+                        "confidence"
+                    ],
+                    "default": "-time"
                 }
             }
         },

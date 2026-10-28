@@ -5,8 +5,8 @@ POST /tracer/instant-eval/estimate/  how many rows a view holds and what reading
                                      a sample or all of them would cost
 POST /tracer/instant-eval/start/     start a run over a view (or rows handed over)
 GET  /tracer/instant-eval/summary/   everything the charts draw, as counts
-GET  /tracer/instant-eval/rows/      one page of rows, filtered like the charts
-GET  /tracer/instant-eval/export/    every row the filter selects, as CSV
+GET/POST /tracer/instant-eval/rows/   one page of rows, filtered like the charts
+GET/POST /tracer/instant-eval/export/ every row the filter selects, as CSV
 POST /tracer/instant-eval/control/   pause, resume, cancel, retry the failed
                                      rows, or read more of a sample
 
@@ -28,6 +28,7 @@ import time
 import structlog
 from django.conf import settings
 from django.core.cache import cache
+from django.core.exceptions import TooManyFieldsSent
 from django.db import transaction
 from django.db.models import F
 from django.http import StreamingHttpResponse
@@ -356,6 +357,17 @@ class InstantEvalRunQuerySerializer(serializers.Serializer):
     tz = serializers.CharField(max_length=64, required=False, default="UTC")
 
 
+class InstantEvalGroupListField(serializers.ListField):
+    def get_value(self, dictionary):
+        # Read POST preserves JSON values inside a QueryDict. Its getlist()
+        # would otherwise wrap the JSON array as one nested list; GET still
+        # reads repeated parameters through ListField's normal path.
+        value = dictionary.get(self.field_name)
+        if isinstance(value, list):
+            return value
+        return super().get_value(dictionary)
+
+
 class InstantEvalRowsQuerySerializer(InstantEvalRunQuerySerializer):
     config_id = serializers.UUIDField(required=False)
     answer = serializers.CharField(max_length=500, required=False)
@@ -366,7 +378,7 @@ class InstantEvalRowsQuerySerializer(InstantEvalRunQuerySerializer):
     # "<dim>:<key>"; repeat the parameter for any of several groups. A key is
     # taken whole (it may hold a comma). A pattern can select one key per
     # answered row, even when its custom range spans more than 400 days.
-    group = serializers.ListField(
+    group = InstantEvalGroupListField(
         child=serializers.CharField(max_length=300),
         required=False,
         max_length=max_rows(),
@@ -1359,12 +1371,23 @@ def _row_filter(params) -> summary_service.RowFilter:
     )
 
 
-@method_decorator(gzip_page, name="dispatch")
-class InstantEvalRowsView(InstantEvalLicenseRequired, APIView):
+class _InstantEvalSelectionView(InstantEvalLicenseRequired, APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    def handle_exception(self, exc):
+        if isinstance(exc, TooManyFieldsSent):
+            return self._gm.bad_request(
+                "Too many selection parameters. Send this query using POST "
+                "with a JSON body instead."
+            )
+        return super().handle_exception(exc)
+
+
+@method_decorator(gzip_page, name="dispatch")
+class InstantEvalRowsView(_InstantEvalSelectionView):
     @validated_request(
+        read_post=True,
         query_serializer=InstantEvalRowsQuerySerializer,
         responses={200: InstantEvalRowsResponseSerializer, **ERRORS},
     )
@@ -1400,12 +1423,13 @@ class InstantEvalRowsView(InstantEvalLicenseRequired, APIView):
             )
         return self._gm.success_response(page)
 
+    # Large chart selections carry the same query in JSON, without a URL limit.
+    post = get
 
-class InstantEvalExportView(InstantEvalLicenseRequired, APIView):
-    permission_classes = [IsAuthenticated]
-    _gm = GeneralMethods()
 
+class InstantEvalExportView(_InstantEvalSelectionView):
     @validated_request(
+        read_post=True,
         query_serializer=InstantEvalExportQuerySerializer,
         responses={
             200: openapi.Response(
@@ -1446,6 +1470,8 @@ class InstantEvalExportView(InstantEvalLicenseRequired, APIView):
             f'attachment; filename="instant-eval-{task.id}{part}.csv"'
         )
         return response
+
+    post = get
 
 
 # ─── Control ─────────────────────────────────────────────────────────────────
