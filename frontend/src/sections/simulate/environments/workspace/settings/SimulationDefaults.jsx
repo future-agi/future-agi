@@ -36,6 +36,12 @@ const withCurrent = (opts, v) =>
 
 const turnsWords = (n) => `${n} turn${n === 1 ? "" : "s"}`;
 const atOnceWords = (n) => (n === 1 ? "1 · one at a time" : `${n} at once`);
+const atOnceSentence = (n) => {
+  if (n == null) return null;
+  return n === 1
+    ? "Every run takes one conversation at a time."
+    : `Every run takes up to ${n} at once.`;
+};
 const minutesWords = (m) => durationWords(m * 60);
 
 const LABEL_SX = { typography: "s3", color: "text.secondary", mb: 0.5 };
@@ -166,7 +172,11 @@ export default function SimulationDefaults({
             />
             <Typography sx={{ ...HELP_SX, mt: 0.75 }}>
               {[
+                atOnceSentence(value("atOnce")),
+                // The build's own count, only when it ran fewer than asked.
                 parallelism?.requested &&
+                  (parallelism.effective ?? parallelism.admitted) <
+                    parallelism.requested &&
                   `${PARALLELISM_COPY.fact}: ${PARALLELISM_COPY.factValue(parallelism)}.`,
                 voice
                   ? "Your provider's concurrency limit still applies."
@@ -270,6 +280,30 @@ export default function SimulationDefaults({
             <SoonChip label="Model" what="The simulated user's model" />
           )}
         </Stack>
+      </Stack>
+      {/* Vel's caller history: each model change, newest first. */}
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={0.75}
+        sx={{
+          px: 2.5,
+          py: 1.25,
+          borderTop: "1px solid",
+          borderColor: "divider",
+        }}
+      >
+        <Typography
+          sx={{ typography: "s3", fontWeight: 600, color: "text.subtitle" }}
+        >
+          Simulated caller changes
+        </Typography>
+        <SoonChip
+          label="History"
+          detail="Each change to the simulated user's model, newest first, with the one this environment started with."
+          what="The simulated caller's change history"
+          size="tiny"
+        />
       </Stack>
       {dirty && (
         <Stack

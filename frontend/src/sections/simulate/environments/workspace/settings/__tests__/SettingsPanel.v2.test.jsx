@@ -148,6 +148,10 @@ describe("SettingsPanel v2", () => {
     expect(
       within(card).getByRole("combobox", { name: "Conversations at once" }),
     ).toHaveTextContent("2 at once");
+    // Vel's wording under the picker; the build's own count only when it ran
+    // fewer than it asked for.
+    expect(card).toHaveTextContent("Every run takes up to 2 at once.");
+    expect(card).not.toHaveTextContent("Parallel worlds");
     expect(within(card).getByText("Stuck after soon")).toBeInTheDocument();
 
     // Picking works, saving sends nothing and the real value comes back.
@@ -158,6 +162,27 @@ describe("SettingsPanel v2", () => {
       variant: "info",
     });
     expect(turns).toHaveTextContent("12 turns");
+  });
+
+  it("says when the build ran fewer conversations at once than it asked for", () => {
+    renderPanel({
+      env: {
+        ...mappedEnv(DETAIL),
+        parallelism: { requested: 4, admitted: 4, effective: 1 },
+      },
+    });
+    expect(section("Simulation defaults")).toHaveTextContent(
+      "Parallel worlds: 1 of 4.",
+    );
+  });
+
+  it("lists simulated caller changes, as Vel's does, with the history still to come", () => {
+    renderPanel();
+    const card = section("Simulation defaults");
+    expect(
+      within(card).getByText("Simulated caller changes"),
+    ).toBeInTheDocument();
+    expect(within(card).getByText("History soon")).toBeInTheDocument();
   });
 
   it("Simulation defaults show - for a missing turn limit and runtime", () => {
