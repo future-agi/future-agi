@@ -153,9 +153,8 @@ func TestProjectTypesMirroredIntoCacheAndEvicted(t *testing.T) {
 	cached := &ResolveResult{OrgID: "org-t", WorkspaceID: "ws-t", Projects: map[string]string{}}
 	ck := "mirror-key"
 	a.cache.putPositive(ck, cached)
-	request := &ResolveResult{OrgID: "org-t", WorkspaceID: "ws-t", Projects: map[string]string{}}
-
-	stampOne(t, a, ck, request, "obs", nil)
+	// Authenticate returns this exact cache result, not a same-scope copy.
+	stampOne(t, a, ck, cached, "obs", nil)
 	if got := cached.ProjectTypeInWorkspace("ws-t", "id-obs"); got != "observe" {
 		t.Fatalf("cached type = %q, want observe", got)
 	}
@@ -174,6 +173,23 @@ func TestProjectTypesMirroredIntoCacheAndEvicted(t *testing.T) {
 	}
 	if got := cached.ProjectTypeInWorkspace("ws-t", "id-obs"); got != "" {
 		t.Errorf("type after eviction = %q, want empty", got)
+	}
+}
+
+func TestProjectTypePublicationRejectsReplacedResult(t *testing.T) {
+	a := &Authenticator{cache: newCache(5*time.Minute, time.Hour)}
+	old := &ResolveResult{OrgID: "org-t", WorkspaceID: "ws-t"}
+	current := &ResolveResult{OrgID: "org-t", WorkspaceID: "ws-t"}
+	a.cache.putPositive("key", old)
+	a.cache.putPositive("key", current)
+	if a.cache.addProjectTypesScoped("key", old, map[string]string{"id-obs": "observe"}) {
+		t.Fatal("stale result published project type")
+	}
+	if got := current.ProjectTypeInWorkspace("ws-t", "id-obs"); got != "" {
+		t.Fatalf("replacement inherited stale project type %q", got)
+	}
+	if !a.cache.addProjectTypesScoped("key", current, map[string]string{"id-obs": "observe"}) {
+		t.Fatal("current result could not publish project type")
 	}
 }
 
