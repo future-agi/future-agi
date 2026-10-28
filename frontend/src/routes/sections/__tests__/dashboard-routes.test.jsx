@@ -90,6 +90,7 @@ const ENVIRONMENT_URLS = [
   `${SIMULATE}/environments/env-1/runs/test-1/exec-1/analytics`,
   `${SIMULATE}/environments/env-1/runs/test-1/exec-1/optimization_runs`,
   `${SIMULATE}/environments/env-1/compare`,
+  `${SIMULATE}/environments/env-1/runs/test-1/exec-1/widgets/new`,
 ];
 
 // Each Prebuilt template URL and the route that must serve it, so
@@ -152,6 +153,16 @@ describe.each([
   it("the compare page opens its own route, not the workspace", () => {
     const route = leafRoute(user, `${SIMULATE}/environments/env-1/compare`);
     expect(route.path).toBe("environments/:envId/compare");
+  });
+
+  it("the run widget editor opens its own route, not the run detail", () => {
+    const route = leafRoute(
+      user,
+      `${SIMULATE}/environments/env-1/runs/test-1/exec-1/widgets/widget-1`,
+    );
+    expect(route.path).toBe(
+      "environments/:envId/runs/:testId/:executionId/widgets/:widgetId",
+    );
   });
 
   it("an old harness job link opens that environment", () => {

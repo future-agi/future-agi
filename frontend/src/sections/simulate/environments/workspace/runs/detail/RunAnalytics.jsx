@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
-import { useParams, useSearchParams } from "react-router-dom";
-import { enqueueSnackbar } from "notistack";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Alert,
   Box,
@@ -20,6 +19,7 @@ import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import { useRunAnalytics } from "src/api/simulate-environments/runAnalytics";
 import { useRunDetail } from "src/api/simulate-environments/runDetail";
+import { paths } from "src/routes/paths";
 import EmptyState from "../../../components/EmptyState";
 import SoonChip from "../../../components/SoonChip";
 import {
@@ -43,6 +43,7 @@ import ViewTabBar from "./analytics/ViewTabBar";
 import { panelSection, panelTitle } from "./analytics/panelRegistry";
 import { DEFAULT_VIEW_NAME, useRunLayout } from "./analytics/useRunLayout";
 import { widgetRows } from "./analytics/widgetRows";
+import RunQueryWidget from "./widgets/RunQueryWidget";
 
 // The voice-pipeline p90 a caller starts to hear as silence. Over it, the
 // cell turns red.
@@ -83,7 +84,6 @@ const tableSx = {
   "& td": { fontSize: 12 },
   "& tr:last-child td": { borderBottom: 0 },
 };
-const UI_ONLY_SAVED = "UI only. Nothing was saved.";
 
 // Durations arrive in milliseconds; whole calls read in seconds.
 const seconds = (ms) => (ms == null ? "-" : format(ms / 1000, "seconds"));
@@ -91,6 +91,7 @@ const seconds = (ms) => (ms == null ? "-" : format(ms / 1000, "seconds"));
 export default function RunAnalytics({
   executionId,
   envId,
+  testId,
   onOpenCall,
   onOpenCalls,
 }) {
@@ -100,6 +101,7 @@ export default function RunAnalytics({
       key={executionId}
       executionId={executionId}
       envId={envId ?? params.envId}
+      testId={testId ?? params.testId}
       onOpenCall={onOpenCall}
       onOpenCalls={onOpenCalls}
     />
@@ -109,11 +111,19 @@ RunAnalytics.propTypes = {
   executionId: PropTypes.string.isRequired,
   // Saved layouts are kept per environment; defaults to the route's envId.
   envId: PropTypes.string,
+  // Builds the widget editor link; defaults to the route's testId.
+  testId: PropTypes.string,
   onOpenCall: PropTypes.func,
   onOpenCalls: PropTypes.func,
 };
 
-function AnalyticsDashboard({ executionId, envId, onOpenCall, onOpenCalls }) {
+function AnalyticsDashboard({
+  executionId,
+  envId,
+  testId,
+  onOpenCall,
+  onOpenCalls,
+}) {
   const { data, isPending, isError, refetch } = useRunAnalytics(executionId);
   if (isPending)
     return (
@@ -146,6 +156,8 @@ function AnalyticsDashboard({ executionId, envId, onOpenCall, onOpenCalls }) {
     <Dashboard
       data={data}
       envId={envId}
+      testId={testId}
+      executionId={executionId}
       onOpenCall={onOpenCall}
       onOpenCalls={onOpenCalls}
     />
@@ -153,7 +165,15 @@ function AnalyticsDashboard({ executionId, envId, onOpenCall, onOpenCalls }) {
 }
 AnalyticsDashboard.propTypes = RunAnalytics.propTypes;
 
-function Dashboard({ data, envId, onOpenCall, onOpenCalls }) {
+function Dashboard({
+  data,
+  envId,
+  testId,
+  executionId,
+  onOpenCall,
+  onOpenCalls,
+}) {
+  const navigate = useNavigate();
   const printable = useRef(null);
   const [showDetails, setShowDetails] = useState(false);
   const [hiddenAnchor, setHiddenAnchor] = useState(null);
@@ -198,6 +218,9 @@ function Dashboard({ data, envId, onOpenCall, onOpenCalls }) {
     comparison?.available ? comparison.previous_execution_id : undefined,
   );
   const previousOrdinal = previous?.identity?.ordinal;
+  // Shares the run header's read; names the run on a saved widget's axis.
+  const currentOrdinal = useRunDetail(undefined, executionId)?.identity
+    ?.ordinal;
 
   const latencyLabel = metricsByKey.agent_latency?.label || "Agent latency";
   // Call length kept in the payload for earlier builds of this page.
@@ -840,11 +863,25 @@ function Dashboard({ data, envId, onOpenCall, onOpenCalls }) {
       section: sectionOf(id),
       custom: customById.has(id),
     }));
+  // The widget editor page, back into the view it was opened from.
+  const openEditor = (id) => {
+    const view =
+      layout.activeView === DEFAULT_VIEW_NAME
+        ? ""
+        : `?view=${encodeURIComponent(layout.activeView)}`;
+    navigate(
+      `${paths.dashboard.simulate.environments.widgetEditor(
+        envId,
+        testId,
+        executionId,
+        id,
+      )}${view}`,
+    );
+  };
   const actionsFor = (id, columns) => {
     const custom = customById.has(id);
     return {
-      // The widget editor has no page yet (Task 7.3): UI only.
-      onEdit: () => enqueueSnackbar(UI_ONLY_SAVED, { variant: "info" }),
+      onEdit: () => openEditor(id),
       onDuplicate: () => layout.duplicate(id, titleOf(id)),
       onResetOverride: () => layout.resetOverride(id),
       onSetSpan: (span) => layout.setSpan(id, Math.min(span, columns)),
@@ -855,6 +892,19 @@ function Dashboard({ data, envId, onOpenCall, onOpenCalls }) {
     };
   };
   const frame = (id) => {
+    const saved = customById.get(id);
+    if (saved?.kind === "query")
+      return (
+        <Widget id={id} title={titleOf(id)} subtitle={saved.description}>
+          <RunQueryWidget
+            widget={saved}
+            executionId={executionId}
+            runLabel={
+              currentOrdinal != null ? `Run ${currentOrdinal}` : undefined
+            }
+          />
+        </Widget>
+      );
     const source = sourceOf(id);
     return (
       <Widget
@@ -895,6 +945,16 @@ function Dashboard({ data, envId, onOpenCall, onOpenCalls }) {
           sx={{ flexShrink: 0 }}
         >
           {showDetails ? "Hide detailed analytics" : "Show detailed analytics"}
+        </Button>
+        <Button
+          size="small"
+          variant="outlined"
+          color="inherit"
+          startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
+          onClick={() => openEditor("new")}
+          sx={{ flexShrink: 0, borderColor: "divider" }}
+        >
+          Add widget
         </Button>
         <Button
           size="small"
@@ -1065,6 +1125,8 @@ function Dashboard({ data, envId, onOpenCall, onOpenCalls }) {
 Dashboard.propTypes = {
   data: PropTypes.object.isRequired,
   envId: PropTypes.string,
+  testId: PropTypes.string,
+  executionId: PropTypes.string,
   onOpenCall: PropTypes.func,
   onOpenCalls: PropTypes.func,
 };

@@ -353,6 +353,12 @@ const CompareRunsPage = lazyWithRetry(
       "src/sections/simulate/environments/workspace/compare/CompareRunsPage"
     ),
 );
+const RunWidgetEditorPage = lazyWithRetry(
+  () =>
+    import(
+      "src/sections/simulate/environments/workspace/runs/detail/widgets/RunWidgetEditorPage"
+    ),
+);
 const RunTestDetail = lazyWithRetry(
   () => import("src/pages/dashboard/run-tests/RunTestDetail"),
 );
@@ -1538,6 +1544,11 @@ export const dashboardRoutes = (
           // Outlet to a run detail.
           path: "environments/:envId/compare",
           element: <CompareRunsPage />,
+        },
+        {
+          // A full page like compare: the run detail renders no Outlet.
+          path: "environments/:envId/runs/:testId/:executionId/widgets/:widgetId",
+          element: <RunWidgetEditorPage />,
         },
         {
           path: "environments/:envId",

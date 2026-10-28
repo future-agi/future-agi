@@ -37,4 +37,10 @@ describe("simulate.environments path constants", () => {
       "/dashboard/simulate/environments/e1/compare",
     );
   });
+
+  it("builds the run widget editor path from env, test, execution and widget ids", () => {
+    expect(env.widgetEditor("e1", "t1", "x1", "new")).toBe(
+      "/dashboard/simulate/environments/e1/runs/t1/x1/widgets/new",
+    );
+  });
 });

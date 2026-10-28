@@ -42,6 +42,15 @@ import ReactApexChart from "react-apexcharts";
 import ChartLegend from "./ChartLegend";
 import WidgetPieCharts from "./WidgetPieCharts";
 import {
+  AXIS_LABEL_MAX_LENGTH,
+  CHART_TYPES,
+  DATASET_EXTRA_AGGREGATIONS,
+  LETTER_LABELS,
+  METRIC_TYPE_ICONS,
+  buildSeriesColorMap,
+  getSeriesColor,
+} from "./widgetEditorConstants";
+import {
   buildTimeRangePayload,
   resolveInitialTimeRange,
 } from "./dashboardDateRange";
@@ -156,7 +165,6 @@ const escapeCsvField = (field) => {
 };
 
 const SAVED_NAV_DELAY_MS = 400;
-const AXIS_LABEL_MAX_LENGTH = 50;
 
 const GRANULARITY_OPTIONS = [
   { label: "Minute", value: "minute" },
@@ -206,38 +214,6 @@ function getAllowedGranularities(preset, customDays) {
     return true;
   });
 }
-
-const CHART_TYPES = [
-  { label: "Line", value: "line", icon: "mdi:chart-line", group: "line" },
-  {
-    label: "Stacked Line",
-    value: "stacked_line",
-    icon: "mdi:chart-line-stacked",
-    group: "line",
-  },
-  { label: "Column", value: "column", icon: "mdi:chart-bar", group: "column" },
-  {
-    label: "Stacked Column",
-    value: "stacked_column",
-    icon: "mdi:chart-bar-stacked",
-    group: "column",
-  },
-  {
-    label: "Bar",
-    value: "bar",
-    icon: "mdi:chart-timeline-variant-shimmer",
-    group: "bar",
-  },
-  {
-    label: "Stacked Bar",
-    value: "stacked_bar",
-    icon: "mdi:chart-timeline-variant-shimmer",
-    group: "bar",
-  },
-  { label: "Pie", value: "pie", icon: "mdi:chart-pie", group: "other" },
-  { label: "Table", value: "table", icon: "mdi:table", group: "other" },
-  { label: "Metric", value: "metric", icon: "mdi:pound", group: "other" },
-];
 
 // Curated list of unit presets shown in the widget editor's Unit
 // dropdown. Keep in sync with ``UNIT_RENDERING`` in ``widgetUtils.js``
@@ -1126,15 +1102,6 @@ function getWidgetMetricAdapterSource(metric) {
   return "traces";
 }
 
-// Additional aggregation options for dataset-specific types
-const DATASET_EXTRA_AGGREGATIONS = [
-  { label: "Pass Rate", value: "pass_rate" },
-  { label: "Fail Rate", value: "fail_rate" },
-  { label: "Pass Count", value: "pass_count" },
-  { label: "Fail Count", value: "fail_count" },
-  { label: "True Rate", value: "true_rate" },
-];
-
 const PRESENCE_FILTER_OPERATORS = [
   { label: "Is set", value: "is_set", noValue: true },
   { label: "Is not set", value: "is_not_set", noValue: true },
@@ -1346,60 +1313,7 @@ export function restoreWidgetFilterConfig(config) {
   };
 }
 
-const METRIC_TYPE_ICONS = {
-  system: "mdi:cog-outline",
-  eval_metric: "mdi:check-circle-outline",
-  annotation: "mdi:format-quote-close",
-  custom_attribute: "mdi:tune-variant",
-  custom_column: "mdi:table-column",
-};
-
-const SERIES_COLORS = [
-  "#7B56DB", // purple (primary)
-  "#1ABCFE", // cyan
-  "#FF6B6B", // coral red
-  "#2ECB71", // emerald green
-  "#F7B731", // amber
-  "#E84393", // magenta pink
-  "#0984E3", // ocean blue
-  "#FD7E14", // tangerine orange
-  "#00CEC9", // teal
-  "#A29BFE", // lavender
-];
-
-const hashSeriesName = (name) => {
-  const s = String(name || "");
-  let h = 0;
-  for (let i = 0; i < s.length; i += 1) {
-    h = (h * 31 + s.charCodeAt(i)) | 0;
-  }
-  return Math.abs(h);
-};
-const buildSeriesColorMap = (names) => {
-  const map = {};
-  const used = new Set();
-  (names || []).forEach((name) => {
-    const start = hashSeriesName(name) % SERIES_COLORS.length;
-    let picked = start;
-    for (let i = 0; i < SERIES_COLORS.length; i += 1) {
-      const candidate = (start + i) % SERIES_COLORS.length;
-      if (!used.has(candidate)) {
-        picked = candidate;
-        break;
-      }
-    }
-    used.add(picked);
-    map[name] = SERIES_COLORS[picked];
-  });
-  return map;
-};
-const getSeriesColor = (name, map) =>
-  (map && map[name]) ||
-  SERIES_COLORS[hashSeriesName(name) % SERIES_COLORS.length];
-
-const LETTER_LABELS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-
-function ToggleButtons({ options, value, onChange, theme }) {
+export function ToggleButtons({ options, value, onChange, theme }) {
   return (
     <Box
       sx={{
@@ -1463,7 +1377,14 @@ ToggleButtons.propTypes = {
   theme: PropTypes.object.isRequired,
 };
 
-function AxisSection({ title, config, onChange, theme, showReset, onReset }) {
+export function AxisSection({
+  title,
+  config,
+  onChange,
+  theme,
+  showReset,
+  onReset,
+}) {
   return (
     <Box sx={{ mb: 3 }}>
       <Stack
@@ -1735,7 +1656,7 @@ AxisSection.propTypes = {
   onReset: PropTypes.func,
 };
 
-function AggregationPicker({
+export function AggregationPicker({
   value,
   onChange,
   theme,

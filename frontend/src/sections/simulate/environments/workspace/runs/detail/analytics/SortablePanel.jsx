@@ -14,7 +14,6 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
-import UiOnlyFlag from "../../../../components/UiOnlyFlag";
 
 // Wraps one analytics widget so it can be dragged in place and carries its
 // actions menu: Edit, Duplicate, Reset to default, width, Download CSV and
@@ -176,7 +175,6 @@ export default function SortablePanel({
           <ListItemText primaryTypographyProps={{ typography: "s1" }}>
             Edit
           </ListItemText>
-          <UiOnlyFlag sx={{ ml: 1 }} />
         </MenuItem>
         <MenuItem onClick={run(onDuplicate)}>
           <ListItemIcon>

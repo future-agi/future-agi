@@ -105,6 +105,8 @@ export const paths = {
           `${ROOTS.DASHBOARD}/simulate/environments/${envId}/runs/${testId}/${executionId}`,
         compare: (envId) =>
           `${ROOTS.DASHBOARD}/simulate/environments/${envId}/compare`,
+        widgetEditor: (envId, testId, executionId, widgetId) =>
+          `${ROOTS.DASHBOARD}/simulate/environments/${envId}/runs/${testId}/${executionId}/widgets/${widgetId}`,
       },
     },
     feed: `${ROOTS.DASHBOARD}/error-feed`,

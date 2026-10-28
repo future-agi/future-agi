@@ -72,7 +72,7 @@ describe("analytics widget layout", () => {
         .getAllByRole("menuitem")
         .map((item) => item.textContent);
       expect(items).toEqual([
-        "EditUI only",
+        "Edit",
         "Duplicate",
         "Reset to default",
         "Half width",
@@ -85,12 +85,10 @@ describe("analytics widget layout", () => {
         screen.getByRole("menuitem", { name: "Reset to default" }),
       ).toHaveAttribute("aria-disabled", "true");
 
-      // The widget editor has no page yet: Edit saves nothing.
-      pick(/^Edit/);
-      expect(enqueueSnackbar).toHaveBeenCalledWith(
-        "UI only. Nothing was saved.",
-        expect.anything(),
-      );
+      // Edit opens the widget editor page.
+      pick("Edit");
+      expect(window.location.pathname).toMatch(/\/widgets\/risk$/);
+      expect(enqueueSnackbar).not.toHaveBeenCalled();
 
       openMenu("Weakest scenarios");
       pick("Duplicate");

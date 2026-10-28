@@ -48,7 +48,9 @@ const objectOr = (value) =>
 function reconcile(view, surface) {
   const eligible = eligibleIds(surface);
   const custom = Array.isArray(view?.custom)
-    ? view.custom.filter((widget) => widget?.id && widget?.of)
+    ? view.custom.filter(
+        (widget) => widget?.id && (widget?.of || widget?.kind === "query"),
+      )
     : [];
   const customIds = new Set(custom.map((widget) => widget.id));
   const order = (Array.isArray(view?.order) ? view.order : []).filter(
@@ -102,8 +104,88 @@ const omitKey = (object, key) => {
   return next;
 };
 
-const newId = (prefix) =>
+export const newId = (prefix) =>
   `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
+
+// The widget editor is its own page, so it reads and writes the stored layout
+// directly rather than through the hook. `viewName` is the view the editor
+// was opened from; without one it is the last active view.
+function storedViewName(stored, viewName) {
+  const views = objectOr(stored?.views);
+  return (
+    [viewName, stored?.activeView].find((name) => name && views[name]) ||
+    DEFAULT_VIEW_NAME
+  );
+}
+
+/** A custom widget saved in the view, or in any view, by id. */
+export function readStoredCustomWidget(envId, widgetId, viewName) {
+  const stored = readStorage(envId);
+  const views = objectOr(stored?.views);
+  const inView = (view) =>
+    (Array.isArray(view?.custom) ? view.custom : []).find(
+      (widget) => widget?.id === widgetId,
+    );
+  return (
+    inView(views[storedViewName(stored, viewName)]) ||
+    Object.values(views).map(inView).find(Boolean) ||
+    null
+  );
+}
+
+/**
+ * Adds a widget to the view's Custom widgets section, or replaces the one
+ * with its id. Returns the view it was saved in.
+ */
+export function saveStoredCustomWidget(envId, widget, viewName) {
+  const stored = readStorage(envId);
+  const views = objectOr(stored?.views);
+  const name = storedViewName(stored, viewName);
+  const view = objectOr(views[name]);
+  const custom = Array.isArray(view.custom) ? view.custom : [];
+  const order = Array.isArray(view.order) ? view.order : [];
+  const exists = custom.some((item) => item?.id === widget.id);
+  writeStorage(envId, {
+    activeView: stored?.activeView || name,
+    views: {
+      ...views,
+      [name]: {
+        ...view,
+        custom: exists
+          ? custom.map((item) => (item?.id === widget.id ? widget : item))
+          : [...custom, widget],
+        order: order.includes(widget.id) ? order : [...order, widget.id],
+      },
+    },
+  });
+  return name;
+}
+
+/** Removes a custom widget from the view. */
+export function removeStoredCustomWidget(envId, widgetId, viewName) {
+  const stored = readStorage(envId);
+  if (!stored) return;
+  const views = objectOr(stored.views);
+  const name = storedViewName(stored, viewName);
+  const view = objectOr(views[name]);
+  writeStorage(envId, {
+    ...stored,
+    views: {
+      ...views,
+      [name]: {
+        ...view,
+        custom: (Array.isArray(view.custom) ? view.custom : []).filter(
+          (item) => item?.id !== widgetId,
+        ),
+        order: (Array.isArray(view.order) ? view.order : []).filter(
+          (id) => id !== widgetId,
+        ),
+        spans: omitKey(objectOr(view.spans), widgetId),
+        sectionOverrides: omitKey(objectOr(view.sectionOverrides), widgetId),
+      },
+    },
+  });
+}
 
 export function useRunLayout({ envId, surface, initialView }) {
   const [state, setState] = useState(() =>
@@ -179,11 +261,12 @@ export function useRunLayout({ envId, surface, initialView }) {
   const duplicate = (id, title) =>
     patchView((current) => {
       const source = current.custom.find((widget) => widget.id === id);
-      const copy = {
-        id: newId("copy"),
-        of: source?.of || id,
-        title: `${source?.title || title} (copy)`,
-      };
+      const copyTitle = `${source?.title || title} (copy)`;
+      // A saved query copies whole; a built-in or its copy by reference.
+      const copy =
+        source?.kind === "query"
+          ? { ...source, id: newId("query"), title: copyTitle }
+          : { id: newId("copy"), of: source?.of || id, title: copyTitle };
       const next = [...current.order];
       const at = next.indexOf(id);
       next.splice(at === -1 ? next.length : at + 1, 0, copy.id);
