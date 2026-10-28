@@ -1022,15 +1022,20 @@ describe("InsightsView", () => {
     mocks.omega = true;
     renderAt(`?report=${CONFIG_ID}`);
     // Finding 5 of the Omega run cites #16–#20.
-    const more = await screen.findByRole("button", { name: "1 more example" });
+    const more = await screen.findByRole("button", {
+      name: "Show 1 more example",
+    });
     expect(more).toHaveTextContent("+1");
     expect(
       screen.queryByRole("button", { name: "Open example 20" }),
     ).toBeNull();
-    fireEvent.mouseOver(more);
+    // Clicked, it gives way to the folded ref in the same line.
+    const line = more.closest("p");
+    fireEvent.click(more, { detail: 1 });
     expect(
-      await screen.findByRole("button", { name: "Open example 20" }),
+      within(line).getByRole("button", { name: "Open example 20" }),
     ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /more example/ })).toBeNull();
   });
 
   it("previews a citation on hover with its title and quote", async () => {

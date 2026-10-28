@@ -1,6 +1,6 @@
 import React from "react";
 import { describe, expect, it, vi } from "vitest";
-import { render } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import { palette } from "src/theme/palette";
 import { typography } from "src/theme/typography";
@@ -30,6 +30,49 @@ describe("CitedText", () => {
     expect(text).toContain("+4");
     expect(text).not.toMatch(/,\s*,/);
     expect(text.trim()).toMatch(/\+4\.$/);
+  });
+
+  const folded = () =>
+    render(
+      <ThemeProvider theme={theme}>
+        <CitedText
+          text="The agent keeps calling a declined refund complete. #1 #2 #3 #4 #5 #6"
+          hiddenRefs={new Set([5, 6])}
+          moreRefs={[5, 6]}
+          component="p"
+        />
+      </ThemeProvider>,
+    ).container.querySelector("p");
+
+  it("sets folded refs out in the line on a click, not over the text", () => {
+    const line = folded();
+    fireEvent.click(
+      within(line).getByRole("button", { name: /2 more examples/ }),
+      { detail: 1 },
+    );
+    // In the paragraph's own flow, where "+2" was, free to wrap; no
+    // floating card holds them.
+    const chips = ["Open example 5", "Open example 6"].map((name) =>
+      within(line).getByRole("button", { name }),
+    );
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    expect(within(line).queryByText("+2")).toBeNull();
+    expect(getComputedStyle(chips[0].parentElement).whiteSpace).toBe("normal");
+    // A mouse click leaves focus where the pointer is.
+    expect(chips[0]).not.toHaveFocus();
+  });
+
+  it("moves focus to the first ref set out when opened from the keyboard", () => {
+    const line = folded();
+    const more = within(line).getByRole("button", {
+      name: "Show 2 more examples",
+    });
+    more.focus();
+    // Enter or Space on a button clicks it with no pointer detail.
+    fireEvent.click(more, { detail: 0 });
+    expect(
+      within(line).getByRole("button", { name: "Open example 5" }),
+    ).toHaveFocus();
   });
 });
 

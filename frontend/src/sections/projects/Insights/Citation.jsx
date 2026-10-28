@@ -1,14 +1,6 @@
 import React, { useEffect, useId, useRef, useState } from "react";
 import PropTypes from "prop-types";
-import {
-  Box,
-  Paper,
-  Popper,
-  Skeleton,
-  Stack,
-  Tooltip,
-  Typography,
-} from "@mui/material";
+import { Box, Paper, Popper, Skeleton, Stack, Typography } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import { useRunUnit } from "./insightsApi";
 import { parseCitations } from "./insightsCitations";
@@ -270,67 +262,69 @@ CitationChip.propTypes = {
   unitId: PropTypes.string,
 };
 
-/** "+N": citations folded away; hovering lists them as chips. */
+/**
+ * "+N": citations folded away. Clicking it sets them out in its place, in
+ * the line, so they wrap with the text instead of floating over it.
+ */
 export function MoreRefs({ refs }) {
+  const [open, setOpen] = useState(false);
+  const shown = useRef(null);
+  const byKeyboard = useRef(false);
+
+  // Opened from the keyboard, focus moves to the first ref set out, not to
+  // the page, now that the "+N" it was on is gone.
+  useEffect(() => {
+    if (open && byKeyboard.current)
+      shown.current?.querySelector("button")?.focus();
+  }, [open]);
+
   if (!refs?.length) return null;
-  return (
-    <Tooltip
-      arrow
-      placement="top"
-      componentsProps={{
-        tooltip: {
-          sx: {
-            p: 1,
-            bgcolor: "background.paper",
-            color: "text.primary",
-            border: "1px solid",
-            borderColor: "divider",
-            boxShadow: (theme) => theme.customShadows?.dropdown,
-          },
-        },
-        arrow: { sx: { color: "background.paper" } },
-      }}
-      title={
-        <Box
-          sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, maxWidth: 240 }}
-        >
-          {refs.map((n) => (
-            <CitationChip key={n} n={n} />
-          ))}
-        </Box>
-      }
-    >
-      <Box
-        component="button"
-        type="button"
-        aria-label={`${refs.length} more ${refs.length === 1 ? "example" : "examples"}`}
-        sx={{
-          display: "inline-flex",
-          alignItems: "center",
-          height: 18,
-          px: 0.5,
-          mx: 0.25,
-          border: "1px dashed",
-          borderColor: "divider",
-          borderRadius: 0.75,
-          bgcolor: "transparent",
-          color: "text.secondary",
-          font: "inherit",
-          fontSize: 11,
-          fontWeight: 600,
-          lineHeight: 1,
-          verticalAlign: "1px",
-          cursor: "default",
-          "&:focus-visible": {
-            outline: "2px solid",
-            outlineColor: "primary.main",
-            outlineOffset: 1,
-          },
-        }}
-      >
-        +{refs.length}
+  if (open)
+    return (
+      <Box component="span" ref={shown} sx={{ whiteSpace: "normal" }}>
+        {refs.map((n) => (
+          <CitationChip key={n} n={n} />
+        ))}
       </Box>
-    </Tooltip>
+    );
+  return (
+    <Box
+      component="button"
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation();
+        byKeyboard.current = event.detail === 0;
+        setOpen(true);
+      }}
+      aria-label={`Show ${refs.length} more ${refs.length === 1 ? "example" : "examples"}`}
+      sx={{
+        display: "inline-flex",
+        alignItems: "center",
+        height: 18,
+        px: 0.5,
+        mx: 0.25,
+        border: "1px dashed",
+        borderColor: "divider",
+        borderRadius: 0.75,
+        bgcolor: "transparent",
+        color: "text.secondary",
+        font: "inherit",
+        fontSize: 11,
+        fontWeight: 600,
+        fontStyle: "normal",
+        lineHeight: 1,
+        verticalAlign: "1px",
+        cursor: "pointer",
+        "&:hover": { color: "primary.main", borderColor: "primary.main" },
+        "&:focus-visible": {
+          outline: "2px solid",
+          outlineColor: "primary.main",
+          outlineOffset: 1,
+        },
+      }}
+    >
+      +{refs.length}
+    </Box>
   );
 }
 
