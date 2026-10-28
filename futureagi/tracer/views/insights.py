@@ -802,11 +802,9 @@ def _step_cost(
 ) -> float:
     if step == "run":
         return billing.run_cost(sample_size or DEFAULT_SAMPLE, **(sizing or {}))
-    return {
-        "ask": billing.ask_cost,
-        "draft": billing.draft_cost,
-        "preview": billing.preview_cost,
-    }[step]()
+    if step == "preview":
+        return billing.preview_cost(**(sizing or {}))
+    return {"ask": billing.ask_cost, "draft": billing.draft_cost}[step]()
 
 
 def _credit_estimate(
@@ -829,7 +827,8 @@ def _credit_estimate(
     out["credits_estimate"] = 0.0
     if step == "run" and sample_size <= 0:
         return out
-    sizing = _sizing(unit, project) if step == "run" else {}
+    # Preview reads units like the report would, so it is sized the same way.
+    sizing = _sizing(unit, project) if step in ("run", "preview") else {}
     cost = _step_cost(billing, step, sample_size, sizing)
     out["credits_estimate"] = billing.credits(cost)
     try:
@@ -871,7 +870,7 @@ def _credits_refused(
     billing = _billing()
     if billing is None:
         return None
-    sizing = _sizing(unit, project, engine) if step == "run" else {}
+    sizing = _sizing(unit, project, engine) if step in ("run", "preview") else {}
     try:
         verdict = _credit_verdict(
             billing,
@@ -1154,7 +1153,8 @@ class InsightPreviewView(InsightsLicenseRequired, APIView):
         draft, _, InsightModelError = modules
         data = request.validated_data
         org = _org(request)
-        if _project(request, data["project_id"]) is None:
+        project = _project(request, data["project_id"])
+        if project is None:
             return self._gm.not_found("Project not found")
         denied = _gate(self._gm, org)
         if denied:
@@ -1165,7 +1165,9 @@ class InsightPreviewView(InsightsLicenseRequired, APIView):
                 "Too many previews this hour. Try again later.",
                 code="rate_limited",
             )
-        refused = _credits_refused(self._gm, org, "preview")
+        refused = _credits_refused(
+            self._gm, org, "preview", unit=data["config"].get("unit"), project=project
+        )
         if refused:
             return refused
         try:
@@ -1225,7 +1227,11 @@ class InsightEstimateView(InsightsLicenseRequired, APIView):
                     "window": None,
                     "sample_ids": [],
                     **_credit_estimate(
-                        _org(request), 0, None, project, step=data["action"]
+                        _org(request),
+                        0,
+                        data.get("unit"),
+                        project,
+                        step=data["action"],
                     ),
                 }
             )

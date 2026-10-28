@@ -36,6 +36,38 @@ def test_action_estimate_matches_the_billed_step(
 
 
 @pytest.mark.django_db
+def test_a_preview_on_the_long_context_agent_is_priced_like_its_reading(
+    auth_client, observe_project, monkeypatch
+):
+    """Preview reads its units on the report's engine: on the v2 agent a
+    session is read whole over several turns, not at the built-in engine's
+    fixed size (a Cloud test estimated 0.3 credits and was charged 29.3)."""
+    from ee.agenthub.insights import agent
+
+    monkeypatch.setattr(billing, "applies", lambda: True)
+    monkeypatch.setattr(billing, "check", lambda org, cost: None)
+    monkeypatch.setattr(billing, "credits", lambda cost: cost * 100)
+    built_in = billing.preview_cost() * 100
+    monkeypatch.setattr(agent, "expected_contract", lambda: agent.CONTRACT_V2)
+    response = auth_client.post(
+        "/tracer/insights/estimate/",
+        {"project_id": str(observe_project.id), "action": "preview", "unit": "sessions"},
+        format="json",
+    )
+    assert response.status_code == 200, response.json()
+    estimate = response.json()["result"]["credits_estimate"]
+    assert estimate == pytest.approx(
+        billing.preview_cost(
+            contract=agent.CONTRACT_V2,
+            unit="sessions",
+            unit_chars=billing.V2_UNIT_CHARS["sessions"],
+        )
+        * 100
+    )
+    assert estimate > 10 * built_in
+
+
+@pytest.mark.django_db
 @pytest.mark.parametrize("action", ["ask", "draft", "preview"])
 def test_action_estimate_explains_a_credit_refusal(
     auth_client, observe_project, monkeypatch, action

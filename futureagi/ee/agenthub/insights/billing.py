@@ -110,8 +110,10 @@ def draft_cost() -> float:
     return _price(THINKING, DRAFT_TOKENS)
 
 
-def preview_cost() -> float:
-    return PREVIEW_UNITS * _price(FAST, READ_TOKENS)
+def preview_cost(**sizing) -> float:
+    """Preview reads its units the way the report would, on the same engine:
+    ``sizing`` is ``read_tokens``'s, as for ``run_cost``."""
+    return PREVIEW_UNITS * _price(FAST, read_tokens(**sizing))
 
 
 def applies() -> bool:
