@@ -99,3 +99,13 @@ export const focusRing = (t) => ({
   outline: `2px solid ${alpha(t.palette.text.primary, 0.5)}`,
   outlineOffset: 2,
 });
+
+// An inline text link in a muted line ("Tools on an MCP server? Use them…").
+export const LINK_SX = {
+  ...T12,
+  verticalAlign: "baseline",
+  color: "text.primary",
+  fontWeight: 600,
+  "&:hover": { textDecoration: "underline" },
+  "&.Mui-focusVisible": focusRing,
+};

@@ -34,36 +34,12 @@ import LogoTile from "./LogoTile";
 import UiOnlyFlag from "../components/UiOnlyFlag";
 import { worldsFrom } from "./worlds";
 import { BTN_SX, T12, T14 } from "./drawerStyles";
-import RepoForm from "./forms/RepoForm";
-import UploadForm from "./forms/UploadForm";
-import HostedForm from "./forms/HostedForm";
-import LiveKitForm from "./forms/LiveKitForm";
-import PhoneForm from "./forms/PhoneForm";
-import { UI_ONLY_FORMS } from "./forms/uiOnly";
-import ScratchForm from "./starts/ScratchForm";
-import FromCodeForm from "./starts/FromCodeForm";
-import McpForm from "./starts/McpForm";
-import SandboxForm from "./starts/SandboxForm";
-import WorldForm from "./starts/WorldForm";
+import { FORMS_BY_PANEL } from "./forms/formsByPanel";
 import WorldsBrowser from "./starts/WorldsBrowser";
 import { QuietTag } from "./starts/startBits";
 import { SANDBOX_ITEM, SCRATCH_ITEM, worldItem } from "./starts/startItems";
 
 const DRAWER_WIDTH = 960;
-
-const FORMS = {
-  repo: RepoForm,
-  upload: UploadForm,
-  hosted: HostedForm,
-  livekit: LiveKitForm,
-  phone: PhoneForm,
-  scratch: ScratchForm,
-  fromCode: FromCodeForm,
-  mcpWorld: McpForm,
-  sandbox: SandboxForm,
-  world: WorldForm,
-  ...UI_ONLY_FORMS,
-};
 
 const CloseButton = forwardRef(function CloseButton(
   { label, onClick, disabled, icon = "solar:close-linear" },
@@ -384,7 +360,7 @@ export default function BuildEnvironmentDrawer({ open, onClose, connect }) {
         </Box>
       );
     }
-    const Form = FORMS[layer.item.setup.panel];
+    const Form = FORMS_BY_PANEL[layer.item.setup.panel];
     const form = <Form item={layer.item} onBusyChange={setBusy} />;
     return layer.connect ? (
       <ConnectModeContext.Provider value={layer.connect}>

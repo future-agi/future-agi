@@ -211,11 +211,11 @@ describe("AgentsLanding", () => {
     expect(currentLocation.pathname).toBe("/dashboard/agents/connected");
   });
 
-  it("sends Connect an agent to the environments build page", () => {
+  it("sends Connect an agent to the New agent page", () => {
     renderAt("/dashboard/agents/connected");
     fireEvent.click(screen.getByRole("button", { name: "Connect an agent" }));
-    expect(currentLocation.pathname).toBe("/dashboard/simulate/environments");
-    expect(currentLocation.search).toBe("?tab=build");
+    expect(currentLocation.pathname).toBe("/dashboard/agents/connect");
+    expect(currentLocation.search).toBe("");
   });
 
   it("explains the page in a CustomTooltip on the header info icon", () => {

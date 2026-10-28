@@ -183,3 +183,15 @@ describe("old Agent Definition link", () => {
     ).toBeTruthy();
   });
 });
+
+describe("New agent page", () => {
+  it("opens on its own, outside the Agents tabs", () => {
+    const routes = dashboardRoutes(null, null, { isCloud: true });
+    const matches = matchRoutes(routes, "/dashboard/agents/connect");
+    const leaf = matches[matches.length - 1].route;
+    expect(leaf.path).toBe("connect");
+    const agents = matches.find((m) => m.route.path === "agents").route;
+    const tabsLayout = agents.children.find((c) => !c.path);
+    expect(matches.some((m) => m.route === tabsLayout)).toBe(false);
+  });
+});

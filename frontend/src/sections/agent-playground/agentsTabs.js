@@ -8,7 +8,7 @@ export const CONNECTED_AGENTS_PATH = agentsTabPath("connected");
 
 export const PLAYGROUND_AGENTS_PATH = agentsTabPath("playground");
 
-export const CONNECT_AGENT_PATH = `${paths.dashboard.simulate.environments.root}?tab=build`;
+export const CONNECT_AGENT_PATH = paths.dashboard.agentsConnect;
 
 export const resolveAgentsTab = (raw) =>
   AGENTS_TABS.includes(raw) ? raw : "connected";

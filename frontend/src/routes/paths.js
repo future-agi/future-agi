@@ -147,6 +147,7 @@ export const paths = {
       settings: `${ROOTS.DASHBOARD}/gateway/settings`,
     },
     agents: `${ROOTS.DASHBOARD}/agents`,
+    agentsConnect: `${ROOTS.DASHBOARD}/agents/connect`,
     falconAI: `${ROOTS.DASHBOARD}/falcon-ai`,
   },
 };

@@ -501,6 +501,9 @@ const ConnectedAgentsTab = lazyWithRetry(
 const PlaygroundAgentsTab = lazyWithRetry(
   () => import("src/sections/agent-playground/PlaygroundAgentsTab"),
 );
+const ConnectAgentPage = lazyWithRetry(
+  () => import("src/sections/agent-playground/ConnectAgentPage"),
+);
 const AgentDetailLayout = lazyWithRetry(
   () =>
     import("src/sections/agent-playground/connected/detail/AgentDetailLayout"),
@@ -1417,6 +1420,7 @@ export const dashboardRoutes = (
             { path: "playground", element: <PlaygroundAgentsTab /> },
           ],
         },
+        { path: "connect", element: <ConnectAgentPage /> },
         {
           path: "connected/:agentId",
           element: <AgentDetailLayout />,

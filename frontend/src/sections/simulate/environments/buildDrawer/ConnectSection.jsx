@@ -13,6 +13,7 @@ import {
 } from "./buildDrawerCatalog";
 import {
   CONNECT_BTN_SX,
+  LINK_SX,
   OUTLINED_BTN_SX,
   PANEL_SX,
   T12,
@@ -250,26 +251,19 @@ SearchBox.propTypes = {
   onChange: PropTypes.func.isRequired,
 };
 
-const linkSx = {
-  ...T12,
-  verticalAlign: "baseline",
-  color: "text.primary",
-  fontWeight: 600,
-  "&:hover": { textDecoration: "underline" },
-  "&.Mui-focusVisible": focusRing,
-};
-
 /**
  * Connect your agent: search, Vel's three tabs and every way in them.
  * `items` narrows the ways (to those for one type of agent); a tab left empty
  * isn't shown. `head` is off where the drawer's header already says what this
- * is, and the MCP link shows only with `onPickMcp`.
+ * is, and the MCP link shows only with `onPickMcp`. `aside` sits at the right
+ * end of the tabs.
  */
 export default function ConnectSection({
   onPick,
   items = CATALOG_ITEMS,
   head = true,
   onPickMcp,
+  aside = null,
 }) {
   const inTab = (id) => items.filter((it) => it.tab === id);
   const tabs = CATALOG_TABS.filter((t) => inTab(t.id).length);
@@ -323,32 +317,36 @@ export default function ConnectSection({
       <Stack spacing={1.5}>
         <SearchBox value={query} onChange={setQuery} />
         {!searching && (
-          <Stack
-            direction="row"
-            spacing={0.75}
-            role="tablist"
-            aria-label="Ways to connect"
-          >
-            {tabs.map((t) => {
-              const on = tab === t.id;
-              return (
-                <ButtonBase
-                  key={t.id}
-                  role="tab"
-                  aria-selected={on}
-                  onClick={() => setTab(t.id)}
-                  sx={chipSx(on)}
-                >
-                  {t.label}{" "}
-                  <Box
-                    component="span"
-                    sx={{ color: "text.secondary", fontWeight: 400 }}
+          <Stack direction="row" alignItems="center" spacing={2}>
+            <Stack
+              direction="row"
+              spacing={0.75}
+              role="tablist"
+              aria-label="Ways to connect"
+              sx={{ flex: 1, minWidth: 0 }}
+            >
+              {tabs.map((t) => {
+                const on = tab === t.id;
+                return (
+                  <ButtonBase
+                    key={t.id}
+                    role="tab"
+                    aria-selected={on}
+                    onClick={() => setTab(t.id)}
+                    sx={chipSx(on)}
                   >
-                    {inTab(t.id).length}
-                  </Box>
-                </ButtonBase>
-              );
-            })}
+                    {t.label}{" "}
+                    <Box
+                      component="span"
+                      sx={{ color: "text.secondary", fontWeight: 400 }}
+                    >
+                      {inTab(t.id).length}
+                    </Box>
+                  </ButtonBase>
+                );
+              })}
+            </Stack>
+            {aside}
           </Stack>
         )}
         {body}
@@ -362,7 +360,7 @@ export default function ConnectSection({
         >
           <Typography sx={{ ...T12, color: "text.secondary" }}>
             {"Tools on an MCP server? "}
-            <ButtonBase onClick={onPickMcp} sx={linkSx}>
+            <ButtonBase onClick={onPickMcp} sx={LINK_SX}>
               Use them as an agent&apos;s world
             </ButtonBase>
           </Typography>
@@ -377,4 +375,5 @@ ConnectSection.propTypes = {
   items: PropTypes.array,
   head: PropTypes.bool,
   onPickMcp: PropTypes.func,
+  aside: PropTypes.node,
 };
