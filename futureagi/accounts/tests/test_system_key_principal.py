@@ -105,10 +105,11 @@ def test_system_key_without_active_owner_is_refused(key_scope, state):
     scope = key_scope[0]
     owner = scope.users[Level.OWNER]
     membership = owner.get_membership(scope.org)
-    if state in ("disabled_user", "deleted_user"):
-        User.all_objects.filter(pk=owner.pk).update(
-            **({"is_active": False} if state == "disabled_user" else {"deleted": True})
-        )
+    if state == "disabled_user":
+        User.objects.filter(pk=owner.pk).update(is_active=False)
+    elif state == "deleted_user":
+        # Users are hard-deleted; OrganizationMembership owns soft deletion.
+        owner.delete()
     else:
         fields = {
             "inactive": {"is_active": False},

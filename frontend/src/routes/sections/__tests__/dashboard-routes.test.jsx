@@ -9,6 +9,22 @@ function findChildRoute(route, path) {
 }
 
 describe("dashboard route registry", () => {
+  it.each([
+    ["Owner", 15],
+    ["Admin", 8],
+    ["Member", 3],
+    ["Viewer", 1],
+  ])(
+    "registers the scoped Keys page for %s",
+    (organization_role, org_level) => {
+      const [dashboardRoute] = dashboardRoutes(
+        { organization_role, org_level },
+        null,
+      );
+      expect(findChildRoute(dashboardRoute, "keys")).toBeTruthy();
+    },
+  );
+
   it("keeps the model list/detail route family reachable", () => {
     const [dashboardRoute] = dashboardRoutes(null, null, { isCloud: true });
     const modelsRoute = findChildRoute(dashboardRoute, "models");

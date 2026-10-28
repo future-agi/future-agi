@@ -20,6 +20,24 @@ function simulateTitles() {
   return section.items.map((item) => item.title);
 }
 
+describe("Keys menu", () => {
+  it.each([
+    ["Owner", 15],
+    ["Admin", 8],
+    ["Member", 3],
+    ["Viewer", 1],
+  ])("shows the scoped Keys link for %s", (organization_role, org_level) => {
+    authState.user = { organization_role, org_level };
+    const { result } = renderHook(() => useNavData(), {
+      wrapper: MemoryRouter,
+    });
+    const links = result.current.flatMap((section) => section.items);
+    expect(
+      links.filter((item) => item.path === "/dashboard/keys"),
+    ).toHaveLength(1);
+  });
+});
+
 describe("Simulate menu", () => {
   beforeEach(() => {
     authState.user = { organization_role: "Owner" };
