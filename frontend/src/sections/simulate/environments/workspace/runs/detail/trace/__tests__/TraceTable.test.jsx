@@ -883,6 +883,26 @@ describe("TraceTable calls with no pass or fail", () => {
     ).toBeInTheDocument();
   });
 
+  it("marks sub-goals of an errored call as not graded, not inconclusive", () => {
+    render(
+      table({
+        rows: [
+          {
+            ...row("err"),
+            status: "error",
+            subGoalResults: [
+              { name: "booked", passed: null },
+              { name: "asked", passed: null, result: "inconclusive" },
+            ],
+          },
+        ],
+        columns: new Set(["callDetails"]),
+      }),
+    );
+    expect(screen.getAllByText("Not graded")).toHaveLength(1);
+    expect(screen.getAllByText("Inconclusive")).toHaveLength(1);
+  });
+
   it("reads Inconclusive with why the call was not scored", () => {
     render(
       table({
