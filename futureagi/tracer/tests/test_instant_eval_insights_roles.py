@@ -141,9 +141,9 @@ def _written():
 def test_a_viewer_is_refused_every_write_before_its_handler(viewer, observe_project):
     before = _written()
     writes = [(m, p) for m, p, _ in _every_endpoint() if _writes(m, p)]
-    # Start and control; config patch and delete, draft, preview, run create
-    # and ask.
-    assert len(writes) == 2 + 6
+    # Start and control; config patch and delete, draft, preview, run create,
+    # run stop and ask.
+    assert len(writes) == 2 + 7
     for method, path in writes:
         response = _call(viewer, method, path, observe_project)
         assert response.status_code == status.HTTP_403_FORBIDDEN, (method, path)
@@ -156,8 +156,8 @@ def test_a_viewer_reads_every_run_summary_row_export_report_and_estimate(
 ):
     reads = [(m, p) for m, p, _ in _every_endpoint() if not _writes(m, p)]
     # Runs, summary, estimate, rows and export (GET and POST); config list
-    # and detail, estimate, run detail and units.
-    assert len(reads) == 7 + 5
+    # and detail, estimate, run detail, units and a unit's cited image.
+    assert len(reads) == 7 + 6
     for method, path in reads:
         response = _call(viewer, method, path, observe_project)
         # Each reaches its handler: a 200, or its own answer to these ids.
