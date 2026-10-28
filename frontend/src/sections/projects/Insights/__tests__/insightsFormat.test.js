@@ -41,10 +41,10 @@ describe("formatting", () => {
 });
 
 describe("insightsErrorMessage", () => {
-  it("names the plan for a capability denial", () => {
+  it("names no edition for a refusal that doesn't say why", () => {
     expect(
       insightsErrorMessage({ statusCode: 402, code: "CAPABILITY_DENIED" }),
-    ).toBe("Insights isn't available on this plan.");
+    ).toBe("Insights isn't available to this organization.");
   });
 
   it("says why a plan refused, when the server does", () => {
@@ -67,28 +67,41 @@ describe("insightsErrorMessage", () => {
         code: "CAPABILITY_DENIED",
         message: "Denied\nTraceback (most recent call last)",
       }),
-    ).toBe("Insights isn't available on this plan.");
+    ).toBe("Insights isn't available to this organization.");
     expect(
       insightsErrorMessage({ statusCode: 402, message: "x".repeat(300) }),
-    ).toBe("Insights isn't available on this plan.");
+    ).toBe("Insights isn't available to this organization.");
   });
 
-  it("keeps the plan wording for licence refusals", () => {
-    // The licence gate names the feature key; only the Turing denial says why.
-    expect(
-      insightsErrorMessage({
-        statusCode: 402,
-        code: "LICENSE_MISSING",
-        message: "'insights' is not available. Upgrade your plan.",
-      }),
-    ).toBe("Insights isn't available on this plan.");
+  it.each([
+    [
+      "LICENSE_MISSING",
+      "Insights needs an Enterprise license that includes it.",
+    ],
+    [
+      "LICENSE_EXPIRED",
+      "Insights needs an Enterprise license; this one has expired.",
+    ],
+    [
+      "LICENSE_FEATURE_MISSING",
+      "Insights isn't included in this Enterprise license.",
+    ],
+    ["PLAN_FEATURE_MISSING", "Insights isn't included in your plan."],
+  ])("says what unlocks Insights for a %s refusal", (code, message) => {
+    // A self-hosted install was told "Insights isn't available on this plan."
+    expect(insightsErrorMessage({ statusCode: 402, code, message })).toBe(
+      message,
+    );
+  });
+
+  it("names no edition for an older entitlement refusal", () => {
     expect(
       insightsErrorMessage({
         statusCode: 402,
         code: "ENTITLEMENT_DENIED",
         message: "This feature is not available on your current plan.",
       }),
-    ).toBe("Insights isn't available on this plan.");
+    ).toBe("Insights isn't available to this organization.");
   });
 
   it("shows rate-limit and model messages as written", () => {

@@ -343,12 +343,19 @@ def test_insights_on_turing_models_needs_turing(
     response = auth_client.post(RUNS, new_run_body(observe_project), format="json")
     assert response.status_code == status.HTTP_402_PAYMENT_REQUIRED
     assert response.json()["code"] == "CAPABILITY_DENIED"
-    assert response.json()["message"] == ee_gates.INSIGHTS_TURING_DENIED_MESSAGE
+    # Self-hosted: the license lacks Turing, and its own models are the way out.
+    assert response.json()["message"] == ee_gates.INSIGHTS_TURING_UNLICENSED_MESSAGE
+    assert "plan" not in response.json()["message"]
     assert not InsightConfig.objects.exists()
 
     enterprise("insights", "turing_models")
     response = auth_client.post(RUNS, new_run_body(observe_project), format="json")
     assert response.status_code == status.HTTP_200_OK, response.content
+
+    cloud("insights")
+    response = auth_client.post(RUNS, new_run_body(observe_project), format="json")
+    assert response.status_code == status.HTTP_402_PAYMENT_REQUIRED
+    assert response.json()["message"] == ee_gates.INSIGHTS_TURING_DENIED_MESSAGE
 
 
 @pytest.mark.requires_ee
@@ -366,7 +373,7 @@ def test_insights_on_the_deployments_own_models_doesnt_need_turing(
     settings.INSIGHTS_THINKING_MODEL = "turing_large"
     response = auth_client.post(RUNS, new_run_body(observe_project), format="json")
     assert response.status_code == status.HTTP_402_PAYMENT_REQUIRED
-    assert response.json()["message"] == ee_gates.INSIGHTS_TURING_DENIED_MESSAGE
+    assert response.json()["message"] == ee_gates.INSIGHTS_TURING_UNLICENSED_MESSAGE
 
 
 @pytest.mark.requires_ee
@@ -403,13 +410,21 @@ def test_an_insights_stage_refuses_an_unlicensed_run(insight_run):
         stage(str(insight_run.id))
     assert refused.value.non_retryable
     assert refused.value.type == "CapabilityDenied"
-    assert refused.value.message == ee_gates.INSIGHTS_DENIED_MESSAGE
+    assert refused.value.message == "Insights is not available."
     assert ran == [str(insight_run.id)]
+
+    # A lapsed license says so, as the views' 402 does, not "plan".
+    enterprise("insights", "turing_models", state=LicenseState.EXPIRED)
+    with pytest.raises(ApplicationError) as refused:
+        stage(str(insight_run.id))
+    assert refused.value.message == (
+        "Insights needs an Enterprise license; this one has expired."
+    )
 
     enterprise("insights")
     with pytest.raises(ApplicationError) as refused:
         activities.require_license(str(insight_run.id))
-    assert refused.value.message == ee_gates.INSIGHTS_TURING_DENIED_MESSAGE
+    assert refused.value.message == ee_gates.INSIGHTS_TURING_UNLICENSED_MESSAGE
 
 
 @pytest.mark.requires_ee
@@ -478,7 +493,14 @@ def test_an_instant_eval_task_fails_closed_without_the_license(
         activities._require_instant_eval_license(task)
     assert refused.value.non_retryable
     assert refused.value.type == "CapabilityDenied"
-    assert refused.value.message == activities.INSTANT_EVAL_DENIED_MESSAGE
+    assert refused.value.message == "Instant eval is not available."
+
+    enterprise("insights")
+    with pytest.raises(ApplicationError) as refused:
+        activities._require_instant_eval_license(task)
+    assert refused.value.message == (
+        "Instant eval isn't included in this Enterprise license."
+    )
 
     # Reconcile and every claim check it before touching the task's rows.
     monkeypatch.setattr(activities, "close_old_connections", lambda: None)

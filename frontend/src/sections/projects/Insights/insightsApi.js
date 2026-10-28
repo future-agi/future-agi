@@ -132,6 +132,20 @@ const USER_FACING_CODES = new Set([
   "users_still_counting",
 ]);
 
+// Refusals the capability service words for people: the feature by name and
+// what unlocks it here (a license self-hosted, a plan on Cloud), and the
+// Turing denial (Insights is allowed, the Turing models it runs on aren't).
+const DENIAL_CODES = new Set([
+  "CAPABILITY_DENIED",
+  "LICENSE_MISSING",
+  "LICENSE_INVALID",
+  "LICENSE_EXPIRED",
+  "LICENSE_TRIAL_EXPIRED",
+  "LICENSE_FEATURE_MISSING",
+  "FEATURE_NOT_IN_GRACE",
+  "PLAN_FEATURE_MISSING",
+]);
+
 const messageOf = (error) =>
   [error?.message, error?.detail, error?.result, error?.error].find(
     (value) => typeof value === "string" && value.trim(),
@@ -178,13 +192,11 @@ export function insightsErrorMessage(
   const code = error?.code;
   const message = messageOf(error).trim();
   const shown = message && message.length <= 240 && !/[\r\n]/.test(message);
-  // Only the Turing denial (code CAPABILITY_DENIED: Insights is on the plan,
-  // the Turing models it runs on aren't) says why. Licence refusals
-  // (LICENSE_MISSING and the like) name a feature key, so they read the same.
+  // Any other refusal (an older entitlement check) names no deployment.
   if (status === 402 || code === "CAPABILITY_DENIED")
-    return code === "CAPABILITY_DENIED" && shown
+    return DENIAL_CODES.has(code) && shown
       ? message
-      : "Insights isn't available on this plan.";
+      : "Insights isn't available to this organization.";
   if (shown && (status === 429 || USER_FACING_CODES.has(code))) return message;
   return actionErrorMessage(error, { fallback, retry });
 }

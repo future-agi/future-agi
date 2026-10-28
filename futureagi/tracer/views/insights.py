@@ -617,12 +617,12 @@ def _gate(gm, org):
     licensed on every view (InsightsLicenseRequired); its models also need
     Turing when they are Turing models, as they are unless the deployment
     configures its own."""
-    from tfc.ee_gates import INSIGHTS_TURING_DENIED_MESSAGE, insights_turing_denied
+    from tfc.ee_gates import insights_turing_denied, insights_turing_denied_message
 
     if insights_turing_denied(org.id):
         return gm.custom_error_response(
             status.HTTP_402_PAYMENT_REQUIRED,
-            INSIGHTS_TURING_DENIED_MESSAGE,
+            insights_turing_denied_message(),
             code="CAPABILITY_DENIED",
         )
     return None

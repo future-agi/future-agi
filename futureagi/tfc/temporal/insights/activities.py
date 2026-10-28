@@ -31,10 +31,11 @@ logger = structlog.get_logger(__name__)
 def require_license(run_id: str) -> None:
     """Refuse a stage whose organization may not use Insights or its Turing
     models. Retry entitlement outages rather than treating them as denials."""
+    from tfc.capabilities.service import refusal_message
     from tfc.ee_gates import (
         INSIGHTS_DENIED_MESSAGE,
-        INSIGHTS_TURING_DENIED_MESSAGE,
         insights_turing_denied,
+        insights_turing_denied_message,
     )
     from tfc.ee_gating import (
         ENTITLEMENT_CHECK_UNAVAILABLE_MESSAGE,
@@ -65,11 +66,13 @@ def require_license(run_id: str) -> None:
                 type="CapabilityUnavailable",
             ) from None
         raise ApplicationError(
-            INSIGHTS_DENIED_MESSAGE, type="CapabilityDenied", non_retryable=True
+            refusal_message(exc, INSIGHTS_DENIED_MESSAGE),
+            type="CapabilityDenied",
+            non_retryable=True,
         ) from None
     if insights_turing_denied(org_id):
         raise ApplicationError(
-            INSIGHTS_TURING_DENIED_MESSAGE,
+            insights_turing_denied_message(),
             type="CapabilityDenied",
             non_retryable=True,
         )

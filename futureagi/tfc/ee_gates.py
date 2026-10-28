@@ -136,11 +136,29 @@ def insights_turing_models() -> list[str]:
     ]
 
 
-INSIGHTS_DENIED_MESSAGE = "Insights isn't available on this organization's plan."
+INSIGHTS_DENIED_MESSAGE = "Insights isn't available to this organization."
 INSIGHTS_TURING_DENIED_MESSAGE = (
     "Insights runs on Turing models, which aren't available on this "
     "organization's plan."
 )
+# Self-hosted, Insights is licensed but Turing isn't: the deployment can point
+# Insights at its own models instead.
+INSIGHTS_TURING_UNLICENSED_MESSAGE = (
+    "Insights runs on Turing models, which this Enterprise license doesn't "
+    "include. Set INSIGHTS_FAST_MODEL and INSIGHTS_THINKING_MODEL to your own "
+    "models, or ask us to add Turing models to the license."
+)
+
+
+def insights_turing_denied_message() -> str:
+    """Why insights_turing_denied refused, in this deployment's terms: a
+    Cloud plan, or a self-hosted license."""
+    from tfc.capabilities import service as capability_service
+    from tfc.licensing.types import DeploymentLocation
+
+    if capability_service.get_deployment_location() == DeploymentLocation.CLOUD:
+        return INSIGHTS_TURING_DENIED_MESSAGE
+    return INSIGHTS_TURING_UNLICENSED_MESSAGE
 
 
 def insights_turing_denied(org_id) -> bool:

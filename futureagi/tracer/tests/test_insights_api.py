@@ -141,7 +141,7 @@ def test_reports_on_turing_models_need_the_turing_capability(
 ):
     from tfc.capabilities import service as capability_service
     from tfc.capabilities.service import CapabilityDecision
-    from tfc.ee_gates import INSIGHTS_TURING_DENIED_MESSAGE
+    from tfc.ee_gates import insights_turing_denied_message
 
     monkeypatch.setattr(
         capability_service,
@@ -152,7 +152,7 @@ def test_reports_on_turing_models_need_the_turing_capability(
     )
     response = auth_client.post(RUNS, new_run_body(observe_project), format="json")
     assert response.status_code == status.HTTP_402_PAYMENT_REQUIRED
-    assert response.json()["message"] == INSIGHTS_TURING_DENIED_MESSAGE
+    assert response.json()["message"] == insights_turing_denied_message()
     assert not InsightConfig.objects.exists()
 
 

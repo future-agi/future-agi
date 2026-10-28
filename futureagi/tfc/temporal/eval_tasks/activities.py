@@ -47,9 +47,7 @@ logger = structlog.get_logger(__name__)
 # =============================================================================
 
 
-INSTANT_EVAL_DENIED_MESSAGE = (
-    "Instant eval isn't available on this organization's plan."
-)
+INSTANT_EVAL_DENIED_MESSAGE = "Instant eval isn't available to this organization."
 
 
 def _require_instant_eval_license(task) -> None:
@@ -60,6 +58,7 @@ def _require_instant_eval_license(task) -> None:
     request; this covers a run on an install without it (the license lapsed,
     or the run predates the gate). Other eval tasks are not affected.
     """
+    from tfc.capabilities.service import refusal_message
     from tracer.services.instant_eval_rows import RUN_MARKER
 
     filters = getattr(task, "filters", None)
@@ -96,7 +95,9 @@ def _require_instant_eval_license(task) -> None:
                 type="CapabilityUnavailable",
             ) from None
         raise ApplicationError(
-            INSTANT_EVAL_DENIED_MESSAGE, type="CapabilityDenied", non_retryable=True
+            refusal_message(exc, INSTANT_EVAL_DENIED_MESSAGE),
+            type="CapabilityDenied",
+            non_retryable=True,
         ) from None
 
 

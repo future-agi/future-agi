@@ -87,7 +87,7 @@ def test_a_plan_without_insights_still_refuses_the_run_for_good(run_org):
     )
     assert refused.type == "CapabilityDenied"
     assert refused.non_retryable
-    assert refused.message == ee_gates.INSIGHTS_DENIED_MESSAGE
+    assert refused.message == "Insights isn't included in your plan."
 
 
 # ─── The report page shows only text written for people ──────────────────────

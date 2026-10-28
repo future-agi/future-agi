@@ -325,6 +325,21 @@ def denial_message(decision: CapabilityDecision) -> str:
     return f"{name} is not available."
 
 
+def refusal_message(exc: BaseException, fallback: str) -> str:
+    """denial_message for a raised denial that names its feature and reason
+    (CapabilityDenied), whatever text it was raised with; fallback for any
+    other refusal."""
+    feature_id = getattr(exc, "feature_id", None)
+    reason_code = getattr(exc, "reason_code", None)
+    if not feature_id or not reason_code:
+        return fallback
+    return denial_message(
+        CapabilityDecision(
+            allowed=False, feature_id=feature_id, reason_code=reason_code
+        )
+    )
+
+
 def _raise_denied(decision: CapabilityDecision, *, activity: bool) -> None:
     logger.info(
         "capability_denied",
