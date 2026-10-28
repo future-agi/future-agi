@@ -19,6 +19,14 @@ describe("UiOnlyFlag", () => {
     ).toBeInTheDocument();
   });
 
+  it("uses a feature's own note in place of the sample-data line", async () => {
+    render(<UiOnlyFlag feature="compareRuns" />);
+    fireEvent.mouseOver(screen.getByText("UI only"));
+    const tip = await screen.findByText(/Needs: /);
+    expect(tip.textContent).toMatch(UI_ONLY_FEATURES.compareRuns.note);
+    expect(tip.textContent).not.toMatch(/sample data/);
+  });
+
   it("keeps the plain tooltip for an unregistered feature", async () => {
     render(<UiOnlyFlag feature="not-a-feature" />);
     fireEvent.mouseOver(screen.getByText("UI only"));

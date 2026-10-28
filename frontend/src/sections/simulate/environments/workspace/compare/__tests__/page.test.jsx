@@ -49,6 +49,11 @@ afterEach(() => {
 });
 
 describe("Compare runs header", () => {
+  it("flags the whole page as UI only", () => {
+    renderPage("?runs=r1,r3");
+    expect(screen.getAllByText("UI only")).toHaveLength(1);
+  });
+
   it('?runs=a,b renders pills "Run N · agent vX · P% p/t"', () => {
     renderPage("?runs=r1,r3");
     const pills = screen.getAllByTestId("compare-run-pill");

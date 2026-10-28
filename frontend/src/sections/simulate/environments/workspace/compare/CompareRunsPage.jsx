@@ -27,6 +27,7 @@ import { useEnvironmentRuns } from "src/api/simulate-environments/runs";
 import { useEnvState } from "../../store/envState";
 import { BUILD_STATUS } from "../../myEnvironments.constants";
 import EmptyState from "../../components/EmptyState";
+import UiOnlyFlag from "../../components/UiOnlyFlag";
 import WorkspaceErrorBoundary from "../WorkspaceErrorBoundary";
 import RunPills from "./RunPills";
 import AddRunMenu from "./AddRunMenu";
@@ -338,12 +339,15 @@ function CompareRuns() {
             sx={{ height: 20, width: "1px", bgcolor: "divider", flexShrink: 0 }}
           />
           <Box minWidth={0}>
-            <Typography
-              noWrap
-              sx={{ typography: "m3", fontWeight: "fontWeightSemiBold" }}
-            >
-              {env.name}
-            </Typography>
+            <Stack direction="row" alignItems="center" spacing={1}>
+              <Typography
+                noWrap
+                sx={{ typography: "m3", fontWeight: "fontWeightSemiBold" }}
+              >
+                {env.name}
+              </Typography>
+              <UiOnlyFlag feature="compareRuns" />
+            </Stack>
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
               {subtitleText(runs, coverage)}
             </Typography>

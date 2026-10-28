@@ -46,6 +46,11 @@ export const UI_ONLY_FEATURES = Object.freeze({
     label: "MCP tools",
     ask: "adding, refreshing and removing tools from MCP servers",
   },
+  compareRuns: {
+    label: "Compare runs",
+    ask: "a run comparison endpoint that pairs scenarios, flips and eval scores across runs",
+    note: "UI only: the numbers are real, but the comparison is put together in the browser from each run's calls, not by the API.",
+  },
   scenarioBatches: {
     label: "Scenario batches",
     ask: "who added which scenarios, how and when (batches with an author)",
