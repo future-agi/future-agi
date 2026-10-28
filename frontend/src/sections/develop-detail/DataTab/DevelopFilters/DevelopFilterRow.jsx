@@ -108,7 +108,7 @@ const DevelopFilterRow = ({
               <SvgColor
                 src="/assets/icons/ic_add.svg"
                 sx={{
-                  width: "20ox !important",
+                  width: "20px !important",
                   height: "20px !important",
                   color: "primary.main",
                 }}
