@@ -575,7 +575,7 @@ def _connector_credential_readiness(
     }
 
 
-def _preflight_source_connectors(request, payload):
+def _preflight_source_connectors(organization, payload):
     """Scan the submitted source the same way authoring will, so preflight asks for the
     credential family the agent actually uses instead of every family."""
     from simulate.services.hosted_harness_gateway import (
@@ -588,9 +588,7 @@ def _preflight_source_connectors(request, payload):
     # the repository source scanner with a synthetic source.
     if payload["source"]["kind"] in {"remote", "provider"}:
         return [], [], 0
-    probe = HostedHarnessJob(
-        organization=request_organization(request), payload=payload
-    )
+    probe = HostedHarnessJob(organization=organization, payload=payload)
     archive, _commit = HostedSourceAcquirer().acquire(probe)
     detected, required_files, scanned = detect_source_credentials(archive)
     if payload["agent"]["connector"] != "auto":
@@ -598,11 +596,11 @@ def _preflight_source_connectors(request, payload):
     return detected, required_files, scanned
 
 
-def _validate_required_credential_files(request, payload):
+def _validate_required_credential_files(organization, payload):
     """Refuse a launch whose source explicitly requires an absent credential file."""
     from simulate.services.hosted_harness import HostedHarnessError
 
-    analysis = _preflight_source_connectors(request, payload)
+    analysis = _preflight_source_connectors(organization, payload)
     required_files = analysis[1] if len(analysis) == 3 else []
     present = {
         str(alias).upper() for alias in (payload["agent"].get("secret_refs") or {})
@@ -1075,11 +1073,7 @@ class HostedHarnessProvider:
     name = "hosted"
 
     def create(self, request) -> Response:
-        from simulate.services.hosted_harness import (
-            HostedHarnessError,
-            create_hosted_job,
-        )
-        from simulate.temporal.client import start_hosted_harness_gateway_workflow
+        from simulate.services.hosted_harness import HostedHarnessError
 
         organization = request_organization(request)
         if organization is None:
@@ -1098,63 +1092,25 @@ class HostedHarnessProvider:
             getattr(settings, "HARNESS_PUBLIC_BASE_URL", "")
             or request.build_absolute_uri("/")
         ).rstrip("/")
-        # This uses only references/configuration and deployment env presence.
-        # Definitive launch validation runs again after vault resolution.
-        try:
-            _validate_secret_refs_hosted(payload["agent"]["secret_refs"])
-            _validate_phone_connectivity(payload)
-            _validate_known_hosted_egress(payload, base_url)
-        except HostedHarnessError as exc:
-            return Response(exc.as_dict(), status=exc.status_code)
-        from simulate.services.harness_usage import (
-            require_harness_run_usage,
-            require_harness_source_call_usage,
+        from simulate.services.hosted_harness_submission import (
+            submit_hosted_harness_job,
         )
 
         try:
-            require_harness_run_usage(str(organization.id), payload)
-        except Exception as exc:
-            response = _usage_limit_response(exc)
-            if response is not None:
-                return response
-            raise
-        try:
-            source_analysis = _validate_required_credential_files(request, payload)
-        except HostedHarnessError as exc:
-            return Response(exc.as_dict(), status=exc.status_code)
-        try:
-            require_harness_source_call_usage(
-                str(organization.id),
-                payload,
-                source_analysis[0] if source_analysis else (),
-            )
-        except Exception as exc:
-            response = _usage_limit_response(exc)
-            if response is not None:
-                return response
-            raise
-        try:
-            job, _ = create_hosted_job(
+            job, _created = submit_hosted_harness_job(
                 organization,
+                request_workspace(request),
                 payload,
-                idempotency_key=idempotency_key,
-                workspace=request_workspace(request),
-            )
-            retry_cfg = job.payload["retry"]
-            start_hosted_harness_gateway_workflow(
-                str(job.id),
+                idempotency_key,
                 base_url,
-                retry_cfg["max_infrastructure_attempts"],
-                retry_cfg["initial_backoff_seconds"],
-                retry_cfg["max_backoff_seconds"],
             )
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
-        except Exception:
-            return Response(
-                {"detail": "Hosted harness scheduler is unavailable"},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
+        except Exception as exc:
+            response = _usage_limit_response(exc)
+            if response is not None:
+                return response
+            raise
         return Response(serialize_job(job), status=status.HTTP_202_ACCEPTED)
 
     def list(self, request) -> Response:
@@ -1189,7 +1145,9 @@ class HostedHarnessProvider:
         runtime = payload["runtime"]
         source_error = None
         try:
-            source_analysis = _preflight_source_connectors(request, payload)
+            source_analysis = _preflight_source_connectors(
+                request_organization(request), payload
+            )
         except HostedHarnessError as exc:
             source_error = exc
             source_analysis = ([], [], 0)
