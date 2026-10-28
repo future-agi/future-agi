@@ -12,7 +12,7 @@ from simulate.models import (
     HostedHarnessJob,
 )
 from simulate.pydantic_schemas.agent_fix import FixRequest, Surface
-from simulate.selectors.agent_fix import failing_sub_goals
+from simulate.selectors.agent_fix import FINISHED_RUN_STATES, failing_sub_goals
 from simulate.services.agent_fix_agents import agent_kind
 from simulate.services.harness_agent_versions import discard_agent_version
 from simulate.services.hosted_harness import (
@@ -26,12 +26,6 @@ from simulate.temporal.client import (
 )
 
 logger = structlog.get_logger(__name__)
-
-_TERMINAL_RUN_STATES = {
-    HostedHarnessJob.State.COMPLETED,
-    HostedHarnessJob.State.FAILED,
-    HostedHarnessJob.State.CANCELED,
-}
 
 
 def launch_fix_run(
@@ -50,7 +44,7 @@ def launch_fix_run(
         raise HostedHarnessError(
             "fix_source_not_a_run", "Fix my agent starts from a run", status_code=422
         )
-    if source_run.state not in _TERMINAL_RUN_STATES:
+    if source_run.state not in FINISHED_RUN_STATES:
         raise HostedHarnessError(
             "fix_source_running", "wait for the run to finish", status_code=409
         )
@@ -94,8 +88,10 @@ def launch_fix_run(
                 created_by=user,
                 request=request.model_dump(mode="json"),
             )
-            transaction.on_commit(lambda: start_agent_fix_workflow(str(fix_run.id)))
+            transaction.on_commit(lambda: _start_workflow(fix_run.id))
     except IntegrityError as exc:
+        if "uniq_active_agent_fix_per_environment" not in str(exc):
+            raise
         raise HostedHarnessError(
             "fix_run_active",
             "this environment already has a fix in progress",
@@ -106,7 +102,25 @@ def launch_fix_run(
         fix_run=str(fix_run.id),
         environment=str(environment.id),
     )
+    fix_run.refresh_from_db()
     return fix_run
+
+
+def _start_workflow(fix_run_id: Any) -> None:
+    """Start the fix's workflow; a fix whose workflow cannot start ends failed at once, so
+    it never holds the environment's one active fix."""
+    try:
+        start_agent_fix_workflow(str(fix_run_id))
+    except Exception:
+        logger.exception("agent_fix_workflow_start_failed", fix_run=str(fix_run_id))
+        close_fix_run(
+            fix_run_id,
+            AgentFixRun.State.FAILED,
+            failure={
+                "code": "fix_dispatch_failed",
+                "message": "the fix could not be scheduled; try again",
+            },
+        )
 
 
 def request_stop(fix_run: AgentFixRun) -> AgentFixRun:
@@ -117,8 +131,17 @@ def request_stop(fix_run: AgentFixRun) -> AgentFixRun:
             return locked
         locked.state = AgentFixRun.State.STOPPING
         locked.save(update_fields=["state", "updated_at"])
-        transaction.on_commit(lambda: cancel_agent_fix_workflow(str(locked.id)))
+        transaction.on_commit(lambda: _signal_stop(locked.id))
     return locked
+
+
+def _signal_stop(fix_run_id: Any) -> None:
+    """Tell the workflow to stop; without a workflow to tell, the fix is closed here."""
+    try:
+        cancel_agent_fix_workflow(str(fix_run_id))
+    except Exception:
+        logger.exception("agent_fix_stop_signal_failed", fix_run=str(fix_run_id))
+        close_fix_run(fix_run_id, AgentFixRun.State.STOPPED)
 
 
 def close_fix_run(
@@ -128,38 +151,38 @@ def close_fix_run(
     failure: dict[str, str] | None = None,
 ) -> AgentFixRun:
     """Move a fix run to its ending once. The sandbox's token stops working, open
-    check runs are canceled, and rejected candidates are set aside (never deleted)."""
+    check runs are canceled, and rejected candidates are set aside (never deleted). The
+    cleanup runs on every call, so a close that failed halfway finishes on the next."""
     with transaction.atomic():
         locked = AgentFixRun.no_workspace_objects.select_for_update().get(id=fix_run_id)
-        if locked.state not in AgentFixRun.ACTIVE_STATES:
-            return locked
-        locked.state = state
-        locked.failure = failure
-        locked.finished_at = timezone.now()
-        locked.token_hash = ""
-        locked.fence_hash = ""
-        locked.save(
-            update_fields=[
-                "state",
-                "failure",
-                "finished_at",
-                "token_hash",
-                "fence_hash",
-                "updated_at",
-            ]
-        )
+        if locked.state in AgentFixRun.ACTIVE_STATES:
+            locked.state = state
+            locked.failure = failure
+            locked.finished_at = timezone.now()
+            locked.token_hash = ""
+            locked.fence_hash = ""
+            locked.save(
+                update_fields=[
+                    "state",
+                    "failure",
+                    "finished_at",
+                    "token_hash",
+                    "fence_hash",
+                    "updated_at",
+                ]
+            )
+            logger.info("agent_fix_run_closed", fix_run=str(locked.id), state=state)
     _cancel_open_check_runs(locked)
     _set_aside_rejected(locked)
-    logger.info("agent_fix_run_closed", fix_run=str(locked.id), state=state)
     return locked
 
 
 def _cancel_open_check_runs(fix_run: AgentFixRun) -> None:
     open_runs = HostedHarnessJob.no_workspace_objects.filter(fix_run=fix_run).exclude(
-        state__in=_TERMINAL_RUN_STATES
+        state__in=FINISHED_RUN_STATES
     )
     for run in open_runs:
-        request_cancellation(run, "user_canceled")
+        request_cancellation(run, "fix_ended")
         try:
             cancel_hosted_harness_gateway_workflow(str(run.id))
         except Exception:  # noqa: BLE001 - the run's own deadline still ends it

@@ -114,9 +114,11 @@ class AgentFixWorkflow:
             except ActivityError as exc:
                 if isinstance(exc.cause, CancelledError):
                     raise
-                # A slow sandbox API must not end a live engine. Each look reads the run's
-                # deadline and the engine's last report before the sandbox, so a dead engine
-                # or a late run still ends once the database answers.
+                # Only an outage reaches here (the sandbox API, the network, the database,
+                # or a lost worker): the service ends the run itself on any other error.
+                # An outage must not end a live engine. Each look reads the run's deadline
+                # and the engine's last report before the sandbox, so a dead engine or a
+                # late run still ends once the database answers.
                 workflow.logger.warning(
                     "Agent fix %s watch unavailable: %s", input.fix_run_id, exc
                 )

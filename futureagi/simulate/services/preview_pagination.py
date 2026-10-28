@@ -206,14 +206,10 @@ def _read_revision_state(
             WHERE parent_item.id = %s
           ), FALSE) AS parent_visible,
           child_state.physical_count,
-          child_state.active_count,
           child_state.all_visible
         FROM (
           SELECT
             COUNT(*)::bigint AS physical_count,
-            COUNT(*) FILTER (
-              WHERE NOT child_item.deleted
-            )::bigint AS active_count,
             COALESCE(BOOL_AND(txid_visible_in_snapshot(
               xid_clock.current_txid - age(child_item.xmin),
               %s::txid_snapshot
@@ -242,9 +238,9 @@ def _read_revision_state(
 
 
 def capture_preview_revision(
-    *, kind: str, parent_id: str, snapshot: str
+    *, kind: str, parent_id: str, snapshot: str, active_total: int
 ) -> PreviewRevision:
-    parent_visible, physical_total, active_total, all_visible = _read_revision_state(
+    parent_visible, physical_total, all_visible = _read_revision_state(
         kind=kind,
         parent_id=parent_id,
         original_snapshot=snapshot,
@@ -256,7 +252,7 @@ def capture_preview_revision(
     return PreviewRevision(
         snapshot=snapshot,
         physical_total=int(physical_total),
-        active_total=int(active_total),
+        active_total=active_total,
     )
 
 
@@ -265,8 +261,9 @@ def assert_preview_revision(
     kind: str,
     parent_id: str,
     revision: PreviewRevision,
+    active_total: int,
 ) -> None:
-    parent_visible, physical_total, active_total, all_visible = _read_revision_state(
+    parent_visible, physical_total, all_visible = _read_revision_state(
         kind=kind,
         parent_id=parent_id,
         original_snapshot=revision.snapshot,
@@ -275,7 +272,7 @@ def assert_preview_revision(
         parent_visible
         and all_visible
         and int(physical_total) == revision.physical_total
-        and int(active_total) == revision.active_total
+        and active_total == revision.active_total
     ):
         raise PreviewSnapshotChanged(
             "Simulation preview data changed while more rows were loading."
@@ -299,9 +296,10 @@ def paginate_preview_snapshot(
 
     The caller owns the repeatable-read transaction.  ``created_at`` and the
     UUID primary key form the immutable order. PostgreSQL ``xmin`` visibility
-    plus physical/active counts form the revision fence, including bulk SQL
-    updates that bypass ``auto_now``. We deliberately fail closed on any
-    update/delete/restore/backdated insert affecting the initial membership.
+    plus the physical count and ``queryset``'s count form the revision fence,
+    including bulk SQL updates that bypass ``auto_now``. We deliberately fail
+    closed on any update/delete/restore/backdated insert affecting the initial
+    membership. ``queryset`` alone decides membership, for the page and its total.
     """
 
     if cursor:
@@ -318,11 +316,15 @@ def paginate_preview_snapshot(
 
     if before_query:
         before_query()
+    active_total = queryset.count()
+    if before_query:
+        before_query()
     if state is None:
         revision = capture_preview_revision(
             kind=kind,
             parent_id=parent_id,
             snapshot=snapshot,
+            active_total=active_total,
         )
         state = PreviewCursorState(
             kind=kind,
@@ -337,6 +339,7 @@ def paginate_preview_snapshot(
             kind=kind,
             parent_id=parent_id,
             revision=state.revision,
+            active_total=active_total,
         )
 
     # Membership is frozen by the signed PostgreSQL MVCC revision above. A

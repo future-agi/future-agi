@@ -7,7 +7,6 @@ is running: ``close_fix_run`` takes the same lock, so nothing starts after a fix
 
 import fnmatch
 import io
-import re
 import tarfile
 from decimal import Decimal
 from typing import Any
@@ -16,8 +15,14 @@ import structlog
 from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.utils import timezone
+from minio.error import S3Error
 
-from simulate.models import AgentFixCandidate, AgentFixRun, HostedHarnessJob
+from simulate.models import (
+    AgentFixCandidate,
+    AgentFixRun,
+    HostedHarnessJob,
+    TestExecution,
+)
 from simulate.pydantic_schemas.agent_fix import (
     CandidateOutcome,
     CheckRunRequest,
@@ -45,7 +50,6 @@ _ENDING_STATES = {
     Ending.OUT_OF_BUDGET: AgentFixRun.State.OUT_OF_BUDGET,
     Ending.FAILED: AgentFixRun.State.FAILED,
 }
-_PATCH_FILE = re.compile(r"^diff --git a/(\S+) b/(\S+)$", re.MULTILINE)
 MAX_PATCH_BYTES = 2 * 1024 * 1024
 
 
@@ -66,14 +70,20 @@ def _locked_running(fix_run_id: Any) -> AgentFixRun:
 
 
 def source_archive(fix_run: AgentFixRun) -> bytes:
-    """The agent's editable files as a `source/`-rooted tar.gz."""
-    if fix_run.source_run_id is None:
-        raise HostedHarnessError(
-            "fix_source_deleted",
-            "the run this fix started from was deleted",
-            status_code=409,
-        )
-    return agent_kind(fix_run.environment).source_archive(fix_run)
+    """The agent's editable files as the fix started from them: a `source/`-rooted tar.gz,
+    kept for the whole fix, so every candidate is compared with the same base."""
+    key = _object_key(fix_run, "base-source.tar.gz")
+    body = _load_if_stored(key)
+    if body is None:
+        if fix_run.source_run_id is None:
+            raise HostedHarnessError(
+                "fix_source_deleted",
+                "the run this fix started from was deleted",
+                status_code=409,
+            )
+        body = agent_kind(fix_run.environment).source_archive(fix_run)
+        _put(key, body, "application/gzip")
+    return body
 
 
 def add_candidate(
@@ -91,16 +101,17 @@ def add_candidate(
                 "the candidate's patch is too large",
                 status_code=413,
             )
-        _refuse_locked_paths(fix_run, patch)
-        files, paths = _tree_files(tree)
-        # Stored first: an object no candidate points at is harmless, a candidate without
-        # its patch is not.
+        files = archive_files(tree)
+        _refuse_locked_changes(fix_run, files)
+        # Storage first, outside the fix's lock: an object no candidate points at is
+        # harmless, a candidate without its files is not.
+        prepared = kind.prepare_candidate(fix_run, files, attempt)
         patch_key = _object_key(fix_run, f"candidate-{attempt}.patch")
         _put(patch_key, patch, "text/x-diff")
         try:
             with transaction.atomic():
                 locked = _locked_running(fix_run.id)
-                version = kind.candidate_version(locked, files, paths, attempt)
+                version = kind.candidate_version(locked, prepared, attempt)
                 candidate = AgentFixCandidate.no_workspace_objects.create(
                     fix_run=locked,
                     attempt=attempt,
@@ -108,7 +119,9 @@ def add_candidate(
                     patch_object_key=patch_key,
                     summary=summary[:4000],
                 )
-        except IntegrityError:
+        except IntegrityError as exc:
+            if "uniq_agent_fix_candidate_attempt" not in str(exc):
+                raise
             # The same attempt arrived twice at once; the first one made it.
             candidate = fix_run.candidates.get(attempt=attempt)
         logger.info(
@@ -120,16 +133,18 @@ def add_candidate(
     return candidate, kind.check(candidate.agent_version)
 
 
-def _refuse_locked_paths(fix_run: AgentFixRun, patch: bytes) -> None:
+def _refuse_locked_changes(fix_run: AgentFixRun, files: dict[str, bytes]) -> None:
+    """Refuse a candidate whose files differ from the base on any locked path. The tree is
+    what becomes the version, so it is what is compared, not the patch."""
     locked = fix_run.request.get("locked_paths") or []
-    # Paths are the agent's own; an archive's `source/` root is not part of them.
-    touched = {
-        path.removeprefix("source/")
-        for pair in _PATCH_FILE.findall(patch.decode("utf-8", "replace"))
-        for path in pair
-    }
+    if not locked:
+        return
+    base = archive_files(source_archive(fix_run))
     hits = sorted(
-        path for path in touched if any(fnmatch.fnmatch(path, rule) for rule in locked)
+        path
+        for path in set(base) | set(files)
+        if any(fnmatch.fnmatch(path, rule) for rule in locked)
+        and base.get(path) != files.get(path)
     )
     if hits:
         raise HostedHarnessError(
@@ -139,20 +154,29 @@ def _refuse_locked_paths(fix_run: AgentFixRun, patch: bytes) -> None:
         )
 
 
-def _tree_files(tree: bytes) -> tuple[list[io.BytesIO], list[str]]:
-    """The files of an uploaded agent tree, for the same store an uploaded folder uses."""
-    files, paths = [], []
+def archive_files(body: bytes) -> dict[str, bytes]:
+    """An agent tree's files by their path from the agent's root, refusing a tree whose
+    unpacked size or file count is over the limit before reading it."""
+    max_bytes = settings.AGENT_FIX_MAX_TREE_BYTES
+    max_files = settings.AGENT_FIX_MAX_TREE_FILES
     try:
-        with tarfile.open(fileobj=io.BytesIO(tree), mode="r:gz") as archive:
-            for member in archive.getmembers():
-                if not member.isfile():
-                    continue
-                path = member.name.removeprefix("./").removeprefix("source/")
+        with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
+            members = [member for member in archive.getmembers() if member.isfile()]
+            if (
+                len(members) > max_files
+                or sum(member.size for member in members) > max_bytes
+            ):
+                raise HostedHarnessError(
+                    "fix_tree_too_large",
+                    "the candidate's tree is over the size limit",
+                    status_code=413,
+                )
+            files = {}
+            for member in members:
                 extracted = archive.extractfile(member)
-                if extracted is None:
-                    continue
-                files.append(io.BytesIO(extracted.read()))
-                paths.append(path)
+                if extracted is not None:
+                    path = member.name.removeprefix("./").removeprefix("source/")
+                    files[path] = extracted.read()
     except tarfile.TarError as exc:
         raise HostedHarnessError(
             "fix_tree_invalid", "the candidate's tree is not a tar.gz", status_code=400
@@ -161,7 +185,7 @@ def _tree_files(tree: bytes) -> tuple[list[io.BytesIO], list[str]]:
         raise HostedHarnessError(
             "fix_tree_empty", "the candidate's tree has no files", status_code=400
         )
-    return files, paths
+    return files
 
 
 def start_check_run(fix_run: AgentFixRun, request: CheckRunRequest) -> HostedHarnessJob:
@@ -209,14 +233,45 @@ def start_check_run(fix_run: AgentFixRun, request: CheckRunRequest) -> HostedHar
 
 
 def _dispatch(run: HostedHarnessJob) -> None:
+    """Start the check run's workflow; if it cannot start, the run fails at once instead of
+    waiting queued for a workflow that will never come."""
     retry = run.payload["retry"]
-    start_hosted_harness_gateway_workflow(
-        str(run.id),
-        str(settings.HARNESS_PUBLIC_BASE_URL).rstrip("/"),
-        retry["max_infrastructure_attempts"],
-        retry["initial_backoff_seconds"],
-        retry["max_backoff_seconds"],
-    )
+    try:
+        start_hosted_harness_gateway_workflow(
+            str(run.id),
+            str(settings.HARNESS_PUBLIC_BASE_URL).rstrip("/"),
+            retry["max_infrastructure_attempts"],
+            retry["initial_backoff_seconds"],
+            retry["max_backoff_seconds"],
+        )
+    except Exception:
+        logger.exception("agent_fix_check_run_dispatch_failed", run=str(run.id))
+        _fail_unscheduled(run)
+
+
+def _fail_unscheduled(run: HostedHarnessJob) -> None:
+    message = "the check run could not be scheduled"
+    now = timezone.now()
+    with transaction.atomic():
+        marked = HostedHarnessJob.no_workspace_objects.filter(
+            id=run.id, state=HostedHarnessJob.State.QUEUED
+        ).update(
+            state=HostedHarnessJob.State.FAILED,
+            current_stage="failed",
+            terminal_at=now,
+            failure={
+                "domain": "infrastructure",
+                "stage": "queued",
+                "code": "scheduler_unavailable",
+                "message": message,
+            },
+        )
+        if marked:
+            TestExecution.no_workspace_objects.filter(id=run.test_execution_id).update(
+                status=TestExecution.ExecutionStatus.FAILED,
+                completed_at=now,
+                error_reason=message,
+            )
 
 
 def committed_usd(fix_run: AgentFixRun) -> Decimal:
@@ -230,9 +285,7 @@ def committed_usd(fix_run: AgentFixRun) -> Decimal:
 
 
 def _worst_case_per_execution() -> Decimal:
-    return Decimal(
-        str(getattr(settings, "AGENT_FIX_WORST_CASE_USD_PER_EXECUTION", "0.05"))
-    )
+    return Decimal(settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION)
 
 
 def _require_budget(fix_run: AgentFixRun, executions: int) -> None:
@@ -279,6 +332,13 @@ def apply_report(fix_run: AgentFixRun, report: EngineReport) -> AgentFixRun:
 
 
 def store_checkpoint(fix_run: AgentFixRun, body: bytes) -> None:
+    max_bytes = settings.AGENT_FIX_MAX_CHECKPOINT_BYTES
+    if len(body) > max_bytes:
+        raise HostedHarnessError(
+            "fix_checkpoint_too_large",
+            "the checkpoint is over the size limit",
+            status_code=413,
+        )
     key = _object_key(fix_run, "checkpoint.json")
     _put(key, body, "application/json")
     stored = AgentFixRun.no_workspace_objects.filter(
@@ -301,6 +361,15 @@ def load_object(key: str) -> bytes | None:
         if response is not None:
             response.close()
             response.release_conn()
+
+
+def _load_if_stored(key: str) -> bytes | None:
+    try:
+        return load_object(key)
+    except S3Error as exc:
+        if exc.code == "NoSuchKey":
+            return None
+        raise
 
 
 def _object_key(fix_run: AgentFixRun, name: str) -> str:

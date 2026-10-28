@@ -125,7 +125,7 @@ class HostedHarnessJob(BaseModel):
     # kept out of the environment's run history.
     fix_run = models.ForeignKey(
         "simulate.AgentFixRun",
-        on_delete=models.PROTECT,
+        on_delete=models.CASCADE,
         null=True,
         blank=True,
         related_name="check_runs",

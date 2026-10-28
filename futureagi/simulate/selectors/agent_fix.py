@@ -1,7 +1,7 @@
 """Reads for "Fix my agent": the engine's brief, a check run's results, the run list."""
 
 from collections.abc import Iterable, Mapping
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from django.db.models import QuerySet
@@ -22,9 +22,10 @@ from simulate.pydantic_schemas.agent_fix import (
     InventoryScenario,
 )
 from simulate.services.harness_environment import environment_name
+from simulate.services.hosted_harness import HostedHarnessError
 
 TRANSCRIPT_CHARS = 8000
-_FINISHED = {
+FINISHED_RUN_STATES = {
     HostedHarnessJob.State.COMPLETED,
     HostedHarnessJob.State.FAILED,
     HostedHarnessJob.State.CANCELED,
@@ -78,12 +79,21 @@ def _scenario(
     )
 
 
+def fix_deadline(fix_run: AgentFixRun) -> datetime:
+    """When the fix must have ended: its start plus the minutes the user allowed."""
+    minutes = FixRequest.model_validate(fix_run.request).max_minutes
+    return (fix_run.started_at or fix_run.created_at) + timedelta(minutes=minutes)
+
+
 def engine_brief(fix_run: AgentFixRun) -> EngineBrief:
+    if fix_run.source_run is None:
+        raise HostedHarnessError(
+            "fix_source_deleted",
+            "the run this fix started from was deleted",
+            status_code=409,
+        )
     source = (fix_run.source_run.payload or {}).get("source") or {}
     request = FixRequest.model_validate(fix_run.request)
-    deadline = (fix_run.started_at or fix_run.created_at) + timedelta(
-        minutes=request.max_minutes
-    )
     return EngineBrief(
         fix_run_id=str(fix_run.id),
         environment_name=environment_name(fix_run.environment),
@@ -92,7 +102,7 @@ def engine_brief(fix_run: AgentFixRun) -> EngineBrief:
         request=request,
         inventory=inventory(fix_run),
         has_checkpoint=bool(fix_run.checkpoint_key),
-        deadline_at=deadline.isoformat(),
+        deadline_at=fix_deadline(fix_run).isoformat(),
     )
 
 
@@ -124,20 +134,29 @@ def check_run_status(run: HostedHarnessJob) -> CheckRunStatus:
     return CheckRunStatus(
         run_id=str(run.id),
         state=run.state,
-        finished=run.state in _FINISHED,
+        finished=run.state in FINISHED_RUN_STATES,
         total=len(executions),
         records=records,
     )
+
+
+def judged_sub_goals(receipt: Mapping[str, Any]) -> dict[str, bool | None]:
+    """Each sub-goal of a receipt and whether it held, None when nothing decided it. A
+    conversation the agent itself broke fails every goal it left undecided."""
+    checks = [one for one in receipt.get("sub_goals") or [] if isinstance(one, Mapping)]
+    judged = {str(one["name"]): one.get("held") for one in checks if one.get("name")}
+    if (receipt.get("failure") or {}).get("domain") == "agent":
+        judged = {name: held is True for name, held in judged.items()}
+    return {
+        name: held if isinstance(held, bool) else None for name, held in judged.items()
+    }
 
 
 def _record(
     scenario_key: str, trial: int, receipt: Mapping[str, Any], transcript: str
 ) -> CheckRecord:
     checks = [one for one in receipt.get("sub_goals") or [] if isinstance(one, Mapping)]
-    judged = {str(one["name"]): one.get("held") for one in checks if one.get("name")}
-    if (receipt.get("failure") or {}).get("domain") == "agent":
-        # The agent itself broke the conversation: every goal it left undecided failed.
-        judged = {name: held is True for name, held in judged.items()}
+    judged = judged_sub_goals(receipt)
     undecided = [name for name, held in judged.items() if not isinstance(held, bool)]
     if not judged:
         error = f"the trial ended {receipt.get('status') or 'without a result'}"
@@ -186,11 +205,11 @@ def failing_sub_goals(
         receipt = (execution.call_execution.call_metadata or {}).get(
             "hosted_harness_receipt"
         )
-        for one in (receipt or {}).get("sub_goals") or []:
-            if isinstance(one, Mapping) and one.get("held") is False:
-                name = str(one.get("name") or "")
-                if name and name not in failing:
-                    failing.append(name)
+        if not isinstance(receipt, Mapping):
+            continue
+        for name, held in judged_sub_goals(receipt).items():
+            if held is False and name not in failing:
+                failing.append(name)
     return failing
 
 

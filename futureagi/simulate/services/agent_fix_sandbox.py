@@ -6,17 +6,18 @@ import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+import httpx
 import structlog
 from django.conf import settings
-from django.db import transaction
+from django.db import InterfaceError, OperationalError, transaction
+from django.db.models import F
 from django.utils import timezone
 
+from agentcc.services.gateway_client import GatewayClientError
 from simulate.models import AgentFixRun
-from simulate.pydantic_schemas.agent_fix import (
-    EngineCapability,
-    EngineModels,
-    FixRequest,
-)
+from simulate.pydantic_schemas.agent_fix import EngineCapability, EngineModels
+from simulate.selectors.agent_fix import fix_deadline
+from simulate.services import agent_fix_keys
 from simulate.services.agent_fix_runs import close_fix_run
 from simulate.services.hosted_harness import HostedHarnessError, hash_secret
 from simulate.services.hosted_harness_gateway import (
@@ -30,6 +31,8 @@ from simulate.services.hosted_sandbox import (
     SandboxCommandRequest,
     SandboxLaunchSpec,
     SandboxNotFoundError,
+    SandboxProviderConfigurationError,
+    SandboxProviderError,
     SandboxRuntimeProvider,
     get_sandbox_provider,
 )
@@ -43,6 +46,14 @@ ENGINE_SESSION = "agent-fix-engine"
 # track of deletes itself soon after.
 LEASE_SECONDS = 20 * 60
 _PROVIDER_TIMEOUT_SECONDS = 15
+# What a later look can outlive: the sandbox API, the network or the database briefly
+# unavailable. SandboxProviderConfigurationError is a SandboxProviderError but is not.
+_TRANSIENT_WATCH_ERRORS = (
+    SandboxProviderError,
+    httpx.TransportError,
+    OperationalError,
+    InterfaceError,
+)
 
 
 @dataclass(frozen=True)
@@ -60,12 +71,23 @@ def launch(fix_run_id: str) -> AgentFixLaunch:
         return AgentFixLaunch(observation=refusal)
     release(fix_run_id)
     provider = _provider()
-    models = platform_models()
+    gateway_url = _model_gateway_url()
     fix_run = AgentFixRun.no_workspace_objects.get(id=fix_run_id)
-    sandbox = provider.create(
-        _launch_spec(fix_run, models, provider),
-        timeout=provider.create_timeout_seconds,
-    )
+    spec = _launch_spec(fix_run, gateway_url, provider)
+    try:
+        model_key = agent_fix_keys.mint(fix_run, _credentials_expiry(fix_run))
+    except GatewayClientError:
+        logger.exception("agent_fix_model_key_failed", fix_run=str(fix_run.id))
+        close_fix_run(
+            fix_run.id,
+            AgentFixRun.State.FAILED,
+            failure={
+                "code": "fix_model_key_unavailable",
+                "message": "AgentCC could not issue the improvement engine a model key",
+            },
+        )
+        return AgentFixLaunch(observation=Observation.ENDED)
+    sandbox = provider.create(spec, timeout=provider.create_timeout_seconds)
     AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
         sandbox_ref=sandbox.id, updated_at=timezone.now()
     )
@@ -79,29 +101,16 @@ def launch(fix_run_id: str) -> AgentFixLaunch:
         token=credentials.token,
         fence=credentials.fence,
         expires_at=credentials.expires_at.isoformat(),
-        models=models,
+        models=EngineModels(base_url=gateway_url, api_key=model_key),
     )
-    sandbox.fs.upload_file(capability.model_dump_json().encode(), CAPABILITY_PATH)
-    prepared = sandbox.process.exec(f"chmod 0600 {CAPABILITY_PATH}", timeout=30)
-    if prepared.exit_code:
-        raise HostedHarnessError(
-            "fix_sandbox_prepare_failed", prepared.result[-500:], status_code=502
-        )
-    sandbox.process.create_session(ENGINE_SESSION)
-    # Only the template's PATH (node lives under /opt): every process in the sandbox
-    # sees the environment, so credentials stay in the capability file.
-    command = sandbox.process.execute_session_command(
-        ENGINE_SESSION,
-        SandboxCommandRequest(
-            command=settings.AGENT_FIX_ENGINE_COMMAND,
-            env={"PATH": _CHAT_RUNTIME_PATH},
-            run_async=True,
-        ),
+    command_id = _start_engine(sandbox, capability)
+    # Only a started engine uses up one of the run's attempts; a launch that failed
+    # before this point is the workflow's to retry.
+    AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+        sandbox_attempt=F("sandbox_attempt") + 1, updated_at=timezone.now()
     )
     logger.info("agent_fix_engine_started", fix_run=str(fix_run.id), sandbox=sandbox.id)
-    return AgentFixLaunch(
-        observation=Observation.RUNNING, command_id=str(command.cmd_id)
-    )
+    return AgentFixLaunch(observation=Observation.RUNNING, command_id=command_id)
 
 
 def rotate_credentials(fix_run_id: str) -> EngineCredentials | None:
@@ -117,8 +126,7 @@ def rotate_credentials(fix_run_id: str) -> EngineCredentials | None:
             return None
         fix_run.token_hash = hash_secret(token)
         fix_run.fence_hash = hash_secret(fence)
-        fix_run.token_expires_at = _deadline(fix_run)
-        fix_run.sandbox_attempt += 1
+        fix_run.token_expires_at = _credentials_expiry(fix_run)
         # A new engine has the report timeout to send its first report.
         fix_run.heartbeat_at = timezone.now()
         fix_run.save(
@@ -126,7 +134,6 @@ def rotate_credentials(fix_run_id: str) -> EngineCredentials | None:
                 "token_hash",
                 "fence_hash",
                 "token_expires_at",
-                "sandbox_attempt",
                 "heartbeat_at",
                 "updated_at",
             ]
@@ -137,15 +144,37 @@ def rotate_credentials(fix_run_id: str) -> EngineCredentials | None:
 
 
 def observe(fix_run_id: str, command_id: str) -> Observation:
-    """One look at a running fix. The run's state, deadline and last report are read
-    before the sandbox, so a sandbox API outage cannot hide a late run or a dead engine.
-    Renews the sandbox's lease while the engine runs."""
+    """One look at a running fix. Raises only what a later look can outlive; any other
+    error ends the run as failed, since looking again would hit it again."""
+    try:
+        return _look(fix_run_id, command_id)
+    except Exception as exc:
+        if isinstance(exc, _TRANSIENT_WATCH_ERRORS) and not isinstance(
+            exc, SandboxProviderConfigurationError
+        ):
+            raise
+        logger.exception("agent_fix_watch_failed", fix_run=str(fix_run_id))
+        close_fix_run(
+            fix_run_id,
+            AgentFixRun.State.FAILED,
+            failure={
+                "code": "fix_watch_failed",
+                "message": "the platform could not watch the improvement engine",
+            },
+        )
+        return Observation.ENDED
+
+
+def _look(fix_run_id: str, command_id: str) -> Observation:
+    """The run's state, deadline and last report are read before the sandbox, so a
+    sandbox API outage cannot hide a late run or a dead engine. Renews the sandbox's
+    lease while the engine runs."""
     fix_run = AgentFixRun.no_workspace_objects.get(id=fix_run_id)
     settled = _settled(fix_run)
     if settled is not None:
         return settled
     now = timezone.now()
-    if now >= _deadline(fix_run):
+    if now >= fix_deadline(fix_run):
         close_fix_run(
             fix_run.id,
             AgentFixRun.State.FAILED,
@@ -186,33 +215,50 @@ def observe(fix_run_id: str, command_id: str) -> Observation:
 
 
 def release(fix_run_id: str) -> None:
-    """Delete the fix's sandbox, if it has one. Safe to repeat."""
+    """Delete the fix's sandbox and revoke its model key, if it has them. Safe to repeat."""
     sandbox_ref = AgentFixRun.no_workspace_objects.values_list(
         "sandbox_ref", flat=True
     ).get(id=fix_run_id)
-    if not sandbox_ref:
-        return
-    provider = _provider()
-    try:
-        provider.delete(
-            provider.get(sandbox_ref, request_timeout=_PROVIDER_TIMEOUT_SECONDS),
-            timeout=120,
-            wait=True,
+    if sandbox_ref:
+        provider = _provider()
+        try:
+            provider.delete(
+                provider.get(sandbox_ref, request_timeout=_PROVIDER_TIMEOUT_SECONDS),
+                timeout=120,
+                wait=True,
+            )
+        except SandboxNotFoundError:
+            pass
+        AgentFixRun.no_workspace_objects.filter(
+            id=fix_run_id, sandbox_ref=sandbox_ref
+        ).update(sandbox_ref="", updated_at=timezone.now())
+        logger.info(
+            "agent_fix_sandbox_released", fix_run=str(fix_run_id), sandbox=sandbox_ref
         )
-    except SandboxNotFoundError:
-        pass
-    AgentFixRun.no_workspace_objects.filter(
-        id=fix_run_id, sandbox_ref=sandbox_ref
-    ).update(sandbox_ref="", updated_at=timezone.now())
-    logger.info(
-        "agent_fix_sandbox_released", fix_run=str(fix_run_id), sandbox=sandbox_ref
+    agent_fix_keys.revoke(fix_run_id)
+
+
+def _start_engine(sandbox, capability: EngineCapability) -> str:
+    """Write the capability file, readable by the engine's user alone, and start the
+    engine on it. Returns the engine's command id."""
+    sandbox.fs.upload_file(capability.model_dump_json().encode(), CAPABILITY_PATH)
+    prepared = sandbox.process.exec(f"chmod 0600 {CAPABILITY_PATH}", timeout=30)
+    if prepared.exit_code:
+        raise HostedHarnessError(
+            "fix_sandbox_prepare_failed", prepared.result[-500:], status_code=502
+        )
+    sandbox.process.create_session(ENGINE_SESSION)
+    # Only the template's PATH (node lives under /opt): every process in the sandbox
+    # sees the environment, so credentials stay in the capability file.
+    command = sandbox.process.execute_session_command(
+        ENGINE_SESSION,
+        SandboxCommandRequest(
+            command=settings.AGENT_FIX_ENGINE_COMMAND,
+            env={"PATH": _CHAT_RUNTIME_PATH},
+            run_async=True,
+        ),
     )
-
-
-def platform_models() -> EngineModels:
-    """AgentCC's OpenAI-compatible endpoint, on the key hosted runs use for every model."""
-    url, key = platform_model_gateway()
-    return EngineModels(base_url=f"{url.removesuffix('/v1')}/v1", api_key=key)
+    return str(command.cmd_id)
 
 
 def _claim_launch(fix_run_id: str) -> Observation | None:
@@ -240,7 +286,7 @@ def _claim_launch(fix_run_id: str) -> Observation | None:
             ]
         )
     attempts = settings.AGENT_FIX_MAX_SANDBOX_ATTEMPTS
-    if timezone.now() >= _deadline(fix_run):
+    if timezone.now() >= fix_deadline(fix_run):
         failure = {
             "code": "fix_deadline",
             "message": "the fix ran out of the time it was given",
@@ -265,9 +311,19 @@ def _settled(fix_run: AgentFixRun) -> Observation | None:
     return None
 
 
-def _deadline(fix_run: AgentFixRun) -> datetime:
-    request = FixRequest.model_validate(fix_run.request)
-    return fix_run.started_at + timedelta(minutes=request.max_minutes)
+def _credentials_expiry(fix_run: AgentFixRun) -> datetime:
+    """The engine's token and model key outlive the deadline by a grace period, so a
+    final report sent near the deadline still lands. The workflow ends the run itself
+    at the deadline."""
+    grace = timedelta(seconds=settings.AGENT_FIX_TOKEN_GRACE_SECONDS)
+    return fix_deadline(fix_run) + grace
+
+
+def _model_gateway_url() -> str:
+    """AgentCC's OpenAI-compatible endpoint, as a sandbox reaches it."""
+    # Only the URL: the platform's own key never enters a sandbox.
+    url, _platform_key = platform_model_gateway()
+    return f"{url.removesuffix('/v1')}/v1"
 
 
 def _provider() -> SandboxRuntimeProvider:
@@ -282,7 +338,7 @@ def _provider() -> SandboxRuntimeProvider:
 
 
 def _launch_spec(
-    fix_run: AgentFixRun, models: EngineModels, provider: SandboxRuntimeProvider
+    fix_run: AgentFixRun, gateway_url: str, provider: SandboxRuntimeProvider
 ) -> SandboxLaunchSpec:
     template = settings.AGENT_FIX_E2B_TEMPLATE_REFERENCE
     if not template:
@@ -294,7 +350,7 @@ def _launch_spec(
     # The engine reaches only the platform's engine API and the model gateway.
     domains = {
         _hostname_from_url(_public_base_url()),
-        _hostname_from_url(models.base_url),
+        _hostname_from_url(gateway_url),
     }
     _validate_resolved_egress_domains(domains, max_domains=provider.max_egress_domains)
     # E2B sizes a sandbox by its template; this only passes the provider's admission.

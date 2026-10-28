@@ -52,7 +52,7 @@ from simulate.models.test_execution import (
     CallExecutionSnapshot,
     EvalExplanationSummaryStatus,
 )
-from simulate.selectors.runs import user_runs
+from simulate.selectors.runs import user_executions
 from simulate.serializers.requests.call_execution import (
     CallExecutionFilterSerializer,
     CallExecutionStatusUpdateSerializer,
@@ -1378,7 +1378,7 @@ class TestExecutionCancelView(APIView):
             if test_execution_id:
                 # Verify user has access to this test execution
                 test_execution = get_object_or_404(
-                    TestExecution,
+                    user_executions(),
                     run_test_workspace_filter(request, "run_test"),
                     id=test_execution_id,
                     run_test__organization=user_organization,
@@ -1730,11 +1730,15 @@ class TestExecutionAPIView(APIView):
             status_filter = request.validated_query_data["status"]
 
             # Filter test executions by organization and workspace
-            test_executions = TestExecution.objects.filter(
-                run_test_workspace_filter(request, "run_test"),
-                run_test__organization=user_organization,
-                run_test__deleted=False,
-            ).select_related("run_test", "run_test__agent_definition")
+            test_executions = (
+                user_executions()
+                .filter(
+                    run_test_workspace_filter(request, "run_test"),
+                    run_test__organization=user_organization,
+                    run_test__deleted=False,
+                )
+                .select_related("run_test", "run_test__agent_definition")
+            )
 
             # Apply search filter if search query is provided
             if search_query:
@@ -2211,7 +2215,9 @@ class RunTestCallExecutionsView(APIView):
 
             # Get call executions for this run test (across all test executions)
             call_executions = (
-                CallExecution.objects.filter(test_execution__run_test=run_test)
+                CallExecution.objects.filter(
+                    test_execution__in=user_executions().filter(run_test=run_test)
+                )
                 .select_related(
                     "scenario",
                     "test_execution",
@@ -3590,9 +3596,9 @@ class RunTestAnalyticsView(APIView):
             )
 
             # Get all test executions for this run test, ordered by creation time
-            test_executions = TestExecution.objects.filter(
-                run_test=run_test, deleted=False
-            ).order_by("created_at")
+            test_executions = (
+                user_executions().filter(run_test=run_test).order_by("created_at")
+            )
 
             # Get all call executions for all test executions
             call_executions = (
@@ -4329,7 +4335,7 @@ class TestExecutionDeleteView(APIView):
 
             # Get the test execution
             test_execution = get_object_or_404(
-                TestExecution,
+                user_executions(),
                 run_test_workspace_filter(request, "run_test"),
                 id=test_execution_id,
                 run_test__organization=user_organization,
@@ -4410,11 +4416,11 @@ class TestExecutionBulkDeleteView(APIView):
 
             # Get test executions to delete
             if select_all:
-                test_executions = TestExecution.objects.filter(run_test=run_test)
+                test_executions = user_executions().filter(run_test=run_test)
                 if test_execution_ids:
                     test_executions = test_executions.exclude(id__in=test_execution_ids)
             else:
-                test_executions = TestExecution.objects.filter(
+                test_executions = user_executions().filter(
                     id__in=test_execution_ids, run_test=run_test
                 )
 
@@ -5517,9 +5523,11 @@ def _covered_scenario_count(run_test) -> int:
     runs, where each entry in ``scenario_ids`` is a scenario of its own.
     """
     covered: set[str] = set()
-    rows = TestExecution.objects.filter(
-        user_runs("hosted_harness_job__"), run_test=run_test, deleted=False
-    ).values_list("scenario_ids", "execution_metadata__selected_scenario_keys")
+    rows = (
+        user_executions()
+        .filter(run_test=run_test)
+        .values_list("scenario_ids", "execution_metadata__selected_scenario_keys")
+    )
     for scenario_ids, keys in rows:
         covered.update(str(item) for item in (keys or scenario_ids or []))
     return len(covered)
@@ -5539,9 +5547,8 @@ def _version_labels(labels: dict[str, Any], execution_id: Any) -> dict[str, Any]
 def _execution_summaries(request, run_test, status_filter: str) -> Response:
     """A page of the run test's executions, newest first, as id, status and pins."""
     executions = (
-        TestExecution.objects.filter(
-            user_runs("hosted_harness_job__"), run_test=run_test, deleted=False
-        )
+        user_executions()
+        .filter(run_test=run_test)
         .only("id", "status", "created_at")
         .order_by("-created_at")
     )
@@ -5617,9 +5624,8 @@ class RunTestExecutionsView(APIView):
             # every aggregate has to leave soft-deleted calls out itself.
             visible_calls = models.Q(calls__deleted=False)
             test_executions = (
-                TestExecution.objects.filter(
-                    user_runs("hosted_harness_job__"), run_test=run_test, deleted=False
-                )
+                user_executions()
+                .filter(run_test=run_test)
                 .select_related(
                     "agent_definition",
                     "agent_version",
@@ -6081,7 +6087,7 @@ class CSVExportView(APIView):
 
                 # Get all call executions for all test executions of this run test
                 call_executions = CallExecution.objects.filter(
-                    test_execution__run_test=run_test
+                    test_execution__in=user_executions().filter(run_test=run_test)
                 ).select_related("scenario", "test_execution")
 
                 filename = (
@@ -6548,7 +6554,7 @@ class TestExecutionOptimiserAnalysisView(APIView):
             )
 
             test_execution = get_object_or_404(
-                TestExecution,
+                user_executions(),
                 run_test_workspace_filter(request, "run_test"),
                 id=test_execution_id,
                 run_test__organization=organization,
@@ -6599,7 +6605,7 @@ class TestExecutionOptimiserAnalysisRefreshView(APIView):
             )
 
             test_execution = get_object_or_404(
-                TestExecution,
+                user_executions(),
                 run_test_workspace_filter(request, "run_test"),
                 id=test_execution_id,
                 run_test__organization=organization,
@@ -6865,7 +6871,9 @@ def _repository_harness_job_id(test_execution) -> str | None:
 def _latest_repository_harness_execution(run_test):
     """Return the newest execution belonging to a saved repository harness job."""
 
-    for execution in run_test.executions.order_by("-started_at"):
+    for execution in (
+        user_executions().filter(run_test=run_test).order_by("-started_at")
+    ):
         if _repository_harness_job_id(execution):
             return execution
     return None
@@ -6974,7 +6982,7 @@ class CallExecutionRerunView(APIView):
 
             # Get the test execution
             test_execution = get_object_or_404(
-                TestExecution,
+                user_executions(),
                 run_test_workspace_filter(request, "run_test"),
                 id=test_execution_id,
                 run_test__organization=user_organization,
@@ -7759,7 +7767,8 @@ class TestExecutionRerunView(APIView):
             # both FKs, so this avoids two extra queries per execution.
             if select_all:
                 test_executions = (
-                    TestExecution.objects.filter(run_test=run_test)
+                    user_executions()
+                    .filter(run_test=run_test)
                     .select_related("agent_version", "run_test__agent_version")
                     .exclude(status__in=non_rerunnable_statuses)
                 )
@@ -7767,9 +7776,8 @@ class TestExecutionRerunView(APIView):
                     test_executions = test_executions.exclude(id__in=test_execution_ids)
             else:
                 test_executions = (
-                    TestExecution.objects.filter(
-                        id__in=test_execution_ids, run_test=run_test
-                    )
+                    user_executions()
+                    .filter(id__in=test_execution_ids, run_test=run_test)
                     .select_related("agent_version", "run_test__agent_version")
                     .exclude(status__in=non_rerunnable_statuses)
                 )
@@ -8121,13 +8129,13 @@ class RunNewEvalsOnTestExecutionView(APIView):
             # Get test executions to run evaluations on
             if select_all:
                 # Get all test executions for this run test
-                test_executions = TestExecution.objects.filter(run_test=run_test)
+                test_executions = user_executions().filter(run_test=run_test)
                 # If test_execution_ids are provided with select_all, exclude those IDs
                 if test_execution_ids:
                     test_executions = test_executions.exclude(id__in=test_execution_ids)
             else:
                 # Get specific test executions
-                test_executions = TestExecution.objects.filter(
+                test_executions = user_executions().filter(
                     id__in=test_execution_ids, run_test=run_test
                 )
 

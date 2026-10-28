@@ -5,6 +5,7 @@ The services pick the kind once per call through ``agent_kind`` and never branch
 kind is one more class in ``AGENT_KINDS``.
 """
 
+import io
 from typing import Any, Protocol
 
 from simulate.models import (
@@ -41,11 +42,17 @@ class AgentKind(Protocol):
         """The agent's editable files as a `source/`-rooted tar.gz."""
         ...
 
+    def prepare_candidate(
+        self, fix_run: AgentFixRun, files: dict[str, bytes], attempt: int
+    ) -> dict[str, Any]:
+        """Validate and store what the candidate's version needs, before any lock is taken."""
+        ...
+
     def candidate_version(
-        self, fix_run: AgentFixRun, files: list[Any], paths: list[str], attempt: int
+        self, fix_run: AgentFixRun, prepared: dict[str, Any], attempt: int
     ) -> AgentVersion:
-        """A new version of the agent from the candidate's files, never the default. Runs
-        inside the caller's transaction: no network calls."""
+        """A new version of the agent from what was prepared, never the default. Runs inside
+        the caller's transaction: database work only."""
         ...
 
     def check(self, version: AgentVersion) -> str:
@@ -90,22 +97,29 @@ class VersionedSourceAgent:
         # The source as the failed run ran it.
         return HostedSourceAcquirer().acquire(fix_run.source_run)[0]
 
-    def candidate_version(
-        self, fix_run: AgentFixRun, files: list[Any], paths: list[str], attempt: int
-    ) -> AgentVersion:
+    def prepare_candidate(
+        self, fix_run: AgentFixRun, files: dict[str, bytes], attempt: int
+    ) -> dict[str, Any]:
         stored = store_source_archive(
-            fix_run.organization, files, paths, f"fix-{fix_run.id}-{attempt}"
+            fix_run.organization,
+            [io.BytesIO(data) for data in files.values()],
+            list(files),
+            f"fix-{fix_run.id}-{attempt}",
         )
+        return {"source_id": stored["source_id"]}
+
+    def candidate_version(
+        self, fix_run: AgentFixRun, prepared: dict[str, Any], attempt: int
+    ) -> AgentVersion:
         base = fix_run.base_agent_version
-        version = create_agent_version(
+        return create_agent_version(
             base.agent_definition,
             parent=base,
             env=fix_run.environment,
-            source={"kind": "archive", "archive_artifact_id": stored["source_id"]},
+            source={"kind": "archive", "archive_artifact_id": prepared["source_id"]},
             trigger=HarnessAgentVersionRuntime.Trigger.FIX,
             activate=False,
         )
-        return version
 
     def check(self, version: AgentVersion) -> str:
         # A run can pick only a version that passed its check (credentials and source); a

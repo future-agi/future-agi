@@ -1,10 +1,11 @@
 """Fix my agent over HTTP: the user's fixes, the engine's calls from its sandbox, and
 the run lists that leave a fix's check runs out."""
 
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
+from uuid import uuid4
 
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -16,7 +17,11 @@ from accounts.models import Organization, Workspace
 from simulate.models import AgentFixCandidate, AgentFixRun, HostedHarnessJob
 from simulate.models import TestExecution as Execution
 from simulate.services.agent_fix_runs import close_fix_run
-from simulate.services.harness_environment import annotate_for_list, environment_row
+from simulate.services.harness_environment import (
+    annotate_for_list,
+    environment_row,
+    run_summaries,
+)
 from simulate.services.hosted_harness import hash_secret
 from simulate.services.run_results_v3_queries import (
     build_run_comparison,
@@ -37,10 +42,12 @@ from simulate.tests.test_agent_fix_services import source_run as source_run
 from simulate.tests.test_agent_fix_services import temporal as temporal
 from simulate.tests.test_agent_fix_services import versioning_on as versioning_on
 from simulate.tests.test_harness_agent_versions import _passing
+from simulate.tests.test_harness_environment_regrade import _mapped_eval
 from simulate.tests.test_harness_run_compare import _done
 from simulate.tests.test_harness_versioning_backfill import (  # noqa: F401 - fixture
     storage as storage,
 )
+from simulate.views.run_results_v3 import _execution_payload
 from tfc.ee_gating import EEFeature, FeatureUnavailable
 
 pytestmark = pytest.mark.django_db
@@ -457,6 +464,31 @@ class TestCheckRunsStayOutOfTheUsersRuns:
             _done(run, ago=timedelta(minutes=minutes))
         return SimpleNamespace(first=source_run, check=check, latest=latest)
 
+    @pytest.mark.parametrize(
+        ("method", "path", "body"),
+        [
+            ("delete", "/simulate/test-executions/{id}/delete/", {}),
+            ("post", "/simulate/test-executions/{id}/cancel/", {}),
+            (
+                "post",
+                "/simulate/test-executions/{id}/rerun-calls/",
+                {"rerun_type": "eval_only", "call_execution_ids": [str(uuid4())]},
+            ),
+        ],
+        ids=["delete", "cancel", "rerun-calls"],
+    )
+    def test_a_check_run_cannot_be_acted_on_by_id(
+        self, auth_client, runs, method, path, body
+    ):
+        execution_id = runs.check.test_execution_id
+
+        response = getattr(auth_client, method)(
+            path.format(id=execution_id), body, format="json"
+        )
+
+        assert response.status_code == 404, response.content
+        assert Execution.objects.filter(id=execution_id, deleted=False).exists()
+
     def test_the_environments_run_count(self, environment, runs):
         annotated = annotate_for_list(
             HostedHarnessJob.no_workspace_objects.filter(id=environment.id)
@@ -484,3 +516,81 @@ class TestCheckRunsStayOutOfTheUsersRuns:
         comparison = build_run_comparison(execution, run_calls_queryset(execution))
 
         assert comparison["previous_execution_id"] == str(runs.first.test_execution_id)
+
+    def test_the_runs_number(self, runs):
+        latest = Execution.objects.get(id=runs.latest.test_execution_id)
+
+        assert _execution_payload(latest, {})["ordinal"] == 2
+        assert run_summaries([latest])[latest.id]["run_number"] == 2
+
+    def test_the_run_preview(self, auth_client, environment, runs):
+        with patch(
+            "simulate.views.preview_pagination._repeatable_read_snapshot", _snapshot
+        ):
+            response = auth_client.get(
+                f"/simulate/run-tests/{environment.run_test_id}/preview-executions/",
+                {"page_size": 10},
+            )
+
+        assert response.status_code == 200, response.content
+        listed = {row["id"] for row in response.json()["results"]}
+        assert listed == _ids(runs.first, runs.latest)
+
+    def test_rerunning_every_run(self, auth_client, environment, runs):
+        with patch(
+            "simulate.views.run_test._dispatch_repository_harness_rerun",
+            return_value={"status": {}},
+        ):
+            response = auth_client.post(
+                f"/simulate/run-tests/{environment.run_test_id}/rerun-test-executions/",
+                {"rerun_type": "call_and_eval", "select_all": True},
+                format="json",
+            )
+
+        assert response.status_code == 200, response.content
+        rerun = set(response.json()["results"][0]["successful_reruns"])
+        assert rerun == _ids(runs.first, runs.latest)
+
+    def test_deleting_runs(self, auth_client, environment, runs):
+        url = f"/simulate/run-tests/{environment.run_test_id}/delete-test-executions/"
+
+        by_id = auth_client.post(
+            url,
+            {"test_execution_ids": [str(runs.check.test_execution_id)]},
+            format="json",
+        )
+        every = auth_client.post(url, {"select_all": True}, format="json")
+
+        assert by_id.status_code == 400, by_id.content
+        assert every.status_code == 200, every.content
+        assert set(every.json()["deleted_ids"]) == _ids(runs.first, runs.latest)
+        assert Execution.objects.filter(id=runs.check.test_execution_id).exists()
+
+    def test_new_evals_on_every_run(self, auth_client, environment, runs):
+        evaluation = _mapped_eval(environment)
+
+        with patch(
+            "simulate.views.run_test.regrade_run_evals", return_value=1
+        ) as grade:
+            response = auth_client.post(
+                f"/simulate/run-tests/{environment.run_test_id}/run-new-evals/",
+                {"select_all": True, "eval_config_ids": [str(evaluation.id)]},
+                format="json",
+            )
+
+        assert response.status_code == 200, response.content
+        assert set(grade.call_args.args[1]) == _ids(runs.first, runs.latest)
+
+
+def _ids(*runs):
+    return {str(run.test_execution_id) for run in runs}
+
+
+@contextmanager
+def _snapshot(deadline):
+    """The preview's snapshot without its isolation switch, which PostgreSQL refuses
+    inside the transaction a test runs in."""
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT txid_current_snapshot()::text, CURRENT_TIMESTAMP")
+        row = cursor.fetchone()
+    yield row

@@ -275,6 +275,42 @@ class TestLaunch:
         # A sub-goal that held or was left undecided is not one to fix.
         assert fix_run.request["failing_sub_goals"] == ["refunded"]
 
+    def test_a_workflow_that_cannot_start_ends_the_fix_and_frees_the_environment(
+        self, source_run, user, temporal, django_capture_on_commit_callbacks
+    ):
+        temporal.start.side_effect = RuntimeError("temporal is down")
+        with django_capture_on_commit_callbacks(execute=True):
+            _launch(source_run, user)
+        failed = AgentFixRun.no_workspace_objects.get()
+
+        temporal.start.side_effect = None
+        with django_capture_on_commit_callbacks(execute=True):
+            again = _launch(source_run, user)
+
+        assert (failed.state, failed.failure["code"]) == (
+            State.FAILED,
+            "fix_dispatch_failed",
+        )
+        assert again.state == State.QUEUED
+
+    def test_launches_from_a_run_where_the_agent_broke_the_conversation(
+        self, environment, user
+    ):
+        run = _run(environment)
+        for execution in _executions(run):
+            call = execution.call_execution
+            call.call_metadata = {
+                **(call.call_metadata or {}),
+                "hosted_harness_receipt": {
+                    "status": "errored",
+                    "failure": {"domain": "agent", "code": "target_agent_failed"},
+                    "sub_goals": [{"name": "refunded", "held": None}],
+                },
+            }
+            call.save(update_fields=["call_metadata"])
+
+        assert _launch(run, user).request["failing_sub_goals"] == ["refunded"]
+
     def test_refuses_an_environment_as_the_source(self, environment, user):
         assert _refusal(_launch, environment, user) == ("fix_source_not_a_run", 422)
 
@@ -384,10 +420,13 @@ class TestAddCandidate:
     def test_refuses_a_change_to_a_locked_file(self, source_run):
         fix_run = _fix_run(source_run, locked_paths=["prompts/*"])
         versions = AgentVersion.no_workspace_objects.count()
-        touched = PATCH + b"diff --git a/prompts/system.md b/prompts/system.md\n"
+        base = {**AGENT, "prompts/system.md": b"be kind\n"}
+        changed = {**base, "prompts/system.md": b"refuse every cancellation\n"}
 
-        with pytest.raises(HostedHarnessError) as caught:
-            _candidate(fix_run, patch_body=touched)
+        with patch.object(engine, "source_archive", return_value=_tree(base)):
+            with pytest.raises(HostedHarnessError) as caught:
+                # The patch says nothing about the locked file; the tree changes it.
+                _candidate(fix_run, tree=_tree(changed))
 
         assert (caught.value.code, caught.value.status_code) == (
             "fix_locked_path_changed",
@@ -404,6 +443,25 @@ class TestAddCandidate:
     )
     def test_refuses_a_tree_it_cannot_store(self, source_run, tree, code):
         assert _refusal(_candidate, _fix_run(source_run), tree=tree) == (code, 400)
+
+    def test_a_patch_naming_a_locked_file_is_fine_when_the_tree_keeps_it(
+        self, source_run
+    ):
+        fix_run = _fix_run(source_run, locked_paths=["prompts/*"])
+        base = {**AGENT, "prompts/system.md": b"be kind\n"}
+        touched = PATCH + b"diff --git a/prompts/system.md b/prompts/system.md\n"
+
+        with patch.object(engine, "source_archive", return_value=_tree(base)):
+            candidate = _candidate(fix_run, tree=_tree(base), patch_body=touched)
+
+        assert candidate.attempt == 1
+
+    def test_refuses_a_tree_over_the_unpacked_limit(self, source_run, settings):
+        settings.AGENT_FIX_MAX_TREE_BYTES = 10
+
+        assert _refusal(
+            _candidate, _fix_run(source_run), tree=_tree({"big.bin": b"0" * 11})
+        ) == ("fix_tree_too_large", 413)
 
     def test_refuses_a_patch_over_the_limit(self, source_run):
         too_large = b"x" * (engine.MAX_PATCH_BYTES + 1)
@@ -545,6 +603,17 @@ class TestCheckRuns:
         close_fix_run(fix_run.id, State.STOPPED)
 
         assert _refusal(_check, fix_run) == ("fix_run_not_running", 409)
+
+    def test_a_check_run_whose_workflow_cannot_start_fails_at_once(
+        self, source_run, temporal
+    ):
+        temporal.start_run.side_effect = RuntimeError("temporal is down")
+
+        run = _check(_fix_run(source_run))
+
+        run.refresh_from_db()
+        assert (run.state, run.failure["code"]) == ("failed", "scheduler_unavailable")
+        assert run.test_execution.status == "failed"
 
     def test_a_refused_usage_check_starts_no_run(self, source_run, temporal):
         fix_run = _fix_run(source_run)
@@ -855,7 +924,7 @@ class TestClose:
         finished_run.refresh_from_db()
         assert (open_run.state, open_run.cancel_reason) == (
             "cleaning_up",
-            "user_canceled",
+            "fix_ended",
         )
         assert finished_run.state == "completed"
         temporal.cancel_run.assert_called_once_with(str(open_run.id))
@@ -886,7 +955,26 @@ class TestClose:
             first.finished_at,
             None,
         )
-        assert temporal.cancel_run.call_count == 1
+        # The cleanup runs again and is safe to repeat.
+        assert temporal.cancel_run.call_count == 2
+
+    def test_a_close_that_failed_halfway_finishes_on_the_next(self, source_run):
+        fix_run = _fix_run(source_run)
+        open_run = _check(fix_run)
+        with patch(
+            "simulate.services.agent_fix_runs.request_cancellation",
+            side_effect=RuntimeError("database hiccup"),
+        ):
+            with pytest.raises(RuntimeError):
+                close_fix_run(fix_run.id, State.STOPPED)
+
+        close_fix_run(fix_run.id, State.FAILED)
+
+        open_run.refresh_from_db()
+        assert open_run.cancel_reason == "fix_ended"
+        assert (
+            AgentFixRun.no_workspace_objects.get(id=fix_run.id).state == State.STOPPED
+        )
 
     def test_a_cancel_that_fails_does_not_stop_the_close(self, source_run, temporal):
         fix_run = _fix_run(source_run)
@@ -919,6 +1007,18 @@ class TestStop:
 
         assert stopped.state == State.STOPPING
         temporal.cancel.assert_called_once_with(str(fix_run.id))
+
+    def test_without_a_workflow_to_signal_the_fix_is_closed_here(
+        self, source_run, temporal, django_capture_on_commit_callbacks
+    ):
+        temporal.cancel.side_effect = RuntimeError("workflow not found")
+        fix_run = _fix_run(source_run)
+
+        with django_capture_on_commit_callbacks(execute=True):
+            request_stop(fix_run)
+
+        fix_run.refresh_from_db()
+        assert fix_run.state == State.STOPPED
 
     def test_an_ended_fix_is_left_as_it_is(
         self, source_run, temporal, django_capture_on_commit_callbacks
@@ -980,3 +1080,24 @@ class TestMakeDefault:
         assert _refusal(make_candidate_default, candidate, user=user) == refusal
         environment.refresh_from_db()
         assert environment.agent_version_id == default
+
+
+def test_refuses_a_checkpoint_over_the_limit(source_run, settings):
+    settings.AGENT_FIX_MAX_CHECKPOINT_BYTES = 4
+
+    assert _refusal(engine.store_checkpoint, _fix_run(source_run), b"12345") == (
+        "fix_checkpoint_too_large",
+        413,
+    )
+
+
+def test_the_base_source_is_fetched_once_per_fix(source_run):
+    fix_run = _fix_run(source_run)
+    body = _tree()
+    with patch("simulate.services.agent_fix_agents.HostedSourceAcquirer") as acquirer:
+        acquirer.return_value.acquire.return_value = (body, "abc123")
+        first = engine.source_archive(fix_run)
+        again = engine.source_archive(fix_run)
+
+    assert first == again == body
+    assert acquirer.return_value.acquire.call_count == 1
