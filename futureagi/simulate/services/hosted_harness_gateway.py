@@ -14,7 +14,6 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
-import time
 import uuid
 import zlib
 from collections.abc import Callable, Iterable, Mapping
@@ -25,14 +24,16 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-import jwt
-import requests
 import structlog
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 from minio.error import S3Error
 
+from integrations.services.github_app import (
+    GitHubAppError,
+    installation_credential,
+)
 from simulate.models import (
     HostedHarnessAttempt,
     HostedHarnessConversation,
@@ -668,83 +669,22 @@ def _extend_command_for(
 
 
 class GitHubAppTokenProvider:
-    def __init__(self, *, app_id: str, private_key: str) -> None:
-        self.app_id = app_id
-        self.private_key = private_key
-
     @classmethod
     def from_settings(cls) -> GitHubAppTokenProvider:
-        app_id = getattr(settings, "GITHUB_APP_ID", "")
-        private_key = getattr(settings, "GITHUB_APP_PRIVATE_KEY", "").replace(
-            "\\n", "\n"
-        )
-        if not app_id or not private_key:
-            raise HostedHarnessError(
-                "github_app_not_configured",
-                "GitHub App credentials are not configured",
-                status_code=503,
-                retryable=True,
-            )
-        return cls(app_id=str(app_id), private_key=private_key)
-
-    def installation_token(self, installation_id: str) -> str:
-        now = int(time.time())
-        app_jwt = jwt.encode(
-            {"iat": now - 30, "exp": now + 540, "iss": self.app_id},
-            self.private_key,
-            algorithm="RS256",
-        )
-        response = requests.post(
-            f"https://api.github.com/app/installations/{installation_id}/access_tokens",
-            headers={
-                "Authorization": f"Bearer {app_jwt}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
-            timeout=(5, 30),
-        )
-        if response.status_code != 201:
-            raise HostedHarnessError(
-                "github_installation_token_failed",
-                f"GitHub rejected installation {installation_id}",
-                status_code=502,
-                retryable=response.status_code >= 500,
-            )
-        token = response.json().get("token")
-        if not token:
-            raise HostedHarnessError(
-                "github_installation_token_missing",
-                "GitHub returned no installation token",
-                status_code=502,
-                retryable=True,
-            )
-        return str(token)
-
-    def revoke(self, token: str) -> None:
-        response = requests.delete(
-            "https://api.github.com/installation/token",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
-            timeout=(5, 30),
-        )
-        if response.status_code != 204:
-            raise HostedHarnessError(
-                "github_installation_token_revoke_failed",
-                "GitHub installation token could not be revoked",
-                status_code=502,
-                retryable=response.status_code >= 500,
-            )
+        return cls()
 
     @contextmanager
     def credential(self, installation_id: str):
-        token = self.installation_token(installation_id)
         try:
-            yield token
-        finally:
-            self.revoke(token)
+            with installation_credential(installation_id) as token:
+                yield token
+        except GitHubAppError as exc:
+            raise HostedHarnessError(
+                exc.code,
+                exc.message,
+                status_code=exc.status_code,
+                retryable=exc.retryable,
+            ) from exc
 
 
 # Dependency manifests and code are where a voice framework shows up; prose (README, docs)

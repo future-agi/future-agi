@@ -1,14 +1,12 @@
 """Short-lived, single-use Slack OAuth installation state."""
 
-import secrets
 from urllib.parse import urlencode
 
 import requests
 from django.conf import settings
-from django.core import signing
-from django.core.cache import cache
 
 from integrations.models import IntegrationConnection, IntegrationPlatform
+from integrations.services.oauth_state import consume_state, issue_state
 
 AUTHORIZE_URL = "https://slack.com/oauth/v2/authorize"
 ACCESS_URL = "https://slack.com/api/oauth.v2.access"
@@ -23,8 +21,7 @@ def slack_redirect_uri() -> str:
     )
 
 
-def _state_cache_key(nonce: str) -> str:
-    return f"slack-oauth-state:{nonce}"
+STATE_CACHE_PREFIX = "slack-oauth-state"
 
 
 def start_slack_install(*, organization, workspace, user, connection_id=None) -> dict:
@@ -57,18 +54,18 @@ def start_slack_install(*, organization, workspace, user, connection_id=None) ->
     ):
         raise ValueError("Slack connection was not found in this workspace.")
 
-    state_data = {
-        "nonce": secrets.token_urlsafe(32),
-        "user_id": str(user.pk),
-        "organization_id": str(organization.pk),
-        "workspace_id": str(workspace.pk),
-        "connection_id": str(connection_id) if connection_id else None,
-    }
-    if not cache.add(
-        _state_cache_key(state_data["nonce"]), state_data, timeout=STATE_TTL_SECONDS
-    ):
-        raise ValueError("Could not start Slack installation. Please try again.")
-    state = signing.dumps(state_data, salt=STATE_SALT)
+    state = issue_state(
+        {
+            "user_id": str(user.pk),
+            "organization_id": str(organization.pk),
+            "workspace_id": str(workspace.pk),
+            "connection_id": str(connection_id) if connection_id else None,
+        },
+        salt=STATE_SALT,
+        cache_prefix=STATE_CACHE_PREFIX,
+        ttl_seconds=STATE_TTL_SECONDS,
+        label="Slack",
+    )
     authorize_url = getattr(settings, "SLACK_OAUTH_AUTHORIZE_URL", "") or AUTHORIZE_URL
     authorization_url = f"{authorize_url}?{urlencode({'client_id': client_id, 'scope': SCOPES, 'redirect_uri': slack_redirect_uri(), 'state': state})}"
     return {"authorization_url": authorization_url}
@@ -76,19 +73,13 @@ def start_slack_install(*, organization, workspace, user, connection_id=None) ->
 
 def consume_slack_state(state: str) -> dict:
     """Verify and consume a signed state before exchanging an OAuth code."""
-    try:
-        state_data = signing.loads(state, salt=STATE_SALT, max_age=STATE_TTL_SECONDS)
-    except signing.BadSignature as exc:
-        raise ValueError("Invalid or expired Slack installation state.") from exc
-    nonce = state_data.get("nonce", "")
-    key = _state_cache_key(nonce)
-    stored = cache.get(key)
-    if not stored or stored != state_data:
-        raise ValueError("Slack installation state has expired or was already used.")
-    if not cache.add(f"{key}:used", True, timeout=STATE_TTL_SECONDS):
-        raise ValueError("Slack installation state was already used.")
-    cache.delete(key)
-    return state_data
+    return consume_state(
+        state,
+        salt=STATE_SALT,
+        cache_prefix=STATE_CACHE_PREFIX,
+        ttl_seconds=STATE_TTL_SECONDS,
+        label="Slack",
+    )
 
 
 def exchange_slack_code(code: str) -> dict:

@@ -111,6 +111,9 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
     def list(self, request, *args, **kwargs):
         try:
             queryset = self.get_queryset()
+            platform = request.validated_query_data.get("platform")
+            if platform:
+                queryset = queryset.filter(platform=platform)
             total_count = queryset.count()
 
             page_number = request.validated_query_data.get("page_number", 0)
@@ -369,6 +372,10 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
             instance = self.get_object()
             if instance.platform == IntegrationPlatform.SLACK:
                 return _error_response("Reconnect Slack through OAuth to change this connection.")
+            if instance.platform == IntegrationPlatform.GITHUB:
+                return _error_response(
+                    "Reconnect GitHub through the GitHub App to change this connection."
+                )
             data = request.validated_data
 
             # Update display_name if provided

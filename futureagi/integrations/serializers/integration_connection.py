@@ -22,6 +22,10 @@ class ValidateCredentialsSerializer(serializers.Serializer):
     def validate_platform(self, value):
         if value == IntegrationPlatform.SLACK:
             raise serializers.ValidationError("Connect Slack through OAuth.")
+        if value == IntegrationPlatform.GITHUB:
+            raise serializers.ValidationError(
+                "Connect GitHub by installing the GitHub App."
+            )
         return value
 
 
@@ -82,6 +86,10 @@ class IntegrationConnectionCreateSerializer(serializers.Serializer):
     def validate_platform(self, value):
         if value == IntegrationPlatform.SLACK:
             raise serializers.ValidationError("Connect Slack through OAuth.")
+        if value == IntegrationPlatform.GITHUB:
+            raise serializers.ValidationError(
+                "Connect GitHub by installing the GitHub App."
+            )
         return value
 
 
