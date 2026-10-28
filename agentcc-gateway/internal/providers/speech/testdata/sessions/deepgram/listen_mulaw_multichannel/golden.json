@@ -1,0 +1,17 @@
+{
+  "upstream": {
+    "header": {
+      "Authorization": [
+        "Token platform-key"
+      ]
+    },
+    "kind": "transcription",
+    "url": "wss://api.deepgram.com/v1/listen?channels=2&encoding=mulaw&model=nova-3&multichannel=true&sample_rate=8000"
+  },
+  "usage": {
+    "audio_seconds": 1,
+    "characters": 0,
+    "model": "deepgram/nova-3",
+    "voice": ""
+  }
+}

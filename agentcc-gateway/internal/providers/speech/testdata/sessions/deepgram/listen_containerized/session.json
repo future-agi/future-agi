@@ -1,0 +1,9 @@
+{
+  "source": "Deepgram AsyncAPI (github.com/deepgram/deepgram-api-specs asyncapi.yml at 417dbdd7): channel /v1/listen with only a model, as the Deepgram Python SDK README streams (client.listen.v1.connect(model=\"nova-3\")): Deepgram reads the container's header",
+  "path": "/v1/listen",
+  "query": "model=nova-3",
+  "headers": {
+    "Authorization": "Token gateway-key"
+  },
+  "notes": "Refused by design: the gateway bills transcription by audio length, which it reads from the byte count of a raw encoding only."
+}

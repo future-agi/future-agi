@@ -1,0 +1,8 @@
+{
+  "error": {
+    "code": "unknown_endpoint",
+    "message": "deepgram has no relayed endpoint /v2/speak",
+    "status": 404,
+    "type": "not_found"
+  }
+}

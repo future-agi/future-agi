@@ -1,0 +1,14 @@
+{
+  "source": "Deepgram AsyncAPI (github.com/deepgram/deepgram-api-specs asyncapi.yml at 417dbdd7): channel /v2/speak (Flux TTS, model flux-{voice}-{language})",
+  "path": "/v2/speak",
+  "query": "model=flux-alexis-en&encoding=linear16",
+  "headers": {
+    "Authorization": "Token gateway-key"
+  },
+  "sanity_gaps": [
+    {
+      "failure": "deepgram documents /v2/speak",
+      "reason": "known gap DG2: Deepgram's Flux /v2/speak is not relayed: 404 unknown_endpoint"
+    }
+  ]
+}
