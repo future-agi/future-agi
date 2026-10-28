@@ -54,6 +54,7 @@ func (h *Handlers) CreateResponse(w http.ResponseWriter, r *http.Request) {
 	rc.Model = req.Model
 	rc.IsStream = req.Stream
 	rc.UserID = req.User
+	rc.GuardrailRequest = responsesGuardrailRequest(&req)
 
 	// Extract client IP.
 	rc.Metadata["client_ip"] = extractClientIP(r)
@@ -170,6 +171,7 @@ func (h *Handlers) handleResponseNonStream(ctx context.Context, w http.ResponseW
 		}
 		respBody = body
 		applyResponsesUsage(callRC, body)
+		callRC.GuardrailResponse = assistantText(responsesOutputText(body))
 		return nil
 	}
 

@@ -922,8 +922,9 @@ func TestPlugin_PostBlock(t *testing.T) {
 	if result.Error == nil {
 		t.Fatal("post-block should return error")
 	}
-	if rc.Response != nil {
-		t.Error("response should be cleared on post-block")
+	// The content goes; the usage stays, so the request is still priced.
+	if rc.Response == nil || len(rc.Response.Choices) != 0 {
+		t.Error("a post-block should drop the content and keep the response's usage")
 	}
 	if !rc.Flags.GuardrailTriggered {
 		t.Error("GuardrailTriggered should be set")

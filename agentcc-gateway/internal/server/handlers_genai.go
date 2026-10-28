@@ -175,6 +175,7 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Fast path: provider natively speaks GenAI.
 	if gp, ok := provider.(providers.GenAINativeProvider); ok {
+		rc.GuardrailRequest = guardrailRequest("google", body)
 		switch action {
 		case "generateContent":
 			h.handleGenAINonStream(ctx, w, rc, gp, model, body, googleHeaders)
@@ -233,6 +234,7 @@ func (h *Handlers) handleGenAINonStream(ctx context.Context, w http.ResponseWrit
 		}
 		if statusCode < 400 {
 			applyGenAIUsage(rc, respBody)
+			rc.GuardrailResponse = assistantText(genaiResponseText(respBody))
 		}
 		return nil
 	})

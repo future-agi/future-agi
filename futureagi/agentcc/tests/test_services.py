@@ -18,7 +18,7 @@ from pydantic import ValidationError
 
 from accounts.models import Organization
 from accounts.models.workspace import Workspace
-from agentcc.models import AgentccAPIKey, AgentccRequestLog
+from agentcc.models import AgentccAPIKey, AgentccEmailAlert, AgentccRequestLog
 from agentcc.models.webhook import AgentccWebhook, AgentccWebhookEvent
 from agentcc.services import auth_bridge
 from agentcc.services.gateway_client import (
@@ -790,6 +790,128 @@ class TestLogIngestion:
             ).count()
             == 2
         )
+
+    @patch("agentcc.services.webhook_delivery.deliver_webhook_events")
+    def test_budget_refusal_raises_budget_exceeded(
+        self, mock_deliver_webhook_events, organization
+    ):
+        AgentccAPIKey.objects.create(
+            gateway_key_id="test-key-for-budget-event",
+            name="budget-event-key",
+            organization=organization,
+        )
+        webhook = AgentccWebhook.objects.create(
+            organization=organization,
+            name="budget",
+            url="https://example.com/budget",
+            events=["budget.exceeded"],
+            is_active=True,
+        )
+        refused = {
+            "model": "gpt-5.5",
+            "status_code": 429,
+            "auth_key_id": "test-key-for-budget-event",
+        }
+
+        ingest_request_logs(
+            [
+                {
+                    **refused,
+                    "request_id": "budget-refused",
+                    "error_code": "org_budget_exceeded",
+                },
+                {
+                    **refused,
+                    "request_id": "rate-limited",
+                    "error_code": "rate_limit_exceeded",
+                },
+            ]
+        )
+
+        events = AgentccWebhookEvent.no_workspace_objects.filter(webhook=webhook)
+        assert [(e.event_type, e.payload["request_id"]) for e in events] == [
+            ("budget.exceeded", "budget-refused")
+        ]
+
+    @patch("agentcc.services.email_sender.send_alert_email_activity.apply_async")
+    @patch("agentcc.services.webhook_delivery.deliver_webhook_events")
+    def test_email_alert_starts_once_per_cooldown_off_the_request(
+        self, mock_deliver_webhook_events, mock_start, organization
+    ):
+        AgentccAPIKey.objects.create(
+            gateway_key_id="test-key-for-email-alert",
+            name="email-alert-key",
+            organization=organization,
+        )
+        alert = AgentccEmailAlert.objects.create(
+            organization=organization,
+            name="errors",
+            recipients=["ops@example.com"],
+            events=["error.occurred"],
+            provider="sendgrid",
+            cooldown_minutes=5,
+        )
+        entry = {"model": "gpt-5.5", "auth_key_id": "test-key-for-email-alert"}
+        failed = {**entry, "status_code": 500, "error_message": "upstream failed"}
+
+        ingest_request_logs([{**entry, "request_id": "email-ok", "status_code": 200}])
+        assert mock_start.call_count == 0
+
+        # One send for the batch, naming the first failed request, started in
+        # the background; ingestion does not wait on the mail provider.
+        ingest_request_logs(
+            [
+                {**failed, "request_id": "email-failed-1"},
+                {**failed, "request_id": "email-failed-2"},
+            ]
+        )
+        assert mock_start.call_count == 1
+        alert_id, event_type, context = mock_start.call_args.kwargs["args"]
+        assert (alert_id, event_type) == (str(alert.id), "error.occurred")
+        assert context["request_id"] == "email-failed-1"
+        assert mock_start.call_args.kwargs["dispatch_timeout_seconds"] == 5
+        alert.refresh_from_db()
+        assert alert.last_triggered_at is not None
+
+        # The cooldown started when the alert fired, whatever the send does.
+        ingest_request_logs([{**failed, "request_id": "email-failed-3"}])
+        assert mock_start.call_count == 1
+
+        AgentccEmailAlert.no_workspace_objects.filter(id=alert.id).update(
+            last_triggered_at=timezone.now() - timedelta(minutes=6)
+        )
+        ingest_request_logs([{**failed, "request_id": "email-failed-4"}])
+        assert mock_start.call_count == 2
+
+    @patch(
+        "agentcc.services.email_sender._send_via_sendgrid",
+        return_value={"success": True},
+    )
+    def test_email_alert_activity_sends_inside_the_cooldown_it_started(
+        self, mock_send, organization
+    ):
+        from agentcc.services.email_sender import send_alert_email_activity
+
+        alert = AgentccEmailAlert.objects.create(
+            organization=organization,
+            name="errors",
+            recipients=["ops@example.com"],
+            events=["error.occurred"],
+            provider="sendgrid",
+            cooldown_minutes=5,
+            last_triggered_at=timezone.now(),
+        )
+
+        # The function itself: the activity wrapper closes the test's DB connection.
+        send_alert_email_activity._original_func(
+            str(alert.id), "error.occurred", {"request_id": "email-failed-1"}
+        )
+
+        assert mock_send.call_count == 1
+        _, recipients, subject, body = mock_send.call_args.args
+        assert recipients == ["ops@example.com"]
+        assert "Error Occurred" in subject
+        assert "email-failed-1" in body
 
 
 @pytest.mark.integration

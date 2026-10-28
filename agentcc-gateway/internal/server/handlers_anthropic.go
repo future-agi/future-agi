@@ -155,7 +155,9 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 		// A carrier with empty Messages would hash to the same cache key for
 		// every prompt (BuildCacheKey marshals Messages), and the response
 		// stored against it holds usage only — so a later request would be
-		// served a content-less 200. Request-shaped plugins skip on nil.
+		// served a content-less 200. Request-shaped plugins skip on nil;
+		// guardrails read the text from GuardrailRequest instead.
+		rc.GuardrailRequest = guardrailRequest("anthropic", body)
 		if isStream {
 			h.handleAnthropicStream(ctx, w, rc, ap, body, anthropicHeaders)
 		} else {
@@ -346,6 +348,7 @@ func (h *Handlers) handleAnthropicNonStream(ctx context.Context, w http.Response
 		}
 		if statusCode < 400 {
 			applyAnthropicUsage(rc, respBody)
+			rc.GuardrailResponse = assistantText(anthropicResponseText(respBody))
 		}
 		return nil
 	})
