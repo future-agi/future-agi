@@ -423,6 +423,55 @@ describe("InsightsView", () => {
       fireEvent.click(screen.getAllByRole("button", { name: "Run again" })[0]);
       expect(await screen.findByRole("dialog")).toBeInTheDocument();
     });
+
+    it("reads a run just stopped as stopping, with no counts, until the reads under way are saved", async () => {
+      // Stopped while 4 sessions were being read: none saved yet, then all 4.
+      serveFailed("Stopped by Ada.", "stopped");
+      const base = mocks.readQuery.getMockImplementation();
+      const stopping = {
+        ...runFixture.result,
+        status: "failed",
+        error: "Stopped by Ada.",
+        error_code: "stopped",
+        finished_at: new Date().toISOString(),
+        analysed_count: 0,
+        skipped_count: 0,
+        progress: { stage: "summarising", in_flight: { 11: "now" } },
+      };
+      let saved = false;
+      mocks.readQuery.mockImplementation((url, options) =>
+        url === `/tracer/insights/runs/${RUN_ID}/`
+          ? ok(
+              saved
+                ? {
+                    ...stopping,
+                    analysed_count: 4,
+                    progress: { stage: "summarising", in_flight: {} },
+                  }
+                : stopping,
+            )
+          : base(url, options),
+      );
+      renderAt(`?report=${CONFIG_ID}`);
+      expect(await screen.findAllByText("Stopping…")).toHaveLength(2);
+      expect(
+        screen.getByText("Finishing the reads already under way."),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/analysed · /)).toBeNull();
+      expect(screen.queryByText("Last run stopped")).toBeNull();
+
+      saved = true;
+      // Page and rail alike, though the list still read 0 when it stopped.
+      await waitFor(
+        () =>
+          expect(screen.getAllByText("4 analysed · 0 skipped")).toHaveLength(2),
+        { timeout: 5000 },
+      );
+      expect(screen.queryByText("Stopping…")).toBeNull();
+      expect(screen.getByText("Stopped")).toBeInTheDocument();
+      expect(screen.getByText("Last run stopped")).toBeInTheDocument();
+      expect(screen.queryByText("0 analysed · 0 skipped")).toBeNull();
+    });
   });
 
   it.each(

@@ -20,6 +20,7 @@ vi.mock("src/utils/axios", () => ({
 
 import {
   failedRunNext,
+  runStopping,
   useInsightsConfig,
   useInsightsConfigs,
   useInsightsRun,
@@ -124,5 +125,93 @@ describe("failedRunNext", () => {
       license: false,
       rerun: null,
     });
+  });
+});
+
+describe("runStopping", () => {
+  const at = (time) => new Date(`2026-10-28T08:${time}Z`).getTime();
+  const stopped = (overrides = {}) => ({
+    status: "failed",
+    error_code: "stopped",
+    finished_at: "2026-10-28T08:00:00Z",
+    progress: { in_flight: { 7: "2026-10-28T07:59:58Z" } },
+    ...overrides,
+  });
+
+  it("holds a stopped run's counts while reads under way are saved, for 2 minutes at most", () => {
+    expect(runStopping(stopped(), at("00:05"))).toBe(true);
+    expect(runStopping(stopped(), at("01:59"))).toBe(true);
+    // A worker lost meanwhile: the counts as they stand.
+    expect(runStopping(stopped(), at("02:00"))).toBe(false);
+    expect(
+      runStopping(stopped({ progress: { in_flight: {} } }), at("00:05")),
+    ).toBe(false);
+    expect(runStopping(stopped({ progress: {} }), at("00:05"))).toBe(false);
+    // Failed on its own, or still running: never stopping.
+    expect(runStopping(stopped({ error_code: "" }), at("00:05"))).toBe(false);
+    expect(runStopping(stopped({ status: "running" }), at("00:05"))).toBe(
+      false,
+    );
+  });
+});
+
+describe("a run being stopped", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("is read again until the reads under way are saved, then the reports refresh", async () => {
+    vi.useFakeTimers();
+    const stopping = {
+      id: "r1",
+      config_id: "c1",
+      status: "failed",
+      error_code: "stopped",
+      finished_at: new Date().toISOString(),
+      analysed_count: 0,
+      progress: { in_flight: { 7: new Date().toISOString() } },
+    };
+    const saved = {
+      ...stopping,
+      analysed_count: 4,
+      progress: { in_flight: {} },
+    };
+    http.read.mockReset();
+    http.read
+      .mockImplementationOnce(() => ok(stopping))
+      .mockImplementationOnce(() => ok(stopping))
+      .mockImplementation(() => ok(saved));
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const refreshed = vi.spyOn(client, "invalidateQueries");
+    const Wrapper = ({ children }) =>
+      React.createElement(QueryClientProvider, { client }, children);
+    Wrapper.propTypes = { children: PropTypes.node };
+    const { result } = renderHook(() => useInsightsRun("r1"), {
+      wrapper: Wrapper,
+    });
+    const wait = async (ms) => {
+      for (let left = ms; left > 0; left -= 1000) {
+        // eslint-disable-next-line no-await-in-loop
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(Math.min(1000, left));
+        });
+      }
+    };
+    await wait(100);
+    expect(result.current.data.analysed_count).toBe(0);
+    expect(refreshed).not.toHaveBeenCalled();
+    await wait(4500);
+    expect(result.current.data.analysed_count).toBe(4);
+    expect(refreshed).toHaveBeenCalledWith({
+      queryKey: ["insights", "configs"],
+    });
+    expect(refreshed).toHaveBeenCalledWith({
+      queryKey: ["insights", "config", "c1"],
+    });
+    const reads = http.read.mock.calls.length;
+    await wait(10_000);
+    expect(http.read).toHaveBeenCalledTimes(reads);
   });
 });

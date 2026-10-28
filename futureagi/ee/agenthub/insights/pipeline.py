@@ -376,7 +376,51 @@ def prepare(run_id: str) -> list[int]:
     return ready
 
 
+# The run's batches being read now (``progress["in_flight"]``: the batch's
+# first unit pk -> when it started). Stop ends the run at once, but the units
+# a batch had already started are still read and saved: the page waits for
+# them before it gives a stopped run's counts.
+IN_FLIGHT = "in_flight"
+
+
+def _note_in_flight(run_id, key: str, *, reading: bool) -> None:
+    """Add a batch to the run's in-flight batches (only while the run is
+    running: one stopped first reads nothing), or take it off. A retried
+    batch has the same key, so a lost attempt's entry goes with it."""
+    InsightRun, _ = _models()
+    with transaction.atomic():
+        run = (
+            InsightRun.no_workspace_objects.select_for_update()
+            .filter(id=run_id)
+            .first()
+        )
+        if run is None or (reading and run.status != "running"):
+            return
+        progress = dict(run.progress or {})
+        batches = dict(progress.get(IN_FLIGHT) or {})
+        if reading:
+            batches[key] = timezone.now().isoformat()
+        elif batches.pop(key, None) is None:
+            return
+        progress[IN_FLIGHT] = batches
+        run.progress = progress
+        run.save(update_fields=["progress", "updated_at"])
+
+
 def extract_batch(run_id: str, unit_pks: list[int]) -> dict:
+    """Read a batch of units, listed in the run's in-flight batches until
+    its units are saved."""
+    if not unit_pks:
+        return _extract_batch(run_id, unit_pks)
+    key = str(min(unit_pks))
+    _note_in_flight(run_id, key, reading=True)
+    try:
+        return _extract_batch(run_id, unit_pks)
+    finally:
+        _note_in_flight(run_id, key, reading=False)
+
+
+def _extract_batch(run_id: str, unit_pks: list[int]) -> dict:
     InsightRun, InsightUnit = _models()
     run = InsightRun.objects.get(id=run_id)
     # Nothing is read, nor paid for, for a run that has stopped.

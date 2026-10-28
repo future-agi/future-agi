@@ -9,9 +9,13 @@ import {
   within,
 } from "@testing-library/react";
 import RunProgress from "../RunProgress";
-import { insightsKeys } from "../insightsApi";
+import { insightsKeys, runStopping, useInsightsRun } from "../insightsApi";
 
-const mocks = vi.hoisted(() => ({ post: vi.fn(), cloud: false }));
+const mocks = vi.hoisted(() => ({
+  post: vi.fn(),
+  read: vi.fn(),
+  cloud: false,
+}));
 
 vi.mock("src/components/iconify", () => ({ default: () => null }));
 vi.mock("src/hooks/useDeploymentMode", () => ({
@@ -19,9 +23,10 @@ vi.mock("src/hooks/useDeploymentMode", () => ({
 }));
 vi.mock("src/utils/axios", () => ({
   default: { post: (...args) => mocks.post(...args) },
-  readQuery: vi.fn(),
+  readQuery: (...args) => mocks.read(...args),
   endpoints: {
     project: {
+      insightsRun: (id) => `/tracer/insights/runs/${id}/`,
       insightsRunStop: (id) => `/tracer/insights/runs/${id}/stop/`,
     },
   },
@@ -133,6 +138,61 @@ describe("RunProgress", () => {
       ),
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("closes once the stopped run is read again, so its counts never show before the reads under way are saved", async () => {
+    const stopped = {
+      id: "run-1",
+      status: "failed",
+      error: "Stopped by Ada.",
+      error_code: "stopped",
+    };
+    // Stopped with a batch still being read: no counts yet.
+    const reread = {
+      ...running(),
+      ...stopped,
+      finished_at: new Date(NOW).toISOString(),
+      progress: { stage: "summarising", in_flight: { 7: ago(0) } },
+    };
+    let answer;
+    mocks.read
+      .mockResolvedValueOnce({ data: { status: true, result: running() } })
+      .mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            answer = () => resolve({ data: { status: true, result: reread } });
+          }),
+      );
+    mocks.post.mockResolvedValue({ data: { status: true, result: stopped } });
+    // The report page: the run's progress while it runs, else how it ended.
+    function Page() {
+      const { data } = useInsightsRun("run-1");
+      if (!data) return null;
+      if (data.status === "running") return <RunProgress run={data} />;
+      return <p>{runStopping(data) ? "Stopping…" : "Stopped · 0 analysed"}</p>;
+    }
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <Page />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Stop" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Stop run" }));
+    await waitFor(() => expect(mocks.read).toHaveBeenCalledTimes(2));
+    expect(mocks.post).toHaveBeenCalledTimes(1);
+    // Stopped, but not read again yet: still the dialog, no counts.
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.queryByText("Stopped · 0 analysed")).toBeNull();
+
+    answer();
+    expect(await screen.findByText("Stopping…")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.queryByText("Stopped · 0 analysed")).toBeNull();
   });
 
   it.each([

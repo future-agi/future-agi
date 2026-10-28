@@ -1015,3 +1015,52 @@ def test_a_stopped_run_is_charged_the_units_it_read_and_no_more(
     spend.add(0.5)
     pipeline.add_spend(str(other.id), spend)
     assert len(charged) == 2
+
+
+@pytest.mark.django_db
+def test_a_batch_under_way_is_in_flight_until_its_units_are_saved(
+    report, user, model, loaded, monkeypatch
+):
+    """Stopped while a batch reads: the run fails at once with that batch
+    still in flight and none of its units saved yet; when the batch ends,
+    the unit it had started is saved and the batch is no longer in flight,
+    so the stopped run's counts are final from then on. A batch reaching a
+    run already stopped reads nothing and is never in flight."""
+    monkeypatch.setattr(pipeline, "ThreadPoolExecutor", InlinePool)
+    run = pipeline.create_run(
+        config=report,
+        scope={"window": WINDOW, "preset": "Custom"},
+        population=[{"id": unit_id} for unit_id in ids(order=4)],
+        sample_size=4,
+        user=user,
+    )
+    ready = pipeline.prepare(str(run.id))
+    fake = facets.chat_json
+    seen = []
+
+    def stop_then_read(system, prompt, **kwargs):
+        if not seen:
+            assert pipeline.stop(str(run.id), "Stopped by Ada.")
+            stopped = InsightRun.objects.get(id=run.id)
+            seen.append(
+                (
+                    stopped.status,
+                    list(stopped.progress.get(pipeline.IN_FLIGHT) or {}),
+                    InsightUnit.objects.filter(run=run, status="done").count(),
+                )
+            )
+        return fake(system, prompt, **kwargs)
+
+    monkeypatch.setattr(facets, "chat_json", stop_then_read)
+    pipeline.extract_batch(str(run.id), ready[:2])
+
+    assert seen == [("failed", [str(min(ready[:2]))], 0)]
+    run.refresh_from_db()
+    assert run.progress[pipeline.IN_FLIGHT] == {}
+    assert InsightUnit.objects.filter(run=run, status="done").count() == 1
+
+    with pytest.raises(pipeline.InsightRunNotRunning):
+        pipeline.extract_batch(str(run.id), ready[2:])
+    run.refresh_from_db()
+    assert run.progress[pipeline.IN_FLIGHT] == {}
+    assert len(seen) == 1

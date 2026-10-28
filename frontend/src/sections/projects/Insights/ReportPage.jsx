@@ -53,6 +53,7 @@ import {
   patchConfig,
   projectMissing,
   runFailureReason,
+  runStopping,
   useInsightsConfig,
   useInsightsRun,
 } from "./insightsApi";
@@ -482,12 +483,14 @@ ReportBody.propTypes = {
 
 // A failed run, and what to do next: run it again when another try could
 // work, the License settings when the licence is why, nothing to click when
-// only the model settings can fix it (its reason says what to change).
+// only the model settings can fix it (its reason says what to change). A run
+// just stopped gives no counts until the reads it had under way are saved.
 function FailedRun({ run, onRerun }) {
   const router = useRouter();
   const { isCloud } = useDeploymentMode();
   const canRun = useCanStartRuns();
   const next = failedRunNext(run, { cloud: isCloud });
+  const stopping = runStopping(run);
   let action = null;
   if (next.rerun)
     action = (
@@ -509,13 +512,17 @@ function FailedRun({ run, onRerun }) {
   return (
     <Alert severity={next.stopped ? "info" : "error"} action={action}>
       <Typography variant="subtitle2">
-        {next.stopped
-          ? "Stopped"
-          : run.analysed_count
-            ? "This run failed"
-            : "Failed before analysing"}
+        {stopping
+          ? "Stopping…"
+          : next.stopped
+            ? "Stopped"
+            : run.analysed_count
+              ? "This run failed"
+              : "Failed before analysing"}
       </Typography>
-      <Typography variant="body2">{runOutcome(run)}</Typography>
+      <Typography variant="body2">
+        {stopping ? "Finishing the reads already under way." : runOutcome(run)}
+      </Typography>
       {runFailureReason(run)}
     </Alert>
   );

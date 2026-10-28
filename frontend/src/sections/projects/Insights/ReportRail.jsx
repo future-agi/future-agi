@@ -31,6 +31,7 @@ import {
   patchConfig,
   projectMissing,
   runFailureReason,
+  useStoppingRun,
 } from "./insightsApi";
 import {
   buildColorOrder,
@@ -261,6 +262,10 @@ function ReportCard({ config, selected, onOpen, onRerun, onDelete }) {
   const stage = active ? STAGES[stageIndex(run.stage)] : null;
   const failed = failedRunNext(run);
   const canRun = useCanStartRuns();
+  // A stopped run as the report page reads it: the reads under way when it
+  // stopped are saved after this list was read.
+  const stopped = useStoppingRun(failed.stopped ? run.id : null);
+  const outcome = stopped.run?.status === "failed" ? stopped.run : run;
   const open = () => !renaming && onOpen(config.id);
 
   return (
@@ -359,13 +364,17 @@ function ReportCard({ config, selected, onOpen, onRerun, onDelete }) {
             variant="caption"
             color={failed.stopped ? "text.secondary" : "error.main"}
           >
-            {failed.stopped
-              ? "Last run stopped"
-              : run.analysed_count
-                ? "Last run failed"
-                : "Failed before analysing"}
+            {stopped.stopping
+              ? "Stopping…"
+              : failed.stopped
+                ? "Last run stopped"
+                : run.analysed_count
+                  ? "Last run failed"
+                  : "Failed before analysing"}
           </Typography>
-          <Typography variant="caption">{runOutcome(run)}</Typography>
+          {!stopped.stopping && (
+            <Typography variant="caption">{runOutcome(outcome)}</Typography>
+          )}
           <Typography variant="caption" color="text.secondary">
             {runFailureReason(run)}
           </Typography>
