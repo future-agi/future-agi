@@ -56431,6 +56431,7 @@ export const TracerInsightsConfigsListResponse = zod.object({
           taxonomy_mode: zod.string().min(1),
           distribution: zod.array(zod.object({}).passthrough()),
           error: zod.string(),
+          error_code: zod.string(),
           scope: zod.object({}).passthrough(),
         }),
         runs: zod
@@ -56448,6 +56449,7 @@ export const TracerInsightsConfigsListResponse = zod.object({
               taxonomy_mode: zod.string().min(1),
               distribution: zod.array(zod.object({}).passthrough()),
               error: zod.string(),
+              error_code: zod.string(),
               scope: zod.object({}).passthrough(),
             }),
           )
@@ -56495,6 +56497,7 @@ export const TracerInsightsConfigsReadResponse = zod.object({
       taxonomy_mode: zod.string().min(1),
       distribution: zod.array(zod.object({}).passthrough()),
       error: zod.string(),
+      error_code: zod.string(),
       scope: zod.object({}).passthrough(),
     }),
     runs: zod
@@ -56512,6 +56515,7 @@ export const TracerInsightsConfigsReadResponse = zod.object({
           taxonomy_mode: zod.string().min(1),
           distribution: zod.array(zod.object({}).passthrough()),
           error: zod.string(),
+          error_code: zod.string(),
           scope: zod.object({}).passthrough(),
         }),
       )
@@ -56669,6 +56673,7 @@ export const TracerInsightsConfigsPartialUpdateResponse = zod.object({
       taxonomy_mode: zod.string().min(1),
       distribution: zod.array(zod.object({}).passthrough()),
       error: zod.string(),
+      error_code: zod.string(),
       scope: zod.object({}).passthrough(),
     }),
     runs: zod
@@ -56686,6 +56691,7 @@ export const TracerInsightsConfigsPartialUpdateResponse = zod.object({
           taxonomy_mode: zod.string().min(1),
           distribution: zod.array(zod.object({}).passthrough()),
           error: zod.string(),
+          error_code: zod.string(),
           scope: zod.object({}).passthrough(),
         }),
       )
@@ -56733,6 +56739,7 @@ export const TracerInsightsConfigsDeleteResponse = zod.object({
       taxonomy_mode: zod.string().min(1),
       distribution: zod.array(zod.object({}).passthrough()),
       error: zod.string(),
+      error_code: zod.string(),
       scope: zod.object({}).passthrough(),
     }),
     runs: zod
@@ -56750,6 +56757,7 @@ export const TracerInsightsConfigsDeleteResponse = zod.object({
           taxonomy_mode: zod.string().min(1),
           distribution: zod.array(zod.object({}).passthrough()),
           error: zod.string(),
+          error_code: zod.string(),
           scope: zod.object({}).passthrough(),
         }),
       )
@@ -57152,6 +57160,7 @@ export const TracerInsightsRunsReadResponse = zod.object({
     models_used: zod.object({}).passthrough(),
     cost_usd: zod.number(),
     error: zod.string(),
+    error_code: zod.string(),
     created_at: zod.string().datetime({ offset: true }),
     started_at: zod.string().datetime({ offset: true }),
     finished_at: zod.string().datetime({ offset: true }),
@@ -57250,6 +57259,30 @@ export const TracerInsightsRunsMediaListQueryParams = zod.object({
 });
 
 export const TracerInsightsRunsMediaListResponse = zod.instanceof(File);
+
+/**
+ * Stop a run in flight: it reads nothing more and isn't written. The
+work it already did is charged. Stopping it again answers the same.
+ */
+export const TracerInsightsRunsStopCreateParams = zod.object({
+  run_id: zod.string(),
+});
+
+export const TracerInsightsRunsStopCreateBody = zod.object({});
+
+export const tracerInsightsRunsStopCreateResponseStatusDefault = true;
+
+export const TracerInsightsRunsStopCreateResponse = zod.object({
+  status: zod
+    .boolean()
+    .default(tracerInsightsRunsStopCreateResponseStatusDefault),
+  result: zod.object({
+    id: zod.string().uuid(),
+    status: zod.string().min(1),
+    error: zod.string(),
+    error_code: zod.string(),
+  }),
+});
 
 /**
  * Analysed units of a run, optionally one category's, oldest first.
@@ -58191,6 +58224,13 @@ export const TracerInstantEvalSummaryListResponse = zod.object({
     credits_used: zod.number(),
     in_flight: zod.number(),
     waiting_s: zod.number(),
+    failure: zod
+      .object({
+        message: zod.string().min(1),
+        every: zod.boolean(),
+        ai_providers: zod.boolean(),
+      })
+      .optional(),
     active_s: zod.number(),
     idle_s: zod.number(),
     sample: zod.object({

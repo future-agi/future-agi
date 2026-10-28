@@ -27757,6 +27757,13 @@ export interface InstantEvalPersonApi {
   email: string;
 }
 
+export interface InstantEvalFailureApi {
+  /** @minLength 1 */
+  message: string;
+  every: boolean;
+  ai_providers: boolean;
+}
+
 export interface InstantEvalSampleApi {
   population: number;
   population_is_lower_bound: boolean;
@@ -27812,6 +27819,7 @@ export interface InstantEvalSummaryApi {
   credits_used: number;
   in_flight: number;
   waiting_s: number;
+  failure?: InstantEvalFailureApi;
   active_s: number;
   idle_s: number;
   sample: InstantEvalSampleApi;

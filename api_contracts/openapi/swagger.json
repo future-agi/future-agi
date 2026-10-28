@@ -63947,6 +63947,91 @@
                 }
             ]
         },
+        "/tracer/insights/runs/{run_id}/stop/": {
+            "post": {
+                "operationId": "tracer_insights_runs_stop_create",
+                "description": "Stop a run in flight: it reads nothing more and isn't written. The\nwork it already did is charged. Stopping it again answers the same.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/EmptyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/InsightRunStopResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "402": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "run_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/tracer/insights/runs/{run_id}/units/": {
             "get": {
                 "operationId": "tracer_insights_runs_units_list",
@@ -149175,6 +149260,7 @@
                 "taxonomy_mode",
                 "distribution",
                 "error",
+                "error_code",
                 "scope"
             ],
             "type": "object",
@@ -149234,6 +149320,10 @@
                 },
                 "error": {
                     "title": "Error",
+                    "type": "string"
+                },
+                "error_code": {
+                    "title": "Error code",
                     "type": "string"
                 },
                 "scope": {
@@ -149995,6 +150085,7 @@
                 "models_used",
                 "cost_usd",
                 "error",
+                "error_code",
                 "created_at",
                 "started_at",
                 "finished_at",
@@ -150080,6 +150171,10 @@
                 },
                 "error": {
                     "title": "Error",
+                    "type": "string"
+                },
+                "error_code": {
+                    "title": "Error code",
                     "type": "string"
                 },
                 "created_at": {
@@ -150279,6 +150374,51 @@
                 },
                 "result": {
                     "$ref": "#/definitions/InsightAskResult"
+                }
+            }
+        },
+        "InsightRunStopResult": {
+            "required": [
+                "id",
+                "status",
+                "error",
+                "error_code"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string"
+                },
+                "error_code": {
+                    "title": "Error code",
+                    "type": "string"
+                }
+            }
+        },
+        "InsightRunStopResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/InsightRunStopResult"
                 }
             }
         },
@@ -151793,6 +151933,30 @@
             },
             "x-nullable": true
         },
+        "InstantEvalFailure": {
+            "required": [
+                "message",
+                "every",
+                "ai_providers"
+            ],
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "every": {
+                    "title": "Every",
+                    "type": "boolean"
+                },
+                "ai_providers": {
+                    "title": "Ai providers",
+                    "type": "boolean"
+                }
+            },
+            "x-nullable": true
+        },
         "InstantEvalSample": {
             "required": [
                 "population",
@@ -151978,6 +152142,9 @@
                     "title": "Waiting s",
                     "type": "integer",
                     "x-nullable": true
+                },
+                "failure": {
+                    "$ref": "#/definitions/InstantEvalFailure"
                 },
                 "active_s": {
                     "title": "Active s",

@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1093,
+  endpointCount: 1094,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -35603,6 +35603,46 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/tracer/insights/runs/{run_id}/stop/": {
+      post: {
+        operationId: "tracer_insights_runs_stop_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/EmptyRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/InsightRunStopResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          402: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          429: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/tracer/insights/runs/{run_id}/units/": {
       get: {
         operationId: "tracer_insights_runs_units_list",
@@ -66953,6 +66993,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         result: {
           $ref: "#/definitions/InsightRunDetail",
+        },
+      },
+    },
+    InsightRunStopResponse: {
+      required: ["result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: true,
+        },
+        result: {
+          $ref: "#/definitions/InsightRunStopResult",
         },
       },
     },
@@ -98645,6 +98699,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "models_used",
         "cost_usd",
         "error",
+        "error_code",
         "created_at",
         "started_at",
         "finished_at",
@@ -98732,6 +98787,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Error",
           type: "string",
         },
+        error_code: {
+          title: "Error code",
+          type: "string",
+        },
         created_at: {
           title: "Created at",
           type: "string",
@@ -98760,6 +98819,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "uuid",
           "x-nullable": true,
+        },
+      },
+    },
+    InsightRunStopResult: {
+      required: ["id", "status", "error", "error_code"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          minLength: 1,
+        },
+        error: {
+          title: "Error",
+          type: "string",
+        },
+        error_code: {
+          title: "Error code",
+          type: "string",
         },
       },
     },
@@ -99143,6 +99226,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Waiting s",
           type: "integer",
           "x-nullable": true,
+        },
+        failure: {
+          $ref: "#/definitions/InstantEvalFailure",
         },
         active_s: {
           title: "Active s",
@@ -115901,6 +115987,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "taxonomy_mode",
         "distribution",
         "error",
+        "error_code",
         "scope",
       ],
       type: "object",
@@ -115960,6 +116047,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         error: {
           title: "Error",
+          type: "string",
+        },
+        error_code: {
+          title: "Error code",
           type: "string",
         },
         scope: {
@@ -116335,6 +116426,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
       },
+    },
+    InstantEvalFailure: {
+      required: ["message", "every", "ai_providers"],
+      type: "object",
+      properties: {
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+        },
+        every: {
+          title: "Every",
+          type: "boolean",
+        },
+        ai_providers: {
+          title: "Ai providers",
+          type: "boolean",
+        },
+      },
+      "x-nullable": true,
     },
     InstantEvalPerson: {
       required: ["id", "name", "email"],

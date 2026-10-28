@@ -662,6 +662,7 @@ import type {
   InsightRunCreateApi,
   InsightRunCreatedResponseApi,
   InsightRunResponseApi,
+  InsightRunStopResponseApi,
   InsightUnitsResponseApi,
   InstantEvalBadRequestApi,
   InstantEvalControlRequestApi,
@@ -73965,6 +73966,99 @@ export const tracerInsightsRunsMediaList = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type tracerInsightsRunsStopCreateResponse200 = {
+  data: InsightRunStopResponseApi;
+  status: 200;
+};
+
+export type tracerInsightsRunsStopCreateResponse400 = {
+  data: ApiErrorResponseApi;
+  status: 400;
+};
+
+export type tracerInsightsRunsStopCreateResponse402 = {
+  data: ApiErrorResponseApi;
+  status: 402;
+};
+
+export type tracerInsightsRunsStopCreateResponse403 = {
+  data: ApiErrorResponseApi;
+  status: 403;
+};
+
+export type tracerInsightsRunsStopCreateResponse404 = {
+  data: ApiErrorResponseApi;
+  status: 404;
+};
+
+export type tracerInsightsRunsStopCreateResponse429 = {
+  data: ApiErrorResponseApi;
+  status: 429;
+};
+
+export type tracerInsightsRunsStopCreateResponse500 = {
+  data: ApiErrorResponseApi;
+  status: 500;
+};
+
+export type tracerInsightsRunsStopCreateResponse503 = {
+  data: ApiErrorResponseApi;
+  status: 503;
+};
+
+export type tracerInsightsRunsStopCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 402 | 403 | 404 | 429 | 500 | 503
+  >;
+};
+
+export type tracerInsightsRunsStopCreateResponseSuccess =
+  tracerInsightsRunsStopCreateResponse200 & {
+    headers: Headers;
+  };
+export type tracerInsightsRunsStopCreateResponseError = (
+  | tracerInsightsRunsStopCreateResponse400
+  | tracerInsightsRunsStopCreateResponse402
+  | tracerInsightsRunsStopCreateResponse403
+  | tracerInsightsRunsStopCreateResponse404
+  | tracerInsightsRunsStopCreateResponse429
+  | tracerInsightsRunsStopCreateResponse500
+  | tracerInsightsRunsStopCreateResponse503
+  | tracerInsightsRunsStopCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerInsightsRunsStopCreateResponse =
+  | tracerInsightsRunsStopCreateResponseSuccess
+  | tracerInsightsRunsStopCreateResponseError;
+
+export const getTracerInsightsRunsStopCreateUrl = (runId: string) => {
+  return `/tracer/insights/runs/${runId}/stop/`;
+};
+
+/**
+ * Stop a run in flight: it reads nothing more and isn't written. The
+work it already did is charged. Stopping it again answers the same.
+ */
+export const tracerInsightsRunsStopCreate = async (
+  runId: string,
+  emptyRequestApi: EmptyRequestApi,
+  options?: RequestInit,
+): Promise<tracerInsightsRunsStopCreateResponse> => {
+  return apiMutator<tracerInsightsRunsStopCreateResponse>(
+    getTracerInsightsRunsStopCreateUrl(runId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emptyRequestApi),
     },
   );
 };
