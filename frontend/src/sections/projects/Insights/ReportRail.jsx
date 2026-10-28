@@ -260,6 +260,7 @@ function ReportCard({ config, selected, onOpen, onRerun, onDelete }) {
     : "Not run yet";
   const stage = active ? STAGES[stageIndex(run.stage)] : null;
   const failed = failedRunNext(run);
+  const canRun = useCanStartRuns();
   const open = () => !renaming && onOpen(config.id);
 
   return (
@@ -373,6 +374,7 @@ function ReportCard({ config, selected, onOpen, onRerun, onDelete }) {
               size="small"
               color="inherit"
               sx={{ alignSelf: "flex-start" }}
+              disabled={!canRun}
               onClick={(event) => {
                 event.stopPropagation();
                 onRerun(config);

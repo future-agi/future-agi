@@ -145,6 +145,71 @@ describe("a Viewer on Insights", () => {
       await screen.findByRole("textbox", { name: "Ask about this report" }),
     ).toBeDisabled();
     expect(screen.getAllByText(VIEWER_CANT_RUN).length).toBeGreaterThan(0);
+    // The trend's "Run it again" is words, not a link.
+    expect(screen.getByText(/One run so far/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Run it again" })).toBeNull();
+  });
+
+  // A stopped report open, and a failed one in the rail.
+  function serveEnded() {
+    const ended = (overrides) => ({
+      ...runFixture.result,
+      status: "failed",
+      analysed_count: 4,
+      skipped_count: 0,
+      ...overrides,
+    });
+    const stopped = ended({ error: "Stopped by Ada.", error_code: "stopped" });
+    const config = { ...sessionsConfig, latest_run: stopped, runs: [stopped] };
+    const failed = {
+      ...configsFixture.result.configs[0],
+      latest_run: ended({ id: "failed-run", error: "", error_code: "" }),
+    };
+    mocks.readQuery.mockImplementation((url) => {
+      if (url === "/tracer/insights/configs/")
+        return ok({ configs: [config, failed] });
+      if (url === `/tracer/insights/configs/${CONFIG_ID}/`) return ok(config);
+      if (url === `/tracer/insights/runs/${RUN_ID}/`) return ok(stopped);
+      return ok({ units: [], total: 0 });
+    });
+  }
+
+  it("can't run a stopped report again or retry a failed one, on the page or in the rail", async () => {
+    serveEnded();
+    renderAs("workspace_viewer", `?report=${CONFIG_ID}`);
+    expect(await screen.findByText("Stopped")).toBeInTheDocument();
+    const again = screen.getAllByRole("button", { name: "Run again" });
+    expect(again).toHaveLength(2);
+    again.forEach((button) => expect(button).toBeDisabled());
+    expect(screen.getByRole("button", { name: "Retry" })).toBeDisabled();
+  });
+
+  it.each([
+    ["workspace_viewer", false],
+    ["workspace_member", true],
+  ])("lets a %s stop a run: %s", async (role, can) => {
+    const running = { ...runFixture.result, status: "running" };
+    const config = { ...sessionsConfig, latest_run: running, runs: [running] };
+    mocks.readQuery.mockImplementation((url) => {
+      if (url === "/tracer/insights/configs/") return ok({ configs: [config] });
+      if (url === `/tracer/insights/configs/${CONFIG_ID}/`) return ok(config);
+      if (url === `/tracer/insights/runs/${RUN_ID}/`) return ok(running);
+      return ok({ units: [], total: 0 });
+    });
+    renderAs(role, `?report=${CONFIG_ID}`);
+    const stop = await screen.findByRole("button", { name: "Stop" });
+    if (can) expect(stop).toBeEnabled();
+    else expect(stop).toBeDisabled();
+  });
+
+  it("leaves a Member Run again and Retry", async () => {
+    serveEnded();
+    renderAs("workspace_member", `?report=${CONFIG_ID}`);
+    expect(await screen.findByText("Stopped")).toBeInTheDocument();
+    screen
+      .getAllByRole("button", { name: "Run again" })
+      .forEach((button) => expect(button).toBeEnabled());
+    expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
   });
 
   it("leaves a Member the report's actions", async () => {
@@ -154,5 +219,8 @@ describe("a Viewer on Insights", () => {
     ).toBeEnabled();
     expect(screen.getByRole("button", { name: "Edit" })).toBeEnabled();
     expect(screen.queryByText(VIEWER_CANT_RUN)).not.toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "Run it again" }),
+    ).toBeEnabled();
   });
 });

@@ -15,6 +15,7 @@ import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import Iconify from "src/components/iconify";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import { UNITS } from "src/sections/projects/observePopulation";
+import { useCanStartRuns } from "src/sections/projects/runPermission";
 import { insightsKeys, stopRun } from "./insightsApi";
 import { formatCount, formatSpan } from "./insightsFormat";
 import { useCancellable, useElapsedSeconds } from "./insightsHooks";
@@ -90,6 +91,7 @@ StageRail.propTypes = { current: PropTypes.number.isRequired };
 function StopRun({ run }) {
   const queryClient = useQueryClient();
   const { isCloud } = useDeploymentMode();
+  const canRun = useCanStartRuns();
   const [open, setOpen] = useState(false);
   const stopping = useCancellable(
     "The run could not be stopped.",
@@ -118,6 +120,7 @@ function StopRun({ run }) {
         color="inherit"
         startIcon={<Iconify icon="mdi:stop" width={16} />}
         onClick={() => setOpen(true)}
+        disabled={!canRun}
         sx={{ fontSize: 13 }}
       >
         Stop

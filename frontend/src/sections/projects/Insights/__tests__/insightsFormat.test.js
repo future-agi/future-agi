@@ -121,6 +121,25 @@ describe("insightsErrorMessage", () => {
     ).toBe("The analysis model is unavailable right now.");
   });
 
+  it("says a start was refused for the person's role as the server does", () => {
+    // A Workspace Viewer's run, as the API refuses it.
+    const viewer = {
+      type: "permission_error",
+      code: "permission_denied",
+      detail: "Write access denied to this workspace",
+      statusCode: 403,
+    };
+    expect(
+      insightsErrorMessage(viewer, "The report could not be started."),
+    ).toBe("Write access denied to this workspace");
+    expect(
+      insightsErrorMessage(
+        { ...viewer, detail: "Denied\nTraceback (most recent call last)" },
+        "The report could not be started.",
+      ),
+    ).toBe("The report could not be started.");
+  });
+
   it("says a fault on the server's side is worth retrying, not the input's", () => {
     const retry = "Couldn't start right now. Try again in a moment.";
     for (const error of [

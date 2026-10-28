@@ -205,6 +205,9 @@ export function insightsErrorMessage(
       ? message
       : "Insights isn't available to this organization.";
   if (shown && (status === 429 || USER_FACING_CODES.has(code))) return message;
+  // Refused for this person's role (a Viewer starting a run): the server
+  // says so.
+  if (shown && status === 403 && code === "permission_denied") return message;
   return actionErrorMessage(error, { fallback, retry });
 }
 

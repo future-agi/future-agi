@@ -486,11 +486,12 @@ ReportBody.propTypes = {
 function FailedRun({ run, onRerun }) {
   const router = useRouter();
   const { isCloud } = useDeploymentMode();
+  const canRun = useCanStartRuns();
   const next = failedRunNext(run, { cloud: isCloud });
   let action = null;
   if (next.rerun)
     action = (
-      <Button color="inherit" size="small" onClick={onRerun}>
+      <Button color="inherit" size="small" onClick={onRerun} disabled={!canRun}>
         {next.rerun}
       </Button>
     );
@@ -767,7 +768,7 @@ export default function ReportPage({
                   onSelectRun={onSelectRun}
                   onCategory={completed ? openCategory : undefined}
                   onRunNow={
-                    latestActive
+                    latestActive || !canRun
                       ? undefined
                       : () => setRerun({ rediscover: false })
                   }
