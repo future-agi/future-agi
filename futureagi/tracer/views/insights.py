@@ -660,8 +660,12 @@ def _billing():
     return billing if billing.applies() else None
 
 
-def _charge(org, cost_usd, source: str, source_id, *, unpriced=False) -> None:
-    """Charge a step's model spend as AI credits (a no-op without billing)."""
+def _charge(
+    org, cost_usd, source: str, source_id, *, unpriced=False, spend=None
+) -> None:
+    """Charge a step's model spend as AI credits (a no-op without billing).
+    ``spend`` puts its calls and tokens on the usage event, and its flag for
+    a cost priced at the ceiling."""
     billing = _billing()
     if billing is not None:
         billing.charge(
@@ -669,6 +673,7 @@ def _charge(org, cost_usd, source: str, source_id, *, unpriced=False) -> None:
             float(cost_usd or 0),
             source=source,
             source_id=str(source_id),
+            spend=spend,
             unpriced=unpriced,
         )
 
@@ -1220,7 +1225,9 @@ class InsightPreviewView(InsightsLicenseRequired, APIView):
                 str(exc),
                 code="insight_unavailable",
             )
-        _charge(org, spend.cost_usd, "insights_preview", data["project_id"])
+        _charge(
+            org, spend.cost_usd, "insights_preview", data["project_id"], spend=spend
+        )
         return self._gm.success_response({"units": units})
 
 
@@ -1663,5 +1670,5 @@ class InsightRunAskView(InsightsLicenseRequired, APIView):
                 status.HTTP_503_SERVICE_UNAVAILABLE, str(exc), code="model_unavailable"
             )
         add_spend(run.id, spend)
-        _charge(org, spend.cost_usd, "insights_ask", run.id, unpriced=spend.unpriced)
+        _charge(org, spend.cost_usd, "insights_ask", run.id, spend=spend)
         return self._gm.success_response(answer)

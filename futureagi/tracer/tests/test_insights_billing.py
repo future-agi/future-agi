@@ -425,6 +425,39 @@ def test_a_question_is_checked_then_charged_and_added_to_the_run(
     assert refused.json()["result"]["message"].startswith("This question needs about")
 
 
+@pytest.mark.django_db
+def test_a_preview_is_charged_with_its_tokens_and_ceiling_flag(
+    auth_client, observe_project, insight_enabled, emitted, monkeypatch
+):
+    """Cloud's preview was charged at the unpriced ceiling, but its usage
+    event neither said so nor carried the tokens to check it by."""
+
+    def preview(*, spend, **kwargs):
+        spend.add(0.244, 6_793, 1_896, unpriced=True)
+        return []
+
+    monkeypatch.setattr("ee.agenthub.insights.draft.preview", preview)
+    body = new_run_body(observe_project)
+    response = auth_client.post(
+        "/tracer/insights/preview/",
+        {
+            "project_id": body["project_id"],
+            "config": body["config"],
+            "unit_ids": ["s1"],
+        },
+        format="json",
+    )
+    assert response.status_code == status.HTTP_200_OK, response.content
+    (event,) = emitted
+    assert event.properties["source"] == "insights_preview"
+    assert event.properties["unpriced"] is True
+    assert (
+        event.properties["model_calls"],
+        event.properties["prompt_tokens"],
+        event.properties["completion_tokens"],
+    ) == (1, 6_793, 1_896)
+
+
 def test_the_estimate_carries_the_credit_fields(monkeypatch, refuse):
     class Org:
         id = "org-1"
