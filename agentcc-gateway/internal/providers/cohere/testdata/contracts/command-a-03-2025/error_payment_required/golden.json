@@ -1,0 +1,6 @@
+{
+  "code": "provider_402",
+  "message": "Please add or update your payment method at https://dashboard.cohere.com/billing?tab=payment to continue",
+  "status": 402,
+  "type": "invalid_request_error"
+}

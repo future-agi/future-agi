@@ -1,0 +1,4 @@
+{
+  "status": 404,
+  "notes": "Synthetic, from the errors page (fern/pages/cohere-api/errors.mdx, docs.cohere.com/reference/errors, read 2026-10-28 from github.com/cohere-ai/cohere-developer-experience) (404 Not Found; the message is its example for an unknown model) and the error body {id, message} the reference gives every error response (components/responses in cohere-openapi.yaml (github.com/cohere-ai/cohere-developer-experience, read 2026-10-28)); id invented. Recordable: upstream_patch.json swaps the model for one that does not exist, while request.json (and the outbound-request golden) keep the fixture's model."
+}

@@ -1,0 +1,56 @@
+{
+  "id": "9f75d94c-5047-4f9f-ad14-4a42ef5d3ff3",
+  "results": [
+    {
+      "index": 2,
+      "relevance_score": 0.8428898,
+      "relevant_spans": [
+        {
+          "start": 0,
+          "end": 139,
+          "score": 0.9997249
+        },
+        {
+          "start": 139,
+          "end": 165,
+          "score": 0.33812714
+        }
+      ]
+    },
+    {
+      "index": 0,
+      "relevance_score": 0.085889876,
+      "relevant_spans": [
+        {
+          "start": 0,
+          "end": 64,
+          "score": 0.33498195
+        }
+      ]
+    },
+    {
+      "index": 4,
+      "relevance_score": 0.04667134,
+      "relevant_spans": [
+        {
+          "start": 0,
+          "end": 82,
+          "score": 0.15934227
+        },
+        {
+          "start": 82,
+          "end": 175,
+          "score": 0.118320465
+        }
+      ]
+    }
+  ],
+  "meta": {
+    "api_version": {
+      "version": "2"
+    },
+    "billed_units": {
+      "input_tokens": 192
+    }
+  }
+}

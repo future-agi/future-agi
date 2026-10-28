@@ -1,0 +1,101 @@
+{
+  "models": [
+    {
+      "name": "command-a-plus-05-2026",
+      "endpoints": [
+        "chat"
+      ],
+      "finetuned": false,
+      "context_length": 128000,
+      "tokenizer_url": "https://storage.googleapis.com/cohere-public/tokenizers/command-a-plus-05-2026.json",
+      "features": [
+        "tools",
+        "json_mode",
+        "json_schema",
+        "vision",
+        "reasoning",
+        "strict_tools",
+        "safety_modes"
+      ],
+      "default_endpoints": [
+        "chat"
+      ],
+      "sampling_defaults": {
+        "temperature": 0.3,
+        "k": 0,
+        "p": 0.75,
+        "frequency_penalty": 0,
+        "presence_penalty": 0
+      }
+    },
+    {
+      "name": "command-a-03-2025",
+      "endpoints": [
+        "chat"
+      ],
+      "finetuned": false,
+      "context_length": 256000,
+      "tokenizer_url": "https://storage.googleapis.com/cohere-public/tokenizers/command-a-03-2025.json",
+      "features": [
+        "tools",
+        "json_mode",
+        "json_schema",
+        "strict_tools",
+        "safety_modes"
+      ],
+      "default_endpoints": [
+        "chat"
+      ]
+    },
+    {
+      "name": "command-a-reasoning-08-2025",
+      "endpoints": [
+        "chat"
+      ],
+      "finetuned": false,
+      "context_length": 256000,
+      "tokenizer_url": "https://storage.googleapis.com/cohere-public/tokenizers/command-a-reasoning-08-2025.json",
+      "features": [
+        "tools",
+        "json_mode",
+        "json_schema",
+        "reasoning",
+        "strict_tools",
+        "safety_modes"
+      ],
+      "default_endpoints": []
+    },
+    {
+      "name": "embed-v5.0-fast",
+      "endpoints": [
+        "embed"
+      ],
+      "finetuned": false,
+      "context_length": 128000,
+      "tokenizer_url": "https://storage.googleapis.com/cohere-public/tokenizers/embed-v5.0-fast.json",
+      "features": [
+        "vision"
+      ],
+      "default_endpoints": [
+        "embed"
+      ]
+    },
+    {
+      "name": "rerank-v5.0-pro",
+      "endpoints": [
+        "rerank"
+      ],
+      "finetuned": false,
+      "context_length": 32000,
+      "tokenizer_url": "https://storage.googleapis.com/cohere-public/tokenizers/rerank-v5.0-pro.json",
+      "features": [],
+      "default_endpoints": [
+        "rerank"
+      ],
+      "sampling_defaults": {
+        "max_tokens_per_doc": 4096
+      }
+    }
+  ],
+  "next_page_token": ""
+}

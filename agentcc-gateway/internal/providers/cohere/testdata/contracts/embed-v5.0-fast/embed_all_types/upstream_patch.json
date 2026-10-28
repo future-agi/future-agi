@@ -1,0 +1,10 @@
+{
+  "embedding_types": [
+    "float",
+    "int8",
+    "uint8",
+    "binary",
+    "ubinary",
+    "base64"
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "code": "provider_404",
+  "message": "model 'command-a-00-0000' not found, make sure the correct model ID was used and that you have access to the model.",
+  "status": 404,
+  "type": "not_found"
+}

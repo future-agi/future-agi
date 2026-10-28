@@ -308,10 +308,14 @@ func lookupCohereFinishReason(reason string) (finish string, ok bool) {
 	}
 }
 
+// cohereErrorResponse is the part of a Cohere error body ({"id", "message"})
+// parseCohereError reads.
+type cohereErrorResponse struct {
+	Message string `json:"message"`
+}
+
 func parseCohereError(status int, body []byte) *models.APIError {
-	var errResp struct {
-		Message string `json:"message"`
-	}
+	var errResp cohereErrorResponse
 	if err := json.Unmarshal(body, &errResp); err == nil && errResp.Message != "" {
 		return &models.APIError{
 			Status:  mapCohereStatus(status),

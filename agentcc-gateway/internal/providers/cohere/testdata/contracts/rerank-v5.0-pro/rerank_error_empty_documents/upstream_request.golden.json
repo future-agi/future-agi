@@ -1,0 +1,13 @@
+{
+  "body": {
+    "documents": [],
+    "model": "rerank-v5.0-pro",
+    "query": "What is the capital of the United States?"
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v2/rerank"
+}

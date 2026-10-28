@@ -1,0 +1,21 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "Hel",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "a9c2e6f4-8b1d-4a73-b5e9-3f7c1d8a2e64",
+  "model": "command-a-03-2025",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 1,
+    "prompt_tokens": 494,
+    "total_tokens": 495
+  }
+}
