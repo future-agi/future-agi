@@ -11,6 +11,7 @@ import {
   AskTimeline,
   matchesFilter,
 } from "../index";
+import { normalizeQuestion, runTally, summarizeRecords } from "../askSummary";
 import {
   buildTimeline,
   columnBudget,
@@ -240,6 +241,34 @@ describe("AskTimeline", () => {
     expect(container.querySelectorAll("rect.reading")).toHaveLength(6);
     expect(screen.getByText("Reading")).toBeInTheDocument();
     expect(screen.getByText("Not yet")).toBeInTheDocument();
+  });
+
+  it("counts its legend from the summary the page reads while the squares lag", () => {
+    // The squares are read again every twentieth of the run; the summary
+    // every poll. Its newer counts are the ones the header shows.
+    const newer = summarizeRecords({
+      records: syntheticRun({ answered: 0.8 }).records,
+      questions: QUESTIONS,
+      window: live.window,
+      status: "running",
+    });
+    const tallied = runTally(newer, normalizeQuestion(QUESTIONS[0]));
+    renderViz(AskTimeline, {
+      summary: newer,
+      records: live.records,
+      window: live.window,
+      running: true,
+    });
+    const legendCount = (label) =>
+      Number(
+        screen
+          .getByText(label)
+          .parentElement.textContent.slice(label.length)
+          .replace(/,/g, ""),
+      );
+    const reading = legendCount("Reading");
+    expect(reading).toBeGreaterThan(0);
+    expect(reading + legendCount("Not yet")).toBe(tallied.pending);
   });
 
   it("marks the columns whose rows had a trace error", () => {

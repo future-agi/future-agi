@@ -89,6 +89,7 @@ function RunPane({
   onCancelRunAgain,
   configsById = {},
   configsLoading = false,
+  onProgress,
 }) {
   const run = useAskRun({
     projectId,
@@ -97,6 +98,13 @@ function RunPane({
     questions: launch?.questions,
     startedAt: launch?.startedAt,
   });
+  // History's card for this run counts from this summary too.
+  const settled = run.answered + run.failed;
+  const counts = run.summary?.counts;
+  useEffect(() => {
+    if (taskId && counts)
+      onProgress?.({ taskId, settled, total: run.total, counts });
+  }, [taskId, settled, run.total, counts, onProgress]);
   // A run opened by its link alone learns its unit from the server, so the
   // URL (and the tab bar) can follow it.
   useEffect(() => {
@@ -145,6 +153,7 @@ RunPane.propTypes = {
   onCancelRunAgain: PropTypes.func,
   configsById: PropTypes.object,
   configsLoading: PropTypes.bool,
+  onProgress: PropTypes.func,
 };
 
 function Welcome({ onNew }) {
@@ -211,6 +220,8 @@ export default function AskPage() {
   const [pending, setPending] = useState(null);
   const [startError, setStartError] = useState(null);
   const [rerunning, setRerunning] = useState(false);
+  // The open run's counts, for its card in History.
+  const [openProgress, setOpenProgress] = useState(null);
   // A Run again the server holds back until its credits are confirmed:
   // {taskId, rows, credits}, confirmed or dropped on that run's page.
   const [rerunConfirm, setRerunConfirm] = useState(null);
@@ -594,6 +605,7 @@ export default function AskPage() {
         onCancelRunAgain={() => setRerunConfirm(null)}
         configsById={configsById}
         configsLoading={saved.isLoading}
+        onProgress={setOpenProgress}
       />
     );
   } else if (!latest.isLoading && !latest.runs.length) {
@@ -608,6 +620,7 @@ export default function AskPage() {
         projectId={observeId}
         configsById={configsById}
         selectedId={isNew ? null : runId}
+        openProgress={openProgress}
         collapsed={collapsed}
         onToggle={toggleRail}
         onNew={() => startOver()}

@@ -1573,6 +1573,11 @@ export default function AskTimeline({
   }));
   const errors = model?.errors || 0;
   const unsure = legend.reduce((sum, entry) => sum + entry.unsure, 0);
+  // Every legend count comes from the summary the page's header and
+  // progress read, so they agree while answers land. The squares, read less
+  // often, only split the rows still to answer into those Jev is reading
+  // and those it hasn't reached.
+  const reading = counts ? Math.min(counts.reading, run.pending) : 0;
   const status = [
     run.failed + run.skipped > 0 && {
       key: "failed",
@@ -1587,16 +1592,16 @@ export default function AskTimeline({
     },
     ...(counts
       ? [
-          (running || counts.reading > 0) && {
+          (running || reading > 0) && {
             key: "reading",
             label: "Reading",
-            count: counts.reading,
+            count: reading,
             color: alpha(theme.palette.primary.main, 0.3),
           },
-          (running || counts.waiting > 0) && {
+          (running || run.pending > reading) && {
             key: "waiting",
             label: "Not yet",
-            count: counts.waiting,
+            count: run.pending - reading,
             color: alpha(theme.palette.text.disabled, 0.55),
             hollow: true,
           },

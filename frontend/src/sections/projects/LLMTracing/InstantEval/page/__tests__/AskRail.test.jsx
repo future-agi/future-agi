@@ -40,7 +40,7 @@ const item = (extra = {}) => ({
   counts: {},
   ...extra,
 });
-function renderRail(onRecreate = vi.fn()) {
+function renderRail(onRecreate = vi.fn(), props = {}) {
   const onOpen = vi.fn();
   render(
     <MemoryRouter>
@@ -52,6 +52,7 @@ function renderRail(onRecreate = vi.fn()) {
           onNew={vi.fn()}
           onOpen={onOpen}
           onRecreate={onRecreate}
+          {...props}
         />
       </ThemeProvider>
     </MemoryRouter>,
@@ -127,5 +128,53 @@ describe("history recovery", () => {
     renderRail();
     expect(screen.getByText("3 Yes")).toBeInTheDocument();
     expect(screen.queryByText("Yes 100%")).toBeNull();
+  });
+});
+
+describe("the open run's card while it is answered", () => {
+  it("counts from the page's summary, not from History's own poll", () => {
+    // History last polled at 8 rows; the page's summary says 2.
+    history.runs = [
+      item({
+        taskId: "live-task",
+        status: "running",
+        unit: "sessions",
+        rows: 49,
+        answered: 8,
+        pending: 41,
+        counts: { q1: { Yes: 6, No: 2 } },
+      }),
+    ];
+    renderRail(vi.fn(), {
+      selectedId: "live-task",
+      openProgress: {
+        taskId: "live-task",
+        settled: 2,
+        total: 49,
+        counts: { q1: { Yes: 3, No: 1 } },
+      },
+    });
+    const card = screen.getByRole("link", { name: "Open the run: Resolved?" });
+    expect(within(card).getByText(/2 of 49 answered/)).toBeInTheDocument();
+    expect(within(card).getByText("3 Yes")).toBeInTheDocument();
+    expect(within(card).queryByText(/8 of 49/)).toBeNull();
+  });
+
+  it("keeps History's count for a run that isn't open", () => {
+    history.runs = [
+      item({
+        taskId: "live-task",
+        status: "running",
+        unit: "sessions",
+        rows: 49,
+        answered: 8,
+        pending: 41,
+      }),
+    ];
+    renderRail(vi.fn(), {
+      selectedId: "other-task",
+      openProgress: { taskId: "other-task", settled: 2, total: 49 },
+    });
+    expect(screen.getByText(/8 of 49 answered/)).toBeInTheDocument();
   });
 });

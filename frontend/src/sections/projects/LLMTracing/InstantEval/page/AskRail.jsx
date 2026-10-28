@@ -94,7 +94,17 @@ function topAnswer(item, counts) {
 }
 
 // One past run: its question, view, size, split and age.
-function RunCard({ runItem, selected, onOpen, onRecreate }) {
+function RunCard({ runItem: listed, selected, onOpen, onRecreate, progress }) {
+  // The open run counts from the summary its page reads, so the card and
+  // the page never show two counts while answers land.
+  const runItem = progress
+    ? {
+        ...listed,
+        answered: progress.settled,
+        rows: progress.total || listed.rows,
+        counts: progress.counts || listed.counts,
+      }
+    : listed;
   const item = runItem.items[0];
   // As the run's header shows them: without the run's name in front.
   const [question] = displayQuestions(
@@ -264,6 +274,8 @@ RunCard.propTypes = {
   selected: PropTypes.bool,
   onOpen: PropTypes.func.isRequired,
   onRecreate: PropTypes.func,
+  // The open run's own counts: {settled, total, counts}.
+  progress: PropTypes.object,
 };
 
 /**
@@ -279,6 +291,7 @@ export default function AskRail({
   onNew,
   onOpen,
   onRecreate,
+  openProgress,
 }) {
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
@@ -438,6 +451,12 @@ export default function AskRail({
                       selected={runItem.taskId === selectedId}
                       onOpen={onOpen}
                       onRecreate={onRecreate}
+                      progress={
+                        runItem.taskId === selectedId &&
+                        openProgress?.taskId === selectedId
+                          ? openProgress
+                          : null
+                      }
                     />
                   ))}
                 </Stack>
@@ -475,4 +494,6 @@ AskRail.propTypes = {
   onNew: PropTypes.func.isRequired,
   onOpen: PropTypes.func.isRequired,
   onRecreate: PropTypes.func,
+  // The open run's counts from its page: {taskId, settled, total, counts}.
+  openProgress: PropTypes.object,
 };
