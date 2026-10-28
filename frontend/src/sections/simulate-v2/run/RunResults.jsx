@@ -19,6 +19,7 @@ import {
   Tab,
   Tooltip,
   Drawer,
+  Alert,
   Popover,
   MenuItem,
   ListItemIcon,
@@ -67,6 +68,8 @@ import {
 import { runPinsOf } from "../_mock/envModel";
 import { REPLAY_HEADER, stubbedToolNames } from "../_mock/replay";
 import FromImprovement from "./FromImprovement";
+import { improvementPath } from "../improvements/improvementNav";
+import { IssueRunOrigin } from "../errorFeed/FixRunNote";
 import RunGroupBar from "./RunGroupBar";
 import InsightsTab from "./InsightsTab";
 import CostTab from "./CostTab";
@@ -446,10 +449,49 @@ export default function RunResults({
 
   /* Made by an improvement to try a change. Its failures are the
      improvement's to read, so Debug failures isn't offered here. */
+  /* A fix's first run is the fix's starting point, not one of its
+     candidates — the fix is already working on these failures. */
+  const fixFirst =
+    (envState.runs || []).find((r) => r.id === runId)?.measuredFor?.kind ===
+    "fix";
+  /* The issue's scenarios ride along uncounted — their result is what the
+     fix came for, so the header says it beside the run's own status. */
+  const fixIssueId =
+    (envState.runs || []).find((r) => r.id === runId)?.measuredFor?.issueId ||
+    "this issue";
+  const fixOfRun = fixFirst
+    ? (envState.optimizations || []).find((o) => o.fromRunId === runId)
+    : null;
+  /*
+    The issue's scenarios ride along uncounted — their result is what the fix
+    came for. Read as the fix reads it (its own reproduce result): a scenario
+    reproduces only when it failed every repeat; failing once is
+    inconclusive — so this page and the fix never disagree.
+  */
+  const issueResult = useMemo(() => {
+    if (!fixFirst) return null;
+    const own = (tasks || []).filter((t) => t.fixScenario);
+    const rep = fixOfRun?.reproduce;
+    if (rep?.total)
+      return {
+        total: rep.total,
+        reproduced: rep.reproduced || 0,
+        inconclusive: rep.inconclusive || 0,
+        unscored: own.filter((t) => t.status === "unmeasured").length,
+      };
+    if (!own.length) return null;
+    return {
+      total: own.length,
+      reproduced: own.filter((t) => t.status === "failed").length,
+      inconclusive: own.filter((t) => t.status === "flaky").length,
+      unscored: own.filter((t) => t.status === "unmeasured").length,
+    };
+  }, [fixFirst, fixOfRun, tasks]);
   const candidate =
-    !!trialMeta ||
-    !!named?.improvement ||
-    isCandidateRun({ ...(identity || {}), id: runId }, envState);
+    !fixFirst &&
+    (!!trialMeta ||
+      !!named?.improvement ||
+      isCandidateRun({ ...(identity || {}), id: runId }, envState));
 
   /*
     The run as one record — its release verdict and execution health, what it
@@ -538,15 +580,29 @@ export default function RunResults({
     });
   const [runRerunAnchor, setRunRerunAnchor] = useState(null);
   /* The scenarios that didn't pass — what "Re-run N failing" replays. */
+  /* A fix's first run debugs only what isn't the issue's — the fix already
+     has the issue. */
+  const debugTasks = useMemo(() => {
+    if (!fixFirst) return tasks;
+    /* The environment's scenarios the fix took in (ones that fail the same
+       way, held back to prove it) are the fix's too. */
+    const ids = (x) =>
+      (x || []).map((t) => (typeof t === "string" ? t : t?.id));
+    const inFix = new Set([
+      ...ids(fixOfRun?.result?.train),
+      ...ids(fixOfRun?.result?.held),
+    ]);
+    return tasks.filter((t) => !t.fixScenario && !inFix.has(t.id));
+  }, [fixFirst, fixOfRun, tasks]);
   const failingScenarioIds = useMemo(
     () => [
       ...new Set(
-        tasks
+        debugTasks
           .filter((t) => t.status === "failed" || t.status === "flaky")
           .map((t) => t.scenarioId || t.id),
       ),
     ],
-    [tasks],
+    [debugTasks],
   );
   /* Failure analysis is priced and charged once per run: the first open
      records the charge on the run; opening it again reads the same one. */
@@ -1090,8 +1146,10 @@ export default function RunResults({
                   cursor: "default",
                 }}
               >
+                {/* An improvement's run says whose it is — the environment has
+                    its own Run 1 too. */}
                 {trialMeta
-                  ? `Run ${trialMeta.trial.n}`
+                  ? `${trialMeta.opt?.name || "Improvement"} · Trial ${trialMeta.trial.n}`
                   : identity
                     ? `Run ${identity.ordinal}`
                     : "Run complete"}
@@ -1116,6 +1174,24 @@ export default function RunResults({
                       : "completed"
               }
             />
+            {issueResult && (
+              <Tooltip
+                arrow
+                title="The issue's scenarios ran with this run but count toward neither its pass rate nor the environment's history. Reproduced: still failing on today's agent."
+              >
+                <Typography
+                  noWrap
+                  sx={{
+                    typography: "s2",
+                    color: "text.secondary",
+                    flexShrink: 0,
+                    cursor: "default",
+                  }}
+                >
+                  {`The issue's ${issueResult.total}: ${issueResult.reproduced} reproduced${issueResult.inconclusive ? ` · ${issueResult.inconclusive} inconclusive` : ""}${issueResult.unscored ? ` · ${issueResult.unscored} not scored` : ""}`}
+                </Typography>
+              </Tooltip>
+            )}
             {/* Two indicators, apart: how the agent did (a report — pass^1,
                 pass^k — never a gate), and did our harness do its job. */}
             <RunSummaryChip summary={report.summary} />
@@ -1214,6 +1290,10 @@ export default function RunResults({
                 <FromImprovement improvement={named.improvement} />
               </>
             )}
+            <IssueRunOrigin
+              envId={env.id}
+              run={(envState.runs || []).find((r) => r.id === runId)}
+            />
             {` · ${stats.total} scenario${stats.total === 1 ? "" : "s"}`}
             {identity?.repeats > 1 ? ` × ${identity.repeats} repeats` : ""}
             {(() => {
@@ -1501,7 +1581,29 @@ export default function RunResults({
           change the agent. Trial pages open the same drawer against the
           trial's own outcomes.
         */}
-        {candidate ? (
+        {fixFirst ? (
+          /* The next step from a fix's first run is the fix itself — a second
+             Debug failures here would start a competing fix for the issue. */
+          <Tooltip
+            arrow
+            title={`The fix for ${fixOfRun?.trigger?.issueId || "this issue"} is working on these failures — its diagnosis, the changes it tries and the result are on its page.`}
+          >
+            <span>
+              <Button
+                variant="contained"
+                color="primary"
+                size="small"
+                disabled={!fixOfRun}
+                startIcon={<Iconify icon="fagi:fix" width={16} />}
+                onClick={() =>
+                  fixOfRun && navigate(improvementPath(env.id, fixOfRun.id))
+                }
+              >
+                View fix progress
+              </Button>
+            </span>
+          </Tooltip>
+        ) : candidate ? (
           /* Reads as unavailable rather than vanishing, so the reason — and
              the way to the improvement that owns this run — is findable. */
           <Tooltip
@@ -1569,6 +1671,50 @@ export default function RunResults({
           </Tooltip>
         )}
       </Stack>
+
+      {/* ── a fix's first run: what it found, and what else it found ──
+          A condition of this page, so a banner under the header (the header
+          stays two lines). The fix itself is the header's button. */}
+      {fixFirst && issueResult && (
+        <Alert
+          severity="info"
+          icon={<Iconify icon="fagi:fix" width={16} />}
+          /* In the page's gutter, like the tabs under it — never edge to edge. */
+          sx={{ mx: 2, mt: 1.5, mb: 1, flexShrink: 0 }}
+          action={
+            failingScenarioIds.length > 0 ? (
+              <Button
+                size="small"
+                variant="outlined"
+                color="inherit"
+                onClick={openDebug}
+                sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
+              >
+                {!analysisCharge
+                  ? `Debug failures · ≈ ${analysisCredits.toLocaleString()} credits`
+                  : "Debug failures"}
+              </Button>
+            ) : null
+          }
+        >
+          <Box component="span" sx={{ fontWeight: 600 }}>
+            {`Step 1 of the fix for ${fixIssueId}. `}
+          </Box>
+          {issueResult.reproduced > 0
+            ? `The issue showed up (${issueResult.reproduced} of ${issueResult.total}), so the fix is now working on it — nothing in the agent has changed yet.`
+            : issueResult.inconclusive
+              ? `The issue didn't fail reliably (${issueResult.inconclusive} of ${issueResult.total} failed only once), so the fix stopped before trying changes — its page says what to try.`
+              : "The issue didn't show up on today's agent, so there was nothing to fix."}
+          {failingScenarioIds.length > 0 && (
+            <Box component="span" sx={{ display: "block" }}>
+              <Box component="span" sx={{ fontWeight: 600 }}>
+                Also found:
+              </Box>
+              {` ${failingScenarioIds.length} other ${failingScenarioIds.length === 1 ? "failure" : "failures"}, not part of this issue — the fix leaves ${failingScenarioIds.length === 1 ? "it" : "them"} alone.`}
+            </Box>
+          )}
+        </Alert>
+      )}
 
       {/* ── the run group it was started with, if any ── */}
       <RunGroupBar envId={envId} runId={runId} />
@@ -2364,7 +2510,7 @@ export default function RunResults({
         envState={envState}
         patch={patch}
         addAgentVersion={addAgentVersion}
-        tasks={tasks}
+        tasks={debugTasks}
         stats={stats}
         runId={runId}
         onOpenTask={(t, step) => {

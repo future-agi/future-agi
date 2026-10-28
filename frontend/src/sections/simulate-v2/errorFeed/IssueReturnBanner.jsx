@@ -81,3 +81,6 @@ export default function IssueReturnBanner({ envId }) {
 }
 
 IssueReturnBanner.propTypes = { envId: PropTypes.string };
+
+/* The same banner for an environment built from New improvement. It goes
+   once an improvement has started in it, or when dismissed. */

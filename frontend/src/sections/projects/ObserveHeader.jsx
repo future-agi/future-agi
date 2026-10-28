@@ -34,6 +34,7 @@ import ConfigureProject from "../project-detail/ConfigureProject";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { ObserveIconButton } from "./SharedComponents";
 import { useGetProjectDetails } from "src/api/project/project-detail";
+import ProjectAgentLink from "src/sections/simulate-v2/agents/connect/ProjectAgentLink";
 import {
   OBSERVE_LIST_REFRESH_EVENT,
   OBSERVE_PAGE_CHANGED_EVENT,
@@ -406,6 +407,13 @@ const ObserveHeader = ({ text, refreshData, resetFilters }) => {
           </Popover>
           {/* Tag editor */}
           {observeId && <TagEditor projectId={observeId} variant="header" />}
+          {/* Which agent sends this project's traces — what Fix needs. */}
+          {observeId && (
+            <ProjectAgentLink
+              project={observeId}
+              projectName={currentProject?.label}
+            />
+          )}
 
           {/* Show simulation calls toggle — moved to Display panel */}
         </Box>

@@ -15,7 +15,7 @@ export const trialRowsFor = (env, envState, record, candidates = []) => {
     return {
       runId: `${record.id}-t${t.n}`,
       n: t.n,
-      name: `Run ${t.n}`,
+      name: `Trial ${t.n}`,
       tried: triedLabelOf(t, r.trials),
       /* A retry that learned from the last run: what it read and what it adds. */
       feedback: t.feedback || null,

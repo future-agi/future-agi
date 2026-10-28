@@ -938,7 +938,7 @@ HardFailPage.propTypes = {
   onContinueWithDefaults: PropTypes.func,
 };
 
-/* ── Claude-style AskUserQuestion card (matches IntakeStage in BuildFromAgent) ── */
+/* ── Claude-style AskUserQuestion card ── */
 
 function AskUserQuestionCard({
   step,

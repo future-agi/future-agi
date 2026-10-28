@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { buildRun } from "../_mock/runStream";
-import { clarifyPlanOf } from "../_mock/clarify";
+import { clarifyPlanOf, withAskSkipped } from "../_mock/clarify";
 import { causeOf, outcomeOfCause } from "../_mock/decoupled";
 
 const EMPTY = [];
@@ -47,36 +47,15 @@ export default function useRunPlayer({
      run, but count toward no decision. */
   staleIds = null,
   /* Whether this run may stop a scenario on a clarifying question (AC-15.13).
-     Only a live run ever asks; one read back from history never plays. */
+     Only a live run ever asks; one read back from history never plays.
+     "skip": a fix's first run — the scenario that would ask is left unscored. */
   clarify = true,
   /* The run plan's spending limit: { cap, alertAt, creditsOf(task, {high}) }.
      No limit: nothing is held back. */
   budget = null,
 }) {
-  const run = useMemo(
-    () =>
-      buildRun({
-        seed,
-        scenarios,
-        stage,
-        evals,
-        tools,
-        agentTools,
-        failRate,
-        concurrency,
-        repeats,
-        phrasing,
-        actors,
-        envVersion,
-        toolFaults,
-        admissionGates,
-        outcomes,
-        requiredEvals,
-        gradingRule,
-        turnLimits,
-        ...(turnLimit != null && { turnLimit }),
-      }),
-    [
+  const run = useMemo(() => {
+    const built = buildRun({
       seed,
       scenarios,
       stage,
@@ -95,9 +74,33 @@ export default function useRunPlayer({
       requiredEvals,
       gradingRule,
       turnLimits,
-      turnLimit,
-    ],
-  );
+      ...(turnLimit != null && { turnLimit }),
+    });
+    return clarify === "skip"
+      ? { ...built, tasks: withAskSkipped(built.tasks, seed) }
+      : built;
+  }, [
+    seed,
+    scenarios,
+    stage,
+    evals,
+    tools,
+    agentTools,
+    failRate,
+    concurrency,
+    repeats,
+    phrasing,
+    actors,
+    envVersion,
+    toolFaults,
+    admissionGates,
+    outcomes,
+    requiredEvals,
+    gradingRule,
+    turnLimits,
+    turnLimit,
+    clarify,
+  ]);
 
   const [phase, setPhase] = useState("booting"); // booting | running | done
   /*
@@ -130,7 +133,9 @@ export default function useRunPlayer({
   */
   const plan = useMemo(
     () =>
-      clarify ? clarifyPlanOf({ seed, tasks: run.tasks, concurrency }) : null,
+      clarify === true
+        ? clarifyPlanOf({ seed, tasks: run.tasks, concurrency })
+        : null,
     [clarify, seed, run, concurrency],
   );
   const [blocked, setBlocked] = useState(null);
@@ -496,7 +501,11 @@ export default function useRunPlayer({
     const done = tasks.filter((t) => FINISHED.includes(t.status));
     /* Pulled (test invalid twice) and Outdated / Re-check scenarios are left
        out of every count — listed on their own. */
-    const counted = tasks.filter((t) => !t.pulled && !staleIds?.[t.id]);
+    /* A fix's issue scenarios are reported apart (`issue`), never counted. */
+    const counted = tasks.filter(
+      (t) => !t.pulled && !staleIds?.[t.id] && !t.fixScenario,
+    );
+    const issueTasks = done.filter((t) => t.fixScenario);
     const passed = counted.filter((t) => t.status === "passed").length;
     const failed = counted.filter((t) => t.status === "failed").length;
     /* Scenarios whose samples disagreed with each other. Counted apart from
@@ -512,7 +521,11 @@ export default function useRunPlayer({
       if (o in notCounted) notCounted[o] += 1;
     });
     const measured = done.filter(
-      (t) => t.status !== "unmeasured" && !t.pulled && !staleIds?.[t.id],
+      (t) =>
+        t.status !== "unmeasured" &&
+        !t.pulled &&
+        !staleIds?.[t.id] &&
+        !t.fixScenario,
     );
     const active = tasks.filter((t) =>
       ["running", "grading"].includes(t.status),
@@ -520,6 +533,13 @@ export default function useRunPlayer({
     const notStarted = tasks.filter((t) => t.status === "notStarted").length;
     return {
       total: tasks.length,
+      /* The environment's own scenarios — what the run's record counts. */
+      envTotal: tasks.filter((t) => !t.fixScenario).length,
+      issue: {
+        total: tasks.filter((t) => t.fixScenario).length,
+        done: issueTasks.length,
+        failed: issueTasks.filter((t) => t.status !== "passed").length,
+      },
       done: done.length,
       passed,
       failed,

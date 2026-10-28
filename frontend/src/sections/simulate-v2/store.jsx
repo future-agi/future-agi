@@ -39,6 +39,7 @@ import { settleImprovements } from "./_mock/optimizationRuns";
 import { settleAbandonedRuns } from "./_mock/runGroup";
 /* Scheduled improvements start on their own, once per store. */
 import { useScheduledImprovements } from "./_mock/scheduledImprovements";
+import useFixFinishedNotices from "./errorFeed/useFixFinishedNotices";
 import { uniqueEnvName } from "./_mock/envNames";
 
 /*
@@ -761,6 +762,8 @@ function SimStoreRoot({ children }) {
   }, []);
 
   useScheduledImprovements(state, commit);
+  /* A fix finishing in the background is said once, wherever you are. */
+  useFixFinishedNotices(state, commit);
 
   const value = useMemo(() => ({ state, dispatch, commit }), [state, commit]);
   return (

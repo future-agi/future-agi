@@ -2,12 +2,15 @@ import PropTypes from "prop-types";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Box, Typography } from "@mui/material";
+import { paths } from "src/routes/paths";
 import { useSimStore, useConnectedAgents } from "../store";
 import { mainEnvOf, agentStatusOf } from "../_mock/agentLifecycle";
 import { baseRunOf, buildImprovement, todaySpend } from "../_mock/improvementStart";
 import { productionAgentVersion } from "../_mock/versions";
 import { isComingSoon } from "../_mock/rsiModel";
 import ImprovementSetup from "../run/fixmyagent/ImprovementSetup";
+import BuildEnvironmentDialog from "../agents/BuildEnvironmentDialog";
+import { buildPresetFor } from "../agents/agentViewUtils";
 import SideDrawer from "../components/SideDrawer";
 import AgentPicker from "./AgentPicker";
 import { agentPickerChoice, agentPickerHelper } from "./agentPickerChoices";
@@ -17,7 +20,10 @@ import { improvementPath } from "./improvementNav";
   New improvement (RSI PRD, Flow 4): pick the agent, then the same setup a
   run's Debug failures opens — on the agent's main environment, its other
   environments optional, aimed at a goal. Agents we can only call start
-  here too: they rarely send anything to the Error Feed.
+  here too: they rarely send anything to the Error Feed. An agent with no
+  environment is listed too: Build environment hands over to the normal
+  build, which ends on Run simulation — that first run shows where the agent
+  fails, and the person improves from what it finds.
 */
 export default function NewImprovement({ open, onClose }) {
   const navigate = useNavigate();
@@ -25,16 +31,19 @@ export default function NewImprovement({ open, onClose }) {
   const { state, commit } = useSimStore();
   const { agents } = useConnectedAgents();
   const [picked, setPicked] = useState(null);
+  const [buildOpen, setBuildOpen] = useState(false);
 
-  /* Agents that can be improved: real (not a template's stand-in), a type
-     improvements run on, and tested in an environment. */
+  /* Agents that can be improved: real (not a template's stand-in) and a type
+     improvements run on. One with no environment yet is listed too. */
   const choices = useMemo(() => agents
-    .filter((a) => !a.placeholder && !isComingSoon(a) && !isComingSoon(mainEnvOf(a, state)?.env) && (a.usedIn || []).length > 0)
+    .filter((a) => !a.placeholder && !isComingSoon(a) && !isComingSoon(mainEnvOf(a, state)?.env))
     .map((a) => ({ agent: a, main: mainEnvOf(a, state), status: agentStatusOf(a) })), [agents, state]);
 
   const close = () => { setPicked(null); onClose(); };
   const main = picked ? mainEnvOf(picked, state) : null;
   const env = main?.env || null;
+  /* Picked, but nowhere to score it yet. */
+  const needsEnv = !!picked && !env;
 
   const start = ({ name, model, writerModel, envIds, goal, budget, limits, seed, lineage, reread, textSearch, optimizerId, base, today }) => {
     const es = state.byEnv[env.id];
@@ -67,11 +76,10 @@ export default function NewImprovement({ open, onClose }) {
     .map((c) => agentPickerChoice(c.agent, c.main?.env, c.status))
     .sort((a, b) => Number(a.off) - Number(b.off) || a.name.localeCompare(b.name)), [choices]);
   const pickedChoice = pickerChoices.find((c) => c.key === picked?.key) || null;
-  /* Why nobody is listed: no agents, none tested in an environment, or none of a type improvements run on yet. */
+  /* Why nobody is listed: no agents, or none of a type improvements run on yet. */
   const emptyText = useMemo(() => {
     const real = agents.filter((a) => !a.placeholder);
     if (!real.length) return "No agents connected yet — connect one from Agents first.";
-    if (!real.some((a) => (a.usedIn || []).length)) return "No agent has an environment yet — build one for an agent first.";
     return "None of your agents can be improved yet — improvements don't run on their type yet.";
   }, [agents]);
   const agentField = (
@@ -85,7 +93,9 @@ export default function NewImprovement({ open, onClose }) {
       />
       {pickedChoice && (
         <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.5 }}>
-          {agentPickerHelper(pickedChoice, main?.envName)}
+          {needsEnv
+            ? `An improvement is scored in an environment. Build one from ${picked.name} — a few minutes — then run it once and improve from what it finds.`
+            : agentPickerHelper(pickedChoice, main?.envName)}
         </Typography>
       )}
     </Box>
@@ -96,10 +106,29 @@ export default function NewImprovement({ open, onClose }) {
       <ImprovementSetup
         bare open={open} onClose={close}
         agentField={agentField}
-        preset={picked && env ? { agentKey: picked.key, envId: env.id, fromGoal: true } : { fromGoal: true }}
+        preset={picked && env ? { agentKey: picked.key, envId: env.id, fromGoal: true } : { ...(picked && { agentKey: picked.key }), fromGoal: true }}
         onStart={start}
+        onBuildEnv={needsEnv ? () => setBuildOpen(true) : null}
       />
+      {needsEnv && (
+        <BuildEnvironmentDialog
+          open={buildOpen}
+          onClose={() => setBuildOpen(false)}
+          agent={picked}
+          defaultVersion={picked.production || picked.latest}
+          onBuild={(choice) => {
+            setBuildOpen(false);
+            close();
+            navigate(paths.dashboard.simulate.environmentBuild, {
+              state: { presetSource: buildPresetFor(picked, choice) },
+            });
+          }}
+        />
+      )}
     </SideDrawer>
   );
 }
-NewImprovement.propTypes = { open: PropTypes.bool, onClose: PropTypes.func.isRequired };
+NewImprovement.propTypes = {
+  open: PropTypes.bool,
+  onClose: PropTypes.func.isRequired,
+};

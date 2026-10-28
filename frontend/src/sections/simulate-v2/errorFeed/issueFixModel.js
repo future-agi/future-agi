@@ -21,6 +21,8 @@ import {
 import { improvementRunName } from "../_mock/optimizer";
 import { currentAgentVersion, productionAgentVersion } from "../_mock/versions";
 import { measureTodayRun, measuredSummaryOf } from "../_mock/measureToday";
+import { runPlan } from "../_mock/proofs";
+import { needsRecheck } from "../improvements/behindProduction";
 import { isComingSoon, needsLiveConsent } from "../_mock/rsiModel";
 import { agentStatusFor, mainEnvFor } from "../_mock/improvementPolicy";
 import {
@@ -29,6 +31,7 @@ import {
   needsFoundCheck,
 } from "../_mock/agentRegistry";
 import { errorFeedScenarios } from "../_mock/scenarioSources";
+import { runsSealed } from "../_mock/setupGaps";
 import { projectLinkOf, projectsOfAgent } from "../_mock/projectLinks";
 import { prOfImprovement } from "../_mock/improvementPr";
 import { coderStatusOf } from "../_mock/improverAttempts";
@@ -161,6 +164,61 @@ const ISSUE_CASES = {
     "Traveller asks whether switching costs anything",
     "Traveller accepts a rebooking, then asks for the receipt",
   ],
+  "ISS-4601": [
+    "Guest books a table and hangs up straight after naming the time",
+    "Guest gives the party size before the date",
+    "Guest changes the day mid-booking",
+    "Guest books for someone else and gives their name",
+  ],
+  "ISS-4602": [
+    "Caller asks for a repeat prescription and gives only a name",
+    "Caller books a pickup for a family member",
+    "Caller can't remember their date of birth format",
+    "Caller asks to collect today, before the check",
+  ],
+  "ISS-4603": [
+    "Traveller rebooked onto a basic fare asks about bags",
+    "Traveller asks if the old bag allowance carries over",
+    "Traveller adds a bag after the rebooking",
+    "Traveller on a partner flight asks about bags",
+    "Traveller rebooked onto a higher fare asks about bags",
+  ],
+  "ISS-4604": [
+    "Customer says the original card is cancelled and asks where the refund goes",
+    "Customer asks for the refund on a different card",
+    "Customer mentions the card was stolen and replaced",
+    "Customer asks for store credit instead",
+    "Customer's bank closed the account the purchase came from",
+    "Customer asks to split the refund across two cards",
+    "Customer says the card expired since the purchase",
+    "Customer asks for a bank transfer instead of a card refund",
+    "Customer gives the new card's last four digits",
+    "Customer asks what happens if the refund bounces",
+    "Customer paid with a gift card and a cancelled card",
+    "Customer calls back after the refund went to the old card",
+    "Customer asks for the refund in cash at the store",
+    "Customer's partner paid, and that card is cancelled",
+    "Customer asks to refund only the shipping to a new card",
+    "Customer cancels the card during the call",
+    "Customer asks for a refund on a subscription billed to an old card",
+    "Customer is unsure whether the card is still active",
+    "Customer asks the agent to check which card was used",
+    "Customer asks to hold the refund until a new card arrives",
+    "Customer says the card was frozen, not cancelled",
+    "Customer asks for the refund to a digital wallet",
+  ],
+  "ISS-4605": [
+    "Caller asks what closing an account involves",
+    "Caller asks whether closing deletes their history",
+    "Caller asks how long closing takes",
+    "Caller asks to close, then changes their mind",
+  ],
+  "ISS-4606": [
+    "Caller asks how long until a driver arrives",
+    "Caller asks for a car at a busy time",
+    "Caller asks for a pickup from a new address",
+    "Caller asks to be called when the driver is near",
+  ],
   "ISS-4589": [
     "Customer asks what cancelling would cost",
     "Customer asks about the cancellation fee on one order",
@@ -191,6 +249,14 @@ const ISSUE_GROUPS = {
   "ISS-4585": [1, 2, 2, 3],
   "ISS-4589": [1, 1, 2, 3],
   "ISS-4593": [1, 2, 1, 3],
+  "ISS-4601": [1, 2, 1, 3],
+  "ISS-4602": [1, 2, 1, 3],
+  "ISS-4603": [1, 1, 2, 3, 3],
+  "ISS-4604": [
+    1, 2, 1, 3, 1, 4, 5, 4, 2, 6, 7, 8, 9, 10, 11, 8, 12, 5, 13, 6, 1, 14,
+  ],
+  "ISS-4605": [1, 2, 3, 4],
+  "ISS-4606": [1, 2, 3, 4],
 };
 
 const hash = (s) => {
@@ -256,6 +322,27 @@ export const envsForAgent = (agent, state) => {
   return main ? [main, ...list.filter((e) => e.id !== main.id)] : list;
 };
 
+/* Whether an environment tests the channel the issue happened on — a voice
+   issue needs callers that speak; a chat issue runs anywhere but voice-only. */
+const VOICE_SURFACES = ["voice", "multi"];
+export const envFitsIssue = (env, issue) => {
+  if (!env || !issue?.modality) return true;
+  return issue.modality === "voice"
+    ? VOICE_SURFACES.includes(env.surface)
+    : env.surface !== "voice";
+};
+
+/**
+ * Where a fix runs unless the person picks another: the agent's main
+ * environment when it tests the issue's channel, else the first one that
+ * does, else the main one. `envs` is envsForAgent's list (main first).
+ */
+export const fixEnvFor = (envs = [], issue) =>
+  (envFitsIssue(envs[0], issue) ? envs[0] : null) ||
+  envs.find((e) => envFitsIssue(e, issue)) ||
+  envs[0] ||
+  null;
+
 /**
  * Which version of the agent is in production — the one answer the Agents
  * page gives too: the version an admin made active, else the newest that
@@ -304,7 +391,7 @@ export const productionVersionOf = (agent, state, issue, fallbackEs) => {
  * live and needs the user's consent first. Null when Fix can start.
  *   { key, title, body, action?: "connections" | "overview" }
  */
-export const fixGateOf = (agent, env) => {
+export const fixGateOf = (agent, env, es = null) => {
   if (!agent) return null;
   const status = agentStatusFor(agent);
   if (status.key === "archived") {
@@ -335,11 +422,21 @@ export const fixGateOf = (agent, env) => {
   }
   /* A newly connected code agent is fixed, like it's run, once what we read
      from its code is confirmed (RSI PRD Flow 1) — the same rule runs follow. */
+  if (needsFoundCheck(agent) && es && !runsSealed(es)) {
+    /* Live, like a live run: the review is where tools that must never run
+       for real are marked, so it comes first. */
+    return {
+      key: "found-live",
+      title: "Confirm what we found in its code first",
+      body: `${agent.name} runs live. Mark the tools that must never run for real on its Overview — Check what we found — then fix.`,
+      action: "overview",
+    };
+  }
   if (needsFoundCheck(agent)) {
     return {
       key: "found",
       title: "Confirm what we found in its code first",
-      body: `Confirm what we read from ${agent.name}'s code on its Overview. Fixes and runs start once it's confirmed.`,
+      body: `Confirm what we read from ${agent.name}'s code on its Overview. Fix works now; runs start once it's confirmed.`,
       action: "overview",
     };
   }
@@ -392,6 +489,13 @@ export const issueScenarioDrafts = (issue, env, _envState) => {
     "The caller asks the agent to repeat itself",
   ];
   const traces = Math.max(cases.length, issue.trace_count || cases.length);
+  /* How many of the issue's traces each situation stands for — the first
+     cases are the most common, so they carry more. */
+  const weights = cases.map((_, i) => cases.length - i);
+  const wsum = weights.reduce((a, b) => a + b, 0);
+  const share = weights.map((w) =>
+    Math.max(1, Math.round((traces * w) / wsum)),
+  );
   const raw = cases.map((title, i) => ({
     id: `from-feed::${id}::${i + 1}`,
     groupId: `from-feed::${id}::g${(ISSUE_GROUPS[id] || [])[i] || i + 1}`,
@@ -400,7 +504,8 @@ export const issueScenarioDrafts = (issue, env, _envState) => {
     title,
     summary: issue.error?.name,
     task: `Reproduces Error Feed issue ${id}: ${issue.error?.name}.`,
-    situation: `${title}. Built from ${Math.max(1, Math.round(traces / cases.length))} of the issue's ${issue.trace_count || traces} traces.`,
+    situation: `${title}. Built from ${share[i]} of the issue's ${issue.trace_count || traces} traces.`,
+    traceCount: share[i],
     expected: `The agent handles this without repeating the issue: ${issue.error?.name.charAt(0).toLowerCase()}${issue.error?.name.slice(1)} does not happen.`,
     turns: 8,
     critical: issue.severity === "critical",
@@ -424,6 +529,61 @@ export const issueScenarioDrafts = (issue, env, _envState) => {
 };
 
 /**
+ * Run scenarios only: a run of just the issue's scenarios — no fix. Those
+ * not in the environment ride on the run, as a fix's do, so the environment
+ * is untouched until someone adds them from the run.
+ */
+export const issueRunFor = (env, es, issue, drafts, { id, cap } = {}) => {
+  const base = fixRunFor(env, es, issue, drafts);
+  if (!base) return null;
+  return {
+    ...base,
+    id,
+    seed: id,
+    scenarioIds: drafts.map((d) => d.id),
+    partial: true,
+    measuredFor: { kind: "issue", issueId: issue.cluster_id },
+    startedBy: `Run scenarios · ${issue.cluster_id}`,
+    label: `${issue.cluster_id} · its scenarios`,
+    ...(cap && { budget: { cap } }),
+  };
+};
+
+/* A fix runs at most this many of an issue's scenarios — the most common
+   situations first. Every scenario runs on every repeat, candidate and
+   finalist, so more costs a lot and makes the search noisier, not better. */
+export const FIX_SCENARIO_CAP = 12;
+
+/** The scenarios a fix uses by default, and the rest. Drafts come most common first. */
+export const fixScenariosOf = (drafts = []) => {
+  const all = [...drafts].sort(
+    (a, b) => (b.traceCount || 0) - (a.traceCount || 0),
+  );
+  return {
+    all,
+    used: all.slice(0, FIX_SCENARIO_CAP),
+    capped: all.length > FIX_SCENARIO_CAP,
+  };
+};
+
+/** Scenarios grouped by the situation they share: { id, label, scenarios, traces }. */
+export const scenarioGroupsOf = (drafts = []) => {
+  const byId = new Map();
+  drafts.forEach((d) => {
+    const g = byId.get(d.groupId) || {
+      id: d.groupId,
+      label: d.title,
+      scenarios: 0,
+      traces: 0,
+    };
+    g.scenarios += 1;
+    g.traces += d.traceCount || 0;
+    byId.set(d.groupId, g);
+  });
+  return [...byId.values()].sort((a, b) => b.traces - a.traces);
+};
+
+/**
  * Does the failure actually happen on today's agent? Each scenario runs
  * three times. It counts as reproduced when it fails at least twice; once in
  * three is inconclusive — never a pass, never a reproduction, never a
@@ -434,7 +594,7 @@ export const issueScenarioDrafts = (issue, env, _envState) => {
  * Confirmed issues reproduce on most of their scenarios, emerging ones on
  * fewer, and one the feed couldn't confirm doesn't reproduce reliably at all.
  */
-export const reproduceOf = (issue, drafts = []) => {
+export const reproduceOf = (issue, drafts = [], repeats = REPEATS) => {
   const evidence = issue.evidence_state || "confirmed";
   const total = drafts.length;
   const perScenario = {};
@@ -446,9 +606,11 @@ export const reproduceOf = (issue, drafts = []) => {
       fails =
         i < Math.max(1, total - 2) ? (h < 50 ? 3 : 2) : i === total - 2 ? 1 : 0;
     else fails = i === total - 1 && h < 50 ? 1 : h < 60 ? 3 : 2;
+    /* Over the run's own repeats (two for voice): never more fails than tries. */
+    fails = Math.min(fails, repeats);
     perScenario[d.id] = {
       fails,
-      of: REPEATS,
+      of: repeats,
       state:
         fails >= 2 ? "reproduced" : fails === 1 ? "inconclusive" : "passed",
     };
@@ -501,6 +663,12 @@ const ISSUE_MECHANISM = {
   "ISS-4585": { unsupportedClaim: true },
   "ISS-4589": { unsupportedClaim: true },
   "ISS-4593": { unsupportedClaim: true },
+  "ISS-4601": { unsupportedClaim: true },
+  "ISS-4602": { missing: "verify_identity", match: /verif|identity|auth|dob/i },
+  "ISS-4603": { unsupportedClaim: true },
+  "ISS-4604": { unsupportedClaim: true },
+  "ISS-4605": { unsupportedClaim: true },
+  "ISS-4606": { unsupportedClaim: true },
 };
 
 /** How the issue's traces fail — a skipped tool, a claim no tool backs, or both. */
@@ -570,6 +738,85 @@ export const todayRunFor = (env, es, issueId, now = new Date()) =>
 const summaryOf = measuredSummaryOf;
 
 /**
+ * The issue's scenarios that can run on this environment, by the same rule
+ * the run applies (a scenario that can't stage there is skipped) — so the
+ * fix counts, reproduces and targets only what its first run actually
+ * plays. { runnable, cant: [{ id, title, why }] }
+ */
+export const runnableDraftsOf = (env, es, drafts = []) => {
+  if (!env || !es || !drafts.length) return { runnable: drafts, cant: [] };
+  const have = new Set((es.scenarios || []).map((x) => x.id));
+  const riding = drafts.filter((d) => !have.has(d.id));
+  if (!riding.length) return { runnable: drafts, cant: [] };
+  let skipped = [];
+  try {
+    skipped = runPlan(env, {
+      ...es,
+      scenarios: [...(es.scenarios || []), ...riding],
+    }).skipped;
+  } catch (e) {
+    return { runnable: drafts, cant: [] };
+  }
+  const out = new Map(
+    skipped
+      .filter((x) => riding.some((d) => d.id === x.id))
+      .map((x) => [x.id, x.skipReason]),
+  );
+  return {
+    runnable: drafts.filter((d) => !out.has(d.id)),
+    cant: drafts
+      .filter((d) => out.has(d.id))
+      .map((d) => ({ id: d.id, title: d.title, why: out.get(d.id) })),
+  };
+};
+
+/**
+ * The fix's first run, played live where Start fix lands: today's agent on
+ * the environment's scenarios (the baseline), then the issue's own — which
+ * fail as often as Reproduce found, so the run and the fix never disagree.
+ * The issue's scenarios ride on the run (`fixScenarios`); they stay out of
+ * the environment until someone adds them.
+ */
+export const fixRunFor = (env, es, issue, drafts, now = new Date()) => {
+  const today = todayRunFor(env, es, issue?.cluster_id, now);
+  if (!today) return null;
+  const reps = today.repeats || REPEATS;
+  const repro = reproduceOf(issue, drafts, reps);
+  /* One already in the environment (added earlier) runs once, as its own. */
+  const inEnv = new Set((es?.scenarios || []).map((x) => x.id));
+  const riding = drafts.filter((d) => !inEnv.has(d.id));
+  const fixScenarios = riding.map((d) => {
+    const fails = Math.min(repro.perScenario?.[d.id]?.fails || 0, reps);
+    return {
+      ...d,
+      fromIssue: issue.cluster_id,
+      fixScenario: true,
+      forcedSamples: Array.from({ length: reps }, (_, i) =>
+        i < fails ? "failed" : "passed",
+      ),
+    };
+  });
+  const {
+    finishedAt: _f,
+    total: _t,
+    passed: _p,
+    failed: _x,
+    flaky: _fl,
+    unmeasured: _u,
+    ...open
+  } = today;
+  return {
+    ...open,
+    scenarioIds: [...(today.scenarioIds || []), ...riding.map((d) => d.id)],
+    fixScenarios,
+    /* Played when its page opens, like a run-group member. */
+    status: "running",
+    pending: true,
+    label: `Fix · ${issue.cluster_id}`,
+  };
+};
+
+/**
  * The improvement record a Fix writes, for Start fix and for the seed alike:
  * the environment's newest run plus the issue's scenarios, reproduced first
  * (the budget pays for that, and what's left caps the search), the issue's
@@ -600,10 +847,19 @@ export const issueFixRecord = ({
      starts from today's measurement of it (`today`, made as the fix starts)
      — else, for fixes written before that, the newest run on it. */
   const prodLabel = productionAgentVersion(es)?.label || null;
-  const base = today
+  const measured = today
     ? summaryOf(env, es, today)
     : baseRunOf(env, es, prodLabel) || baseRunOf(env, es);
-  const repro = reproduceOf(issue, drafts);
+  /* The baseline is the environment's scenarios; the issue's — on the first
+     run too, when it carries them — are added once, below. */
+  const draftIds = new Set(drafts.map((d) => d.id));
+  const base = measured
+    ? { ...measured, tasks: measured.tasks.filter((t) => !draftIds.has(t.id)) }
+    : null;
+  const envScenarioCount = (today?.scenarioIds || []).filter(
+    (id) => !draftIds.has(id),
+  ).length;
+  const repro = reproduceOf(issue, drafts, today?.repeats || REPEATS);
   return buildImprovement({
     env,
     es,
@@ -624,7 +880,7 @@ export const issueFixRecord = ({
     budget,
     regressionEnvIds,
     spentFirst:
-      (drafts.length + (today?.scenarioIds?.length || 0)) *
+      (drafts.length + envScenarioCount) *
       (today?.repeats || REPEATS) *
       PER_CONVERSATION[env.surface === "voice" ? "voice" : "chat"],
     hold: !repro.reproduced,
@@ -726,6 +982,7 @@ export const fixEstimate = ({
   scenarioCount,
   regressionCount,
   surface,
+  inEnvCount = 0,
 }) =>
   improvementEstimate({
     /* Measuring today covers the issue's scenarios and the environment's. */
@@ -733,8 +990,14 @@ export const fixEstimate = ({
     surface,
     extraScenarios: regressionCount,
     firstConversations:
-      (scenarioCount + (preview?.today?.scenarioIds?.length || 0)) *
+      (scenarioCount -
+        inEnvCount +
+        (preview?.today?.scenarioIds?.length || 0)) *
       (preview?.today?.repeats || REPEATS),
+    firstDetail:
+      inEnvCount >= scenarioCount
+        ? `today's agent on the environment's ${preview?.today?.scenarioIds?.length || 0} scenarios — the issue's ${scenarioCount} are among them`
+        : `today's agent on the environment's ${preview?.today?.scenarioIds?.length || 0} scenarios and the issue's ${scenarioCount - inEnvCount}${inEnvCount ? ` (${inEnvCount} more already in it)` : ""}`,
   });
 
 /* How long a released fix is watched before the issue counts as resolved —
@@ -970,6 +1233,18 @@ export const fixStatusOf = (
     ...(issue?.recurs_after_fix === true && { recurs: true }),
   });
   if (shipped) return { ...at, ...shipped };
+  /* Another change went live after it measured the agent: its proof is on
+     the old version, so it's re-checked before it can ship. */
+  const behind =
+    ["ready", "stopped-early", "budget"].includes(ending.key) &&
+    needsRecheck({ record, env, envState: es, agents });
+  if (behind)
+    return {
+      ...at,
+      key: "ready",
+      recheck: true,
+      label: `Needs re-check on ${behind.prod}`,
+    };
   if (ending.key === "budget")
     return { ...at, key: "ready", label: "Stopped at budget" };
   /* Stopped once two runs in a row didn't beat the best; the best was verified. */

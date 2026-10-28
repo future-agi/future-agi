@@ -26,6 +26,16 @@ addIcon("solar:square-linear", {
   height: 24,
 });
 
+/*
+  Fix — a wrench. Solar has none, so it's drawn here in Solar's linear style
+  (24 grid, 1.5 stroke, round ends; shape adapted from Lucide's, ISC).
+*/
+addIcon("fagi:fix", {
+  body: '<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>',
+  width: 24,
+  height: 24,
+});
+
 /**
  * A wrapper component for displaying Iconify icons with customizable width and styling
  * Get Iconify icons from https://iconify.design/

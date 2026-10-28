@@ -39,7 +39,11 @@ import {
 } from "../_mock/comparison";
 import { TRIAL_CAP, DEMO_QUEUED_ROW } from "../_mock/runList";
 import { currentEnvVersion, currentAgentVersion } from "../_mock/versions";
-import { isCandidateRun, runIdentityOf } from "../_mock/runIdentity";
+import {
+  improvementOf,
+  isCandidateRun,
+  runIdentityOf,
+} from "../_mock/runIdentity";
 import { currentEnvSnapshot } from "../_mock/envSnapshot";
 import { staleScenarios } from "../_mock/proofs";
 import WinnerDrawer from "./WinnerDrawer";
@@ -49,7 +53,9 @@ import { allMetrics, deltaAgainst } from "../_mock/winner";
 import { estimateRunPlan, rangeLabel } from "../_mock/pricing";
 import { runCreditsOf } from "../_mock/usageLedger";
 import { resolveEval } from "../_mock/evals";
-import { useEnvState } from "../store";
+import { useConnectedAgents, useEnvState } from "../store";
+import { improvementRowsOf } from "../improvements/improvementRows";
+import StatusPill from "../improvements/ImprovementStatusPill";
 import { neutralCheckboxSx } from "../components/primitives";
 import { Head, MetricCell, ScoreCell } from "./RunsTableCells";
 import { compactTokens } from "./runsTableFormat";
@@ -115,7 +121,6 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
   const [addEvalsOpen, setAddEvalsOpen] = useState(false);
   /* Candidate runs — an improvement's trials and its winner run — are off
      until asked for. */
-  const [showCandidates, setShowCandidates] = useState(false);
 
   /* The winner is kept with the environment rather than derived, because it is
      a decision someone made under stated weights — not a fact about the runs
@@ -146,7 +151,6 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
      stays readable — the latest improvements are the ones people come to
      check; "Show all" lifts it. Kept oldest-first here (the merge sorts by
      time); the table shows newest first like every other run. */
-  const [allTrials, setAllTrials] = useState(false);
   const trialsAll = useMemo(
     () =>
       trialSummaries(env, envState)
@@ -156,10 +160,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
         ),
     [env, envState],
   );
-  const trials = useMemo(
-    () => (allTrials ? trialsAll : trialsAll.slice(-TRIAL_CAP)),
-    [trialsAll, allTrials],
-  );
+  const trials = useMemo(() => trialsAll.slice(-TRIAL_CAP), [trialsAll]);
 
   /*
     The one source of row-level truth. Chronological, then stamped with
@@ -200,22 +201,48 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
   }, [summaries, trials, envState.optimizations]);
 
   /*
-    What the list and the chart show. An improvement makes a run per
-    candidate it tries, and left in they bury the runs someone started — the
-    history people came to read. They keep their ordinals, so a hidden
-    candidate leaves a gap rather than renumbering the runs around it.
+    What the list shows: the runs of the agent, and each improvement as one
+    row. An improvement's trials are the agent with a change it may never
+    ship, scored on its target scenarios only — listed one by one they'd
+    read as the agent's history and bury the runs someone started. The row
+    says what it tried and how it went, and opens the improvement.
   */
-  const candidateCount = useMemo(
-    () => mergedRaw.filter((r) => isCandidateRun(r, envState)).length,
-    [mergedRaw, envState],
-  );
-  const listed = useMemo(
-    () =>
-      showCandidates
-        ? mergedRaw
-        : mergedRaw.filter((r) => !isCandidateRun(r, envState)),
-    [mergedRaw, showCandidates, envState],
-  );
+  const { agents, state: simState } = useConnectedAgents();
+  const improvementRows = useMemo(() => {
+    const rowsHere = improvementRowsOf({ state: simState, agents }).filter(
+      (x) => x.envId === env.id,
+    );
+    return rowsHere.map((row) => {
+      const own = trialsAll.filter((t) => t.selfImprovementId === row.recordId);
+      const record = (envState.optimizations || []).find(
+        (o) => o.id === row.recordId,
+      );
+      const last = own[own.length - 1];
+      return {
+        id: `improvement:${row.recordId}`,
+        kind: "improvement",
+        row,
+        trials: own.length,
+        best: own.length ? Math.max(...own.map((t) => t.passRate || 0)) : null,
+        finishedAt: last?.finishedAt || null,
+        startedAt: record?.startedAt || record?.createdAt || null,
+      };
+    });
+  }, [simState, agents, env.id, trialsAll, envState.optimizations]);
+  const listed = useMemo(() => {
+    const when = (r) =>
+      new Date(r.finishedAt || r.startedAt || Date.now()).getTime();
+    return [
+      /* A fix's first step is today's agent, unchanged — a run of the
+         agent like any other. Only its trials are the improvement's. */
+      ...mergedRaw.filter(
+        (r) =>
+          !isCandidateRun(r, envState) ||
+          improvementOf(r, envState)?.role === "baseline",
+      ),
+      ...improvementRows,
+    ].sort((a, b) => when(a) - when(b));
+  }, [mergedRaw, improvementRows, envState]);
 
   /* Newest first for display — the run someone just finished is the top row. */
   const rows = useMemo(() => [...listed].reverse(), [listed]);
@@ -534,7 +561,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
         <Stack direction="row" alignItems="center" spacing={2} sx={{ pb: 1.5 }}>
           <Box flex={1} minWidth={0}>
             <Typography sx={{ typography: "s1", fontWeight: 600 }}>
-              Runs ({tableRows.length})
+              Runs ({tableRows.filter((r) => r.kind !== "improvement").length})
             </Typography>
             <Typography
               noWrap
@@ -560,64 +587,6 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
               )}
             </Typography>
           </Box>
-          {/* Candidate runs, off by default — the count says what the list
-              is leaving out. Same quiet text toggle as the chart's run
-              window. */}
-          {selected.length === 0 && candidateCount > 0 && (
-            <Stack
-              direction="row"
-              alignItems="center"
-              spacing={0.5}
-              sx={{ flexShrink: 0 }}
-            >
-              {!showCandidates && (
-                <Typography
-                  sx={{
-                    typography: "s3",
-                    color: "text.tertiary",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {`${candidateCount} improvement run${candidateCount === 1 ? "" : "s"} hidden`}
-                </Typography>
-              )}
-              <Tooltip
-                arrow
-                title="Runs an improvement made to try a change. They aren't sent to Debug failures — the improvement reads its own."
-              >
-                <Button
-                  size="small"
-                  onClick={() => setShowCandidates((v) => !v)}
-                  sx={{
-                    color: "text.secondary",
-                    flexShrink: 0,
-                    whiteSpace: "nowrap",
-                    minWidth: 0,
-                  }}
-                >
-                  {showCandidates
-                    ? "Hide improvement runs"
-                    : "Show improvement runs"}
-                </Button>
-              </Tooltip>
-              {showCandidates && trialsAll.length > TRIAL_CAP && (
-                <Button
-                  size="small"
-                  onClick={() => setAllTrials((v) => !v)}
-                  sx={{
-                    color: "text.secondary",
-                    flexShrink: 0,
-                    whiteSpace: "nowrap",
-                    minWidth: 0,
-                  }}
-                >
-                  {allTrials
-                    ? `Show the latest ${TRIAL_CAP}`
-                    : `Show all ${trialsAll.length} improvement runs`}
-                </Button>
-              )}
-            </Stack>
-          )}
           {/* The page's own actions — on the runs bar while nothing is
               selected; a selection swaps in its own actions. */}
           {selected.length === 0 && (
@@ -882,6 +851,98 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                     : r.kind === "trial"
                       ? null
                       : previousRunOf(finishedRuns, r, versionOf);
+
+                /* An improvement, as one row: what it tried and how it went. */
+                if (r.kind === "improvement") {
+                  const x = r.row;
+                  return (
+                    <Box
+                      key={r.id}
+                      {...clickable(() => navigate(x.href), { role: "link" })}
+                      sx={{
+                        display: "grid",
+                        gridTemplateColumns: grid.template,
+                        alignItems: "center",
+                        columnGap: 0,
+                        pl: 1.5,
+                        minHeight: 40,
+                        cursor: "pointer",
+                        borderLeft: "2px solid",
+                        borderColor: "transparent",
+                        "&:hover": { bgcolor: "action.hover" },
+                        ...focusRing,
+                      }}
+                    >
+                      <Box />
+                      <Stack
+                        direction="row"
+                        alignItems="center"
+                        spacing={1.25}
+                        sx={{
+                          gridColumn: "2 / -1",
+                          minWidth: 0,
+                          py: 0.875,
+                          pr: 1.5,
+                        }}
+                      >
+                        <Box
+                          sx={{
+                            minWidth: 26,
+                            height: 22,
+                            borderRadius: "4px",
+                            flexShrink: 0,
+                            display: "grid",
+                            placeItems: "center",
+                            color: "text.secondary",
+                            bgcolor: "background.neutral",
+                          }}
+                        >
+                          <Iconify
+                            icon={
+                              x.issueId ? "fagi:fix" : "solar:graph-up-linear"
+                            }
+                            width={14}
+                          />
+                        </Box>
+                        <Typography
+                          noWrap
+                          sx={{
+                            typography: "s2",
+                            fontWeight: 500,
+                            flexShrink: 0,
+                          }}
+                        >
+                          {x.name}
+                        </Typography>
+                        <Typography
+                          noWrap
+                          sx={{
+                            typography: "s2",
+                            color: "text.tertiary",
+                            minWidth: 0,
+                          }}
+                        >
+                          {[
+                            x.issueId ? `fix for ${x.issueId}` : null,
+                            `${r.trials} ${r.trials === 1 ? "trial" : "trials"}`,
+                            r.best != null
+                              ? `best ${r.best}% on its target scenarios`
+                              : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </Typography>
+                        <StatusPill ending={x.status} headline={x.headline} />
+                        <Box sx={{ flex: 1 }} />
+                        <Iconify
+                          icon="solar:alt-arrow-right-linear"
+                          width={14}
+                          sx={{ color: "text.tertiary", flexShrink: 0 }}
+                        />
+                      </Stack>
+                    </Box>
+                  );
+                }
 
                 if (r.kind === "queued-demo") {
                   return (

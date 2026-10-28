@@ -4,7 +4,8 @@ import { Helmet } from "react-helmet-async";
 import { Box, Button, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
-import { useEnvState, useSimStore } from "../store";
+import { useConnectedAgents, useEnvState, useSimStore } from "../store";
+import { behindProductionOf } from "./behindProduction";
 import OptimizationRunView from "../run/fixmyagent/OptimizationRunView";
 import { shippedCandidate } from "../run/fixmyagent/tradeoffs";
 import { improvementRunName } from "../_mock/optimizer";
@@ -46,6 +47,7 @@ export default function ImprovementRunPage() {
   const { state } = useSimStore();
   const env = (state.myEnvironments || []).find((e) => e.id === envId) || null;
   const { envState, patch, addAgentVersion } = useEnvState(envId);
+  const { agents } = useConnectedAgents();
   const record =
     (envState?.optimizations || []).find((o) => o.id === optId) || null;
   const location = useLocation();
@@ -208,6 +210,30 @@ export default function ImprovementRunPage() {
     if (candidate) q.set("candidate", candidate);
     navigate(q.toString() ? `${url}?${q.toString()}` : url);
   };
+  /* Fell behind production while it waited: the kept change once more, on
+     the version in production now — Ship waits for it. */
+  const recheck = () => {
+    const behind = behindProductionOf({ record, env, envState, agents });
+    if (!behind) return;
+    const id = protoRunId(env.id, Date.now().toString(36));
+    patch({
+      optimizations: (envState?.optimizations || []).map((o) =>
+        o.id === record.id
+          ? {
+              ...o,
+              verifyRunIds: [...(o.verifyRunIds || []), id],
+              recheck: {
+                on: behind.prodLabel,
+                runId: id,
+                at: new Date().toISOString(),
+              },
+            }
+          : o,
+      ),
+    });
+    const q = new URLSearchParams({ agent: behind.prodLabel });
+    navigate(`${paths.dashboard.simulate.simulationRun(env.id, id)}?${q}`);
+  };
   const finish = () =>
     patch({
       optimizations: (envState?.optimizations || []).map((o) =>
@@ -329,6 +355,7 @@ export default function ImprovementRunPage() {
               : undefined
           }
           onVerify={() => runWinner()}
+          onRecheck={recheck}
           onShip={() => {
             setSearchOpen(false);
             setShipOpen(true);

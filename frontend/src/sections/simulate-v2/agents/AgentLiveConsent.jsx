@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { alpha } from "@mui/material/styles";
 import {
   Box,
@@ -132,14 +132,33 @@ export function LiveConsentCard({
   bare = false,
   oneLine = false,
   onCancel = null,
+  onReady = null,
 }) {
   const r = replicationOf(agent, env);
   const proof = proofKindOf(agent);
   const given = agent.values?.liveTestConsent || null;
   const provider = PROVIDER_LABELS[agent.values?.provider] || "your";
   const copies = makesCopies(r.mode);
-  const [copiesOk, setCopiesOk] = useState(false);
+  /* Ticked by default — the button (Give consent, or Start fix in Fix) is the act of consenting, not the tick. */
+  const [copiesOk, setCopiesOk] = useState(true);
   const [tools, setTools] = useState(null); // "safe" | "replay"
+  const readyNow = (!makesCopies(r.mode) || copiesOk) && !!tools;
+  /* With `onReady` the caller's own button gives consent (Fix's Start fix):
+     it hears the consent while it's complete, null while it isn't. */
+  useEffect(() => {
+    if (!onReady) return;
+    onReady(
+      readyNow
+        ? {
+            liveTestConsent: {
+              at: new Date().toISOString(),
+              replayFlag: tools === "replay",
+            },
+          }
+        : null,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [readyNow, tools]);
   /* Not live, or an endpoint that has its own acknowledgment. */
   if (
     proof.kind !== "live" ||
@@ -294,27 +313,29 @@ export function LiveConsentCard({
             hint={replayHint}
           />
         </Stack>
-        <Stack
-          direction="row"
-          alignItems="center"
-          spacing={1.5}
-          sx={{ pt: 0.5 }}
-        >
-          <Button
-            size="small"
-            variant="contained"
-            color="primary"
-            disabled={!ready}
-            onClick={give}
+        {!onReady && (
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1.5}
+            sx={{ pt: 0.5 }}
           >
-            Give consent
-          </Button>
-          {!ready && (
-            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-              {notReady}
-            </Typography>
-          )}
-        </Stack>
+            <Button
+              size="small"
+              variant="contained"
+              color="primary"
+              disabled={!ready}
+              onClick={give}
+            >
+              Give consent
+            </Button>
+            {!ready && (
+              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                {notReady}
+              </Typography>
+            )}
+          </Stack>
+        )}
       </Stack>
     );
   }
@@ -514,6 +535,7 @@ LiveConsentCard.propTypes = {
   bare: PropTypes.bool,
   oneLine: PropTypes.bool,
   onCancel: PropTypes.func,
+  onReady: PropTypes.func,
 };
 
 /* One plain checkbox or radio with its label — no box around it; the longer note behind an ⓘ. */

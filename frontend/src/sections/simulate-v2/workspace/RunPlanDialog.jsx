@@ -17,6 +17,8 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useSimStore } from "../store";
+import { candidateSourceOf, takesSnapshot } from "../_mock/candidateSource";
+import CandidateSourcePicker from "../run/CandidateSourcePicker";
 import { monthStart, monthUsage, simMeters } from "../_mock/usageLedger";
 import { FREE_TIER, RATE_PLAN } from "../_mock/rates";
 import { currentUser } from "../_mock/scenarioProvenance";
@@ -133,6 +135,10 @@ export default function RunPlanDialog({
     versionOptions.slice(0, 1).map((o) => o.label),
   );
   const [moreVersions, setMoreVersions] = useState(false);
+  /* A code agent can be tested from a commit or an uploaded archive instead
+     of a version — one candidate, so only with one version picked. */
+  const [candidate, setCandidate] = useState(null);
+  const snapshotPick = takesSnapshot(envState?.agent) && versions.length === 1;
   const [cap, setCap] = useState(null);
   const [capTouched, setCapTouched] = useState(false);
   const [alertAt, setAlertAt] = useState(WORKSPACE_POLICY.alertAt);
@@ -148,11 +154,24 @@ export default function RunPlanDialog({
         : versionOptions.slice(0, 1).map((o) => o.label),
     );
     setMoreVersions(false);
+    setCandidate(null);
     setCapTouched(false);
     setAlertAt(WORKSPACE_POLICY.alertAt);
     setShowBreakdown(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  /* Opened from a link before the store loaded: the versions arrive after
+     the dialog did — pick the current one then. */
+  useEffect(() => {
+    if (open && !versions.length && versionOptions.length)
+      setVersions(
+        initialVersion && versionOptions.some((o) => o.label === initialVersion)
+          ? [initialVersion]
+          : versionOptions.slice(0, 1).map((o) => o.label),
+      );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, versionOptions.length]);
 
   /* A run group prices every environment it starts, not just this one. */
   const estimate = useMemo(
@@ -402,6 +421,17 @@ export default function RunPlanDialog({
               {`= ${estimate.trials} ${unit}${estimate.trials === 1 ? "" : "s"}`}
             </Box>
           </Stack>
+
+          {snapshotPick && (
+            <CandidateSourcePicker
+              agent={envState?.agent}
+              agentVersion={versions[0]}
+              current={candidateSourceOf(candidate, envState?.agent)}
+              onPick={setCandidate}
+              offer="Or test a commit or uploaded code instead"
+              sx={{ px: 0, py: 0, borderTop: "none", mt: -1 }}
+            />
+          )}
 
           {/* ── what it costs: one number; the breakdown on request ── */}
           <Box>
@@ -677,6 +707,7 @@ export default function RunPlanDialog({
                 onStart({
                   attempts: Number(attempts),
                   versions,
+                  candidate: snapshotPick ? candidate : null,
                   cap: effectiveCap,
                   alertAt,
                   estimate,

@@ -51,10 +51,12 @@ export default function ClarifyCard({ blocked, scenario, onAnswer, onOpen }) {
         role="region"
         aria-label="Clarifying question"
         sx={{
+          /* A neutral panel: the run's amber "Needs input" says it's
+             waiting; colour here would only repeat it louder. */
           border: "1px solid",
-          borderColor: "status.discovery.border",
+          borderColor: "divider",
           borderRadius: "8px",
-          bgcolor: "status.discovery.bg",
+          bgcolor: "background.paper",
           px: 2,
           py: 1.5,
         }}
@@ -71,7 +73,7 @@ export default function ClarifyCard({ blocked, scenario, onAnswer, onOpen }) {
               bgcolor: "background.paper",
               border: "1px solid",
               borderColor: "divider",
-              color: "text.secondary",
+              color: "status.warning.fg",
             }}
           >
             <Iconify icon="solar:chat-round-dots-linear" width={16} />

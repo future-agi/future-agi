@@ -35,7 +35,7 @@ import {
 import { observabilityOf } from "./observability";
 import { pinsForNewRun } from "./envModel";
 import { runSummaries } from "./comparison";
-import { frozenSnapshotOf } from "./envSnapshot";
+import { frozenSnapshotOf, currentEnvSnapshot, snapshotLabelOf } from "./envSnapshot";
 import { mustPassOf } from "./mustPass";
 import {
   optimizationId,
@@ -216,6 +216,24 @@ const otherEnvsFor = (env, state, regressionEnvIds = []) =>
     })
     .filter(Boolean);
 
+/*
+  Finished runs that already measured today's agent here: the whole set, same
+  agent version, and the environment unchanged since (same snapshot — world,
+  scenarios, evals, caller). The latest two count toward the baseline's two
+  measurements, so it isn't paid for again.
+*/
+const todayRunsOf = (env, es, agentVersion) => {
+  if (!env || !agentVersion) return [];
+  const now = currentEnvSnapshot(env, es)?.label;
+  return (es?.runs || [])
+    .filter((r) => r.finishedAt && !r.pending && r.status !== "running"
+      && r.kind !== "trial" && !r.partial && r.agentVersion === agentVersion
+      && (r.scenarioIds || []).length && snapshotLabelOf(r, env, es) === now)
+    .sort((a, b) => Date.parse(b.finishedAt) - Date.parse(a.finishedAt))
+    .slice(0, 2)
+    .map((r) => ({ id: r.id, label: `Run ${r.ordinal || 1}`, scenarioIds: r.scenarioIds }));
+};
+
 /* What the newer engine reads off the agent and its environment. */
 const engineConfig = ({
   env,
@@ -233,6 +251,7 @@ const engineConfig = ({
   return {
     rsi: {
       calibration: 1,
+      todayRuns: todayRunsOf(env, es, agentVersion),
       version: agentVersion || null,
       areasOff: states
         ? Object.entries(states)
@@ -371,7 +390,7 @@ export const planSearch = ({
   planned run count is a maximum.
 */
 export const stopEarlyNote = () =>
-  `After at least ${MIN_RUNS_BEFORE_STOP} runs, stops early if ${NO_GAIN_RUNS} in a row don't beat the best on the target scenarios by more than run-to-run noise, and verifies the best — so it often spends less.`;
+  `After at least ${MIN_RUNS_BEFORE_STOP} trials, stops early if ${NO_GAIN_RUNS} in a row don't beat the best on the target scenarios by more than trial-to-trial noise, and verifies the best — so it often spends less.`;
 
 /**
  * What an improvement will spend, as a range: the search on the main
@@ -387,6 +406,9 @@ export const improvementEstimate = ({
   surface,
   extraScenarios = 0,
   firstConversations = 0,
+  /* What the first run covers, in words — a fix names the environment's
+     scenarios and the issue's. */
+  firstDetail = "today's agent, measured before anything changes",
 }) => {
   const kind = surface === "voice" ? "voice" : "chat";
   const per = PER_CONVERSATION[kind];
@@ -415,8 +437,8 @@ export const improvementEstimate = ({
       ? [
           {
             id: "reproduce",
-            label: "Reproducing",
-            detail: "the issue on today's agent, first",
+            label: "First run",
+            detail: firstDetail,
             conversations: firstN,
             usd: firstN * per,
           },
@@ -773,6 +795,12 @@ export const buildImprovement = ({
       rules: (env?.rules || []).length,
     },
     minutes: minutesFor(result.trials.length),
+    /* Each run plays about as long as a run of its size would: its target
+       scenarios × repeats × ~5 s a conversation, 20 s to 2 min. */
+    runMs: Math.min(
+      120000,
+      Math.max(20000, (result.trainMeasured || 3) * reps * 5000),
+    ),
     ...(stopBefore
       ? {
           stoppedAtBudget: {

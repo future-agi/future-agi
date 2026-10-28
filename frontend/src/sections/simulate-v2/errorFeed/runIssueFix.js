@@ -10,14 +10,19 @@
 
   Additive to the Error Feed: nothing here changes how its Fix behaves.
 */
-import { agentSourceOf, envAgentKey, PROVIDER_LABELS } from "../_mock/agentRegistry";
+import {
+  agentSourceOf,
+  envAgentKey,
+  PROVIDER_LABELS,
+} from "../_mock/agentRegistry";
 import { observabilityOf } from "../_mock/observability";
 import { buildImprovement, budgetsWithin } from "../_mock/improvementStart";
 import { limitsOf } from "../agents/agentLimits";
 import { issueRootFor } from "../_mock/runInsights";
 
 export const TRACEAI_DOCS = "https://docs.futureagi.com/docs/observe";
-export const NO_TRACE_REASON = "traceAI isn't instrumented in this agent. You can still run and read results, but the fix loop needs trace evidence.";
+export const NO_TRACE_REASON =
+  "traceAI isn't instrumented in this agent. You can still run and read results, but the fix loop needs trace evidence.";
 
 /* Providers that report every call on their own. */
 const HOSTED = ["vapi", "retell", "bland", "elevenlabs", "livekit"];
@@ -28,17 +33,42 @@ const HOSTED = ["vapi", "retell", "bland", "elevenlabs", "livekit"];
  */
 export const runTracingOf = (agent, integrations, envId) => {
   if (!agent) {
-    return { traced: false, mode: null, reason: "No agent is connected to this environment, so there is nothing to fix against.", docs: null };
+    return {
+      traced: false,
+      mode: null,
+      reason:
+        "No agent is connected to this environment, so there is nothing to fix against.",
+      docs: null,
+    };
   }
-  const keyed = agent.key ? agent : { ...agent, key: envAgentKey(agent, envId) };
+  const keyed = agent.key
+    ? agent
+    : { ...agent, key: envAgentKey(agent, envId) };
   const provider = agent.values?.provider;
   const source = agentSourceOf(keyed);
-  if (HOSTED.includes(provider) || (source.kind === "platform" && provider && provider !== "other")) {
-    return { traced: true, mode: "hosted", note: `${PROVIDER_LABELS[provider] || source.label} reports every call, so this run is traced.` };
+  if (
+    HOSTED.includes(provider) ||
+    (source.kind === "platform" && provider && provider !== "other")
+  ) {
+    return {
+      traced: true,
+      mode: "hosted",
+      note: `${PROVIDER_LABELS[provider] || source.label} reports every call, so this run is traced.`,
+    };
   }
   const o = observabilityOf(keyed, integrations);
-  if (o.on) return { traced: true, mode: o.mode, note: "traceAI is instrumented in this agent, so this run is traced." };
-  return { traced: false, mode: o.mode, reason: NO_TRACE_REASON, docs: TRACEAI_DOCS };
+  if (o.on)
+    return {
+      traced: true,
+      mode: o.mode,
+      note: "traceAI is instrumented in this agent, so this run is traced.",
+    };
+  return {
+    traced: false,
+    mode: o.mode,
+    reason: NO_TRACE_REASON,
+    docs: TRACEAI_DOCS,
+  };
 };
 
 /**
@@ -53,7 +83,9 @@ export const runIssueImprovement = ({ env, es, state, run, tasks, issue }) => {
   const limits = limitsOf(state, agentKey);
   const budgets = budgetsWithin(limits.budget.dollars);
   const focus = new Set(issue.memberIds);
-  const scoped = (tasks || []).map((t) => (focus.has(t.id) ? { ...t, fromIssue: issue.id } : t));
+  const scoped = (tasks || []).map((t) =>
+    focus.has(t.id) ? { ...t, fromIssue: issue.id } : t,
+  );
   return buildImprovement({
     env,
     es,
@@ -63,7 +95,10 @@ export const runIssueImprovement = ({ env, es, state, run, tasks, issue }) => {
     baseAgentVersion: run?.agentVersion || null,
     trigger: {
       kind: "run",
-      goal: { id: `issue:${issue.id}`, label: `the pass rate on "${issue.title}"` },
+      goal: {
+        id: `issue:${issue.id}`,
+        label: `the pass rate on "${issue.title}"`,
+      },
       issueId: issue.id,
       issueTitle: issue.title,
       severity: issue.severity,
@@ -78,8 +113,20 @@ export const runIssueImprovement = ({ env, es, state, run, tasks, issue }) => {
     /* Re-read the agent as it starts, so the baseline matches production. */
     state,
     extra: {
-      diagnosis: [{ id: issue.id, label: issue.title, headline: issue.headline.join(" · "), severity: issue.severity }],
-      focus: { issueId: issue.id, scenarioIds: issue.memberIds, rootCause: issue.root.label, fix: issue.fix.text },
+      diagnosis: [
+        {
+          id: issue.id,
+          label: issue.title,
+          headline: issue.headline.join(" · "),
+          severity: issue.severity,
+        },
+      ],
+      focus: {
+        issueId: issue.id,
+        scenarioIds: issue.memberIds,
+        rootCause: issue.root.label,
+        fix: issue.fix.text,
+      },
     },
   });
 };

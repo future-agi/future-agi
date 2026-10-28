@@ -508,7 +508,7 @@ export const triedLabelOf = (t, trials = []) => {
   if (!raw) return null;
   if (/^re-ran the incumbent|^ran the best change again/.test(raw)) {
     const prev = trials.filter((x) => x.n < t.n && x.improved).pop();
-    return prev ? `Run ${prev.n}'s change again, to check it holds` : "The best change again, to check it holds";
+    return prev ? `Trial ${prev.n}'s change again, to check it holds` : "The best change again, to check it holds";
   }
   if (/^dropped a change|^removed one change/.test(raw)) return "One change removed, to check it's needed";
   if (t.feedback) return `Revised: ${t.feedback.why}`;
@@ -529,15 +529,27 @@ export const staticFailed = (t) => !!t?.static && t.static.pass === false;
   read off the scenario and the run, never the search's stream; a scenario
   that's flaky today disagrees far more often than one that isn't.
 */
-export const calibrate = (seed, measured = [], version) => {
+export const calibrate = (seed, measured = [], version, todayRuns = []) => {
   const noisy = measured.filter((t) => {
     const share = passShareOf(t);
     const odds = share > 0 && share < 1 ? 55 : 4;
     return hashSeed(`${seed}:calibrate:${t.id}`) % 100 < odds;
   });
   const n = measured.length;
+  /* Runs of this version that already played some of these scenarios once
+     each — held-back scenarios are fresh variants, so a run covers only the
+     rest. */
+  const reused = todayRuns
+    .map(({ id, label, scenarioIds }) => ({
+      id,
+      label,
+      covered: measured.filter((t) => scenarioIds.includes(t.id)).length,
+    }))
+    .filter((r) => r.covered)
+    .slice(0, 2);
   return {
     runs: 2,
+    ...(reused.length && { reused }),
     version: version || null,
     scenarios: n,
     disagreed: noisy.length,
@@ -841,7 +853,7 @@ const revisionOf = (baseP, still, last, repeats, n) => {
     ...baseP,
     id: `${baseP.revisionOf || baseP.id}~r${n}`,
     revisionOf: baseP.revisionOf || baseP.id,
-    title: `${(baseP.title || "").replace(/ — revised after Run \d+$/, "")} — revised after Run ${last.n}`,
+    title: `${(baseP.title || "").replace(/ — revised after (Run|Trial) \d+$/, "")} — revised after Trial ${last.n}`,
     addresses: [...new Set([...(baseP.addresses || []), ...still.map((t) => t.id)])],
     diff: [...(baseP.diff || []), { type: "add", text: line }],
     feedback: {
@@ -849,7 +861,7 @@ const revisionOf = (baseP, still, last, repeats, n) => {
       fixed: Object.values(last.perScenario || {}).filter((v) => v === "fixed").length,
       stillFailing: still.map((t) => ({ id: t.id, title: t.title })),
       conversations: still.length * repeats,
-      why: `Run ${last.n} ${reason} on “${scenarioTitle(first.title).replace(/\.$/, "")}”${still.length > 1 ? ` and ${still.length - 1} more` : ""}`,
+      why: `Trial ${last.n} ${reason} on “${scenarioTitle(first.title).replace(/\.$/, "")}”${still.length > 1 ? ` and ${still.length - 1} more` : ""}`,
       adds: line,
     },
   };
@@ -986,7 +998,7 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
   const r = rng(hashSeed(`${seed}-${optimizerId}`));
   const base = projectedRate(trainMeasured, []);
   /* Baseline twice, before any candidate (new improvements only). */
-  const calibration = rsi?.calibration ? calibrate(seed, [...trainMeasured, ...heldMeasured], rsi.version) : null;
+  const calibration = rsi?.calibration ? calibrate(seed, [...trainMeasured, ...heldMeasured], rsi.version, rsi.todayRuns || []) : null;
   const noisyIds = new Set(calibration?.noisyIds || []);
 
   const trials = [];
@@ -1470,6 +1482,19 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
       mustPassTasks: mustPassMeasured.map((t) => ({ id: t.id, title: t.title, critical: !!t.critical, ...(scope.remembered?.(t) && { remembered: true }) })),
     }),
     flakyToday: (rsi ? scope.tasks.filter((t) => !inSets.has(t.id)) : [...trainMeasured, ...heldMeasured]).filter(flakyToday).map((t) => ({ id: t.id, title: t.title })),
+    /*
+      An issue's fix: what else failed on today's agent — not the issue's, so
+      never a target and never protected. The winner is re-run on them once,
+      so the review can say what it also fixed along the way, and what's
+      still failing to fix separately.
+    */
+    ...(rsi && issueFix && {
+      /* From the whole suite when the search kept a slice of it (voice) —
+         the same pool must-pass reads, so it matches the run's own count. */
+      otherFailing: (cfg.mustPassPool || scope.tasks)
+        .filter((t) => !inSets.has(t.id) && !t.fromIssue && !t.fixScenario && t.status !== "unmeasured" && passShareOf(t) < 1)
+        .map((t) => ({ id: t.id, title: t.title, fixed: hashSeed(`${seed}:${t.id}:along`) % 10 < 3 })),
+    }),
     failingToday: [...trainMeasured, ...heldMeasured].filter((t) => passShareOf(t) < 1).length,
     ...(contract && { contract }),
     ...(cfg.textSearch && { textSearch: true }),
@@ -1659,7 +1684,9 @@ export const searchTrace = (result, record = null) => {
     label: `Baseline twice · ${cal.version || "current version"} against itself`,
     result: `${cal.disagreed} of ${plural(cal.scenarios, "scenario")} disagreed`,
     lines: [
-      `ran ${cal.version || "the current version"} twice on every scenario before any run`,
+      cal.reused?.length
+        ? `ran ${cal.version || "the current version"} twice on every scenario before any run — ${cal.reused.map((r) => `${r.label} already covered ${r.covered} of ${cal.scenarios}`).join(", ")}, so those weren't run again`
+        : `ran ${cal.version || "the current version"} twice on every scenario before any run`,
       cal.disagreed ? "a flip on one of those must show up on more than one repeat to count" : "no scenario disagreed with itself — every flip counts",
       `run-to-run noise ±${result.noise} pts`,
     ],
@@ -1759,7 +1786,7 @@ export const searchTrace = (result, record = null) => {
     },
     {
       id: "trials",
-      label: `Running ${trials.length} runs against the environment${result.textSearch ? " · in text" : ""}`,
+      label: `Running ${trials.length} trials against the environment${result.textSearch ? " · in text" : ""}`,
       result: trials.some((t) => !t.brokeBlocker && !t.cheats) ? `best ${Math.max(...trials.filter((t) => !t.brokeBlocker && !t.cheats).map((t) => t.score))}% on the target scenarios` : "every run was rejected",
       tone: "#16A34A",
       /* Every trial, because watching the incumbent hold is the point. */
@@ -1770,7 +1797,7 @@ export const searchTrace = (result, record = null) => {
           (t) => `run ${t.n} — ${staticFailed(t) ? "not run" : `${t.score}%`} ${t.improved ? "· new best" : "· no better"} · ${triedLabelOf(t, trials)}${rejectedFor(t) ? ` · rejected, ${rejectedFor(t)}` : ""}${t.repoTests?.pass ? ` · ${t.repoTests.command} passed` : ""}`,
         ),
         ...(result.stoppedEarly?.window ? [result.stoppedEarly.complete
-          ? `stopped after ${result.stoppedEarly.after} of up to ${result.stoppedEarly.of} runs — the best already fixes every failing target, nothing left to gain`
+          ? `stopped after ${result.stoppedEarly.after} of up to ${result.stoppedEarly.of} trials — the best already fixes every failing target, nothing left to gain`
           : `stopped early after ${result.stoppedEarly.after} of up to ${result.stoppedEarly.of} runs — the last ${result.stoppedEarly.window} didn't beat the best by more than run-to-run noise, so the best goes straight to verifying`] : []),
       ],
     },

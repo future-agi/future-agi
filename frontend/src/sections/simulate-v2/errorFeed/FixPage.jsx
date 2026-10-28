@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Box,
   Button,
@@ -42,8 +42,11 @@ import { codeDiagnosisOf } from "./codeDiagnosis";
 import { clickable, focusRing } from "../components/clickable";
 import {
   FIX_IN_FLIGHT,
+  FIX_SCENARIO_CAP,
   envsForAgent,
+  fixEnvFor,
   fixEstimate,
+  fixScenariosOf,
   fixPreview,
   issueFixNav,
   issueProjectLinkOf,
@@ -130,12 +133,18 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
   const improving = useAgentImprovementFlag();
   const { state, agent, agents, project, gate, start, evidence, status } =
     useIssueFix(issue);
-  /* A fix runs in the agent's main environment — never one picked per fix.
-     Its other environments can add their must-pass sets (RSI PRD: "Targets
-     come from one environment; the others add their must-pass sets"). */
+  /* A fix runs in one environment (RSI PRD: "Targets come from one
+     environment; the others add their must-pass sets"): the one picked for
+     this fix (`?env=`, from the Fix popup), else the best fit for the
+     issue's channel — the agent's main one when it fits. Picking never
+     changes the agent's main environment. */
+  const [params] = useSearchParams();
   const envs = useMemo(() => envsForAgent(agent, state), [agent, state]);
-  const main = envs[0] || null;
-  const others = envs.slice(1);
+  const main =
+    envs.find((e) => e.id === params.get("env")) ||
+    fixEnvFor(envs, issue) ||
+    null;
+  const others = envs.filter((e) => e.id !== main?.id);
   const [alsoIn, setAlsoIn] = useState([]);
   /* Search across the lineage: changes earlier versions made, tried again. */
   const [acrossLineage, setAcrossLineage] = useState(false);
@@ -152,7 +161,8 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
      once given it stays on screen as "Given just now". */
   const { setAgentValues } = useConnectedAgents();
   const consentNeeded = gate?.key === "consent";
-  const hardGate = gate && !consentNeeded ? gate : null;
+  /* "Check what we found" doesn't hold a fix back — the Fix button's tooltip says it. */
+  const hardGate = gate && !consentNeeded && gate.key !== "found" ? gate : null;
   const [askedConsent, setAskedConsent] = useState(false);
   useEffect(() => {
     if (consentNeeded) setAskedConsent(true);
@@ -221,6 +231,8 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
     [issue, main, mainState],
   );
   const [picked, setPicked] = useState({});
+  /* Search the issue's scenarios once there are many to scan. */
+  const [scenarioQuery, setScenarioQuery] = useState("");
   const [titles, setTitles] = useState({});
   const [budget, setBudget] = useState(null);
   const [minutes, setMinutes] = useState(null);
@@ -231,7 +243,11 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
 
   useEffect(() => {
     if (!open) return;
-    setPicked(Object.fromEntries(drafts.map((d) => [d.id, true])));
+    /* The most common situations, up to the cap, are in by default. */
+    setPicked(
+      Object.fromEntries(fixScenariosOf(drafts).used.map((d) => [d.id, true])),
+    );
+    setScenarioQuery("");
     setTitles({});
     setBudget(null);
     setMinutes(null);
@@ -300,6 +316,9 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
     scenarioCount: chosen.length,
     regressionCount,
     surface: main?.surface,
+    inEnvCount: chosen.filter((d) =>
+      (mainState?.scenarios || []).some((x) => x.id === d.id),
+    ).length,
   });
   const overBudget = estimate.likely > spend;
   /* The same monthly balance runs and builds draw on: a fix whose ceiling is
@@ -369,7 +388,10 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
           }
         : null,
     });
-    navigate(...issueFixNav(at, issue?.cluster_id));
+    /* Lands on the fix's first run, playing live; its banner opens the fix. */
+    if (at?.liveRunId)
+      navigate(paths.dashboard.simulate.simulationRun(at.envId, at.liveRunId));
+    else navigate(...issueFixNav(at, issue?.cluster_id));
   };
 
   const meta = [
@@ -796,67 +818,105 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                 <Section
                   n={lead + 1}
                   title="Scenarios from this issue"
-                  meta={`${chosen.length} of ${drafts.length} · used by this fix only`}
+                  meta={`${chosen.length} of ${drafts.length} · used by this fix only${drafts.length > FIX_SCENARIO_CAP ? ` · the ${FIX_SCENARIO_CAP} most common are in by default` : ""}`}
                 >
-                  {drafts.map((d, i) => (
-                    <Stack
-                      key={d.id}
-                      direction="row"
-                      alignItems="flex-start"
-                      spacing={1}
+                  {drafts.length > 20 && (
+                    <Box
                       sx={{
                         px: 2,
                         py: 1,
-                        borderTop: i ? "1px solid" : "none",
+                        borderBottom: "1px solid",
                         borderColor: "divider",
                       }}
                     >
-                      <Checkbox
-                        size="small"
-                        checked={!!picked[d.id]}
-                        disabled={!ready}
-                        onChange={(e) =>
-                          setPicked((p) => ({ ...p, [d.id]: e.target.checked }))
+                      <InputBase
+                        value={scenarioQuery}
+                        onChange={(e) => setScenarioQuery(e.target.value)}
+                        placeholder={`Search ${drafts.length} scenarios`}
+                        startAdornment={
+                          <Iconify
+                            icon="solar:magnifer-linear"
+                            width={14}
+                            sx={{ color: "text.tertiary", mr: 1 }}
+                          />
                         }
-                        inputProps={{ "aria-label": `Use ${d.title}` }}
-                        sx={{
-                          p: 0.25,
-                          mt: 0.125,
-                          ...(!ready && {
-                            "&.Mui-disabled": { color: "text.disabled" },
-                          }),
-                        }}
+                        sx={{ typography: "s2", width: 1 }}
                       />
-                      <Box flex={1} minWidth={0}>
-                        {/* The title is the scenario — edit it in place. */}
-                        <InputBase
-                          fullWidth
-                          multiline
-                          value={titles[d.id] ?? d.title}
-                          readOnly={!ready}
+                    </Box>
+                  )}
+                  {drafts
+                    .filter(
+                      (d) =>
+                        !scenarioQuery.trim() ||
+                        d.title
+                          .toLowerCase()
+                          .includes(scenarioQuery.trim().toLowerCase()),
+                    )
+                    .map((d, i) => (
+                      <Stack
+                        key={d.id}
+                        direction="row"
+                        alignItems="flex-start"
+                        spacing={1}
+                        sx={{
+                          px: 2,
+                          py: 1,
+                          borderTop: i ? "1px solid" : "none",
+                          borderColor: "divider",
+                        }}
+                      >
+                        <Checkbox
+                          size="small"
+                          checked={!!picked[d.id]}
+                          disabled={!ready}
                           onChange={(e) =>
-                            setTitles((t) => ({ ...t, [d.id]: e.target.value }))
+                            setPicked((p) => ({
+                              ...p,
+                              [d.id]: e.target.checked,
+                            }))
                           }
+                          inputProps={{ "aria-label": `Use ${d.title}` }}
                           sx={{
-                            py: 0,
-                            color: picked[d.id]
-                              ? "text.primary"
-                              : "text.disabled",
-                            "& .MuiInputBase-input": {
-                              typography: "s2",
-                              fontWeight: 500,
-                              p: 0,
-                            },
+                            p: 0.25,
+                            mt: 0.125,
+                            ...(!ready && {
+                              "&.Mui-disabled": { color: "text.disabled" },
+                            }),
                           }}
                         />
-                        <Typography
-                          sx={{ typography: "s3", color: "text.subtitle" }}
-                        >
-                          {`From ${d.errorFeedIssue.traceIds.length} traces${d.persona?.archetype ? ` · ${d.persona.archetype}, inferred from the calls` : d.persona?.name ? ` · ${d.persona.name}` : ""}`}
-                        </Typography>
-                      </Box>
-                    </Stack>
-                  ))}
+                        <Box flex={1} minWidth={0}>
+                          {/* The title is the scenario — edit it in place. */}
+                          <InputBase
+                            fullWidth
+                            multiline
+                            value={titles[d.id] ?? d.title}
+                            readOnly={!ready}
+                            onChange={(e) =>
+                              setTitles((t) => ({
+                                ...t,
+                                [d.id]: e.target.value,
+                              }))
+                            }
+                            sx={{
+                              py: 0,
+                              color: picked[d.id]
+                                ? "text.primary"
+                                : "text.disabled",
+                              "& .MuiInputBase-input": {
+                                typography: "s2",
+                                fontWeight: 500,
+                                p: 0,
+                              },
+                            }}
+                          />
+                          <Typography
+                            sx={{ typography: "s3", color: "text.subtitle" }}
+                          >
+                            {`From ${d.errorFeedIssue.traceIds.length} traces${d.persona?.archetype ? ` · ${d.persona.archetype}, inferred from the calls` : d.persona?.name ? ` · ${d.persona.name}` : ""}`}
+                          </Typography>
+                        </Box>
+                      </Stack>
+                    ))}
                   <Typography
                     sx={{
                       px: 2,
@@ -932,8 +992,8 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                           sx={{ typography: "s3", color: "text.subtitle" }}
                         >
                           {ready
-                            ? `Main environment · ${pairOf(main)} · measured on today's version first`
-                            : "Main environment · still building — the fix starts once it's built"}
+                            ? `${main.id === envs[0]?.id ? "Main environment" : "Picked for this fix"} · ${pairOf(main)} · measured on today's version first`
+                            : `${main.id === envs[0]?.id ? "Main environment" : "Picked for this fix"} · still building — the fix starts once it's built`}
                         </Typography>
                       </Box>
                       <Typography
@@ -944,7 +1004,9 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                           flexShrink: 0,
                         }}
                       >
-                        Main · always checked
+                        {main.id === envs[0]?.id
+                          ? "Main · always checked"
+                          : "Runs here · always checked"}
                       </Typography>
                     </Stack>
                   )}
@@ -1239,7 +1301,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                             fontVariantNumeric: "tabular-nums",
                           }}
                         >
-                          {`Up to ${estimate.runs} runs · ${creditsLabel(estimate.likely)} · ${estimate.minutes} min`}
+                          {`Up to ${estimate.runs} trials · ${creditsLabel(estimate.likely)} · ${estimate.minutes} min`}
                         </Typography>
                         <Typography
                           sx={{
@@ -1252,7 +1314,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                           }}
                         >
                           {overBudget || overTime
-                            ? `May reach the ${overBudget ? "credit" : "time"} budget before all ${estimate.runs} runs — you'll get the best it found. ${stopEarlyNote()}`
+                            ? `May reach the ${overBudget ? "credit" : "time"} budget before all ${estimate.runs} trials — you'll get the best it found. ${stopEarlyNote()}`
                             : `Up to ${estimate.conversations.toLocaleString()} simulated conversations. ${stopEarlyNote()}`}
                         </Typography>
                         {/* What the ceiling is made of, part by part. */}

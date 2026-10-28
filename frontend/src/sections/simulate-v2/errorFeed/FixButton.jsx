@@ -5,8 +5,10 @@ import { Box, Button, Stack, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import { useAgentImprovementFlag } from "../_mock/featureFlags";
-import { issueFixNav, issueProjectLinkOf, useIssueFix } from "./issueFix";
+import { issueFixNav, issueProjectLinkOf } from "./issueFix";
 import ConnectAgentDialog from "./ConnectAgentDialog";
+import FixStartDialog from "./FixStartDialog";
+import useFixPlan from "./useFixPlan";
 import { clickable, focusRing } from "../components/clickable";
 
 /*
@@ -58,10 +60,16 @@ const AGAIN_HOW = { "over-budget": "Fix again with a bigger budget" };
  * at Could not reproduce before a search is spent (the sheet says when the
  * feed hasn't confirmed it yet).
  */
-export default function FixButton({ issue, onOpenSheet }) {
+export default function FixButton({ issue, onOpenSheet, rootCause = null }) {
   const navigate = useNavigate();
   const improving = useAgentImprovementFlag();
-  const { agent, agents, state, gate, status } = useIssueFix(issue);
+  /* The fix with its defaults — its price on the button, and what the
+     confirm starts. Adjust (onOpenSheet) is the full plan to edit. */
+  /* The environment picked in the popup — this fix only. */
+  const [envId, setEnvId] = useState(null);
+  const plan = useFixPlan(issue, rootCause, envId);
+  const { agent, agents, state, gate, status } = plan;
+  const [confirming, setConfirming] = useState(false);
   /* Controlled so a link inside it closes it before it navigates. */
   const [tip, setTip] = useState(false);
   const [connecting, setConnecting] = useState(false);
@@ -99,7 +107,7 @@ export default function FixButton({ issue, onOpenSheet }) {
             ["review", "ready"].includes(status.key) ? "primary" : undefined
           }
           onClick={openFix}
-          startIcon={<Iconify icon="solar:toolbox-linear" width={14} />}
+          startIcon={<Iconify icon="fagi:fix" width={14} />}
         >
           {inFlight.label}
         </Button>
@@ -110,24 +118,29 @@ export default function FixButton({ issue, onOpenSheet }) {
   /* Disconnected, archived or Coming soon — said on the button, with the
      way out when there is one. Live-test consent isn't one of them: the
      sheet asks for it, right where it's needed, before anything runs. */
-  const hardGate = gate && gate.key !== "consent" ? gate : null;
+  /* "Check what we found" on a new code agent is advice, not a stop: the
+     tooltip still says it, with the link, but Fix stays on — it reproduces
+     the issue before it searches. */
+  const hardGate =
+    gate && gate.key !== "consent" && gate.key !== "found" ? gate : null;
+  const shownGate = hardGate || (gate?.key === "found" ? gate : null);
   const blocked = !!agent && !!hardGate;
   const again = !!status && AGAIN.has(status.key);
 
-  const why = hardGate ? (
+  const why = shownGate ? (
     <Box sx={{ py: 0.25 }}>
       <Typography sx={{ typography: "s3", fontWeight: 600 }}>
-        {hardGate.title}
+        {shownGate.title}
       </Typography>
       <Typography sx={{ typography: "s3", mt: 0.25 }}>
-        {hardGate.body}
+        {shownGate.body}
       </Typography>
-      {(hardGate.action === "connections" ||
-        hardGate.action === "overview") && (
+      {(shownGate.action === "connections" ||
+        shownGate.action === "overview") && (
         <Typography
           {...clickable(() => {
             setTip(false);
-            openConnections(hardGate.action);
+            openConnections(shownGate.action);
           })}
           sx={{
             typography: "s3",
@@ -138,7 +151,7 @@ export default function FixButton({ issue, onOpenSheet }) {
             ...focusRing,
           }}
         >
-          {hardGate.action === "overview"
+          {shownGate.action === "overview"
             ? "Open the agent's Overview"
             : "Open the agent's Connections tab"}
         </Typography>
@@ -147,7 +160,7 @@ export default function FixButton({ issue, onOpenSheet }) {
   ) : !agent ? (
     `No agent in Agents is linked to ${link.name || "this issue's project"}. Connect it once — this project comes with it, and Fix works for every issue from it.`
   ) : again ? (
-    `${status.label}${status.detail ? ` · ${status.detail}` : ""}. ${AGAIN_HOW[status.key] || "Fix again"} starts a new fix; the last one stays on its page.`
+    `${status.label}${status.detail ? ` · ${status.detail}` : ""}. ${["no-fix", "not-reproduced"].includes(status.key) ? "Last fix says what to try first — the same fix again would likely end the same way. " : ""}${AGAIN_HOW[status.key] || "Fix again"} starts a new fix; the last one stays on its page.`
   ) : gate?.key === "consent" ? (
     `${agent.name} runs live — Fix asks for your consent before its first test.`
   ) : (
@@ -174,8 +187,11 @@ export default function FixButton({ issue, onOpenSheet }) {
               variant="contained"
               color="primary"
               disabled={blocked}
-              startIcon={<Iconify icon="solar:toolbox-linear" width={14} />}
-              onClick={onOpenSheet}
+              startIcon={<Iconify icon="fagi:fix" width={14} />}
+              onClick={() => {
+                setTip(false);
+                setConfirming(true);
+              }}
             >
               {again ? "Fix again" : "Fix"}
             </Button>
@@ -183,7 +199,7 @@ export default function FixButton({ issue, onOpenSheet }) {
             <Button
               variant="contained"
               color="primary"
-              startIcon={<Iconify icon="solar:toolbox-linear" width={14} />}
+              startIcon={<Iconify icon="fagi:fix" width={14} />}
               onClick={() => {
                 setTip(false);
                 setConnecting(true);
@@ -194,6 +210,16 @@ export default function FixButton({ issue, onOpenSheet }) {
           )}
         </span>
       </Tooltip>
+      {agent && !blocked && (
+        <FixStartDialog
+          open={confirming}
+          onClose={() => setConfirming(false)}
+          issue={issue}
+          plan={plan}
+          onEnv={setEnvId}
+          onAdjust={() => onOpenSheet?.(plan.main?.id || null)}
+        />
+      )}
       {!agent && (
         <ConnectAgentDialog
           open={connecting}
@@ -206,4 +232,8 @@ export default function FixButton({ issue, onOpenSheet }) {
   );
 }
 
-FixButton.propTypes = { issue: PropTypes.object, onOpenSheet: PropTypes.func };
+FixButton.propTypes = {
+  issue: PropTypes.object,
+  onOpenSheet: PropTypes.func,
+  rootCause: PropTypes.object,
+};

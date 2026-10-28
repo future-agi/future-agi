@@ -703,7 +703,7 @@ export default function OptimizationRunView({
                   ? "stopped before searching"
                   : suggestion
                     ? `${record.reproduce?.total ? `Reproduced on ${record.reproduce.reproduced || 0} of ${record.reproduce.total} scenarios` : `${result.trainMeasured + result.heldMeasured} scenarios measured`} · no change tried`
-                    : `${record.stoppedAtBudget ? `${result.trials.length} of ${record.stoppedAtBudget.of}` : result.stoppedEarly && !running ? `${result.trials.length} of up to ${result.stoppedEarly.of}` : result.trials.length} runs × ${result.trainMeasured} target ${result.trainMeasured === 1 ? "scenario" : "scenarios"}${result.stoppedEarly && !running ? (result.stoppedEarly.complete ? " · stopped once every failing target was fixed" : ` · stopped early, no gain in the last ${noGainRunsOf(result.stoppedEarly)}`) : ""}`}
+                    : `${record.stoppedAtBudget ? `${result.trials.length} of ${record.stoppedAtBudget.of}` : result.stoppedEarly && !running ? `${result.trials.length} of up to ${result.stoppedEarly.of}` : result.trials.length} trials × ${result.trainMeasured} target ${result.trainMeasured === 1 ? "scenario" : "scenarios"}${result.stoppedEarly && !running ? (result.stoppedEarly.complete ? " · stopped once every failing target was fixed" : ` · stopped early, no gain in the last ${noGainRunsOf(result.stoppedEarly)}`) : ""}`}
           </Typography>
         </Box>
         {!running && result && (
@@ -902,7 +902,7 @@ export default function OptimizationRunView({
             subtitle={
               record.fixDepth === "suggestion"
                 ? `${result.trainMeasured + result.heldMeasured} scenarios on the agent as it runs today`
-                : `${result.trials.length} runs × ${result.trainMeasured} target ${result.trainMeasured === 1 ? "scenario" : "scenarios"}${result.textSearch ? " in text" : ""}`
+                : `${result.trials.length} trials × ${result.trainMeasured} target ${result.trainMeasured === 1 ? "scenario" : "scenarios"}${result.textSearch ? " in text" : ""}`
             }
             steps={searchTrace(result, record)}
             trials={record.fixDepth === "suggestion" ? [] : result.trials}
@@ -2355,7 +2355,7 @@ function ImprovementSteps({
       !running &&
       record.result?.stoppedEarly?.window &&
       !record.result.stoppedEarly.complete
-        ? `${record.result.stoppedEarly.after} of up to ${record.result.stoppedEarly.of} runs · no gain in the last ${noGainRunsOf(record.result.stoppedEarly)}`
+        ? `${record.result.stoppedEarly.after} of up to ${record.result.stoppedEarly.of} trials · no gain in the last ${noGainRunsOf(record.result.stoppedEarly)}`
         : null,
     ]
       .filter(Boolean)
@@ -3045,7 +3045,7 @@ function SearchDetails({ record, result, model }) {
           <Typography
             sx={{ typography: "s3", color: "text.tertiary", px: 0.5 }}
           >
-            {`${methodLabelOf(result.optimizer?.id)} search (${result.optimizer?.label}) · changes ${record.writerModel ? improverModelsText(record.model, record.writerModel) : `written by ${model?.label || record.model}`}, judged by ${judgeFor(record.model)} — a different model family, so no model grades its own work · ${result.trials.length}${result.planned && result.planned !== result.trials.length ? ` of ${result.planned}` : ""} runs · ${result.trainMeasured} target / ${result.heldMeasured} held-back${result.mustPassMeasured != null ? ` / ${result.mustPassMeasured} must-pass` : ""} scenarios${result.goal ? ` · targets: scenarios short of ${goalWords(result.goal)}` : ""}`}
+            {`${methodLabelOf(result.optimizer?.id)} search (${result.optimizer?.label}) · changes ${record.writerModel ? improverModelsText(record.model, record.writerModel) : `written by ${model?.label || record.model}`}, judged by ${judgeFor(record.model)} — a different model family, so no model grades its own work · ${result.trials.length}${result.planned && result.planned !== result.trials.length ? ` of ${result.planned}` : ""} trials · ${result.trainMeasured} target / ${result.heldMeasured} held-back${result.mustPassMeasured != null ? ` / ${result.mustPassMeasured} must-pass` : ""} scenarios${result.goal ? ` · targets: scenarios short of ${goalWords(result.goal)}` : ""}`}
           </Typography>
           {/* GEPA keeps the best candidate for each scenario, not one overall best. */}
           {result.optimizer?.id === "gepa" && <ParetoPool result={result} />}

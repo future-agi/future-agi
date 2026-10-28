@@ -376,7 +376,11 @@ export default function AgentPicker({
                             color: "text.tertiary",
                             flexShrink: 0,
                           }}
-                        >{`${c.envs} ${c.envs === 1 ? "env" : "envs"}`}</Typography>
+                        >
+                          {c.envs
+                            ? `${c.envs} ${c.envs === 1 ? "env" : "envs"}`
+                            : "No environment yet"}
+                        </Typography>
                       </>
                     )}
                   </Box>

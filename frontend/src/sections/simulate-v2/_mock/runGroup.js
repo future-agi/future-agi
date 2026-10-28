@@ -158,7 +158,10 @@ export const settledRun = (env, envState, run, now = new Date()) => {
         envVersion: run.envVersion,
       }).missing.map((t) => t.name),
   };
-  const t = outcomeTally(rebuildRun(env, envState, stamped));
+  /* Counts are the environment's own scenarios — a fix's issue scenarios ride along uncounted. */
+  const t = outcomeTally(
+    rebuildRun(env, envState, stamped).filter((x) => !x.fixScenario),
+  );
   return {
     ...stamped,
     pending: false,
@@ -181,33 +184,55 @@ export const settledRun = (env, envState, run, now = new Date()) => {
   it would have finished.
 */
 const ABANDONED_MS = 30 * 60 * 1000;
+
+/** How long a run takes to play, roughly — what an unwatched run is settled at. */
+export const expectedRunMs = (r) =>
+  Math.min(
+    15 * 60000,
+    Math.max(
+      60000,
+      (r?.total || (r?.scenarioIds || []).length * (r?.repeats || 1) || 10) *
+        5000,
+    ),
+  );
 export const settleAbandonedRuns = (state, envId, es, now = Date.now()) => {
   const runs = es?.runs || [];
+  /* A fix's first run is due when it would have finished — its fix waits on it. */
   const stuck = (r) =>
     r.status === "running" &&
-    now - (Date.parse(r.startedAt || "") || now) > ABANDONED_MS;
+    now - (Date.parse(r.startedAt || "") || now) >
+      (r.measuredFor?.kind === "fix"
+        ? 2 * expectedRunMs(r) + 120000
+        : ABANDONED_MS);
   if (!runs.some(stuck)) return es;
   const env = envOf(state, envId);
   if (!env) return es;
+  /* A fix waiting on a run settled here starts its search from then. */
+  const released = {};
+  const settledRuns = runs.map((r) => {
+    if (!stuck(r)) return r;
+    const started = Date.parse(r.startedAt);
+    const took = expectedRunMs(r);
+    try {
+      const done = settledRun(env, es, r, new Date(started + took));
+      released[r.id] = done.finishedAt;
+      return done;
+    } catch {
+      return r;
+    }
+  });
   return {
     ...es,
-    runs: runs.map((r) => {
-      if (!stuck(r)) return r;
-      const started = Date.parse(r.startedAt);
-      const took = Math.min(
-        15 * 60000,
-        Math.max(
-          60000,
-          (r.total || (r.scenarioIds || []).length * (r.repeats || 1) || 10) *
-            5000,
-        ),
-      );
-      try {
-        return settledRun(env, es, r, new Date(started + took));
-      } catch {
-        return r;
-      }
-    }),
+    optimizations: (es.optimizations || []).map((o) =>
+      o.waitingForRun && released[o.waitingForRun]
+        ? {
+            ...o,
+            waitingForRun: undefined,
+            startedAt: released[o.waitingForRun],
+          }
+        : o,
+    ),
+    runs: settledRuns,
   };
 };
 

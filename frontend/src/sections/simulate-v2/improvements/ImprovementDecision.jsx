@@ -95,7 +95,7 @@ export default function ImprovementDecision({
             How it was decided
           </Typography>
           <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
-            {`${name}${shipped ? ` · Run ${shipped.n} ${chosen ? `chosen by you${unverified ? " · not verified yet" : " · verified"}` : "kept"}` : ""}`}
+            {`${name}${shipped ? ` · Trial ${shipped.n} ${chosen ? `chosen by you${unverified ? " · not verified yet" : " · verified"}` : "kept"}` : ""}`}
           </Typography>
         </Box>
         <IconButton size="small" onClick={onClose} aria-label="Close">
@@ -271,7 +271,7 @@ export default function ImprovementDecision({
                 >
                   <Typography
                     sx={{ ...cell, flex: 1, fontWeight: f.winner ? 600 : 500 }}
-                  >{`Run ${f.n}`}</Typography>
+                  >{`Trial ${f.n}`}</Typography>
                   <Typography
                     sx={{ ...cell, width: 84, textAlign: "right", ...num }}
                   >{`${f.score}%`}</Typography>
@@ -324,10 +324,10 @@ export default function ImprovementDecision({
             >
               {chosen
                 ? unverified
-                  ? `Run ${shipped.n} was chosen over the search's pick. It can't ship until it's verified on the full suite${projected ? " — its held-back result is projected until then" : ""}.`
-                  : `Run ${shipped.n} was chosen over the search's pick and verified on the full suite.`
+                  ? `Trial ${shipped.n} was chosen over the search's pick. It can't ship until it's verified on the full suite${projected ? " — its held-back result is projected until then" : ""}.`
+                  : `Trial ${shipped.n} was chosen over the search's pick and verified on the full suite.`
                 : confirm
-                  ? `Finalists are ranked on one held-back run; of those that pass, the highest target score is kept. Run ${shipped.n} then ran on the held-back set again — ${confirm.held ? "it held" : "it didn't hold"}.`
+                  ? `Finalists are ranked on one held-back run; of those that pass, the highest target score is kept. Trial ${shipped.n} then ran on the held-back set again — ${confirm.held ? "it held" : "it didn't hold"}.`
                   : "Finalists are scored once on held-back scenarios; of those that pass, the highest target score is kept."}
             </Typography>
           </Box>

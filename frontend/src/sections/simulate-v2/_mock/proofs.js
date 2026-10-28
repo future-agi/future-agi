@@ -238,6 +238,9 @@ export const autoReprove = (scenarios = [], env, envState) => {
     return {
       ...s,
       provedBroke: true,
+      /* Never proved before (a new scenario, one from an Error Feed issue):
+         it didn't break — it couldn't be set up here in the first place. */
+      ...(!s.provedAgainst && !s.provedOn && { neverStaged: true }),
       brokeReasons: status.reasons,
       brokeAgainst: currentLabel,
       brokeAt: now,
@@ -297,7 +300,10 @@ export const runPlan = (env, envState, { only, envVersion } = {}) => {
 
 /* Why a scenario can't be run on this world, or null when it can. */
 const skipReasonFor = (sc, env, envState, label) => {
-  if (brokenOn(sc, label)) return "Its proof broke when the environment changed. Edit it or re-prove it to run it again.";
+  if (brokenOn(sc, label))
+    return sc.neverStaged
+      ? "It couldn't be set up in this environment — the world doesn't hold what it presumes. Edit it to run it."
+      : "Its proof broke when the environment changed. Edit it or re-prove it to run it again.";
   const adm = admissionOf(sc, env);
   if (!adm.admitted) return `Quarantined — ${adm.reason}`;
   const proof = proofStatus(sc, env, envState);

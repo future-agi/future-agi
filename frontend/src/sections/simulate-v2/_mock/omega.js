@@ -100,6 +100,22 @@ const cluster = ({ failing }) => {
  * Some signals are per-episode; the sharp ones are comparative, which is the
  * other reason this cannot be an eval — an eval sees one transcript.
  */
+/* The check that let these conversations pass: the evaluation that passed
+   the most of them. */
+const passingCheckOf = (tasks, ids) => {
+  const counts = new Map();
+  tasks
+    .filter((t) => ids.includes(t.id))
+    .forEach((t) =>
+      (t.evalResults || []).forEach((e) => {
+        if (!e.passed) return;
+        const at = counts.get(e.id);
+        counts.set(e.id, { id: e.id, name: e.name, count: (at?.count || 0) + 1 });
+      }),
+    );
+  return [...counts.values()].sort((a, b) => b.count - a.count)[0] || null;
+};
+
 const gaming = ({ tasks, measured, env, baseline }) => {
   const signals = [];
 
@@ -113,6 +129,7 @@ const gaming = ({ tasks, measured, env, baseline }) => {
       why: "Every judge that reads only the words scores these as successes. The world says nothing happened.",
       tasks: claims.map((t) => t.id),
       step: "closing",
+      check: passingCheckOf(tasks, claims.map((t) => t.id)),
     });
   }
 
@@ -130,6 +147,7 @@ const gaming = ({ tasks, measured, env, baseline }) => {
       count: hollow.length,
       why: "A check that passes when a required tool was never called cannot distinguish this run from an empty one.",
       tasks: hollow.map((t) => t.id),
+      check: passingCheckOf(tasks, hollow.map((t) => t.id)),
     });
   }
 
@@ -314,6 +332,21 @@ export const omegaReport = ({ env, summary, baseline }) => {
       : { ...a, severity: "low", clear: true, nothing: true, headline: "Nothing found", detail: a.none || null, rows: [], rank: -1 };
   })
     .sort((a, b) => b.rank - a.rank);
+};
+
+/**
+ * What "fix the checks" points at, when gaming is the worst finding: the
+ * evaluation that passed the hollow conversations (claims with no tool call,
+ * skipped required steps), or the score's efficiency term (found in the
+ * contract). → { signal, count, check: { id, name, count } | null } or null.
+ */
+export const checkToFix = (report) => {
+  const worst = (report || []).find((a) => a.severity === "high");
+  if (worst?.id !== "gaming") return null;
+  const s =
+    (worst.signals || []).find((x) => x.check) ||
+    (worst.signals || []).find((x) => x.id === "efficiency-exploit");
+  return s ? { signal: s.id, count: s.count, check: s.check || null } : null;
 };
 
 /** The one sentence the panel adds up to. */

@@ -620,7 +620,7 @@ export default function EnvironmentWorkspace() {
   const launchRun = (
     scenarioIds,
     trials,
-    { agent, cap, alertAt, continues, snapshot, envVersion } = {},
+    { agent, cap, alertAt, continues, snapshot, envVersion, candidate } = {},
   ) => {
     const runId = protoRunId(envId, Date.now().toString(36));
     let url = paths.dashboard.simulate.simulationRun(envId, runId);
@@ -645,6 +645,8 @@ export default function EnvironmentWorkspace() {
     if (continues) params.set("continues", continues);
     if (snapshot) params.set("snapshot", snapshot);
     if (envVersion) params.set("env", envVersion);
+    /* A code agent's commit or uploaded archive, picked in the run plan. */
+    if (candidate) params.set("candidate", candidate);
     const qs = params.toString();
     if (qs) url += `?${qs}`;
     navigate(url);
@@ -656,7 +658,7 @@ export default function EnvironmentWorkspace() {
      confirmed before anything starts. */
   const runNow = (scenarioIds, trials, { also } = {}) =>
     checkRunFit(() => setRunPlanReq({ scenarioIds, trials, also }));
-  const startPlannedRun = ({ attempts, versions, cap, alertAt }) => {
+  const startPlannedRun = ({ attempts, versions, candidate, cap, alertAt }) => {
     const req = runPlanReq;
     setRunPlanReq(null);
     if (!req) return;
@@ -676,6 +678,7 @@ export default function EnvironmentWorkspace() {
       continues: req.continues,
       snapshot: req.snapshot,
       envVersion: req.envVersion,
+      candidate,
     });
   };
   const startRun = (scenarioIds, trials, opts = {}) =>
@@ -786,6 +789,19 @@ export default function EnvironmentWorkspace() {
           line: `Check what we found in ${agentName}'s code.`,
           actionLabel: "Review what we found",
           onAction: () => setFoundOpen(true),
+        };
+      /* Consent is given right here (the same form as the agent's
+         Connections tab, saved to the agent) — nobody leaves to agree. */
+      const consentGap =
+        readiness.gap === "gap_live_consent" &&
+        !isSeededTemplate &&
+        allGaps.find((g) => g.code === "gap_live_consent");
+      if (consentGap)
+        return {
+          title: "Let us call your agent for tests first to run.",
+          line: "A run makes real calls to it, with its real tools.",
+          actionLabel: "Give consent",
+          onAction: () => setInbox({ open: true, focus: consentGap.id }),
         };
       return {
         title: `${readiness.reason.replace(/ on Overview$/, "")} to run.`,

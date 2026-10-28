@@ -26,19 +26,30 @@ const TEMPLATES = [
   },
   {
     match: /refund|payment|charge|invoice|compensat|credit/i,
-    ask: (tool) => `Which currency should ${tool} use when the order doesn't say?`,
+    ask: (tool) =>
+      `Which currency should ${tool} use when the order doesn't say?`,
     why: "The order record has an amount but no currency, so the refund can't be checked against the limit.",
-    options: ["The order's original currency", "USD", "The caller's billing currency"],
+    options: [
+      "The order's original currency",
+      "USD",
+      "The caller's billing currency",
+    ],
   },
   {
     match: /order|lookup|account|customer|search|find|get_/i,
-    ask: (tool) => `Two records match the caller. Which one should ${tool} return?`,
+    ask: (tool) =>
+      `Two records match the caller. Which one should ${tool} return?`,
     why: "The seed has two customers with the same name and postcode, and the scenario doesn't say which one is calling.",
-    options: ["The most recent order", "The account with an open ticket", "Ask the caller to confirm"],
+    options: [
+      "The most recent order",
+      "The account with an open ticket",
+      "Ask the caller to confirm",
+    ],
   },
 ];
 const FALLBACK = {
-  ask: () => "The scenario says \"next week\" but the world has no date. Which day should the simulated caller treat as today?",
+  ask: () =>
+    'The scenario says "next week" but the world has no date. Which day should the simulated caller treat as today?',
   why: "Relative dates can't be graded until the world has a fixed today.",
   options: ["The run's start date", "Monday of next week"],
 };
@@ -51,20 +62,26 @@ export const clarifyPlanOf = ({ seed, tasks = [], concurrency = 4 }) => {
   if (tasks.length < CLARIFY_MIN_TASKS) return null;
   /* From the first wave, so it lands while someone is still watching — but
      never the scenario the stage opens on. */
-  const askable = (t) => t.verdict !== "unmeasured" && (t.steps || []).length >= 4;
+  const askable = (t) =>
+    t.verdict !== "unmeasured" && (t.steps || []).length >= 4;
   const first = tasks.slice(1, Math.max(2, concurrency + 1)).filter(askable);
   /* Else the next scenario that can ask — still early in the run. */
-  const pool = first.length ? first : tasks.slice(1).filter(askable).slice(0, 1);
+  const pool = first.length
+    ? first
+    : tasks.slice(1).filter(askable).slice(0, 1);
   if (!pool.length) return null;
   const h = hashSeed(`clarify:${seed}`);
   const task = pool[h % pool.length];
   const tools = (task.callLog?.calls || []).map((c) => c.name).filter(Boolean);
-  const hit = tools.map((tool) => [tool, TEMPLATES.find((tp) => tp.match.test(tool))]).find(([, tp]) => tp);
+  const hit = tools
+    .map((tool) => [tool, TEMPLATES.find((tp) => tp.match.test(tool))])
+    .find(([, tp]) => tp);
   const tpl = hit ? hit[1] : FALLBACK;
   const tool = hit ? hit[0] : null;
   /* Mid-call, and never past the turn a failing scenario stops at. */
   const mid = Math.max(1, Math.floor(task.steps.length / 2));
-  const step = task.failStep != null ? Math.min(mid, Math.max(0, task.failStep)) : mid;
+  const step =
+    task.failStep != null ? Math.min(mid, Math.max(0, task.failStep)) : mid;
   return {
     taskId: task.id,
     step,
@@ -73,4 +90,29 @@ export const clarifyPlanOf = ({ seed, tasks = [], concurrency = 4 }) => {
     why: tpl.why,
     options: tpl.options,
   };
+};
+
+/*
+  A fix's first run never waits on a person: the scenario that would have
+  asked is left unscored instead — never graded on our guess. Drawn the same
+  way live and when the run is read back (a fixed wave size, not the run's
+  parallelism), so both mark the same scenario.
+*/
+export const SKIPPED_ASK =
+  "Not enough evidence — it needed an answer nobody wrote down, and a fix's first run skips the question rather than grade a guess.";
+
+export const withAskSkipped = (tasks = [], seed) => {
+  const plan = clarifyPlanOf({ seed, tasks, concurrency: 4 });
+  if (!plan) return tasks;
+  return tasks.map((t) =>
+    t.id === plan.taskId
+      ? {
+          ...t,
+          verdict: "unmeasured",
+          failStep: null,
+          fault: { ...(t.fault || {}), grading: SKIPPED_ASK },
+          askSkipped: true,
+        }
+      : t,
+  );
 };

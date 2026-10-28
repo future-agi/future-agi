@@ -38,6 +38,8 @@ const fixTip = (status) => {
   if (key === "fixing")
     return "A fix is running: it reproduces the issue, then searches for a change that fixes it without breaking your must-pass scenarios.";
   if (key === "ready") {
+    if (status.recheck)
+      return "Another change went live after this fix measured the agent. Re-check its change on the version in production before you ship it.";
     if (/budget/i.test(label))
       return "The fix stopped at its budget. The best change it found so far is ready for you to review.";
     if (/suggestion/i.test(label))
@@ -80,14 +82,30 @@ export default function IssueStatusChip({ issue, variant = "chip" }) {
   const theme = useTheme();
   const navigate = useNavigate();
   const improving = useAgentImprovementFlag();
-  const { status } = useIssueFix(issue);
+  const { status, agent, state } = useIssueFix(issue);
   if (!improving) return null;
   if (!status) {
-    return variant === "text" ? (
+    if (variant !== "text") return null;
+    /* No agent linked to the issue's project: say why there's no fix here,
+       not a bare dash — the issue's page has Connect agent to fix. Only once
+       the store has loaded, so a connected agent isn't misread. */
+    if (state?.hydrated && !agent)
+      return (
+        <Tooltip
+          arrow
+          placement="top-start"
+          title="No agent is linked to this issue's project yet. Open the issue to connect one, then fix it."
+        >
+          <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+            Connect agent
+          </Typography>
+        </Tooltip>
+      );
+    return (
       <Typography sx={{ typography: "s3", color: "text.disabled" }}>
         —
       </Typography>
-    ) : null;
+    );
   }
   const tone = TONE[status.key] || TONE.fixing;
   /* The detail rides along unless it's only a footnote (inconclusive count). */

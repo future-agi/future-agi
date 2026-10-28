@@ -27,6 +27,8 @@ export default function IssueConnectCard({
   anotherWayLabel = "Connect another way",
   bare = false,
   aside = null,
+  /* "Your agents" is listed above it — no need to point at Agents. */
+  existingListed = false,
 }) {
   const navigate = useNavigate();
   const traced = project.traced;
@@ -219,12 +221,15 @@ export default function IssueConnectCard({
             minWidth: 0,
           }}
         >
-          Already in Agents? Connect it the same way to link this project, or
-          change it on the agent&apos;s Connections tab.
+          {existingListed
+            ? "Or another way — its code, the platform it runs on, or its endpoint."
+            : "Already in Agents? Connect it the same way to link this project, or change it on the agent's Connections tab."}
         </Typography>
-        <TextLink onClick={() => navigate(paths.dashboard.agents)}>
-          Open Agents
-        </TextLink>
+        {!existingListed && (
+          <TextLink onClick={() => navigate(paths.dashboard.agents)}>
+            Open Agents
+          </TextLink>
+        )}
         <TextLink onClick={onAnotherWay}>{anotherWayLabel}</TextLink>
       </Stack>
     </Box>
@@ -242,4 +247,5 @@ IssueConnectCard.propTypes = {
   bare: PropTypes.bool,
   /* Shown beside the title on the page — a way back to the issue. */
   aside: PropTypes.node,
+  existingListed: PropTypes.bool,
 };

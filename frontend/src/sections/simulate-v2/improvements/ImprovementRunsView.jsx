@@ -7,10 +7,11 @@ import {
   Button,
   Checkbox,
   Chip,
+  IconButton,
+  Link,
   Stack,
   Tab,
   Tabs,
-  IconButton,
   Tooltip,
   Typography,
 } from "@mui/material";
@@ -52,9 +53,12 @@ import WinnerDrawer from "../run/WinnerDrawer";
 import { improvementRowsOf } from "./improvementRows";
 import { chartRunOf, trialRowsFor } from "./improvementRunsData";
 import StatusPill from "./ImprovementStatusPill";
-import { agentDefinitionOf, envAgentKey } from "../_mock/agentRegistry";
-import { versionNumber } from "../_mock/versions";
-import { isGitAgent, versionNameOf } from "../_mock/codeRefs";
+import {
+  agentDefinitionOf,
+  agentIdOf,
+  envAgentKey,
+} from "../_mock/agentRegistry";
+import { behindProductionOf } from "./behindProduction";
 import ImprovementStages from "./ImprovementStages";
 
 const RED = "status.danger.fg";
@@ -90,6 +94,7 @@ export default function ImprovementRunsView({
   onOpenSearch,
   onVerify,
   onShip,
+  onRecheck,
   progress = null,
   onOpenIssue,
   onOpenStartRun,
@@ -207,35 +212,15 @@ export default function ImprovementRunsView({
   const startRun = envRuns.find((r) => r.id === record.fromRunId) || null;
   /* Production may have moved on since this fix started: its proof is against
      the version it started from, so a fix still waiting to ship says so. */
-  const behind = useMemo(() => {
-    const regAgent = envState?.agent
-      ? agents.find((a) => a.key === envAgentKey(envState.agent, env.id))
-      : null;
-    const base = record.baseAgentVersion || startRun?.agentVersion || null;
-    const prod = regAgent?.production || null;
-    if (
-      !regAgent ||
-      !base ||
-      !prod ||
-      base === prod ||
-      versionNumber(prod) <= versionNumber(base)
-    )
-      return null;
-    const since = regAgent.versions.filter(
-      (v) =>
-        versionNumber(v.label) > versionNumber(base) &&
-        versionNumber(v.label) <= versionNumber(prod) &&
-        !v.pendingDraft &&
-        v.kind !== "credentials",
-    ).length;
-    if (!since) return null;
-    return {
-      since,
-      base: versionNameOf(regAgent, base).main,
-      prod: versionNameOf(regAgent, prod).main,
-      git: isGitAgent(regAgent),
-    };
-  }, [agents, envState, env.id, record.baseAgentVersion, startRun]);
+  const behind = useMemo(
+    () => behindProductionOf({ record, env, envState, agents }),
+    [record, env, envState, agents],
+  );
+  /* Behind and not re-checked: Ship waits for the re-check. */
+  const holdShip = !!behind && !behind.recheck;
+  const recheckRun = behind?.recheck
+    ? (envState?.runs || []).find((r) => r.id === behind.recheck.runId) || null
+    : null;
   /* Required ones are marked — only they weigh like a pass/fail signal. */
   const evals = useMemo(() => {
     const required = new Set(requiredEvalIds(envState?.evals || []));
@@ -373,7 +358,7 @@ export default function ImprovementRunsView({
           arrow
           title={
             r.n === searchWinner
-              ? "The search kept this run — verified on the held-back scenarios."
+              ? "The search kept this trial — verified on the held-back scenarios."
               : needsVerify
                 ? "Chosen by you — not yet run on the held-back scenarios. Verify it before review."
                 : "Chosen by you and run on the full suite."
@@ -533,6 +518,18 @@ export default function ImprovementRunsView({
                   {`Verify ${kept.name}`}
                 </Button>
               </Tooltip>
+            ) : onShip && holdShip && onRecheck ? (
+              /* Its proof is on an older version: re-checked first. */
+              <Button
+                size="small"
+                variant="contained"
+                color="primary"
+                onClick={onRecheck}
+                startIcon={<Iconify icon="solar:refresh-linear" width={14} />}
+                sx={{ flexShrink: 0 }}
+              >
+                {`Re-check on ${behind.prod}`}
+              </Button>
             ) : onShip ? (
               <Button
                 size="small"
@@ -581,7 +578,9 @@ export default function ImprovementRunsView({
                   ? `main has moved on ${behind.since} commit${behind.since === 1 ? "" : "s"} since this fix started.`
                   : `${behind.prod} is in production now — ${behind.since} version${behind.since === 1 ? "" : "s"} after this fix started.`}
               </Box>
-              {` Its proof is on ${behind.base}. Re-check it on ${behind.prod} before it ${behind.git ? "is merged" : "ships"}.`}
+              {behind.recheck
+                ? ` Re-checked on ${behind.prod}${recheckRun ? ` in Run ${recheckRun.ordinal}${recheckRun.finishedAt ? "" : " (still running)"}` : ""} — compare it with its proof on ${behind.base} before it ${behind.git ? "is merged" : "ships"}.`
+                : ` Its proof is on ${behind.base}, so it's re-checked on ${behind.prod} before it ${behind.git ? "is merged" : "ships"}.`}
             </Typography>
           </Stack>
         )}
@@ -602,6 +601,22 @@ export default function ImprovementRunsView({
           outcome={outcome}
           result={result}
           targetNow={kept?.score ?? null}
+        />
+      )}
+
+      {/* No safe change: never a dead end — what to try instead. */}
+      {!running && outcome?.ending?.key === "no-fix" && (
+        <NoFixNext
+          issueId={record.trigger?.issueId || null}
+          onOpenIssue={onOpenIssue}
+          onOpenRules={
+            envState?.agent
+              ? () =>
+                  navigate(
+                    `${paths.dashboard.agents}/connected/${agentIdOf(envAgentKey(envState.agent, env.id))}?tab=constraints`,
+                  )
+              : null
+          }
         />
       )}
 
@@ -626,7 +641,7 @@ export default function ImprovementRunsView({
             borderColor: "divider",
           }}
         >
-          <Tab value="runs" label={`Runs (${runs.length})`} />
+          <Tab value="runs" label={`Trials (${runs.length})`} />
           <Tab value="changes" label="Changes" />
           <Tab value="scenarios" label="Per scenario" />
           <Tab value="cost" label="Cost" />
@@ -658,7 +673,7 @@ export default function ImprovementRunsView({
                     ? "stopped at its budget — the best it found is kept"
                     : null,
                   `${RATE_PLAN.name} · ${RATE_PLAN.version} rates`,
-                  "each part charged once; its runs' own Cost tabs list their calls",
+                  "each part charged once; its trials' own Cost tabs list their calls",
                 ]
                   .filter(Boolean)
                   .join(" · ")}
@@ -681,6 +696,7 @@ export default function ImprovementRunsView({
         <Box sx={{ mb: 2, flexShrink: 0 }}>
           <RunsOverview
             runs={chartRuns}
+            unit="trial"
             evals={[]}
             headline={headline}
             onOpenRun={(r) =>
@@ -707,8 +723,8 @@ export default function ImprovementRunsView({
                 return (
                   <Typography sx={{ typography: "s1", fontWeight: 600 }}>
                     {c.stopped
-                      ? `Runs (${runs.length}) · ${c.stopped}`
-                      : `Runs (${runs.length} of ${c.upTo ? "up to " : ""}${c.max})`}
+                      ? `Trials (${runs.length}) · ${c.stopped}`
+                      : `Trials (${runs.length} of ${c.upTo ? "up to " : ""}${c.max})`}
                   </Typography>
                 );
               })()}
@@ -716,7 +732,7 @@ export default function ImprovementRunsView({
               sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}
             >
               {running && progress.stage === "reproduce" ? (
-                "Each run is a full simulation on this environment — open one to see its conversations"
+                "Each trial is the agent with one change, simulated on this environment — open one to see its conversations"
               ) : selected.length ? (
                 `${selected.length} selected`
               ) : baselineRow ? (
@@ -726,7 +742,7 @@ export default function ImprovementRunsView({
                     component="span"
                     sx={{ color: "text.primary", fontWeight: 600 }}
                   >
-                    {baselineRow.name || `Run ${baselineRow.n}`}
+                    {baselineRow.name || `Trial ${baselineRow.n}`}
                   </Box>{" "}
                   — rates in points, everything else in percent
                 </>
@@ -788,9 +804,9 @@ export default function ImprovementRunsView({
               arrow
               title={
                 running
-                  ? "Once every run has finished and been checked."
+                  ? "Once every trial has finished and been checked."
                   : field.length < 2
-                    ? "Fewer than two runs passed the checks — there's nothing to choose between."
+                    ? "Fewer than two trials passed the checks — there's nothing to choose between."
                     : ""
               }
               disableHoverListener={!running && field.length >= 2}
@@ -835,11 +851,11 @@ export default function ImprovementRunsView({
                 }}
               >
                 <Box />
-                <Head>Run</Head>
+                <Head>Trial</Head>
                 <Head>Status</Head>
                 <Head
                   right
-                  title="Scenarios this run passed, on the target scenarios it was scored on"
+                  title="Scenarios this trial passed, on the target scenarios it was scored on"
                 >
                   Pass
                 </Head>
@@ -920,7 +936,7 @@ export default function ImprovementRunsView({
                           checked={picked}
                           onChange={() => toggle(r.runId)}
                           inputProps={{
-                            "aria-label": `Select ${r.name || `Run ${r.n}`}`,
+                            "aria-label": `Select ${r.name || `Trial ${r.n}`}`,
                           }}
                           sx={{
                             p: 0.5,
@@ -960,7 +976,7 @@ export default function ImprovementRunsView({
                               : "background.neutral",
                           }}
                         >
-                          {r.s?.letter || `R${r.n}`}
+                          {r.s?.letter || `T${r.n}`}
                         </Box>
                         <Box minWidth={0}>
                           <Stack
@@ -1115,7 +1131,7 @@ export default function ImprovementRunsView({
                           fontVariantNumeric: "tabular-nums",
                         }}
                       >
-                        {`R${pendingN}`}
+                        {`T${pendingN}`}
                       </Box>
                       <Typography
                         noWrap
@@ -1124,7 +1140,7 @@ export default function ImprovementRunsView({
                           fontWeight: 600,
                           color: "text.subtitle",
                         }}
-                      >{`Run ${pendingN}`}</Typography>
+                      >{`Trial ${pendingN}`}</Typography>
                     </Stack>
                     <Stack direction="row" alignItems="center" spacing={0.75}>
                       <Box
@@ -1147,6 +1163,25 @@ export default function ImprovementRunsView({
                       >
                         Running
                       </Typography>
+                      {/* Watching is a choice, never a stop on the way. */}
+                      <Link
+                        component="button"
+                        type="button"
+                        underline="hover"
+                        onClick={() =>
+                          navigate(
+                            `${paths.dashboard.simulate.simulationRun(env.id, `${record.id}-t${pendingN}`)}?live=1`,
+                          )
+                        }
+                        sx={{
+                          typography: "s2",
+                          fontWeight: 600,
+                          color: "text.primary",
+                          ml: 1,
+                        }}
+                      >
+                        Watch live
+                      </Link>
                     </Stack>
                   </Box>
                 )}
@@ -1160,8 +1195,8 @@ export default function ImprovementRunsView({
                     }}
                   >
                     {progress.stage === "reproduce"
-                      ? "Runs appear here as they finish. First it checks the failure happens on today's version."
-                      : "Runs appear here as they finish."}
+                      ? "Trials appear here as they finish. First it checks the failure happens on today's version."
+                      : "Trials appear here as they finish."}
                   </Typography>
                 )}
               </Stack>
@@ -1200,7 +1235,7 @@ export default function ImprovementRunsView({
         scenarioCount={envState?.scenarios?.length || 0}
         env={env}
         envState={envState}
-        nameOf={(r) => `Run ${r.trialN}`}
+        nameOf={(r) => `Trial ${r.trialN}`}
         showSummary={false}
         onApply={choose}
       />
@@ -1217,9 +1252,87 @@ export default function ImprovementRunsView({
 */
 /* What a retry read from the run before it, and what it changed because of it. */
 const feedbackText = (f) =>
-  `Fed Run ${f.from}'s per-scenario results and its ${f.conversations} failing ${f.conversations === 1 ? "conversation" : "conversations"}: ${f.stillFailing.length} still failing (${f.stillFailing.map((x) => `“${x.title.replace(/\.$/, "")}”`).join(", ")}). Adds: “${f.adds}”`;
+  `Fed Trial ${f.from}'s per-scenario results and its ${f.conversations} failing ${f.conversations === 1 ? "conversation" : "conversations"}: ${f.stillFailing.length} still failing (${f.stillFailing.map((x) => `“${x.title.replace(/\.$/, "")}”`).join(", ")}). Adds: “${f.adds}”`;
 const signedPct = (n) =>
   `${n > 0 ? "+" : n < 0 ? "−" : "±"}${Math.abs(Math.round(n * 10) / 10)}%`;
+/*
+  No safe improvement: every change it tried fixed too little or broke
+  something. Three things to try, each with where to do it — never just
+  "Fix again", which would repeat the same search.
+*/
+function NoFixNext({ issueId, onOpenIssue, onOpenRules }) {
+  const items = [
+    {
+      title: "The agent's rules ruled out the change it needs",
+      body: "Allowed changes, protected parts or the cost and latency limits can block the fix. Loosen one, then fix again.",
+      action: onOpenRules && {
+        label: "Open the agent's rules",
+        onClick: onOpenRules,
+      },
+    },
+    issueId && {
+      title: "It needs a change in the code",
+      body: "Tools, orchestration or data aren't changed here. Hand it to your coding agent with the diagnosis — from the issue's Open in Claude Code.",
+      action: onOpenIssue && { label: `Open ${issueId}`, onClick: onOpenIssue },
+    },
+    issueId && {
+      title: "Its scenarios miss what triggers it",
+      body: "Add scenarios from newer traces or edit them, then Fix again from the issue.",
+      action: null,
+    },
+  ].filter(Boolean);
+  return (
+    <Box
+      sx={{
+        mb: 2,
+        flexShrink: 0,
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: "8px",
+        "& > * + *": { borderTop: "1px solid", borderColor: "divider" },
+      }}
+    >
+      <Typography sx={{ px: 2, py: 1, typography: "s2", fontWeight: 500 }}>
+        What to try next
+      </Typography>
+      {items.map((it) => (
+        <Stack
+          key={it.title}
+          direction="row"
+          alignItems="center"
+          spacing={2}
+          sx={{ px: 2, py: 1 }}
+        >
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Typography sx={{ typography: "s2", fontWeight: 500 }}>
+              {it.title}
+            </Typography>
+            <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+              {it.body}
+            </Typography>
+          </Box>
+          {it.action && (
+            <Button
+              size="small"
+              variant="outlined"
+              color="inherit"
+              onClick={it.action.onClick}
+              sx={{ flexShrink: 0, borderColor: "divider" }}
+            >
+              {it.action.label}
+            </Button>
+          )}
+        </Stack>
+      ))}
+    </Box>
+  );
+}
+NoFixNext.propTypes = {
+  issueId: PropTypes.string,
+  onOpenIssue: PropTypes.func,
+  onOpenRules: PropTypes.func,
+};
+
 function Verdict({ outcome, result, targetNow }) {
   const [allChecks, setAllChecks] = useState(false);
   if (!result?.winner && !outcome.headline) return null;
@@ -1311,6 +1424,40 @@ function Verdict({ outcome, result, targetNow }) {
           </Box>
           {` · ${outcome.strength.note.charAt(0).toUpperCase()}${outcome.strength.note.slice(1)}.`}
         </Typography>
+      )}
+
+      {/* What else failed today, as the winner left it — a bonus said
+          plainly, and what's left to fix separately. Never a target. */}
+      {outcome.alongTheWay && (
+        <Box sx={{ px: 2, pb: 1, mt: outcome.strength ? -0.5 : -0.75 }}>
+          {outcome.alongTheWay.fixed.length > 0 && (
+            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+              <Box
+                component="span"
+                sx={{ fontWeight: 600, color: "text.primary" }}
+              >
+                Also fixed along the way
+              </Box>
+              {` · ${outcome.alongTheWay.fixed.map((f) => `“${f.title}”`).join(", ")} — failing today, passing with this change. It wasn't aimed at ${outcome.alongTheWay.fixed.length === 1 ? "it" : "them"}.`}
+            </Typography>
+          )}
+          {outcome.alongTheWay.still.length > 0 && (
+            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+              <Box
+                component="span"
+                sx={{ fontWeight: 600, color: "text.primary" }}
+              >
+                {`Still failing, not part of this fix`}
+              </Box>
+              {` · ${outcome.alongTheWay.still.length} ${outcome.alongTheWay.still.length === 1 ? "scenario" : "scenarios"} (${outcome.alongTheWay.still
+                .slice(0, 2)
+                .map((f) => `“${f.title}”`)
+                .join(
+                  ", ",
+                )}${outcome.alongTheWay.still.length > 2 ? "…" : ""}) failed before this fix too — fix ${outcome.alongTheWay.still.length === 1 ? "it" : "them"} separately.`}
+            </Typography>
+          )}
+        </Box>
       )}
 
       {/* ── the numbers, side by side ── */}
@@ -1518,6 +1665,8 @@ ImprovementRunsView.propTypes = {
   onVerify: PropTypes.func,
   /* Opens the hand-over for a verified winner. */
   onShip: PropTypes.func,
+  /* Re-run the kept change on today's production version. */
+  onRecheck: PropTypes.func,
   /* Running: from improvementProgressOf — the stage and runs finished so far. */
   progress: PropTypes.object,
   onOpenIssue: PropTypes.func,

@@ -118,14 +118,18 @@ export default function ErrorFeedDetailView() {
      it through the store (the Root cause tab) lands here too. */
   const [params, setParams] = useSearchParams();
   const fixOpen = params.get("fix") === "1";
-  const openFix = () => {
+  /* `envId`: the environment picked in the Fix popup, kept on the plan. */
+  const openFix = (envId) => {
     const next = new URLSearchParams(params);
     next.set("fix", "1");
+    if (typeof envId === "string") next.set("env", envId);
+    else next.delete("env");
     setParams(next);
   };
   const closeFix = () => {
     const next = new URLSearchParams(params);
     next.delete("fix");
+    next.delete("env");
     setParams(next);
   };
   useEffect(() => {
@@ -318,7 +322,11 @@ export default function ErrorFeedDetailView() {
               />
               {/* Fix: prove a change in simulation, ship it as a draft. A
                   coding agent can join from the sheet. */}
-              <FixButton issue={currentError} onOpenSheet={openFix} />
+              <FixButton
+                issue={currentError}
+                onOpenSheet={openFix}
+                rootCause={rootCause}
+              />
             </Stack>
           </Stack>
         </Box>

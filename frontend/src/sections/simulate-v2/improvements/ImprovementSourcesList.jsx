@@ -485,7 +485,10 @@ export default function ImprovementSourcesList({ agent }) {
             New improvement
           </Button>
         )}
-        <NewImprovement open={newOpen} onClose={() => setNewOpen(false)} />
+        <NewImprovement
+          open={newOpen}
+          onClose={() => setNewOpen(false)}
+        />
       </Stack>
 
       {/* Acceptance rate, time to proposal, fix survival — over what's listed. */}
@@ -607,7 +610,7 @@ export default function ImprovementSourcesList({ agent }) {
           {deletable.length > 0 && (
             <DialogContentText sx={{ typography: "s2" }}>
               {
-                "Their runs, results and unreleased drafts go with them. The environments and their own runs stay as they are."
+                "Their trials, results and unreleased drafts go with them. The environments and their own runs stay as they are."
               }
             </DialogContentText>
           )}

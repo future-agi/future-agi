@@ -15,7 +15,7 @@ const num = { fontVariantNumeric: "tabular-nums" };
    repeats) is read as given; any other is counted off its tasks. */
 const statsOf = (r) => r.stats || runStatsOf(r);
 const nameOf = (r) =>
-  r.kind === "trial" ? `Run ${r.trialN}` : `Run ${r.ordinal}`;
+  r.kind === "trial" ? `Trial ${r.trialN}` : `Run ${r.ordinal}`;
 const signed = (n) => `${n > 0 ? "+" : n < 0 ? "−" : ""}${Math.abs(n)}`;
 
 /**
@@ -30,6 +30,8 @@ export default function RunsOverview({
   onOpenRun,
   headline = null,
   versionOf = undefined,
+  /* What a point is called — an improvement's page charts its trials. */
+  unit = "run",
 }) {
   /* Runs someone started, oldest first — candidates are read by their improvement. */
   const main = useMemo(() => runs.filter((r) => r.kind !== "trial"), [runs]);
@@ -208,6 +210,7 @@ export default function RunsOverview({
 
       <Box sx={{ borderTop: "1px solid", borderColor: "divider" }}>
         <TrendChart
+          unit={unit}
           runs={finished}
           referenceVersion={referenceVersion}
           focusEval={focus}
@@ -218,6 +221,7 @@ export default function RunsOverview({
   );
 }
 RunsOverview.propTypes = {
+  unit: PropTypes.string,
   /* runSummaries rows (and trials), oldest first. */
   runs: PropTypes.array.isRequired,
   /* [{ id, name, color }] — the environment's evals. */
@@ -240,7 +244,13 @@ const PAD = { l: 44, r: 56, t: 38, b: 24 };
    failing scenarios as faint bars beneath, agent versions marked across the
    top. Hover a point for its numbers; click to open the run. A focused check
    draws its own dashed line. */
-function TrendChart({ runs, referenceVersion, focusEval, onOpenRun }) {
+function TrendChart({
+  runs,
+  referenceVersion,
+  focusEval,
+  onOpenRun,
+  unit = "run",
+}) {
   const theme = useTheme();
   const ref = useRef(null);
   const [w, setW] = useState(900);
@@ -279,7 +289,7 @@ function TrendChart({ runs, referenceVersion, focusEval, onOpenRun }) {
         noWrap
         sx={{ typography: "s3", color: "text.tertiary", flex: 1, minWidth: 0 }}
       >
-        {`Each point is one finished run, oldest to latest${points.length > 1 ? ` · ${points.length} runs` : ""} · hover for its numbers, click to open`}
+        {`Each point is one finished ${unit}, oldest to latest${points.length > 1 ? ` · ${points.length} ${unit}s` : ""} · hover for its numbers, click to open`}
       </Typography>
       <Stack direction="row" alignItems="center" spacing={0.75}>
         <Box
@@ -413,7 +423,7 @@ function TrendChart({ runs, referenceVersion, focusEval, onOpenRun }) {
           fontSize="10.5"
           fill={sub}
         >
-          Run
+          {unit === "trial" ? "Trial" : "Run"}
         </text>
         <text
           x={w - 6}
@@ -580,6 +590,7 @@ function TrendChart({ runs, referenceVersion, focusEval, onOpenRun }) {
   );
 }
 TrendChart.propTypes = {
+  unit: PropTypes.string,
   runs: PropTypes.array,
   referenceVersion: PropTypes.string,
   focusEval: PropTypes.object,

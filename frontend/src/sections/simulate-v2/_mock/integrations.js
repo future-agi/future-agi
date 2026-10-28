@@ -642,6 +642,7 @@ export const SLACK_EVENTS = [
   { id: "regression", label: "Regression against the previous version", blurb: "A full run scores lower than the version before it.", on: true },
   { id: "release_blocker", label: "Must-pass scenario failing", blurb: "A scenario marked must-pass fails.", on: true },
   { id: "pr", label: "Fix PR opened or merged", blurb: "Every pull request Future AGI opens, and when it merges.", on: true },
+  { id: "fix_finished", label: "Fix finished", blurb: "A fix is ready for review, or ended without a change and says what to try next.", on: true },
   { id: "version", label: "New agent version", blurb: "A push or a sync saved a new version of an agent.", on: true },
   { id: "error_feed", label: "New Error Feed issue or spike", blurb: "Production failures grouping into a new issue.", on: false },
   { id: "alert", label: "Alert rule triggered", blurb: "Any alert rule that has Slack as a destination.", on: false },

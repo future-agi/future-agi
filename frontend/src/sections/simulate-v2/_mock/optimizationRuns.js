@@ -120,7 +120,7 @@ export const optimizationSummary = (record) => {
   if (record.status === OPT_STATUS.RUNNING) {
     return {
       headline: "Running",
-      sub: `${r.trials?.length || 0} runs`,
+      sub: `${r.trials?.length || 0} trials`,
       tone: "#CA8A04",
     };
   }
@@ -153,7 +153,7 @@ export const optimizationVerdict = (record) => {
       return {
         tone: "#CA8A04",
         title: `Run ${n} scored higher and was rejected`,
-        body: "It broke a must-pass scenario. The winner below is the best run that did not.",
+        body: "It broke a must-pass scenario. The winner below is the best trial that did not.",
       };
     }
     if (!finalist) {
@@ -169,7 +169,7 @@ export const optimizationVerdict = (record) => {
     return {
       tone: "#CA8A04",
       title: `Run ${n} scored higher and was rejected`,
-      body: `${finalist.why ? `Rejected: ${finalist.why}.` : "It didn't pass the held-back checks."} The winner below is the best run that passed.`,
+      body: `${finalist.why ? `Rejected: ${finalist.why}.` : "It didn't pass the held-back checks."} The winner below is the best trial that passed.`,
     };
   }
   /*
@@ -440,6 +440,28 @@ export const repeatsOf = (x) =>
   x?.result?.repeats || x?.frozen?.repeats || x?.repeats || REPEATS;
 
 /*
+  The baseline is today's agent measured twice; a run of the same version on
+  the unchanged environment (calibration.reused) stands in for one of them.
+*/
+const coveredOf = (cal) =>
+  (cal?.reused || []).reduce((n, r) => n + (r.covered ?? cal.scenarios), 0);
+const baselineConversations = (cal, reps) =>
+  cal ? Math.max(0, 2 * cal.scenarios - coveredOf(cal)) * reps : 0;
+const baselineDetail = (cal, stopped = "") => {
+  const reused = cal?.reused || [];
+  const n = cal?.scenarios || 0;
+  const labels = reused.map((r) => r.label).join(" and ");
+  const said = !reused.length
+    ? "today's agent measured twice"
+    : coveredOf(cal) >= 2 * n
+      ? `${labels} reused — nothing new to run`
+      : reused.length === 1 && reused[0].covered >= n
+        ? `today's agent measured once more — ${labels} counts as the first`
+        : `today's agent measured twice, less what ${labels} already ran (${reused.map((r) => r.covered).join(" + ")} of ${n} scenarios)`;
+  return `${said}${stopped}`;
+};
+
+/*
   What a new improvement runs beyond the trials and the finalists' held-back
   check: the baseline twice, each finalist on the must-pass set, two more
   repeats for a code finalist, and each finalist once in every other
@@ -447,9 +469,7 @@ export const repeatsOf = (x) =>
 */
 const extraFinalConversations = (result) => {
   const reps = result.repeats || REPEATS;
-  const calib = result.calibration
-    ? 2 * result.calibration.scenarios * reps
-    : 0;
+  const calib = baselineConversations(result.calibration, reps);
   const mustPass =
     (result.mustPassMeasured || 0) * finalistCount(result) * reps;
   const deeper = (result.finalists || []).reduce(
@@ -465,7 +485,9 @@ const extraFinalConversations = (result) => {
       n + finalistCount(result) * (e.scenarios || e.mustPass || 0) * reps,
     0,
   );
-  return calib + mustPass + deeper + envs;
+  /* An issue's fix: the winner once on today's other failures. */
+  const others = (result.otherFailing || []).length * reps;
+  return calib + mustPass + deeper + envs + others;
 };
 
 /** Every conversation a search runs — `trials` prices another run count (an estimate's maximum). */
@@ -535,8 +557,8 @@ export const searchSpendParts = (result, surface, { trials } = {}) => {
     part(
       "baseline",
       "Baseline",
-      "today's agent measured twice",
-      result.calibration ? 2 * result.calibration.scenarios * reps : 0,
+      baselineDetail(result.calibration),
+      baselineConversations(result.calibration, reps),
       perFinal,
     ),
     part(
@@ -561,6 +583,13 @@ export const searchSpendParts = (result, surface, { trials } = {}) => {
       perFinal,
     ),
     part(
+      "otherFailing",
+      "Other failures",
+      "the winner re-checked on what else failed today",
+      (result.otherFailing || []).length * reps,
+      perFinal,
+    ),
+    part(
       "otherEnvs",
       "Other environments",
       "finalists checked for regressions",
@@ -570,7 +599,11 @@ export const searchSpendParts = (result, surface, { trials } = {}) => {
       ),
       perFinal,
     ),
-  ].filter((p) => p.conversations > 0);
+  ].filter(
+    (p) =>
+      p.conversations > 0 ||
+      (p.id === "baseline" && result.calibration?.reused?.length),
+  );
 };
 
 /**
@@ -594,9 +627,15 @@ export const improvementSpendParts = (
   if (first)
     parts.push({
       id: "reproduce",
-      label: "Reproducing",
-      detail: "the issue on today's agent, before anything else",
-      conversations: firstConv,
+      label: "First run",
+      /* What it spent covers the whole first run — the environment's
+         scenarios and, for a fix, the issue's — so the count follows it. */
+      detail:
+        record.trigger?.kind === "error-feed"
+          ? "today's agent on the environment's scenarios and the issue's"
+          : "today's agent, measured before anything changed",
+      conversations:
+        record.spentFirst != null ? Math.round(first / per) : firstConv,
       usd: first,
     });
   const status = statusOf(record);
@@ -608,14 +647,16 @@ export const improvementSpendParts = (
     ].includes(status)
   ) {
     const p = record.pendingResult;
-    if (p?.calibration)
+    if (p?.calibration) {
+      const n = baselineConversations(p.calibration, p.repeats || REPEATS);
       parts.push({
         id: "baseline",
         label: "Baseline",
-        detail: "today's agent measured twice · stopped before searching",
-        conversations: 2 * p.calibration.scenarios * (p.repeats || REPEATS),
-        usd: 2 * p.calibration.scenarios * (p.repeats || REPEATS) * per,
+        detail: baselineDetail(p.calibration, " · stopped before searching"),
+        conversations: n,
+        usd: n * per,
       });
+    }
     return parts;
   }
   if (status === OPT_STATUS.FAILED) return parts;
@@ -685,9 +726,8 @@ export const improvementTotalSpend = (
   ].includes(status);
   if (stoppedFirst) {
     const p = record.pendingResult;
-    const measure = p?.calibration
-      ? 2 * p.calibration.scenarios * (p.repeats || REPEATS) * per
-      : 0;
+    const measure =
+      baselineConversations(p?.calibration, p?.repeats || REPEATS) * per;
     return first + measure;
   }
   if (status === OPT_STATUS.FAILED) return first;
@@ -1309,6 +1349,16 @@ const outcomeOf = (rec, { model } = {}) => {
   const base = {
     strength: chosen ? null : proofStrength(r, issue, held),
     held,
+    /* An issue's fix: what else failed today, as the winner left it — fixed
+       along the way, or still failing to fix separately. Read for the
+       search's pick only; a chosen run wasn't re-checked on them. */
+    alongTheWay:
+      shipped && !chosen && (r.otherFailing || []).length
+        ? {
+            fixed: r.otherFailing.filter((f) => f.fixed),
+            still: r.otherFailing.filter((f) => !f.fixed),
+          }
+        : null,
     effect,
     costKnown,
     checks,
@@ -1367,7 +1417,7 @@ const outcomeOf = (rec, { model } = {}) => {
     return {
       ...base,
       ending: { key: "no-fix", label: "No safe improvement" },
-      headline: `No safe improvement — the ${chosen ? "run you chose" : "best run"} ${why.replace(/^it /, "")}.`,
+      headline: `No safe improvement — the ${chosen ? "trial you chose" : "best trial"} ${why.replace(/^it /, "")}.`,
     };
   }
   if (blocking && !chosen) {
@@ -1383,7 +1433,7 @@ const outcomeOf = (rec, { model } = {}) => {
     return {
       ...base,
       ending: { key: "no-fix", label: "No safe improvement" },
-      headline: `No fix for ${issue.id} — the best run didn't fix it on any of the ${plural(issue.targets, "scenario")} where it failed.`,
+      headline: `No fix for ${issue.id} — the best trial didn't fix it on any of the ${plural(issue.targets, "scenario")} where it failed.`,
     };
   }
   /* Fixed only where the search could see it: fitted, not fixed. */
@@ -1391,7 +1441,7 @@ const outcomeOf = (rec, { model } = {}) => {
     return {
       ...base,
       ending: { key: "no-fix", label: "No safe improvement" },
-      headline: `No fix for ${issue.id} — the best run fixed it on scenarios the search saw, but not on the ${issue.held === 1 ? "one" : issue.held} it never saw.`,
+      headline: `No fix for ${issue.id} — the best trial fixed it on scenarios the search saw, but not on the ${issue.held === 1 ? "one" : issue.held} it never saw.`,
     };
   }
   /*
@@ -1429,7 +1479,7 @@ const outcomeOf = (rec, { model } = {}) => {
     return {
       ...base,
       ending: { key: "stopped-early", label: "Stopped early" },
-      headline: `Stopped early — no gain beyond noise in the last ${noGainRunsOf(s)} runs, after ${s.after} of up to ${s.of}. Best: ${said.charAt(0).toLowerCase()}${said.slice(1)}.`,
+      headline: `Stopped early — no gain beyond noise in the last ${noGainRunsOf(s)} trials, after ${s.after} of up to ${s.of}. Best: ${said.charAt(0).toLowerCase()}${said.slice(1)}.`,
     };
   }
   if (record.stoppedAtBudget) {
@@ -1441,7 +1491,7 @@ const outcomeOf = (rec, { model } = {}) => {
     return {
       ...base,
       ending: { key: "budget", label: "Stopped at budget" },
-      headline: `Stopped at the ${limit} after ${s.trials} of ${s.of} runs. Best so far: ${said.charAt(0).toLowerCase()}${said.slice(1)}.`,
+      headline: `Stopped at the ${limit} after ${s.trials} of ${s.of} trials. Best so far: ${said.charAt(0).toLowerCase()}${said.slice(1)}.`,
     };
   }
   return {
@@ -1893,8 +1943,11 @@ export const TRACE_STEP_MS = 800;
 export const RUN_MS = 1600;
 const runsOfStep = (s) =>
   (s.lines || []).filter((l) => /^run \d+ —/.test(l)).length;
-const stepDuration = (s, stepMs = TRACE_STEP_MS) => {
-  if (s.id === "trials") return runsOfStep(s) * RUN_MS + stepMs * 0.55;
+/* How long one of an improvement's runs plays — paced like a run of its
+   size when the record says (`runMs`, set as it starts), else the old pace. */
+export const runMsOf = (record) => record?.runMs || RUN_MS;
+const stepDuration = (s, stepMs = TRACE_STEP_MS, runMs = RUN_MS) => {
+  if (s.id === "trials") return runsOfStep(s) * runMs + stepMs * 0.55;
   const n = (s.lines || []).length;
   return n * Math.max(180, stepMs / (n + 1)) + stepMs * 0.55;
 };
@@ -1920,12 +1973,28 @@ export const reproduceMsOf = (record) =>
     TRACE_STEP_MS * 3,
   );
 /** The status a record has now — a pending ending once its Reproduce has played. */
+/* When an improvement's own clock starts. A fix waits for its first run
+   (`waitingForRun`) — until that run finishes, nothing after Reproducing
+   plays, so the fix never runs ahead of the run you're watching. */
+export const startMsOf = (record, now = Date.now()) => {
+  if (record?.waitingForRun) {
+    /* Unwatched, its run is due by `waitUntil`; watched, the run's page
+       starts it the moment the run ends. */
+    const until = Date.parse(record.waitUntil || "");
+    return until && now >= until ? until : now;
+  }
+  return Date.parse(record?.startedAt || record?.createdAt || "") || now;
+};
+/** Still waiting on its first run at `now`. */
+export const waitingAt = (record, now = Date.now()) =>
+  !!record?.waitingForRun && !(Date.parse(record.waitUntil || "") <= now);
+
 export const statusOf = (record, now = Date.now()) => {
   if (!record?.pendingEnding) return record?.status;
   /* A caller that marked it finished without knowing — its ending stands. */
   if (record.status === OPT_STATUS.COMPLETED) return record.pendingEnding;
   if (record.status !== OPT_STATUS.RUNNING) return record.status;
-  const start = Date.parse(record.startedAt || record.createdAt || "") || now;
+  const start = startMsOf(record, now);
   return now >= start + reproduceMsOf(record)
     ? record.pendingEnding
     : record.status;
@@ -1945,8 +2014,8 @@ export const improvementPhaseOf = (record, now = Date.now()) => {
   if (record?.status === "draft")
     return { key: "draft", label: IMPROVEMENT_PHASES.draft };
   if (statusOf(record, now) !== OPT_STATUS.RUNNING) return null;
-  /* An ending decided up front still reproduces first. */
-  if (record.pendingEnding)
+  /* Waiting on its first run, or an ending decided up front: reproducing. */
+  if (record.pendingEnding || waitingAt(record, now))
     return {
       key: "reproducing",
       label: IMPROVEMENT_PHASES.reproducing,
@@ -1955,13 +2024,10 @@ export const improvementPhaseOf = (record, now = Date.now()) => {
   const r = record.result;
   if (!r) return { key: "draft", label: IMPROVEMENT_PHASES.draft };
   const steps = searchTrace(r, record);
-  const elapsed = Math.max(
-    0,
-    now - (Date.parse(record.startedAt || record.createdAt || 0) || now),
-  );
+  const elapsed = Math.max(0, now - startMsOf(record, now));
   let t = 0;
   for (const s of steps) {
-    t += stepDuration(s);
+    t += stepDuration(s, TRACE_STEP_MS, runMsOf(record));
     if (elapsed < t) {
       const key = STEP_PHASE[s.id] || "searching";
       return { key, label: IMPROVEMENT_PHASES[key], step: s.id };
@@ -1995,10 +2061,7 @@ export const improvementProgressOf = (record, now = Date.now()) => {
   if (record?.status !== OPT_STATUS.RUNNING) return null;
   /* An ending decided up front: Reproduce plays, then it settles to it. */
   if (record.pendingEnding) {
-    const elapsed = Math.max(
-      0,
-      now - (Date.parse(record.startedAt || record.createdAt || 0) || now),
-    );
+    const elapsed = Math.max(0, now - startMsOf(record, now));
     const total =
       record.fixDepth === "suggestion"
         ? 0
@@ -2021,17 +2084,14 @@ export const improvementProgressOf = (record, now = Date.now()) => {
   const early =
     record.fixDepth !== "suggestion" ? plateauStopOf(record.result) : null;
   const runsMax = early ? early.of : total;
-  const elapsed = Math.max(
-    0,
-    now - (Date.parse(record.startedAt || record.createdAt || 0) || now),
-  );
+  const elapsed = Math.max(0, now - startMsOf(record, now));
   let t = 0;
   let runsDone = 0;
   for (const s of steps) {
-    const d = stepDuration(s);
+    const d = stepDuration(s, TRACE_STEP_MS, runMsOf(record));
     if (elapsed < t + d) {
       if (s.id === "trials")
-        runsDone = Math.min(total, Math.floor((elapsed - t) / RUN_MS));
+        runsDone = Math.min(total, Math.floor((elapsed - t) / runMsOf(record)));
       const stage = STEP_STAGE[s.id] || "search";
       return {
         stage,
@@ -2122,9 +2182,13 @@ export const settleImprovements = (es, now = Date.now()) => {
       return settlePending(o, now);
     }
     if (o.status !== OPT_STATUS.RUNNING || !o.result) return o;
-    const start = Date.parse(o.startedAt || o.createdAt || "") || now;
+    const start = startMsOf(o, now);
     const done =
-      start + searchTrace(o.result, o).reduce((t, s) => t + stepDuration(s), 0);
+      start +
+      searchTrace(o.result, o).reduce(
+        (t, s) => t + stepDuration(s, TRACE_STEP_MS, runMsOf(o)),
+        0,
+      );
     if (now < done) return o;
     changed = true;
     return {

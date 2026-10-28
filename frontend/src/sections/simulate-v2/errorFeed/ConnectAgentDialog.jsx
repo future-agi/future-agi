@@ -1,6 +1,13 @@
 import PropTypes from "prop-types";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Box, Dialog, IconButton, Stack, Typography } from "@mui/material";
+import {
+  Box,
+  Button,
+  Dialog,
+  IconButton,
+  Stack,
+  Typography,
+} from "@mui/material";
 import { useSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import { PROVIDER_LABELS } from "../_mock/agentRegistry";
@@ -12,6 +19,8 @@ import IssueConnectCard from "../agents/connect/IssueConnectCard";
 import { TextLink } from "../agents/connect/connectBits";
 import { detectedRequestOf } from "../agents/connect/detectedRequest";
 import { useSaveConnectedAgent } from "../agents/connect/useSaveConnectedAgent";
+import YourAgentsList from "../agents/connect/YourAgentsList";
+import { useConnectedAgents } from "../store";
 
 /**
  * Connect agent to fix (RSI PRD, Flow 3), over the issue — never a page
@@ -20,8 +29,10 @@ import { useSaveConnectedAgent } from "../agents/connect/useSaveConnectedAgent";
  * one right way in, then grows into that flow, with the project already
  * linked. Saving closes it and the issue's button reads Fix.
  *
- * A project whose traces don't say which agent sent them opens straight on
- * the full list of ways to connect one.
+ * It opens on the agents already in Agents — the ones the traces point at
+ * first — since a traced app is often an agent that's here already; picking
+ * one saves the project on it. Below, connecting a new one: the one right
+ * way the traces show, else every way. With no agents yet, it opens on that.
  */
 const mono = { fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" };
 
@@ -32,14 +43,17 @@ export default function ConnectAgentDialog({ open, onClose, issue, project }) {
   const projectName = known?.name || project || "this issue's project";
   const traced = known?.traced || null;
   const issueId = issue?.cluster_id || null;
+  const { agents } = useConnectedAgents();
+  const hasAgents = agents.some((a) => !a?.deleted?.at);
 
   /* null: what the traces say · "detected": the one right way · "all": every way. */
   const [mode, setMode] = useState(null);
   const [request, setRequest] = useState(null);
   useEffect(() => {
     if (!open) return;
-    setMode(traced ? null : "all");
+    setMode(traced || hasAgents ? null : "all");
     setRequest(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, traced]);
 
   const prefill = useMemo(
@@ -161,17 +175,80 @@ export default function ConnectAgentDialog({ open, onClose, issue, project }) {
           },
         }}
       >
-        {mode === null && traced && (
-          <IssueConnectCard
-            bare
-            issueId={issueId}
-            project={known}
-            onConnectDetected={() => {
-              setRequest(detectedRequestOf(traced));
-              setMode("detected");
+        {mode === null && project && (
+          <YourAgentsList
+            project={project}
+            onLinked={(agent) => {
+              onClose();
+              enqueueSnackbar(
+                `${projectName} is linked to ${agent.name} — this issue can be fixed now`,
+                { variant: "success" },
+              );
             }}
-            onAnotherWay={() => setMode("all")}
           />
+        )}
+        {mode === null && traced && (
+          <Box
+            sx={{
+              borderTop: hasAgents ? "1px solid" : "none",
+              borderColor: "divider",
+              pt: hasAgents ? 1 : 0,
+            }}
+          >
+            {hasAgents && (
+              <Typography
+                sx={{ typography: "s1", fontWeight: 500, px: 2.5, pt: 1.5 }}
+              >
+                Or connect it
+              </Typography>
+            )}
+            <IssueConnectCard
+              bare
+              existingListed={hasAgents}
+              issueId={issueId}
+              project={known}
+              onConnectDetected={() => {
+                setRequest(detectedRequestOf(traced));
+                setMode("detected");
+              }}
+              onAnotherWay={() => setMode("all")}
+            />
+          </Box>
+        )}
+        {mode === null && !traced && (
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1.5}
+            sx={{
+              px: 2.5,
+              py: 2,
+              borderTop: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+              <Typography sx={{ typography: "s1", fontWeight: 500 }}>
+                Or connect it
+              </Typography>
+              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                Not in Agents yet — connect its code, the platform it runs on,
+                or its endpoint.
+              </Typography>
+            </Box>
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={() => setMode("all")}
+              sx={{
+                flexShrink: 0,
+                color: "text.primary",
+                borderColor: "divider",
+              }}
+            >
+              Choose how
+            </Button>
+          </Stack>
         )}
         {mode !== null && (
           <>
@@ -202,10 +279,12 @@ export default function ConnectAgentDialog({ open, onClose, issue, project }) {
               >
                 {`${projectName} is linked to the agent you connect — then every issue from it can be fixed.`}
               </Typography>
-              {traced && (
-                <TextLink
-                  onClick={() => setMode(null)}
-                >{`From its ${traced.via === "traceai" ? "traces" : "call logs"}`}</TextLink>
+              {(traced || hasAgents) && (
+                <TextLink onClick={() => setMode(null)}>
+                  {hasAgents
+                    ? "Back to your agents"
+                    : `From its ${traced.via === "traceai" ? "traces" : "call logs"}`}
+                </TextLink>
               )}
             </Stack>
             <InDrawerContext.Provider value>

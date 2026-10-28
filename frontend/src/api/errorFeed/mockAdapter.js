@@ -581,6 +581,138 @@ const MOCK_CLUSTERS = [
     eval_score: 0.46,
     modality: "text",
   },
+  {
+    /* Guest booking (sealed voice) — the plain happy path. Added for testing the fix flow. */
+    cluster_id: "ISS-4601",
+    project_id: "guest-booking-line",
+    error: {
+      name: "Booking confirmed without reading back the date and party size",
+      type: "SkippedVerification",
+    },
+    severity: "high",
+    status: "escalating",
+    evidence_state: "confirmed",
+    why_shown:
+      "24 calls where the agent booked straight after the guest named a time, without repeating the date and party size; six guests arrived on the wrong day. Matched calls read the booking back first.",
+    trace_count: 24,
+    users_affected: 22,
+    fix_layer: "prompt",
+    trends: sparkFor("ISS-4601"),
+    first_seen: nowIso(60 * 24 * 3),
+    last_seen: nowIso(31),
+    eval_score: 0.48,
+    modality: "voice",
+  },
+  {
+    /* Clinic line — a critical issue with a missing tool call. Added for testing the fix flow. */
+    cluster_id: "ISS-4602",
+    project_id: "clinic-appointment-line",
+    error: {
+      name: "Repeat prescription booked without checking the patient's identity",
+      type: "SkippedVerification",
+    },
+    severity: "critical",
+    status: "escalating",
+    evidence_state: "confirmed",
+    why_shown:
+      "15 calls where the agent booked a repeat-prescription pickup after the caller gave only a name; the identity check was never called. Matched calls verify date of birth first.",
+    trace_count: 15,
+    users_affected: 15,
+    fix_layer: "orchestration",
+    trends: sparkFor("ISS-4602"),
+    first_seen: nowIso(60 * 24 * 2),
+    last_seen: nowIso(34),
+    eval_score: 0.36,
+    modality: "voice",
+  },
+  {
+    /* Airline rebooking — a code agent (branch @ commit), text. Added for testing the fix flow. */
+    cluster_id: "ISS-4603",
+    project_id: "airline-rebooking",
+    error: {
+      name: "Baggage allowance quoted from the original fare after rebooking",
+      type: "StaleToolResult",
+    },
+    severity: "high",
+    status: "escalating",
+    evidence_state: "confirmed",
+    why_shown:
+      "33 chats where the traveller was rebooked onto a basic fare and the agent still quoted the two free bags of the old fare. Matched chats read the allowance from the new booking.",
+    trace_count: 33,
+    users_affected: 30,
+    fix_layer: "tools",
+    trends: sparkFor("ISS-4603"),
+    first_seen: nowIso(60 * 24 * 4),
+    last_seen: nowIso(38),
+    eval_score: 0.53,
+    modality: "text",
+  },
+  {
+    /* Returns line (LiveKit) — many traces, so the popup caps and groups its scenarios. Added for testing the fix flow. */
+    cluster_id: "ISS-4604",
+    project_id: "returns-refunds-line-agent",
+    error: {
+      name: "Refund sent to a card the customer said was cancelled",
+      type: "PolicyViolation",
+    },
+    severity: "critical",
+    status: "escalating",
+    evidence_state: "confirmed",
+    why_shown:
+      "64 calls where the customer said their card was cancelled and the agent still refunded to it. Matched calls offer store credit or a new card before refunding.",
+    trace_count: 64,
+    users_affected: 58,
+    fix_layer: "prompt",
+    trends: sparkFor("ISS-4604"),
+    first_seen: nowIso(60 * 24 * 6),
+    last_seen: nowIso(41),
+    eval_score: 0.42,
+    modality: "voice",
+  },
+  {
+    /* Customer support (Vapi) — few traces and evidence still emerging. Added for testing the fix flow. */
+    cluster_id: "ISS-4605",
+    project_id: "customer-support-line-agent",
+    error: {
+      name: "Account closed when the caller only asked how closing works",
+      type: "PolicyViolation",
+    },
+    severity: "high",
+    status: "for_review",
+    evidence_state: "emerging",
+    why_shown:
+      "9 calls where the caller asked what closing their account involves and the agent closed it. Too few calls to be sure yet; matched calls explain the steps and wait for a yes.",
+    trace_count: 9,
+    users_affected: 9,
+    fix_layer: "prompt",
+    trends: sparkFor("ISS-4605"),
+    first_seen: nowIso(60 * 24 * 1),
+    last_seen: nowIso(45),
+    eval_score: 0.5,
+    modality: "voice",
+  },
+  {
+    /* Pickup dispatch — Connect agent to fix until an agent records this project. Added for testing the fix flow. */
+    cluster_id: "ISS-4606",
+    project_id: "pickup-dispatch",
+    error: {
+      name: "Driver ETA promised before a driver accepted the job",
+      type: "UnsupportedClaim",
+    },
+    severity: "high",
+    status: "escalating",
+    evidence_state: "confirmed",
+    why_shown:
+      "21 calls where the agent told the caller a driver was 5 minutes away while the job was still unassigned. Matched calls say a driver is being found.",
+    trace_count: 21,
+    users_affected: 20,
+    fix_layer: "orchestration",
+    trends: sparkFor("ISS-4606"),
+    first_seen: nowIso(60 * 24 * 2),
+    last_seen: nowIso(52),
+    eval_score: 0.47,
+    modality: "voice",
+  },
 ];
 
 const idSeedFor = (id) => {
@@ -749,6 +881,36 @@ const INPUT_PROMPTS = {
     "Is there a fee to cancel order 3381?",
     "If I cancel now do I get the full amount back?",
   ],
+  "ISS-4601": [
+    "Table for four on Friday at 8, please.",
+    "Can you book us in for Saturday lunch?",
+    "Six of us, tomorrow at 7.",
+  ],
+  "ISS-4602": [
+    "I'm calling to pick up my repeat prescription.",
+    "Can you book my mum's prescription pickup for Thursday?",
+    "I need my usual inhaler — when can I collect it?",
+  ],
+  "ISS-4603": [
+    "I've been moved to the 7am flight — how many bags can I bring?",
+    "Does my new fare still include checked bags?",
+    "What's my baggage allowance after the rebooking?",
+  ],
+  "ISS-4604": [
+    "My card was cancelled last week — where will the refund go?",
+    "Please don't send it to the old card, I closed it.",
+    "Can I get the refund on a different card?",
+  ],
+  "ISS-4605": [
+    "What happens if I close my account?",
+    "How would I go about closing my account?",
+    "If I close the account do I lose my history?",
+  ],
+  "ISS-4606": [
+    "Can I get a car to the station now?",
+    "How long until a driver gets here?",
+    "I need a pickup from 12 Mill Lane, how soon?",
+  ],
   "ISS-4548": [
     "Actually make it the 14th instead of the 12th — what does that cost?",
     "Can you check Friday instead? Same route.",
@@ -780,6 +942,12 @@ const AGENT_UTTERANCE = {
   "ISS-4585": "Your March invoice total is $1,240.",
   "ISS-4589": "Your order has been cancelled.",
   "ISS-4593": "You're on the 6pm flight — nothing more to pay.",
+  "ISS-4601": "You're all set — see you then.",
+  "ISS-4602": "Done — your prescription is ready to collect on Thursday.",
+  "ISS-4603": "Your fare includes two checked bags.",
+  "ISS-4604": "Your refund of $64 is on its way to your card.",
+  "ISS-4605": "Done — your account is now closed.",
+  "ISS-4606": "A driver is 5 minutes away.",
 };
 
 /** Representative trace records for OverviewTab + TracesTab. Shape

@@ -39,8 +39,14 @@ export default function ConnectAgentPage() {
   const prefill = useMemo(() => {
     const project = params.get("project");
     const issue = params.get("issue");
+    /* From a tracing project's own page: its name, and the way back is there. */
+    const projectName = params.get("projectName");
     return project || issue
-      ? { project: project || null, issue: issue || null }
+      ? {
+          project: project || null,
+          issue: issue || null,
+          projectName: projectName || null,
+        }
       : null;
   }, [params]);
   /*
@@ -223,17 +229,21 @@ export default function ConnectAgentPage() {
             <Typography sx={{ typography: "s2", fontWeight: 600 }}>
               {prefill.issue
                 ? `Connecting the agent behind ${prefill.issue}`
-                : "Connecting the agent behind an Error Feed issue"}
+                : prefill.projectName
+                  ? `Connecting the agent behind ${prefill.projectName}`
+                  : "Connecting the agent behind an Error Feed issue"}
             </Typography>
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
               {prefill.project
-                ? `We'll link ${project ? project.name : prefill.project} to it, so its Error Feed issues can be fixed.`
+                ? `We'll link ${project ? project.name : prefill.projectName || prefill.project} to it, so its Error Feed issues can be fixed.`
                 : "Pick the Observe project its traces land in."}
             </Typography>
           </Box>
           {returnTo && (
             <TextLink onClick={() => navigate(returnTo)}>
-              Back to the issue
+              {prefill.issue || !prefill.projectName
+                ? "Back to the issue"
+                : "Back to the project"}
             </TextLink>
           )}
         </Stack>

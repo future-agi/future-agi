@@ -91,8 +91,8 @@ export default function RaiseLimitBar({
     });
 
   const said = byTime
-    ? `Stopped at its ${minutesLabel(nowMinutes)} time cap${before ? " before searching" : ` after ${s.trials} of ${s.of} runs`}.`
-    : `Stopped at its ${creditsLabel(record.budget || 0)} budget${before ? " before searching" : ` after ${s.trials} of ${s.of} runs`}.`;
+    ? `Stopped at its ${minutesLabel(nowMinutes)} time cap${before ? " before searching" : ` after ${s.trials} of ${s.of} trials`}.`
+    : `Stopped at its ${creditsLabel(record.budget || 0)} budget${before ? " before searching" : ` after ${s.trials} of ${s.of} trials`}.`;
   const ask = steps.length
     ? before
       ? `The whole search needs about ${creditsLabel(needed || 0)}. Raise it to continue?`

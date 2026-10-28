@@ -16,6 +16,7 @@ import {
   Tabs,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { paths } from "src/routes/paths";
 import { clickable, focusRing } from "../../components/clickable";
 import { connectedAgentPath } from "../../improvements/improvementNav";
 import { RunTraceLog } from "../../components/RunTrace";
@@ -32,6 +33,7 @@ import { fixScope, codingAgentBrief } from "../../_mock/codingAgentBrief";
 import { decidingMoment } from "../../_mock/comparison";
 import { runIdentityOf } from "../../_mock/runIdentity";
 import { scenarioTitle } from "../../_mock/scenarios";
+import { checkToFix } from "../../_mock/omega";
 
 /**
  * What is wrong, and what to change about it.
@@ -267,7 +269,8 @@ export default function DiagnosisPane({
   const [handoff, setHandoff] = useState(false);
   const [previousAnchor, setPreviousAnchor] = useState(null);
   const [open, setOpen] = useState({});
-  const [showDiagnosis, setShowDiagnosis] = useState(true);
+  /* Folded to one line — what to fix comes first; the six checks are a click away. */
+  const [showDiagnosis, setShowDiagnosis] = useState(false);
   /* Diagnosis is the fixed six-analyzer read; Imagine is the freeform
      follow-up canvas over the same run. Kept as a top-level tab inside
      this pane so the user can jump between them without losing the
@@ -305,6 +308,54 @@ export default function DiagnosisPane({
     ? () => {
         onClose?.();
         navigate(connectedAgentPath(agent.id, "constraints"));
+      }
+    : null;
+  /* The checks pass conversations that didn't do the work (the gaming
+     analyzer's high finding — the verdict says fix them first). An
+     improvement scored by them could win without getting better, so fixing
+     the checks leads and Improve steps back. */
+  const checksFirst =
+    report.find((a) => a.severity === "high")?.id === "gaming";
+  /* The exact check: the evaluation that passed them (opened on the
+     Evaluations tab, which says what to change), or the score's efficiency
+     term (the contract). */
+  const toFix = checksFirst ? checkToFix(report) : null;
+  const unit = (n) =>
+    `${n} ${env?.surface === "voice" ? "call" : "conversation"}${n === 1 ? "" : "s"}`;
+  const runLabel = (() => {
+    const run = (envState?.runs || []).find((r) => r.id === runId);
+    return run?.ordinal ? `Run ${run.ordinal}` : "this run";
+  })();
+  const checksLine = !toFix
+    ? "The checks pass conversations that didn't do the work"
+    : toFix.signal === "efficiency-exploit"
+      ? `The score paid ${unit(toFix.count)} for finishing early by doing less`
+      : `${toFix.check.name} passed ${unit(toFix.check.count)} ${
+          toFix.signal === "hollow-pass"
+            ? "that skipped a step the scenario requires"
+            : "where the agent claimed an action it never took"
+        }`;
+  const fixLabel = !toFix?.check
+    ? toFix
+      ? "Fix the score"
+      : "Fix the checks"
+    : `Fix ${toFix.check.name}`;
+  const fixChecks = env?.id
+    ? () => {
+        onClose?.();
+        const base = paths.dashboard.simulate.environmentDetail(env.id);
+        if (toFix && !toFix.check) return navigate(`${base}/contract`);
+        navigate(`${base}/evals`, {
+          state: toFix?.check && {
+            fixCheck: {
+              evalId: toFix.check.id,
+              name: toFix.check.name,
+              count: toFix.check.count,
+              signal: toFix.signal,
+              runLabel,
+            },
+          },
+        });
       }
     : null;
 
@@ -728,8 +779,13 @@ export default function DiagnosisPane({
                 </Typography>
                 <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
                   {running
-                    ? `${report.length} analyzers · report once every call is read`
-                    : `${report.length} analyzers`}
+                    ? `${report.length} checks · report once every call is read`
+                    : (() => {
+                        const found = report.filter(
+                          (a) => a.severity && a.severity !== "low",
+                        ).length;
+                        return `${report.length} checks · ${found ? `${found} found problems` : "nothing serious"}`;
+                      })()}
                 </Typography>
                 {!running && (
                   <Iconify
@@ -1313,6 +1369,24 @@ export default function DiagnosisPane({
               the training scenarios. Hand-off stays as the quiet
               alternative for teams that would rather skip the search.
             */}
+            {checksFirst && !running && (
+              <>
+                <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+                  {`${checksLine}, so an improvement scored by ${toFix?.check ? "it" : "them"} can win without getting better. Fix ${toFix?.check ? "it" : "that"} first.`}
+                </Typography>
+                {fixChecks && (
+                  <Button
+                    size="small"
+                    fullWidth
+                    variant="contained"
+                    color="primary"
+                    onClick={fixChecks}
+                  >
+                    {fixLabel}
+                  </Button>
+                )}
+              </>
+            )}
             <Tooltip
               arrow
               title={
@@ -1328,15 +1402,15 @@ export default function DiagnosisPane({
                 <Button
                   size="small"
                   fullWidth
-                  variant="contained"
-                  color="primary"
+                  variant={checksFirst && !running ? "outlined" : "contained"}
+                  color={checksFirst && !running ? "inherit" : "primary"}
                   disabled={running || !included.length}
                   onClick={onOptimize}
                   startIcon={
                     <Iconify icon="solar:magic-stick-3-bold" width={16} />
                   }
                 >
-                  Run self improvement
+                  {checksFirst && !running ? "Improve anyway" : "Improve"}
                 </Button>
               </Box>
             </Tooltip>

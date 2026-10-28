@@ -14,6 +14,7 @@
  */
 
 import { buildRun } from "./runStream";
+import { withAskSkipped } from "./clarify";
 import { withRegrade } from "./regrade";
 import { resolveEval } from "./evals";
 import { getSurface } from "./surfaces";
@@ -60,7 +61,12 @@ export const runScenarios = (envState, run) => {
   /* Each at the version the run pinned (§4.10.8): an edit since — a major
      bump to its caller instruction, say — doesn't change what an old run
      shows. Runs without pins replay today's rows, as they always did. */
-  const all = pinnedScenarios(envState?.scenarios || [], run);
+  /* A fix's first run also carries the issue's scenarios — the fix's own,
+     not the environment's, so they ride on the run (`fixScenarios`). */
+  const all = pinnedScenarios(
+    [...(envState?.scenarios || []), ...(run?.fixScenarios || [])],
+    run,
+  );
   if (!run?.scenarioIds?.length) return { scenarios: all, dropped: 0 };
   const byId = new Map(all.map((sc) => [sc.id, sc]));
   /* Rows of the removed cheat checks aren't "dropped" — they're gone by design. */
@@ -93,18 +99,22 @@ export const rebuildRun = (env, envState, run) => {
   /* A snapshot re-run replays its source's draws; anything else draws from
      its own id (not `run.seed` — seeded runs carry numeric seeds that differ
      from their ids, and their results come from the id). */
+  const seed = run.replaySeed || run.id;
+  const built = buildRun({
+    seed,
+    scenarios: runScenarios(envState, run).scenarios,
+    stage: getSurface(env?.surface).stage,
+    evals: (run.evals || envState?.evals || [])
+      .map(resolveEval)
+      .filter(Boolean),
+    repeats: run.repeats || 1,
+    ...inputs,
+  }).tasks;
+  /* A fix's first run skipped its one clarifying question (useRunPlayer). */
+  const tasks =
+    run.measuredFor?.kind === "fix" ? withAskSkipped(built, seed) : built;
   return withRegrade(
-    buildRun({
-      seed: run.replaySeed || run.id,
-      scenarios: runScenarios(envState, run).scenarios,
-      stage: getSurface(env?.surface).stage,
-      evals: (run.evals || envState?.evals || [])
-        .map(resolveEval)
-        .filter(Boolean),
-      repeats: run.repeats || 1,
-      ...inputs,
-    })
-      .tasks /* Scenarios the run's spending limit kept from starting never ran. */
+    tasks /* Scenarios the run's spending limit kept from starting never ran. */
       .filter((t) => !notStartedOf(run).has(t.id))
       .map((t) => ({ ...t, status: t.verdict })),
     run,
@@ -120,7 +130,9 @@ const notStartedOf = (run) => new Set(run?.budget?.notStarted || []);
  * the table, the chart and the comparison can never disagree with each other.
  */
 export const runSummary = (env, envState, run, index) => {
-  const tasks = rebuildRun(env, envState, run);
+  /* A fix's first run also played the issue's scenarios; the environment's
+     history counts only its own. */
+  const tasks = rebuildRun(env, envState, run).filter((t) => !t.fixScenario);
   const { dropped } = runScenarios(envState, run);
   const passed = tasks.filter((t) => t.status === "passed").length;
   const flaky = tasks.filter((t) => t.status === "flaky").length;
@@ -376,7 +388,7 @@ export const trialSummaries = (env, envState) => {
         kind: "trial",
         /* A trial ran a candidate on top of the version it started from, so
            it's named as both — "agent v2" alone read as v2 itself. */
-        trialLabel: `Run ${trial.n} · ${baseVersion ? `${baseVersion} + change` : "change"}`,
+        trialLabel: `Trial ${trial.n} · ${baseVersion ? `${baseVersion} + change` : "change"}`,
         selfImprovementId: opt.id,
         /* The improvement's own name — a custom one when it was given, the same
            helper its page title reads. */
@@ -393,7 +405,7 @@ export const trialSummaries = (env, envState) => {
         baseScore: opt.result.base,
         /* Each run its own colour, so two runs of one improvement read apart. */
         color: SI_TRIAL_COLORS[(trial.n - 1) % SI_TRIAL_COLORS.length],
-        letter: `R${trial.n}`,
+        letter: `T${trial.n}`,
         finishedAt,
         agentVersion: baseVersion || "trial",
         envVersion: sourceRun?.envVersion,

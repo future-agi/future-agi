@@ -8,6 +8,8 @@ import StatusBadge from "src/components/status-badge/StatusBadge";
 const STATUS_TONE = {
   running: { status: "running", role: "info" },
   ready: { status: "ready", role: "success" },
+  /* Ready, but its proof is on an older version — a person re-checks it. */
+  recheck: { status: "ready", role: "warning" },
   failed: { status: "failed", role: "danger" },
 };
 

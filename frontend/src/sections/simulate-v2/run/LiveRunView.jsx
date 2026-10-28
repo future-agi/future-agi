@@ -12,6 +12,7 @@ import {
   Button,
   IconButton,
   Tooltip,
+  Link,
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
@@ -52,12 +53,7 @@ import { twinTimelineFor } from "../_mock/twins";
 import { getEnvironment } from "../_mock/environments";
 import { getSurface } from "../_mock/surfaces";
 import { getEval, resolveEval } from "../_mock/evals";
-import {
-  BOOT_STEPS,
-  parallelOf,
-  runSizeOf,
-  envTurnLimitOf,
-} from "../_mock/runStream";
+import { parallelOf, runSizeOf, envTurnLimitOf } from "../_mock/runStream";
 import { runDefaultsOf } from "../_mock/rsiModel";
 import { staleScenariosOf } from "../_mock/runCauses";
 import { runProofKindOf, gradingOf } from "../_mock/runRollup";
@@ -74,15 +70,15 @@ import {
   EmptyState,
   pulse,
 } from "../components/primitives";
-import { ProvisioningPanel } from "../components/loading";
 import useRunPlayer from "./useRunPlayer";
 import SecretCheckDialog from "./SecretCheckDialog";
+import FixRunNote from "../errorFeed/FixRunNote";
+import { improvementPath } from "../improvements/improvementNav";
 import IssueReturnBanner from "../errorFeed/IssueReturnBanner";
 import { failedSecretChecksOf } from "../_mock/envConfig";
 import Stage from "./stages";
 import FromImprovement from "./FromImprovement";
-import CandidateSourcePicker from "./CandidateSourcePicker";
-import { candidateSourceOf, takesSnapshot } from "../_mock/candidateSource";
+import { candidateSourceOf } from "../_mock/candidateSource";
 import RunGroupBar from "./RunGroupBar";
 import { groupMembersOf, settledRun } from "../_mock/runGroup";
 import { gradedRuleIds } from "../_mock/provenance";
@@ -140,6 +136,12 @@ function LiveRun() {
   if (!pendingRef.current && recorded?.pending && !recorded.finishedAt)
     pendingRef.current = recorded;
   const pendingMember = pendingRef.current;
+  /* A fix's first run — said in the notes row, never as a banner. */
+  const fixRun = ["fix", "issue"].includes(
+    (recorded || pendingMember)?.measuredFor?.kind,
+  );
+  /* Its first run never waits on a person — a question leaves that scenario unscored. */
+  const fixFirstRun = (recorded || pendingMember)?.measuredFor?.kind === "fix";
 
   const env =
     getEnvironment(envId) || state.myEnvironments.find((e) => e.id === envId);
@@ -168,8 +170,37 @@ function LiveRun() {
         (r) => r.id === snapshotParam && r.finishedAt,
       ) || null
     : null;
+  /*
+    `?live=1` on an improvement's run (OPT-…-tN): watch that candidate play,
+    replayed from the run it started from with each scenario landing where
+    the candidate's own result says. A replay — it records nothing, sends no
+    alerts, and the improvement's numbers stay the search's.
+  */
+  const watchTrial = useMemo(() => {
+    if (params.get("live") !== "1") return null;
+    const m = /^(OPT-\d+)-t(\d+)$/.exec(runId || "");
+    if (!m) return null;
+    const opt = (envState.optimizations || []).find((o) => o.id === m[1]);
+    const trial = (opt?.result?.trials || []).find((t) => t.n === Number(m[2]));
+    const sourceRun = (envState.runs || []).find(
+      (r) => r.id === opt?.fromRunId,
+    );
+    return trial && sourceRun ? { opt, trial, sourceRun } : null;
+    /* Re-read once the store has loaded; a replay writes nothing, so these
+       don't change under it. */
+  }, [params, runId, envState.optimizations, envState.runs]);
+  /* A candidate is tried on the target scenarios — what its replay plays. */
+  const watchIds = watchTrial
+    ? (watchTrial.opt.result?.train || [])
+        .map((t) => t.scenarioId || t.id)
+        .filter(Boolean)
+    : [];
   const only =
     params.get("only") ||
+    (watchIds.length ? watchIds.join(",") : null) ||
+    (watchTrial?.sourceRun?.scenarioIds?.length
+      ? watchTrial.sourceRun.scenarioIds.join(",")
+      : null) ||
     (snapshotSrc?.scenarioIds?.length
       ? snapshotSrc.scenarioIds.join(",")
       : null);
@@ -193,12 +224,6 @@ function LiveRun() {
     params.get("candidate") || recorded?.candidateSource?.param,
     envState.agent,
   );
-  const pickCandidate = (value) => {
-    const q = new URLSearchParams(params);
-    if (value) q.set("candidate", value);
-    else q.delete("candidate");
-    navigate(`?${q.toString()}`, { replace: true });
-  };
   /* `?env=` runs on a specific environment version without moving the
      environment's own pin — how Compare re-runs an older agent on the newer
      world. Otherwise the pinned one. */
@@ -215,25 +240,66 @@ function LiveRun() {
   /* Only the scenarios that exist in this environment version, re-proved
      against it at run start — what still can't stage is skipped and listed.
      A selection is never widened to the whole set. */
+  /* A fix's first run also plays the issue's scenarios it carries — the
+     fix's own, never written into the environment. */
+  const fixScenarios =
+    pendingMember?.fixScenarios || watchTrial?.sourceRun?.fixScenarios || null;
   const plan = useMemo(
     () =>
-      runPlan(env, envState, {
-        only: only ? only.split(",") : null,
-        envVersion: runEnv,
-      }),
+      runPlan(
+        env,
+        fixScenarios
+          ? {
+              ...envState,
+              scenarios: [...envState.scenarios, ...fixScenarios],
+            }
+          : envState,
+        {
+          only: only ? only.split(",") : null,
+          envVersion: runEnv,
+        },
+      ),
     /* Keyed on the scenario list, not the whole env state — recording the run
        itself updates the env state, and must not rebuild the run mid-flight. */
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [only, envState.scenarios, runEnv],
+    [only, envState.scenarios, runEnv, fixScenarios],
   );
   const { run: planned, skipped, poolSize } = plan;
   /* An exact snapshot plays each scenario at the version its source pinned —
      the text it had then, not today's edit (§4.10.8). As configured now, today's. */
-  const scenarios = useMemo(
-    () => (snapshotSrc ? pinnedScenarios(planned, snapshotSrc) : planned),
+  const scenarios = useMemo(() => {
+    const rows = snapshotSrc ? pinnedScenarios(planned, snapshotSrc) : planned;
+    if (!watchTrial || !env) return rows;
+    /* Watching a candidate: each scenario lands where the candidate's own
+       result says — the trial's change, else how it went on its source run. */
+    const { trial, sourceRun } = watchTrial;
+    const reps = sourceRun.repeats || 1;
+    const before = new Map(
+      rebuildRun(env, envState, sourceRun).map((t) => [
+        t.scenarioId || t.id,
+        t.status,
+      ]),
+    );
+    const per = trial.perScenario || {};
+    return rows.map((sc) => {
+      const changed = TRIAL_CHANGES[per[sc.id]];
+      const status = changed || before.get(sc.id);
+      const samples =
+        status === "passed"
+          ? Array(reps).fill("passed")
+          : status === "failed"
+            ? Array(reps).fill("failed")
+            : status === "flaky"
+              ? Array.from({ length: reps }, (_, i) =>
+                  i % 2 ? "passed" : "failed",
+                )
+              : null;
+      /* Counted in a candidate's run — the issue's scenarios are its targets. */
+      const { fixScenario: _x, fromIssue: _f, ...row } = sc;
+      return samples ? { ...row, forcedSamples: samples } : row;
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [planned, snapshotSrc?.id],
-  );
+  }, [planned, snapshotSrc?.id, watchTrial, env]);
   /* A re-run of some scenarios, not the whole set. */
   const partial = !!only && scenarios.length + skipped.length < poolSize;
 
@@ -246,7 +312,10 @@ function LiveRun() {
   */
   const repeats = (() => {
     const raw = Number(
-      params.get("trials") || pendingMember?.repeats || snapshotSrc?.repeats,
+      params.get("trials") ||
+        pendingMember?.repeats ||
+        watchTrial?.sourceRun?.repeats ||
+        snapshotSrc?.repeats,
     );
     /* No count asked for: the environment's default (3 unless Settings changed it). */
     if (!Number.isFinite(raw) || raw < 1)
@@ -426,6 +495,9 @@ function LiveRun() {
     };
   })();
   const playerArgs = {
+    /* A replay never stops to ask — the candidate's results are already in. */
+    ...(watchTrial && { clarify: false }),
+    ...(!watchTrial && fixFirstRun && { clarify: "skip" }),
     budget: runBudget,
     seed: replaySeed || runId,
     scenarios,
@@ -561,30 +633,34 @@ function LiveRun() {
     return { opt, trial, sourceRun };
   }, [runId, envState.optimizations, envState.runs]);
 
-  const stored = trialMatch
-    ? /* Synthesize a stored-like record pointing at the source run's seed so
+  const stored =
+    trialMatch && !watchTrial
+      ? /* Synthesize a stored-like record pointing at the source run's seed so
        rebuildRun can produce a task list. The trial's per-scenario outcomes
        are folded in below. */
-      {
-        id: trialMatch.sourceRun?.id || runId,
-        agentVersion: trialMatch.sourceRun?.agentVersion || "trial",
-        envVersion: trialMatch.sourceRun?.envVersion,
-        scenarioIds:
-          trialMatch.sourceRun?.scenarioIds ||
-          Object.keys(trialMatch.trial.perScenario || {}),
-        repeats: trialMatch.sourceRun?.repeats || 1,
-      }
-    : pendingMember
-      ? undefined
-      : recorded;
+        {
+          id: trialMatch.sourceRun?.id || runId,
+          agentVersion: trialMatch.sourceRun?.agentVersion || "trial",
+          envVersion: trialMatch.sourceRun?.envVersion,
+          scenarioIds:
+            trialMatch.sourceRun?.scenarioIds ||
+            Object.keys(trialMatch.trial.perScenario || {}),
+          repeats: trialMatch.sourceRun?.repeats || 1,
+        }
+      : pendingMember
+        ? undefined
+        : recorded;
 
   /* Persist the start-of-run re-proof, so the Scenarios tab reads the same
      verdicts this run used. Only for a new run — history is read, not re-run. */
   const isNewRun = !trialMatch && !stored;
   useEffect(() => {
     if (!isNewRun || !env) return;
-    if (plan.reproofed.some((sc, i) => sc !== envState.scenarios[i]))
-      patch({ scenarios: plan.reproofed });
+    /* Only the environment's own rows — a fix's scenarios stay the fix's. */
+    const fixIds = new Set((fixScenarios || []).map((sc) => sc.id));
+    const reproofed = plan.reproofed.filter((sc) => !fixIds.has(sc.id));
+    if (reproofed.some((sc, i) => sc !== envState.scenarios[i]))
+      patch({ scenarios: reproofed });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plan, isNewRun]);
   /* Every way into a run ends here, so this is the gate that can't be skipped. */
@@ -595,7 +671,8 @@ function LiveRun() {
     if (phase === "running") wasLive.current = true;
   }, [phase]);
   /* Trials are always read-only: the search already ran them. */
-  const readOnly = !!trialMatch || (!wasLive.current && !!stored);
+  const readOnly =
+    (!!trialMatch && !watchTrial) || (!wasLive.current && !!stored);
 
   const storedTasks = useMemo(() => {
     if (!readOnly || !env || !stored) return [];
@@ -667,13 +744,13 @@ function LiveRun() {
     mount, and an empty answer would be cached.
   */
   useEffect(() => {
-    if (phase !== "done") return;
+    if (phase !== "done" || watchTrial) return;
     installMockExecutionAdapter();
     publishRun(runId, {
       tasks,
       startedAt: new Date(Date.now() - elapsed).toISOString(),
     });
-  }, [phase, runId, tasks, elapsed]);
+  }, [phase, runId, tasks, elapsed, watchTrial]);
 
   /*
     Record the run as soon as the simulation actually starts (phase
@@ -685,7 +762,7 @@ function LiveRun() {
   */
   const startedRef = useRef(false);
   useEffect(() => {
-    if (phase !== "running" || startedRef.current) return;
+    if (phase !== "running" || startedRef.current || watchTrial) return;
     /* A pending group member is already recorded, but only as a placeholder —
        it gets the full start record like any new run. */
     if (envState.runs.some((r) => r.id === runId && !r.pending)) {
@@ -841,8 +918,48 @@ function LiveRun() {
      reducer preserves them. This write only overwrites the fields that
      genuinely change at completion (status, finishedAt, counts, twin
      writes, and the label to match the final task count). */
+  /*
+    A fix's first step, watched to its end: the fix carries on, so its page is
+    where to be — this run's results stay a link away (its Reproduce step,
+    the environment's Runs). A moment's pause so the run and the fix's start
+    are saved before the page changes. Read back later, it never moves.
+  */
+  useEffect(() => {
+    if (phase !== "done" || watchTrial || !fixFirstRun || !wasLive.current)
+      return undefined;
+    const fix = (envState.optimizations || []).find(
+      (o) => o.fromRunId === runId,
+    );
+    if (!fix) return undefined;
+    const t = setTimeout(
+      () =>
+        navigate(improvementPath(envId, fix.id), {
+          replace: true,
+          state: { fromIssue: fix.trigger?.issueId || null },
+        }),
+      900,
+    );
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, runId]);
+
+  /* A fix waiting on this run starts its search now (it never runs ahead). */
   useEffect(() => {
     if (phase !== "done") return;
+    const list = envState.optimizations || [];
+    if (!list.some((o) => o.waitingForRun === runId)) return;
+    const at = new Date().toISOString();
+    patch({
+      optimizations: list.map((o) =>
+        o.waitingForRun === runId
+          ? { ...o, waitingForRun: undefined, startedAt: at }
+          : o,
+      ),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, runId]);
+  useEffect(() => {
+    if (phase !== "done" || watchTrial) return;
     recordRun({
       id: runId,
       label: only
@@ -865,7 +982,8 @@ function LiveRun() {
           notStarted: notStartedIds,
         },
       }),
-      total: stats.total - (stats.notStarted || 0),
+      /* The environment's own scenarios; a fix's issue scenarios aren't counted. */
+      total: (stats.envTotal ?? stats.total) - (stats.notStarted || 0),
       passed: stats.passed,
       failed: stats.failed,
       flaky: stats.flaky,
@@ -891,7 +1009,7 @@ function LiveRun() {
   */
   const settledRef = useRef(false);
   useEffect(() => {
-    if (phase !== "done" || settledRef.current) return;
+    if (phase !== "done" || settledRef.current || watchTrial) return;
     settledRef.current = true;
     const members = groupMembersOf(state, recorded || pendingMember);
     (members || []).forEach((m) => {
@@ -920,7 +1038,7 @@ function LiveRun() {
   */
   const notifiedRef = useRef(false);
   useEffect(() => {
-    if (phase !== "done" || notifiedRef.current) return;
+    if (phase !== "done" || notifiedRef.current || watchTrial) return;
     notifiedRef.current = true;
     /*
       The run digest (AC-20.8): one compact message — score, the run summary
@@ -1034,19 +1152,19 @@ function LiveRun() {
     }
   }, [phase]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /*
-    A finished run goes to the summary, not to its own results. On its own a
-    result page answers "how did that go"; the question someone has after
-    changing their agent and running again is whether it moved, and only the
-    list of runs can answer that. The run just finished is the top row there,
-    one click from everything this screen used to show.
-  */
+  /* Start straight away — no boot screen. A failing credential asks first.
+     Only a new run, once the store has loaded: before that every run looks
+     new and empty, and one read back from history is never played again. */
   useEffect(() => {
-    if (phase !== "done" || readOnly) return;
-    navigate(paths.dashboard.simulate.environmentStep(envId, "runs"), {
-      replace: true,
-    });
-  }, [phase, readOnly, navigate, envId]);
+    if (phase !== "booting" || !state.hydrated || readOnly || !scenarios.length)
+      return;
+    if (failedSecrets.length && !secretsOk) setSecretAsk(true);
+    else start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, state.hydrated, readOnly, scenarios.length]);
+
+  /* A finished run stays on its own results (below) — the run someone just
+     watched is the one they want to read; the list is one click back. */
 
   if (!env) {
     /* Wait for hydration before declaring the env missing — a custom env
@@ -1208,71 +1326,30 @@ function LiveRun() {
   }
 
   /* ── pre-run provisioning ── */
+  /* No "Preparing the simulation" screen — a run starts as soon as it
+     opens (the effect above). Only a failing credential asks first. */
   if (phase === "booting") {
     return (
-      <Box
-        sx={{
-          p: 2,
-          height: "100%",
-          minHeight: 420,
-          display: "grid",
-          placeItems: "center",
-        }}
-      >
-        <Box
-          sx={{
-            width: "100%",
-            maxWidth: 560,
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: "8px",
-            bgcolor: "background.paper",
+      <Box sx={{ height: "100%" }}>
+        <SecretCheckDialog
+          open={secretAsk}
+          failed={failedSecrets}
+          onClose={() => {
+            setSecretAsk(false);
+            navigate(paths.dashboard.simulate.environmentDetail(envId));
           }}
-        >
-          <ProvisioningPanel
-            icon={surface.icon}
-            accent={surface.color}
-            title="Preparing the simulation"
-            /* What this run is actually about to do — a re-run of four
-               scenarios is not "17 tasks", and the boot panel is the first
-               place that claim appears. */
-            subtitle={`${scenarios.length}${partial ? ` of ${poolSize}` : ""} scenario${scenarios.length === 1 ? "" : "s"} × ${repeats} repeat${repeats === 1 ? "" : "s"} = ${size.conversations} conversations · up to ${parallel} at once · agent ${runAgent}${candidate ? ` ${candidate.label}` : ""} on a fresh sandbox copy of environment ${runEnvShown} for each${skipped.length ? ` · ${skipped.length} skipped` : ""}${size.voice ? ` · voice runs in real time: ${voiceLine}` : ""}`}
-            steps={BOOT_STEPS[surface.stage] || BOOT_STEPS.voice}
-            onDone={() =>
-              failedSecrets.length && !secretsOk ? setSecretAsk(true) : start()
-            }
-          />
-          {/* Every way of starting a run lands here, so the credential check
-              is said once, here — a warning, never a block. */}
-          <SecretCheckDialog
-            open={secretAsk}
-            failed={failedSecrets}
-            onClose={() => {
-              setSecretAsk(false);
-              navigate(paths.dashboard.simulate.environmentDetail(envId));
-            }}
-            onRun={() => {
-              setSecretAsk(false);
-              setSecretsOk(true);
-              start();
-            }}
-            onFix={() => {
-              setSecretAsk(false);
-              navigate(
-                paths.dashboard.simulate.environmentStep(envId, "settings"),
-              );
-            }}
-          />
-          {/* A code agent's candidate can come from a commit or an uploaded archive. */}
-          {(takesSnapshot(envState.agent) || candidate) && (
-            <CandidateSourcePicker
-              agent={envState.agent}
-              agentVersion={runAgent}
-              current={candidate}
-              onPick={pickCandidate}
-            />
-          )}
-        </Box>
+          onRun={() => {
+            setSecretAsk(false);
+            setSecretsOk(true);
+            start();
+          }}
+          onFix={() => {
+            setSecretAsk(false);
+            navigate(
+              paths.dashboard.simulate.environmentStep(envId, "settings"),
+            );
+          }}
+        />
       </Box>
     );
   }
@@ -1305,6 +1382,7 @@ function LiveRun() {
   /* The run's number — the same one the Runs tab lists it under — and its
      name, "agent v3 × env v7", the way that row will name it. */
   const ordinal =
+    watchTrial?.trial?.n ??
     (stored || pendingMember)?.ordinal ??
     Math.max(0, ...(envState.runs || []).map((r) => r.ordinal || 0)) + 1;
   const named = runIdentityOf(
@@ -1421,7 +1499,9 @@ function LiveRun() {
                   flexShrink: 0,
                 }}
               >
-                Run {ordinal}
+                {watchTrial
+                  ? `${watchTrial.opt.name || "Improvement"} · Trial ${ordinal}`
+                  : `Run ${ordinal}`}
               </Typography>
               {/* Waiting on an answer is the run's state, not another
                   line — the question itself is the card below. */}
@@ -1589,7 +1669,9 @@ function LiveRun() {
       <RunGroupBar envId={envId} runId={runId} live />
 
       {/* ── what to know about this run ── */}
-      {(blockers.length > 0 ||
+      {(fixRun ||
+        watchTrial ||
+        blockers.length > 0 ||
         toolGap.length > 0 ||
         skipped.length > 0 ||
         stats.retried > 0 ||
@@ -1609,6 +1691,36 @@ function LiveRun() {
             flexShrink: 0,
           }}
         >
+          {/* A candidate being watched: what it is, and the way back. */}
+          {watchTrial && (
+            <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+              {`Watching Trial ${watchTrial.trial.n} of ${watchTrial.opt.name || "this improvement"} — the change it tried, replayed on the scenarios it was tested on. Nothing here is saved. · `}
+              <Link
+                component="button"
+                type="button"
+                underline="hover"
+                onClick={() =>
+                  navigate(improvementPath(envId, watchTrial.opt.id))
+                }
+                sx={{
+                  typography: "s3",
+                  fontWeight: 600,
+                  color: "text.primary",
+                  verticalAlign: "baseline",
+                }}
+              >
+                Back to the improvement
+              </Link>
+            </Typography>
+          )}
+          {/* A fix's first run: what it's for, first. */}
+          {fixRun && (
+            <FixRunNote
+              envId={envId}
+              run={recorded || pendingMember}
+              issue={stats.issue}
+            />
+          )}
           {blockers.length > 0 && (
             <Tooltip
               arrow

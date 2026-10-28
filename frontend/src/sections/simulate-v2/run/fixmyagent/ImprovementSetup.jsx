@@ -14,6 +14,7 @@ import {
   Switch,
   TextField,
   Typography,
+  Tooltip,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { clickable, focusRing } from "../../components/clickable";
@@ -68,6 +69,7 @@ import ImprovementConstraints, {
   ConstraintPicker,
 } from "../../improvements/ImprovementConstraints";
 import { changedKeysOf, withEdits } from "../../improvements/constraintEdits";
+import CostPartsTable from "../../improvements/CostPartsTable";
 import { limitsOf } from "../../agents/agentLimits";
 import { rereadFor, textSearchDefault } from "../../_mock/improvementPolicy";
 import { recordOutsideChange } from "../../_mock/nudgeEffects";
@@ -107,6 +109,7 @@ export default function ImprovementSetup({
   bare = false,
   onBack = null,
   agentField = null,
+  onBuildEnv = null,
 }) {
   const { state, commit } = useSimStore();
   const { agents } = useConnectedAgents();
@@ -172,6 +175,9 @@ export default function ImprovementSetup({
   /* The constraints sit in an advanced panel, the agent's applied — most
      people never open it. */
   const [advanced, setAdvanced] = useState(false);
+  /* From a run: a short confirm first (agent, scenarios, budget, price), the
+     same as Fix's — Edit plan opens everything below in place. */
+  const [compact, setCompact] = useState(!preset?.fromGoal);
   /* Stamped when the setup opens: the seed is never reused, even after an
      improvement is deleted, and stays the same until Start. */
   const [openedAt, setOpenedAt] = useState(() => Date.now().toString(36));
@@ -180,6 +186,7 @@ export default function ImprovementSetup({
     if (!open) return;
     setOpenedAt(Date.now().toString(36));
     setAdvanced(false);
+    setCompact(!preset?.fromGoal);
     setAlsoIn([]);
     setAcrossLineage(false);
     setName(improvementRunName(es, null));
@@ -514,7 +521,9 @@ export default function ImprovementSetup({
         )}
         <Box flex={1}>
           <Typography sx={{ typography: "s1", fontWeight: 600 }}>
-            {preset?.fromGoal ? "New improvement" : "Run self improvement"}
+            {preset?.fromGoal
+              ? "New improvement"
+              : `Improve ${agent?.name || "the agent"}`}
           </Typography>
           <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
             {main
@@ -536,209 +545,23 @@ export default function ImprovementSetup({
           ...(bare ? { flex: 1, minHeight: 0 } : { maxHeight: "62vh" }),
         }}
       >
-        {agentField ||
-          (preset?.agentKey && (
-            /* Debug failures: the same field as New improvement, fixed to the
-             agent this run tested and the version it tested — shown even when
-             that agent has been deleted since. */
-            <Box>
-              <Typography sx={{ typography: "s3", fontWeight: 600, mb: 0.5 }}>
-                Agent
-              </Typography>
-              <AgentPicker
-                choices={
-                  agent
-                    ? [
-                        agentPickerChoice(
-                          agent,
-                          main,
-                          null,
-                          preset?.fromGoal ? null : base?.agentVersion,
-                        ),
-                      ]
-                    : []
-                }
-                value={preset.agentKey}
-                locked="Debug failures improves the agent this run tested. To improve another agent, start a new improvement from Improvements."
-              />
-              {agent && (
-                <Typography
-                  sx={{ typography: "s3", color: "text.tertiary", mt: 0.5 }}
-                >
-                  {agentPickerHelper(
-                    agentPickerChoice(
-                      agent,
-                      main,
-                      null,
-                      preset?.fromGoal ? null : base?.agentVersion,
-                    ),
-                    main?.name,
-                  )}
-                </Typography>
-              )}
-            </Box>
-          ))}
-        {!main && agentField && (
-          <Typography
-            sx={{
-              typography: "s3",
-              color: "text.tertiary",
-              mt: "-12px !important",
-            }}
-          >
-            Its goals, budget and cost show here once it&apos;s picked.
-          </Typography>
-        )}
-        {main && (
-          <>
-            <Box>
-              <Typography sx={fieldLabel}>Name</Typography>
-              <TextField
-                size="small"
-                fullWidth
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                sx={{ "& .MuiInputBase-input": { typography: "s2" } }}
-              />
-            </Box>
-          </>
-        )}
-
-        {/* The two things the search can't guess — what to aim at, what it may spend. */}
-        {main && (
+        {compact && main ? (
           <Box>
-            <Stack direction="row" spacing={1.5}>
-              <Box flex={1} minWidth={0}>
-                <Typography sx={fieldLabel}>Goal</Typography>
-                <Select
-                  size="small"
-                  fullWidth
-                  value={goalOf.id}
-                  sx={selectSx}
-                  renderValue={() => goalText(goalOf)}
-                  onChange={(e) =>
-                    e.target.value === ADD_EVAL
-                      ? setAddingEval(true)
-                      : setGoal(e.target.value)
-                  }
-                  MenuProps={{ PaperProps: { sx: { maxHeight: 460 } } }}
-                >
-                  {[
-                    ["rate", null],
-                    ["outcome", "Outcomes · from tool calls"],
-                    ["eval", "Evaluations"],
-                  ].flatMap(([group, title]) => {
-                    const list = goals.filter((g) => g.group === group);
-                    if (!list.length && group !== "eval") return [];
-                    return [
-                      ...(title
-                        ? [
-                            <ListSubheader
-                              key={group}
-                              sx={{
-                                typography: "s3",
-                                fontWeight: 600,
-                                color: "text.tertiary",
-                                lineHeight: "28px",
-                              }}
-                            >
-                              {title}
-                            </ListSubheader>,
-                          ]
-                        : []),
-                      ...list.map((g) => (
-                        <MenuItem
-                          key={g.id}
-                          value={g.id}
-                          sx={{ typography: "s2", gap: 2 }}
-                        >
-                          <Box component="span" sx={{ flex: 1, minWidth: 0 }}>
-                            <Box component="span" sx={{ display: "block" }}>
-                              {goalText(g)}
-                            </Box>
-                            {/* What an outcome counts — read off its tool's calls. */}
-                            {g.group === "outcome" && g.note && (
-                              <Box
-                                component="span"
-                                sx={{
-                                  display: "block",
-                                  typography: "s3",
-                                  color: "text.tertiary",
-                                }}
-                              >
-                                {g.note}
-                              </Box>
-                            )}
-                          </Box>
-                          {g.reliability && (
-                            <Box
-                              component="span"
-                              sx={{
-                                typography: "s3",
-                                fontVariantNumeric: "tabular-nums",
-                                color:
-                                  g.reliability.tier === "unreliable"
-                                    ? "status.warning.fg"
-                                    : "text.tertiary",
-                                flexShrink: 0,
-                              }}
-                            >
-                              {g.reliability.measured
-                                ? `κ ${g.reliability.kappa.toFixed(2)} · ${g.reliability.label}`
-                                : g.reliability.label}
-                            </Box>
-                          )}
-                        </MenuItem>
-                      )),
-                      /* Your own evaluation: the environment's add-evaluations flow, then it's here to pick. */
-                      ...(group === "eval"
-                        ? [
-                            <MenuItem
-                              key={ADD_EVAL}
-                              value={ADD_EVAL}
-                              disabled={slotsLeft <= 0}
-                              sx={{
-                                typography: "s2",
-                                gap: 1,
-                              }}
-                            >
-                              <Iconify icon="solar:add-linear" width={14} />
-                              <Box
-                                component="span"
-                                sx={{ flex: 1, minWidth: 0 }}
-                              >
-                                <Box
-                                  component="span"
-                                  sx={{
-                                    display: "block",
-                                    fontWeight: 600,
-                                    color: "text.primary",
-                                  }}
-                                >
-                                  Add an evaluation
-                                </Box>
-                                <Box
-                                  component="span"
-                                  sx={{
-                                    display: "block",
-                                    typography: "s3",
-                                    color: "text.tertiary",
-                                  }}
-                                >
-                                  {slotsLeft <= 0
-                                    ? "This environment has all the evaluations it can take"
-                                    : `From the library, or your own — added to ${main?.name || "this environment"}`}
-                                </Box>
-                              </Box>
-                            </MenuItem>,
-                          ]
-                        : []),
-                    ];
-                  })}
-                </Select>
-              </Box>
-              <Box sx={{ width: 220, flexShrink: 0 }}>
-                <Typography sx={fieldLabel}>Budget</Typography>
+            <ConfirmRow k="Agent">
+              <Typography sx={{ typography: "s2" }}>
+                {`${agent?.name || "Agent"}${identity ? ` · ${identity}` : ""}`}
+              </Typography>
+            </ConfirmRow>
+            <ConfirmRow k="Runs in">
+              <Typography sx={{ typography: "s2" }}>{main.name}</Typography>
+            </ConfirmRow>
+            <ConfirmRow k="Scenarios">
+              <Typography sx={{ typography: "s2" }}>
+                {`${train} failing to fix · ${held} held back to prove it · ${mustPassAll} must keep passing`}
+              </Typography>
+            </ConfirmRow>
+            <ConfirmRow k="Budget">
+              <Box sx={{ maxWidth: 240 }}>
                 <ConstraintPicker
                   agent={agent}
                   limits={agentLimits}
@@ -746,241 +569,489 @@ export default function ImprovementSetup({
                   value={spend}
                   onChange={setBudget}
                   fullWidth
-                  sx={selectSx}
                 />
               </Box>
-            </Stack>
-            {/* An evaluation as the goal is only as good as its agreement with people. */}
-            {shaky && (
-              <Stack
-                direction="row"
-                spacing={0.75}
-                alignItems="flex-start"
-                sx={{ mt: 0.75 }}
+              <Typography
+                sx={{ typography: "s3", color: "text.secondary", mt: 0.75 }}
               >
-                <Iconify
-                  icon="solar:danger-triangle-linear"
-                  width={14}
-                  sx={{
-                    color:
-                      goalOf.reliability.tier === "unreliable"
-                        ? "status.warning.fg"
-                        : "text.tertiary",
-                    flexShrink: 0,
-                    mt: "2px",
-                  }}
+                {`Up to ${trials} trials · ${creditsLabel(estimate.likely)} · ${estimate.minutes} min. Stops at the budget with the best it found.`}
+              </Typography>
+            </ConfirmRow>
+            {estimate.parts?.length > 0 && (
+              <Box
+                sx={{
+                  pt: 1,
+                  borderTop: "1px solid",
+                  borderColor: "divider",
+                }}
+              >
+                <CostPartsTable
+                  parts={estimate.parts}
+                  totalLabel="Up to"
+                  totalUsd={estimate.likely}
                 />
+              </Box>
+            )}
+          </Box>
+        ) : (
+          <>
+            {agentField ||
+              (preset?.agentKey && (
+                /* Debug failures: the same field as New improvement, fixed to the
+             agent this run tested and the version it tested — shown even when
+             that agent has been deleted since. */
+                <Box>
+                  <Typography
+                    sx={{ typography: "s3", fontWeight: 600, mb: 0.5 }}
+                  >
+                    Agent
+                  </Typography>
+                  <AgentPicker
+                    choices={
+                      agent
+                        ? [
+                            agentPickerChoice(
+                              agent,
+                              main,
+                              null,
+                              preset?.fromGoal ? null : base?.agentVersion,
+                            ),
+                          ]
+                        : []
+                    }
+                    value={preset.agentKey}
+                    locked="Debug failures improves the agent this run tested. To improve another agent, start a new improvement from Improvements."
+                  />
+                  {agent && (
+                    <Typography
+                      sx={{ typography: "s3", color: "text.tertiary", mt: 0.5 }}
+                    >
+                      {agentPickerHelper(
+                        agentPickerChoice(
+                          agent,
+                          main,
+                          null,
+                          preset?.fromGoal ? null : base?.agentVersion,
+                        ),
+                        main?.name,
+                      )}
+                    </Typography>
+                  )}
+                </Box>
+              ))}
+            {!main && agentField && !preset?.agentKey && (
+              <Typography
+                sx={{
+                  typography: "s3",
+                  color: "text.tertiary",
+                  mt: "-12px !important",
+                }}
+              >
+                Its goals, budget and cost show here once it&apos;s picked.
+              </Typography>
+            )}
+            {main && (
+              <>
+                <Box>
+                  <Typography sx={fieldLabel}>Name</Typography>
+                  <TextField
+                    size="small"
+                    fullWidth
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    sx={{ "& .MuiInputBase-input": { typography: "s2" } }}
+                  />
+                </Box>
+              </>
+            )}
+
+            {/* The two things the search can't guess — what to aim at, what it may spend. */}
+            {main && (
+              <Box>
+                <Stack direction="row" spacing={1.5}>
+                  <Box flex={1} minWidth={0}>
+                    <Typography sx={fieldLabel}>Goal</Typography>
+                    <Select
+                      size="small"
+                      fullWidth
+                      value={goalOf.id}
+                      sx={selectSx}
+                      renderValue={() => goalText(goalOf)}
+                      onChange={(e) =>
+                        e.target.value === ADD_EVAL
+                          ? setAddingEval(true)
+                          : setGoal(e.target.value)
+                      }
+                      MenuProps={{ PaperProps: { sx: { maxHeight: 460 } } }}
+                    >
+                      {[
+                        ["rate", null],
+                        ["outcome", "Outcomes · from tool calls"],
+                        ["eval", "Evaluations"],
+                      ].flatMap(([group, title]) => {
+                        const list = goals.filter((g) => g.group === group);
+                        if (!list.length && group !== "eval") return [];
+                        return [
+                          ...(title
+                            ? [
+                                <ListSubheader
+                                  key={group}
+                                  sx={{
+                                    typography: "s3",
+                                    fontWeight: 600,
+                                    color: "text.tertiary",
+                                    lineHeight: "28px",
+                                  }}
+                                >
+                                  {title}
+                                </ListSubheader>,
+                              ]
+                            : []),
+                          ...list.map((g) => (
+                            <MenuItem
+                              key={g.id}
+                              value={g.id}
+                              sx={{ typography: "s2", gap: 2 }}
+                            >
+                              <Box
+                                component="span"
+                                sx={{ flex: 1, minWidth: 0 }}
+                              >
+                                <Box component="span" sx={{ display: "block" }}>
+                                  {goalText(g)}
+                                </Box>
+                                {/* What an outcome counts — read off its tool's calls. */}
+                                {g.group === "outcome" && g.note && (
+                                  <Box
+                                    component="span"
+                                    sx={{
+                                      display: "block",
+                                      typography: "s3",
+                                      color: "text.tertiary",
+                                    }}
+                                  >
+                                    {g.note}
+                                  </Box>
+                                )}
+                              </Box>
+                              {g.reliability && (
+                                <Box
+                                  component="span"
+                                  sx={{
+                                    typography: "s3",
+                                    fontVariantNumeric: "tabular-nums",
+                                    color:
+                                      g.reliability.tier === "unreliable"
+                                        ? "status.warning.fg"
+                                        : "text.tertiary",
+                                    flexShrink: 0,
+                                  }}
+                                >
+                                  {g.reliability.measured
+                                    ? `κ ${g.reliability.kappa.toFixed(2)} · ${g.reliability.label}`
+                                    : g.reliability.label}
+                                </Box>
+                              )}
+                            </MenuItem>
+                          )),
+                          /* Your own evaluation: the environment's add-evaluations flow, then it's here to pick. */
+                          ...(group === "eval"
+                            ? [
+                                <MenuItem
+                                  key={ADD_EVAL}
+                                  value={ADD_EVAL}
+                                  disabled={slotsLeft <= 0}
+                                  sx={{
+                                    typography: "s2",
+                                    gap: 1,
+                                  }}
+                                >
+                                  <Iconify icon="solar:add-linear" width={14} />
+                                  <Box
+                                    component="span"
+                                    sx={{ flex: 1, minWidth: 0 }}
+                                  >
+                                    <Box
+                                      component="span"
+                                      sx={{
+                                        display: "block",
+                                        fontWeight: 600,
+                                        color: "text.primary",
+                                      }}
+                                    >
+                                      Add an evaluation
+                                    </Box>
+                                    <Box
+                                      component="span"
+                                      sx={{
+                                        display: "block",
+                                        typography: "s3",
+                                        color: "text.tertiary",
+                                      }}
+                                    >
+                                      {slotsLeft <= 0
+                                        ? "This environment has all the evaluations it can take"
+                                        : `From the library, or your own — added to ${main?.name || "this environment"}`}
+                                    </Box>
+                                  </Box>
+                                </MenuItem>,
+                              ]
+                            : []),
+                        ];
+                      })}
+                    </Select>
+                  </Box>
+                  <Box sx={{ width: 220, flexShrink: 0 }}>
+                    <Typography sx={fieldLabel}>Budget</Typography>
+                    <ConstraintPicker
+                      agent={agent}
+                      limits={agentLimits}
+                      field="dollars"
+                      value={spend}
+                      onChange={setBudget}
+                      fullWidth
+                      sx={selectSx}
+                    />
+                  </Box>
+                </Stack>
+                {/* An evaluation as the goal is only as good as its agreement with people. */}
+                {shaky && (
+                  <Stack
+                    direction="row"
+                    spacing={0.75}
+                    alignItems="flex-start"
+                    sx={{ mt: 0.75 }}
+                  >
+                    <Iconify
+                      icon="solar:danger-triangle-linear"
+                      width={14}
+                      sx={{
+                        color:
+                          goalOf.reliability.tier === "unreliable"
+                            ? "status.warning.fg"
+                            : "text.tertiary",
+                        flexShrink: 0,
+                        mt: "2px",
+                      }}
+                    />
+                    <Typography
+                      sx={{
+                        typography: "s3",
+                        color:
+                          goalOf.reliability.tier === "unreliable"
+                            ? "text.primary"
+                            : "text.secondary",
+                      }}
+                    >
+                      {`${goalOf.label}: ${evalReliabilityLine(goalOf.reliability)}`}
+                    </Typography>
+                  </Stack>
+                )}
                 <Typography
                   sx={{
                     typography: "s3",
                     color:
-                      goalOf.reliability.tier === "unreliable"
-                        ? "text.primary"
-                        : "text.secondary",
+                      nothing || overBudget ? "text.primary" : "text.tertiary",
+                    mt: 0.75,
                   }}
                 >
-                  {`${goalOf.label}: ${evalReliabilityLine(goalOf.reliability)}`}
+                  {nothing
+                    ? `Nothing to improve — every scenario already meets ${goalWords(goalOf)}. Pick another goal.`
+                    : `${preview?.goal ? `Targets the ${preview.goalTargets} ${preview.goalTargets === 1 ? "scenario" : "scenarios"} short of it. ` : ""}${overBudget ? `May reach the budget before all ${trials} runs — you'll get the best it found by then.` : "If it runs over, it stops at the budget with the best it found."}`}
                 </Typography>
+              </Box>
+            )}
+
+            {/* Where else it must hold, and whether to try earlier versions' changes. */}
+            {main && (others.length > 0 || lineageVersions.length > 0) && (
+              <Stack spacing={1.5}>
+                {others.length > 0 && (
+                  <Box>
+                    <Typography sx={fieldLabel}>
+                      Also check must-pass in
+                    </Typography>
+                    <Stack spacing={0.25}>
+                      {others.map((e) => {
+                        const on = alsoIn.includes(e.id);
+                        const n = mustPassIn(e);
+                        return (
+                          <Stack
+                            key={e.id}
+                            direction="row"
+                            alignItems="center"
+                            spacing={1}
+                            {...clickable(
+                              () =>
+                                setAlsoIn((ids) =>
+                                  on
+                                    ? ids.filter((x) => x !== e.id)
+                                    : [...ids, e.id],
+                                ),
+                              { role: "checkbox", checked: on },
+                            )}
+                            sx={{
+                              ...focusRing,
+                              px: 1,
+                              py: 0.75,
+                              borderRadius: 1,
+                              cursor: "pointer",
+                              "&:hover": { bgcolor: "action.hover" },
+                            }}
+                          >
+                            <Checkbox
+                              size="small"
+                              checked={on}
+                              tabIndex={-1}
+                              disableRipple
+                              inputProps={{ "aria-hidden": true }}
+                              sx={{ p: 0, flexShrink: 0 }}
+                            />
+                            <Typography
+                              noWrap
+                              sx={{ typography: "s2", flex: 1, minWidth: 0 }}
+                            >
+                              {e.name}
+                            </Typography>
+                            <Typography
+                              noWrap
+                              sx={{
+                                typography: "s3",
+                                color: "text.tertiary",
+                                fontVariantNumeric: "tabular-nums",
+                              }}
+                            >
+                              {n ? `${n} must-pass` : "No must-pass yet"}
+                            </Typography>
+                          </Stack>
+                        );
+                      })}
+                    </Stack>
+                  </Box>
+                )}
+                {lineageVersions.length > 0 && (
+                  <Stack direction="row" alignItems="center" spacing={1}>
+                    <Box flex={1} minWidth={0}>
+                      <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                        Search across earlier versions
+                      </Typography>
+                      <Typography
+                        sx={{ typography: "s3", color: "text.tertiary" }}
+                      >
+                        {`Also tries the changes ${versionName(lineageVersions[0].label)}–${versionName(lineageVersions[lineageVersions.length - 1].label)} made. Checked the same way as every other proposed change.`}
+                      </Typography>
+                    </Box>
+                    <Switch
+                      size="small"
+                      checked={acrossLineage}
+                      onChange={(e) => setAcrossLineage(e.target.checked)}
+                    />
+                  </Stack>
+                )}
               </Stack>
             )}
-            <Typography
-              sx={{
-                typography: "s3",
-                color: nothing || overBudget ? "text.primary" : "text.tertiary",
-                mt: 0.75,
-              }}
-            >
-              {nothing
-                ? `Nothing to improve — every scenario already meets ${goalWords(goalOf)}. Pick another goal.`
-                : `${preview?.goal ? `Targets the ${preview.goalTargets} ${preview.goalTargets === 1 ? "scenario" : "scenarios"} short of it. ` : ""}${overBudget ? `May reach the budget before all ${trials} runs — you'll get the best it found by then.` : "If it runs over, it stops at the budget with the best it found."}`}
-            </Typography>
-          </Box>
-        )}
 
-        {/* Where else it must hold, and whether to try earlier versions' changes. */}
-        {main && (others.length > 0 || lineageVersions.length > 0) && (
-          <Stack spacing={1.5}>
-            {others.length > 0 && (
+            {/* Advanced: the constraints it's held to — the agent's, editable for this improvement. */}
+            {main && (
               <Box>
-                <Typography sx={fieldLabel}>Also check must-pass in</Typography>
-                <Stack spacing={0.25}>
-                  {others.map((e) => {
-                    const on = alsoIn.includes(e.id);
-                    const n = mustPassIn(e);
-                    return (
-                      <Stack
-                        key={e.id}
-                        direction="row"
-                        alignItems="center"
-                        spacing={1}
-                        {...clickable(
-                          () =>
-                            setAlsoIn((ids) =>
-                              on
-                                ? ids.filter((x) => x !== e.id)
-                                : [...ids, e.id],
-                            ),
-                          { role: "checkbox", checked: on },
-                        )}
-                        sx={{
-                          ...focusRing,
-                          px: 1,
-                          py: 0.75,
-                          borderRadius: 1,
-                          cursor: "pointer",
-                          "&:hover": { bgcolor: "action.hover" },
-                        }}
-                      >
-                        <Checkbox
-                          size="small"
-                          checked={on}
-                          tabIndex={-1}
-                          disableRipple
-                          inputProps={{ "aria-hidden": true }}
-                          sx={{ p: 0, flexShrink: 0 }}
-                        />
-                        <Typography
-                          noWrap
-                          sx={{ typography: "s2", flex: 1, minWidth: 0 }}
-                        >
-                          {e.name}
-                        </Typography>
-                        <Typography
-                          noWrap
-                          sx={{
-                            typography: "s3",
-                            color: "text.tertiary",
-                            fontVariantNumeric: "tabular-nums",
-                          }}
-                        >
-                          {n ? `${n} must-pass` : "No must-pass yet"}
-                        </Typography>
-                      </Stack>
-                    );
+                <Stack
+                  direction="row"
+                  alignItems="center"
+                  spacing={0.75}
+                  {...clickable(() => setAdvanced((v) => !v), {
+                    expanded: advanced,
                   })}
+                  sx={{ ...focusRing, cursor: "pointer", width: "fit-content" }}
+                >
+                  <Iconify
+                    icon={
+                      advanced
+                        ? "solar:alt-arrow-down-linear"
+                        : "solar:alt-arrow-right-linear"
+                    }
+                    width={14}
+                    sx={{ color: "text.tertiary" }}
+                  />
+                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                    Advanced
+                  </Typography>
+                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                    {edited
+                      ? `Constraints · ${edited} set for this improvement`
+                      : `Constraints from ${agent?.name || "the agent"}`}
+                  </Typography>
+                </Stack>
+                {advanced && (
+                  <Box sx={{ mt: 1.5 }}>
+                    <ImprovementConstraints
+                      agent={agent}
+                      env={main}
+                      envState={es}
+                      limits={agentLimits}
+                      edits={edits}
+                      onChange={setEdits}
+                      model={agentModel}
+                    />
+                  </Box>
+                )}
+              </Box>
+            )}
+
+            {/* What the search starts from, what it's never allowed to see, and what it costs. */}
+            {main && (
+              <Box
+                sx={{
+                  px: 2,
+                  py: 1.75,
+                  borderRadius: 1,
+                  border: "1px solid",
+                  borderColor: "divider",
+                  bgcolor: "background.neutral",
+                }}
+              >
+                <Stack spacing={1.25}>
+                  <Row
+                    label="Starts from"
+                    value={
+                      preset?.fromGoal
+                        ? `${identity || "the version in production"} · aimed at ${goalWords(goalOf)}`
+                        : `${identity || "the current version"} · ${included.length} ${included.length === 1 ? "change" : "changes"} you included`
+                    }
+                    note={
+                      preset?.fromGoal
+                        ? "The search tries changes on the scenarios short of the goal, and proves the winner on held-back ones."
+                        : included.length
+                          ? "Every run is built from these, so each one can be read line by line."
+                          : "Nothing included — the search explores every change the diagnosis found."
+                    }
+                  />
+                  <Row
+                    label="Scenarios"
+                    value={`${train} target · ${held} held back · ${mustPassAll} must-pass`}
+                    note={`The headline number comes from held-back scenarios the search never sees.${notCounted ? ` ${notCounted}` : ""}`}
+                  />
+                  <Row
+                    label="Cost"
+                    value={`Up to ${creditsLabel(estimate.likely)} · ${estimate.minutes} min`}
+                    note={`Up to ${trials} trials × ${train} target scenarios, then the finalists on held-back and must-pass. ${stopEarlyNote()} ${inText ? "Runs as text conversations; only the finalists are confirmed as real calls." : "A trial is a full pass through the real tools, not a dataset lookup."}`}
+                  />
+                  <Row
+                    label="Constraints"
+                    value={
+                      edited
+                        ? `From ${agent?.name || "the agent"} · ${edited} set for this improvement`
+                        : `From ${agent?.name || "the agent"}`
+                    }
+                    note={constraints}
+                    action={
+                      advanced
+                        ? null
+                        : { label: "Edit", onClick: () => setAdvanced(true) }
+                    }
+                  />
                 </Stack>
               </Box>
             )}
-            {lineageVersions.length > 0 && (
-              <Stack direction="row" alignItems="center" spacing={1}>
-                <Box flex={1} minWidth={0}>
-                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                    Search across earlier versions
-                  </Typography>
-                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                    {`Also tries the changes ${versionName(lineageVersions[0].label)}–${versionName(lineageVersions[lineageVersions.length - 1].label)} made. Checked the same way as every other proposed change.`}
-                  </Typography>
-                </Box>
-                <Switch
-                  size="small"
-                  checked={acrossLineage}
-                  onChange={(e) => setAcrossLineage(e.target.checked)}
-                />
-              </Stack>
-            )}
-          </Stack>
-        )}
-
-        {/* Advanced: the constraints it's held to — the agent's, editable for this improvement. */}
-        {main && (
-          <Box>
-            <Stack
-              direction="row"
-              alignItems="center"
-              spacing={0.75}
-              {...clickable(() => setAdvanced((v) => !v), {
-                expanded: advanced,
-              })}
-              sx={{ ...focusRing, cursor: "pointer", width: "fit-content" }}
-            >
-              <Iconify
-                icon={
-                  advanced
-                    ? "solar:alt-arrow-down-linear"
-                    : "solar:alt-arrow-right-linear"
-                }
-                width={14}
-                sx={{ color: "text.tertiary" }}
-              />
-              <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                Advanced
-              </Typography>
-              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                {edited
-                  ? `Constraints · ${edited} set for this improvement`
-                  : `Constraints from ${agent?.name || "the agent"}`}
-              </Typography>
-            </Stack>
-            {advanced && (
-              <Box sx={{ mt: 1.5 }}>
-                <ImprovementConstraints
-                  agent={agent}
-                  env={main}
-                  envState={es}
-                  limits={agentLimits}
-                  edits={edits}
-                  onChange={setEdits}
-                  model={agentModel}
-                />
-              </Box>
-            )}
-          </Box>
-        )}
-
-        {/* What the search starts from, what it's never allowed to see, and what it costs. */}
-        {main && (
-          <Box
-            sx={{
-              px: 2,
-              py: 1.75,
-              borderRadius: 1,
-              border: "1px solid",
-              borderColor: "divider",
-              bgcolor: "background.neutral",
-            }}
-          >
-            <Stack spacing={1.25}>
-              <Row
-                label="Starts from"
-                value={
-                  preset?.fromGoal
-                    ? `${identity || "the version in production"} · aimed at ${goalWords(goalOf)}`
-                    : `${identity || "the current version"} · ${included.length} ${included.length === 1 ? "change" : "changes"} you included`
-                }
-                note={
-                  preset?.fromGoal
-                    ? "The search tries changes on the scenarios short of the goal, and proves the winner on held-back ones."
-                    : included.length
-                      ? "Every run is built from these, so each one can be read line by line."
-                      : "Nothing included — the search explores every change the diagnosis found."
-                }
-              />
-              <Row
-                label="Scenarios"
-                value={`${train} target · ${held} held back · ${mustPassAll} must-pass`}
-                note={`The headline number comes from held-back scenarios the search never sees.${notCounted ? ` ${notCounted}` : ""}`}
-              />
-              <Row
-                label="Cost"
-                value={`Up to ${creditsLabel(estimate.likely)} · ${estimate.minutes} min`}
-                note={`Up to ${trials} runs × ${train} target scenarios, then the finalists on held-back and must-pass. ${stopEarlyNote()} ${inText ? "Runs as text conversations; only the finalists are confirmed as real calls." : "A run is a full pass through the real tools, not a dataset lookup."}`}
-              />
-              <Row
-                label="Constraints"
-                value={
-                  edited
-                    ? `From ${agent?.name || "the agent"} · ${edited} set for this improvement`
-                    : `From ${agent?.name || "the agent"}`
-                }
-                note={constraints}
-                action={
-                  advanced
-                    ? null
-                    : { label: "Edit", onClick: () => setAdvanced(true) }
-                }
-              />
-            </Stack>
-          </Box>
+          </>
         )}
       </Stack>
 
@@ -1030,16 +1101,44 @@ export default function ImprovementSetup({
         <Button size="small" onClick={onClose} sx={{ color: "text.secondary" }}>
           Cancel
         </Button>
-        <Button
-          size="small"
-          variant="contained"
-          color="primary"
-          disabled={!ready}
-          onClick={start}
-          startIcon={<Iconify icon="solar:play-bold" width={16} />}
-        >
-          Start improvement
-        </Button>
+        {compact && main && (
+          <Tooltip
+            arrow
+            title="Change the goal, scenarios, budget, other environments or rules before starting."
+          >
+            <Button
+              size="small"
+              variant="outlined"
+              color="inherit"
+              onClick={() => setCompact(false)}
+              sx={{ borderColor: "divider" }}
+            >
+              Edit plan
+            </Button>
+          </Tooltip>
+        )}
+        {/* The picked agent has no environment: build one, as Fix does. */}
+        {!main && onBuildEnv ? (
+          <Button
+            size="small"
+            variant="contained"
+            color="primary"
+            onClick={onBuildEnv}
+          >
+            Build environment
+          </Button>
+        ) : (
+          <Button
+            size="small"
+            variant="contained"
+            color="primary"
+            disabled={!ready}
+            onClick={start}
+            startIcon={<Iconify icon="solar:play-bold" width={16} />}
+          >
+            Start improvement
+          </Button>
+        )}
       </Stack>
       {main && (
         <AddEvalsDrawer
@@ -1060,6 +1159,35 @@ export default function ImprovementSetup({
     </SetupFrame>
   );
 }
+
+/* One line of the short confirm: a label and its value. */
+function ConfirmRow({ k, children }) {
+  return (
+    <Stack
+      direction="row"
+      spacing={1.5}
+      sx={{
+        py: 1,
+        borderTop: "1px solid",
+        borderColor: "divider",
+        "&:first-of-type": { borderTop: 0, pt: 0 },
+      }}
+    >
+      <Typography
+        sx={{
+          typography: "s2",
+          color: "text.subtitle",
+          width: 110,
+          flexShrink: 0,
+        }}
+      >
+        {k}
+      </Typography>
+      <Box sx={{ flex: 1, minWidth: 0 }}>{children}</Box>
+    </Stack>
+  );
+}
+ConfirmRow.propTypes = { k: PropTypes.string, children: PropTypes.node };
 
 /* A dialog where it opens over a drawer; the drawer's own body where it is the drawer. */
 function SetupFrame({ bare, open, onClose, children }) {
@@ -1095,6 +1223,7 @@ ImprovementSetup.propTypes = {
   onBack: PropTypes.func,
   /* The agent picker, first in the form, when the agent is chosen here. */
   agentField: PropTypes.node,
+  onBuildEnv: PropTypes.func,
   /* Debug failures also names the run it diagnosed and the versions it tested. */
   preset: PropTypes.shape({
     agentKey: PropTypes.string,

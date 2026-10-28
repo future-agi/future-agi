@@ -101,8 +101,13 @@ export function ObserveProjectStep({
     ? [
         {
           id: prefillProject,
-          name: prefillProject,
-          traces: "From the Error Feed",
+          /* A tracing project opened from its own page carries its name. */
+          name:
+            new URLSearchParams(window.location.search).get("projectName") ||
+            prefillProject,
+          traces: new URLSearchParams(window.location.search).get("projectName")
+            ? "From Tracing"
+            : "From the Error Feed",
           issues: null,
         },
         ...known,

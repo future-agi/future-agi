@@ -21,12 +21,17 @@ import {
  * Where a run's candidate comes from: the agent version (default), a commit
  * SHA, or an uploaded archive of its code. A mock picker — the choice goes on
  * the URL (`?candidate=`) and the run is labelled "from snapshot <sha>".
+ * Picked in the run plan, under the agent version it stands in for.
  */
 export default function CandidateSourcePicker({
   agent,
   agentVersion,
   current,
   onPick,
+  /* Shown where the version is already said: the line offers the other
+     sources instead of repeating it. */
+  offer = null,
+  sx,
 }) {
   const [anchor, setAnchor] = useState(null);
   const [mode, setMode] = useState(null); // null | "commit"
@@ -47,7 +52,13 @@ export default function CandidateSourcePicker({
       direction="row"
       alignItems="center"
       spacing={1}
-      sx={{ px: 2, py: 1.25, borderTop: "1px solid", borderColor: "divider" }}
+      sx={{
+        px: 2,
+        py: 1.25,
+        borderTop: "1px solid",
+        borderColor: "divider",
+        ...sx,
+      }}
     >
       <Iconify
         icon="solar:code-square-linear"
@@ -60,7 +71,7 @@ export default function CandidateSourcePicker({
       >
         {current
           ? `Testing ${current.label}`
-          : `Testing agent ${agentVersion || "—"}`}
+          : offer || `Testing agent ${agentVersion || "—"}`}
       </Typography>
       <Button
         size="small"
@@ -68,7 +79,7 @@ export default function CandidateSourcePicker({
         endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={12} />}
         sx={{ color: "text.primary", flexShrink: 0 }}
       >
-        Change
+        {offer && !current ? "Choose" : "Change"}
       </Button>
       <Menu
         anchorEl={anchor}
@@ -179,4 +190,6 @@ CandidateSourcePicker.propTypes = {
   agentVersion: PropTypes.string,
   current: PropTypes.object,
   onPick: PropTypes.func.isRequired,
+  offer: PropTypes.string,
+  sx: PropTypes.object,
 };

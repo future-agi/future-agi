@@ -11,10 +11,6 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useSilentBreaks } from "src/api/errorFeed/mockAdapter";
-import {
-  clickable,
-  focusRing,
-} from "src/sections/simulate-v2/components/clickable";
 
 const ago = (m) =>
   m < 60
@@ -32,6 +28,21 @@ export default function SilentBreaks({ projectId }) {
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
   if (!rows.length) return null;
+  /* By the issue each one resembles — the one to open and compare. */
+  const groups = Object.values(
+    rows.reduce((acc, r) => {
+      const g = (acc[r.nearIssue] ||= {
+        issue: r.nearIssue,
+        name: r.nearIssueName,
+        requirement: r.requirement,
+        latest: r.minutesAgo,
+        rows: [],
+      });
+      g.rows.push(r);
+      g.latest = Math.min(g.latest, r.minutesAgo);
+      return acc;
+    }, {}),
+  ).sort((a, b) => b.rows.length - a.rows.length || a.latest - b.latest);
   return (
     <>
       <Stack
@@ -70,7 +81,7 @@ export default function SilentBreaks({ projectId }) {
           >
             {rows.length}
           </Box>
-          {` conversation${rows.length === 1 ? "" : "s"} broke a requirement without becoming an issue`}
+          {` conversation${rows.length === 1 ? "" : "s"} broke a requirement but didn't join an issue, so no fix covers ${rows.length === 1 ? "it" : "them"}`}
         </Typography>
         <Box sx={{ flex: 1 }} />
         <Button
@@ -105,8 +116,9 @@ export default function SilentBreaks({ projectId }) {
               Broke a requirement, no issue
             </Typography>
             <Typography fontSize="12px" color="text.tertiary">
-              Each broke something it was supposed to do but didn&apos;t group
-              into an issue.
+              Each looks like an existing issue but wasn&apos;t close enough to
+              join it. A fix only covers its issue&apos;s conversations — open
+              the issue to check whether these are the same failure.
             </Typography>
           </Box>
           <IconButton
@@ -118,12 +130,12 @@ export default function SilentBreaks({ projectId }) {
           </IconButton>
         </Stack>
         <Box sx={{ overflowY: "auto" }}>
-          {rows.map((r) => (
+          {groups.map((g) => (
             <Box
-              key={r.id}
+              key={g.issue}
               sx={{
                 px: 2.5,
-                py: 1.25,
+                py: 1.5,
                 borderBottom: "1px solid",
                 borderColor: "divider",
               }}
@@ -134,52 +146,35 @@ export default function SilentBreaks({ projectId }) {
                 gap={1}
                 sx={{ minWidth: 0 }}
               >
-                <Iconify
-                  icon="solar:close-circle-linear"
-                  width={16}
-                  sx={{ color: "status.danger.fg", flexShrink: 0 }}
-                />
-                <Typography
-                  fontSize="13px"
-                  color="text.primary"
-                  noWrap
-                  sx={{ minWidth: 0, flex: 1 }}
-                >
-                  {r.requirement}
-                </Typography>
-                <Typography
-                  fontSize="12px"
-                  color="text.tertiary"
-                  noWrap
-                  sx={{ flexShrink: 0 }}
-                >
-                  {ago(r.minutesAgo)}
-                </Typography>
-              </Stack>
-              <Typography
-                fontSize="12px"
-                color="text.tertiary"
-                noWrap
-                sx={{ pl: 3 }}
-              >
-                {`${r.failureType} · ${r.traceId} · close to `}
-                <Box
-                  component="span"
-                  {...clickable(
-                    () => navigate(`/dashboard/error-feed/${r.nearIssue}`),
-                    { role: "link" },
-                  )}
+                <Box sx={{ minWidth: 0, flex: 1 }}>
+                  <Typography
+                    fontSize="13px"
+                    fontWeight={500}
+                    color="text.primary"
+                    noWrap
+                  >
+                    {`${g.issue} · ${g.name || g.requirement}`}
+                  </Typography>
+                  <Typography fontSize="12px" color="text.tertiary" noWrap>
+                    {`${g.rows.length} conversation${g.rows.length === 1 ? "" : "s"} · broke "${g.requirement}" · latest ${ago(g.latest)}`}
+                  </Typography>
+                </Box>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={() => {
+                    setOpen(false);
+                    navigate(`/dashboard/error-feed/${g.issue}`);
+                  }}
                   sx={{
-                    ...focusRing,
-                    color: "text.secondary",
-                    fontWeight: 500,
-                    cursor: "pointer",
-                    "&:hover": { textDecoration: "underline" },
+                    flexShrink: 0,
+                    color: "text.primary",
+                    borderColor: "divider",
                   }}
                 >
-                  {r.nearIssue}
-                </Box>
-              </Typography>
+                  Open issue
+                </Button>
+              </Stack>
             </Box>
           ))}
         </Box>

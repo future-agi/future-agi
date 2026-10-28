@@ -829,7 +829,11 @@ export function buildRun({
     const failChance =
       (sc.critical ? failRate * 1.9 : failRate) + (actor ? 0.06 : 0);
     const draw = r();
-    const failed = draw < failChance;
+    /* A fix's issue scenarios fail as often as its Reproduce step found
+       (`forcedSamples`, one per repeat). They run last, so every other
+       scenario draws exactly what it always did. */
+    const forced = Array.isArray(sc.forcedSamples) ? sc.forcedSamples : null;
+    const failed = forced ? forced[0] === "failed" : draw < failChance;
     const drawnFail = failed
       ? Math.max(2, Math.floor(steps.length * (0.45 + r() * 0.45)))
       : null;
@@ -940,7 +944,9 @@ export function buildRun({
     if (injected?.failed && !gradedFail) {
       faultFailEvals(evalResults, injected.failed);
     }
-    const samples = [gradedFail || injected?.failed ? "failed" : "passed"];
+    const samples = [
+      forced ? forced[0] : gradedFail || injected?.failed ? "failed" : "passed",
+    ];
     /*
       Only scenarios near their own threshold disagree with themselves. Drawing
       each sample independently would make roughly half of every suite flaky,
@@ -957,7 +963,13 @@ export function buildRun({
       const faultFailed = injected
         ? sampleFaultFails({ seed, sc, k, callLog, toolFaults })
         : false;
-      samples.push(flipped || faultFailed ? "failed" : "passed");
+      samples.push(
+        forced
+          ? forced[k] || forced[forced.length - 1]
+          : flipped || faultFailed
+            ? "failed"
+            : "passed",
+      );
     }
     const passes = samples.filter((v) => v === "passed").length;
     /*
@@ -1049,6 +1061,12 @@ export function buildRun({
       summary: sc.summary,
       persona: sc.persona,
       expected: sc.expected,
+      /* An issue's scenario riding on a fix's first run — shown with the run,
+         never counted in it or in the environment's history. */
+      ...((sc.fixScenario ||
+        (Array.isArray(sc.forcedSamples) && sc.fromIssue)) && {
+        fixScenario: true,
+      }),
       /* What the runner watches for — the same sub-goals the scenario table lists. */
       subTasks: sc.subTasks,
       critical: sc.critical,

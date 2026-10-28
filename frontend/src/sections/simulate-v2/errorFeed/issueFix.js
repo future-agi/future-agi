@@ -18,9 +18,19 @@ import { startImproverSession, useIntegrations } from "../_mock/integrations";
 import { asCoderImprovement } from "../_mock/improverAttempts";
 import { rereadFor } from "../_mock/improvementPolicy";
 import { envStateOnVersion } from "../_mock/improvementStart";
+import { expectedRunMs } from "../_mock/runGroup";
 import { currentUser } from "../_mock/scenarioProvenance";
 import {
-  agentKeyForIssue, envsForAgent, evidenceGateOf, fixGateOf, fixStatusOf, issueFixRecord, issueProjectOf, todayRunFor,
+  FIX_IN_FLIGHT,
+  agentKeyForIssue,
+  envsForAgent,
+  evidenceGateOf,
+  fixGateOf,
+  fixRunFor,
+  fixStatusOf,
+  issueFixRecord,
+  issueProjectOf,
+  runnableDraftsOf,
 } from "./issueFixModel";
 
 export * from "./issueFixModel";
@@ -32,8 +42,14 @@ export function useIssueFix(issue) {
   const { prs } = useIntegrations();
   const issueId = issue?.cluster_id;
   const agentKey = agentKeyForIssue(issue, state, agents);
-  const agent = useMemo(() => agents.find((a) => a.key === agentKey) || null, [agents, agentKey]);
-  const status = useMemo(() => (issueId ? fixStatusOf(issue, state, prs || []) : null), [issue, issueId, state, prs]);
+  const agent = useMemo(
+    () => agents.find((a) => a.key === agentKey) || null,
+    [agents, agentKey],
+  );
+  const status = useMemo(
+    () => (issueId ? fixStatusOf(issue, state, prs || []) : null),
+    [issue, issueId, state, prs],
+  );
 
   /* The issue's Observe project — its agent was set when the project was. */
   const project = issueProjectOf(issue);
@@ -56,58 +72,168 @@ export function useIssueFix(issue) {
      improvement with `improver` set: today is measured and the scenarios
      frozen, but the agent writes the candidates and we only judge them
      (RSI PRD, Bring your own improver). */
-  const start = useCallback(({ env, drafts, regressionEnvIds, budget, minutes, limits: given = null, textSearch, targetMember, rootCause, diagnosis = null, lineage, improver = null }) => {
-    const es = state.byEnv[env.id];
-    const reread = rereadFor(agent, state);
-    if (reread?.changed && reread.versionRecord && agentKey) {
-      commit({ type: "recordAgentVersion", key: agentKey, version: reread.versionRecord, activateEnvId: env.id });
-    }
-    /* The time budget the sheet set caps the search the same way dollars do. */
-    /* The fix page's own constraints (the agent's, with its inline edits), else the agent's. */
-    const limits = given || limitsOf(state, agentKey);
-    /* Measure today: the environment's scenarios on the production version,
+  const start = useCallback(
+    ({
+      env,
+      drafts: picked,
+      regressionEnvIds,
+      budget,
+      minutes,
+      limits: given = null,
+      textSearch,
+      targetMember,
+      rootCause,
+      diagnosis = null,
+      lineage,
+      improver = null,
+    }) => {
+      /* One fix in flight per issue — re-checked here, so a stale popup or a
+       second click opens the fix already running instead of starting another. */
+      const current = fixStatusOf(issue, state);
+      if (current && FIX_IN_FLIGHT.has(current.key))
+        return {
+          envId: current.envId,
+          runId: current.runId,
+          optId: current.optId,
+          existing: true,
+        };
+      const es = state.byEnv[env.id];
+      /* Only what can run here — the run, the reproduction and the targets
+         then count the same scenarios. */
+      const runnable = runnableDraftsOf(env, es, picked).runnable;
+      const drafts = runnable.length ? runnable : picked;
+      const reread = rereadFor(agent, state);
+      if (reread?.changed && reread.versionRecord && agentKey) {
+        commit({
+          type: "recordAgentVersion",
+          key: agentKey,
+          version: reread.versionRecord,
+          activateEnvId: env.id,
+        });
+      }
+      /* The time budget the sheet set caps the search the same way dollars do. */
+      /* The fix page's own constraints (the agent's, with its inline edits), else the agent's. */
+      const limits = given || limitsOf(state, agentKey);
+      /* Measure today: the environment's scenarios on the production version,
        recorded as a run of it — the baseline and must-pass set come from it. */
-    /* After an outside change, today is measured on the re-read version, so
+      /* After an outside change, today is measured on the re-read version, so
        the baseline's version and its scores match. */
-    const esOnVersion = envStateOnVersion(es, reread);
-    const today = todayRunFor(env, esOnVersion, issue.cluster_id);
-    if (today) commit({ type: "recordRun", envId: env.id, run: today });
-    const esNow = today ? { ...esOnVersion, runs: [today, ...(esOnVersion?.runs || [])] } : esOnVersion;
-    const built = issueFixRecord({
-      issue, env, es: esNow, drafts, budget, regressionEnvIds, state, reread, textSearch, targetMember, rootCause, diagnosis, lineage, today,
-      limits: minutes ? { ...limits, budget: { ...limits.budget, minutes } } : limits,
-    });
-    const record = improver ? asCoderImprovement(built, improver) : built;
-    /* The agent's submissions land on this improvement as its attempts. */
-    if (improver) startImproverSession({ agentId: improver.id, envId: env.id, optId: record.id, where: "future-agi" });
-    /* Saved now — Start fix leaves the Error Feed straight after. The
+      const esOnVersion = envStateOnVersion(es, reread);
+      /* Today's agent on the environment's scenarios and the issue's, played
+       live where Start fix lands. */
+      const today = fixRunFor(env, esOnVersion, issue, drafts);
+      if (today) commit({ type: "recordRun", envId: env.id, run: today });
+      const esNow = today
+        ? { ...esOnVersion, runs: [today, ...(esOnVersion?.runs || [])] }
+        : esOnVersion;
+      const built = issueFixRecord({
+        issue,
+        env,
+        es: esNow,
+        drafts,
+        budget,
+        regressionEnvIds,
+        state,
+        reread,
+        textSearch,
+        targetMember,
+        rootCause,
+        diagnosis,
+        lineage,
+        today,
+        limits: minutes
+          ? { ...limits, budget: { ...limits.budget, minutes } }
+          : limits,
+      });
+      /* It waits for its first run: nothing after Reproducing plays until that run finishes. */
+      const waited = today?.pending
+        ? {
+            ...built,
+            waitingForRun: today.id,
+            /* Only for a run nobody watches: twice its length plus two
+               minutes, so a paused or slow run never lets the fix run ahead. */
+            waitUntil: new Date(
+              Date.now() + 2 * expectedRunMs(today) + 120000,
+            ).toISOString(),
+          }
+        : built;
+      const record = improver ? asCoderImprovement(waited, improver) : waited;
+      /* The agent's submissions land on this improvement as its attempts. */
+      if (improver)
+        startImproverSession({
+          agentId: improver.id,
+          envId: env.id,
+          optId: record.id,
+          where: "future-agi",
+        });
+      /* Saved now — Start fix leaves the Error Feed straight after. The
        issue's scenarios belong to this improvement only (RSI PRD: "They join
        the environment only if the user adds them, or through regression
        memory") — the improvement page and Scenarios tab offer to add them. */
-    const optimizations = [...(es?.optimizations || []), record];
-    commit({ type: "patchEnvState", envId: env.id, patch: { optimizations } });
-    return { envId: env.id, runId: record.fromRunId, optId: record.id };
-  }, [state, commit, issue, agentKey, agent]);
+      const optimizations = [...(es?.optimizations || []), record];
+      commit({
+        type: "patchEnvState",
+        envId: env.id,
+        patch: { optimizations },
+      });
+      return {
+        envId: env.id,
+        runId: record.fromRunId,
+        optId: record.id,
+        liveRunId: today?.id || null,
+      };
+    },
+    [state, commit, issue, agentKey, agent],
+  );
 
   /* Why Fix can't start, if it can't — said on the button and the sheet. */
-  const gate = useMemo(() => (agent ? fixGateOf(agent, envsForAgent(agent, state)[0]) : null), [agent, state]);
+  const gate = useMemo(() => {
+    if (!agent) return null;
+    const env = envsForAgent(agent, state)[0];
+    return fixGateOf(agent, env, env ? state.byEnv[env.id] : null);
+  }, [agent, state]);
   /* How sure the feed is — a note on the sheet, never a gate. */
   const evidence = useMemo(() => evidenceGateOf(issue), [issue]);
 
   /* A person reopening (or taking back a reopen of) the shipped fix, from the
      issue's triage status. Saved with commit: the Error Feed and the
      improvement page are different stores. */
-  const setReopened = useCallback((on) => {
-    if (!status?.envId || !status?.optId) return;
-    const es = state.byEnv[status.envId];
-    const optimizations = (es?.optimizations || []).map((o) => {
-      if (o.id !== status.optId) return o;
-      if (on) return { ...o, reopenedBy: { by: currentUser().name, at: new Date().toISOString() } };
-      const { reopenedBy: _drop, ...rest } = o;
-      return rest;
-    });
-    commit({ type: "patchEnvState", envId: status.envId, patch: { optimizations } });
-  }, [status, state, commit]);
+  const setReopened = useCallback(
+    (on) => {
+      if (!status?.envId || !status?.optId) return;
+      const es = state.byEnv[status.envId];
+      const optimizations = (es?.optimizations || []).map((o) => {
+        if (o.id !== status.optId) return o;
+        if (on)
+          return {
+            ...o,
+            reopenedBy: {
+              by: currentUser().name,
+              at: new Date().toISOString(),
+            },
+          };
+        const { reopenedBy: _drop, ...rest } = o;
+        return rest;
+      });
+      commit({
+        type: "patchEnvState",
+        envId: status.envId,
+        patch: { optimizations },
+      });
+    },
+    [status, state, commit],
+  );
 
-  return { state, agent, agentKey, agents, project, status, gate, evidence, start, setReopened };
+  return {
+    state,
+    agent,
+    agentKey,
+    agents,
+    project,
+    status,
+    gate,
+    evidence,
+    start,
+    setReopened,
+  };
 }

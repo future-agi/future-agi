@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import {
   Box,
   Stack,
@@ -30,6 +31,7 @@ import { useAppliedEvals } from "./evals/useAppliedEvals";
 import AddEvalsDrawer from "./evals/AddEvalsDrawer";
 import TwinEvalEditor from "./evals/TwinEvalEditor";
 import EditEvalDrawer from "./evals/EditEvalDrawer";
+import NextStepBanner from "./NextStepBanner";
 import { worldToolsFor } from "../_mock/toolFit";
 import { runScopeOf } from "../_mock/runScope";
 import { evalCreditsPerRun, evalRailOf } from "../_mock/metering";
@@ -165,11 +167,52 @@ export default function EvalsStep({
   /* Removing an evaluation asks first; past scores stay either way. */
   const [confirmRemove, setConfirmRemove] = useState(null);
 
+  /*
+    Sent here by a run's Debug failures ("Fix Task success"): the evaluation
+    that passed conversations which didn't do the work. Tool call evaluation
+    is what checks a claim against the calls, so turning it on resolves the
+    banner; with it already on, the fix is in the evaluation itself.
+  */
+  const location = useLocation();
+  const fixCheck = location.state?.fixCheck || null;
+  const culprit = fixCheck && appliedIds.has(fixCheck.evalId) ? fixCheck : null;
+  const culpritRef = useRef(null);
+  useEffect(() => {
+    if (culprit) culpritRef.current?.scrollIntoView({ block: "center" });
+  }, [culprit?.evalId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const canTurnOn = !toolCallEvalOn && !locked && hasTools && !!toolCallEval;
+  /* Resolved once tool call evaluation is turned on here. */
+  const startedOff = useRef(!toolCallEvalOn);
+  const fixBanner =
+    culprit && !locked && !(startedOff.current && toolCallEvalOn)
+      ? {
+          title: `${culprit.name} passed ${culprit.count} ${
+            env.surface === "voice" ? "call" : "conversation"
+          }${culprit.count === 1 ? "" : "s"} in ${culprit.runLabel} ${
+            culprit.signal === "hollow-pass"
+              ? "that skipped a tool the scenario requires"
+              : "where the agent claimed an action it never took"
+          } — it reads only what was said.`,
+          line: canTurnOn
+            ? "Turn on tool call evaluation so every claim is checked against the tool calls."
+            : `Edit ${culprit.name} so it checks the tool calls too.`,
+          actionLabel: canTurnOn ? "Turn on" : `Edit ${culprit.name}`,
+          onAction: canTurnOn
+            ? () => add([toolCallEval])
+            : () => setEditingId(culprit.evalId),
+        }
+      : null;
+
   return (
     <Box sx={{ p: 2 }}>
       {/* No heading or description — the tab names the page and its hover
           hint carries the description. Add evaluations sits on the card it
           adds to. */}
+      {fixBanner && (
+        <Box sx={{ mb: 2 }}>
+          <NextStepBanner {...fixBanner} />
+        </Box>
+      )}
       {/* Tool-call evaluation — carried over from the legacy run setup. It is
           the catalogue's tool-correctness eval, added to and removed from the
           applied list like any other, so the switch and the list below can
@@ -361,81 +404,90 @@ export default function EvalsStep({
             }
           >
             {appliedEvals.map((e) => (
-              <EvalRow
+              <Box
                 key={e.id}
-                item={e}
-                action={
-                  /* No always-on evals. Every added row is editable and
+                ref={culprit?.evalId === e.id ? culpritRef : undefined}
+                sx={
+                  fixBanner && culprit?.evalId === e.id
+                    ? { bgcolor: "action.selected" }
+                    : undefined
+                }
+              >
+                <EvalRow
+                  item={e}
+                  action={
+                    /* No always-on evals. Every added row is editable and
                      removable — except on a locked template, where every
                      edit is gated behind a fork. */
-                  <Stack direction="row" alignItems="center" spacing={0.25}>
-                    {/* Required — a failing score fails the conversation. Stored
+                    <Stack direction="row" alignItems="center" spacing={0.25}>
+                      {/* Required — a failing score fails the conversation. Stored
                         on the applied eval, so runs and an improvement's goal
                         picker read it from envState.evals. */}
-                    <Tooltip
-                      arrow
-                      title={
-                        locked
-                          ? "Fork this environment to edit."
-                          : `Required — ${REQUIRED_EVAL_NOTE}`
-                      }
-                    >
-                      <Stack
-                        component="label"
-                        direction="row"
-                        alignItems="center"
-                        spacing={0.25}
-                        sx={{
-                          mr: 0.75,
-                          cursor: locked ? "default" : "pointer",
-                        }}
+                      <Tooltip
+                        arrow
+                        title={
+                          locked
+                            ? "Fork this environment to edit."
+                            : `Required — ${REQUIRED_EVAL_NOTE}`
+                        }
                       >
-                        <Switch
-                          size="small"
-                          checked={!!e.required}
-                          disabled={locked}
-                          onChange={(ev) =>
-                            setRequired(e.id, ev.target.checked)
-                          }
-                          inputProps={{ "aria-label": `Required: ${e.name}` }}
-                        />
-                        <Typography
+                        <Stack
+                          component="label"
+                          direction="row"
+                          alignItems="center"
+                          spacing={0.25}
                           sx={{
-                            typography: "s3",
-                            fontWeight: 600,
-                            color: e.required
-                              ? "text.primary"
-                              : "text.tertiary",
+                            mr: 0.75,
+                            cursor: locked ? "default" : "pointer",
                           }}
                         >
-                          Required
-                        </Typography>
-                      </Stack>
-                    </Tooltip>
-                    <Tooltip
-                      arrow
-                      title={
-                        locked ? "Fork this environment to edit." : "Remove"
-                      }
-                    >
-                      <span>
-                        <IconButton
-                          size="small"
-                          disabled={locked}
-                          onClick={() => setConfirmRemove(e)}
-                          aria-label={`Remove ${e.name}`}
-                        >
-                          <Iconify
-                            icon="solar:trash-bin-trash-linear"
-                            width={16}
-                            sx={{ color: "text.tertiary" }}
+                          <Switch
+                            size="small"
+                            checked={!!e.required}
+                            disabled={locked}
+                            onChange={(ev) =>
+                              setRequired(e.id, ev.target.checked)
+                            }
+                            inputProps={{ "aria-label": `Required: ${e.name}` }}
                           />
-                        </IconButton>
-                      </span>
-                    </Tooltip>
-                  </Stack>
-                }
-              />
+                          <Typography
+                            sx={{
+                              typography: "s3",
+                              fontWeight: 600,
+                              color: e.required
+                                ? "text.primary"
+                                : "text.tertiary",
+                            }}
+                          >
+                            Required
+                          </Typography>
+                        </Stack>
+                      </Tooltip>
+                      <Tooltip
+                        arrow
+                        title={
+                          locked ? "Fork this environment to edit." : "Remove"
+                        }
+                      >
+                        <span>
+                          <IconButton
+                            size="small"
+                            disabled={locked}
+                            onClick={() => setConfirmRemove(e)}
+                            aria-label={`Remove ${e.name}`}
+                          >
+                            <Iconify
+                              icon="solar:trash-bin-trash-linear"
+                              width={16}
+                              sx={{ color: "text.tertiary" }}
+                            />
+                          </IconButton>
+                        </span>
+                      </Tooltip>
+                    </Stack>
+                  }
+                />
+              </Box>
             ))}
           </Stack>
         )}

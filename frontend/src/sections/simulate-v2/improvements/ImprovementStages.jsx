@@ -78,7 +78,11 @@ export default function ImprovementStages({
   const reps = repeatsOf(record);
   const cal = record.calibration || r.calibration || null;
   /* The environment's own scenarios, measured on today's version alongside. */
-  const envCount = fromRun?.scenarioIds?.length || 0;
+  /* The environment's own — a fix's first run also carries the issue's. */
+  const riding = new Set((fromRun?.fixScenarios || []).map((x) => x.id));
+  const envCount = (fromRun?.scenarioIds || []).filter(
+    (id) => !riding.has(id),
+  ).length;
   const diag = diagnosisSummaryOf(record, r);
   const cause =
     (diag?.cause || record.snapshot?.rootCause || "").replace(/\.$/, "") ||
@@ -133,6 +137,10 @@ export default function ImprovementStages({
         feed && fromRun && stateOf("reproduce") === "done"
           ? `The environment's Run ${fromRun.ordinal} measured it today: ${fromRun.passed ?? 0} of ${fromRun.total ?? envCount} of its scenarios pass every repeat.`
           : null,
+        /* What else that run found — never this fix's to work on. */
+        feed && stateOf("reproduce") === "done" && (r.otherFailing || []).length
+          ? `Also found ${plural(r.otherFailing.length, "other failure")}, not part of this issue — the fix leaves ${r.otherFailing.length === 1 ? "it" : "them"} alone.`
+          : null,
         stateOf("reproduce") === "done" && rep.inconclusive
           ? `${plural(rep.inconclusive, "scenario")} failed only once, so ${rep.inconclusive === 1 ? "it isn't a target" : "they aren't targets"}.`
           : null,
@@ -156,10 +164,10 @@ export default function ImprovementStages({
       text: suggestion
         ? "No change is tried — this agent can only be called. You get a suggested change to apply yourself."
         : stateOf("search") === "todo"
-          ? "Tries changes one at a time, each as a full run on this environment — it stops early once runs stop beating the best"
+          ? "Tries changes one at a time, each as a trial on this environment — it stops early once trials stop beating the best"
           : count.stopped
-            ? `${plural(count.done, "run")} of up to ${count.max} · ${count.stopped}${best != null ? ` · best ${best}%` : ""} on ${plural(r.trainMeasured || 0, "target scenario")}`
-            : `${count.done} of ${count.upTo ? "up to " : ""}${plural(count.max, "run")}${best != null ? ` · best so far ${best}%` : ""} on ${plural(r.trainMeasured || 0, "target scenario")}`,
+            ? `${plural(count.done, "trial")} of up to ${count.max} · ${count.stopped}${best != null ? ` · best ${best}%` : ""} on ${plural(r.trainMeasured || 0, "target scenario")}`
+            : `${count.done} of ${count.upTo ? "up to " : ""}${plural(count.max, "trial")}${best != null ? ` · best so far ${best}%` : ""} on ${plural(r.trainMeasured || 0, "target scenario")}`,
       sub:
         [
           /* A goal aims at the scenarios short of it; an issue or a run's
@@ -189,7 +197,7 @@ export default function ImprovementStages({
       text: suggestion
         ? "Writes up the cause and the change to make"
         : [
-            `${stateOf("verify") === "done" ? "Checked" : "Checks"} the best run on`,
+            `${stateOf("verify") === "done" ? "Checked" : "Checks"} the best trial on`,
             r.heldMeasured
               ? `${plural(r.heldMeasured, "held-back scenario")} it never saw`
               : null,
@@ -207,6 +215,11 @@ export default function ImprovementStages({
           r.mustPass
             ? `Must-pass: ${[`${r.mustPass.passing} passing every repeat today`, r.mustPass.marked ? `${r.mustPass.marked} marked` : null, r.mustPass.remembered ? `${r.mustPass.remembered} from regression memory` : null].filter(Boolean).join(", ")}.`
             : null,
+          /* An issue's fix: the winner once more on what else failed today,
+             to say what it fixed along the way. */
+          (r.otherFailing || []).length
+            ? `Then once on today's ${plural(r.otherFailing.length, "other failure")}, to see if any were fixed along the way.`
+            : null,
           !r.heldMeasured && !suggestion
             ? "Too few scenarios reproduced to hold any back, so the gain can't be checked on unseen ones."
             : null,
@@ -217,7 +230,7 @@ export default function ImprovementStages({
     {
       key: "review",
       label: "Ready for review",
-      text: "You choose the run to keep and ship it. Nothing ships without you.",
+      text: "You choose the trial to keep and ship it. Nothing ships without you.",
       sub: null,
       state: "todo",
     },
