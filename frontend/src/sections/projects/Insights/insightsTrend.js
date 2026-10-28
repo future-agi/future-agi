@@ -68,13 +68,43 @@ export function nearestIndex(xs, x) {
 }
 
 /**
- * Indexes of the rows that get an x-axis label: every row when there are
- * few, else an even spread that always keeps the first and last.
+ * The x-axis labels that fit: [{index, anchor}] in row order. The run on
+ * screen, the latest and the first are placed first, then the rest in turn,
+ * each only where its text (about `charPx` a character) clears every label
+ * already placed by `gap` and isn't the same text again; a label near an edge
+ * is anchored to stay inside [left, right]. However close runs are, labels
+ * never overlap: the tooltip names every run.
  */
-export function tickIndexes(count, max = 8) {
-  if (count <= max) return Array.from({ length: count }, (_, i) => i);
-  const step = (count - 1) / (max - 1);
-  return [
-    ...new Set(Array.from({ length: max }, (_, i) => Math.round(i * step))),
-  ];
+export function tickLabels({
+  xs,
+  texts,
+  current = -1,
+  left,
+  right,
+  charPx = 6.5,
+  gap = 12,
+}) {
+  const order = [current, xs.length - 1, 0, ...xs.keys()].filter(
+    (index, at, all) =>
+      index >= 0 && index < xs.length && all.indexOf(index) === at,
+  );
+  const placed = [];
+  order.forEach((index) => {
+    const x = xs[index];
+    const text = texts[index];
+    const w = String(text).length * charPx;
+    const [anchor, from, to] =
+      x - w / 2 < left
+        ? ["start", x, x + w]
+        : x + w / 2 > right
+          ? ["end", x - w, x]
+          : ["middle", x - w / 2, x + w / 2];
+    const clash = placed.some(
+      (p) => p.text === text || (from < p.to + gap && to > p.from - gap),
+    );
+    if (!clash) placed.push({ index, anchor, text, from, to });
+  });
+  return placed
+    .sort((a, b) => a.index - b.index)
+    .map(({ index, anchor }) => ({ index, anchor }));
 }

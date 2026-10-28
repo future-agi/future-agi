@@ -5,7 +5,7 @@ import { useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import { OTHER_ID, buildAreaSeries } from "./insightsDistribution";
 import { formatCount, formatPercent, formatWhen } from "./insightsFormat";
-import { nearestIndex, tickIndexes, trendGeometry } from "./insightsTrend";
+import { nearestIndex, tickLabels, trendGeometry } from "./insightsTrend";
 import { StackedBar, Swatch } from "./parts";
 
 const CHART_HEIGHT = 176;
@@ -118,6 +118,15 @@ function TrendChart({ rows, series, runId, onSelectRun }) {
           month: "short",
           day: "numeric",
         });
+  const ticks = geometry
+    ? tickLabels({
+        xs: geometry.xs,
+        texts: rows.map((row) => tick(row.time)),
+        current,
+        left: 0,
+        right: width,
+      })
+    : [];
   const pick = (event) => {
     if (!geometry) return -1;
     const rect = event.currentTarget.getBoundingClientRect();
@@ -189,18 +198,12 @@ function TrendChart({ rows, series, runId, onSelectRun }) {
               strokeLinejoin="round"
             />
           ))}
-          {tickIndexes(rows.length).map((index) => (
+          {ticks.map(({ index, anchor }) => (
             <text
               key={rows[index].runId}
               x={geometry.xs[index]}
               y={CHART_HEIGHT - 6}
-              textAnchor={
-                index === 0
-                  ? "start"
-                  : index === rows.length - 1
-                    ? "end"
-                    : "middle"
-              }
+              textAnchor={anchor}
               style={{
                 ...axisText,
                 fontWeight: index === current ? 600 : 400,

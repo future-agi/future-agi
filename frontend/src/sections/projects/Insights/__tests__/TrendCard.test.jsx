@@ -56,6 +56,19 @@ const runs = [
   },
 ];
 
+const renderCard = (runId, list = runs) =>
+  render(
+    <ThemeProvider theme={theme}>
+      <TrendCard
+        runs={list}
+        runId={runId}
+        order={["a", "b", "c", "d"]}
+        onSelectRun={() => {}}
+        onCategory={() => {}}
+      />
+    </ThemeProvider>,
+  );
+
 const legend = (runId) => {
   render(
     <ThemeProvider theme={theme}>
@@ -100,5 +113,31 @@ describe("TrendCard legend", () => {
     expect(
       screen.queryByRole("button", { name: "Forgot password loops" }),
     ).toBeNull();
+  });
+});
+
+describe("TrendCard chart", () => {
+  it("labels runs minutes apart without overlapping, the open one kept", () => {
+    const close = runs.map((run) =>
+      run.id === "run-2"
+        ? {
+            ...run,
+            created_at: "2026-10-28T06:18:00Z",
+            finished_at: "2026-10-28T06:18:30Z",
+          }
+        : run,
+    );
+    const { container } = renderCard("run-2", close);
+    const labels = [...container.querySelectorAll("svg text")]
+      .filter((text) => !text.textContent.endsWith("%"))
+      .map((text) => text.textContent);
+    // 6:18 and 6:19 sit a few pixels apart: only the open run's is shown.
+    expect(labels).toHaveLength(2);
+    expect(labels[1]).toBe(
+      new Date("2026-10-28T06:18:30Z").toLocaleTimeString("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+      }),
+    );
   });
 });

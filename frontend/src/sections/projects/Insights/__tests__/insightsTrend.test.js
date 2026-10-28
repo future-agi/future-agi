@@ -5,7 +5,7 @@ import {
   OTHER_ID,
   buildAreaSeries,
 } from "../insightsDistribution";
-import { nearestIndex, tickIndexes, trendGeometry } from "../insightsTrend";
+import { nearestIndex, tickLabels, trendGeometry } from "../insightsTrend";
 
 const run = (id, createdAt, distribution) => ({
   id,
@@ -107,15 +107,69 @@ describe("trendGeometry", () => {
   });
 });
 
-describe("nearestIndex and tickIndexes", () => {
+describe("nearestIndex and tickLabels", () => {
   it("picks the closest run", () => {
     expect(nearestIndex([40, 140, 240], 100)).toBe(1);
     expect(nearestIndex([40, 140, 240], 0)).toBe(0);
     expect(nearestIndex([], 10)).toBe(-1);
   });
 
-  it("labels every run when few, else an even spread with both ends", () => {
-    expect(tickIndexes(3)).toEqual([0, 1, 2]);
-    expect(tickIndexes(20, 5)).toEqual([0, 5, 10, 14, 19]);
+  const extent = ({ index, anchor }, xs, texts) => {
+    const w = texts[index].length * 6.5;
+    const x = xs[index];
+    return anchor === "start"
+      ? [x, x + w]
+      : anchor === "end"
+        ? [x - w, x]
+        : [x - w / 2, x + w / 2];
+  };
+
+  it("labels every run that fits, anchored inside the chart", () => {
+    const xs = [40, 340, 640];
+    const texts = ["Oct 20", "Oct 24", "Oct 28"];
+    expect(tickLabels({ xs, texts, left: 0, right: 652 })).toEqual([
+      { index: 0, anchor: "middle" },
+      { index: 1, anchor: "middle" },
+      { index: 2, anchor: "end" },
+    ]);
+  });
+
+  it("never overlaps runs close in time, keeping the run on screen", () => {
+    // 1:50 AM, then two runs ten minutes apart at the right edge.
+    const xs = [40, 630, 640];
+    const texts = ["1:50 AM", "6:09 AM", "6:19 AM"];
+    const shown = tickLabels({ xs, texts, current: 1, left: 0, right: 652 });
+    expect(shown.map((t) => t.index)).toEqual([0, 1]);
+    const many = Array.from({ length: 30 }, (_, i) => 40 + i * 20);
+    const labels = many.map((_, i) => `${i + 1}:00 AM`);
+    const spread = tickLabels({
+      xs: many,
+      texts: labels,
+      current: 12,
+      left: 0,
+      right: 652,
+    });
+    expect(spread.map((t) => t.index)).toContain(12);
+    expect(spread.map((t) => t.index)).toContain(29);
+    const boxes = spread
+      .map((t) => extent(t, many, labels))
+      .sort((a, b) => a[0] - b[0]);
+    boxes.slice(1).forEach((box, i) => {
+      expect(box[0]).toBeGreaterThan(boxes[i][1]);
+    });
+    boxes.forEach(([from, to]) => {
+      expect(from).toBeGreaterThanOrEqual(0);
+      expect(to).toBeLessThanOrEqual(652);
+    });
+  });
+
+  it("doesn't repeat a day two runs share", () => {
+    const shown = tickLabels({
+      xs: [40, 340, 640],
+      texts: ["Oct 20", "Oct 28", "Oct 28"],
+      left: 0,
+      right: 652,
+    });
+    expect(shown.map((t) => t.index)).toEqual([0, 2]);
   });
 });
