@@ -312,9 +312,13 @@ def prepare(run_id: str) -> list[int]:
     run = InsightRun.objects.get(id=run_id)
     if not started:
         _require_running(run)
+    engine = insight_agent.pinned(run.settings)
     # A model setup no call can get through (a licence the managed service
-    # won't activate) fails the run now, before anything is read.
-    check_setup()
+    # won't activate) fails the run now, before anything is read. The agent
+    # reads and writes on its own models, so this asks only the built-in
+    # engine's; a call the agent's run still makes here is refused on its own.
+    if not insight_agent.is_omega(engine):
+        check_setup()
     set_progress(run, "reading", 0, run.sample_size)
     units = list(InsightUnit.objects.filter(run=run))
     window = (run.scope or {}).get("window") or []
@@ -322,7 +326,7 @@ def prepare(run_id: str) -> list[int]:
     until = _parse_time(window[1]) if len(window) == 2 else None
     # A v2 unit is read whole by the agent: one whose root has no input or
     # output of its own may still hold everything in its spans.
-    v2 = insight_agent.is_v2(insight_agent.pinned(run.settings))
+    v2 = insight_agent.is_v2(engine)
     loaded = {}
     ids = [u.unit_id for u in units]
     for start in range(0, len(ids), 200):

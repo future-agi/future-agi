@@ -876,14 +876,19 @@ class TestUnitTextForV2:
         monkeypatch.setattr(units_module, "_user_labels", lambda ids: {})
 
         assert set(units_module.load_units("traces", PROJECT, ["T1", "T2"])) == {"T2"}
-        kept = units_module.load_units("traces", PROJECT, ["T1", "T2"], keep_empty=True)
+        # As a v2 run loads them: kept when empty, steps left to the agent.
+        kept = units_module.load_units(
+            "traces", PROJECT, ["T1", "T2"], keep_empty=True, read_steps=False
+        )
         assert set(kept) == {"T1", "T2"}
         assert kept["T2"].output == "final answer" and kept["T1"].output == ""
         # What the example panel shows: the exchange, or nothing for a root
         # without text (never empty "User:" lines).
-        assert kept["T2"].content == "User: hi\n\nAssistant: final answer"
+        assert kept["T2"].content == "User: hi\nAssistant: final answer"
         assert kept["T1"].content == ""
-        session = units_module.load_units("sessions", PROJECT, ["S1"], keep_empty=True)
+        session = units_module.load_units(
+            "sessions", PROJECT, ["S1"], keep_empty=True, read_steps=False
+        )
         assert session["S1"].content == (
             "[Turn 1] User: hi\nAssistant: final answer\n\n"
             "[Turn 2] User: and?\nAssistant: "

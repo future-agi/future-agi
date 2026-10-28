@@ -474,8 +474,10 @@ def test_a_v2_unit_keeps_its_conversation_to_show(report, user, monkeypatch):
     )
     asked = []
 
-    def load_units(unit, project_id, unit_ids, since, until, *, keep_empty=False):
-        asked.append(keep_empty)
+    def load_units(
+        unit, project_id, unit_ids, since, until, *, keep_empty=False, read_steps=True
+    ):
+        asked.append((keep_empty, read_steps))
         return {
             unit_ids[0]: UnitText(
                 unit_id=unit_ids[0],
@@ -503,7 +505,8 @@ def test_a_v2_unit_keeps_its_conversation_to_show(report, user, monkeypatch):
     ready = pipeline.prepare(str(run.id))
 
     units = units_of(run)
-    assert asked == [True] and len(ready) == 2
+    # Kept when empty, and the agent reads the steps itself.
+    assert asked == [(True, False)] and len(ready) == 2
     assert units["long-0"].content == turns
     # A unit whose roots hold no text is still read, with nothing to show.
     assert units["spans-only-0"].status == "pending"
