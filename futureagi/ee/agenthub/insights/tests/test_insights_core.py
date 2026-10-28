@@ -670,6 +670,47 @@ class TestModelCalls:
         assert caught.value.unavailable
         assert "internals" not in str(caught.value)
 
+    @pytest.mark.parametrize("status", [400, 401, 403, 404, 422])
+    def test_a_refused_call_is_not_retried_and_says_retrying_will_not_help(
+        self, monkeypatch, status
+    ):
+        calls = []
+
+        class Refused(Exception):
+            status_code = status
+
+        def refuse(*_):
+            calls.append(1)
+            raise Refused("model_not_found")
+
+        monkeypatch.setattr(llm, "_complete", refuse)
+        monkeypatch.setattr(llm.time, "sleep", lambda *_: None)
+        with pytest.raises(llm.InsightModelError) as caught:
+            llm.chat_json("s", "u", tier=llm.THINKING)
+        assert str(caught.value) == llm.MODEL_REFUSED_MESSAGE
+        assert len(calls) == 1
+
+    def test_a_transient_failure_still_says_try_again(self, monkeypatch):
+        class Busy(Exception):
+            status_code = 503
+
+        def busy(*_):
+            raise Busy("upstream busy")
+
+        monkeypatch.setattr(llm, "_complete", busy)
+        monkeypatch.setattr(llm.time, "sleep", lambda *_: None)
+        with pytest.raises(llm.InsightModelError) as caught:
+            llm.chat_json("s", "u", tier=llm.FAST)
+        assert "Try again shortly" in str(caught.value)
+
+    def test_an_agent_unit_the_model_refused_reads_as_refused(self):
+        from ee.agenthub.insights.agent import _unit_error
+
+        refused = {"ok": False, "error": {"code": "model_rejected", "message": "x"}}
+        other = {"ok": False, "error": {"code": "deadline_exceeded", "message": "late"}}
+        assert _unit_error(refused) == llm.MODEL_REFUSED_MESSAGE
+        assert _unit_error(other) == "late"
+
 
 class TestSampling:
     def test_even_sample_spans_the_window(self):

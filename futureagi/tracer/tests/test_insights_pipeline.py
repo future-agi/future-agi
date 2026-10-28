@@ -691,3 +691,41 @@ def test_a_failed_run_is_never_started_or_read_again(report, user, model, loaded
     with pytest.raises(pipeline.InsightRunNotRunning):
         pipeline.finish(str(second.id))
     assert model.calls == calls
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "errors, expected",
+    [
+        # Every unit refused by the model gateway: retrying will not help.
+        (["refused", "refused"], "refused"),
+        # Any other failure among them may pass on a later try.
+        (["refused", "timed out"], "could not read these items. Try again shortly."),
+    ],
+)
+def test_a_report_the_model_refused_says_retrying_will_not_help(
+    report, user, errors, expected
+):
+    from ee.agenthub.insights.llm import MODEL_REFUSED_MESSAGE, InsightModelError
+
+    run = pipeline.create_run(
+        config=report,
+        scope={"window": WINDOW, "preset": "Custom"},
+        population=[{"id": unit_id} for unit_id in ids(order=len(errors))],
+        sample_size=len(errors),
+        user=user,
+    )
+    InsightRun.objects.filter(id=run.id).update(status="running")
+    for n, error in enumerate(errors):
+        InsightUnit.objects.create(
+            run=run,
+            unit_id=f"u-{n}",
+            status="failed",
+            error=MODEL_REFUSED_MESSAGE if error == "refused" else error,
+        )
+    with pytest.raises(InsightModelError) as caught:
+        pipeline.organise(str(run.id))
+    if expected == "refused":
+        assert str(caught.value) == MODEL_REFUSED_MESSAGE
+    else:
+        assert str(caught.value).endswith(expected)

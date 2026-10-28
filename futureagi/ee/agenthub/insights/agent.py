@@ -587,6 +587,10 @@ def read_units(
 
 def _unit_error(item: dict) -> str:
     error = item.get("error")
+    if isinstance(error, dict) and error.get("code") == "model_rejected":
+        from ee.agenthub.insights.llm import MODEL_REFUSED_MESSAGE
+
+        return MODEL_REFUSED_MESSAGE
     message = error.get("message") if isinstance(error, dict) else error
     return str(message or "The Insights agent could not read this item.")[:200]
 

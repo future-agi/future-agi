@@ -34,6 +34,19 @@ _SETTINGS = {FAST: "INSIGHTS_FAST_MODEL", THINKING: "INSIGHTS_THINKING_MODEL"}
 _TIMEOUT = 180
 
 
+# The model gateway or provider refused the call itself (unknown model, refused
+# credentials, an account without credit): retrying cannot help.
+MODEL_REFUSED_MESSAGE = (
+    "The analysis model refused the request, so trying again won't help: "
+    "an administrator needs to check the Insights model settings."
+)
+_REFUSED_STATUSES = frozenset({400, 401, 403, 404, 422})
+
+
+def refused(exc: BaseException | None) -> bool:
+    return getattr(exc, "status_code", None) in _REFUSED_STATUSES
+
+
 class InsightModelError(Exception):
     """The model could not produce a usable answer; safe to show users."""
 
@@ -328,7 +341,11 @@ def chat_json(
                 attempt=attempt + 1,
                 error=str(exc)[:300],
             )
+            if refused(exc):
+                break
         time.sleep(min(8, 1.5 * (attempt + 1)))
+    if refused(last_error):
+        raise InsightModelError(MODEL_REFUSED_MESSAGE, unavailable=True) from last_error
     raise InsightModelError(
         "The analysis model is unavailable right now. Try again shortly.",
         unavailable=True,

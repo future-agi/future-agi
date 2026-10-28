@@ -590,17 +590,19 @@ def organise(run_id: str) -> dict:
     set_progress(run, "grouping")
     spend = Spend()
     units = list(InsightUnit.objects.filter(run=run, status="done", included=True))
-    failed = InsightUnit.objects.filter(run=run, status="failed").count()
+    failed_units = InsightUnit.objects.filter(run=run, status="failed")
+    failed = failed_units.count()
     done = InsightUnit.objects.filter(run=run, status="done").count()
     if done == 0:
-        raise InsightModelError(
-            (
-                "Nothing could be read from these items."
-                if not failed
-                else "The analysis model could not read these items. Try again shortly."
-            ),
-            unavailable=bool(failed),
-        )
+        from ee.agenthub.insights.llm import MODEL_REFUSED_MESSAGE
+
+        if not failed:
+            message = "Nothing could be read from these items."
+        elif not failed_units.exclude(error=MODEL_REFUSED_MESSAGE).exists():
+            message = MODEL_REFUSED_MESSAGE
+        else:
+            message = "The analysis model could not read these items. Try again shortly."
+        raise InsightModelError(message, unavailable=bool(failed))
     items = [clustering.Item(key=str(u.pk), text=_item_text(u)) for u in units]
     context = _context(run)
     audit: dict = {}
