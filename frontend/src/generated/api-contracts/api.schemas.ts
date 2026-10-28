@@ -15347,6 +15347,12 @@ export interface RunEnvironmentRefApi {
   name: string;
 }
 
+export interface ObserveProjectRefApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+}
+
 export interface AgentDefinitionListResponseApi {
   readonly id?: string;
   /**
@@ -15411,6 +15417,7 @@ export interface AgentDefinitionListResponseApi {
   readonly version_count?: number;
   readonly environment_count?: number;
   readonly environments?: readonly RunEnvironmentRefApi[];
+  observe_project?: ObserveProjectRefApi;
 }
 
 export type ApiErrorWithDetailsResponseApiType =
@@ -15815,12 +15822,6 @@ export type AgentDefinitionDetailResponseApiModelDetails = {
 export type AgentDefinitionDetailResponseApiActiveVersion = {
   [key: string]: string;
 };
-
-export interface ObserveProjectRefApi {
-  id: string;
-  /** @minLength 1 */
-  name: string;
-}
 
 export interface AgentDefinitionDetailResponseApi {
   readonly id?: string;

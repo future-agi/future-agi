@@ -31634,6 +31634,12 @@ export const SimulateAgentDefinitionsListResponseItem = zod.object({
       }),
     )
     .optional(),
+  observe_project: zod
+    .object({
+      id: zod.string().uuid(),
+      name: zod.string().min(1),
+    })
+    .optional(),
 });
 export const SimulateAgentDefinitionsListResponse = zod.array(
   SimulateAgentDefinitionsListResponseItem,

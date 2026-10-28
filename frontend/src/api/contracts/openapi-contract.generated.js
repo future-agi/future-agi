@@ -48587,6 +48587,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           readOnly: true,
         },
+        observe_project: {
+          $ref: "#/definitions/ObserveProjectRef",
+        },
       },
     },
     AgentDefinitionResponse: {

@@ -1091,3 +1091,65 @@ def test_linking_refuses_a_project_outside_the_agent_s_workspace(
         assert refused.status_code == status.HTTP_400_BAD_REQUEST, refused.content
     code.refresh_from_db()
     assert code.production_project_id is None
+
+
+def _pulling(agent, project, *, enabled=True):
+    row = ObservabilityProvider.objects.create(
+        project=project,
+        provider=ProviderChoices.VAPI,
+        enabled=enabled,
+        organization=agent.organization,
+        workspace=agent.workspace,
+    )
+    AgentDefinition.objects.filter(id=agent.id).update(observability_provider=row)
+
+
+@pytest.mark.django_db
+def test_the_list_names_each_agent_s_observe_project_by_kind(
+    auth_client, organization, workspace
+):
+    code = _code_agent(organization, workspace, "Harbor Hotels")
+    production = _observe_project(organization, workspace, "Harbor production")
+    _link(auth_client, code, str(production.id))
+    # The switch's own project for a code agent is not where its traces land.
+    _pulling(code, _observe_project(organization, workspace, "Harbor Hotels"))
+    unlinked = _code_agent(organization, workspace, "Page Turner Books")
+    hosted = _agent(organization, workspace, "Northwind")
+    pulled = _observe_project(organization, workspace, "Northwind calls")
+    _pulling(hosted, pulled)
+    switched_off = _agent(organization, workspace, "Clinic")
+    _pulling(
+        switched_off,
+        _observe_project(organization, workspace, "Clinic calls"),
+        enabled=False,
+    )
+
+    rows = _rows(auth_client)
+
+    assert rows["Harbor Hotels"]["observe_project"] == {
+        "id": str(production.id),
+        "name": "Harbor production",
+    }
+    assert rows["Page Turner Books"]["observe_project"] is None
+    assert rows["Northwind"]["observe_project"] == {
+        "id": str(pulled.id),
+        "name": "Northwind calls",
+    }
+    assert rows["Clinic"]["observe_project"] is None
+    assert unlinked.production_project_id is None
+
+
+@pytest.mark.django_db
+def test_the_list_reads_observe_projects_without_a_query_per_agent(
+    auth_client, organization, workspace, django_assert_max_num_queries
+):
+    for index in range(3):
+        agent = _agent(organization, workspace, f"Hosted {index}")
+        _pulling(agent, _observe_project(organization, workspace, f"Calls {index}"))
+    with CaptureQueriesContext(connection) as one_more:
+        _rows(auth_client)
+    agent = _agent(organization, workspace, "Hosted 3")
+    _pulling(agent, _observe_project(organization, workspace, "Calls 3"))
+
+    with django_assert_max_num_queries(len(one_more.captured_queries)):
+        assert len(_rows(auth_client)) == 4

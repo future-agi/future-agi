@@ -162,13 +162,17 @@ class AgentDefinitionView(APIView):
                 .values("id")[:1]
             )
 
-            agents = annotate_agent_rows(
-                AgentDefinition.objects.filter(
-                    organization=user_organization,
+            agents = (
+                annotate_agent_rows(
+                    AgentDefinition.objects.filter(
+                        organization=user_organization,
+                    )
                 )
-            ).annotate(
-                _latest_version=Subquery(latest_version_subquery),
-                _latest_version_id=Subquery(latest_version_id_subquery),
+                .annotate(
+                    _latest_version=Subquery(latest_version_subquery),
+                    _latest_version_id=Subquery(latest_version_id_subquery),
+                )
+                .select_related("observability_provider__project", "production_project")
             )
 
             if agent_type is not None:

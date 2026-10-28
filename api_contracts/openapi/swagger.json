@@ -120356,6 +120356,26 @@
                 }
             }
         },
+        "ObserveProjectRef": {
+            "required": [
+                "id",
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                }
+            },
+            "x-nullable": true
+        },
         "AgentDefinitionListResponse": {
             "type": "object",
             "properties": {
@@ -120608,6 +120628,9 @@
                         "$ref": "#/definitions/RunEnvironmentRef"
                     },
                     "readOnly": true
+                },
+                "observe_project": {
+                    "$ref": "#/definitions/ObserveProjectRef"
                 }
             }
         },
@@ -121152,26 +121175,6 @@
                     "$ref": "#/definitions/AgentDefinitionResponse"
                 }
             }
-        },
-        "ObserveProjectRef": {
-            "required": [
-                "id",
-                "name"
-            ],
-            "type": "object",
-            "properties": {
-                "id": {
-                    "title": "Id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "name": {
-                    "title": "Name",
-                    "type": "string",
-                    "minLength": 1
-                }
-            },
-            "x-nullable": true
         },
         "AgentDefinitionDetailResponse": {
             "type": "object",
