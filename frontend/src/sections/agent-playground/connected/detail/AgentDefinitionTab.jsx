@@ -1,14 +1,16 @@
 import PropTypes from "prop-types";
-import React from "react";
+import React, { useState } from "react";
 import { format } from "date-fns";
 import { Link as RouterLink } from "react-router-dom";
-import { Box, Link, Skeleton, Stack, Typography } from "@mui/material";
+import { Box, Button, Link, Skeleton, Stack, Typography } from "@mui/material";
 import {
   useAgentEnvironments,
   useAgentVersion,
   useStoredAgent,
 } from "src/api/agents/agentDetail";
+import { useAuthContext } from "src/auth/hooks";
 import { paths } from "src/routes/paths";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { sourceLabel } from "../connectedAgentLabels";
 import { Card, LineSkeleton } from "./bits";
 import { MONO } from "./format";
@@ -21,6 +23,7 @@ import {
   storedAgentRows,
 } from "./definitionRows";
 import ComingSoonCard from "./ComingSoonCard";
+import { ConnectTracesDrawer, observeProjectPath } from "./AgentNextSteps";
 import ObservabilityToggle, {
   ObservabilityToggleSkeleton,
 } from "./ObservabilityToggle";
@@ -187,6 +190,9 @@ Section.propTypes = {
  */
 export default function AgentDefinitionTab() {
   const { agentId, agent, versionId } = useAgentRoute();
+  const { role } = useAuthContext();
+  const canEdit = !!RolePermission.SIMULATION_AGENT[PERMISSIONS.UPDATE][role];
+  const [connecting, setConnecting] = useState(false);
   const {
     data: version,
     isLoading,
@@ -249,7 +255,62 @@ export default function AgentDefinitionTab() {
   }
 
   const envs = environments.data ?? [];
+  const observe = agent?.observeProject;
+  const observeRow = {
+    label: "Observe project",
+    node: observe ? (
+      <Typography
+        data-testid="observe-project-link"
+        sx={{ typography: "s2_1", lineHeight: "24px" }}
+      >
+        {observe.name}
+        <Box component="span" sx={{ color: "text.secondary" }}>
+          {" · linked · "}
+        </Box>
+        <Link
+          href={observeProjectPath(observe.id)}
+          target="_blank"
+          rel="noopener"
+          underline="hover"
+          sx={{ fontWeight: 500 }}
+        >
+          Open in Observe
+        </Link>
+      </Typography>
+    ) : (
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1.5}
+        data-testid="observe-project-link"
+      >
+        <Typography
+          sx={{
+            typography: "s2_1",
+            lineHeight: "24px",
+            color: "text.secondary",
+          }}
+        >
+          {isCode
+            ? "Not linked"
+            : "Not linked · turn observability on to pull its calls in"}
+        </Typography>
+        {isCode && (
+          <Button
+            size="small"
+            variant="outlined"
+            color="inherit"
+            disabled={!canEdit}
+            onClick={() => setConnecting(true)}
+          >
+            Link a project
+          </Button>
+        )}
+      </Stack>
+    ),
+  };
   const links = [
+    observeRow,
     {
       label: "Environments",
       node: environments.isLoading ? (
@@ -344,6 +405,14 @@ export default function AgentDefinitionTab() {
         title="File structure"
         description="Browse the files we read from your agent, version by version."
       />
+      {agent && isCode && (
+        <ConnectTracesDrawer
+          agent={agent}
+          open={connecting}
+          onClose={() => setConnecting(false)}
+          canEdit={canEdit}
+        />
+      )}
     </Stack>
   );
 }

@@ -45,7 +45,17 @@ vi.mock("src/utils/axios", () => ({
       storedAgent: (id, v) =>
         `/simulate/agent-definitions/${id}/versions/${v}/agent/`,
     },
+    project: { getCodeBlockTracer: "/tracer/project/project_sdk_code/" },
   },
+}));
+
+vi.mock("src/api/project/observe-project-list", () => ({
+  fetchAllObserveProjects: () =>
+    Promise.resolve([{ id: "p-prod", name: "Harbor production" }]),
+}));
+
+vi.mock("react-syntax-highlighter", () => ({
+  Prism: ({ children }) => <pre>{children}</pre>,
 }));
 
 const NOT_STORED = {
@@ -137,6 +147,64 @@ describe("AgentDefinitionTab", () => {
       screen.getByText("Phone call · inbound · caller speaks first"),
     ).toBeInTheDocument();
     expect(screen.getByText("+14155550100")).toBeInTheDocument();
+  });
+
+  it("names a code agent's linked Observe project under Links", async () => {
+    const linked = {
+      ...CODE_AGENT_DETAIL,
+      observe_project: { id: "p-prod", name: "Harbor production" },
+    };
+    serve(
+      linked,
+      { [CODE_VERSION_DETAIL.id]: CODE_VERSION_DETAIL },
+      { [CODE_VERSION_DETAIL.id]: STORED_AGENT },
+    );
+    renderAt(linked);
+    const row = await screen.findByTestId("observe-project-link");
+    expect(row).toHaveTextContent("Harbor production · linked");
+    expect(
+      within(row).getByRole("link", { name: "Open in Observe" }),
+    ).toHaveAttribute("href", "/dashboard/observe/p-prod/llm-tracing");
+  });
+
+  it("offers Link a project for an unlinked code agent, opening the setup drawer", async () => {
+    serve(
+      CODE_AGENT_DETAIL,
+      { [CODE_VERSION_DETAIL.id]: CODE_VERSION_DETAIL },
+      { [CODE_VERSION_DETAIL.id]: STORED_AGENT },
+    );
+    renderAt(CODE_AGENT_DETAIL);
+    const row = await screen.findByTestId("observe-project-link");
+    expect(row).toHaveTextContent("Not linked");
+    fireEvent.click(
+      within(row).getByRole("button", { name: "Link a project" }),
+    );
+    const drawer = await screen.findByRole("presentation");
+    expect(
+      within(drawer).getByText("Connect production traces"),
+    ).toBeInTheDocument();
+  });
+
+  it("tells a hosted agent to turn observability on instead of linking", async () => {
+    serve(HOSTED_AGENT_DETAIL, { "v2-id": HOSTED_VERSION_DETAIL });
+    renderAt(HOSTED_AGENT_DETAIL);
+    const row = await screen.findByTestId("observe-project-link");
+    expect(row).toHaveTextContent("turn observability on to pull its calls in");
+    expect(within(row).queryByRole("button")).toBeNull();
+  });
+
+  it("won't let a viewer link a project from Definition", async () => {
+    auth.role = "workspace_viewer";
+    serve(
+      CODE_AGENT_DETAIL,
+      { [CODE_VERSION_DETAIL.id]: CODE_VERSION_DETAIL },
+      { [CODE_VERSION_DETAIL.id]: STORED_AGENT },
+    );
+    renderAt(CODE_AGENT_DETAIL);
+    const row = await screen.findByTestId("observe-project-link");
+    expect(
+      within(row).getByRole("button", { name: "Link a project" }),
+    ).toBeDisabled();
   });
 
   it("links the environments testing the agent", async () => {

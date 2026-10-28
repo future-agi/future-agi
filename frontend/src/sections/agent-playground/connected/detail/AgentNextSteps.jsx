@@ -143,7 +143,7 @@ function SetupCode() {
  * project is the user saying they flow. The observability switch, which only
  * exports simulation spans, is left as it is.
  */
-function ConnectTracesDrawer({ agent, open, onClose, canEdit }) {
+export function ConnectTracesDrawer({ agent, open, onClose, canEdit }) {
   const { enqueueSnackbar } = useSnackbar();
   const linked = agent.observeProject;
   const [picked, setPicked] = useState(linked);
