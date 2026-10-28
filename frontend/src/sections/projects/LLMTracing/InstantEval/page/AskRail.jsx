@@ -174,10 +174,20 @@ function RunCard({
     runItem.unit === "users" && runItem.sessions != null
       ? `${runItem.sessions.toLocaleString()} sessions read`
       : null;
+  // With several questions a row counts once each has its answer, as the
+  // run's page says it ("6 of 49 sessions done with both questions"), not
+  // as the first question's answers on the bar below.
+  const asked = runItem.items.length;
   const progressWords =
     rows == null
       ? ""
-      : `${Math.min(runItem.answered, rows)} of ${rows} answered`;
+      : `${Math.min(runItem.answered, rows)} of ${rows} ${
+          asked > 2
+            ? `done with all ${asked}`
+            : asked === 2
+              ? "done with both"
+              : "answered"
+        }`;
   const size =
     rows == null
       ? ""
@@ -278,6 +288,7 @@ function RunCard({
         color="text.secondary"
         noWrap
         component="p"
+        title={meta}
         sx={{ mt: 0.25, fontVariantNumeric: "tabular-nums" }}
       >
         {meta}

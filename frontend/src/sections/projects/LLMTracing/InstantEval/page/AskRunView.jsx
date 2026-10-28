@@ -751,6 +751,17 @@ export default function AskRunView({
       ) || [];
   if (lowConfidence > 0)
     answerHeadline.push(`${lowConfidence.toLocaleString()} low-confidence`);
+  // With several questions the headline is one question's answers, while
+  // the progress counts rows done with every question: it says which
+  // question it counts, and how many rows that one has answered.
+  const countsFor =
+    questions.length > 1 && split
+      ? `These counts are for question ${
+          questions.indexOf(question) + 1
+        }: ${split.answered.toLocaleString()} of ${run.total.toLocaleString()} ${
+          run.total === 1 ? meta.noun : meta.plural
+        } answered${live || PAUSED_STATES.has(run.status) ? " so far" : ""}.`
+      : null;
   const metaLine = [
     sourceViewTitle(unit),
     runScopeWords(scope?.label || summary?.scope?.label, run.window),
@@ -1214,6 +1225,15 @@ export default function AskRunView({
             <Typography variant="h5" component="p" aria-label="Answer summary">
               {answerHeadline.join(" · ")}
             </Typography>
+            {countsFor && (
+              <Typography
+                variant="body2"
+                color="text.secondary"
+                sx={{ fontVariantNumeric: "tabular-nums" }}
+              >
+                {countsFor}
+              </Typography>
+            )}
             {lowConfidence > 0 && (
               <Typography variant="body2" color="text.secondary">
                 Low-confidence answers are included in these counts, not extra

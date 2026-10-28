@@ -1538,6 +1538,71 @@ describe("a run asking several questions while it is answered", () => {
       ),
     ).toBeInTheDocument();
   });
+
+  it("says whose answers the headline counts, and how many that question has", () => {
+    // Run 9e0df0dd at 5 s: "1 Yes · 10 No" for question 1 beside
+    // "6 of 49 sessions done with both questions".
+    const run = runOf({
+      status: "running",
+      total: 49,
+      answered: 6,
+      records: null,
+    });
+    run.questions = [
+      ...QUESTIONS,
+      {
+        configId: "config-2",
+        question: "Was the customer polite?",
+        answerType: "yes_no",
+        labels: ["Yes", "No"],
+      },
+    ];
+    run.summary = {
+      ...run.summary,
+      counts: {
+        [CONFIG]: { Yes: 1, No: 10, __error__: 0 },
+        "config-2": { Yes: 7, __error__: 0 },
+      },
+    };
+    fakes.askRuns["task-sessions"] = run;
+    renderAt(
+      `/dashboard/observe/${PROJECT}/ask?run=task-sessions&unit=sessions&tab=sessions`,
+    );
+    expect(screen.getByLabelText("Answer summary")).toHaveTextContent(
+      /^1 Yes · 10 No$/,
+    );
+    expect(
+      screen.getByText(
+        "These counts are for question 1: 11 of 49 sessions answered so far.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/6 of 49 sessions done with both questions/),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: /^2 · / }));
+    expect(screen.getByLabelText("Answer summary")).toHaveTextContent(
+      /^7 Yes$/,
+    );
+    expect(
+      screen.getByText(
+        "These counts are for question 2: 7 of 49 sessions answered so far.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("names no question when it asked one", () => {
+    fakes.askRuns["task-sessions"] = runOf({
+      status: "running",
+      total: 49,
+      answered: 6,
+      records: null,
+    });
+    renderAt(
+      `/dashboard/observe/${PROJECT}/ask?run=task-sessions&unit=sessions&tab=sessions`,
+    );
+    expect(screen.getByLabelText("Answer summary")).toBeInTheDocument();
+    expect(screen.queryByText(/These counts are for question/)).toBeNull();
+  });
 });
 
 describe("a run whose workflow went before it picked its rows", () => {

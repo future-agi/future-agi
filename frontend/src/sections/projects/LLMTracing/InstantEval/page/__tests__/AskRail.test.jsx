@@ -163,6 +163,56 @@ describe("the open run's card while it is answered", () => {
     expect(within(card).queryByText(/8 of 49/)).toBeNull();
   });
 
+  it("counts a run of several questions as its page does, not as answers", () => {
+    // Run 9e0df0dd: its bar has question 1's 11 answers while 6 rows are
+    // done with both questions.
+    history.runs = [
+      item({
+        taskId: "live-task",
+        status: "running",
+        unit: "sessions",
+        rows: 49,
+        answered: 6,
+        pending: 43,
+        items: [...item().items, { ...item().items[0], configId: "q2" }],
+        counts: { q1: { Yes: 1, No: 10 }, q2: { Yes: 7 } },
+      }),
+      item({
+        taskId: "three-task",
+        status: "running",
+        unit: "sessions",
+        rows: 49,
+        answered: 4,
+        pending: 45,
+        items: [
+          { ...item().items[0], question: "Three?" },
+          { ...item().items[0], configId: "q2" },
+          { ...item().items[0], configId: "q3" },
+        ],
+      }),
+    ];
+    renderRail(vi.fn(), {
+      selectedId: "live-task",
+      openProgress: {
+        taskId: "live-task",
+        settled: 6,
+        total: 49,
+        counts: { q1: { Yes: 1, No: 10 }, q2: { Yes: 7 } },
+        status: "running",
+      },
+    });
+    const card = screen.getByRole("link", { name: "Open the run: Resolved?" });
+    expect(
+      within(card).getByText(/6 of 49 done with both/),
+    ).toBeInTheDocument();
+    expect(within(card).queryByText(/6 of 49 answered/)).toBeNull();
+    expect(within(card).getByText("10 No")).toBeInTheDocument();
+    const three = screen.getByRole("link", { name: "Open the run: Three?" });
+    expect(
+      within(three).getByText(/4 of 49 done with all 3/),
+    ).toBeInTheDocument();
+  });
+
   it("keeps History's count for a run that isn't open", () => {
     history.runs = [
       item({
