@@ -95,8 +95,13 @@ def test_foreign_secret_is_not_resolved(location, monkeypatch, legacy_transport)
         actual_key="fixture-value",
     )
     lookups = []
+    workspace_filters = []
 
     class Manager:
+        def filter(self, scope):
+            workspace_filters.append(scope)
+            return self
+
         def get(self, **scope):
             lookups.append(scope)
             if all(getattr(record, key) == value for key, value in scope.items()):
@@ -105,6 +110,11 @@ def test_foreign_secret_is_not_resolved(location, monkeypatch, legacy_transport)
 
     monkeypatch.setattr(columns.SecretModel, "objects", Manager())
     monkeypatch.setattr(columns.SecretModel, "no_workspace_objects", Manager())
+    workspaces = Mock()
+    workspaces.no_workspace_objects.filter.return_value.exists.return_value = False
+    # The original base lacks the explicit workspace model import; this stub is
+    # unused there, so its unscoped lookup still returns the foreign fixture.
+    monkeypatch.setattr(columns, "Workspace", workspaces, raising=False)
     dataset = SimpleNamespace(organization_id="own-org", workspace_id="own-workspace")
     cell = SimpleNamespace(row=SimpleNamespace(dataset=dataset))
     request_config = config()
@@ -114,8 +124,11 @@ def test_foreign_secret_is_not_resolved(location, monkeypatch, legacy_transport)
         {
             "id": "foreign",
             "organization_id": "own-org",
-            "workspace_id": "own-workspace",
             "deleted": False,
         }
     ]
+    assert workspace_filters == [columns.Q(workspace_id="own-workspace")]
+    workspaces.no_workspace_objects.filter.assert_called_once_with(
+        id="own-workspace", organization_id="own-org", is_default=True
+    )
     legacy_transport.assert_not_called()
