@@ -1,3 +1,4 @@
+import { formatDayRange } from "./Insights/insightsFormat";
 import { DATE_OPTION_LABELS } from "./LLMTracing/DateRangePill";
 import { filtersForUnit } from "./observeFilterConfig";
 import { UNITS } from "./observePopulation";
@@ -190,6 +191,37 @@ export const scopeApiFilters = (scope) =>
 /** The same scope with other filters, relabelled. */
 export const withFilters = (scope, filters) =>
   makeScope({ ...scope, filters: filters || [] });
+
+const atMidnight = (date) =>
+  date.getHours() === 0 &&
+  date.getMinutes() === 0 &&
+  date.getSeconds() === 0 &&
+  date.getMilliseconds() === 0;
+
+/**
+ * A range picked in the custom picker, which picks days: one ending on a day
+ * reads that whole day, so 22–23 Oct is both days.
+ */
+export function throughLastDay([from, to]) {
+  const end = new Date(to);
+  if (Number.isNaN(end.getTime()) || !atMidnight(end)) return [from, to];
+  end.setHours(23, 59, 59, 999);
+  return [from, end];
+}
+
+/**
+ * "Oct 22–23": the days a custom window reads. A window ending at midnight
+ * (one an Observe view handed over) reads up to the day before.
+ */
+export function customRangeLabel(window) {
+  if (!Array.isArray(window) || window.length < 2) return undefined;
+  const from = new Date(window[0]);
+  const to = new Date(window[1]);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()))
+    return undefined;
+  const last = atMidnight(to) && to > from ? new Date(to.getTime() - 1) : to;
+  return formatDayRange(from, last);
+}
 
 /** The same scope over another date: a preset key and its window. */
 export const withDate = (scope, dateOption, window) =>

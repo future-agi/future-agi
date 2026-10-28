@@ -1,11 +1,12 @@
 /* eslint-disable react/prop-types */
 import React, { useState } from "react";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { palette } from "src/theme/palette";
 
 const panel = vi.hoisted(() => ({ props: null }));
+const picker = vi.hoisted(() => ({ props: null }));
 
 vi.mock("src/components/iconify", () => ({ default: () => null }));
 vi.mock("src/utils/axios", () => ({
@@ -47,9 +48,22 @@ vi.mock("../LLMTracing/TraceFilterPanel", () => ({
   },
 }));
 
+// The custom range picker picks days and hands back midnights.
+vi.mock("src/components/custom-datepicker/DatePicker", () => ({
+  default: (props) => {
+    picker.props = props;
+    return null;
+  },
+}));
+
 import ScopeFilterBar from "../ScopeFilterBar";
 import { OBSERVE_FILTER_CONFIG } from "../observeFilterConfig";
-import { defaultScope, presetWindow, withFilters } from "../observeScope";
+import {
+  defaultScope,
+  makeScope,
+  presetWindow,
+  withFilters,
+} from "../observeScope";
 
 const theme = createTheme({ palette: palette("light") });
 const STATUS = {
@@ -88,6 +102,7 @@ const renderBar = (unit, initial = defaultScope(unit)) => {
 
 beforeEach(() => {
   panel.props = null;
+  picker.props = null;
 });
 
 describe("the scope bar", () => {
@@ -198,6 +213,42 @@ describe("the scope bar", () => {
     fireEvent.change(box, { target: { value: "" } });
     expect(onChange.mock.lastCall[0].search).toBeUndefined();
     expect(onChange.mock.lastCall[0].label).toBe("Past 7D");
+  });
+
+  it("reads both days of a custom range picked as 22-23 Oct, and says so", () => {
+    const onChange = renderBar("sessions");
+    fireEvent.click(screen.getByRole("button", { name: "Past 7D" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Custom range" }));
+    act(() =>
+      picker.props.setDateFilter([
+        "2026-10-22 00:00:00",
+        "2026-10-23 00:00:00",
+      ]),
+    );
+    const next = onChange.mock.lastCall[0];
+    expect(next.dateOption).toBe("Custom");
+    expect(next.window).toEqual([
+      new Date(2026, 9, 22).toISOString(),
+      new Date(2026, 9, 23, 23, 59, 59, 999).toISOString(),
+    ]);
+    // The pill names the days the count reads.
+    expect(
+      screen.getByRole("button", { name: /Oct 22.23/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("labels a handed-over window ending at midnight by the days it reads", () => {
+    renderBar(
+      "sessions",
+      makeScope({
+        unit: "sessions",
+        dateOption: "Custom",
+        window: [new Date(2026, 9, 22), new Date(2026, 9, 23)],
+      }),
+    );
+    expect(screen.getByRole("button", { name: /^Oct 22/ })).toHaveTextContent(
+      /Oct 22$/,
+    );
   });
 
   it("has no search for other units", () => {

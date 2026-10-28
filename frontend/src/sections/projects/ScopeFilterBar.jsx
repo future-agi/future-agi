@@ -13,7 +13,14 @@ import {
   filterConfigFor,
   panelRowsToApiFilters,
 } from "./observeFilterConfig";
-import { makeScope, withDate, withFilters } from "./observeScope";
+import {
+  CUSTOM,
+  customRangeLabel,
+  makeScope,
+  throughLastDay,
+  withDate,
+  withFilters,
+} from "./observeScope";
 
 const NO_FILTERS = [];
 
@@ -58,8 +65,12 @@ export default function ScopeFilterBar({
 
   const setDateFilter = (update) => {
     const next = typeof update === "function" ? update(dateFilter) : update;
-    if (next?.dateFilter?.length === 2)
-      onChange(withDate(scope, next.dateOption, next.dateFilter));
+    if (next?.dateFilter?.length !== 2) return;
+    const window =
+      next.dateOption === CUSTOM
+        ? throughLastDay(next.dateFilter)
+        : next.dateFilter;
+    onChange(withDate(scope, next.dateOption, window));
   };
   const setFilters = (next) => onChange(withFilters(scope, next));
 
@@ -86,7 +97,12 @@ export default function ScopeFilterBar({
         <DateRangePill
           dateFilter={dateFilter}
           setDateFilter={setDateFilter}
-          label={dateLabel}
+          label={
+            dateLabel ||
+            (scope?.dateOption === CUSTOM
+              ? customRangeLabel(scope?.window)
+              : undefined)
+          }
           sx={{ ...pillSx, height: 28 }}
         />
         <Button
