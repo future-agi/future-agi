@@ -11,7 +11,9 @@
 //  1. Defaults coded into chwriter.New / server.New
 //  2. YAML file path from --config (or /etc/fi-collector/config.yaml)
 //  3. Environment overrides (FI_CH_URL, FI_GRPC_ADDR, FI_HTTP_ADDR,
-//     FI_GRPC_MAX_RECV_MIB, FI_GZIP_INFLIGHT_MIB, FI_DEAD_LETTER_FILE, ...)
+//     FI_INGEST_BUDGET_MIB, FI_OTLP_MAX_BODY_MIB, FI_GRPC_MAX_RECV_MIB,
+//     FI_OTLP_MAX_CONNECTIONS, FI_INGEST_MAX_WAIT, FI_INSERT_CONCURRENCY,
+//     FI_DEAD_LETTER_FILE, ...)
 //
 // Health surfaces:
 //   - /healthz (HTTP 200 unless writer dead-letter rate > threshold)
@@ -63,6 +65,7 @@ func main() {
 
 	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
+	applyContainerMemoryLimit(log, os.Getenv("GOMEMLIMIT"), cgroupRoot)
 	cfg := loadConfig(log, configPath)
 	if err := applyEnvOverrides(log, &cfg); err != nil {
 		log.Error("invalid environment override", "err", err)
@@ -175,7 +178,7 @@ func main() {
 	srv := server.New(cfg.Server, writer, authenticator, usageEmitter, metering, opts...)
 
 	// Admin HTTP server — internal only, health check endpoint.
-	go runAdmin(":9464", writer, authenticator, log)
+	go runAdmin(":9464", writer, authenticator, srv, log)
 
 	startAuthWatchers(ctx, authenticator)
 
@@ -284,12 +287,37 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
 	if v := os.Getenv("FI_CH_PASSWORD"); v != "" {
 		c.Writer.Password = v
 	}
-	if v := os.Getenv("FI_GZIP_INFLIGHT_MIB"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			c.Server.GzipInflightMiB = n
-		} else {
-			log.Warn("ignoring invalid FI_GZIP_INFLIGHT_MIB", "value", v)
+	for _, o := range []struct {
+		env    string
+		target *int
+	}{
+		{"FI_INGEST_BUDGET_MIB", &c.Server.IngestBudgetMiB},
+		{"FI_OTLP_MAX_BODY_MIB", &c.Server.MaxBodyMiB},
+		{"FI_OTLP_MAX_CONNECTIONS", &c.Server.MaxConnections},
+		{"FI_INSERT_CONCURRENCY", &c.Server.InsertConcurrency},
+	} {
+		if v := os.Getenv(o.env); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				*o.target = n
+			} else {
+				log.Warn("ignoring invalid "+o.env, "value", v)
+			}
 		}
+	}
+	// FI_INGEST_MAX_WAIT: a Go duration ("2s", "1500ms"), the longest a
+	// request waits for the ingest budget before it is refused as busy.
+	if v := os.Getenv("FI_INGEST_MAX_WAIT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			c.Server.IngestMaxWait = d
+		} else {
+			log.Warn("ignoring invalid FI_INGEST_MAX_WAIT (want a duration such as 2s)", "value", v)
+		}
+	}
+	// FI_GZIP_INFLIGHT_MIB bounded gzip requests only. One budget now bounds
+	// every OTLP request, so it is not read: setting it to a gzip-sized value
+	// would otherwise shrink the whole budget.
+	if v := os.Getenv("FI_GZIP_INFLIGHT_MIB"); v != "" {
+		log.Warn("FI_GZIP_INFLIGHT_MIB is no longer read; the ingest budget for every OTLP request is FI_INGEST_BUDGET_MIB", "value", v)
 	}
 	if v := os.Getenv("FI_GRPC_ADDR"); v != "" {
 		c.Server.GRPCAddr = v
@@ -405,19 +433,35 @@ func healthBody(status string, stats chwriter.Stats, router routingReporter) map
 	return body
 }
 
-// runAdmin serves /healthz for container health checks.
-func runAdmin(addr string, w *chwriter.Writer, router routingReporter, log *slog.Logger) {
+// ingestReporter is the part of the server /healthz reads.
+type ingestReporter interface {
+	IngestStats() server.IngestStats
+}
+
+// withIngest adds the ingest budget's use and the refused OTLP requests to a
+// /healthz body.
+func withIngest(body map[string]any, ingest ingestReporter) map[string]any {
+	if ingest != nil {
+		body["ingest"] = ingest.IngestStats()
+	}
+	return body
+}
+
+// runAdmin serves /healthz for container health checks. The ingest budget's
+// use and the OTLP requests refused, by transport, reason and code, are in
+// the body only; they never change the status code.
+func runAdmin(addr string, w *chwriter.Writer, router routingReporter, ingest ingestReporter, log *slog.Logger) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(rw http.ResponseWriter, r *http.Request) {
 		s := w.Snapshot()
 		denom := s.BatchesInserted + s.BatchesFailed
 		if denom > 100 && s.BatchesFailed*2 > denom {
 			rw.WriteHeader(503)
-			_ = json.NewEncoder(rw).Encode(healthBody("unhealthy", s, router))
+			_ = json.NewEncoder(rw).Encode(withIngest(healthBody("unhealthy", s, router), ingest))
 			return
 		}
 		rw.WriteHeader(200)
-		_ = json.NewEncoder(rw).Encode(healthBody("ok", s, router))
+		_ = json.NewEncoder(rw).Encode(withIngest(healthBody("ok", s, router), ingest))
 	})
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
