@@ -239,20 +239,15 @@ export function failedRunNext(run, { cloud = false } = {}) {
   };
 }
 
-// How long a stopped run's page waits for the reads it had under way: past
-// this (a worker lost meanwhile), it gives the counts as they stand.
-const STOPPING_MAX_MS = 2 * 60_000;
-
 /**
  * A run just stopped whose reads already under way are still being saved
  * (`progress.in_flight`): its counts aren't final yet, so it reads as
- * stopping, with none, until they are.
+ * stopping, with none, until they are. The server lists them for a couple
+ * of minutes at most (a worker lost meanwhile), judged on its own clock.
  */
-export function runStopping(run, now = Date.now()) {
+export function runStopping(run) {
   if (run?.status !== "failed" || run.error_code !== "stopped") return false;
-  if (!Object.keys(run.progress?.in_flight || {}).length) return false;
-  const since = new Date(run.finished_at).getTime();
-  return Number.isFinite(since) && now - since < STOPPING_MAX_MS;
+  return Object.keys(run.progress?.in_flight || {}).length > 0;
 }
 
 const creditsFrom = (data) =>
@@ -322,15 +317,13 @@ export function useInsightsConfig(configId) {
   });
 }
 
-// Judged as of the run's last read, so a run past STOPPING_MAX_MS settles
-// on the read that finds it so.
-const runLive = (run, readAt) =>
-  isRunActive(run?.status) || runStopping(run, readAt);
+const runLive = (run) => isRunActive(run?.status) || runStopping(run);
 
 /**
  * A run, polled every two seconds while it works or is being stopped. When
- * it ends, the report's run list (pager, trend) and the reports home
- * refresh.
+ * it stops working (the header's Run button, the rail card) and again when
+ * the reads under way are saved (their counts), the report's run list
+ * (pager, trend) and the reports home refresh.
  */
 export function useInsightsRun(runId) {
   const queryClient = useQueryClient();
@@ -339,36 +332,37 @@ export function useInsightsRun(runId) {
     queryFn: ({ signal }) => fetchRun(runId, signal),
     enabled: Boolean(runId),
     refetchInterval: (q) =>
-      q.state.status !== "error" && runLive(q.state.data, q.state.dataUpdatedAt)
-        ? RUN_POLL_MS
-        : false,
+      q.state.status !== "error" && runLive(q.state.data) ? RUN_POLL_MS : false,
     refetchOnWindowFocus: false,
     meta: { errorHandled: true },
   });
   const status = query.data?.status;
-  const live = runLive(query.data, query.dataUpdatedAt);
+  const active = isRunActive(status);
+  const live = runLive(query.data);
   const configId = query.data?.config_id;
-  const previous = useRef(live);
+  const previous = useRef({ active, live });
   useEffect(() => {
-    if (previous.current && status && !live) {
+    const was = previous.current;
+    if (status && ((was.active && !active) || (was.live && !live))) {
       if (configId)
         queryClient.invalidateQueries({
           queryKey: insightsKeys.config(configId),
         });
       queryClient.invalidateQueries({ queryKey: ["insights", "configs"] });
     }
-    previous.current = live;
-  }, [status, live, configId, queryClient]);
+    previous.current = { active, live };
+  }, [status, active, live, configId, queryClient]);
   return query;
 }
 
 /**
- * The run a report card shows, as the report page last read it, read again
- * while it is being stopped: the card says "Stopping" as the page does and
- * then gives the same counts. Reads nothing for a run the page hasn't read.
+ * The run a report card shows, as the report page last read it (`readAt`),
+ * read again while it is being stopped: the card says "Stopping" as the
+ * page does and then gives the same counts. Reads nothing for a run the
+ * page hasn't read.
  */
 export function useStoppingRun(runId) {
-  const stopping = (q) => runStopping(q.state.data, q.state.dataUpdatedAt);
+  const stopping = (q) => runStopping(q.state.data);
   const query = useQuery({
     queryKey: insightsKeys.run(runId),
     queryFn: ({ signal }) => fetchRun(runId, signal),
@@ -380,7 +374,8 @@ export function useStoppingRun(runId) {
   });
   return {
     run: query.data,
-    stopping: runStopping(query.data, query.dataUpdatedAt),
+    readAt: query.dataUpdatedAt,
+    stopping: runStopping(query.data),
   };
 }
 

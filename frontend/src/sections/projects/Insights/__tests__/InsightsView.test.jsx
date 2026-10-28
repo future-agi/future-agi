@@ -1,8 +1,13 @@
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  QueryClient,
+  QueryClientProvider,
+  focusManager,
+} from "@tanstack/react-query";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -439,19 +444,22 @@ describe("InsightsView", () => {
         progress: { stage: "summarising", in_flight: { 11: "now" } },
       };
       let saved = false;
-      mocks.readQuery.mockImplementation((url, options) =>
-        url === `/tracer/insights/runs/${RUN_ID}/`
-          ? ok(
-              saved
-                ? {
-                    ...stopping,
-                    analysed_count: 4,
-                    progress: { stage: "summarising", in_flight: {} },
-                  }
-                : stopping,
-            )
-          : base(url, options),
-      );
+      mocks.readQuery.mockImplementation((url, options) => {
+        if (url === `/tracer/insights/runs/${RUN_ID}/`)
+          return ok(
+            saved
+              ? {
+                  ...stopping,
+                  analysed_count: 4,
+                  progress: { stage: "summarising", in_flight: {} },
+                }
+              : stopping,
+          );
+        // The list, read again once they are saved, hasn't answered yet.
+        if (saved && url === "/tracer/insights/configs/")
+          return new Promise(() => {});
+        return base(url, options);
+      });
       renderAt(`?report=${CONFIG_ID}`);
       expect(await screen.findAllByText("Stopping…")).toHaveLength(2);
       expect(
@@ -471,6 +479,49 @@ describe("InsightsView", () => {
       expect(screen.getByText("Stopped")).toBeInTheDocument();
       expect(screen.getByText("Last run stopped")).toBeInTheDocument();
       expect(screen.queryByText("0 analysed · 0 skipped")).toBeNull();
+    });
+
+    it("gives a stopped run's card the list's counts once the list is read after the page's run", async () => {
+      // The page stopped waiting before a batch was saved (its 0 stays);
+      // the list, read again later, has the batch's 4.
+      serveFailed("Stopped by Ada.", "stopped");
+      const base = mocks.readQuery.getMockImplementation();
+      let saved = false;
+      mocks.readQuery.mockImplementation((url, options) => {
+        if (saved && url === "/tracer/insights/configs/") {
+          const config = configsFixture.result.configs[1];
+          const run = {
+            ...runFixture.result,
+            status: "failed",
+            error: "Stopped by Ada.",
+            error_code: "stopped",
+            analysed_count: 4,
+            skipped_count: 0,
+          };
+          return ok({ configs: [{ ...config, latest_run: run, runs: [run] }] });
+        }
+        return base(url, options);
+      });
+      renderAt(`?report=${CONFIG_ID}`);
+      const card = await screen.findByRole("link", {
+        name: `Open report ${sessionsConfig.name}`,
+      });
+      expect(
+        await within(card).findByText("0 analysed · 0 skipped"),
+      ).toBeInTheDocument();
+
+      saved = true;
+      try {
+        await act(async () => {
+          focusManager.setFocused(false);
+          focusManager.setFocused(true);
+        });
+        expect(
+          await within(card).findByText("4 analysed · 0 skipped"),
+        ).toBeInTheDocument();
+      } finally {
+        focusManager.setFocused(undefined);
+      }
     });
   });
 

@@ -69,6 +69,11 @@ RUNS_PER_HOUR = 30
 # A run older than this is no longer in flight: its workflow is started with
 # a limit no longer than this (tfc/temporal/insights/client.py RUN_TIMEOUT).
 ACTIVE_RUN_WINDOW = timedelta(hours=2)
+# How long after a run ends its page waits for the batches it had under way
+# (progress["in_flight"], until their units are saved): a worker lost
+# meanwhile never takes them off, so past this the run is given as it
+# stands. Judged here, on the clock that wrote finished_at.
+STOPPING_WAIT = timedelta(minutes=2)
 DRAFTS_PER_HOUR = 60
 MAX_POPULATION = 20000
 DEFAULT_SAMPLE = 300
@@ -537,6 +542,15 @@ def _error_code(run) -> str:
     if run.status != "failed":
         return ""
     return str((run.progress or {}).get("error_code") or "")
+
+
+def _run_progress(run) -> dict:
+    """A run's progress, its batches under way listed only for STOPPING_WAIT
+    after it ended."""
+    progress = dict(run.progress or {})
+    if run.finished_at and timezone.now() - run.finished_at >= STOPPING_WAIT:
+        progress.pop("in_flight", None)
+    return progress
 
 
 def _run_summary(run) -> dict:
@@ -1512,7 +1526,7 @@ class InsightRunDetailView(InsightsLicenseRequired, APIView):
                 "project_id": run.project_id,
                 "status": run.status,
                 "stage": run.stage,
-                "progress": run.progress or {},
+                "progress": _run_progress(run),
                 "unit": run.unit,
                 "scope": normalize_scope(run.scope),
                 "settings": run.settings or {},

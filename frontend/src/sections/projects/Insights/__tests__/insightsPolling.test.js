@@ -129,7 +129,6 @@ describe("failedRunNext", () => {
 });
 
 describe("runStopping", () => {
-  const at = (time) => new Date(`2026-10-28T08:${time}Z`).getTime();
   const stopped = (overrides = {}) => ({
     status: "failed",
     error_code: "stopped",
@@ -138,20 +137,23 @@ describe("runStopping", () => {
     ...overrides,
   });
 
-  it("holds a stopped run's counts while reads under way are saved, for 2 minutes at most", () => {
-    expect(runStopping(stopped(), at("00:05"))).toBe(true);
-    expect(runStopping(stopped(), at("01:59"))).toBe(true);
-    // A worker lost meanwhile: the counts as they stand.
-    expect(runStopping(stopped(), at("02:00"))).toBe(false);
-    expect(
-      runStopping(stopped({ progress: { in_flight: {} } }), at("00:05")),
-    ).toBe(false);
-    expect(runStopping(stopped({ progress: {} }), at("00:05"))).toBe(false);
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("holds a stopped run's counts while the server lists reads under way, whatever this browser's clock says", () => {
+    vi.useFakeTimers();
+    // An hour ahead of the server, then an hour behind: the server says
+    // when it has waited long enough (a worker lost meanwhile).
+    vi.setSystemTime(new Date("2026-10-28T09:00:00Z"));
+    expect(runStopping(stopped())).toBe(true);
+    vi.setSystemTime(new Date("2026-10-28T07:00:00Z"));
+    expect(runStopping(stopped())).toBe(true);
+    expect(runStopping(stopped({ progress: { in_flight: {} } }))).toBe(false);
+    expect(runStopping(stopped({ progress: {} }))).toBe(false);
     // Failed on its own, or still running: never stopping.
-    expect(runStopping(stopped({ error_code: "" }), at("00:05"))).toBe(false);
-    expect(runStopping(stopped({ status: "running" }), at("00:05"))).toBe(
-      false,
-    );
+    expect(runStopping(stopped({ error_code: "" }))).toBe(false);
+    expect(runStopping(stopped({ status: "running" }))).toBe(false);
   });
 });
 
@@ -213,5 +215,60 @@ describe("a run being stopped", () => {
     const reads = http.read.mock.calls.length;
     await wait(10_000);
     expect(http.read).toHaveBeenCalledTimes(reads);
+  });
+
+  it("refreshes the reports as soon as it stops working, and again once the reads under way are saved", async () => {
+    vi.useFakeTimers();
+    const run = { id: "r1", config_id: "c1", status: "running" };
+    const stopping = {
+      ...run,
+      status: "failed",
+      error_code: "stopped",
+      finished_at: new Date().toISOString(),
+      analysed_count: 0,
+      progress: { in_flight: { 7: new Date().toISOString() } },
+    };
+    let read = run;
+    http.read.mockReset();
+    http.read.mockImplementation(() => ok(read));
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const refreshed = vi.spyOn(client, "invalidateQueries");
+    const Wrapper = ({ children }) =>
+      React.createElement(QueryClientProvider, { client }, children);
+    Wrapper.propTypes = { children: PropTypes.node };
+    const { result } = renderHook(() => useInsightsRun("r1"), {
+      wrapper: Wrapper,
+    });
+    const tick = () =>
+      act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    expect(result.current.data.status).toBe("running");
+
+    // Stopped: the header's Run button and the rail card can't wait for
+    // the reads under way, nor for their own poll.
+    read = stopping;
+    await tick();
+    expect(result.current.data.status).toBe("failed");
+    const refreshes = (key) =>
+      refreshed.mock.calls.filter(
+        ([filters]) => JSON.stringify(filters.queryKey) === JSON.stringify(key),
+      ).length;
+    expect(refreshes(["insights", "configs"])).toBe(1);
+    expect(refreshes(["insights", "config", "c1"])).toBe(1);
+    await tick();
+    expect(refreshes(["insights", "configs"])).toBe(1);
+
+    // The reads under way saved: their counts.
+    read = { ...stopping, analysed_count: 4, progress: { in_flight: {} } };
+    await tick();
+    expect(result.current.data.analysed_count).toBe(4);
+    expect(refreshes(["insights", "configs"])).toBe(2);
+    expect(refreshes(["insights", "config", "c1"])).toBe(2);
   });
 });

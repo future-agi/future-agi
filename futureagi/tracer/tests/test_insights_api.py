@@ -594,6 +594,34 @@ def test_stop_never_reaches_another_organizations_run(
 
 
 @pytest.mark.django_db
+def test_a_stopped_runs_batches_under_way_are_listed_for_two_minutes_at_most(
+    auth_client, observe_project, cancelled
+):
+    # Stopped while a batch was being read: its page waits for that batch's
+    # units, but not for a worker lost meanwhile, and the server's clock,
+    # not the browser's, says when it has waited long enough.
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    batch = {"7": "2026-10-28T08:00:00+00:00"}
+    run_id = running_run(
+        auth_client, observe_project, progress={"stage": "reading", "in_flight": batch}
+    )
+    assert auth_client.post(f"{RUNS}{run_id}/stop/").status_code == 200
+    detail = auth_client.get(f"{RUNS}{run_id}/").json()["result"]
+    assert detail["progress"]["in_flight"] == batch
+
+    InsightRun.objects.filter(id=run_id).update(
+        finished_at=timezone.now() - timedelta(minutes=2)
+    )
+    detail = auth_client.get(f"{RUNS}{run_id}/").json()["result"]
+    assert detail["progress"] == {"stage": "reading", "error_code": "stopped"}
+    # Only the answer: the run still holds what the worker wrote.
+    assert InsightRun.objects.get(id=run_id).progress["in_flight"] == batch
+
+
+@pytest.mark.django_db
 def test_a_run_failed_on_its_model_setup_says_so(auth_client, observe_project):
     run_id = running_run(auth_client, observe_project)
     InsightRun.objects.filter(id=run_id).update(

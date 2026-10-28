@@ -242,7 +242,14 @@ RenameField.propTypes = {
   onDone: PropTypes.func.isRequired,
 };
 
-function ReportCard({ config, selected, onOpen, onRerun, onDelete }) {
+function ReportCard({
+  config,
+  listReadAt,
+  selected,
+  onOpen,
+  onRerun,
+  onDelete,
+}) {
   const theme = useTheme();
   const mode = theme.palette.mode;
   const [renaming, setRenaming] = useState(false);
@@ -263,9 +270,13 @@ function ReportCard({ config, selected, onOpen, onRerun, onDelete }) {
   const failed = failedRunNext(run);
   const canRun = useCanStartRuns();
   // A stopped run as the report page reads it: the reads under way when it
-  // stopped are saved after this list was read.
+  // stopped are saved after this list was read. Its counts are the later
+  // read's, the page's or this list's.
   const stopped = useStoppingRun(failed.stopped ? run.id : null);
-  const outcome = stopped.run?.status === "failed" ? stopped.run : run;
+  const outcome =
+    stopped.run?.status === "failed" && stopped.readAt > listReadAt
+      ? stopped.run
+      : run;
   const open = () => !renaming && onOpen(config.id);
 
   return (
@@ -417,6 +428,7 @@ function ReportCard({ config, selected, onOpen, onRerun, onDelete }) {
 
 ReportCard.propTypes = {
   config: PropTypes.object.isRequired,
+  listReadAt: PropTypes.number.isRequired,
   selected: PropTypes.bool,
   onOpen: PropTypes.func.isRequired,
   onRerun: PropTypes.func.isRequired,
@@ -610,6 +622,7 @@ export default function ReportRail({
               <ReportCard
                 key={config.id}
                 config={config}
+                listReadAt={configsQuery.dataUpdatedAt}
                 selected={config.id === selectedId}
                 onOpen={onOpen}
                 onRerun={onRerun}
