@@ -42,6 +42,10 @@ from simulate.models import (
     HostedHarnessSecret,
 )
 from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
+from simulate.services.code_archives import (
+    store_commit_archive,
+    stored_commit_archive,
+)
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     activate_attempt_capability,
@@ -904,6 +908,15 @@ class HostedSourceAcquirer:
             )
         if ".." in ref or not self._REF.fullmatch(ref):
             raise HostedHarnessError("github_ref_invalid", "invalid GitHub ref")
+        pinned_commit = str(source.get("commit_sha") or "").lower()
+        if pinned_commit:
+            stored = stored_commit_archive(
+                organization_id=job.organization_id,
+                repository=repository,
+                commit_sha=pinned_commit,
+            )
+            if stored is not None:
+                return stored, pinned_commit
         if shutil.which("git") is None:
             # The default backend image ships without git (with perl it is
             # ~81 MB unpacked). futureagi/Dockerfile.oss --build-arg
@@ -1020,7 +1033,14 @@ class HostedSourceAcquirer:
                     "compressed source exceeds the hosted source limit",
                     status_code=413,
                 )
-            return archive.getvalue(), commit_sha
+            body = archive.getvalue()
+            store_commit_archive(
+                organization_id=job.organization_id,
+                repository=repository,
+                commit_sha=commit_sha,
+                body=body,
+            )
+            return body, commit_sha
 
 
 def _check_secret_reference(alias: str, reference: Mapping[str, Any]) -> None:

@@ -1178,7 +1178,7 @@ def test_dispatch_and_certify_jobs_pass_alk_secret_check_with_chat_state():
 
 @pytest.mark.django_db
 def test_gateway_clones_exact_commit_without_archiving_git_credentials(
-    organization, monkeypatch
+    organization, monkeypatch, memory_storage
 ):
     job, _ = create_hosted_job(
         organization, _payload(), idempotency_key="source-gateway"
@@ -1221,6 +1221,7 @@ def test_gateway_clones_exact_commit_without_archiving_git_credentials(
         names = set(tar.getnames())
     assert "source/agent.py" in names
     assert all(".git" not in name for name in names)
+    assert list(memory_storage.objects.values()) == [archive]
 
 
 class _Filesystem:
