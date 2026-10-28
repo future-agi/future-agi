@@ -262,6 +262,20 @@ class AutomaticPublisher:
         assets.update({BUNDLE_ASSET:bundle.read_bytes(),MANIFEST_ASSET:path.read_bytes()})
         self._prepared[version] = dict(inputs=canonical_json(inputs), manifest=manifest, assets=assets)
 
+    def transition(self, source_version, target_version):
+        """Return the exact qualified row for this retained-layout transition."""
+        prepared = self._prepared[target_version]
+        proof = validate_release_proof(prepared['assets'][PROOF_ASSET], prepared['manifest'], repository=REPOSITORY)
+        execution = self._prepared[self.retained_layout]['manifest']['deployment']
+        source = self._prepared[source_version]['manifest']
+        from deploy.update.manifest import manifest_hash
+        rows = [row for row in proof['predecessors'] if row['predecessor']['version'] == source_version
+                and row['predecessor']['manifest_hash'] == manifest_hash(source)
+                and row['predecessor']['platform'] == self.platform
+                and row['execution_deployment'] == execution]
+        rehearsal.need(len(rows) == 1, 'exact qualified acceptance transition required')
+        return copy.deepcopy(rows[0])
+
     def publish(self, version):
         rehearsal.need(self._server is not None and version in self.versions,'unknown local release')
         if self.lane == 'synthetic':

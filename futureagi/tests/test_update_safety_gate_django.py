@@ -280,6 +280,74 @@ class Migration(migrations.Migration):
             with self.subTest(field=field):
                 self.assertEqual(self.risks(migrations.AddField("event", "extra", field)), [])
 
+    def test_positive_integer_addfield_requires_backend_check_constraint_review(self):
+        from django.db import connection
+        from unittest.mock import patch
+        for field_type in (models.PositiveSmallIntegerField, models.PositiveIntegerField, models.PositiveBigIntegerField):
+            for options in ({'null': True}, {'db_default': 0}):
+                operation = migrations.AddField('event', 'positive_count', field_type(**options))
+                after = self.state.clone()
+                operation.state_forwards('fixed_label', after)
+                rendered = after.apps.get_model('fixed_label', 'Event')._meta.get_field('positive_count')
+                self.assertTrue(rendered.db_parameters(connection)['check'])
+                with self.subTest(field=field_type.__name__, options=options), patch.object(connection, 'cursor',
+                        side_effect=AssertionError('constraint inspection must not query the database')):
+                    risks = self.risks(operation)
+                    self.assertIn('constraint', {r['risk_class'] for r in risks})
+                    with self.assertRaisesRegex(gate.GateError, 'constraint.*hot_events'):
+                        gate.validate_declaration(None, risks, REGISTRY, '0003_positive_count.py')
+
+    def test_postgresql_backend_emits_the_nullable_positive_field_check_without_database_io(self):
+        from django.db.backends.postgresql.base import DatabaseWrapper
+        from unittest.mock import patch
+        backend = DatabaseWrapper({'ENGINE': 'django.db.backends.postgresql', 'NAME': 'fixture'})
+        backend.pg_version = 160000
+        operation = migrations.AddField('event', 'positive_count', models.PositiveIntegerField(null=True))
+        after = self.state.clone()
+        operation.state_forwards('fixed_label', after)
+        model = after.apps.get_model('fixed_label', 'Event')
+        field = model._meta.get_field('positive_count')
+        with patch.object(backend, 'cursor', side_effect=AssertionError('SQL collection must not contact PostgreSQL')):
+            with backend.schema_editor(collect_sql=True, atomic=False) as editor:
+                editor.add_field(model, field)
+            self.assertTrue(any('CHECK' in sql and 'positive_count' in sql and '>= 0' in sql
+                                for sql in editor.collected_sql), editor.collected_sql)
+            with patch('django.db.connection', backend):
+                self.assertIn('constraint', {r['risk_class'] for r in self.risks(operation)})
+
+    def test_loader_requires_declaration_for_nullable_positive_integer_check(self):
+        source = '''from django.db import migrations, models
+class Migration(migrations.Migration):
+    dependencies = [("fixed_label", "0002_backfill")]
+    operations = [migrations.AddField("event", "positive_count", models.PositiveIntegerField(null=True))]
+'''
+        loader, relative = self.load_candidate('0003_positive_check', source)
+        with self.assertRaisesRegex(gate.GateError, 'constraint.*hot_events'):
+            gate.lint_migrations(loader, [relative], self.root, REGISTRY)
+        (self.root / relative).write_text(source + '\nUPDATE_SAFETY = ' + repr(reviewed([
+            {'table': 'postgres:hot_events', 'risk_class': 'constraint'}])) + '\n')
+        self.assertEqual(gate.lint_migrations(loader, [relative], self.root, REGISTRY)[0]['risk_classes'], ['constraint'])
+
+    def test_alterfield_backend_check_addition_requires_constraint_review(self):
+        state = self.state.clone()
+        migrations.AddField('event', 'count', models.IntegerField(null=True)).state_forwards('fixed_label', state)
+        operation = migrations.AlterField('event', 'count', models.PositiveIntegerField(null=True))
+        risks = gate.operation_risks(operation, 'fixed_label', state, REGISTRY)
+        self.assertIn('constraint', {r['risk_class'] for r in risks})
+
+    def test_existing_positive_field_help_text_does_not_add_a_check(self):
+        state = self.state.clone()
+        migrations.AddField('event', 'count', models.PositiveIntegerField(null=True)).state_forwards('fixed_label', state)
+        self.assertEqual(gate.operation_risks(migrations.AlterField('event', 'count', models.PositiveIntegerField(
+            null=True, help_text='Documentation only')), 'fixed_label', state, REGISTRY), [])
+
+    def test_postgres_constraint_addition_and_validation_are_classified(self):
+        from django.contrib.postgres.operations import AddConstraintNotValid, ValidateConstraint
+        constraint = models.CheckConstraint(condition=models.Q(value__isnull=False), name='hot_value_check')
+        for operation in (AddConstraintNotValid('event', constraint), ValidateConstraint('event', 'hot_value_check')):
+            with self.subTest(operation=operation):
+                self.assertEqual({r['risk_class'] for r in self.risks(operation)}, {'constraint'})
+
     def test_metadata_only_change_is_safe(self):
         self.assertEqual(self.risks(migrations.AlterField("event", "value", models.CharField(max_length=20, null=True, help_text="new docs"))), [])
 

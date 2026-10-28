@@ -109,14 +109,17 @@ jobs:
             --docker-context default --platform linux/amd64 --purpose product \
             --startup-timeout-seconds 4200 --rehearsal-timeout-seconds 19800
           mkdir "$RUNNER_TEMP/qualified"
+          # Defense in depth against an accidentally successful producer exit.
+          # A protected qualification job may NEVER turn an unavailable executor
+          # or missing/failed/timed-out/unrun suite into a green manual package.
+          if [ -f "$RUNNER_TEMP/evidence/manual.json" ] || [ -f "$RUNNER_TEMP/evidence/failure.json" ]; then
+            printf '%s\n' 'Product qualification refused; inspect update-rehearsal-diagnostics.' >&2
+            exit 2
+          fi
+          test -s "$RUNNER_TEMP/evidence/evidence.json"
+          test -s "$RUNNER_TEMP/evidence/policy.json"
           evidence=(--policy "$RUNNER_TEMP/evidence/policy.json" --evidence "$RUNNER_TEMP/evidence")
           eligible=true
-          if [ -f "$RUNNER_TEMP/evidence/manual.json" ]; then
-            # Missing/failed/timed-out/unrun suites are explicitly notify-only.
-            # The unchanged frozen candidate is packaged WITHOUT a proof.
-            evidence=(--manual-decision "$RUNNER_TEMP/evidence/manual.json")
-            eligible=false
-          fi
           python3 -I scripts/build_update_compatibility_proof.py \
             --target "$RUNNER_TEMP/candidate/future-agi-update-manifest.json" \
             "${evidence[@]}" --run-id "$GITHUB_RUN_ID" \
@@ -148,5 +151,6 @@ jobs:
             ${{ runner.temp }}/evidence/*.xml
             ${{ runner.temp }}/evidence/failure.json
             ${{ runner.temp }}/evidence/manual.json
-          if-no-files-found: ignore
+            ${{ runner.temp }}/evidence/diagnostics.json
+          if-no-files-found: warn
           retention-days: 30

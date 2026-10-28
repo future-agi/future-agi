@@ -292,20 +292,36 @@ class ClickHouseRegistryTests(unittest.TestCase):
         self.reviews['changes'] = [{'path': self.path, 'before_sha256': gate.content_sha(self.before),
             'after_sha256': gate.content_sha(target.read_bytes() if target.exists() else None), 'declaration': value}]
 
-    def test_every_change_requires_review_without_parsing_source(self):
-        variants = [('schema.py', '# comment only\n'), ('schema.py', 'parts=["ALTER", " TABLE spans"]; parts.append(" MODIFY COLUMN x String")'),
-                    ('schema.py', 'not even valid Python source'), ('schema.go', 'package main\nvar q = "ALTER " + "TABLE spans MODIFY COLUMN x String"'),
-                    ('schema.sql', 'SELECT 1;'), ('start', '#!/bin/sh\n# unchanged behavior'),
-                    ('schema.sh', 'output="$(clickhouse-client <<SQL\nALTER TABLE spans MODIFY COLUMN x String;\nSQL\n)"'),
-                    ('schema.sh', 'query="ALTER TABLE spans"; query+=" MODIFY COLUMN x String"')]
-        for suffix, text in variants:
+    def test_literal_schema_and_mutation_statements_require_review_in_all_languages(self):
+        statements = ['ALTER TABLE spans ADD COLUMN x String', 'CREATE TABLE spans (x UInt64)',
+                      'CREATE MATERIALIZED VIEW v AS SELECT * FROM spans', 'DROP TABLE spans',
+                      'RENAME TABLE spans TO old_spans', 'TRUNCATE TABLE spans', 'TRUNCATE spans',
+                      'OPTIMIZE TABLE spans FINAL', 'ALTER TABLE spans UPDATE x=1 WHERE 1',
+                      'ALTER TABLE spans DELETE WHERE 1', 'DELETE FROM spans WHERE 1']
+        for suffix in ('schema.py', 'schema.go', 'schema.sql', 'schema.sh', 'start'):
             self.path = 'product/' + suffix
+            for statement in statements:
+                text = statement if suffix.endswith('.sql') else 'query="' + statement + '"\n'
+                if suffix == 'start':
+                    text = '#!/bin/sh\n' + text
+                self.write(text)
+                self.reviews['changes'] = []
+                with self.subTest(path=self.path, statement=statement), self.assertRaisesRegex(gate.GateError, 'human-reviewed declarations'):
+                    self.check()
+                self.review()
+                self.assertEqual(self.check()[0]['tables'], ['clickhouse:spans'])
+
+    def test_client_calls_readonly_builders_and_registration_alone_do_not_trigger_review(self):
+        for text in ('# comment only\n', 'client.command(query)', 'conn.Exec(ctx, query)',
+                     'ClickHouseClientSingleton().client.execute("SELECT * FROM spans")',
+                     'import clickhouse_connect\nquery = "SELECT * FROM spans"', 'var q = "SELECT count() FROM spans"'):
             self.write(text)
-            self.reviews['changes'] = []
-            with self.subTest(path=self.path, source=text), self.assertRaisesRegex(gate.GateError, 'ANY.*requires a reviewed declaration'):
-                self.check()
-            self.review()
-            self.assertEqual(self.check()[0]['tables'], ['clickhouse:spans'])
+            self.assertEqual(gate.check_source_coverage(self.root, self.sources, [self.path]), [])
+            self.assertEqual(self.check(), [])
+
+    def test_obfuscated_sql_is_explicitly_outside_the_keyword_scan_threat_model(self):
+        self.write('parts=["AL", "TER", " TABLE spans"]; client.command("".join(parts))')
+        self.assertEqual(self.check(), [])
 
     def test_new_and_deleted_files_need_exact_hash_review(self):
         self.before = None
@@ -322,12 +338,12 @@ class ClickHouseRegistryTests(unittest.TestCase):
         self.assertEqual(len(self.check('D')), 1)
 
     def test_review_cannot_be_reused_after_any_edit_or_base_change(self):
-        self.write('SELECT 1;')
+        self.write('ALTER TABLE spans ADD COLUMN x String;')
         self.review()
-        self.write('SELECT 1; -- comment')
+        self.write('ALTER TABLE spans ADD COLUMN x String; -- comment')
         with self.assertRaisesRegex(gate.GateError, 'exact base-to-head change'):
             self.check()
-        self.write('SELECT 1;')
+        self.write('ALTER TABLE spans ADD COLUMN x String;')
         self.before = b'# different base'
         with self.assertRaises(gate.GateError):
             self.check()
@@ -335,8 +351,8 @@ class ClickHouseRegistryTests(unittest.TestCase):
     def test_removing_source_registration_cannot_bypass_previous_registry(self):
         old = copy.deepcopy(self.sources)
         self.sources['sources'] = []
-        self.write('# no DDL words at all')
-        with self.assertRaisesRegex(gate.GateError, 'requires a reviewed declaration'):
+        self.write('DELETE FROM spans WHERE id=1')
+        with self.assertRaisesRegex(gate.GateError, 'human-reviewed declarations'):
             self.check(old_sources=old)
 
     def test_deleted_or_obfuscated_unregistered_old_marker_still_requires_review(self):
@@ -348,19 +364,66 @@ class ClickHouseRegistryTests(unittest.TestCase):
 
     def test_new_discovery_paths_require_registration(self):
         self.sources['sources'] = []
-        for path, source in (('new/schema.py', 'client.command(query)'), ('new/schema.go', 'conn.Exec(ctx, query)'),
+        for path, source in (('new/schema.py', 'client.execute("DELETE FROM spans WHERE 1")'),
+                             ('new/schema.go', 'conn.Exec(ctx, "OPTIMIZE TABLE spans FINAL")'),
                              ('new/schema.sql', 'CREATE MATERIALIZED VIEW v AS SELECT * FROM spans'),
-                             ('new/start', '#!/bin/sh\nclickhouse-client -q "$QUERY"'), ('new/schema.sh', 'ALTER TABLE spans ADD COLUMN x String')):
+                             ('new/start', '#!/bin/sh\nclickhouse-client -q "DROP TABLE spans"'),
+                             ('new/schema.sh', 'ALTER TABLE spans ADD COLUMN x String')):
             self.write(source, path)
-            with self.subTest(path=path), self.assertRaisesRegex(gate.GateError, 'unregistered DDL/client-call'):
+            with self.subTest(path=path), self.assertRaisesRegex(gate.GateError, 'unregistered schema/mutation'):
                 gate.check_source_coverage(self.root, self.sources, [path])
 
-    def test_path_registration_catches_concatenation_and_comments_even_without_keywords(self):
-        for text in ('# no SQL here', 'parts=["AL", "TER"]; client(query)', 'var q = prefix + suffix'):
-            self.write(text)
-            self.assertEqual(gate.check_source_coverage(self.root, self.sources, [self.path]), [self.path])
-            with self.assertRaises(gate.GateError):
+    def test_test_like_production_filenames_never_get_an_implicit_exemption(self):
+        for path in ('product/test_executor.py', 'product/executor_test.py', 'product/executor_test.go'):
+            self.path = path
+            self.write('query="DELETE FROM spans WHERE 1"')
+            self.assertEqual(gate.check_source_coverage(self.root, self.sources, [path]), [path])
+            with self.assertRaisesRegex(gate.GateError, 'human-reviewed declarations'):
                 self.check()
+
+    def test_only_concrete_test_directories_or_individually_reviewed_files_can_be_excluded(self):
+        for pattern in ('**/test_*.py', '**/*_test.go', '**/tests/**', 'product/test_executor.py'):
+            bad = copy.deepcopy(self.sources)
+            bad['exclusions'] = [{'pattern': pattern, 'reason': 'A name is not evidence that this is a test.', 'sha256': None}]
+            with self.subTest(pattern=pattern), self.assertRaises(gate.GateError):
+                gate.source_registry(bad)
+        path = 'product/tests/fixture.py'
+        self.write('query="DROP TABLE spans"', path)
+        self.sources['exclusions'] = [{'pattern': 'product/tests/**', 'reason': 'Verified fixture-only directory for this product.', 'sha256': None}]
+        self.assertEqual(gate.check_source_coverage(self.root, self.sources, [path]), [])
+
+    def test_historical_review_cost_reads_tag_blobs_and_uses_the_statement_trigger(self):
+        from unittest.mock import patch
+        blobs = {('v1.54.0', 'product/client.py'): b'query="SELECT 1"',
+                 ('v1.55.0', 'product/client.py'): b'client.command("SELECT 2")',
+                 ('v1.54.0', 'product/schema.sql'): b'CREATE TABLE spans (x UInt64)',
+                 ('v1.55.0', 'product/schema.sql'): b'ALTER TABLE spans ADD COLUMN x UInt64'}
+        with patch.object(gate, 'base_bytes', side_effect=lambda root, tag, path: blobs[(tag, path)]):
+            candidates = gate.clickhouse_review_candidates(self.root,
+                [('M', 'product/client.py'), ('M', 'product/schema.sql')], 'v1.54.0', self.sources, head='v1.55.0')
+        self.assertEqual([row['path'] for row in candidates], ['product/schema.sql'])
+        self.assertEqual(candidates[0]['after_sha256'], gate.content_sha(blobs[('v1.55.0', 'product/schema.sql')]))
+
+    def test_whole_line_comments_and_text_truncation_prose_are_not_statements(self):
+        for text in ('# DELETE FROM store\n', '// Create quota enforcement plugin\n', '-- ALTER TABLE spans\n',
+                     'def truncate():\n    """Truncate a long display string."""\n    pass\n'):
+            with self.subTest(text=text):
+                self.assertEqual(gate.schema_statements(text.encode()), [])
+
+    def test_extensionless_binary_and_non_source_assets_are_not_shell_sources(self):
+        binary = self.root / 'product/native-helper'
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        binary.write_bytes(b'\x7fELF\xff\x00ALTER TABLE spans')
+        self.write('ALTER TABLE spans', 'product/notes.md')
+        self.assertEqual(gate.check_source_coverage(self.root, self.sources,
+                         ['product/native-helper', 'product/notes.md']), [])
+
+    def test_missing_review_error_lists_exact_blobs_and_human_fields(self):
+        self.write('client.execute("DELETE FROM spans WHERE 1")')
+        with self.assertRaises(gate.GateError) as failure:
+            self.check()
+        for field in ('before_sha256', 'after_sha256', 'mitigation', 'actual reviewer', 'PR discussion', 'clickhouse:'):
+            self.assertIn(field, str(failure.exception))
 
     def test_exclusion_is_blob_pinned_and_does_not_exempt_changed_source(self):
         self.sources['sources'] = []
@@ -401,14 +464,25 @@ class ClickHouseRegistryTests(unittest.TestCase):
         with self.assertRaises(gate.GateError):
             gate.source_registry({**self.sources, 'unknown': True})
 
-    def test_repository_inventory_covers_all_ddl_and_client_sources(self):
+    def test_repository_inventory_covers_literal_statements_not_readonly_client_sources(self):
         sources = gate.document(ROOT / 'deploy/update/clickhouse-sources.json')
         covered = gate.check_source_coverage(ROOT, sources)
-        for path in ('futureagi/tracer/services/clickhouse/schema.py', 'fi-collector/pkg/chwriter/writer.go',
+        for path in ('futureagi/tracer/services/clickhouse/schema.py',
                      'futureagi/tracer/services/clickhouse/v2/schema/002_spans_v2.sql',
                      'futureagi/scripts/property_catalog_oss/bootstrap_clickhouse.sh', 'deploy/standalone/bin/bootstrap.py'):
             self.assertIn(path, covered)
-        self.assertGreaterEqual(len(covered), 50)
+        for path in ('futureagi/simulate/services/harness_versioning/assembly.py',
+                     'futureagi/simulate/services/hosted_harness_gateway.py', 'deploy/update/probes/standalone.py',
+                     'fi-collector/pkg/chwriter/writer.go'):
+            self.assertNotIn(path, covered)
+
+    def test_production_harness_modules_are_classified_by_statements_not_path_exclusions(self):
+        sources = gate.document(ROOT / 'deploy/update/clickhouse-sources.json')
+        for path in ('futureagi/simulate/services/harness_versioning/assembly.py',
+                     'futureagi/simulate/services/hosted_harness_gateway.py', 'futureagi/simulate/services/test_executor.py'):
+            content = (ROOT / path).read_bytes()
+            self.assertFalse(gate.excluded_source(path, sources['exclusions'], content))
+            self.assertEqual(gate.schema_statements(content), [])
 
 
 class StaticEntryPointTests(unittest.TestCase):
@@ -443,19 +517,20 @@ class StaticEntryPointTests(unittest.TestCase):
             code = gate.main(['--root', str(self.root), '--static', '--base', 'fixture', '--compose-model', str(self.model), '--json'])
         return code, out.getvalue(), err.getvalue()
 
-    def test_registered_runner_comment_only_edit_is_rejected(self):
-        code, _, err = self.run_changed_source('deploy/standalone/bin/bootstrap.py', '# documentation only')
-        self.assertEqual(code, 1, err)
-        self.assertIn('requires a reviewed declaration', err)
+    def test_registered_source_without_statements_does_not_need_a_declaration(self):
+        code, stdout, err = self.run_changed_source('deploy/standalone/bin/bootstrap.py', '# documentation only')
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(stdout)['large_volume_rehearsal_required'], [])
 
-    def test_unregistered_new_sql_shell_python_and_go_sources_fail(self):
-        for path, text in (('new/schema.py', 'client.command(query)'), ('new/schema.go', 'conn.Exec(ctx, query)'),
-                           ('deploy/new-start', '#!/bin/sh\nclickhouse-client -q "$QUERY"'),
+    def test_unregistered_new_sql_shell_python_and_go_statement_sources_fail(self):
+        for path, text in (('new/schema.py', 'client.execute("DELETE FROM spans WHERE 1")'),
+                           ('new/schema.go', 'conn.Exec(ctx, "OPTIMIZE TABLE spans FINAL")'),
+                           ('new/start', '#!/bin/sh\nclickhouse-client -q "DROP TABLE spans"'),
                            ('new/schema.sql', 'ALTER TABLE spans MODIFY COLUMN x String;')):
             with self.subTest(path=path):
                 code, _, err = self.run_changed_source(path, text, 'A')
                 self.assertEqual(code, 1, err)
-                self.assertIn('unregistered DDL/client-call', err)
+                self.assertIn('unregistered schema/mutation', err)
 
     def test_commented_required_row_reaches_real_static_gate(self):
         reference = (ROOT / 'deploy/env-reference.toml').read_text()
@@ -471,8 +546,8 @@ class StaticEntryPointTests(unittest.TestCase):
                 self.assertEqual(code, 1)
                 self.assertIn('histories are immutable', err)
 
-    def test_test_source_is_not_a_product_schema_change(self):
-        code, stdout, err = self.run_changed_source('fi-collector/pkg/server/schema_test.go', 'client.command("DROP TABLE spans")')
+    def test_verified_test_directory_is_not_a_product_schema_change(self):
+        code, stdout, err = self.run_changed_source('deploy/tests/fixture.py', 'client.command("DROP TABLE spans")')
         self.assertEqual(code, 0, err)
         self.assertEqual(json.loads(stdout)['large_volume_rehearsal_required'], [])
 
@@ -516,6 +591,9 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertIn("makemigrations --check --dry-run", job)
         self.assertIn("--static --django", job)
         self.assertIn("--calibrate", job)
+        self.assertIn("uv sync --frozen --no-dev", job)
+        self.assertIn("python -m unittest discover -s tests -p test_update_safety_gate_django.py", job)
+        self.assertNotIn("python -I -m unittest", job)
         required = text.split("  backend-tests:\n", 1)[1]
         self.assertIn("        update-safety,", required)
         self.assertIn("scripts/check_update_safety.py", text.split("  plan:", 1)[0])

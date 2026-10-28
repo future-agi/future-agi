@@ -206,6 +206,171 @@ class RehearsalDriverTests(unittest.TestCase):
             len([n for n in rehearsal.required_cases('source_snapshot',rehearsal.topology_profile('standalone',())) if n<'source_identity']))
 
 
+class Wave4bDriverRegressionTests(unittest.TestCase):
+    """Daemon-free refusals and diagnostic plumbing, NOT product qualification."""
+    def test_A9_selects_only_touched_registered_tables_per_engine(self):
+        registry = ({'database':'postgres','table':'large'}, {'database':'clickhouse','table':'large'},
+                    {'database':'postgres','table':'untouched'})
+        plan = [dict(app_label='a',name='0001_change'), dict(app_label='a',name='0002_other')]
+        scope = [dict(plan[0],tables=[dict(engine='postgres',table='public.large')]),
+                 dict(plan[1],tables=[dict(engine='clickhouse',table='default.small')])]
+        selected = rehearsal.select_reference_registry(registry,scope,plan=plan)
+        self.assertEqual(selected,(registry[0],))
+        self.assertEqual(rehearsal.select_reference_registry(registry,[],plan=[]),())
+        calls=[]
+        self.assertEqual(rehearsal.seed_reference_tables((),lambda *a:calls.append(a),lambda *a:calls.append(a)),[])
+        self.assertEqual(calls,[])
+        for invalid in (None,scope[::-1],scope+[scope[0]],
+                        [dict(scope[0],tables=[dict(engine='postgres',table='public.large;DROP')]),scope[1]]):
+            with self.subTest(scope=invalid),self.assertRaises((rehearsal.RehearsalError,ValueError)):
+                rehearsal.select_reference_registry(registry,invalid,plan=plan)
+
+    def test_A9_reference_requires_exact_selected_scope_including_positive_zero(self):
+        registry = rehearsal.load_high_volume_registry()
+        entry = next(r for r in registry if r['database']=='postgres')
+        identity=dict(app_label='a',name='0001')
+        scope=[dict(identity,tables=[dict(engine='postgres',table='public.'+entry['table'])])]
+        reference=dict(snapshot_generation='a'*64,
+            registry_sha256=hashlib.sha256((rehearsal.ROOT/'deploy/update/high-volume-tables.json').read_bytes()).hexdigest(),
+            reference_rows=100000,tables=[dict(engine='postgres',table='public.'+entry['table'],rows=100000,bytes=1000000)])
+        self.assertEqual(len(rehearsal.validate_reference_inventory(reference,pending_migration_tables=scope,plan=[identity])),1)
+        for tables in ([],reference['tables']*2,[dict(reference['tables'][0],rows=99999)],
+                       [dict(reference['tables'][0],table='wrong.'+entry['table'])]):
+            with self.subTest(tables=tables),self.assertRaises(rehearsal.RehearsalError):
+                rehearsal.validate_reference_inventory(dict(reference,tables=tables),pending_migration_tables=scope,plan=[identity])
+        empty=dict(reference,tables=[])
+        self.assertEqual(rehearsal.validate_reference_inventory(empty,pending_migration_tables=[],plan=[]),{})
+        with self.assertRaises(rehearsal.RehearsalError):
+            rehearsal.validate_reference_inventory(empty)
+        with self.assertRaises(rehearsal.RehearsalError):
+            rehearsal.validate_reference_inventory(reference,pending_migration_tables=[],plan=[])
+
+    def test_protected_real_entrypoint_missing_executor_is_red_and_diagnosable(self):
+        with tempfile.TemporaryDirectory(prefix='fagi-release-refusal-',dir=str(Path.home())) as temporary:
+            root=Path(temporary).resolve()
+            candidate=default_v2(); path=root/'candidate.json'; path.write_bytes(canonical_json(candidate))
+            env=dict(os.environ,GITHUB_REPOSITORY=rehearsal.REPOSITORY,GITHUB_RUN_ID='42',
+                     GITHUB_REF='refs/tags/'+candidate['version'],GITHUB_SHA=candidate['source_sha'],
+                     GITHUB_EVENT_NAME='workflow_call')
+            result=subprocess.run([sys.executable,'-I',str(rehearsal.ROOT/'scripts/rehearse_update_compatibility.py'),
+                '--target',str(path),'--workspace',str(root/'work'),'--output',str(root/'out'),'--run-id','42',
+                '--docker-context','colima-fagi-update'],cwd=str(rehearsal.ROOT),env=env,
+                capture_output=True,text=True,timeout=30)
+            self.assertEqual(result.returncode,2,result.stdout+result.stderr)
+            self.assertIn('release rehearsal refused: shipping_executor_unavailable',result.stderr)
+            data=json.loads((root/'out/failure.json').read_bytes())
+            self.assertFalse(data['eligible'])
+            self.assertEqual(data['reason'],'shipping_executor_unavailable')
+            self.assertEqual(set(data['suites'].values()),{'unrun'})
+            self.assertEqual(sum(data['executed_assertions'].values()),0)
+            self.assertTrue((root/'out/diagnostics.json').is_file())
+            self.assertFalse((root/'out/evidence.json').exists())
+
+    def test_protected_workflow_rejects_a_false_success_with_manual_output(self):
+        from deploy.tests.test_update_release_static import load
+        workflow=load(rehearsal.ROOT/'.github/workflows/update-compatibility-proof.yml')
+        step=next(s for s in workflow['jobs']['proof']['steps'] if s.get('id')=='package')
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary); tools=root/'tools'; tools.mkdir()
+            fake=tools/'python3'
+            fake.write_text('#!'+sys.executable+'\nimport os,sys,json\nfrom pathlib import Path\n'
+                'p=Path(os.environ["RUNNER_TEMP"])\n'
+                'if "rehearse_update_compatibility.py" in sys.argv[2]:\n'
+                ' d=p/"evidence"; d.mkdir(); (d/"manual.json").write_text(json.dumps({"reason":"suite_unrun"}))\n'
+                'else:\n (p/"packager-was-called").touch()\n')
+            fake.chmod(0o700)
+            env=dict(os.environ,PATH=str(tools)+os.pathsep+os.environ['PATH'],RUNNER_TEMP=str(root),RUNNER_ARCH='X64',
+                     GITHUB_RUN_ID='42',GITHUB_REPOSITORY=rehearsal.REPOSITORY,GITHUB_OUTPUT=str(root/'github-output'))
+            result=subprocess.run(['bash','-c',step['run']],env=env,cwd=str(rehearsal.ROOT),capture_output=True,text=True,timeout=30)
+            self.assertEqual(result.returncode,2,result.stdout+result.stderr)
+            self.assertIn('Product qualification refused',result.stderr)
+            self.assertFalse((root/'packager-was-called').exists())
+
+    def test_diagnostics_keep_typed_refusal_and_real_failed_timing_not_secret_errors(self):
+        from deploy.update.automatic_runtime import RuntimeRefused
+        from deploy.update.contracts import ReasonCode
+        executor=SimpleNamespace(executed_cases=rehearsal.ExecutedCases())
+        executor.executed_cases.active_suite='target_readiness'
+        with self.assertRaises(RuntimeRefused):
+            executor.executed_cases.check('target_readiness','health',
+                lambda:(_ for _ in ()).throw(RuntimeRefused(ReasonCode.DISK_WATERMARK_ABORT)))
+        data=rehearsal.failure_diagnostics(RuntimeRefused(ReasonCode.DISK_WATERMARK_ABORT),executor)
+        self.assertEqual(data['refusal_code'],'disk_watermark_abort')
+        self.assertEqual(data['suites']['target_readiness'],'failed')
+        self.assertEqual(data['assertion_timings'][0]['outcome'],'failed')
+        self.assertGreaterEqual(data['assertion_timings'][0]['duration_seconds'],0)
+        self.assertEqual(sum(data['executed_assertions'].values()),0)
+        self.assertNotIn('PRIVATE',json.dumps(rehearsal.failure_diagnostics(RuntimeError('PRIVATE PASSWORD'))))
+
+    def test_failed_or_unrun_suites_always_exit_nonzero_with_an_explicit_reason(self):
+        candidate=default_v2()
+        for reason in ('suite_failed','suite_unrun','suite_timed_out','migration_measurement_unavailable','witness_operation_unavailable'):
+            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as temporary:
+                root=Path(temporary); path=root/'candidate.json'; path.write_bytes(canonical_json(candidate))
+                env=dict(GITHUB_REPOSITORY=rehearsal.REPOSITORY,GITHUB_RUN_ID='42',
+                         GITHUB_REF='refs/tags/'+candidate['version'],GITHUB_SHA=candidate['source_sha'],
+                         GITHUB_EVENT_NAME='workflow_call')
+                with mock.patch.dict(os.environ,env),mock.patch.object(rehearsal,'_validate_context'), \
+                     mock.patch.object(rehearsal,'shipping_factory',side_effect=rehearsal.ManualRelease(reason)), \
+                     mock.patch.object(rehearsal,'ReleaseDiscovery') as discovery, \
+                     mock.patch('sys.stderr') as stderr:
+                    code=rehearsal.main(['--target',str(path),'--workspace',str(root/'work'),
+                                         '--output',str(root/'out'),'--run-id','42'])
+                self.assertEqual(code,2)
+                self.assertIn(reason,''.join(str(call.args[0]) for call in stderr.write.call_args_list))
+                discovery.assert_not_called()
+                failure=json.loads((root/'out/failure.json').read_bytes())
+                self.assertEqual(failure['reason'],reason)
+                self.assertFalse((root/'out/evidence.json').exists())
+
+    def test_first_boot_enter_failure_retains_diagnostics_after_cleanup(self):
+        candidate=default_v2(); old,raw,_,_=restore_release(0)
+        row=rehearsal.Row(SimpleNamespace(manifest=old,raw_manifest=raw,raw_bundle=b'SYNTHETIC'),old['deployment'],old['source_sha'],())
+        class FailedBoot:
+            def __enter__(self): raise rehearsal.ManualRelease('suite_timed_out')
+            def __exit__(self,*args): return None
+            def diagnostics(self):
+                return dict(active_phase='source_first_boot',first_boot_budget_seconds=4200,
+                            resources=[{'bootstrap':{'phase':'postgres_schema_bootstrap'}}],
+                            product_logs={'app':{'stdout':'Applying synthetic.0001'}},cleanup_verified=True)
+        executor=FailedBoot()
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary)
+            with mock.patch.object(rehearsal,'_validate_context'), \
+                 mock.patch.object(rehearsal,'shipping_factory',return_value=lambda *a,**k:executor):
+                with self.assertRaisesRegex(rehearsal.ManualRelease,'suite_timed_out'):
+                    rehearsal.produce(candidate,[row],root,root/'out',run_id=42,purpose='pr-validation')
+            diagnostics=json.loads((root/'out/diagnostics.json').read_bytes())
+            self.assertEqual(diagnostics['product']['active_phase'],'source_first_boot')
+            self.assertEqual(diagnostics['product']['first_boot_budget_seconds'],4200)
+            self.assertEqual(diagnostics['product']['product_logs']['app']['stdout'],'Applying synthetic.0001')
+            self.assertEqual(diagnostics['failure']['reason'],'suite_timed_out')
+            self.assertFalse((root/'out/evidence.json').exists())
+
+    def test_log_tails_redact_generated_secrets_tokens_and_url_credentials(self):
+        driver=object.__new__(shipping.ShippingRehearsal)
+        driver._secret_values={'generated-secret-value'}
+        raw=b'Applying app.0001 OK\npassword=hidden bearer opaque.token/value https://user:credential@service/path generated-secret-value'
+        tail=driver._redact(raw)
+        self.assertIn('Applying app.0001 OK',tail)
+        for secret in ('hidden','opaque.token/value','credential','generated-secret-value'):
+            self.assertNotIn(secret,tail)
+        self.assertLessEqual(len(driver._redact('x'*100000)),8192)
+        # Redact BEFORE taking the bounded tail, so a cut cannot leak a suffix.
+        self.assertNotIn('secret-value',driver._redact('generated-secret-value'+'x'*8180))
+
+    def test_driver_diagnostics_record_failed_phase_without_claiming_cleanup_or_proof(self):
+        driver=object.__new__(shipping.ShippingRehearsal)
+        driver._diagnostic_data={'phase_timings':[]}; driver.cleanup_verified=False
+        with self.assertRaises(rehearsal.ManualRelease):
+            driver._phase('source_first_boot',lambda:(_ for _ in ()).throw(rehearsal.ManualRelease('suite_timed_out')))
+        result=driver.diagnostics()
+        self.assertFalse(result['cleanup_verified'])
+        self.assertEqual(result['phase_timings'][0]['phase'],'source_first_boot')
+        self.assertEqual(result['phase_timings'][0]['refusal'],'suite_timed_out')
+        self.assertGreaterEqual(result['phase_timings'][0]['duration_seconds'],0)
+
+
 def time_limit():
     import time
     return time.monotonic()+30

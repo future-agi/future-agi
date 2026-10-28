@@ -23,9 +23,15 @@ VENDOR_IMAGES={'postgres':'postgres:16','clickhouse':'clickhouse/clickhouse-serv
 
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--out',type=Path,required=True)
+    parser.add_argument('--out',type=Path)
+    parser.add_argument('--plan',action='store_true')
     args=parser.parse_args(argv)
-    if not native_ci():
+    if args.plan:
+        print(json.dumps(dict(context=CONTEXT,platform='linux/amd64',product_qualification=False,
+            images=VENDOR_IMAGES,opt_in='FAGI_UPDATE_BACKUP_E2E=1',
+            command=['python','-m','unittest','discover','-s','deploy/tests/update_e2e','-p','native_backup.py','-v']),indent=2))
+        return 0
+    if not native_ci() or args.out is None:
         parser.error('native Linux Actions only; dedicated Mac fixture entrypoint is unchanged')
     out=home_path(args.out); out.mkdir(mode=0o700)
     images={}
@@ -39,7 +45,7 @@ def main(argv=None):
     pins=out/'fixture-images.json'; pins.write_text(json.dumps(images)); pins.chmod(0o600)
     env=dict(os.environ,FAGI_UPDATE_BACKUP_E2E='1',FAGI_UPDATE_BACKUP_EVIDENCE=str(out),
              FAGI_UPDATE_NATIVE_BACKUP_IMAGES=str(pins))
-    return subprocess.call([sys.executable,'-I','-m','unittest','discover','-s','deploy/tests/update_e2e',
+    return subprocess.call([sys.executable,'-m','unittest','discover','-s','deploy/tests/update_e2e',
                             '-p','native_backup.py','-v'],cwd=ROOT,env=env)
 
 

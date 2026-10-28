@@ -1669,8 +1669,12 @@ class ReleaseProofWiringTests(unittest.TestCase):
         self.assertIn('test "$RUNNER_ARCH" = X64',run)
         self.assertIn('--docker-context default --platform linux/amd64 --purpose product',run)
         self.assertIn('--startup-timeout-seconds 4200 --rehearsal-timeout-seconds 19800',run)
-        self.assertIn('eligible=false',run)
-        self.assertIn('--manual-decision',run)
+        self.assertIn('set -euo pipefail',run)
+        self.assertIn('if [ -f "$RUNNER_TEMP/evidence/manual.json" ] || [ -f "$RUNNER_TEMP/evidence/failure.json" ]',run)
+        self.assertIn('exit 2',run)
+        self.assertLess(run.index('exit 2'),run.index('scripts/build_update_compatibility_proof.py'))
+        self.assertIn('test -s "$RUNNER_TEMP/evidence/evidence.json"',run)
+        self.assertNotIn('--manual-decision',run)
         self.assertNotIn('test_update_image_descriptors',(WORKFLOWS/'update-compatibility-proof.yml').read_text())
 
     def test_proof_downloads_cannot_select_other_runs_or_unreviewed_inputs(self):
@@ -3961,15 +3965,44 @@ class ClosingDeploymentFileCoverageTests(unittest.TestCase):
                 with self.subTest(event=event, workflow=workflow):
                     self.assertIn(f".github/workflows/{workflow}", paths)
 
-    def test_update_ci_e2e_matrix_runs_every_e2e_suite(self):
+    def test_update_ci_e2e_matrix_and_native_jobs_run_every_e2e_suite(self):
         text = (ROOT / ".github/workflows/update-ci.yml").read_text(encoding="utf-8")
         listed = re.findall(r"^        suite: \[([^\]]*)\]$", text, re.M)
-        self.assertEqual(len(listed), 1, "the e2e job names its suites in one matrix list")
-        suites = sorted(name.strip() for name in listed[0].split(","))
-        files = sorted(path.name[len("test_update_e2e_"):-len(".py")]
-                       for path in (ROOT / "deploy/tests").glob("test_update_e2e_*.py"))
-        self.assertEqual(suites, files)
+        self.assertEqual(len(listed), 1, "the fake-image e2e job names its suites in one matrix list")
+        matrix = [name.strip() for name in listed[0].split(",")]
+        self.assertEqual(len(matrix), len(set(matrix)), "no duplicated matrix suite can hide a missing one")
+        # Automatic tests use real published images and vendor backup fixtures
+        # have a different opt-in. Running either in the fake-image matrix would
+        # discover skipped tests, not execute their contract. Pin BOTH routing
+        # and the actual native launchers, and keep complete file coverage.
+        self.assertEqual(set(matrix), {"standalone", "distributed", "faults"})
+        files = {path.name[len("test_update_e2e_"):-len(".py")]
+                 for path in (ROOT / "deploy/tests").glob("test_update_e2e_*.py")}
+        self.assertEqual(set(matrix) | {"automatic", "backup"}, files)
         self.assertIn('-p "test_update_e2e_${SUITE}.py"', text)
+        for job, launcher in (("automatic-upgrade", "acceptance.py --mode upgrade"),
+                              ("automatic-a-b-c", "acceptance.py --mode a-b-c"),
+                              ("backup", "backup_ci.py")):
+            match = re.search(r"^  " + re.escape(job) + r":\n(.*?)(?=^  [a-zA-Z][a-zA-Z0-9_-]*:|\Z)", text, re.M | re.S)
+            self.assertIsNotNone(match, "missing native job " + job)
+            block = match.group(1)
+            self.assertIn("runs-on: ubuntu-24.04", block)
+            self.assertIn("python -I deploy/tests/update_e2e/" + launcher, block)
+            self.assertIn("set -euo pipefail", block)
+            self.assertIn("--out ", block)
+            if job.startswith("automatic-"):
+                self.assertIn("if: always()", block)
+        # Verify the native entrypoints reach the actual suite and opt it in;
+        # merely retaining a job name is not test execution coverage.
+        acceptance = (ROOT / "deploy/tests/update_e2e/acceptance.py").read_text()
+        backup = (ROOT / "deploy/tests/update_e2e/backup_ci.py").read_text()
+        self.assertIn("test_update_e2e_automatic.py", acceptance)
+        self.assertIn("'native_backup.py'", backup)
+        self.assertIn("FAGI_UPDATE_BACKUP_E2E='1'", backup)
+        native = (ROOT / "deploy/tests/update_e2e/native_backup.py").read_text()
+        self.assertIn("from deploy.tests import test_update_e2e_backup as fixture", native)
+        self.assertIn("DedicatedBackupRestoreTests=fixture.DedicatedBackupRestoreTests", native)
+        self.assertIn("__unittest_skip__", native)
 
     def test_update_ci_jobs_run_where_python_3_9_exists(self):
         text = (ROOT / ".github/workflows/update-ci.yml").read_text(encoding="utf-8")

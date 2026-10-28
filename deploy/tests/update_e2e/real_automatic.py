@@ -38,6 +38,46 @@ RELEASES = {
 }
 
 
+def acceptance_policy(rows):
+    """Size CI timeouts from real signed rehearsal measurements, never fixtures.
+
+    Runtime host-size admission remains mandatory; these are configured ceilings,
+    not a replacement estimate or permission to exceed the job's wall clock.
+    """
+    from dataclasses import replace
+    from fractions import Fraction
+    from math import ceil
+    from deploy.update.compatibility import transition_measurements
+    from deploy.update.contracts import AutomationPolicy
+    measurements = [transition_measurements(row) for row in rows]
+    if not measurements:
+        raise ValueError('measured transition rows required')
+    def transfer(name):
+        return max(60, max(ceil(2 * Fraction(sum(getattr(m, name).reference_volume_bytes.values())) /
+            Fraction(str(getattr(m, name).throughput_bytes_per_second))) + 60 for m in measurements))
+    def migration_seconds(measured):
+        total = Fraction(0)
+        for item in measured.migration_measurements:
+            work = sum(t.reference_rows if item.throughput.unit == 'rows_per_second' else t.reference_bytes
+                       for t in item.tables)
+            total += max(Fraction(str(item.duration_seconds)), Fraction(work)/Fraction(str(item.throughput.value)))
+        return ceil(2*total)+60
+    migration = max(300, max(migration_seconds(m) for m in measurements))
+    policy = AutomationPolicy(qualification_policy='standalone-cold-restore-v1',
+        wait_timeout_seconds=READINESS_SECONDS, recovery_startup_timeout_seconds=READINESS_SECONDS,
+        migration_timeout_seconds=migration, backup_timeout_seconds=transfer('backup_measurement'),
+        restore_timeout_seconds=transfer('restore_measurement'), check_interval_seconds=300)
+    return replace(policy, mode='apply', enabled=True,
+                   tick_timeout_seconds=max(900, policy.required_tick_budget_seconds))
+
+
+def policy_cli_arguments(policy):
+    names = ('wait_timeout_seconds', 'migration_timeout_seconds', 'backup_timeout_seconds',
+             'restore_timeout_seconds', 'recovery_startup_timeout_seconds', 'pull_timeout_seconds',
+             'tick_timeout_seconds', 'migration_stall_timeout_seconds', 'stability_period_seconds')
+    return tuple(value for name in names for value in ('--'+name.replace('_','-'), str(getattr(policy,name))))
+
+
 def canonical(value: Any) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"),
                       ensure_ascii=False, allow_nan=False).encode("utf-8")
@@ -175,6 +215,9 @@ class ProductHarness:
         self.root = self.evidence / "installation"
         self.compose = ([compose] if isinstance(compose, str) else list(compose or ['docker', 'compose']))
         self.source_manifest = None
+        # Shared ProductWitnesses records generated secrets for bounded driver
+        # diagnostics; acceptance keeps the same driver interface.
+        self._secret_values = set()
         # Never inherit an operator's provider keys, Compose overlays or profiles.
         self.env = {key: os.environ[key] for key in ("PATH", "HOME", "TMPDIR") if key in os.environ}
         self.env["DOCKER_CONTEXT"] = CONTEXT
@@ -237,40 +280,125 @@ class ProductHarness:
         return self.app_python(DJANGO_PREFIX + '''
 from django.db import connection
 from django.db.migrations.loader import MigrationLoader
+from pathlib import Path
+import hashlib, inspect
 loader=MigrationLoader(connection,ignore_no_migrations=True)
 planned=sorted([list(node) for node in loader.graph.nodes])
 applied=sorted([list(node) for node in loader.applied_migrations])
-print(json.dumps({'planned':planned,'applied':applied,'pending':[n for n in planned if tuple(n) not in loader.applied_migrations]}))
+inventory=[dict(app_label=app,name=name,source_sha256=hashlib.sha256(
+    Path(inspect.getsourcefile(migration.__class__)).read_bytes()).hexdigest())
+    for (app,name),migration in sorted(loader.disk_migrations.items())]
+def digest(value):
+    return hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':'),ensure_ascii=False,allow_nan=False).encode()).hexdigest()
+print(json.dumps({'planned':planned,'applied':applied,'pending':[n for n in planned if tuple(n) not in loader.applied_migrations],
+    'inventory_sha256':digest(inventory),'applied_sha256':digest(applied)}))
 ''', {})
 
-    def seed_and_check(self):
+    def verify_installed_release(self, manifest, receipt, migration_evidence):
+        """Independent product oracle, not a baseline/receipt-only success check."""
+        from deploy.update.manifest import manifest_hash, parse_image_ref
+        rows = self.containers()
+        services = {c['Config']['Labels'].get('com.docker.compose.service'): c for c in rows}
+        if len(rows) != 3 or set(services) != {'app', 'postgres', 'clickhouse'}:
+            raise AssertionError('installed service roster differs')
+        if any(not c['State']['Running'] or c['State'].get('Health', {}).get('Status') != 'healthy'
+               for c in rows):
+            raise AssertionError('installed target is not healthy')
+        target = manifest['components']['standalone']
+        image = json.loads(self.docker('image', 'inspect', services['app']['Image']).stdout)[0]
+        expected = parse_image_ref(target['image'])
+        if not any(parse_image_ref(ref).name == expected.name and parse_image_ref(ref).digest == target['digest']
+                   for ref in image.get('RepoDigests', [])):
+            raise AssertionError('installed app is not the signed target image')
+        if (receipt.get('kind') != 'apply' or receipt.get('status') != 'succeeded'
+                or receipt.get('target_version') != manifest['version']
+                or receipt.get('manifest_hash') != manifest_hash(manifest)
+                or receipt.get('target_image_ids', {}).get('app') != services['app']['Image']):
+            raise AssertionError('success receipt does not identify the installed target')
+        migrations = self.migration_inventory()
+        if (not migrations['planned'] or migrations['pending'] or migrations['applied'] != migrations['planned']
+                or migrations['inventory_sha256'] != migration_evidence['target_inventory_sha256']
+                or migrations['applied_sha256'] != migration_evidence['target_applied_set_sha256']):
+            raise AssertionError('installed target migration inventory differs from qualification')
+        status, _ = self.request(self.ports['BACKEND_PORT'], '/health/')
+        if status != 200:
+            raise AssertionError('installed target API is not ready')
+        self.record('installed-'+manifest['version']+'.private.json', dict(
+            version=manifest['version'], run_id=receipt['run_id'], images={s: c['Image'] for s,c in services.items()},
+            migrations=migrations))
+        return migrations
+
+    def seed_and_check(self, generation='acceptance-a'):
         from scripts.update_rehearsal_shipping import ProductWitnesses
         from scripts.rehearse_update_compatibility import ManualRelease
-        self.corpus = {}
-        witnesses = ProductWitnesses(self)
+        if not hasattr(self, '_witnesses'):
+            self.corpus, self._witness_generations = {}, {}
+            self._witnesses = ProductWitnesses(self)
+        witnesses = self._witnesses
         try:
-            initial = witnesses.create('acceptance')
+            initial = witnesses.create(generation)
         except ManualRelease as error:
-            # A4 local acceptance, unlike release qualification, permits a
-            # documented lack of a natural spool-producing product operation.
-            # No core-domain operation or HTTP/DB failure is converted to a gap.
-            if str(error) != 'witness_operation_unavailable' or not witnesses.namespaces.get('acceptance'):
+            # A4 permits only the explicit natural-spool operation gap. Core
+            # API/collector/S3/workflow failures still fail acceptance.
+            if str(error) != 'witness_operation_unavailable' or not witnesses.namespaces.get(generation):
                 raise
-            initial = witnesses.read('acceptance')
+            initial = witnesses.read(generation)
         domains = {row['domain'] for row in initial}
         if not {'postgres_app','clickhouse','object_store','temporal'} <= domains:
             raise AssertionError('incomplete real product witness corpus')
-        self.record('witness-inventory.private.json', dict(witnesses=initial, gaps=self.corpus.get('witness_gaps', [])))
+        self._witness_generations[generation] = initial
+        self.record('witness-inventory.private.json', dict(generations=self._witness_generations,
+                    gaps=self.corpus.get('witness_gaps', [])))
         def check():
-            actual = witnesses.read('acceptance')
-            if actual != initial:
-                raise AssertionError('exact product witness identities/payloads changed')
+            for label, expected in self._witness_generations.items():
+                if witnesses.read(label) != expected:
+                    raise AssertionError('exact product witness identities/payloads changed: '+label)
             migrations = self.migration_inventory()
-            if not migrations['planned'] or migrations['pending']:
-                raise AssertionError('bootstrap left pending migrations')
+            if not migrations['planned'] or migrations['pending'] or migrations['applied'] != migrations['planned']:
+                raise AssertionError('bootstrap migration set is not exact')
             return migrations
         check()
         return check
+
+    def create_candidate_only_witness(self):
+        """A real local write made only after B bootstrap, outside A's snapshot."""
+        import base64
+        import uuid
+        from scripts.update_rehearsal_shipping import S3_OPERATION
+        body = os.urandom(4096)
+        data = dict(action='create',bucket='failed-update-'+uuid.uuid4().hex,key='candidate-only',
+                    body=base64.b64encode(body).decode())
+        observed = self.app_python(S3_OPERATION, data)
+        expected = dict(identity=data['bucket']+'/'+data['key'],payload_sha256=hashlib.sha256(body).hexdigest())
+        if observed != expected:
+            raise AssertionError('candidate-only S3 write was not independently read back')
+        self._candidate_only = dict(bucket=data['bucket'],key=data['key'],**expected)
+        self.record('candidate-only-witness.private.json', self._candidate_only)
+        return expected
+
+    def verify_candidate_only_absent(self):
+        # Accept only the service's explicit NoSuchKey/NoSuchBucket/404 response;
+        # unavailable credentials, a timeout, or a broken S3 server are NOT absence.
+        data = self._candidate_only
+        observed = self.app_python('''
+import sys,os,json,boto3
+from botocore.exceptions import ClientError
+a=json.load(sys.stdin)
+s=boto3.client('s3',endpoint_url='http://127.0.0.1:9005',
+    aws_access_key_id=os.environ['MINIO_ROOT_USER'],aws_secret_access_key=os.environ['MINIO_ROOT_PASSWORD'],
+    region_name='us-east-1')
+absent=False
+try:
+    s.head_object(Bucket=a['bucket'],Key=a['key'])
+except ClientError as error:
+    if str(error.response.get('Error',{}).get('Code')) not in ('NoSuchKey','NoSuchBucket','404'):
+        raise
+    absent=True
+print(json.dumps({'identity':a['identity'],'absent':absent}))
+''', data)
+        if observed != dict(identity=data['identity'],absent=True):
+            raise AssertionError('candidate-only local write survived snapshot restoration')
+        self.record('candidate-only-restored-absence.json', observed)
 
     def fail_after_migrations(self, manifest, *, timeout=5400):
         """Induce a real outage on the exact B app after bootstrap, not a tick.
@@ -298,11 +426,13 @@ print(json.dumps({'planned':planned,'applied':applied,'pending':[n for n in plan
                     if status == 200:
                         migrations = self.migration_inventory()
                         if migrations['planned'] and not migrations['pending']:
+                            candidate_only = self.create_candidate_only_witness()
                             current = json.loads(self.docker('inspect',app[0]['Id']).stdout)[0]
                             if current['Image'] != app[0]['Image'] or not current['State']['Running']:
                                 raise AssertionError('target identity changed before fault')
                             self.record('failure-after-migrations.json', dict(target=manifest['version'],
-                                image_id=current['Image'], container_id=current['Id'], migrations=migrations))
+                                image_id=current['Image'], container_id=current['Id'], migrations=migrations,
+                                candidate_only=candidate_only))
                             self.docker('stop','--time','10',current['Id'],timeout=60)
                             return migrations
             time.sleep(1)

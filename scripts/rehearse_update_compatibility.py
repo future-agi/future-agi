@@ -5,7 +5,7 @@ Only frozen candidates and authenticated predecessors are inputs. No external
 success report, command, customer bypass, trial startup or image rollback is
 accepted. Qualification requires six executed shipping-transaction suites.
 Current integration is INCOMPLETE: the checked-in primitive driver does not yet
-invoke the complete Updater transaction, seed the whole reviewed registry, or
+invoke the complete Updater transaction, resolve/seed the A9 touched subset, or
 provide real per-migration boundaries and all six assertion sets. Its factory
 therefore refuses BEFORE provisioning. Current real product runs CANNOT qualify.
 Missing integration, witnesses, measurements or assertions produce a bounded
@@ -48,10 +48,13 @@ manual migrate, ad-hoc backup hooks and prewritten success rows are forbidden.
 Private A6 evidence contract (unreleased; not customer input)
 ---------------------------------------------------------
 large_volume_reference is {snapshot_generation, registry_sha256, reference_rows,
-tables:[{engine,table,rows,bytes}]}. All registered tables must be present exactly
-once at >=100000 measured rows. snapshot_generation is SHA256(canonical JSON of
-source_snapshot_inventory), the original StandaloneBackup inventory-v2, not an
-arbitrary run label. Unregistered touched tables also need independent sizes.
+tables:[{engine,table,rows,bytes}]}. A9 requires exactly the registered tables
+in pending_migration_tables, the complete ordered PRE-START real-loader table
+analysis ({app_label,name,tables:[{engine,table}]}). Only that intersection is
+seeded to >=100000 rows; a positively measured empty intersection seeds nothing.
+Every pending migration still has execution measurements, including normal
+non-scaling witness-corpus migrations. snapshot_generation is SHA256(canonical
+JSON of source_snapshot_inventory), not an arbitrary run label.
 A complete inventory alone is not association evidence. Retain
 source_runtime_observation (all RuntimeObservationV2 fields),
 source_installation_binding (all InstallationBinding fields),
@@ -282,16 +285,23 @@ class ExecutedCases:
     def __init__(self):
         self.cases = {suite: {} for suite in SUITES}
         self.failed = None
+        self.active_suite = None
+        self.timings = []
 
     def check(self, suite, name, assertion):
         need(suite in self.cases and name not in self.cases[suite] and callable(assertion), 'duplicate/unrun assertion')
         start = time.monotonic()
+        outcome = 'failed'
         try:
             need(assertion() is None, 'assertions must raise on failure, not return a verdict')
+            outcome = 'passed'
         except BaseException:
             self.failed = (suite, name)
             raise
-        self.cases[suite][name] = time.monotonic() - start
+        finally:
+            self.timings.append(dict(suite=suite, assertion=name, outcome=outcome,
+                                     duration_seconds=time.monotonic() - start))
+        self.cases[suite][name] = self.timings[-1]['duration_seconds']
 
     def render(self, suite, layout, properties):
         need(set(self.cases[suite]) == required_cases(suite, layout), 'unrun required assertions')
@@ -335,6 +345,37 @@ def load_high_volume_registry(path=None):
     return tuple(result)
 
 
+def select_reference_registry(registry, pending_migration_tables, *, plan=None):
+    """A9 intersection, from the producer's real-loader PRE-START plan analysis.
+
+    Entries are complete/ordered {app_label,name,tables:[{engine,table}]}.
+    Schema-qualified table identities are resolved by the live loader/state,
+    not by path names or by the signed metric's own denominator. An empty plan
+    positively selects zero tables. Missing analysis is not an empty plan.
+    """
+    need(type(pending_migration_tables) is list, 'missing pending migration table analysis')
+    identities, touched = [], set()
+    for item in pending_migration_tables:
+        need(type(item) is dict and set(item) == {'app_label', 'name', 'tables'}
+             and type(item['tables']) is list and len(item['tables']) <= 4096,
+             'invalid pending migration table analysis')
+        identities.append({k: item[k] for k in ('app_label', 'name')})
+        seen = set()
+        for table in item['tables']:
+            need(type(table) is dict and set(table) == {'engine', 'table'} and
+                 table['engine'] in ('postgres', 'clickhouse') and type(table['table']) is str and
+                 re.fullmatch(r'[a-z_][a-z0-9_]{0,63}\.[a-z_][a-z0-9_]{0,63}', table['table']),
+                 'invalid resolved pending migration table')
+            key = (table['engine'], table['table'])
+            need(key not in seen, 'duplicate pending migration table')
+            seen.add(key)
+            touched.add((key[0], key[1].split('.')[1]))
+    pending_migration_plan_hash(identities)
+    if plan is not None:
+        equal(identities, plan, 'pending migration table analysis plan differs')
+    return tuple(copy.deepcopy(row) for row in registry if (row['database'], row['table']) in touched)
+
+
 def seed_reference_tables(registry, seed_one, measure_one, *, reference_rows=REFERENCE_ROWS):
     """Publisher-only bulk workload, then independent actual row/byte measurement.
 
@@ -356,7 +397,8 @@ def seed_reference_tables(registry, seed_one, measure_one, *, reference_rows=REF
         need(type(actual['table']) is str and re.fullmatch(r'[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*', actual['table'])
              and actual['table'].split('.')[1] == entry['table'], 'resolved registry table mismatch')
         results.append(copy.deepcopy(actual))
-    need(bool(results), 'unrun large-volume reference')
+    # A9: an independently observed zero/untouched plan has no at-scale work.
+    # The caller must supply select_reference_registry's exact intersection.
     return results
 
 
@@ -524,14 +566,15 @@ def migration_measurement(identity, tables, samples, *, engine, risk_class, dura
         temp_bytes=max(s['temp_bytes'] for s in samples))
 
 
-def validate_reference_inventory(reference, *, registry=None):
-    """Independently observed source generation, not migration-supplied work.
+def validate_reference_inventory(reference, *, registry=None, pending_migration_tables=None, plan=None):
+    """A9: exactly the registered tables touched by the measured pending plan.
 
-    The complete reviewed registry is mandatory even for a zero pending plan.
-    Registry database names denote engines; resolved schema identities come from
-    the live database measurement. Extra tables support unregistered migrations.
+    Other migrations still require execution measurements in migration_forward,
+    but do not force an unrelated high-volume table to be seeded at scale.
+    No metric can omit its independent pre-start table analysis to claim zero.
     """
     registry = load_high_volume_registry() if registry is None else registry
+    registry = select_reference_registry(registry, pending_migration_tables, plan=plan)
     need(type(reference) is dict and set(reference) == {
         'snapshot_generation', 'registry_sha256', 'reference_rows', 'tables'},
         'missing independently measured reference inventory')
@@ -544,6 +587,9 @@ def validate_reference_inventory(reference, *, registry=None):
     need(type(reference['tables']) is list and len(reference['tables']) <= 100000,
          'invalid reference tables')
     actual, registered = {}, {(r['database'], r['table']) for r in registry}
+    expected_resolved = {(t['engine'], t['table']) for m in pending_migration_tables for t in m['tables']
+                         if (t['engine'], t['table'].split('.')[1]) in registered}
+    need(len(expected_resolved) == len(registered), 'ambiguous resolved registered-table scope')
     resolved = set()
     for table in reference['tables']:
         need(type(table) is dict and set(table) == {'engine', 'table', 'rows', 'bytes'} and
@@ -554,11 +600,11 @@ def validate_reference_inventory(reference, *, registry=None):
         need(key not in actual, 'duplicate independent table measurement')
         actual[key] = table
         registry_key = (table['engine'], table['table'].split('.')[1])
-        if registry_key in registered:
-            need(registry_key not in resolved and table['rows'] >= scale and table['bytes'] > 0,
-                 'ambiguous or underseeded reference table')
-            resolved.add(registry_key)
-    equal(resolved, registered, 'incomplete registered-table reference inventory')
+        need(registry_key in registered and key in expected_resolved, 'reference table outside pending registered-table scope')
+        need(registry_key not in resolved and table['rows'] >= scale and table['bytes'] > 0,
+             'ambiguous or underseeded reference table')
+        resolved.add(registry_key)
+    equal(resolved, registered, 'incomplete touched registered-table reference inventory')
     return actual
 
 
@@ -927,11 +973,12 @@ def validate_executed_measurements(fields, corpus, *, target, predecessor_raw):
     `target_pending_plan` is measured BEFORE normal target
     startup, not reconstructed from a successful post-start applied inventory.
     """
-    required = {'resource_samples', 'target_pending_plan', 'backup_transfer', 'restore_transfer',
+    required = {'resource_samples', 'target_pending_plan', 'pending_migration_tables', 'backup_transfer', 'restore_transfer',
                 'large_volume_reference', 'source_snapshot_inventory'}
     need(type(corpus) is dict and required <= set(corpus), 'unrun resource/transfer/reference measurements')
     reference = corpus['large_volume_reference']
-    actual_tables = validate_reference_inventory(reference)
+    actual_tables = validate_reference_inventory(reference, pending_migration_tables=corpus['pending_migration_tables'],
+                                                plan=corpus['target_pending_plan'])
     snapshot = corpus['source_snapshot_inventory']
     try:
         volume_bytes = validate_snapshot_evidence(fields, corpus, target=target, predecessor_raw=predecessor_raw)
@@ -946,7 +993,7 @@ def validate_executed_measurements(fields, corpus, *, target, predecessor_raw):
     samples = corpus['resource_samples']
     need(type(samples) is list and len(samples) == len(plan), 'incomplete per-migration samples')
     reduced = []
-    for identity, item in zip(plan, samples):
+    for identity, item, scope in zip(plan, samples, corpus['pending_migration_tables']):
         need(type(item) is dict and set(item) == {'app_label', 'name', 'engine', 'risk_class',
              'tables', 'duration_seconds', 'samples', 'snapshot_generation', 'started_monotonic',
              'completed_monotonic'}, 'incomplete migration resource samples')
@@ -959,6 +1006,9 @@ def validate_executed_measurements(fields, corpus, *, target, predecessor_raw):
             observed = actual_tables.get((item['engine'], table['table']))
             need(observed is not None and table['reference_rows'] == observed['rows'] and
                  table['reference_bytes'] == observed['bytes'], 'migration work differs from independent reference scale')
+        expected_tables = {(t['engine'], t['table']) for t in scope['tables'] if (t['engine'], t['table']) in actual_tables}
+        equal({(item['engine'], t['table']) for t in item['tables']}, expected_tables,
+              'migration at-scale table coverage differs from pre-start analysis')
         reduced.append(migration_measurement(identity, item['tables'], item['samples'], engine=item['engine'],
             risk_class=item['risk_class'], duration_seconds=item['duration_seconds'],
             started_monotonic=item['started_monotonic'], completed_monotonic=item['completed_monotonic']))
@@ -1068,6 +1118,7 @@ def exercise(executor, *, deadline):
     layout, cases = topology_profile('standalone', ()), ExecutedCases()
     executor.executed_cases = cases
     for suite in SUITES:
+        cases.active_suite = suite
         if time.monotonic() >= deadline:
             raise ManualRelease('suite_timed_out')
         assertions = executor.suite_assertions(suite)
@@ -1101,6 +1152,56 @@ def _validate_context(context, workspace):
              'isolated native Actions daemon required')
 
 
+def failure_diagnostics(exc, executor=None, *, completed_rows=0):
+    """Bounded closed diagnostic data; never stringify subprocess/product errors.
+
+    Preserve typed runtime refusals and our fixed assertion messages, not SQL,
+    env values, downloaded exception messages or arbitrary command output.
+    Diagnostic phase/suite data is not affirmative qualification evidence.
+    """
+    executed = getattr(executor, 'executed_cases', None)
+    counts = {s: len(executed.cases[s]) if isinstance(executed, ExecutedCases) else 0 for s in SUITES}
+    failed = executed.failed if isinstance(executed, ExecutedCases) else None
+    active = executed.active_suite if isinstance(executed, ExecutedCases) else None
+    layout = topology_profile('standalone', ())
+    states = {s: ('failed' if failed and failed[0] == s else
+                  'passed' if counts[s] == len(required_cases(s, layout)) else
+                  'incomplete' if counts[s] or s == active else 'unrun') for s in SUITES}
+    reason = str(exc) if isinstance(exc, ManualRelease) else 'suite_failed'
+    if reason not in MANUAL_REASONS:
+        reason = 'suite_failed'
+    code = getattr(exc, 'reason_code', None)
+    code = getattr(code, 'value', code)
+    if not isinstance(code, str) or re.fullmatch(r'[a-z_]{1,80}', code) is None:
+        code = reason
+    result = dict(schema_version=1, producer=PRODUCER, eligible=False, reason=reason,
+        refusal_code=code, exception_type=type(exc).__name__[:80], completed_rows=completed_rows,
+        suites=states, executed_assertions=counts, failed_assertion=list(failed) if failed else None,
+        active_suite=active, assertion_timings=executed.timings if isinstance(executed, ExecutedCases) else [])
+    if isinstance(exc, RehearsalError):
+        # Only this producer's own fixed diagnostics, not third-party stderr.
+        result['assertion_detail'] = str(exc)[:512]
+    return result
+
+
+def retain_diagnostics(output, executor=None, *, failure=None):
+    """Separate CI-readable bounded diagnostics from private backup/witness data."""
+    data = dict(schema_version=1, qualification_evidence=False)
+    if executor is not None and callable(getattr(executor, 'diagnostics', None)):
+        try:
+            data['product'] = executor.diagnostics()
+        except Exception as exc:
+            data['collection'] = dict(status='unavailable', exception_type=type(exc).__name__)
+    executed = getattr(executor, 'executed_cases', None)
+    if isinstance(executed, ExecutedCases):
+        data['assertion_timings'] = executed.timings
+    if failure is not None:
+        data['failure'] = failure
+    raw = canonical_json(data)
+    need(len(raw) <= MAX_EVIDENCE_BYTES, 'diagnostic size bound')
+    write_pair(((output / 'diagnostics.json', raw),))
+
+
 def produce(target, rows, workspace, output, *, run_id, docker_context='colima-fagi-update',
             cosign='cosign', budgets=None, purpose='product'):
     """Publish no affirmative bytes until ALL exact rows and cleanup pass."""
@@ -1128,13 +1229,18 @@ def produce(target, rows, workspace, output, *, run_id, docker_context='colima-f
             if time.monotonic() >= deadline:
                 raise ManualRelease('suite_timed_out')
             binding = row.binding()
-            with factory(workspace, row, target, docker_context=docker_context,
-                         resource_prefix=RESOURCE_PREFIX, budgets=budgets, deadline=deadline, registry=registry) as executor:
+            executor = factory(workspace, row, target, docker_context=docker_context,
+                               resource_prefix=RESOURCE_PREFIX, budgets=budgets, deadline=deadline, registry=registry)
+            # Keep the object when __enter__ fails, so first-boot diagnostics
+            # survive its verified cleanup and can be read from CI artifacts.
+            with executor:
                 from deploy.update.apply import Updater
                 from deploy.update.standalone_restore import StandaloneRestore
                 need(executor.shipping_executor_class is Updater and executor.shipping_restore_class is StandaloneRestore,
                      'shipping executor/restore required')
-                reference = seed_reference_tables(registry, executor.seed_reference_table, executor.measure_reference_table)
+                scope = copy.deepcopy(executor.pending_migration_tables())
+                selected = select_reference_registry(registry, scope)
+                reference = seed_reference_tables(selected, executor.seed_reference_table, executor.measure_reference_table)
                 cases = exercise(executor, deadline=deadline)
                 fields = copy.deepcopy(executor.measurements())
                 need(set(fields) == set(MEASURED_FIELDS) - {'executor_sha256', 'evidence_inventory_sha256'}, 'incomplete measurements')
@@ -1148,7 +1254,9 @@ def produce(target, rows, workspace, output, *, run_id, docker_context='colima-f
                 # BEFORE any target migration. Do not append/replace reference
                 # evidence after metric validation (that used to permit invented
                 # denominators to enter the signed rate).
-                measured_reference = validate_reference_inventory(corpus.get('large_volume_reference'))
+                equal(corpus.get('pending_migration_tables'), scope, 'pre-start table analysis changed during rehearsal')
+                measured_reference = validate_reference_inventory(corpus.get('large_volume_reference'), registry=registry,
+                    pending_migration_tables=scope, plan=corpus.get('target_pending_plan'))
                 for table in reference:
                     equal(measured_reference.get((table['engine'], table['table'])), table,
                           'seed measurement differs from snapshot reference')
@@ -1189,17 +1297,14 @@ def produce(target, rows, workspace, output, *, run_id, docker_context='colima-f
             write_pair(((output / (key + '.json'), row.release.raw_manifest),
                         (output / (key + '.sigstore.json'), row.release.raw_bundle)))
         envelope = dict(common, schema_version=2, run_id=run_id, rows=evidence_rows, executor_inventory=implementation)
+        retain_diagnostics(output, executor)
         write_pair(((output / 'policy.json', canonical_json(policy)), (output / 'evidence.json', canonical_json(envelope))))
         return policy
     except Exception as exc:
-        # Never serialize raw product logs/errors/secrets into public diagnostics.
-        reason = str(exc) if isinstance(exc, ManualRelease) else 'suite_failed'
-        executed = getattr(executor, 'executed_cases', None)
-        counts = {s: len(executed.cases[s]) if isinstance(executed, ExecutedCases) else 0 for s in SUITES}
-        write_pair(((output / 'failure.json', canonical_json({'producer': PRODUCER, 'eligible': False,
-            'reason': reason, 'completed_rows': len(results), 'executed_assertions': counts,
-            'failed_assertion': list(executed.failed) if isinstance(executed, ExecutedCases) and executed.failed else None,
-            'candidate_sha256': sha(canonical_json(target))})),))
+        failure = failure_diagnostics(exc, executor, completed_rows=len(results))
+        failure['candidate_sha256'] = sha(canonical_json(target))
+        write_pair(((output / 'failure.json', canonical_json(failure)),))
+        retain_diagnostics(output, executor, failure=failure)
         if isinstance(exc, ManualRelease):
             raise
         raise ManualRelease('suite_failed') from None
@@ -1369,6 +1474,10 @@ def qualify(argv):
         write_pair(((args.out / 'proof-row.json', canonical_json(result)),))
         if not (args.out / 'failure.json').exists():
             write_pair(((args.out / 'failure.json', canonical_json(result)),))
+        if (output / 'diagnostics.json').is_file():
+            write_pair(((args.out / 'diagnostics.json', read_bytes(output / 'diagnostics.json', MAX_EVIDENCE_BYTES)),))
+        else:
+            retain_diagnostics(args.out, failure=failure_diagnostics(exc))
         print('qualification refused: ' + reason, file=sys.stderr)
         return 2
 
@@ -1449,10 +1558,27 @@ def main(argv=None):
                 docker_context=args.docker_context, budgets=budgets, purpose=args.purpose)
     except ManualRelease as exc:
         args.output.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if not (args.output / 'failure.json').exists():
+            failure = failure_diagnostics(exc)
+            failure['candidate_sha256'] = sha(canonical_json(target)) if target else None
+            write_pair(((args.output / 'failure.json', canonical_json(failure)),))
+            retain_diagnostics(args.output, failure=failure)
         write_pair(((args.output / 'manual.json', canonical_json(notify_decision(target, str(exc), args.run_id))),))
-        return 0 if args.purpose == 'product' else 2
+        # A notify-only manifest is still readable/manual-installable, but a
+        # protected qualification job did NOT pass. In particular absent
+        # integration and failed, timed-out or unrun suites must turn CI red.
+        print('release rehearsal refused: ' + str(exc), file=sys.stderr)
+        return 2
     except Exception as exc:
-        print('release rehearsal refused: ' + type(exc).__name__, file=sys.stderr)
+        failure = failure_diagnostics(exc)
+        # Never overwrite a pre-existing output directory after a create-only
+        # refusal. Unexpected discovery/import failures still get diagnostics
+        # when this invocation has not produced any directory/evidence yet.
+        if not args.output.exists() and not args.output.is_symlink():
+            args.output.mkdir(mode=0o700, parents=True)
+            write_pair(((args.output / 'failure.json', canonical_json(failure)),))
+            retain_diagnostics(args.output, failure=failure)
+        print('release rehearsal refused: ' + failure['refusal_code'] + ' (' + type(exc).__name__ + ')', file=sys.stderr)
         return 2
     return 0
 

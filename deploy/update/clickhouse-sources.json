@@ -1,349 +1,90 @@
 {
   "schema_version": 1,
   "sources": [
-    {
-      "pattern": "futureagi/tracer/services/clickhouse/**",
-      "reason": "All legacy and v2 schemas, schema runners, imported helpers and client wrappers require explicit change review."
-    },
-    {
-      "pattern": "deploy/standalone/bin/**",
-      "reason": "Standalone entrypoints orchestrate bootstrap and schema execution before readiness."
-    },
-    {
-      "pattern": "futureagi/tracer/management/commands/ch25_*.py",
-      "reason": "Management entrypoints orchestrate schema, cutover and backfill helpers; changes cannot bypass review by delegating DDL."
-    },
-    {
-      "pattern": "fi-collector/pkg/chwriter/**",
-      "reason": "ClickHouse writer and its schema/client wrappers require explicit change review."
-    },
-    {
-      "pattern": "deploy/helm/futureagi/hack/kind-smoke.sh",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "deploy/update/probes/standalone.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "fi-collector/cmd/fi-observed-catalog-backfill/legacy.go",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "fi-collector/pkg/curatedwriter/curatedwriter.go",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/agentic_eval/core/database/ch_vector.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/agentic_eval/core/embeddings/embedding_manager.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/agentic_eval/core/llm/llm.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/agentic_eval/core_evals/fi_utils/sandbox.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/docker/runtime_smoke.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/ee/agenthub/eval_orchestrator/run_comprehensive_tests.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/ee/agenthub/eval_orchestrator/run_real_integration_tests.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/model_hub/management/commands/backfill_score_tracer_project.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/model_hub/management/commands/convert_vector_table_to_replicated.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/model_hub/management/commands/migrate_ch_vector_tables.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/model_hub/management/commands/migrate_legacy_default_tables_to_replicated.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/model_hub/selectors/eval_list_charts.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/model_hub/selectors/eval_usage.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/model_hub/serializers/dataset_properties.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/model_hub/services/legacy_ch_tables.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/model_hub/utils/clickhouse.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/model_hub/utils/insight.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/model_hub/utils/performance_ch.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/model_hub/views/optimize_dataset.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/model_hub/views/utils/evals.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/scripts/peerdb-bulk-copy.sh",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/scripts/peerdb-init.sh",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/scripts/property_catalog_oss/bootstrap_clickhouse.sh",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/simulate/services/run_traces_v3.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/tfc/deployment_telemetry/ch_counts.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/tfc/management/commands/bootstrap_install.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/tfc/telemetry/__init__.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/tfc/telemetry/instrumentation.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/tfc/utils/clickhouse.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/tfc/utils/functions.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/tracer/management/commands/backfill_eval_score.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/tracer/management/commands/drop_legacy_observation_span.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/tracer/management/commands/recreate_clickhouse_mv.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/tracer/queries/error_clustering.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/tracer/queries/scan_clustering.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/tracer/selectors/eval_tasks/row_resolver.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/tracer/serializers/health.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/tracer/services/annotation_label_source.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/tracer/services/grouping/control.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/tracer/services/grouping/feature_store.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/tracer/views/clickhouse_health.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/tracer/views/dashboard.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/tracer/views/span_attributes.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "futureagi/tracer/views/trace_session.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "scripts/qa/discover_observe_query_inputs.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "scripts/qa/observe_trace_id_reference.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "scripts/qa/probe_long_text_index_contract_readonly.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "scripts/qa/replay_observe_queries_readonly.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "scripts/qa/verify_annotation_mirror_readonly.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    },
-    {
-      "pattern": "scripts/update_rehearsal_shipping.py",
-      "reason": "Conservative DDL/client-call inventory: review every change without inferring SQL behavior or safety from source spelling."
-    }
+    {"pattern": "futureagi/**", "reason": "Scan all backend production Python, SQL and shell, including production modules with test-like names; only literal schema/mutation statements trigger review."},
+    {"pattern": "fi-collector/**", "reason": "Scan collector Go and SQL production sources for literal schema/mutation statements, not client APIs or read-only builders."},
+    {"pattern": "agentcc-gateway/**", "reason": "Scan gateway production Go and shell for literal schema/mutation statements, not generic Exec or command calls."},
+    {"pattern": "deploy/**", "reason": "Scan shipped deployment/bootstrap and updater sources for literal schema/mutation statements; path registration alone never requires a declaration."},
+    {"pattern": "bin/**", "reason": "Scan installed shell entrypoints, including extensionless scripts, for literal schema/mutation statements."},
+    {"pattern": "scripts/**", "reason": "Scan developer and release production drivers for literal schema/mutation statements, excluding only verified test fixtures."}
   ],
   "exclusions": [
-    {
-      "pattern": "**/tests/**",
-      "reason": "Test fixtures and assertions do not ship as schema/bootstrap entrypoints.",
-      "sha256": null
-    },
-    {
-      "pattern": "**/test/**",
-      "reason": "Test-only harness resources do not ship as product schema entrypoints.",
-      "sha256": null
-    },
-    {
-      "pattern": "**/testdata/**",
-      "reason": "Golden test payloads and fixtures are not product bootstrap sources.",
-      "sha256": null
-    },
-    {
-      "pattern": "**/migrations/*.py",
-      "reason": "Django MigrationLoader checks every added operation separately; arbitrary RunPython/RunSQL always needs review.",
-      "sha256": null
-    },
-    {
-      "pattern": "**/*_test.go",
-      "reason": "Go tests are not shipping schema/bootstrap programs.",
-      "sha256": null
-    },
-    {
-      "pattern": "**/test_*.py",
-      "reason": "Python test assertions and fixture SQL are not product bootstrap code.",
-      "sha256": null
-    },
-    {
-      "pattern": "**/*_test.py",
-      "reason": "Python test assertions and fixture SQL are not product bootstrap code.",
-      "sha256": null
-    },
-    {
-      "pattern": "**/conftest.py",
-      "reason": "Pytest fixture setup is not shipped automatic-update bootstrap.",
-      "sha256": null
-    },
-    {
-      "pattern": "futureagi/.test_durations",
-      "reason": "The test-duration cache contains test names, not executable schema code.",
-      "sha256": null
-    },
-    {
-      "pattern": "scripts/check_update_safety.py",
-      "reason": "The checker contains the discovery regular expression as data; it does not execute ClickHouse DDL.",
-      "sha256": "0ec5bbd970180788c8b7b64841b68f7d082e439d63ba8848928d5b1ab92da280"
-    },
-    {
-      "pattern": "futureagi/tfc/settings/test.py",
-      "reason": "Django test-only settings create disposable test databases, never product bootstrap databases.",
-      "sha256": "7d345e110e8f176a510cd9aa671732e9eb8d64015725562cc41b184efaabdaed"
-    },
-    {
-      "pattern": "agentcc-gateway/internal/plugins/quota/quota.go",
-      "reason": "Redis pipeline execution, not ClickHouse SQL; changes must retain this separation.",
-      "sha256": "418683783c1be7d4dd11c0b05ce1fa63dde4a7bbc54521aa3a026de503e9fee2"
-    },
-    {
-      "pattern": "agentcc-gateway/internal/redisstate/budget.go",
-      "reason": "Redis budget pipeline execution, not a ClickHouse schema runner.",
-      "sha256": "b3d6ed4d44418b2f61c831159785a0eb41346e3b93a5e83f3dc5e6fae5b47240"
-    },
-    {
-      "pattern": "agentcc-gateway/internal/redisstate/license.go",
-      "reason": "Redis license pipeline execution, not a ClickHouse schema runner.",
-      "sha256": "36651aa1792770ad90a648ab2fb4da89e55aa7fecb2660d080e724af5b236f57"
-    },
-    {
-      "pattern": "agentcc-gateway/internal/secrets/gcp.go",
-      "reason": "gcloud command execution, not a ClickHouse schema runner.",
-      "sha256": "d9b6cd73ae766c11e31ce430ffe4ad5aac5189206cd3d119cb912d12d3193355"
-    },
-    {
-      "pattern": "deploy/update/standalone_restore.py",
-      "reason": "The command adapter invokes Docker stop, inspect and archive helpers, not SQL.",
-      "sha256": "31e80f37bdfb635ff9750bcd8664c309f7a4847a628ce45ac499f98109061d99"
-    },
-    {
-      "pattern": "futureagi/bin/test-db-init.sql",
-      "reason": "PostgreSQL-only disposable test database initialization, never product ClickHouse bootstrap.",
-      "sha256": "e9ae5283a43d726d2d1be8dd63953e7046b7c6f98c1481618f0f33496542c6e6"
-    },
-    {
-      "pattern": "futureagi/model_serving/app/cli.py",
-      "reason": "Click CLI command decorators, not database client command calls.",
-      "sha256": "2740eada89f14bad74a56e237fcce5bf325f6fabe154b7af19e1b77ae8568660"
-    },
-    {
-      "pattern": "futureagi/scripts/setup_pg_replication.sql",
-      "reason": "PostgreSQL-only replication identity setup, covered separately by upgrade acceptance.",
-      "sha256": "7c3b563bda94cdb1d92d794b22c14b41b11514cd05bd71d3d40cf45d28cbc015"
-    },
-    {
-      "pattern": "futureagi/simulate/services/hosted_harness_diagnostics.py",
-      "reason": "Sandbox process execution, not ClickHouse database execution.",
-      "sha256": "87b6a3bf18aa53a34c95df151cfc7028b90538c92cf848281dc7fab9135f07e7"
-    },
-    {
-      "pattern": "futureagi/simulate/services/hosted_harness_gateway.py",
-      "reason": "Sandbox process execution and diagnostics, not ClickHouse DDL execution.",
-      "sha256": "ae6bd5400d99ad4fb9c8e61afdeeb3a858effe6fceed5cc21054c8249d4d859a"
-    },
-    {
-      "pattern": "futureagi/simulate/services/hosted_sandbox/e2b.py",
-      "reason": "Sandbox command adapter, not ClickHouse database execution.",
-      "sha256": "21749e44ad033a5a92b45cdd6db293356b3404c2d5e69502d6168e824693f6ee"
-    }
+    {"pattern": "futureagi/agent_playground/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/agentic_eval/clients/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/agentic_eval/core/llm/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/agentic_eval/core/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/agentic_eval/core/utils/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/agentic_eval/core_evals/fi_evals/grounded/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/agentic_eval/core_evals/fi_utils/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/agentic_eval/core_evals/run_prompt/runprompt_handlers/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/agentic_eval/core_evals/run_prompt/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/ai_tools/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/analytics/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/ee/agent_opt/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/ee/agenthub/cluster_rca/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/ee/agenthub/prompt_generate_agent/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/ee/agenthub/synthetic_data_agent/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/ee/agenthub/trace_scanner/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/ee/evals/llm/agent_evaluator/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/ee/licensing/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/ee/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/ee/usage/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/ee/voice/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/evaluations/engine/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/integrations/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/mcp_server/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/model_hub/utils/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/saml2_auth/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/sdk/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/sockets/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/tfc/capabilities/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/tfc/deployment_telemetry/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/tfc/licensing/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/tfc/temporal/agent_playground/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/tfc/temporal/agent_prompt_optimiser/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/tfc/temporal/background_tasks/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/tfc/temporal/common/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/tfc/temporal/drop_in/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/tfc/temporal/experiments/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/tfc/temporal/schedules/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/tfc/temporal/simulate/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/tfc/utils/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/tracer/queries/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "futureagi/tracer/utils/tests/**", "reason": "Verified test function definitions and fixture-only directory; not product execution code.", "sha256": null},
+    {"pattern": "deploy/tests/**", "reason": "Verified updater unit/integration fixture directory, not installed product bootstrap code.", "sha256": null},
+    {"pattern": "futureagi/accounts/tests/**", "reason": "Verified accounts test fixture directory, not product schema entrypoints.", "sha256": null},
+    {"pattern": "futureagi/agentcc/tests/**", "reason": "Verified gateway integration test fixture directory, not product schema entrypoints.", "sha256": null},
+    {"pattern": "futureagi/ee/agenthub/traceerroragent/tests/**", "reason": "Verified trace error agent test fixtures, not product schema entrypoints.", "sha256": null},
+    {"pattern": "futureagi/ee/falcon_ai/tests/**", "reason": "Verified assistant test fixtures, not product schema entrypoints.", "sha256": null},
+    {"pattern": "futureagi/model_hub/system_evals/tests/**", "reason": "Verified system evaluation test fixtures, not product schema entrypoints.", "sha256": null},
+    {"pattern": "futureagi/model_hub/tests/**", "reason": "Verified dataset/evaluation test fixtures, not product schema entrypoints.", "sha256": null},
+    {"pattern": "futureagi/simulate/tests/**", "reason": "Verified simulation test fixtures; deliberately does not exclude simulate/services/test_executor.py.", "sha256": null},
+    {"pattern": "futureagi/tests/**", "reason": "Verified backend test fixture directory, not product schema entrypoints.", "sha256": null},
+    {"pattern": "futureagi/tfc/temporal/eval_tasks/tests/**", "reason": "Verified Temporal evaluation task test fixtures, not product schema entrypoints.", "sha256": null},
+    {"pattern": "futureagi/tfc/tests/**", "reason": "Verified backend core test fixtures, not product schema entrypoints.", "sha256": null},
+    {"pattern": "futureagi/tracer/services/clickhouse/tests/**", "reason": "Verified ClickHouse fixture/assertion directory, not shipping schema sources.", "sha256": null},
+    {"pattern": "futureagi/tracer/tests/**", "reason": "Verified tracer test fixtures, not product schema entrypoints.", "sha256": null},
+    {"pattern": "agentcc-gateway/internal/guardrails/leakage/leakage_test.go", "reason": "Inspected testing.T SQL-injection detection fixtures; only this exact test blob is excluded.", "sha256": "7afc8145d8c8cbc3a4a66626fdaf37e3f80aec9f5f860268fe52fa7b77547350"},
+    {"pattern": "agentcc-gateway/internal/guardrails/mcpsec/mcpsec_test.go", "reason": "Inspected testing.T tool-argument injection fixtures; only this exact test blob is excluded.", "sha256": "10d0bf51dfbfdbe6ab130a4e9511cf1ef8a3f12a05207190b2b836609b1f1f6f"},
+    {"pattern": "agentcc-gateway/internal/guardrails/mcpsec/toolguard_test.go", "reason": "Inspected testing.T tool guard injection fixtures; only this exact test blob is excluded.", "sha256": "d6598c6921e9e4c8ade1dbe318949977778111072431ec10a4345e4d28f3d414"},
+    {"pattern": "fi-collector/cmd/fi-observed-catalog-backfill/postgres_integration_test.go", "reason": "Inspected testing.T disposable PostgreSQL/Kafka fixtures, not a shipping entrypoint.", "sha256": "47928121f0401a375b7011d39248ae69798630a6c7a024b077e2d5f4a1ab275d"},
+    {"pattern": "fi-collector/cmd/fi-observed-catalog-backfill/replicated_integration_test.go", "reason": "Inspected testing.T disposable replicated ClickHouse fixtures, not a shipping entrypoint.", "sha256": "ee042815d425ed7d38c7de02009e5712ce3081db46c9c5ef4b1d1b660f34a5eb"},
+    {"pattern": "fi-collector/cmd/fi-observed-catalog-backfill/scan_integration_test.go", "reason": "Inspected testing.T disposable ClickHouse scan fixtures, not a shipping entrypoint.", "sha256": "8ab478dc8a4ca76dfd60bbf86cd71a1938f1ab4808abe74bbbacb2bb547e6314"},
+    {"pattern": "fi-collector/cmd/fi-observed-catalog-backfill/scan_test.go", "reason": "Inspected testing.T SELECT-only client assertions and hostile input fixtures.", "sha256": "ad0b731bac30c5c2e34793b7d84c13ffb06043f13a63e5ffd59d267c6331b0d4"},
+    {"pattern": "fi-collector/exporter/clickhouse25exporter/e2e_ch_test.go", "reason": "Inspected testing.T exporter E2E fixture setup, not a shipping entrypoint.", "sha256": "5b07c307516303c563206aeeb72b970bb66b190133d719d6d37ba54bfc9753a4"},
+    {"pattern": "fi-collector/pkg/auth/pgresolver_test.go", "reason": "Inspected testing.T disposable PostgreSQL resolver fixtures, not a shipping entrypoint.", "sha256": "583a26906873003d6afd5c1323bce079078cbdaca25d73a5f2a30cb257144fba"},
+    {"pattern": "fi-collector/pkg/server/observed_direct_integration_test.go", "reason": "Inspected testing.T disposable ClickHouse authentication fixtures, not a shipping entrypoint.", "sha256": "738a20917592a930e1eb122fd4a6ec1641f0fe36f45d13cb92dd5c8ad328a70d"},
+    {"pattern": "fi-collector/pkg/server/observed_integration_test.go", "reason": "Inspected testing.T disposable local stack fixtures, not a shipping entrypoint.", "sha256": "8c3c09c59b71eab7e175f0afec5dcaa9e2ad329ce5c1ef5d96077df672d74c7e"},
+    {"pattern": "futureagi/conftest.py", "reason": "Inspected pytest collection and disposable database fixtures, not product startup.", "sha256": "8913dc51a719dc94677182ba400cf89d0fec32cadedd3c724c90ee8d03588267"},
+    {"pattern": "futureagi/tracer/services/clickhouse/v2/test_property_catalog_schema_contract.py", "reason": "Inspected pytest test functions asserting schema data; not a shipping schema runner.", "sha256": "f7545e5eeeb450d1fe865417b8def57fd236e0f9b63f5660ce274b14906f348b"},
+    {"pattern": "scripts/qa/test_long_text_index_contract_readonly.py", "reason": "Inspected unittest compiler fixtures and mock clients; not a production schema runner.", "sha256": "d19bea7f023c0fb160e977d590c6ffbbe4dd21f77242a54af410a680563fe21a"},
+    {"pattern": "scripts/qa/test_observe_session_reference.py", "reason": "Inspected pytest disposable reference engine fixtures, not a production schema runner.", "sha256": "3cd0bf48d9fcec4cf71a3fd285d19584737a82fb463fb3b924344847a6a39fa1"},
+    {"pattern": "scripts/qa/test_observe_span_reference.py", "reason": "Inspected pytest disposable reference engine fixtures, not a production schema runner.", "sha256": "ad3984f054c7b300e6b62883ff571b2305d3fbb5e28503abd55b06118f4eea51"},
+    {"pattern": "scripts/qa/test_replay_observe_queries_readonly.py", "reason": "Inspected unittest replay assertions with mock clients, not a production schema runner.", "sha256": "5908c651213c7fb795da5a4da7f897b2640775457f228236441eceef21b6125c"},
+    {"pattern": "futureagi/bin/test-db-init.sql", "reason": "PostgreSQL-only disposable test database initialization, not ClickHouse schema execution.", "sha256": "e9ae5283a43d726d2d1be8dd63953e7046b7c6f98c1481618f0f33496542c6e6"},
+    {"pattern": "futureagi/scripts/setup_pg_replication.sql", "reason": "PostgreSQL-only replica identity statements, not ClickHouse schema execution.", "sha256": "7c3b563bda94cdb1d92d794b22c14b41b11514cd05bd71d3d40cf45d28cbc015"},
+    {"pattern": "futureagi/tfc/settings/test.py", "reason": "Test settings initialize disposable PostgreSQL databases, not product ClickHouse bootstrap.", "sha256": "7d345e110e8f176a510cd9aa671732e9eb8d64015725562cc41b184efaabdaed"},
+    {"pattern": "futureagi/model_hub/utils/SQL_queries.py", "reason": "Inspected PostgreSQL PL/pgSQL function definitions using Django connections, not ClickHouse DDL.", "sha256": "4c13a5fce6b43c3be0c663400c8200b5fd3dd4ca312058e1b84ae6c3a3ec5ef1"},
+    {"pattern": "futureagi/tfc/utils/error_codes.py", "reason": "The literal create-user text is a user-facing error message, not a database schema statement.", "sha256": "43689832cf0943defc9eda7fd2728a24db5c82ebb0249f42f0d1264a65f52c57"}
   ]
 }

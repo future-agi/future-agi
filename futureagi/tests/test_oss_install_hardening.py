@@ -737,6 +737,7 @@ def test_installer_rejects_a_control_character_in_the_typed_email_before_create_
         b"Abhijai\n"
         b"correct-horse-battery\n"
         b"correct-horse-battery\n"
+        b"n\n"  # the one-time automatic-update opt-in that follows readiness
     )
 
     code, stdout, stderr = _run_installer(script, environment, typed=typed, timeout=120)
@@ -756,6 +757,24 @@ def test_installer_rejects_a_control_character_in_the_typed_email_before_create_
 ADMIN_PASSWORD = "correct-horse-battery"
 
 
+def test_the_automatic_update_opt_in_follows_the_account_and_defaults_to_off(
+    tmp_path: Path,
+) -> None:
+    """Pressing Enter at the one-time opt-in must leave automatic updates off."""
+    script, environment, _ = _installer_sandbox(tmp_path)
+    answers = ["abhijai@futureagi.com", "Abhijai", ADMIN_PASSWORD, ADMIN_PASSWORD, ""]
+
+    code, stdout, stderr = _run_installer(
+        script, environment, typed="\n".join(answers + [""]).encode(), timeout=120
+    )
+
+    assert code == 0, stderr
+    assert "Opt in once to supported automatic updates? [y/N]" in stderr
+    assert stdout.index("Email    : ") < stdout.index("Optional automatic updates:")
+    # Setup never ran: it would have created the private automation state.
+    assert not (script.parents[1] / ".futureagi-updates").exists()
+
+
 @pytest.mark.parametrize("typed", [False, True], ids=["FAGI_ADMIN_PASSWORD", "typed"])
 def test_the_admin_password_reaches_create_user_on_stdin_only(
     tmp_path: Path, typed: bool
@@ -764,7 +783,8 @@ def test_the_admin_password_reaches_create_user_on_stdin_only(
     can read every process's command line."""
     if typed:
         script, environment, state = _installer_sandbox(tmp_path)
-        answers = ["abhijai@futureagi.com", "Abhijai", ADMIN_PASSWORD, ADMIN_PASSWORD]
+        # The last answer declines the one-time automatic-update opt-in.
+        answers = ["abhijai@futureagi.com", "Abhijai", ADMIN_PASSWORD, ADMIN_PASSWORD, "n"]
         code, _, stderr = _run_installer(
             script, environment, typed="\n".join(answers + [""]).encode(), timeout=120
         )
@@ -2189,7 +2209,8 @@ def test_the_telemetry_notice_comes_before_the_admin_email_is_asked(
     """The first account's email is part of the registration."""
     script, environment, _ = _installer_sandbox(tmp_path)
 
-    code, stdout, stderr = _run_installer(script, environment, typed=b"\n", timeout=120)
+    # A blank email skips the account; "n" declines the automatic-update opt-in.
+    code, stdout, stderr = _run_installer(script, environment, typed=b"\nn\n", timeout=120)
 
     assert code == 0, stderr
     notice = stdout.index("this install registers with api.futureagi.com")

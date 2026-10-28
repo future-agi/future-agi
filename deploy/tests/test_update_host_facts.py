@@ -165,7 +165,8 @@ class SelectionTests(pub.PublisherCase):
     def test_executor_inventory_matches_producer_and_never_borrows_proof_digest(self):
         from scripts.build_update_compatibility_proof import implementation_inventory, inventory_hash
         names = ['scripts/rehearse_update_compatibility.py', 'scripts/build_update_compatibility_proof.py',
-            'scripts/generate_update_manifest.py', 'bin/update', 'deploy/standalone/bin/start',
+            'scripts/generate_update_manifest.py', 'scripts/update_rehearsal_shipping.py', 'bin/update',
+            'deploy/standalone/bin/start',
             'deploy/standalone/bin/bootstrap.py', 'deploy/standalone/nginx.conf',
             'deploy/update/fixed.py', 'deploy/update/probes/fixed.py', 'deploy/update/mapping.json']
         for name in names:

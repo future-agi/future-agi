@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed PR checks for the supported unattended Standalone upgrade layout.
+"""Honest-mistake PR checks for the supported unattended Standalone upgrade layout.
 
 Host/static code uses Python 3.9+ stdlib only. --django runs in the backend's
 locked environment, never on a customer installation. No database is mutated.
@@ -95,6 +95,8 @@ def compose_model(root):
         command = ["docker-compose"]
     env = {key: os.environ[key] for key in ("PATH", "HOME", "DOCKER_CONTEXT", "DOCKER_CONFIG") if key in os.environ}
     env["COMPOSE_PROJECT_NAME"] = "futureagi"
+    if env.get("DOCKER_CONTEXT"):
+        command += ["--context", env["DOCKER_CONTEXT"]]
     command += ["--env-file", os.devnull, "-f", str(root / "docker-compose.yml"),
                 "--profile", "*", "config", "--no-path-resolution", "--no-env-resolution", "--format", "json"]
     try:
@@ -605,6 +607,10 @@ def operation_risks(operation, app, state, registry, fresh=None):
                     after_db = after_field.db_parameters(connection)
                     if (before_db.get("type"), before_db.get("collation")) != (after_db.get("type"), after_db.get("collation")):
                         add(hot_table, "type_change")
+                    # Django's backend-generated field CHECKs (e.g. positive
+                    # integers) validate existing rows even on nullable columns.
+                    if after_db.get("check") and before_db.get("check") != after_db.get("check"):
+                        add(hot_table, "constraint")
         except Exception as exc:
             raise GateError(f"{app}.{model}.{operation.name}: cannot resolve historical backend column type; "
                             "update the migration/field implementation and scripts/check_update_safety.py") from exc
@@ -620,6 +626,7 @@ def operation_risks(operation, app, state, registry, fresh=None):
         if (new.db_index and not old.db_index) or (new.unique and not old.unique):
             add(table, "index")
         if ((getattr(new, "db_constraint", False) and not getattr(old, "db_constraint", False)) or
+                (new.primary_key and not old.primary_key) or
                 getattr(new.remote_field, "model", None) != getattr(old.remote_field, "model", None) or
                 getattr(new, "to_fields", None) != getattr(old, "to_fields", None) or
                 getattr(new, "from_fields", None) != getattr(old, "from_fields", None)):
@@ -633,7 +640,19 @@ def operation_risks(operation, app, state, registry, fresh=None):
             add(table, "volatile_default")
         if field.db_index or field.unique or getattr(field, "many_to_many", False):
             add(table, "index")
-        if getattr(field, "db_constraint", False):
+        # Resolve the rendered field against the historical model/backend,
+        # rather than hardcoding a list of Positive* field classes. This also
+        # covers backend CHECKs from other supported field implementations.
+        from django.db import connection
+        after = state.clone()
+        operation.state_forwards(app, after)
+        try:
+            rendered = after.apps.get_model(app, model)._meta.get_field(operation.name)
+            check = rendered.db_parameters(connection).get("check")
+        except Exception as exc:
+            raise GateError(f"{app}.{model}.{operation.name}: cannot resolve historical backend column constraint; "
+                            "update the migration/field implementation and scripts/check_update_safety.py") from exc
+        if check or getattr(field, "db_constraint", False) or field.primary_key:
             add(table, "constraint")
         if getattr(field, "generated", False):
             add(table, "table_rewrite")
@@ -646,7 +665,7 @@ def operation_risks(operation, app, state, registry, fresh=None):
         old = set(state.models[(app, model.lower())].options.get(option, []))
         if set(getattr(operation, option) or []) - old:
             add(table, "index")
-    elif kind in ("AddConstraint", "RemoveConstraint", "AlterConstraint"):
+    elif kind in ("AddConstraint", "AddConstraintNotValid", "ValidateConstraint", "RemoveConstraint", "AlterConstraint"):
         add(table, "constraint")
     elif kind in ("RemoveField", "DeleteModel", "AlterModelTable", "RenameModel", "RenameField", "AlterOrderWithRespectTo"):
         add(table, "table_rewrite")
@@ -682,19 +701,49 @@ def lint_migrations(loader, paths, root, registry, mapping=None):
     return result
 
 
-# This is a coverage alarm, not a DDL parser or proof that a file is safe.
-# Comments/string construction are deliberately not interpreted. Known schema
-# runners remain covered by explicit paths even if these markers disappear.
+# A9: an honest-mistake keyword alarm, not a SQL/program parser or security
+# boundary. Client imports/calls, MergeTree names and SELECT builders alone are
+# NOT schema changes. Deliberately split/obfuscated SQL is out of scope. Scan
+# both changed blobs so removing a schema/mutation statement also needs review.
+SQL_OBJECT = r"(?:TABLE|VIEW|DICTIONARY|DATABASE|INDEX|FUNCTION|USER|ROLE|QUOTA|ROW\s+POLICY|SETTINGS\s+PROFILE|NAMED\s+COLLECTION)"
 DDL_DISCOVERY = re.compile(
-    r"\b(?:CREATE\s+(?:(?:MATERIALIZED|OR\s+REPLACE)\s+)?(?:TABLE|VIEW|DICTIONARY|DATABASE)|"
-    r"ALTER\s+(?:TABLE|DATABASE)|DROP\s+(?:TABLE|VIEW|DICTIONARY|DATABASE)|"
-    r"TRUNCATE\s+TABLE|ATTACH\s+TABLE|DETACH\s+TABLE|RENAME\s+TABLE)\b|"
-    r"clickhouse[-_](?:client|connect|driver|go)|\bMergeTree\b|\.command\s*\(|\.Exec(?:Context)?\s*\(", re.I)
+    r"\b(?:(?:CREATE\s+(?:OR\s+REPLACE\s+)?(?:(?:MATERIALIZED|LIVE|WINDOW|TEMPORARY)\s+)?|"
+    r"ALTER\s+|DROP\s+(?:TEMPORARY\s+)?|RENAME\s+)" + SQL_OBJECT +
+    r"|TRUNCATE\s+TABLE|OPTIMIZE\s+TABLE|DELETE\s+FROM|"
+    r"ATTACH\s+(?:TABLE|DATABASE)|DETACH\s+(?:TABLE|DATABASE))\b|"
+    r"(?:^|[;\"'`])[ \t]*TRUNCATE\s+(?:IF\s+EXISTS\s+)?[A-Za-z_`\"][A-Za-z_0-9.`\"]*"
+    r"[ \t]*(?=[;\"'`\n]|$)", re.I | re.M)
 
 
 def source_candidate(path):
     p = Path(path)
-    return p.suffix in (".py", ".go", ".sql", ".sh") or not p.suffix
+    # Extensionless shipped shell entrypoints are included too.
+    return p.suffix in (".py", ".go", ".sql", ".sh") or (not p.suffix and not p.name.startswith("."))
+
+
+def source_blob(path, content):
+    """Extensionless binaries/cache/config data are not shell entrypoints."""
+    return content is not None and (bool(Path(path).suffix) or content.startswith(b"#!"))
+
+
+def schema_statements(content):
+    if content is None:
+        return []
+    text = content.decode("utf-8", errors="strict")
+    # Ignore whole-line source/SQL comments while preserving diagnostic lines.
+    # No untrusted code is imported and no SQL strings are reconstructed.
+    text = re.sub(r"(?m)^[ \t]*(?:#|//|--)[^\n]*", lambda m: " " * len(m.group()), text)
+    return [{"line": text.count("\n", 0, match.start()) + 1,
+             "keyword": " ".join(match.group().upper().split())}
+            for match in DDL_DISCOVERY.finditer(text)]
+
+
+def test_directory_pattern(pattern):
+    # No filename heuristics: simulate/services/test_executor.py ships. Only
+    # concrete reviewed test directories can exclude future fixture blobs.
+    parts = pattern.split("/")
+    return (len(parts) >= 2 and parts[-1] == "**" and parts[-2] in ("tests", "test", "testdata") and
+            not any(c in "/".join(parts[:-1]) for c in "*?[]"))
 
 
 def matches(path, rows):
@@ -716,9 +765,10 @@ def source_registry(value):
                     "duplicate pattern or missing source rationale", path)
             if name == "exclusions":
                 digest = row["sha256"]
-                require(digest is None and ("test" in pattern or "migrations" in pattern) or
+                require(digest is None and test_directory_pattern(pattern) or
                         isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest) and
-                        not any(c in pattern for c in "*?[]"), "non-test exclusions must pin one exact source blob", path)
+                        not any(c in pattern for c in "*?[]"),
+                        "exclusions need a concrete reviewed test directory or one exact reviewed source SHA-256; test-like filenames are not exempt", path)
             seen.add(pattern)
     return value
 
@@ -737,23 +787,27 @@ def check_source_coverage(root, registry, paths=None):
     missing, covered = [], []
     for path in paths if paths is not None else repository_paths(root):
         target = root / path
-        if not (source_candidate(path) or matches(path, registry["sources"])):
+        if not source_candidate(path):
             continue
         require(not target.is_symlink() or not matches(path, registry["sources"]),
                 f"{path}: indirect source path is unsupported", DATA / "clickhouse-sources.json")
         if not target.is_file():
             continue
         require(target.resolve() == root.resolve() / path, f"{path}: indirect source path is unsupported", DATA / "clickhouse-sources.json")
-        if excluded_source(path, registry["exclusions"], target.read_bytes()):
+        # Django migration SQL is covered by the immutable-history check and
+        # mandatory real-loader RunSQL/RunPython declarations, not two reviews.
+        if migration_path(path):
             continue
-        registered = matches(path, registry["sources"])
-        if registered:
-            require(not target.is_symlink(), f"{path}: indirect schema source", DATA / "clickhouse-sources.json")
+        content = target.read_bytes()
+        if not source_blob(path, content) or excluded_source(path, registry["exclusions"], content) or not schema_statements(content):
+            continue
+        if matches(path, registry["sources"]):
             covered.append(path)
-        elif not excluded_source(path, registry["exclusions"], target.read_bytes()) and DDL_DISCOVERY.search(target.read_text(errors="strict")):
+        else:
             missing.append(path)
-    require(not missing, f"unregistered DDL/client-call sources: {missing}",
-            "deploy/update/clickhouse-sources.json (explicit paths/globs, or a reviewed non-product/non-ClickHouse exclusion)")
+    require(not missing, f"unregistered schema/mutation statement sources: {missing}",
+            "deploy/update/clickhouse-sources.json (source path/rationale, or an exact reviewed non-ClickHouse exclusion), "
+            "then add human-reviewed entries to deploy/update/clickhouse-change-reviews.json")
     return covered
 
 
@@ -773,12 +827,32 @@ def content_sha(content):
     return hashlib.sha256(content).hexdigest() if content is not None else None
 
 
-def check_clickhouse_changes(root, changes, baseline, sources, reviews, registry):
-    """ANY change to a registered source needs a review bound to both blobs.
+def clickhouse_review_candidates(root, changes, baseline, sources, head=None):
+    """Changed production blobs with literal schema/mutation statements.
 
-    Compare both registries, so removing a path/glob in this PR cannot exempt a
-    previously registered runner. Deletions are changes too. No DDL is parsed.
+    Paths define scan coverage, never a review trigger. A raw keyword scan is
+    intentionally simple; it does not inspect client calls or reconstruct SQL.
     """
+    source_registry(sources)
+    result = []
+    for status, relative in changes:
+        if migration_path(relative) or not source_candidate(relative):
+            continue
+        before = base_bytes(root, baseline, relative)
+        current = root / relative
+        after = base_bytes(root, head, relative) if head else (current.read_bytes() if current.is_file() else None)
+        if before == after or excluded_source(relative, sources["exclusions"], after if after is not None else before):
+            continue
+        old_statements = schema_statements(before) if source_blob(relative, before) else []
+        new_statements = schema_statements(after) if source_blob(relative, after) else []
+        if old_statements or new_statements:
+            result.append({"path": relative, "before_sha256": content_sha(before), "after_sha256": content_sha(after),
+                           "before_statements": old_statements, "after_statements": new_statements})
+    return result
+
+
+def check_clickhouse_changes(root, changes, baseline, sources, reviews, registry):
+    """Require human declarations only for keyword-discovered statement sources."""
     path = DATA / "clickhouse-change-reviews.json"
     source_registry(sources)
     closed(reviews, {"schema_version", "changes"}, path)
@@ -797,29 +871,19 @@ def check_clickhouse_changes(root, changes, baseline, sources, reviews, registry
         require(any(t.startswith("clickhouse:") for t in row["declaration"]["tables"]),
                 "ClickHouse review must name ClickHouse tables", path)
         entries[row["path"]] = row
-    old_content = base_bytes(root, baseline, (DATA / "clickhouse-sources.json").as_posix())
-    old_sources = source_registry(json.loads(old_content)) if old_content is not None else {"sources": [], "exclusions": []}
+    candidates = clickhouse_review_candidates(root, changes, baseline, sources)
+    missing = [row for row in candidates if row["path"] not in entries]
+    require(not missing,
+            "schema/mutation statements require human-reviewed declarations: " + json.dumps(missing, sort_keys=True) +
+            "; for EACH path add {path, before_sha256, after_sha256, declaration}; declaration needs schema_version=1, "
+            "risk_classes including clickhouse_change, complete clickhouse:<table> roster, mitigation, actual reviewer, "
+            "actual PR discussion review URL and large_volume_rehearsal=true; do not invent approval",
+            path)
     required = []
-    for status, relative in changes:
-        if not (source_candidate(relative) or matches(relative, sources["sources"]) or matches(relative, old_sources["sources"])):
-            continue
-        current_path = root / relative
-        before = base_bytes(root, baseline, relative)
-        after = current_path.read_bytes() if current_path.is_file() else None
-        excluded_now = excluded_source(relative, sources["exclusions"], after if after is not None else before)
-        registered = (matches(relative, sources["sources"]) and not excluded_now) or (
-            matches(relative, old_sources["sources"]) and not excluded_source(relative, old_sources["exclusions"], before))
-        # A new unregistered raw marker is refused by coverage; a removed or
-        # obfuscated old marker cannot disappear without explicit review either.
-        candidate_before = before is not None and DDL_DISCOVERY.search(before.decode("utf-8", errors="strict")) and not (
-            excluded_now or excluded_source(relative, sources["exclusions"], before))
-        if not registered and not candidate_before:
-            continue
-        if before == after:
-            continue
-        require(relative in entries, f"{relative}: ANY schema/client-source change requires a reviewed declaration (including comments/deletions)", path)
+    for candidate in candidates:
+        relative = candidate["path"]
         row = entries[relative]
-        require(row["before_sha256"] == content_sha(before) and row["after_sha256"] == content_sha(after),
+        require(all(row[key] == candidate[key] for key in ("before_sha256", "after_sha256")),
                 f"{relative}: review hashes do not match this exact base-to-head change", path)
         value = row["declaration"]
         required.append({"path": relative, "tables": value["tables"], "risk_classes": value["risk_classes"], "large_volume_rehearsal": True})
@@ -931,18 +995,31 @@ print(json.dumps({"real_django_loader": True, "migrations": findings}))
                     literal_requirements.append({"path": relative, "operation_spellings": calls,
                                                  "app_conditions": [row["condition"] for row in app_rows],
                                                  "classification": "source_inventory_only_not_loader_evidence"})
-            ddl_paths = [p for status, p in changed_paths(root, previous, tag) if
-                         matches(p, sources["sources"]) and not matches(p, [row for row in sources["exclusions"] if row["sha256"] is None])]
+            candidates = clickhouse_review_candidates(root, changed_paths(root, previous, tag), previous, sources, head=tag)
             report = {"release": tag, "base": previous, "added_migrations": len(paths),
-                      "clickhouse_source_changes_requiring_review": ddl_paths,
+                      "clickhouse_source_changes_requiring_review": [row["path"] for row in candidates],
+                      "clickhouse_statement_reviews": candidates,
                       "data_operation_source_inventory": literal_requirements}
             if process.returncode:
                 report.update(real_django_loader=False, loader_error=process.stderr[-4000:])
             else:
                 report.update(json.loads(process.stdout))
+            findings = report.get("migrations", [])
+            declarations = [row["path"] for row in findings if row["status"] == "declared" or
+                            (row["status"] == "flagged" and "reviewed declaration required" in row.get("message", ""))]
+            complete = report["real_django_loader"] and all(row["status"] != "flagged" or
+                        "reviewed declaration required" in row.get("message", "") for row in findings)
+            report["developer_cost"] = {
+                "migration_declarations": len(declarations) if complete else None,
+                "migration_paths_requiring_declaration": declarations if complete else None,
+                "clickhouse_reviews": len(candidates),
+                "exact_migration_cost_verified": complete,
+                "note": "One declaration per migration file, one review per keyword-bearing changed production file; "
+                        "source inventory alone is not a schema-risk count."}
             reports.append(report)
         previous = tag
-    return {"status": "calibrated" if all(r["real_django_loader"] for r in reports) else "blocked",
+    return {"status": "calibrated" if all(r["real_django_loader"] and
+            r["developer_cost"]["exact_migration_cost_verified"] for r in reports) else "blocked",
             "qualification": False, "releases": reports}
 
 

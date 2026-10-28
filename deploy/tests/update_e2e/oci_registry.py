@@ -24,7 +24,7 @@ class OCIRegistry:
         self.server = self.thread = None
 
     def add(self, repository, tag, directory):
-        if not re.fullmatch(r'futureagi/[a-z0-9-]+', repository) or not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', tag):
+        if not re.fullmatch(r'futureagi/[a-z0-9-]+', repository) or not re.fullmatch(r'v?[0-9]+\.[0-9]+\.[0-9]+', tag):
             raise ValueError('invalid owned CI image reference')
         if repository in self.repositories:
             raise ValueError('immutable OCI repository already registered')

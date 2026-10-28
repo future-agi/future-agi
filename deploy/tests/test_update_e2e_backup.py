@@ -189,12 +189,19 @@ class DedicatedBackupRestoreTests(unittest.TestCase):
     def wait_ready(self, cid):
         end = time.monotonic() + 120
         while time.monotonic() < end:
-            state = json.loads(self.cmd('inspect', cid))[0]['State']
+            row = json.loads(self.cmd('inspect', cid))[0]
+            state = row['State']
             self.assertTrue(state['Running'], str(state))
             if state.get('Health', {}).get('Status') == 'healthy':
                 return
             time.sleep(0.2)
-        self.fail('small vendor fixture readiness timed out')
+        # A CI runner cannot be inspected afterwards: say which fixture stalled and why.
+        health = state.get('Health') or {}
+        probes = [(entry.get('ExitCode'), (entry.get('Output') or '')[-300:]) for entry in health.get('Log', [])[-3:]]
+        logs = self.runner([self.docker, '--context', CONTEXT, 'logs', '--tail', '30', cid], capture_output=True, timeout=30)
+        tail = (logs.stdout + logs.stderr).decode('utf-8', 'replace')[-2000:]
+        self.fail('small vendor fixture readiness timed out: %s health=%s probes=%r restarts=%s logs=%s' % (
+            row['Name'], health.get('Status'), probes, row.get('RestartCount'), tail))
 
     def query(self, db, cid, sql):
         return self.cmd('exec', cid, *(['psql', '-U', 'futureagi', '-d', 'futureagi', '-At', '--command=' + sql]

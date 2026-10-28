@@ -860,8 +860,10 @@
 
 ### ERR-E2E-004 — an issue's traces download as a dataset-ready CSV
 
-**Goal:** A developer downloads an issue's traces from the issue page and uploads the file unchanged as a dataset (overview response stubbed)  
-**Spec:** `flows/error-feed/export-traces-csv.spec.ts:33`  
+**Goal:** A developer downloads an issue's traces from the issue page and uploads the file unchanged as a dataset (overview response stubbed)
+
+**Spec:** `flows/error-feed/export-traces-csv.spec.ts:33`
+
 **Tags:** —
 
 **User steps:**
@@ -886,8 +888,10 @@
 
 ### ERR-E2E-005 — a shared issue opens read-only for someone who is not signed in
 
-**Goal:** Someone who is not signed in opens a shared Error Feed issue and reads it without being able to change it  
-**Spec:** `flows/error-feed/shared-issue.spec.ts:28`  
+**Goal:** Someone who is not signed in opens a shared Error Feed issue and reads it without being able to change it
+
+**Spec:** `flows/error-feed/shared-issue.spec.ts:28`
+
 **Tags:** —
 
 **User steps:**
@@ -1986,8 +1990,10 @@
 
 ### OBS-E2E-052 — OpenRouter-shaped traces keep coherent usage through filters, sorting and details
 
-**Goal:** A developer inspects OpenRouter-shaped traces and trusts content, identities and usage through filtering, sorting and trace/session details  
-**Spec:** `flows/observe/openrouter-usage.spec.ts:43`  
+**Goal:** A developer inspects OpenRouter-shaped traces and trusts content, identities and usage through filtering, sorting and trace/session details
+
+**Spec:** `flows/observe/openrouter-usage.spec.ts:43`
+
 **Tags:** —
 
 **User steps:**

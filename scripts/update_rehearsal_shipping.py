@@ -218,15 +218,18 @@ class ProductWitnesses:
         namespace = PREFIX + label + '-' + uuid.uuid4().hex
         initial_spool = {r['identity']:r['payload_sha256'] for r in self.d.app_python(SPOOL_OPERATION,{'paths':None})}
         account = dict(email=namespace+'@example.test',full_name=namespace,password=secrets.token_urlsafe(32))
+        self.d._secret_values.add(account['password'])
         # The supported local OSS API creates the relational user/org/workspace;
         # collector ingestion creates the project through the product path.
         self._http('/accounts/signup/',payload=account)
         tokens = self._http('/accounts/token/',payload=dict(email=account['email'],password=account['password'],remember_me=True))
+        self.d._secret_values.update(str(v) for v in tokens.values() if isinstance(v, str))
         headers = {'Authorization':'Bearer '+tokens['access']}
         info = self._http('/accounts/user-info/',headers=headers)
         p.need(info.get('default_workspace_id') and info.get('organization',{}).get('id'), 'relational witness missing')
         headers.update({'X-Organization-Id':str(info['organization']['id']), 'X-Workspace-Id':str(info['default_workspace_id'])})
         keys = self._http('/accounts/keys/',headers=headers)['data']
+        self.d._secret_values.update(str(v) for v in keys.values() if isinstance(v, str))
         trace = uuid.uuid4()
         span = secrets.token_hex(8)
         start = int(time.time()*1000000)*1000
@@ -309,6 +312,10 @@ class ShippingRehearsal:
         self.directory = Path(workspace)/self.project
         self.root = self.directory/'installation'
         self.cleanup_verified = False
+        self._secret_values = set()
+        self._diagnostic_data = dict(schema_version=1, qualification_evidence=False,
+            first_boot_budget_seconds=budgets.startup_seconds, phase_timings=[],
+            resources=[], product_logs={}, product_operations=[], collection_errors=[])
         self.corpus,self.executed,self.tables = {},{},[]
         self.owned_containers,self.owned_volumes,self.owned_networks = {},{},{}
         self.dependencies = tuple(row.dependencies)
@@ -317,6 +324,87 @@ class ShippingRehearsal:
         # Do not attest merely by importing the class (the old protocol accepted
         # that assertion without establishing an engine invocation).
         self.shipping_executor_class,self.shipping_restore_class = None,StandaloneRestore
+
+    def _redact(self, value, limit=8192):
+        """Diagnostics only. Never include generated passwords/keys or API tokens."""
+        text = value.decode('utf-8', errors='replace') if isinstance(value, bytes) else str(value)
+        for secret in sorted(getattr(self, '_secret_values', ()), key=len, reverse=True):
+            if len(secret) >= 6:
+                text = text.replace(secret, '[REDACTED]')
+        text = re.sub(r'(?i)(bearer\s+)[A-Za-z0-9_.~+/=-]+', r'\1[REDACTED]', text)
+        text = re.sub(r'(?i)((?:password|secret|token|api[_-]?key)["\s:=]+)[^\s,;]+', r'\1[REDACTED]', text)
+        text = re.sub(r'(?i)(https?://)[^/\s:@]+:[^/\s@]+@', r'\1[REDACTED]@', text)
+        return ''.join(c for c in text if c in '\n\r\t' or ord(c) >= 32)[-limit:]
+
+    def _phase(self, name, operation, *args, **kwargs):
+        started = time.monotonic()
+        entry = dict(phase=name, outcome='failed')
+        self._diagnostic_data['active_phase'] = name
+        try:
+            result = operation(*args, **kwargs)
+            entry['outcome'] = 'passed'
+            return result
+        except BaseException as exc:
+            entry['refusal'] = producer().failure_diagnostics(exc)['refusal_code']
+            raise
+        finally:
+            entry['duration_seconds'] = time.monotonic() - started
+            self._diagnostic_data['phase_timings'].append(entry)
+
+    def _collect_diagnostics(self):
+        """Bounded read-only exact-project snapshots, before disposable cleanup.
+
+        This uses an independent READ supervisor. It cannot reset or extend the
+        mutation supervisor, consume its protected restore reserve, or bless an
+        ambiguous child. Samples/logs are for CI diagnosis, never proof metrics.
+        """
+        if not hasattr(self, 'installation'):
+            return
+        from deploy.update.docker_host import bounded_installation
+        inst = bounded_installation(self.installation, 15)
+        inst.runner.max_output = 65536
+        sample = dict(monotonic=time.monotonic(), containers={})
+        try:
+            rows = inst.containers()
+            ids = []
+            for item in rows[:3]:
+                record = json.loads(inst.docker_run('inspect', item['id']).stdout)[0]
+                if record['Config']['Labels'].get('com.docker.compose.project') != self.project:
+                    raise RuntimeError('foreign diagnostic container')
+                service = record['Config']['Labels'].get('com.docker.compose.service')
+                if service not in ('app', 'postgres', 'clickhouse'):
+                    raise RuntimeError('foreign diagnostic service')
+                ids.append(record['Id'])
+                state = record['State']
+                sample['containers'][service] = dict(status=state.get('Status'),
+                    health=state.get('Health', {}).get('Status'), oom_killed=state.get('OOMKilled'),
+                    exit_code=state.get('ExitCode'), restart_count=record['RestartCount'])
+                logs = inst.docker_run('logs', '--timestamps', '--tail', '60', record['Id'], check=False)
+                self._diagnostic_data['product_logs'][service] = dict(
+                    stdout=self._redact(logs.stdout), stderr=self._redact(logs.stderr))
+                if service == 'app' and state.get('Running'):
+                    result = inst.docker_run('exec', record['Id'], 'cat', '/run/futureagi/status.json', check=False)
+                    if result.returncode == 0:
+                        status = producer().decode_document(result.stdout.encode(), 16384)
+                        sample['bootstrap'] = {k: v for k, v in status.items()
+                            if k in ('phase', 'migration', 'current_migration') and isinstance(v, str)
+                            and re.fullmatch(r'[A-Za-z0-9_.-]{0,257}', v)}
+            if ids:
+                stats = inst.docker_run('stats', '--no-stream', '--format', '{{json .}}', *ids)
+                sample['stats'] = [{k: str(v)[:80] for k, v in json.loads(line).items()
+                    if k in ('ID', 'CPUPerc', 'MemUsage', 'MemPerc', 'BlockIO', 'NetIO', 'PIDs')}
+                    for line in stats.stdout.splitlines() if line.strip()]
+        except Exception as exc:
+            self._diagnostic_data['collection_errors'].append(dict(exception_type=type(exc).__name__,
+                refusal=producer().failure_diagnostics(exc)['refusal_code']))
+            self._diagnostic_data['collection_errors'] = self._diagnostic_data['collection_errors'][-16:]
+        self._diagnostic_data['resources'].append(sample)
+        self._diagnostic_data['resources'] = self._diagnostic_data['resources'][-128:]
+
+    def diagnostics(self):
+        result = copy.deepcopy(self._diagnostic_data)
+        result['cleanup_verified'] = self.cleanup_verified
+        return result
 
     def _docker(self,*args,check=True):
         from deploy.update.compatibility import decode_document
@@ -331,7 +419,7 @@ class ShippingRehearsal:
         self.directory.mkdir(mode=0o700,parents=True)
         self.root.mkdir(mode=0o700)
         try:
-            self._prepare()
+            self._phase('provision_and_first_boot', self._prepare)
             return self
         except BaseException:
             self.__exit__(*sys.exc_info())
@@ -364,6 +452,7 @@ class ShippingRehearsal:
         values['INTEGRATION_ENCRYPTION_KEY']=base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()
         for key in ('SECRET_KEY','REDIS_PASSWORD','PG_PASSWORD','CH_PASSWORD','MINIO_ROOT_PASSWORD','AGENTCC_INTERNAL_API_KEY','AGENTCC_ADMIN_TOKEN'):
             values[key]=secrets.token_hex(32)
+        self._secret_values.update(str(values[k]) for k in values if any(part in k for part in ('KEY', 'PASSWORD', 'TOKEN')))
         path=self.root/'.env'
         path.write_text(''.join(str(k)+'='+str(v)+'\n' for k,v in values.items()))
         path.chmod(0o600)
@@ -418,8 +507,8 @@ class ShippingRehearsal:
         p.equal(pinned['Architecture'],self.row.platform.split('/')[1],'non-native target image')
         self.installation.docker_run('pull','--platform',self.row.platform,target['image'])
         p.equal(self._json('image','inspect',target['image'])[0]['Id'],pinned['Id'],'target tag differs from explicit pin')
-        self.installation.compose_run('up','-d','--no-build','--pull','never')
-        self._wait_healthy()
+        self._phase('source_compose_up', self.installation.compose_run, 'up','-d','--no-build','--pull','never')
+        self._phase('source_first_boot', self._wait_healthy)
         self._remember_resources()
         daemon=self._docker('info','--format','{{.ID}}').strip()
         identity=self.installation.identity()
@@ -447,14 +536,21 @@ class ShippingRehearsal:
 
     def _wait_healthy(self):
         p=producer(); deadline=min(self.deadline,time.monotonic()+self.budgets.startup_seconds)
-        while time.monotonic()<deadline:
-            rows=self.installation.containers()
-            if len(rows)==3:
-                records=[self._json('inspect',r['id'])[0] for r in rows]
-                if all(r['State']['Running'] and r['State'].get('Health',{}).get('Status')=='healthy' for r in records): return
-                p.need(not any(r['State'].get('OOMKilled') or r['RestartCount'] for r in records),'source boot failed')
-            time.sleep(2)
-        raise p.ManualRelease('suite_timed_out')
+        next_sample = 0
+        try:
+            while time.monotonic()<deadline:
+                rows=self.installation.containers()
+                if len(rows)==3:
+                    records=[self._json('inspect',r['id'])[0] for r in rows]
+                    if all(r['State']['Running'] and r['State'].get('Health',{}).get('Status')=='healthy' for r in records): return
+                    p.need(not any(r['State'].get('OOMKilled') or r['RestartCount'] for r in records),'source boot failed')
+                if time.monotonic() >= next_sample:
+                    self._collect_diagnostics()
+                    next_sample = time.monotonic() + 30
+                time.sleep(min(2, max(0, deadline-time.monotonic())))
+            raise p.ManualRelease('suite_timed_out')
+        finally:
+            self._collect_diagnostics()
 
     def app_python(self,source,argument):
         p=producer()
@@ -463,6 +559,12 @@ class ShippingRehearsal:
         result=self.runner([*self.installation.docker,'exec','-i',app,'python','-I','-B','-c',source],
             input=p.canonical_json(argument),cwd=str(self.root),env=self.installation.subprocess_env(),
             capture_output=True,timeout=180)
+        if result.returncode != 0:
+            self._diagnostic_data['product_operations'].append(dict(
+                script_sha256=p.sha(source.encode()), exit_code=result.returncode,
+                stderr=self._redact(result.stderr, 4096)))
+            self._diagnostic_data['product_operations'] = self._diagnostic_data['product_operations'][-8:]
+            self._collect_diagnostics()
         p.need(result.returncode==0,'product witness operation failed')
         return p.decode_document(result.stdout,p.MAX_EVIDENCE_BYTES)
 
@@ -471,6 +573,17 @@ class ShippingRehearsal:
         argv=['exec',cid,'clickhouse-client','--query',sql]
         argv.extend('--param_'+k+'='+v for k,v in (params or {}).items())
         return [json.loads(line) for line in self._docker(*argv).splitlines() if line.strip()]
+
+    def pending_migration_tables(self):
+        # Must be captured from the target's real MigrationLoader/model state
+        # against the source's applied set BEFORE any reference workload/start.
+        # Never infer this from a successful target or the rate's own tables.
+        if 'pending_migration_tables' not in self.corpus or 'target_pending_plan' not in self.corpus:
+            raise producer().ManualRelease('migration_measurement_unavailable')
+        scope = copy.deepcopy(self.corpus['pending_migration_tables'])
+        self.reference_registry = producer().select_reference_registry(self.registry, scope,
+            plan=self.corpus['target_pending_plan'])
+        return scope
 
     def seed_reference_table(self,entry,rows):
         p=producer()
@@ -591,7 +704,8 @@ print(json.dumps(dict(engine='postgres',table=schema+'.'+table,rows=count,bytes=
         self.corpus['source_witnesses']=p.witness_inventory(self.witnesses.create('source'))
         self.corpus['source_witnesses_rechecked']=p.witness_inventory(self.witnesses.read('source'))
         p.equal(self.corpus['source_witnesses_rechecked'],self.corpus['source_witnesses'],'source witnesses changed before backup')
-        self.corpus['reference_tables_before_backup']=[self.measure_reference_table(r) for r in self.registry]
+        p.need(hasattr(self, 'reference_registry'), 'pre-start reference scope not measured')
+        self.corpus['reference_tables_before_backup']=[self.measure_reference_table(r) for r in self.reference_registry]
         self.cold_backup()
         snapshot=self.corpus['source_snapshot_inventory']
         self.corpus['large_volume_reference']=dict(snapshot_generation=p.sha(p.canonical_json(snapshot)),
@@ -655,6 +769,10 @@ print(json.dumps(dict(engine='postgres',table=schema+'.'+table,rows=count,bytes=
         p.equal(self._json('image','inspect',self.target['components']['standalone']['image']+'@'+
             self.target['components']['standalone']['digest'])[0]['Id'],roster['app']['Image'],'target image differs from qualified pin')
 
+    def _reference_scope_verified(self):
+        producer().validate_reference_inventory(self.corpus['large_volume_reference'], registry=self.registry,
+            pending_migration_tables=self.corpus['pending_migration_tables'], plan=self.corpus['target_pending_plan'])
+
     def suite_assertions(self,suite):
         p=producer()
         if suite=='source_snapshot':
@@ -662,7 +780,7 @@ print(json.dumps(dict(engine='postgres',table=schema+'.'+table,rows=count,bytes=
                 'snapshot_sealed':self._snapshot_sealed,'persistent_domain_mapping':self._domain_mapping,
                 'witness_namespace_complete':lambda:p.witness_inventory(self.corpus['source_witnesses']) and
                     p.equal(self.corpus['source_witnesses'],self.corpus['source_witnesses_rechecked'],'source namespace differs'),
-                'large_volume_reference':lambda:p.validate_reference_inventory(self.corpus['large_volume_reference']) and None}
+                'large_volume_reference':self._reference_scope_verified}
             result.update({'source_witness:'+domain:lambda d=domain:self._source_domain(d)
                            for domain in p.topology_profile('standalone',()).backup_domains})
             return result
@@ -691,6 +809,7 @@ print(json.dumps(dict(engine='postgres',table=schema+'.'+table,rows=count,bytes=
         cleanup.runner=ProcessSupervisor(self.policy,docker_context=self.context,
             environment=self.runner.environment,grace_seconds=1)
         cleanup.runner.deadline=time.monotonic()+180
+        self._collect_diagnostics()
         self.installation=cleanup
         # Discover only our exact unique project after partially failed create.
         # Verify physical identity again before removing it; never prune by prefix.

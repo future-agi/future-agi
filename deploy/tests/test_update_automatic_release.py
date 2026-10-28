@@ -375,14 +375,20 @@ def refresh_snapshot_hashes(corpus):
 
 def reference_fixture(extra_tables=()):
     """SYNTHETIC evidence for reducer tests, never shipping qualification."""
-    tables = [{'engine': r['database'], 'table': ('public.' if r['database'] == 'postgres' else 'default.') + r['table'],
-               'rows': producer.REFERENCE_ROWS, 'bytes': 1000000} for r in producer.load_high_volume_registry()]
-    measured = {(r['engine'], r['table']): r for r in tables}
-    measured.update({(r['engine'], r['table']): copy.deepcopy(r) for r in extra_tables})
-    tables = list(measured.values())
+    # A9 fixtures seed only the table(s) declared touched by this synthetic plan,
+    # not every unrelated production registry entry. No product run is implied.
+    registered = next(r for r in producer.load_high_volume_registry() if r['database'] == 'postgres')
+    tables = copy.deepcopy(list(extra_tables)) if extra_tables else [dict(engine='postgres',
+        table='public.'+registered['table'], rows=producer.REFERENCE_ROWS, bytes=1000000)]
     return {'snapshot_generation': producer.sha(canonical_json(snapshot_fixture())), 'reference_rows': producer.REFERENCE_ROWS,
             'registry_sha256': producer.sha((producer.ROOT/'deploy/update/high-volume-tables.json').read_bytes()),
             'tables': tables}
+
+
+def pending_scope_fixture(samples):
+    """Authored SYNTHETIC loader analysis; never used by a product executor."""
+    return [dict(app_label=s['app_label'], name=s['name'],
+        tables=[dict(engine=s['engine'], table=t['table']) for t in s['tables']]) for s in samples]
 
 
 def timed_samples(samples, duration):
@@ -463,6 +469,8 @@ class MeasurementAndExecutorTests(unittest.TestCase):
         _,_,proof,_ = restore_release(pending_count=1)
         fields = complete_snapshot_fields(proof['predecessors'][0])
         migration = fields['migration_measurements'][0]
+        touched = next(r for r in producer.load_high_volume_registry() if r['database'] == 'postgres')
+        migration['tables'] = [dict(table='public.'+touched['table'], reference_rows=producer.REFERENCE_ROWS, reference_bytes=1000000)]
         item = {k:copy.deepcopy(migration[k]) for k in ('app_label','name','engine','risk_class','tables','duration_seconds')}
         item['samples'] = [dict(disk_bytes=1000,wal_bytes=0,temp_bytes=0,rss_bytes=100,processed_bytes=0),
                            dict(disk_bytes=2000,wal_bytes=100,temp_bytes=50,rss_bytes=120,processed_bytes=1000)]
@@ -476,7 +484,11 @@ class MeasurementAndExecutorTests(unittest.TestCase):
                     snapshot_generation=producer.sha(canonical_json(snapshot_fixture())))
         reference = reference_fixture([dict(engine=item['engine'], table=t['table'],
             rows=t['reference_rows'], bytes=t['reference_bytes']) for t in item['tables']])
-        corpus = {'resource_samples':[item],'target_pending_plan':[{k:item[k] for k in ('app_label','name')}],
+        fields['migration_measurements'] = [producer.migration_measurement(
+            {k:item[k] for k in ('app_label','name')}, item['tables'], item['samples'],
+            **{k:item[k] for k in ('engine','risk_class','duration_seconds','started_monotonic','completed_monotonic')})]
+        corpus = {'resource_samples':[item], 'pending_migration_tables':pending_scope_fixture([item]),
+                  'target_pending_plan':[{k:item[k] for k in ('app_label','name')}],
                   'backup_transfer':transfer,'restore_transfer':copy.deepcopy(transfer),
                   'large_volume_reference':reference, **snapshot_evidence_fixture(fields)}
         validate_measurements(fields,corpus)
@@ -553,7 +565,7 @@ class MeasurementAndExecutorTests(unittest.TestCase):
                     side_effect=producer.ManualRelease('shipping_executor_unavailable')):
                 with self.assertRaises(producer.ManualRelease):
                     producer.produce(default_v2(),[],root,root/'evidence',run_id=42)
-            self.assertEqual({p.name for p in (root/'evidence').iterdir()},{'failure.json'})
+            self.assertEqual({p.name for p in (root/'evidence').iterdir()},{'failure.json','diagnostics.json'})
             failed = json.loads((root/'evidence/failure.json').read_bytes())
             self.assertFalse(failed['eligible'])
             self.assertEqual(failed['completed_rows'],0)
@@ -589,18 +601,19 @@ class MeasurementAndExecutorTests(unittest.TestCase):
             cleanup_verified = False
             def __enter__(self): return self
             def __exit__(self,*args): self.cleanup_verified = True
+            def pending_migration_tables(self): return []
             def seed_reference_table(self,entry,rows):
-                if rows != 100000: raise AssertionError('wrong synthetic scale')
+                raise AssertionError('zero pending plan must not seed an unrelated table')
             def measure_reference_table(self,entry):
                 return {'engine':'postgres','table':'public.synthetic_table','rows':100000,'bytes':1000000}
             def suite_assertions(self,suite):
                 return {name:lambda:None for name in packager.required_cases(suite,topology_profile('standalone',()))}
             def measurements(self): return values
             def private_evidence(self):
-                reference = reference_fixture([{'engine':'postgres','table':'public.synthetic_table','rows':100000,'bytes':1000000}])
-                reference['snapshot_generation'] = generation
+                reference = reference_fixture()
+                reference.update(snapshot_generation=generation, tables=[])
                 return {'source_witnesses':witnesses,'restored_witnesses':witnesses,
-                        'resource_samples':[],'target_pending_plan':[],
+                        'resource_samples':[],'target_pending_plan':[], 'pending_migration_tables':[],
                         'backup_transfer':transfer,'restore_transfer':transfer,
                         **snapshot_corpus, 'large_volume_reference':reference}
         with tempfile.TemporaryDirectory() as tmp:
@@ -617,7 +630,7 @@ class MeasurementAndExecutorTests(unittest.TestCase):
             with self.assertRaises(CompatibilityError):
                 packager.build(candidate,policy,output,run_id=42)
 
-    def test_main_missing_executor_emits_only_notify_decision_without_network(self):
+    def test_main_missing_executor_fails_qualification_with_notify_decision_without_network(self):
         import os
         target = default_v2()
         with tempfile.TemporaryDirectory() as tmp:
@@ -632,8 +645,8 @@ class MeasurementAndExecutorTests(unittest.TestCase):
                  mock.patch.object(producer,'ReleaseDiscovery',side_effect=AssertionError('network must not run')):
                 code = producer.main(['--target',str(candidate),'--workspace',str(root/'work'),
                     '--output',str(root/'output'),'--run-id','42'])
-            self.assertEqual(code,0)
-            self.assertEqual({p.name for p in (root/'output').iterdir()},{'manual.json'})
+            self.assertEqual(code,2)
+            self.assertEqual({p.name for p in (root/'output').iterdir()},{'manual.json','failure.json','diagnostics.json'})
             decision = json.loads((root/'output/manual.json').read_bytes())
             self.assertEqual(decision['reason'],'shipping_executor_unavailable')
             self.assertEqual(json.loads(packager.manual_candidate(target,decision,run_id=42)),target)
@@ -703,7 +716,8 @@ class ResourceCoverageRegressionTests(unittest.TestCase):
             {k:item[k] for k in ('app_label','name')}, item['tables'], item['samples'],
             **{k:item[k] for k in ('engine','risk_class','duration_seconds','started_monotonic','completed_monotonic')})]
         transfer = transfer_fixture(fields)
-        corpus = dict(resource_samples=[item], target_pending_plan=[{k:item[k] for k in ('app_label','name')}],
+        corpus = dict(resource_samples=[item], pending_migration_tables=pending_scope_fixture([item]),
+                      target_pending_plan=[{k:item[k] for k in ('app_label','name')}],
                       backup_transfer=transfer, restore_transfer=copy.deepcopy(transfer), large_volume_reference=reference,
                       **snapshot_evidence_fixture(fields))
         validate_measurements(fields,corpus)

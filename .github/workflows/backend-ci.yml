@@ -111,10 +111,12 @@ jobs:
           cache-dependency-glob: futureagi/uv.lock
       - name: Install OSS backend dependencies
         run: uv sync --frozen --no-dev
-      - name: Fail-closed gate fixture tests (serial, daemon-free)
+      - name: Honest-mistake gate tests in the real OSS backend environment (serial)
+        # unittest discovery must retain the repo/import roots; reserve -I for
+        # direct gate scripts and child processes reading historical sources.
         run: |
-          uv run --no-sync python -I -m unittest discover -s ../deploy/tests -p test_update_safety_gate.py -v
-          uv run --no-sync python -I -m unittest discover -s tests -p test_update_safety_gate_django.py -v
+          uv run --no-sync python -m unittest discover -s ../deploy/tests -p test_update_safety_gate.py -v
+          uv run --no-sync python -m unittest discover -s tests -p test_update_safety_gate_django.py -v
       - name: Models must have migrations (no database writes)
         run: uv run --no-sync python manage.py makemigrations --check --dry-run
       - name: Resolve explicit PR base
