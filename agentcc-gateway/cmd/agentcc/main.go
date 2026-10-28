@@ -309,8 +309,9 @@ func main() {
 		}
 
 		// Dynamic factory creates guardrails from org config for managed mode.
+		platformURL := tenantPlatformURL(cfg.ControlPlane.URL)
 		dynamicFactory := func(name string, checkCfg map[string]interface{}) guardrails.Guardrail {
-			return newTenantGuardrail(name, checkCfg, cfg.OrgProviders.AllowPrivateURLs)
+			return newTenantGuardrail(name, checkCfg, cfg.OrgProviders.AllowPrivateURLs, platformURL)
 		}
 
 		guardrailPlugin := guardrails.NewPlugin(grEngine, guardrailRegistry, dynamicFactory, policyStore, tenantStore)
@@ -622,7 +623,16 @@ func main() {
 	<-shutdownDone
 }
 
-func newTenantGuardrail(name string, cfg map[string]interface{}, allowPrivate bool) guardrails.Guardrail {
+// tenantPlatformURL is where platform FutureAGI checks go: the control plane, or the
+// operator's FI_BASE_URL when pull sync is off (Helm sets both to the backend Service).
+func tenantPlatformURL(controlPlaneURL string) string {
+	if controlPlaneURL != "" {
+		return controlPlaneURL
+	}
+	return os.Getenv("FI_BASE_URL")
+}
+
+func newTenantGuardrail(name string, cfg map[string]interface{}, allowPrivate bool, platformURL string) guardrails.Guardrail {
 	switch name {
 	case "pii-detection":
 		return pii.New(cfg)
@@ -648,7 +658,7 @@ func newTenantGuardrail(name string, cfg map[string]interface{}, allowPrivate bo
 		return leakage.New(cfg)
 	}
 	if futureagi.IsFutureAGIConfig(cfg) {
-		return futureagi.NewTenant(name, cfg)
+		return futureagi.NewTenant(name, cfg, allowPrivate, platformURL)
 	}
 	if webhook.IsWebhookConfig(cfg) {
 		return webhook.NewTenant(name, cfg, allowPrivate)

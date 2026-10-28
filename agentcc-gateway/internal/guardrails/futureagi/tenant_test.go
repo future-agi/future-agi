@@ -33,7 +33,7 @@ func TestTenantFutureAGIEnvironmentIsLiteral(t *testing.T) {
 		var g *FutureAGIGuardrail
 		wantKey, wantSecret := "operator-key", "operator-secret"
 		if tenant {
-			g = NewTenant("check", cfg)
+			g = NewTenant("check", cfg, false, "")
 			wantKey, wantSecret = "${FI_API_KEY}", "${FI_SECRET_KEY}"
 		} else {
 			g = New("check", cfg)
@@ -52,7 +52,7 @@ func TestTenantFutureAGIEnvironmentIsLiteral(t *testing.T) {
 		}
 	}
 	cfg["base_url"] = "${FI_BASE_URL}"
-	if got := NewTenant("check", cfg).baseURL; got != "${FI_BASE_URL}" {
+	if got := NewTenant("check", cfg, false, "").baseURL; got != "${FI_BASE_URL}" {
 		t.Fatalf("tenant base URL expanded to %q", got)
 	}
 	if got := New("check", cfg).baseURL; got != "https://operator.example" {
@@ -73,7 +73,7 @@ func TestTenantFutureAGIMissingCredentialsPolicy(t *testing.T) {
 		if credentials != "neither" {
 			cfg[credentials] = "tenant-credential"
 		}
-		g := NewTenant("check", cfg)
+		g := NewTenant("check", cfg, false, "")
 		g.client.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
 			t.Error("incomplete tenant credentials must not make an evaluator request")
 			return nil, fmt.Errorf("unexpected request")
@@ -126,14 +126,12 @@ func TestTenantFutureAGIDoesNotInheritOperatorCredentials(t *testing.T) {
 	t.Setenv("FI_SECRET_KEY", "operator-secret")
 	t.Setenv("FI_BASE_URL", "https://operator.example")
 	for _, cfg := range []map[string]interface{}{nil, {}, {"eval_id": "safety"}} {
-		g := NewTenant("check", cfg)
+		g := NewTenant("check", cfg, false, "")
 		if g.apiKey != "" || g.secretKey != "" {
 			t.Fatalf("tenant inherited operator credentials: %+v", g)
 		}
-		// The platform URL is not a secret; a tenant without base_url uses it.
-		// A nil config reads no environment at all, as before.
-		if cfg != nil && g.baseURL != "https://operator.example" {
-			t.Fatalf("tenant base URL = %q, want the operator platform", g.baseURL)
+		if g.baseURL != "https://api.futureagi.com" {
+			t.Fatalf("tenant inherited operator base URL: %q", g.baseURL)
 		}
 	}
 	g := New("check", map[string]interface{}{"eval_id": "safety"})
