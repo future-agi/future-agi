@@ -93,8 +93,59 @@ function topAnswer(item, counts) {
     : "";
 }
 
+// The open run's page states that are still being answered.
+const PAGE_LIVE = new Set(["running", "preparing", "pausing"]);
+// The server calls a run stalled after this long without progress once no
+// workflow drains it. History asks no workflow, so a live run quiet for
+// longer only says it hasn't moved; its page says where it stands.
+const QUIET_AFTER_MS = 90_000;
+const NOW_TICK_MS = 15_000;
+
+/**
+ * Where a run stands on its card: "live" (being answered), "stalled"
+ * (stopped before finishing), "quiet" (live, but nothing has moved for
+ * longer than the stall bound) or null. The open run's from its page.
+ */
+function cardState(listed, progress, now) {
+  const page = progress?.status;
+  if (page && page !== "loading" && page !== "error")
+    return PAGE_LIVE.has(page) ? "live" : page === "stalled" ? "stalled" : null;
+  if (listed.status === "stalled") return "stalled";
+  if (!isLiveRun(listed)) return null;
+  const moved = Date.parse(listed.lastActivityAt || "");
+  return Number.isFinite(moved) && now - moved > QUIET_AFTER_MS
+    ? "quiet"
+    : "live";
+}
+
+const STATE_MARKS = {
+  live: { title: "Still being answered", color: "info.main", pulse: true },
+  stalled: { title: "Stopped before finishing", color: "warning.main" },
+  quiet: { title: "No progress lately", color: "text.disabled" },
+};
+
+// Now, moved on while a run is live: a run that stops moving turns quiet on
+// its card even when History's polls bring nothing new.
+function useNow(ticking) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!ticking) return undefined;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), NOW_TICK_MS);
+    return () => clearInterval(timer);
+  }, [ticking]);
+  return now;
+}
+
 // One past run: its question, view, size, split and age.
-function RunCard({ runItem: listed, selected, onOpen, onRecreate, progress }) {
+function RunCard({
+  runItem: listed,
+  selected,
+  onOpen,
+  onRecreate,
+  progress,
+  now,
+}) {
   // The open run counts from the summary its page reads, so the card and
   // the page never show two counts while answers land.
   const runItem = progress
@@ -110,7 +161,8 @@ function RunCard({ runItem: listed, selected, onOpen, onRecreate, progress }) {
   const [question] = displayQuestions(
     runItem.items.map((entry) => entry.question),
   );
-  const live = isLiveRun(runItem);
+  const state = cardState(listed, progress, now);
+  const mark = STATE_MARKS[state];
   const failed = runItem.status === "failed";
   const answersSaved = savedAnswerCount(runItem.counts);
   const failedBeforeAnswering = failed && !answersSaved;
@@ -122,14 +174,25 @@ function RunCard({ runItem: listed, selected, onOpen, onRecreate, progress }) {
     runItem.unit === "users" && runItem.sessions != null
       ? `${runItem.sessions.toLocaleString()} sessions read`
       : null;
+  const progressWords =
+    rows == null
+      ? ""
+      : `${Math.min(runItem.answered, rows)} of ${rows} answered`;
   const size =
     rows == null
       ? ""
-      : live
-        ? `${Math.min(runItem.answered, rows)} of ${rows} answered`
-        : [`${rows.toLocaleString()} ${unitWord(runItem.unit, rows)}`, sessions]
-            .filter(Boolean)
-            .join(" · ");
+      : state === "live"
+        ? progressWords
+        : state === "stalled"
+          ? `Stopped · ${progressWords}`
+          : state === "quiet"
+            ? `No progress lately · ${progressWords}`
+            : [
+                `${rows.toLocaleString()} ${unitWord(runItem.unit, rows)}`,
+                sessions,
+              ]
+                .filter(Boolean)
+                .join(" · ");
   const meta = [
     sourceViewTitle(runItem.unit),
     size,
@@ -168,18 +231,24 @@ function RunCard({ runItem: listed, selected, onOpen, onRecreate, progress }) {
       }}
     >
       <Stack direction="row" spacing={0.75} alignItems="flex-start">
-        {live && (
+        {mark && (
           <Box
-            title="Still being answered"
+            title={mark.title}
+            aria-label={mark.title}
+            role="img"
             sx={{
               width: 7,
               height: 7,
               mt: 0.75,
               borderRadius: "50%",
               flexShrink: 0,
-              bgcolor: "info.main",
-              animation: `${pulse} 1.6s ease-in-out infinite`,
-              "@media (prefers-reduced-motion: reduce)": { animation: "none" },
+              bgcolor: mark.color,
+              ...(mark.pulse && {
+                animation: `${pulse} 1.6s ease-in-out infinite`,
+                "@media (prefers-reduced-motion: reduce)": {
+                  animation: "none",
+                },
+              }),
             }}
           />
         )}
@@ -274,8 +343,9 @@ RunCard.propTypes = {
   selected: PropTypes.bool,
   onOpen: PropTypes.func.isRequired,
   onRecreate: PropTypes.func,
-  // The open run's own counts: {settled, total, counts}.
+  // The open run's own counts and state: {settled, total, counts, status}.
   progress: PropTypes.object,
+  now: PropTypes.number.isRequired,
 };
 
 /**
@@ -303,6 +373,7 @@ export default function AskRail({
     enabled: !collapsed,
     search: query,
   });
+  const now = useNow(history.runs.some(isLiveRun));
   const groups = useMemo(() => {
     const out = [];
     history.runs.forEach((runItem) => {
@@ -456,6 +527,7 @@ export default function AskRail({
                       selected={runItem.taskId === selectedId}
                       onOpen={onOpen}
                       onRecreate={onRecreate}
+                      now={now}
                       progress={
                         runItem.taskId === selectedId &&
                         openProgress?.taskId === selectedId
@@ -499,6 +571,7 @@ AskRail.propTypes = {
   onNew: PropTypes.func.isRequired,
   onOpen: PropTypes.func.isRequired,
   onRecreate: PropTypes.func,
-  // The open run's counts from its page: {taskId, settled, total, counts}.
+  // The open run's counts and state from its page: {taskId, settled, total,
+  // counts, status}.
   openProgress: PropTypes.object,
 };

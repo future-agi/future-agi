@@ -2447,6 +2447,38 @@ def test_a_key_saved_for_the_organization_counts_from_any_workspace(
 
 
 @pytest.mark.django_db
+def test_history_says_when_a_live_run_last_moved(
+    auth_client, observe_project, yes_no, fake_view, started
+):
+    """History tells a live run that has stopped moving from one that is
+    answering by when it last moved: its last answer, else its task's last
+    change. No Temporal call per run."""
+    task = _running_with_unanswered(auth_client, observe_project, yes_no)
+
+    def listed():
+        runs = auth_client.get(
+            "/tracer/instant-eval/runs/",
+            {"project_id": str(observe_project.id), "page_size": 5},
+        ).json()["result"]["runs"]
+        return next(r for r in runs if r["task_id"] == str(task.id))
+
+    # Its one answer and its task's last change were ten minutes ago.
+    run = listed()
+    assert run["status"] == "running" and run["pending"] == 3
+    moved = datetime.fromisoformat(run["last_activity_at"])
+    assert timedelta(minutes=9) < datetime.now(UTC) - moved < timedelta(minutes=11)
+
+    # An answer lands: it moved just now.
+    from tracer.models.instant_eval import InstantEvalAnswer
+
+    InstantEvalAnswer.objects.filter(task_id=task.id).update(
+        answered_at=datetime.now(UTC)
+    )
+    moved = datetime.fromisoformat(listed()["last_activity_at"])
+    assert datetime.now(UTC) - moved < timedelta(minutes=1)
+
+
+@pytest.mark.django_db
 def test_history_lists_a_runs_questions_in_the_order_it_asked_them(
     auth_client, observe_project, yes_no, category, fake_view, started
 ):

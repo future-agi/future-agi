@@ -700,7 +700,12 @@ describe("History", () => {
   });
 
   it("rebuilds a past run from the runs endpoint and its evaluators", () => {
-    expect(historyRun(run("k1"), configsById)).toEqual({
+    expect(
+      historyRun(
+        run("k1", { last_activity_at: "2026-10-15T10:01:00Z" }),
+        configsById,
+      ),
+    ).toEqual({
       taskId: "k1",
       name: "Instant eval · Refund promised?",
       status: "completed",
@@ -714,6 +719,8 @@ describe("History", () => {
       counts: { c1: { Yes: 4, No: 2 } },
       answered: 6,
       pending: 0,
+      // When it last moved, for telling a live run that has stopped moving.
+      lastActivityAt: "2026-10-15T10:01:00Z",
     });
     // An evaluator that is gone still reads from what the run counted.
     expect(

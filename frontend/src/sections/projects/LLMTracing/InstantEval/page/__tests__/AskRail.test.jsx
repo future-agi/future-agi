@@ -1,8 +1,8 @@
 import React from "react";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import { MemoryRouter } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { palette } from "src/theme/palette";
 
 const history = vi.hoisted(() => ({ runs: [], error: null }));
@@ -197,5 +197,83 @@ describe("History that can't be read", () => {
       screen.getByText(/Past questions couldn't be loaded/),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+  });
+});
+
+describe("where a run that isn't done stands", () => {
+  const ago = (ms) => new Date(Date.now() - ms).toISOString();
+  const liveRun = (taskId, question, lastActivityAt) =>
+    item({
+      taskId,
+      status: "running",
+      unit: "sessions",
+      rows: 49,
+      answered: 8,
+      pending: 41,
+      lastActivityAt,
+      items: [{ ...item().items[0], configId: taskId, question }],
+    });
+  const card = (question) =>
+    screen.getByRole("link", { name: `Open the run: ${question}` });
+
+  afterEach(() => vi.useRealTimers());
+
+  it("takes the open run's state from its page", () => {
+    // History still says running; the page knows its workflow is gone.
+    history.runs = [liveRun("open-task", "Resolved?", ago(5_000))];
+    renderRail(vi.fn(), {
+      selectedId: "open-task",
+      openProgress: {
+        taskId: "open-task",
+        settled: 8,
+        total: 49,
+        counts: {},
+        status: "stalled",
+      },
+    });
+    const open = card("Resolved?");
+    expect(within(open).getByText(/Stopped · 8 of 49 answered/)).toBeTruthy();
+    expect(
+      within(open).getByRole("img", { name: "Stopped before finishing" }),
+    ).toBeInTheDocument();
+    expect(
+      within(open).queryByRole("img", { name: "Still being answered" }),
+    ).toBeNull();
+  });
+
+  it("says another live run hasn't moved, from when it last did", () => {
+    history.runs = [
+      liveRun("quiet-task", "Quiet?", ago(5 * 60_000)),
+      liveRun("busy-task", "Busy?", ago(10_000)),
+    ];
+    renderRail();
+    const quiet = card("Quiet?");
+    expect(
+      within(quiet).getByText(/No progress lately · 8 of 49 answered/),
+    ).toBeInTheDocument();
+    expect(
+      within(quiet).getByRole("img", { name: "No progress lately" }),
+    ).toBeInTheDocument();
+    const busy = card("Busy?");
+    expect(within(busy).getByText(/8 of 49 answered/)).toBeInTheDocument();
+    expect(within(busy).queryByText(/No progress lately/)).toBeNull();
+    expect(
+      within(busy).getByRole("img", { name: "Still being answered" }),
+    ).toBeInTheDocument();
+  });
+
+  it("turns quiet as time passes, with no new poll", () => {
+    vi.useFakeTimers();
+    history.runs = [liveRun("busy-task", "Busy?", ago(80_000))];
+    renderRail();
+    expect(
+      within(card("Busy?")).getByRole("img", { name: "Still being answered" }),
+    ).toBeInTheDocument();
+    act(() => {
+      vi.advanceTimersByTime(15_000);
+    });
+    expect(
+      within(card("Busy?")).getByRole("img", { name: "No progress lately" }),
+    ).toBeInTheDocument();
   });
 });

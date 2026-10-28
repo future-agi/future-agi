@@ -687,6 +687,8 @@ export function historyRun(run, configsById = {}) {
     counts: run.counts || {},
     answered: run.answered || 0,
     pending: run.pending || 0,
+    // When it last moved: its last answer, or its task's last change.
+    lastActivityAt: run.last_activity_at || null,
   };
 }
 

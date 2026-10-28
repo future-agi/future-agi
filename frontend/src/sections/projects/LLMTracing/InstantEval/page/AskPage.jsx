@@ -99,13 +99,20 @@ function RunPane({
     questions: launch?.questions,
     startedAt: launch?.startedAt,
   });
-  // History's card for this run counts from this summary too.
+  // History's card for this run counts, and says where it stands, from
+  // this summary too.
   const settled = run.answered + run.failed;
   const counts = run.summary?.counts;
   useEffect(() => {
     if (taskId && counts)
-      onProgress?.({ taskId, settled, total: run.total, counts });
-  }, [taskId, settled, run.total, counts, onProgress]);
+      onProgress?.({
+        taskId,
+        settled,
+        total: run.total,
+        counts,
+        status: run.status,
+      });
+  }, [taskId, settled, run.total, counts, run.status, onProgress]);
   // A run opened by its link alone learns its unit from the server, so the
   // URL (and the tab bar) can follow it.
   useEffect(() => {

@@ -8,6 +8,8 @@ The runs themselves (estimate, start, summary, rows, export, control) are in
 ``tracer.views.instant_eval_scale``.
 """
 
+from datetime import UTC
+
 from django.core.cache import cache
 from rest_framework import serializers
 from rest_framework.permissions import IsAuthenticated
@@ -86,6 +88,10 @@ class InstantEvalRunSerializer(serializers.Serializer):
     pending = serializers.IntegerField()
     # When the last answer landed, once every row has one.
     finished_at = serializers.CharField(allow_null=True, required=False)
+    # When the run last moved: its last answer, or its task's last change
+    # (a start, a pause). History tells a live run that has stopped moving
+    # by it, without asking Temporal about each run.
+    last_activity_at = serializers.CharField(allow_null=True, required=False)
     # Runs started from the Ask page: who started it, what it was expected to
     # cost, and how big the view it sampled was.
     created_by = serializers.CharField(allow_null=True, required=False)
@@ -183,6 +189,12 @@ def _answer_tally(task_ids: list[str], out: dict[str, list]) -> None:
 
 
 FINISHED = frozenset({"completed", "failed", "paused"})
+
+
+def _latest(*times) -> str | None:
+    """The latest of these times (naive ones are UTC), as ISO 8601."""
+    known = [t if t.tzinfo else t.replace(tzinfo=UTC) for t in times if t]
+    return _iso(max(known)) if known else None
 
 
 def _history_status(task, run, pending: int) -> str:
@@ -366,6 +378,7 @@ class InstantEvalRunsView(InstantEvalLicenseRequired, APIView):
                     "answered": settled,
                     "pending": pending,
                     "finished_at": _iso(last_update) if not pending else None,
+                    "last_activity_at": _latest(last_update, task.updated_at),
                     "created_by": (
                         (run.created_by.name or run.created_by.email)
                         if run is not None and run.created_by
