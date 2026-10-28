@@ -5,7 +5,14 @@ import { Box, Stack, Typography, IconButton, Tooltip, Checkbox } from "@mui/mate
 
 import Iconify from "src/components/iconify";
 import ScenarioDetail from "./ScenarioDetail";
-import { SCENARIOS_COPY } from "./scenarios.constants";
+import { UnsavedMark } from "./ScenarioTableCells";
+import {
+  SCENARIOS_COPY,
+  hasUnsavedChange,
+  isUnsavedAddition,
+  selectableRowIds,
+  unsavedCheckboxProps,
+} from "./scenarios.constants";
 import { ENV_SHAPE, GROUP_SHAPE } from "./scenarios.shapes";
 
 // A seeded-from-template env is read-only until forked; the per-row edit/delete
@@ -57,7 +64,7 @@ function CollapsibleGroup({ group, env, onEdit, onRemove, onHideGroup, selection
   // Selection is opt-in and drops out entirely on a locked template, mirroring
   // the table. The group-header checkbox selects just this group's visible rows.
   const selectable = !!selection && !locked;
-  const groupIds = group.rows.map((r) => r.id).filter(Boolean);
+  const groupIds = selectableRowIds(group.rows);
   const groupState = selectable ? selection.pageState(groupIds) : null;
 
   return (
@@ -148,7 +155,10 @@ function CollapsibleGroup({ group, env, onEdit, onRemove, onHideGroup, selection
                   <Box component="span" sx={{ display: "inline-flex", mt: 1.25, ml: 1.5, mr: 0.5, flexShrink: 0 }}>
                     <Checkbox
                       size="small"
-                      checked={selection.isSelected(s.id)}
+                      checked={
+                        !isUnsavedAddition(s) && selection.isSelected(s.id)
+                      }
+                      {...unsavedCheckboxProps(s)}
                       onChange={() => selection.toggle(s.id)}
                       aria-label={`Select ${s.name || s.title || "scenario"}`}
                       sx={selectableCheckboxSx}
@@ -156,6 +166,11 @@ function CollapsibleGroup({ group, env, onEdit, onRemove, onHideGroup, selection
                   </Box>
                 )}
                 <Box sx={{ flex: 1, minWidth: 0 }}>
+                  {hasUnsavedChange(s) && (
+                    <Box sx={{ px: 1.5, pt: 1 }}>
+                      <UnsavedMark row={s} />
+                    </Box>
+                  )}
                   <ScenarioDetail row={s} env={env} />
                 </Box>
                 <Tooltip arrow title={locked ? LOCK_TOOLTIP : SCENARIOS_COPY.editLabel}>

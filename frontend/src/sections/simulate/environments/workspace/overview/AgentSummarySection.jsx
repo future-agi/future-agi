@@ -15,7 +15,8 @@ const providerLabel = (provider) =>
   CONNECTOR_LABEL[provider] ||
   provider;
 
-export default function AgentSummarySection({ subject }) {
+// With `onManageVersions`, a "Manage versions" action opens the agent versions.
+export default function AgentSummarySection({ subject, onManageVersions }) {
   const title = subject
     ? AGENT_SUMMARY_COPY.agentTitle(subject.name, subject.active_version)
     : AGENT_SUMMARY_COPY.noAgentTitle;
@@ -131,6 +132,21 @@ export default function AgentSummarySection({ subject }) {
             {AGENT_SUMMARY_COPY.viewAgent}
           </Button>
         )}
+        {onManageVersions && (
+          <Button
+            variant="outlined"
+            size="small"
+            color="inherit"
+            onClick={onManageVersions}
+            sx={{
+              typography: "s2",
+              fontWeight: "fontWeightBold",
+              flexShrink: 0,
+            }}
+          >
+            {AGENT_SUMMARY_COPY.manage}
+          </Button>
+        )}
       </Stack>
     </Box>
   );
@@ -143,4 +159,5 @@ AgentSummarySection.propTypes = {
     versions_count: PropTypes.number,
     active_version: PropTypes.string,
   }),
+  onManageVersions: PropTypes.func,
 };

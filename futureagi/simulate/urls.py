@@ -104,6 +104,7 @@ from .views.agent_version import (
 )
 from .views.alk_simulate_ingestion import ALKSimulateIngestionViewSet
 from .views.harness_environment import HarnessEnvironmentViewSet
+from .views.harness_github_webhook import HarnessGitHubWebhookView
 from .views.harness_job import HarnessJobViewSet
 from .views.hosted_harness import (
     HostedHarnessAttemptViewSet,
@@ -208,6 +209,11 @@ urlpatterns = [
         "api/harness/ingress/<str:token>/<path:target_path>",
         HostedHarnessIngressProxyView.as_view(),
         name="hosted-harness-ingress-proxy-path",
+    ),
+    path(
+        "api/harness/github/webhook/",
+        HarnessGitHubWebhookView.as_view(),
+        name="hosted-harness-github-webhook",
     ),
     # Persona duplicate endpoint with custom URL pattern
     path(
