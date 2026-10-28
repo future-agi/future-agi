@@ -1672,7 +1672,8 @@ export const dashboardRoutes = (
     },
   ];
 
-  if (isOwner || isAdmin) {
+  // Members bootstrap personal keys; the API scopes each caller's visible rows.
+  if (isOwner || isAdmin || user?.org_level >= 1) {
     dashboardChildren.push({
       path: "keys",
       element: <DevKeysPage />,

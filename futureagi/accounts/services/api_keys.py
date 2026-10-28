@@ -10,14 +10,13 @@ from accounts.services.workspace_membership import resolve_org_membership
 from tfc.constants.levels import Level
 
 
-def system_key_principal(organization):
+def system_key_principal(organization: Organization) -> User:
     """Resolve system credentials to a current Owner, never a home-org guess."""
     membership = (
         OrganizationMembership.no_workspace_objects.filter(
             organization=organization,
             is_active=True,
             user__is_active=True,
-            user__deleted=False,
         )
         .filter(Q(level__gte=Level.OWNER) | Q(level__isnull=True, role="Owner"))
         .select_related("user", "user__organization")

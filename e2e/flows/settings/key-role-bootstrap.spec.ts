@@ -106,8 +106,10 @@ test('SET-E2E-004: key access follows the current organization role and removal'
         expect(row.api_key).toMatch(/^.{4}\*{10}.{4}$/);
         expect(row.secret_key).toMatch(/^.{4}\*{10}.{4}$/);
         const uiRow = page.locator(`[role="row"][data-id="${row.id}"]`);
-        await expect(uiRow.locator('[data-field="key_name"]'), 'B: exact allowed key name')
-          .toHaveText(wrong === 'ui-rows' ? `${row.key_name}-wrong` : row.key_name, { timeout: UI_READY });
+        await expect(uiRow.locator('[data-field="key_name"]'))
+          .toHaveText(row.key_name, { timeout: UI_READY });
+        expect(await uiRow.locator('[data-field="key_name"]').innerText(), 'B: exact allowed key name')
+          .toBe(wrong === 'ui-rows' ? `${row.key_name}-wrong` : row.key_name);
         await expect(uiRow.locator('[data-field="api_key"]')).toHaveText(row.api_key, { timeout: UI_READY });
         await expect(uiRow.locator('[data-field="secret_key"]')).toHaveText(row.secret_key, { timeout: UI_READY });
       }

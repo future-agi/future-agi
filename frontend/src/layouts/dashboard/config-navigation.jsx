@@ -137,7 +137,7 @@ export function useNavData() {
         },
       },
     ];
-    if (isOwner || isAdmin) {
+    if (isOwner || isAdmin || user?.org_level >= 1) {
       buildItems.push({
         title: "Keys",
         path: paths.dashboard.keys,
@@ -271,7 +271,13 @@ export function useNavData() {
     });
 
     return sections;
-  }, [isOwner, isAdmin, agentsPath, restrictSimulateToEnvironments]);
+  }, [
+    isOwner,
+    isAdmin,
+    user?.org_level,
+    agentsPath,
+    restrictSimulateToEnvironments,
+  ]);
   return data;
 }
 
