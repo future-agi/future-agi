@@ -33,6 +33,8 @@ const fakes = vi.hoisted(() => ({
   // The rows a filter selects, when more than the run's records.
   rowsTotal: null,
   saved: [],
+  // Why History couldn't be read, when it couldn't.
+  historyError: null,
 }));
 
 vi.mock("src/components/iconify", () => ({ default: () => null }));
@@ -104,7 +106,8 @@ vi.mock("../../useInstantEval", async (importOriginal) => ({
   useInstantEvalHistory: () => ({
     runs: fakes.runs,
     isLoading: false,
-    isError: false,
+    isError: Boolean(fakes.historyError),
+    error: fakes.historyError,
     hasMore: false,
     loadMore: () => {},
     refetch: () => {},
@@ -458,6 +461,7 @@ beforeEach(() => {
   fakes.keep = [];
   fakes.rowsTotal = null;
   fakes.saved = QUESTIONS;
+  fakes.historyError = null;
   globalThis.sessionStorage?.clear?.();
   globalThis.localStorage?.clear?.();
 });
@@ -1319,6 +1323,56 @@ describe("the Ask page", () => {
       fireEvent.click(screen.getByRole("button", { name: "Retry 30 rows" }));
     });
     expect(fakes.control).toHaveBeenCalledWith("retry_failed", {});
+  });
+});
+
+describe("a run whose project was deleted", () => {
+  const NOT_FOUND = { statusCode: 404, result: "Project not found" };
+  const gone = () => ({
+    ...runOf({ total: 0, answered: 0, records: null }),
+    status: "error",
+    summary: null,
+    questions: [],
+    error: NOT_FOUND,
+  });
+
+  it("says so once, without a retry that can't help", () => {
+    fakes.askRuns["task-sessions"] = gone();
+    fakes.historyError = NOT_FOUND;
+    renderAt(
+      `/dashboard/observe/${PROJECT}/ask?run=task-sessions&unit=sessions&tab=sessions`,
+    );
+    expect(
+      screen.getByText(
+        "This run can't be opened. It or its project was deleted, or it belongs to another organization.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(screen.queryByText(/Answering 0 of 0/)).toBeNull();
+    expect(screen.queryByText(/couldn't be loaded/)).toBeNull();
+  });
+
+  it("keeps the retry for a read that failed on the way", () => {
+    fakes.askRuns["task-sessions"] = {
+      ...gone(),
+      error: { statusCode: 503 },
+    };
+    renderAt(
+      `/dashboard/observe/${PROJECT}/ask?run=task-sessions&unit=sessions&tab=sessions`,
+    );
+    expect(screen.getByText(/This run couldn't be loaded/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+  });
+
+  it("says so with no run chosen, rather than inviting a first question", () => {
+    fakes.historyError = NOT_FOUND;
+    renderAt(`/dashboard/observe/${PROJECT}/ask?unit=sessions&tab=sessions`);
+    expect(
+      screen.getByText(
+        "This project's questions can't be opened. It was deleted, or it belongs to another organization.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Ask Jev a question about each row")).toBeNull();
   });
 });
 

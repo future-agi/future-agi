@@ -62,7 +62,7 @@ import {
 } from "./askFilter";
 import { MAX_HANDOVER } from "./askPopulation";
 import { downloadRowsCsv, fetchRowIds, useAskRows } from "./useAskRows";
-import { RERUNNABLE_STATES } from "./useAskRun";
+import { RERUNNABLE_STATES, isNotFound } from "./useAskRun";
 import {
   GRID_LINK_MAX,
   answerGridLink,
@@ -1062,7 +1062,10 @@ export default function AskRunView({
                 title={question?.fullQuestion || undefined}
                 sx={{ fontSize: 22, lineHeight: "30px", fontWeight: 600 }}
               >
-                {question?.question || <Skeleton variant="text" width={420} />}
+                {question?.question ||
+                  (run.status !== "error" && (
+                    <Skeleton variant="text" width={420} />
+                  ))}
               </Typography>
               {question && (
                 <Chip
@@ -1353,7 +1356,13 @@ export default function AskRunView({
           />
         )}
 
-        {run.status === "error" ? (
+        {run.status === "error" && isNotFound(run.error) ? (
+          // Deleted (or another organization's): a retry won't bring it back.
+          <Alert severity="error">
+            This run can&apos;t be opened. It or its project was deleted, or it
+            belongs to another organization.
+          </Alert>
+        ) : run.status === "error" ? (
           <Alert
             severity="error"
             action={

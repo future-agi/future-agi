@@ -5,14 +5,16 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { palette } from "src/theme/palette";
 
-const history = vi.hoisted(() => ({ runs: [] }));
+const history = vi.hoisted(() => ({ runs: [], error: null }));
 vi.mock("src/components/iconify", () => ({ default: () => null }));
 vi.mock("../../useInstantEval", async (importOriginal) => ({
   ...(await importOriginal()),
   useInstantEvalHistory: () => ({
     runs: history.runs,
     isLoading: false,
-    isError: false,
+    isError: Boolean(history.error),
+    error: history.error,
+    refetch: vi.fn(),
   }),
 }));
 import AskRail from "../AskRail";
@@ -61,6 +63,7 @@ function renderRail(onRecreate = vi.fn(), props = {}) {
 }
 beforeEach(() => {
   history.runs = [];
+  history.error = null;
 });
 
 describe("history recovery", () => {
@@ -176,5 +179,23 @@ describe("the open run's card while it is answered", () => {
       openProgress: { taskId: "other-task", settled: 2, total: 49 },
     });
     expect(screen.getByText(/8 of 49 answered/)).toBeInTheDocument();
+  });
+});
+
+describe("History that can't be read", () => {
+  it("offers no retry for a project that is gone", () => {
+    history.error = { statusCode: 404, result: "Project not found" };
+    renderRail();
+    expect(screen.getByText("No past questions to show.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+
+  it("offers a retry for a read that failed on the way", () => {
+    history.error = { statusCode: 503 };
+    renderRail();
+    expect(
+      screen.getByText(/Past questions couldn't be loaded/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
   });
 });

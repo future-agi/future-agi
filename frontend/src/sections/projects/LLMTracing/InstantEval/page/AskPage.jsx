@@ -48,7 +48,7 @@ import { draftsFromQuestions } from "../instantEvalUnits";
 import AskComposer from "./AskComposer";
 import AskRail from "./AskRail";
 import AskRunView from "./AskRunView";
-import { RERUNNABLE_STATES, useAskRun } from "./useAskRun";
+import { RERUNNABLE_STATES, isNotFound, useAskRun } from "./useAskRun";
 import { rerunScope, seedScope } from "./askScope";
 import {
   ASK_RUN_PARAM,
@@ -607,6 +607,16 @@ export default function AskPage() {
         configsLoading={saved.isLoading}
         onProgress={setOpenProgress}
       />
+    );
+  } else if (latest.isError) {
+    content = (
+      <Box sx={{ px: 3, pt: 2.5, maxWidth: 1180, mx: "auto" }}>
+        <Alert severity="error">
+          {isNotFound(latest.error)
+            ? "This project's questions can't be opened. It was deleted, or it belongs to another organization."
+            : "Past questions couldn't be loaded. Try again in a moment."}
+        </Alert>
+      </Box>
     );
   } else if (!latest.isLoading && !latest.runs.length) {
     content = <Welcome onNew={startOver} />;

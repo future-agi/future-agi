@@ -38,12 +38,21 @@ export const livePollMs = (lastMs) =>
 // case it wasn't stopped after all.
 export const STALLED_POLL_MS = 15000;
 
+const statusOf = (error) =>
+  Number(error?.statusCode ?? error?.response?.status ?? 0);
+
 /** Retry a failed read twice, unless the server refused it (4xx). */
 export const retryServerErrors = (failureCount, error) => {
-  const code = Number(error?.statusCode ?? error?.response?.status ?? 0);
+  const code = statusOf(error);
   if (code >= 400 && code < 500) return false;
   return failureCount < 2;
 };
+
+/**
+ * The server has no such run or project for this organization (deleted, or
+ * another organization's): retrying won't bring it back.
+ */
+export const isNotFound = (error) => statusOf(error) === 404;
 export const SQUARES_MAX = 1500;
 const TICK_MS = 1000;
 const LIVE = new Set(["pending", "running"]);

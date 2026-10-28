@@ -22,7 +22,7 @@ import { formatAgo } from "../instantEvalUnits";
 import { answerColor } from "../results/answerColors";
 import { dayGroup } from "./askFormat";
 import { sourceViewTitle } from "./askLinks";
-import { displayQuestions } from "./useAskRun";
+import { displayQuestions, isNotFound } from "./useAskRun";
 import { answeredSplit, savedAnswerCount } from "./askFilter";
 
 const ASK_RAIL_WIDTH = 320;
@@ -420,6 +420,11 @@ export default function AskRail({
               <Skeleton key={key} variant="rounded" height={88} />
             ))}
           </Stack>
+        ) : history.isError && isNotFound(history.error) ? (
+          // The run's page says why; a retry won't bring the project back.
+          <Typography variant="body2" color="text.secondary">
+            No past questions to show.
+          </Typography>
         ) : history.isError ? (
           <Typography variant="body2" color="error.main">
             Past questions couldn&apos;t be loaded.{" "}

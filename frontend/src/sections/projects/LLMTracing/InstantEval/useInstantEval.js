@@ -721,6 +721,8 @@ export function useInstantEvalHistory(
     getNextPageParam: (last) => (last.hasMore ? last.page + 1 : undefined),
     staleTime: 10_000,
     refetchInterval: (current) => historyRefetchMs(current.state.data?.pages),
+    // The rail and the page say what went wrong; a toast would say it again.
+    meta: { errorHandled: true },
   });
   const runs = useMemo(
     () =>
@@ -734,6 +736,7 @@ export function useInstantEvalHistory(
     runs,
     isLoading: query.isLoading,
     isError: query.isError,
+    error: query.error,
     hasMore: Boolean(query.hasNextPage),
     isFetchingMore: query.isFetchingNextPage,
     loadMore: query.fetchNextPage,

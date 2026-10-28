@@ -1,7 +1,11 @@
 import React from "react";
 import PropTypes from "prop-types";
 import { act, renderHook } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  QueryCache,
+  QueryClient,
+  QueryClientProvider,
+} from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), read: vi.fn() }));
@@ -814,6 +818,29 @@ describe("History", () => {
     await vi.waitFor(() => expect(result.current.hasMore).toBe(true));
     await act(() => result.current.loadMore());
     expect(http.get.mock.calls.at(-1)[1].params.page_number).toBe(1);
+  });
+
+  it("leaves a failed read to the page, with no toast of its own", async () => {
+    // A deleted project: the app's query cache toasts any read that doesn't
+    // say it handles its own failure.
+    const notFound = { statusCode: 404, result: "Project not found" };
+    http.get.mockRejectedValue(notFound);
+    const toasts = vi.fn();
+    const client = new QueryClient({
+      queryCache: new QueryCache({
+        onError: (error, query) => {
+          if (!query.options.meta?.errorHandled) toasts(error);
+        },
+      }),
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { result } = renderHook(
+      () => useInstantEvalHistory("p1", configsById),
+      { wrapper: wrapperFor(client) },
+    );
+    await vi.waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.error).toBe(notFound);
+    expect(toasts).not.toHaveBeenCalled();
   });
 });
 
