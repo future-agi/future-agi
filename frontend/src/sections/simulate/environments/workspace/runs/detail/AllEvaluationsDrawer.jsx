@@ -25,6 +25,7 @@ import {
 import {
   runAnalyticsKey,
   callDetailKeyPrefix,
+  compareRunsKeyPrefix,
   runResultsKey,
 } from "src/api/simulate-environments/runEvals";
 import SideDrawer from "../../../components/SideDrawer";
@@ -160,6 +161,7 @@ export default function AllEvaluationsDrawer({
     queryClient.invalidateQueries({
       queryKey: runAnalyticsKey(executionId),
     });
+    queryClient.invalidateQueries({ queryKey: compareRunsKeyPrefix });
     // Call rows are built from the live catalog, and a drawer keeps
     // its detail for minutes: reopened, it must not list the removed eval.
     queryClient.invalidateQueries({ queryKey: callDetailKeyPrefix });

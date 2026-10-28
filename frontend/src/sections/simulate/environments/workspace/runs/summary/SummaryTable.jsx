@@ -18,6 +18,7 @@ import SoonChip from "../../../components/SoonChip";
 import { runColor } from "../runs.constants";
 import StatusChip from "../StatusChip";
 import StopRunControl from "../StopRunControl";
+import AgentDiffersTag from "../../run/AgentDiffersTag";
 import {
   deltaAgainst,
   evalMetric,
@@ -196,9 +197,9 @@ function SummaryRow({ row, evals, onOpenRun, picked, onToggle, baseline }) {
     onToggle?.(row);
   };
 
-  // The run's own agent version (per-execution, real). The environment version
-  // is deliberately NOT shown per row: there is no per-run env version, so
-  // stamping the current one onto every run misrepresents what each ran against.
+  // The run's own agent version (per-execution, real). A run pinned to an
+  // environment version whose agent differs is tagged; its versions show on
+  // the run's own page.
   const sub = row.agentVersion ? `agent ${row.agentVersion}` : "";
   const scenarios =
     row.scenarioCount == null
@@ -274,6 +275,12 @@ function SummaryRow({ row, evals, onOpenRun, picked, onToggle, baseline }) {
                 {row.label}
                 {sub ? ` · ${sub}` : ""}
               </Typography>
+              {row.agentDiffers && (
+                <AgentDiffersTag
+                  agentVersion={row.pinnedAgentVersion}
+                  environmentVersion={row.environmentVersion}
+                />
+              )}
               {isBaseline && (
                 <Typography
                   sx={{

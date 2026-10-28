@@ -51,18 +51,6 @@ func ExtractStreamFromBody(body []byte) bool {
 	return m.Stream
 }
 
-// ExtractRunUsage parses the "usage" object from a run response body.
-// Returns nil if no usage field is present or run is not completed.
-func ExtractRunUsage(body []byte) *AssistantsRunUsage {
-	var m struct {
-		Usage *AssistantsRunUsage `json:"usage"`
-	}
-	if err := json.Unmarshal(body, &m); err != nil {
-		return nil
-	}
-	return m.Usage
-}
-
 // ExtractMessageContent extracts text content from a Create Message request body.
 // Content can be a string or an array of content parts.
 func ExtractMessageContent(body []byte) string {

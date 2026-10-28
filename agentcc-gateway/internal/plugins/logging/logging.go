@@ -61,7 +61,9 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 	}
 
 	// Skip logging for requests without a model (e.g., health checks that somehow enter the pipeline).
-	if rc.Model == "" && rc.Request == nil {
+	// An endpoint's own calls always name it, a vector-store write or a run on
+	// the assistant's model among them.
+	if rc.Model == "" && rc.Request == nil && rc.EndpointType == "" {
 		return pipeline.ResultContinue()
 	}
 

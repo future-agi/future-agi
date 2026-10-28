@@ -15,6 +15,7 @@ describe("workspace tab constants", () => {
       "scenarios",
       "evals",
       "runs",
+      "versions",
       "settings",
     ]);
   });

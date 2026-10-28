@@ -244,63 +244,68 @@ describe("Change agent drawer", () => {
   });
 });
 
-const renderLine = (subject, route = "/x") =>
+const renderLine = (subject, route = "/x", props = {}) =>
   renderWithRouter(
-    <AgentLine
-      subject={subject}
-      agentMode="connect_only"
-      envId="env-1"
-      envName="Returns line"
-      onChangeAgent={vi.fn()}
-    />,
+    withClient(
+      <AgentLine
+        subject={subject}
+        agentMode="connect_only"
+        envId="env-1"
+        onChangeAgent={vi.fn()}
+        {...props}
+      />,
+    ),
     { route },
   );
 
 describe("Agent line flows", () => {
-  it("Default to production and Try vN open the switch dialog flagged", async () => {
-    const spies = writes();
+  it("never offers a sample Try vN or Default to production", () => {
     renderLine(
       { ...SUBJECT, versions_count: 3, active_version: "v2" },
       "/x?uiSample=agentversion",
     );
-
-    fireEvent.click(screen.getByRole("button", { name: "Try v3" }));
-    let dialog = screen.getByRole("dialog");
-    expect(
-      within(dialog).getByText("Make v3 the default in Returns line?"),
-    ).toBeInTheDocument();
-    expect(within(dialog).getByText("UI only")).toBeInTheDocument();
-    fireEvent.click(
-      within(dialog).getByRole("button", { name: "Make v3 the default" }),
-    );
-    expect(enqueueSnackbar).toHaveBeenCalledWith(UI_ONLY_SAVED, {
-      variant: "info",
-    });
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-
-    fireEvent.click(
-      screen.getByRole("button", { name: "Default to production" }),
-    );
-    dialog = screen.getByRole("dialog");
-    expect(
-      within(dialog).getByText("Make production the default in Returns line?"),
-    ).toBeInTheDocument();
-    expect(within(dialog).getByText("UI only")).toBeInTheDocument();
-    expect(document.body.textContent).not.toMatch(/—/);
-    spies.forEach((s) => expect(s).not.toHaveBeenCalled());
-  });
-
-  it("never guesses a newer version on a real agent: Try vN is sample only", () => {
-    renderLine({ ...SUBJECT, versions_count: 3, active_version: "v2" });
-    expect(screen.queryByRole("button", { name: /^Try v/ })).toBeNull();
-  });
-
-  it("shows no Try or Default to production on a real agent without a newer version", () => {
-    renderLine(SUBJECT);
     expect(screen.queryByRole("button", { name: /^Try v/ })).toBeNull();
     expect(
       screen.queryByRole("button", { name: "Default to production" }),
     ).toBeNull();
+  });
+
+  it("states the real default agent version while versioning is on", async () => {
+    vi.spyOn(axios, "get").mockResolvedValue({
+      data: {
+        agent: [
+          { id: "av2", label: "v2", is_default: true, status: "active" },
+          { id: "av1", label: "v1", status: "active" },
+        ],
+        environment: [],
+        suite: [],
+      },
+    });
+    renderLine(SUBJECT, "/x", { versioningEnabled: true });
+    expect(
+      await screen.findByText((_, el) =>
+        el?.tagName === "P" && /· default v2$/.test(el.textContent),
+      ),
+    ).toBeInTheDocument();
+    axios.get.mockRestore();
+  });
+
+  it("states no default agent version while versioning is off", () => {
+    renderLine(SUBJECT);
+    expect(document.body.textContent).not.toMatch(/default/);
+  });
+
+  it("Manage versions and Sync agent open the agent versions when offered", () => {
+    const onManageVersions = vi.fn();
+    renderLine(SUBJECT, "/x", { onManageVersions });
+    fireEvent.click(screen.getByRole("button", { name: "Manage versions" }));
+    expect(onManageVersions).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Agent actions" }));
+    const sync = screen.getByRole("menuitem", { name: /Sync agent/ });
+    expect(within(sync).queryByText("UI only")).toBeNull();
+    fireEvent.click(sync);
+    expect(onManageVersions).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("⋯ Sync agent opens the sync dialog flagged", () => {

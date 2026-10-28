@@ -14,8 +14,13 @@ import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 import SoonChip from "../../components/SoonChip";
 import UiOnlyFlag from "../../components/UiOnlyFlag";
 import { UI_ONLY_SAVED } from "../gaps/NeedsInputButton";
-import { ClampCell, TruncTooltip } from "./ScenarioTableCells";
-import { ROW_HEIGHTS, SCENARIOS_COPY } from "./scenarios.constants";
+import { ClampCell, TruncTooltip, UnsavedMark } from "./ScenarioTableCells";
+import {
+  ROW_HEIGHTS,
+  SCENARIOS_COPY,
+  isUnsavedAddition,
+  unsavedCheckboxProps,
+} from "./scenarios.constants";
 import { personaSubline } from "./personaLabels";
 import { GROUP_SHAPE, SCENARIO_SHAPE } from "./scenarios.shapes";
 
@@ -386,7 +391,8 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onOpen, 
                       <TableCell padding="checkbox" sx={pinnedSelectCellSx} onClick={stopRowClick}>
                         <Checkbox
                           size="small"
-                          checked={rowChecked(row.id)}
+                          checked={!isUnsavedAddition(row) && rowChecked(row.id)}
+                          {...unsavedCheckboxProps(row)}
                           onChange={() => toggle(row.id)}
                           sx={selectableCheckboxSx}
                         />
@@ -410,6 +416,7 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onOpen, 
                             </Box>
                           </Tooltip>
                         )}
+                        <UnsavedMark row={row} />
                       </Stack>
                     </TableCell>
                     <TableCell sx={{ overflow: "hidden", verticalAlign: "top" }}>

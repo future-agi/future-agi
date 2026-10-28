@@ -14,6 +14,7 @@ import SettingsPanel from "./settings/SettingsPanel";
 import WorldPanel from "./world/WorldPanel";
 import RunsEmptyState from "./runs/RunsEmptyState";
 import useRunRepeats from "./run/useRunRepeats";
+import VersionsPanel from "./versions/VersionsPanel";
 import WorkspaceTabLabel from "./WorkspaceTabLabel";
 import { WORKSPACE_TABS } from "./workspace.constants";
 
@@ -73,7 +74,11 @@ export default function WorkspacePanels({
     ? overviewCounts?.runs ?? 0
     : runCount ?? runs.length;
   // Runs is always in the rail; before the first run it offers the baseline.
-  const tabs = WORKSPACE_TABS;
+  // Versions appears only while versioning is switched on for this environment.
+  const showVersions = Boolean(env?.versioning?.enabled);
+  const tabs = WORKSPACE_TABS.filter(
+    (t) => t.id !== "versions" || showVersions,
+  );
   const [repeats] = useRunRepeats(envState, patch);
   const noRuns = !runsLoading && runsTotal === 0;
 
@@ -134,9 +139,11 @@ export default function WorkspacePanels({
           );
         // The summary's eval columns come from the runs' own scores, so it
         // only needs the store for its scenario count.
-        return <RunsSummary env={env} envState={envState} onOpenRun={openRun} onGo={go} />;
+        return <RunsSummary key={env.id} env={env} envState={envState} onOpenRun={openRun} onGo={go} />;
+      case "versions":
+        return <VersionsPanel env={env} />;
       case "settings":
-        return <SettingsPanel env={env} envState={envState} patch={patch} locked={locked} backed={backed} />;
+        return <SettingsPanel env={env} envState={envState} patch={patch} locked={locked} backed={backed} onGo={go} />;
       default:
         return (
           // The next-steps checklist's "Add evaluations" step and its CTA
@@ -147,7 +154,6 @@ export default function WorkspacePanels({
           <OverviewPanel
             env={env}
             envState={serverEnvState}
-            patch={patch}
             onGo={go}
             agentConnected={!!envState?.agent}
             locked={locked}
@@ -206,6 +212,7 @@ WorkspacePanels.propTypes = {
       runTestId: PropTypes.string,
       testExecutionId: PropTypes.string,
     }),
+    versioning: PropTypes.shape({ enabled: PropTypes.bool }),
   }).isRequired,
   envState: PropTypes.shape({
     agent: PropTypes.shape({ name: PropTypes.string }),

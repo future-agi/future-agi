@@ -238,6 +238,8 @@ export default function RepoForm({ onBusyChange }) {
               placeholder="src/agent/index.ts"
             />
           </Box>
+          {/* TODO: hide Private once creation knows versioning is on: it then refuses
+              private repositories (github_private_unsupported, shown on Build). */}
           <Box>
             <Label>Visibility</Label>
             <Box

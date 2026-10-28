@@ -11,8 +11,9 @@ import {
 
 /*
   The drawer must send exactly what the old Build tab sent. The tab's requests
-  were recorded from its panels before they were removed (fixtures/
-  buildTabRequests.json). Each case fills the drawer's form with the values
+  were recorded from its panels (fixtures/buildTabRequests.json), last from
+  dev's panels when environments started sending credential values write-only
+  with preflight and create instead of exchanging them for secret refs. Each case fills the drawer's form with the values
   the recording used, runs preflight (and, for the repo, the build), and
   compares what it sends with the recording.
 */

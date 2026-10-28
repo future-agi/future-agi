@@ -4,6 +4,7 @@ import { Box, Stack, Typography, Grid } from "@mui/material";
 import { getSurface } from "src/api/simulate-environments/_fixtures/surfaces";
 import { contractFor } from "src/api/simulate-environments/_fixtures/contract";
 import {
+  AGENT_SUMMARY_COPY,
   CONNECTOR_LABEL,
   DIRECTION_LABEL,
   ENV_SHAPE,
@@ -21,8 +22,9 @@ import { RUN_MODE_CHIP } from "../workspace.constants";
 import AgentLine from "./AgentLine";
 import ConnectAgentBanner from "./ConnectAgentBanner";
 import ChangeAgentDrawer from "../agent/ChangeAgentDrawer";
+import SideDrawer from "../../components/SideDrawer";
+import AgentVersionsPanel from "../agents/AgentVersionsPanel";
 import SourceToSandboxMap from "./SourceToSandboxMap";
-import AgentRefreshBanner from "./AgentRefreshBanner";
 import StateSummary from "./StateSummary";
 import { UseCasesCard, AmendmentsCard } from "./OverviewCards";
 import { DependsOnCard, SeededDataCard } from "./WorldCards";
@@ -32,8 +34,9 @@ import { DependsOnCard, SeededDataCard } from "./WorldCards";
  * the agent line (or a Connect your agent banner), the four tiles and the
  * latest run, the capabilities map, use cases and amendments, then the world.
  * Facts the API doesn't have are soon chips; the map's origins and targets
- * and the agent-changed banner fill in only with their ?uiSample features.
- * Twin-backed sections are not ported.
+ * fill in only with ?uiSample=world. While versioning is on, an unlocked
+ * env's "Manage versions" opens its agent versions in a side drawer overlaid
+ * on this tab. Twin-backed sections are not ported.
  */
 // Map a real §6 contract.dependency ({name, kind, what, used_by}) to the shape
 // DependsOnCard renders ({name, kind, provides, usedBy}).
@@ -51,14 +54,15 @@ const WORLD_NOTE = {
   connect_only: "runs call a test copy in your account; its tools reach your real systems",
 };
 
-export default function OverviewPanel({ env, envState, patch, onGo, locked = false, buildMode, counts, latestRun, backedWorld }) {
+export default function OverviewPanel({ env, envState, onGo, locked = false, buildMode, counts, latestRun, backedWorld }) {
   const sampleWorld = useUiSample("world");
-  const sampleAgentChange = useUiSample("agentchange");
   const [changingAgent, setChangingAgent] = useState(false);
-  // Manage-versions drawer state — commented with the card + drawer below,
-  // to be picked up later.
-  // const [agentDrawerOpen, setAgentDrawerOpen] = useState(false);
-  // const [nestedAgentDrawer, setNestedAgentDrawer] = useState(false);
+  const [agentDrawerOpen, setAgentDrawerOpen] = useState(false);
+  // Agent versions are managed on real data, so only while versioning is on.
+  const canManageVersions = !locked && Boolean(env.versioning?.enabled);
+  const manageVersions = canManageVersions
+    ? () => setAgentDrawerOpen(true)
+    : undefined;
   const surface = getSurface(env.surface);
   const contract = contractFor(env);
   // The real connector for a backed env (envState.agent.typeId = the job poll's
@@ -123,17 +127,17 @@ export default function OverviewPanel({ env, envState, patch, onGo, locked = fal
           subject={env.testSubject}
           agentMode={env.agentMode}
           envId={env.id}
-          envName={env.name}
+          versioningEnabled={Boolean(env.versioning?.enabled)}
           onChangeAgent={locked ? undefined : () => setChangingAgent(true)}
+          onManageVersions={manageVersions}
         />
       ) : (
-        <ConnectAgentBanner onConnect={() => setChangingAgent(true)} />
+        <ConnectAgentBanner
+          onConnect={() => setChangingAgent(true)}
+          onManageVersions={manageVersions}
+        />
       )}
       <ChangeAgentDrawer open={changingAgent} onClose={() => setChangingAgent(false)} env={env} />
-
-      {/* The agent-changed banner reads sample versions, so it shows only with
-          ?uiSample=agentchange. */}
-      {!locked && sampleAgentChange && <AgentRefreshBanner env={env} envState={envState} patch={patch} />}
 
       {/* State-of-the-env summary tiles + latest run — the "how's this env doing
           right now?" answer. Each tile jumps to the tab it summarises. For a
@@ -196,6 +200,52 @@ export default function OverviewPanel({ env, envState, patch, onGo, locked = fal
           />
         </Grid>
       </Grid>
+
+      {/* Agent version-management drawer, overlaid on Overview so the user
+          never leaves the tab. Not kept mounted while closed. */}
+      {canManageVersions && (
+        <SideDrawer
+          open={agentDrawerOpen}
+          onClose={() => setAgentDrawerOpen(false)}
+          width={{ xs: "100%", sm: 720, md: 880 }}
+        >
+          <Stack sx={{ height: "100%", minHeight: 0 }}>
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={1.5}
+              sx={{
+                px: 2.5,
+                py: 1.5,
+                pr: 6,
+                borderBottom: "1px solid",
+                borderColor: "divider",
+                flexShrink: 0,
+              }}
+            >
+              <Iconify
+                icon="solar:cpu-bolt-linear"
+                width={18}
+                sx={{ color: "text.secondary" }}
+              />
+              <Box flex={1} minWidth={0}>
+                <Typography
+                  component="h2"
+                  sx={{ typography: "s1", fontWeight: "fontWeightBold" }}
+                >
+                  {AGENT_SUMMARY_COPY.label}
+                </Typography>
+                <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                  {OVERVIEW_COPY.manageVersionsSubtitle}
+                </Typography>
+              </Box>
+            </Stack>
+            <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+              <AgentVersionsPanel env={env} />
+            </Box>
+          </Stack>
+        </SideDrawer>
+      )}
     </Box>
   );
 }
@@ -203,7 +253,6 @@ export default function OverviewPanel({ env, envState, patch, onGo, locked = fal
 OverviewPanel.propTypes = {
   env: ENV_SHAPE.isRequired,
   envState: ENV_STATE_SHAPE,
-  patch: PropTypes.func,
   onGo: PropTypes.func,
   agentConnected: PropTypes.bool,
   locked: PropTypes.bool,

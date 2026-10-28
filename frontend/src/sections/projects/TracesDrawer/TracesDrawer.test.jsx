@@ -12,6 +12,7 @@ const state = vi.hoisted(() => ({
   history: null,
   scroll: null,
   fetchNext: vi.fn(),
+  totalCost: undefined,
 }));
 vi.mock("@tanstack/react-query", async (importOriginal) => {
   const actual = await importOriginal();
@@ -31,6 +32,7 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
                   session_metadata: {
                     next_session_id: "session-2",
                     previous_session_id: "session-0",
+                    total_cost: state.totalCost,
                   },
                 },
               },
@@ -119,6 +121,25 @@ describe("Session drawer navigation request", () => {
     state.placeholder = false;
     state.history = null;
     state.fetchNext.mockReset();
+    state.totalCost = undefined;
+  });
+  it.each([
+    [0.000029999999999999997, "$0.00003"],
+    [3e-8, "< $0.0000001"],
+    [2.37e-5, "$0.0000237"],
+    [0, "$0.00"],
+    [null, "N/A"],
+    [undefined, "N/A"],
+  ])("formats session cost %s without float noise or false missing values", (cost, display) => {
+    state.totalCost = cost;
+    render(
+      <TracesDrawer
+        open
+        onClose={vi.fn()}
+        rowData={{ session_id: "session-1" }}
+      />,
+    );
+    expect(screen.getByText(`Total Cost: ${display}`, { exact: true })).toBeVisible();
   });
   it.each(["project-1", null])(
     "loads the same-workspace %s session using the provider contract",

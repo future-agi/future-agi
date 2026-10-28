@@ -36,10 +36,7 @@
         "agent": {
           "connector": "auto",
           "config": {},
-          "secret_refs": {
-            "OPENAI_API_KEY": "ref-OPENAI_API_KEY",
-            "LOG_LEVEL": "ref-LOG_LEVEL"
-          }
+          "secret_refs": {}
         },
         "credential_values": {
           "OPENAI_API_KEY": "sk-test",
@@ -47,14 +44,7 @@
         }
       }
     ],
-    "secrets": [
-      [
-        {
-          "OPENAI_API_KEY": "sk-test",
-          "LOG_LEVEL": "info"
-        }
-      ]
-    ],
+    "secrets": [],
     "create": [
       {
         "schema_version": "futureagi.harness-job.v1",
@@ -91,10 +81,11 @@
         "agent": {
           "connector": "auto",
           "config": {},
-          "secret_refs": {
-            "OPENAI_API_KEY": "ref-OPENAI_API_KEY",
-            "LOG_LEVEL": "ref-LOG_LEVEL"
-          }
+          "secret_refs": {}
+        },
+        "credential_values": {
+          "OPENAI_API_KEY": "sk-test",
+          "LOG_LEVEL": "info"
         }
       },
       "idem-test"
@@ -158,9 +149,7 @@
             "inbound": false,
             "target_speaks_first": true
           },
-          "secret_refs": {
-            "VAPI_API_KEY": "ref-VAPI_API_KEY"
-          },
+          "secret_refs": {},
           "call_direction": "outbound"
         },
         "credential_values": {
@@ -168,13 +157,7 @@
         }
       }
     ],
-    "secrets": [
-      [
-        {
-          "VAPI_API_KEY": "vk-1"
-        }
-      ]
-    ]
+    "secrets": []
   },
   "retellVoice": {
     "preflight": [
@@ -198,9 +181,7 @@
             "inbound": true,
             "target_speaks_first": false
           },
-          "secret_refs": {
-            "RETELL_API_KEY": "ref-RETELL_API_KEY"
-          },
+          "secret_refs": {},
           "call_direction": "inbound"
         },
         "credential_values": {
@@ -208,13 +189,7 @@
         }
       }
     ],
-    "secrets": [
-      [
-        {
-          "RETELL_API_KEY": "rk-1"
-        }
-      ]
-    ]
+    "secrets": []
   },
   "retellChat": {
     "preflight": [
@@ -236,9 +211,7 @@
           "config": {
             "agent_id": "agent_2"
           },
-          "secret_refs": {
-            "RETELL_API_KEY": "ref-RETELL_API_KEY"
-          }
+          "secret_refs": {}
         },
         "credential_values": {
           "RETELL_API_KEY": "rk-2"
@@ -270,10 +243,7 @@
             "inbound": true,
             "target_speaks_first": true
           },
-          "secret_refs": {
-            "LIVEKIT_API_KEY": "ref-LIVEKIT_API_KEY",
-            "LIVEKIT_API_SECRET": "ref-LIVEKIT_API_SECRET"
-          },
+          "secret_refs": {},
           "call_direction": "inbound"
         },
         "credential_values": {
@@ -282,14 +252,7 @@
         }
       }
     ],
-    "secrets": [
-      [
-        {
-          "LIVEKIT_API_KEY": "lk-key",
-          "LIVEKIT_API_SECRET": "lk-secret"
-        }
-      ]
-    ]
+    "secrets": []
   },
   "phone": {
     "preflight": [

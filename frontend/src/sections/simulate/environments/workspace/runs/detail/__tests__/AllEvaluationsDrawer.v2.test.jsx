@@ -23,6 +23,7 @@ vi.mock("src/api/simulate-environments/runEvals", () => ({
   runResultsKey: (id) => ["simulation-run-results-v3", id],
   runAnalyticsKey: (id) => ["simulation-run-analytics-v3", id],
   callDetailKeyPrefix: ["simulation-call-detail-v3"],
+  compareRunsKeyPrefix: ["harness-run-compare"],
 }));
 
 const CONFIGS = [
@@ -159,6 +160,9 @@ describe("AllEvaluationsDrawer (Vel's applied evals)", () => {
     });
     expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: ["simulation-call-detail-v3"],
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["harness-run-compare"],
     });
 
     // The confirm closes once the removes are sent.

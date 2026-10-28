@@ -78,6 +78,7 @@ function renderPanel({
   patch = vi.fn(),
   backed = true,
   locked = false,
+  onGo,
 } = {}) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -92,6 +93,7 @@ function renderPanel({
           patch={patch}
           backed={backed}
           locked={locked}
+          onGo={onGo}
         />
       </QueryClientProvider>
     </MemoryRouter>,
@@ -311,13 +313,32 @@ describe("SettingsPanel v2", () => {
     );
   });
 
-  it("simulated user's model, versions, replay flag and scenarios from production are flagged or soon", () => {
+  it("Versions says versioning is off, or opens the Versions tab while it is on", () => {
+    renderPanel();
+    const off = section("Versions");
+    expect(
+      within(off).getByText("Versioning is switched off for this environment."),
+    ).toBeInTheDocument();
+    expect(within(off).queryByText("Versions soon")).toBeNull();
+    expect(within(off).queryByRole("button", { name: "Open versions" })).toBeNull();
+  });
+
+  it("opens the Versions tab from the Versions card while versioning is on", () => {
+    const onGo = vi.fn();
+    renderPanel({
+      env: { ...mappedEnv(), versioning: { enabled: true } },
+      onGo,
+    });
+    fireEvent.click(
+      within(section("Versions")).getByRole("button", { name: "Open versions" }),
+    );
+    expect(onGo).toHaveBeenCalledWith("versions");
+  });
+
+  it("simulated user's model, replay flag and scenarios from production are flagged or soon", () => {
     renderPanel();
     expect(
       within(section("Simulation defaults")).getByText("Model soon"),
-    ).toBeInTheDocument();
-    expect(
-      within(section("Versions")).getByText("Versions soon"),
     ).toBeInTheDocument();
 
     const replay = section("Replay flag");

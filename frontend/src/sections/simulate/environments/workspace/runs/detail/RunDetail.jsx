@@ -27,6 +27,7 @@ import {
 } from "src/api/simulate-environments/runDetail";
 import {
   callDetailKeyPrefix,
+  compareRunsKeyPrefix,
   runAnalyticsKey,
 } from "src/api/simulate-environments/runEvals";
 import {
@@ -46,6 +47,7 @@ import UiOnlyFlag from "../../../components/UiOnlyFlag";
 import useUiSample from "../../../hooks/useUiSample";
 import StatusChip from "../StatusChip";
 import StopRunControl from "../StopRunControl";
+import AgentDiffersTag from "../../run/AgentDiffersTag";
 import AddEvaluationDrawer from "../../evals/AddEvaluationDrawer";
 import AddEvalsDrawer from "../../evals/AddEvalsDrawer";
 import RunTraceTable from "./trace/RunTraceTable";
@@ -223,6 +225,7 @@ export default function RunDetail({
       executionStatus !== "evaluating"
     ) {
       queryClient.invalidateQueries({ queryKey: runAnalyticsKey(executionId) });
+      queryClient.invalidateQueries({ queryKey: compareRunsKeyPrefix });
       queryClient.invalidateQueries({ queryKey: callDetailKeyPrefix });
     }
   }, [executionStatus, executionId, queryClient]);
@@ -254,6 +257,26 @@ export default function RunDetail({
     : null;
   const scenarios = scenarioCount(identity, stats);
   const notScored = stats.notScored ?? 0;
+  // The agent version this run was pinned to, else the one it was recorded with.
+  const agentLabel =
+    identity?.pinnedAgentVersion?.label ?? identity?.agentVersion ?? null;
+  // The environment and scenario versions this run was pinned to, if any.
+  const pinnedLabels = [
+    identity?.environmentVersion?.label &&
+      `env ${identity.environmentVersion.label}`,
+    identity?.suiteVersion?.label && `scenarios ${identity.suiteVersion.label}`,
+  ]
+    .filter(Boolean)
+    .map((label) => ` · ${label}`)
+    .join("");
+  // A re-run starts from the versions this run used.
+  const rerunOptions = {
+    initialPicks: {
+      agent: identity?.pinnedAgentVersion?.id,
+      environment: identity?.environmentVersion?.id,
+      suite: identity?.suiteVersion?.id,
+    },
+  };
 
   // Back to whichever page opened the run (the runs tab, the compare page);
   // a run opened cold, from a pasted link, goes to its environment's runs.
@@ -285,7 +308,7 @@ export default function RunDetail({
         status: ["failed", "error"],
       });
       const keys = uniqueScenarioKeys(calls);
-      if (keys.length) onStartRun?.(keys, identity?.trials || 1);
+      if (keys.length) onStartRun?.(keys, identity?.trials || 1, rerunOptions);
       else
         enqueueSnackbar("No failing scenario could be found to re-run", {
           variant: "info",
@@ -299,7 +322,11 @@ export default function RunDetail({
     }
   };
   const runWholeAgain = () =>
-    onStartRun?.(identity?.scenarioIds || undefined, identity?.trials || 1);
+    onStartRun?.(
+      identity?.scenarioIds || undefined,
+      identity?.trials || 1,
+      rerunOptions,
+    );
 
   return (
     <Box
@@ -375,6 +402,12 @@ export default function RunDetail({
                 sx={{ typography: "s1_2" }}
               />
             )}
+            {identity?.agentDiffers && (
+              <AgentDiffersTag
+                agentVersion={identity.pinnedAgentVersion}
+                environmentVersion={identity.environmentVersion}
+              />
+            )}
             {status && <StatusChip status={status} />}
             <RunSummaryChip
               executionId={executionId}
@@ -393,7 +426,8 @@ export default function RunDetail({
             sx={{ typography: "s2", color: "text.subtitle" }}
           >
             {env.name}
-            {identity?.agentVersion ? ` · agent ${identity.agentVersion}` : ""}
+            {agentLabel ? ` · agent ${agentLabel}` : ""}
+            {pinnedLabels}
             {identity &&
               dot(
                 `${plural(scenarios, "scenario")}${
@@ -681,7 +715,12 @@ export default function RunDetail({
                     // Ticked calls re-run either inside this run (their rows are
                     // refilled in place) or as a new simulation, through the same
                     // start as any run: that one opens the new run.
-                    onRerunScenarios={onStartRun}
+                    onRerunScenarios={
+                      onStartRun
+                        ? (keys, trials) =>
+                            onStartRun(keys, trials, rerunOptions)
+                        : null
+                    }
                     onRerunInRun={rerunInRun.mutate}
                     onTickableChange={setHasTickableCalls}
                     runTrials={identity?.trials || 1}

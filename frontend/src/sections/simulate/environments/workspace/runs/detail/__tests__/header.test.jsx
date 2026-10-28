@@ -318,6 +318,11 @@ describe.each([
   });
 });
 
+// A run with no pinned versions re-runs with nothing pre-selected.
+const NO_PINS = {
+  initialPicks: { agent: undefined, environment: undefined, suite: undefined },
+};
+
 describe("run detail header", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -374,7 +379,7 @@ describe("run detail header", () => {
 
     await user.click(screen.getByRole("button", { name: "Re-run what didn't pass" }));
     await waitFor(() =>
-      expect(onStartRun).toHaveBeenCalledWith(["billing", "refund"], 3),
+      expect(onStartRun).toHaveBeenCalledWith(["billing", "refund"], 3, NO_PINS),
     );
     expect(listMatchingCalls).toHaveBeenCalledWith("ex1", {
       status: ["failed", "error"],
@@ -415,7 +420,7 @@ describe("run detail header", () => {
     await user.click(
       screen.getByRole("menuitem", { name: /Run as configured now/ }),
     );
-    expect(onStartRun).toHaveBeenCalledWith(["a", "b"], 3);
+    expect(onStartRun).toHaveBeenCalledWith(["a", "b"], 3, NO_PINS);
     expect(listMatchingCalls).not.toHaveBeenCalled();
   });
 
@@ -435,7 +440,7 @@ describe("run detail header", () => {
     await user.click(
       screen.getByRole("menuitem", { name: /Run as configured now/ }),
     );
-    expect(onStartRun).toHaveBeenCalledWith(["a", "b"], 3);
+    expect(onStartRun).toHaveBeenCalledWith(["a", "b"], 3, NO_PINS);
     expect(listMatchingCalls).not.toHaveBeenCalled();
   });
 

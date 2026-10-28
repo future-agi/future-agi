@@ -11,19 +11,21 @@ from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from simulate.serializers.harness_environment import (
+    HarnessAgentCredentialsResponseSerializer,
+)
 from simulate.serializers.harness_job import (
     HarnessJobActionSerializer,
     HarnessJobAdjustmentSerializer,
     HarnessJobCreateSerializer,
     HarnessJobExtendSerializer,
-    HarnessScenarioAmendSerializer,
     HarnessJobReadSerializer,
     HarnessPreflightResponseSerializer,
     HarnessPreflightSerializer,
     HarnessRunCreateResponseSerializer,
     HarnessRunCreateSerializer,
+    HarnessScenarioAmendSerializer,
     HarnessSecretFileUploadResponseSerializer,
-    HarnessSecretValuesResponseSerializer,
     HarnessSecretValuesSerializer,
     HarnessSourceUploadResponseSerializer,
 )
@@ -156,24 +158,25 @@ class HarnessJobViewSet(viewsets.ViewSet):
                     },
                     status=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 )
-            content = uploaded.read()
+            # Named for the error reporters' scrubbers: it holds a private key.
+            secret_content = uploaded.read()
             try:
-                document = json.loads(content.decode("utf-8"))
+                secret_document = json.loads(secret_content.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError):
                 return Response(
                     {"detail": "Google credential file must contain valid UTF-8 JSON"},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            if not isinstance(document, dict):
+            if not isinstance(secret_document, dict):
                 return Response(
                     {"detail": "Google credential JSON must contain an object"},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             required_fields = {"type", "project_id", "client_email", "private_key"}
             missing_fields = sorted(
-                field for field in required_fields if not document.get(field)
+                field for field in required_fields if not secret_document.get(field)
             )
-            if document.get("type") != "service_account" or missing_fields:
+            if secret_document.get("type") != "service_account" or missing_fields:
                 detail = (
                     "Google credential file must be service-account JSON containing "
                     "type, project_id, client_email, and private_key"
@@ -187,7 +190,7 @@ class HarnessJobViewSet(viewsets.ViewSet):
                 organization=organization,
                 name=key,
                 version="1",
-                encrypted_value=json.dumps(document, separators=(",", ":")),
+                encrypted_value=json.dumps(secret_document, separators=(",", ":")),
             )
             result = {
                 "environment_name": "GOOGLE_APPLICATION_CREDENTIALS_JSON",
@@ -197,7 +200,7 @@ class HarnessJobViewSet(viewsets.ViewSet):
                     "version": "1",
                     "purpose": "target_provider",
                 },
-                "size": len(content),
+                "size": len(secret_content),
             }
         else:
             record = store_credential_file(
@@ -215,45 +218,71 @@ class HarnessJobViewSet(viewsets.ViewSet):
 
     @validated_request(
         request_serializer=HarnessSecretValuesSerializer,
+        responses={202: HarnessAgentCredentialsResponseSerializer},
         reject_unknown_fields=True,
     )
     @action(detail=False, methods=["post"], url_path="secret-values")
     @swagger_auto_schema(
         request_body=HarnessSecretValuesSerializer,
-        responses={201: HarnessSecretValuesResponseSerializer},
+        responses={202: HarnessAgentCredentialsResponseSerializer},
     )
     def secret_values(self, request):
-        """Persist uploaded agent values encrypted and return opaque hosted refs.
+        """Make an environment's next agent version from new credential values.
 
-        Values are intentionally separate from platform/model-provider settings. They are scoped
-        to the submitting organization and only resolved inside the selected hosted job.
+        The values (and staged ``files``) are stored encrypted on the new version, which
+        is checked next and returned with 202.
         """
-        import uuid
-
-        from simulate.models import HostedHarnessSecret
-
         organization, _workspace = request_scope(request)
         if organization is None:
             return Response(
                 {"detail": "an organization is required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        refs = {}
-        for alias, value in request.validated_data["environment_values"].items():
-            key = f"harness-{alias.lower()}-{uuid.uuid4().hex}"
-            HostedHarnessSecret.objects.create(
+        return self._agent_credentials(request, organization)
+
+    @staticmethod
+    def _agent_credentials(request, organization):
+        from simulate.models import HostedHarnessJob
+        from simulate.services.harness_agent_versions import (
+            change_credentials,
+            staged_credential_files,
+        )
+        from simulate.services.harness_provider import scope_jobs
+        from simulate.services.harness_versioning.read import agent_version_item
+        from simulate.services.hosted_harness import HostedHarnessError
+
+        # Locals holding values are named for the error tracker's scrubber.
+        secret_values = request.validated_data["environment_values"]
+        environment = scope_jobs(
+            HostedHarnessJob.no_workspace_objects.filter(
                 organization=organization,
-                name=key,
-                version="1",
-                encrypted_value=value,
+                id=request.validated_data["environment_id"],
+                environment__isnull=True,
+                deleted=False,
+            ),
+            request,
+        ).first()
+        if environment is None:
+            return Response(
+                {"detail": "Environment not found"}, status=status.HTTP_404_NOT_FOUND
             )
-            refs[alias] = {
-                "manager": "platform-vault",
-                "key": key,
-                "version": "1",
-                "purpose": "target_provider",
-            }
-        return Response({"secret_refs": refs}, status=status.HTTP_201_CREATED)
+        try:
+            secret_files = staged_credential_files(
+                organization, request.validated_data.get("files") or []
+            )
+            version = change_credentials(
+                environment,
+                secret_values=secret_values,
+                secret_files=secret_files,
+                user=request.user,
+            )
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+        environment.refresh_from_db(fields=["agent_version"])
+        return Response(
+            {"agent_version": agent_version_item(environment, version)},
+            status=status.HTTP_202_ACCEPTED,
+        )
 
     @validated_request(
         request_serializer=HarnessPreflightSerializer,
@@ -308,6 +337,7 @@ class HarnessJobViewSet(viewsets.ViewSet):
     @action(detail=True, methods=["post"], url_path="scenarios/amend")
     def amend_scenarios(self, request, pk=None):
         return get_harness_provider().amend_scenarios(request, pk)
+
     @validated_request(
         request_serializer=HarnessRunCreateSerializer,
         responses={202: HarnessRunCreateResponseSerializer},

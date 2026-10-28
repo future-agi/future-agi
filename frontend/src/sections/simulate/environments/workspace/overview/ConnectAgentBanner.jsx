@@ -1,10 +1,12 @@
 import PropTypes from "prop-types";
 import { Button, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { AGENT_SUMMARY_COPY } from "./overview.constants";
 
 // Vel's no-agent banner on Overview. Connect agent opens the Change agent
-// drawer, as Vel's does; attaching the agent there is UI only.
-export default function ConnectAgentBanner({ onConnect }) {
+// drawer, as Vel's does; attaching the agent there is UI only. With
+// `onManageVersions` (versioning on), Manage versions opens the agent versions.
+export default function ConnectAgentBanner({ onConnect, onManageVersions }) {
   return (
     <Stack
       direction="row"
@@ -28,6 +30,16 @@ export default function ConnectAgentBanner({ onConnect }) {
       <Typography sx={{ typography: "s2", fontWeight: 600, flex: 1 }}>
         Connect your agent to start testing
       </Typography>
+      {onManageVersions && (
+        <Button
+          onClick={onManageVersions}
+          size="small"
+          variant="outlined"
+          sx={{ color: "text.primary", borderColor: "divider" }}
+        >
+          {AGENT_SUMMARY_COPY.manage}
+        </Button>
+      )}
       <Button
         onClick={onConnect}
         size="small"
@@ -40,4 +52,7 @@ export default function ConnectAgentBanner({ onConnect }) {
   );
 }
 
-ConnectAgentBanner.propTypes = { onConnect: PropTypes.func.isRequired };
+ConnectAgentBanner.propTypes = {
+  onConnect: PropTypes.func.isRequired,
+  onManageVersions: PropTypes.func,
+};

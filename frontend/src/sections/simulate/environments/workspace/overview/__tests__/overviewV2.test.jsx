@@ -67,10 +67,12 @@ describe("Overview, Vel's layout", () => {
       screen.getByText(
         (_, el) =>
           el?.tagName === "P" &&
-          /^Tests Uber agent v1 · Retell[^·]* · Live · $/.test(el.textContent),
+          /^Tests Uber agent v1 · Retell[^·]* · Live$/.test(el.textContent),
       ),
     ).toBeInTheDocument();
-    expect(screen.getByText("Default soon")).toBeInTheDocument();
+    // With versioning off there is no default agent version to state.
+    expect(screen.queryByText("Default soon")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Manage versions" })).toBeNull();
     expect(screen.getByRole("link", { name: /View agent/ })).toHaveAttribute(
       "href",
       expect.stringContaining("/agents/connected/agent-1"),

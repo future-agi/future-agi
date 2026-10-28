@@ -21,6 +21,7 @@ import SurfaceIcon from "../components/SurfaceIcon";
 import LivePill from "./LivePill";
 import RenameEnvironmentDialog from "./RenameEnvironmentDialog";
 import TrialsPicker from "./scenarios/TrialsPicker";
+import EnvVersionPin from "./EnvVersionPin";
 import ForkMenu from "./ForkMenu";
 import NeedsInputButton from "./gaps/NeedsInputButton";
 import RunFromCodeButton from "./code/RunFromCodeButton";
@@ -32,8 +33,8 @@ import { RUN_MODE_CHIP, WORKSPACE_COPY } from "./workspace.constants";
 // name + Live pill, the primary "Run simulation" action, and
 // (for a regular, unlocked env) the Fork overflow. Run simulation is the
 // product's own navigation — a built env opens its execution detail, otherwise
-// the product's run entry. `locked` = template-seeded until forked: the pin is
-// read-only and the overflow is hidden (Fork lives on the Overview card there).
+// the product's run entry. `locked` = template-seeded until forked: the overflow
+// is hidden (Fork lives on the Overview card there).
 export default function WorkspaceHeader({
   env,
   envState,
@@ -135,6 +136,8 @@ export default function WorkspaceHeader({
               </IconButton>
             </CustomTooltip>
           )}
+          {/* The default environment version; hidden while versioning is off. */}
+          <EnvVersionPin env={env} />
         </Stack>
       </Box>
 
@@ -269,13 +272,14 @@ WorkspaceHeader.propTypes = {
       runTestId: PropTypes.string,
       testExecutionId: PropTypes.string,
     }),
+    versioning: PropTypes.shape({ enabled: PropTypes.bool }),
   }).isRequired,
   envState: PropTypes.shape({
-    envVersions: PropTypes.arrayOf(PropTypes.shape({ label: PropTypes.string })),
-    activeEnvVersion: PropTypes.string,
     scenarios: PropTypes.arrayOf(PropTypes.any),
+    runRepeats: PropTypes.number,
   }).isRequired,
-  patch: PropTypes.func.isRequired,
+  // Saves the header's repeats into the environment's workspace state.
+  patch: PropTypes.func,
   canRun: PropTypes.bool,
   runBlockedReason: PropTypes.string,
   locked: PropTypes.bool,

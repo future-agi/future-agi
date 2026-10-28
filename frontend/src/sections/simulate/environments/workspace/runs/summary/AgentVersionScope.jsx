@@ -30,8 +30,9 @@ export function agentVersionsOf(runs = []) {
 const runsText = (n) => `${n} ${n === 1 ? "run" : "runs"}`;
 
 // The scope the Runs tab reads at: one agent version, so every number on the
-// tab (headline, chart, table) reads that version's runs alone. A per-run
-// environment version isn't in the API yet, so its select is a soon chip.
+// tab (headline, chart, table) reads that version's runs alone. Runs carry
+// the environment version they were pinned to once versioning is on, but a
+// select by it isn't built yet, so it is a soon chip.
 export default function AgentVersionScope({ runs, value, onChange, shown }) {
   const versions = useMemo(() => agentVersionsOf(runs), [runs]);
   if (!runs.length) return null;

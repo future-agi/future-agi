@@ -29,6 +29,11 @@ import AgentVersionScope from "./AgentVersionScope";
 import RunsSelectionBar from "./RunsSelectionBar";
 import WinnerDrawer from "./WinnerDrawer";
 import { countCoveredScenarios, deriveEvals } from "./summaryData";
+import RunCompare from "./RunCompare";
+
+// The in-place two-run compare from the versioning work, hidden until its
+// place in the product is decided; the compare page serves ticked runs.
+const RUN_COMPARE_ENABLED = false;
 
 // The Runs tab: the agent-version scope, the latest pass rate and the pass
 // rate across every run, with the evals as chips that draw themselves on the
@@ -61,6 +66,9 @@ export default function RunsSummary({ env, envState, onOpenRun }) {
   // Ticked summary rows, kept whole so a tick survives a page change.
   const [selected, setSelected] = useState([]);
   const [pickingWinner, setPickingWinner] = useState(false);
+  const [comparing, setComparing] = useState(false);
+  // TODO: compare is hidden until its place in the product is decided.
+  const canCompare = RUN_COMPARE_ENABLED && !!env?.versioning?.enabled;
   const [addingEvals, setAddingEvals] = useState(false);
   const baselineId = useEnvironmentsStore(
     (s) => s.byEnv[env.id]?.baselineRunId ?? null,
@@ -89,6 +97,14 @@ export default function RunsSummary({ env, envState, onOpenRun }) {
   // or the run before it when there's none (or the baseline is the latest).
   const reference =
     baseline && baseline.id !== overview.latest?.id ? baseline : overview.previous;
+
+  // A ticked run on this page reads its latest state: one no longer finished
+  // (re-graded, say) can't be compared in place.
+  const live = selected.map((s) => rows.find((r) => r.id === s.id) ?? s);
+  const comparable =
+    live.length === 2 && live.every((r) => r.runState === "finished");
+  // The newer run is the one compared; the older is what it is compared with.
+  const [current, against] = [...live].sort((a, b) => b.ordinal - a.ordinal);
 
   const toggle = (row) =>
     setSelected((prev) =>
@@ -237,7 +253,9 @@ export default function RunsSummary({ env, envState, onOpenRun }) {
               baselineId={baselineId}
               onBaseline={setBaseline}
               onCompare={() =>
-                navigate(compareUrl(env.id, selected, baselineId))
+                canCompare && comparable
+                  ? setComparing(true)
+                  : navigate(compareUrl(env.id, selected, baselineId))
               }
               onClear={() => setSelected([])}
             />
@@ -328,13 +346,25 @@ export default function RunsSummary({ env, envState, onOpenRun }) {
           onClose={() => setAddingEvals(false)}
         />
       )}
+      {canCompare && comparable && (
+        <RunCompare
+          open={comparing}
+          onClose={() => setComparing(false)}
+          env={env}
+          current={current}
+          against={against}
+        />
+      )}
     </Box>
   );
 }
 
 RunsSummary.propTypes = {
-  env: PropTypes.shape({ id: PropTypes.string, name: PropTypes.string })
-    .isRequired,
+  env: PropTypes.shape({
+    id: PropTypes.string,
+    name: PropTypes.string,
+    versioning: PropTypes.object,
+  }).isRequired,
   envState: PropTypes.shape({ scenarios: PropTypes.array }).isRequired,
   onOpenRun: PropTypes.func,
   onGo: PropTypes.func,

@@ -289,7 +289,10 @@ def engine(tmp_path, record_property):
     local = independent.LocalRMT(tmp_path / "positive-session-rmt")
     local.oracle = independent.reference.reference_session_pages
     local.execute(
-        "ALTER TABLE spans ADD COLUMN end_user_id Nullable(UUID), ADD COLUMN input String DEFAULT ''"
+        "ALTER TABLE spans ADD COLUMN end_user_id Nullable(UUID), ADD COLUMN input String DEFAULT '',"
+        # Materialized as in schema/002_spans_v2.sql; the session page's member
+        # pass reads it instead of the content.
+        " ADD COLUMN input_length UInt32 MATERIALIZED lengthUTF8(input)"
     )
     local.execute("""CREATE TABLE end_user_id_remap (
         old_id UUID, new_id UUID, version DateTime64(6, 'UTC')
@@ -528,7 +531,7 @@ def test_real_list_entrypoint_walks_typed_leaves_without_the_primary_witness(
 
     def execute(sql, params, **kwargs):
         calls.append((sql, params))
-        if "sum(cost) AS total_cost" in sql:
+        if "sum(cost) AS root_total_cost" in sql:
             return SimpleNamespace(
                 data=[
                     {

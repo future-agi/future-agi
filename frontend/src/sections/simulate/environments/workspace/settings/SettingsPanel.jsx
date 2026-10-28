@@ -38,9 +38,9 @@ export default function SettingsPanel({
   patch,
   backed = false,
   locked = false,
+  onGo,
 }) {
   const sample = useUiSample("settings");
-  const sampleVersions = useUiSample("versions");
   // §6 detail is the source of truth for the variables. Shares the
   // ["harness-environment", id] cache the Evals tab already populates.
   const detailQuery = useQuery(
@@ -178,7 +178,10 @@ export default function SettingsPanel({
 
         <EgressCard domains={egress} disabled={disabled} />
 
-        <VersionsCard disabled={disabled} sample={sample || sampleVersions} />
+        <VersionsCard
+          enabled={Boolean(env?.versioning?.enabled)}
+          onOpen={onGo ? () => onGo("versions") : undefined}
+        />
 
         <DangerZone env={env} name={currentName} canDelete={!disabled} />
       </Stack>
@@ -192,4 +195,6 @@ SettingsPanel.propTypes = {
   patch: PropTypes.func,
   backed: PropTypes.bool,
   locked: PropTypes.bool,
+  // Switches the workspace tab; Versions opens the Versions tab with it.
+  onGo: PropTypes.func,
 };

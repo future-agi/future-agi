@@ -14,9 +14,9 @@ export const UI_ONLY_FEATURES = Object.freeze({
     label: "Run estimate",
     ask: "a credit estimate and conversation cap for a run before it starts",
   },
-  environmentVersions: {
-    label: "Environment versions",
-    ask: "environment versions with history, rollback and a version per run",
+  toolFit: {
+    label: "Tools the world can't answer",
+    ask: "a check before a run for tools the agent calls that the environment can't answer, and a rebuild that adds them",
   },
   runFromCode: {
     label: "Run from code",
@@ -25,10 +25,6 @@ export const UI_ONLY_FEATURES = Object.freeze({
   connectAgent: {
     label: "Connect an agent",
     ask: "an endpoint to attach or change the agent an environment tests",
-  },
-  agentVersionDefault: {
-    label: "Default agent version",
-    ask: "a pinned default agent version per environment",
   },
   syncAgent: {
     label: "Sync agent",

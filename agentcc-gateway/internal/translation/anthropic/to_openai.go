@@ -18,7 +18,7 @@ import (
 //   - tool_result user blocks  → separate role:"tool" messages emitted before the user message
 //   - tool_use assistant blocks → message.tool_calls[]
 //   - base64 images            → data: URLs
-//   - thinking config          → Extra["anthropic_thinking_config"]
+//   - thinking config          → dropped, recorded in drops
 //   - top_k                    → dropped, recorded in drops
 //   - tool names > 64 chars    → truncated, mapping stored in Extra["tool_name_mapping"]
 func (t *Translator) RequestToCanonical(body []byte) (*models.ChatCompletionRequest, []string, error) {

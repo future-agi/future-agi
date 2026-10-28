@@ -13,54 +13,57 @@ import Iconify from "src/components/iconify";
 import { RouterLink } from "src/routes/components";
 import { VOICE_CHAT_PROVIDERS } from "src/sections/agents/constants";
 import { CONNECTED_AGENTS_PATH } from "src/sections/agent-playground/agentsTabs";
-import SoonChip from "../../components/SoonChip";
+import {
+  isVersioningDisabled,
+  useEnvironmentVersions,
+} from "src/api/simulate-environments/versions";
 import UiOnlyFlag from "../../components/UiOnlyFlag";
-import useUiSample from "../../hooks/useUiSample";
-import { RUN_MODE_CHIP } from "../workspace.constants";
+import { RUN_MODE_CHIP, VERSIONS_COPY } from "../workspace.constants";
 import AgentSyncDialog from "../agent/AgentSyncDialog";
-import SwitchVersionDialog from "../agent/SwitchVersionDialog";
-import { CONNECTOR_LABEL } from "./overview.constants";
+import { AGENT_SUMMARY_COPY, CONNECTOR_LABEL } from "./overview.constants";
 
 const providerLabel = (provider) =>
   VOICE_CHAT_PROVIDERS.find((p) => p.value === provider)?.label ||
   CONNECTOR_LABEL[provider] ||
   provider;
 
-// The newest version when the agent has one past the active version:
-// "v3" for versions_count 3 and active_version "v2".
-const newerVersion = ({ active_version: active, versions_count: count }) => {
-  const n = Number(/^v(\d+)$/.exec(active || "")?.[1]);
-  return n && count > n ? `v${count}` : null;
-};
+// " · default v2": the environment's default agent version, once the versions
+// have answered. Mounted only while versioning is on.
+function DefaultAgentVersion({ envId }) {
+  const { data, error } = useEnvironmentVersions(envId);
+  const agent = isVersioningDisabled(error) ? null : data?.defaults?.agent;
+  if (!agent) return null;
+  return (
+    <>
+      {" · default "}
+      <Box component="span" sx={{ color: "text.primary", fontWeight: 600 }}>
+        {agent.label || VERSIONS_COPY.unlabelled}
+      </Box>
+    </>
+  );
+}
 
-// Vel's agent line: "Tests <name> <version> · <provider> · Live · default:
-// production" with Try vN, View agent and a menu. Name, version and provider
-// are real; Try vN shows only with ?uiSample=agentversion. Which version
-// is the environment's default isn't in the API (soon chip), so Default to
-// production shows only with ?uiSample=agentversion. Changing the default,
-// Change agent and Sync agent have no API (UI only).
+DefaultAgentVersion.propTypes = { envId: PropTypes.string };
+
+// Vel's agent line: "Tests <name> <version> · <provider> · Live · default
+// <version>" with View agent and a menu. Name, version and provider are real.
+// While versioning is on, the default agent version is the environment's real
+// default, and Manage versions opens the agent versions (where the default
+// moves and a changed source becomes the next version), so Sync agent opens
+// them too. With versioning off there is no default to state, and Change
+// agent and Sync agent have no API (UI only).
 export default function AgentLine({
   subject,
   agentMode,
   envId,
-  envName,
+  versioningEnabled = false,
   onChangeAgent,
+  onManageVersions,
 }) {
   const [menu, setMenu] = useState(null);
   const [syncOpen, setSyncOpen] = useState(false);
-  const [switchOpen, setSwitchOpen] = useState(false);
-  // { label, follows } for the switch dialog; kept while it closes.
-  const [switchTo, setSwitchTo] = useState(null);
-  const openSwitch = (to) => {
-    setSwitchTo(to);
-    setSwitchOpen(true);
-  };
-  const sampleDefault = useUiSample("agentversion");
   const live = RUN_MODE_CHIP[agentMode]?.label;
   const source = subject.provider ? providerLabel(subject.provider) : null;
-  // Version numbers can have gaps or drafts, so a count can't name a real
-  // newer version: Try vN is sample only until the API says which is newer.
-  const newer = sampleDefault ? newerVersion(subject) : null;
   const strong = (t) => (
     <Box component="span" sx={{ color: "text.primary", fontWeight: 600 }}>
       {t}
@@ -97,42 +100,18 @@ export default function AgentLine({
           .filter(Boolean)
           .map((x) => ` · ${x}`)
           .join("")}
-        {" · "}
+        {versioningEnabled && <DefaultAgentVersion envId={envId} />}
       </Typography>
-      <SoonChip
-        label="Default" detail="Which agent version this environment runs by default when you start a run."
-        what="Which agent version this environment tests by default"
-        size="tiny"
-      />
       <Box flex={1} />
-      {newer && (
+      {onManageVersions && (
         <Button
           size="small"
           variant="outlined"
-          onClick={() => openSwitch({ label: newer, follows: false })}
+          onClick={onManageVersions}
           sx={{ color: "text.primary", borderColor: "divider", flexShrink: 0 }}
         >
-          {`Try ${newer}`}
+          {AGENT_SUMMARY_COPY.manage}
         </Button>
-      )}
-      {sampleDefault && subject.active_version && (
-        <>
-          <UiOnlyFlag feature="agentVersionDefault" />
-          <Button
-            size="small"
-            variant="outlined"
-            onClick={() =>
-              openSwitch({ label: subject.active_version, follows: true })
-            }
-            sx={{
-              color: "text.primary",
-              borderColor: "divider",
-              flexShrink: 0,
-            }}
-          >
-            Default to production
-          </Button>
-        </>
       )}
       <Button
         component={RouterLink}
@@ -174,13 +153,14 @@ export default function AgentLine({
         <MenuItem
           onClick={() => {
             setMenu(null);
-            setSyncOpen(true);
+            if (onManageVersions) onManageVersions();
+            else setSyncOpen(true);
           }}
           sx={{ gap: 1 }}
         >
           <Iconify icon="solar:refresh-linear" width={16} />
           <Typography sx={{ typography: "s2" }}>Sync agent</Typography>
-          <UiOnlyFlag feature="syncAgent" />
+          {!onManageVersions && <UiOnlyFlag feature="syncAgent" />}
         </MenuItem>
       </Menu>
       <AgentSyncDialog
@@ -189,13 +169,6 @@ export default function AgentLine({
         name={subject.name}
         sourceLabel={source}
         version={subject.active_version}
-      />
-      <SwitchVersionDialog
-        open={switchOpen}
-        onClose={() => setSwitchOpen(false)}
-        envName={envName}
-        label={switchTo?.label}
-        follows={switchTo?.follows}
       />
     </Stack>
   );
@@ -211,7 +184,10 @@ AgentLine.propTypes = {
   }).isRequired,
   agentMode: PropTypes.string,
   envId: PropTypes.string,
-  envName: PropTypes.string,
+  // Whether the environment has versioning on, so its default agent shows.
+  versioningEnabled: PropTypes.bool,
   // Opens the Change agent drawer; the menu item shows only with it.
   onChangeAgent: PropTypes.func,
+  // Opens the agent versions; Manage versions shows only with it.
+  onManageVersions: PropTypes.func,
 };

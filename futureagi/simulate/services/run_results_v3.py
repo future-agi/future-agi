@@ -27,6 +27,7 @@ from simulate.services.harness_evals import runnable_eval_config_ids
 from simulate.services.harness_scenarios import (
     authored_scenarios_for_calls,
     call_row_metadata,
+    pinned_scenarios,
 )
 from simulate.services.run_results_v3_expressions import NUMERIC_JSON_PATTERN
 from simulate.services.run_results_v3_scoring import (
@@ -314,7 +315,20 @@ def _harness_scenarios(
         call_execution_id__in=call_ids
     ):
         scenarios.setdefault(str(scenario.call_execution_id), scenario)
-    return scenarios
+    # A pinned run shows its suite version's content, as its grouping does.
+    keys = {}
+    for call in calls:
+        metadata = call_row_metadata(call)
+        if isinstance(metadata, dict):
+            keys[call.id] = metadata.get("harness_scenario_key")
+    pinned = pinned_scenarios(
+        calls, {call.id: scenarios.get(str(call.id)) for call in calls}, keys
+    )
+    return {
+        str(call_id): scenario
+        for call_id, scenario in pinned.items()
+        if scenario is not None
+    }
 
 
 ROW_DIMENSION_COLUMNS = (

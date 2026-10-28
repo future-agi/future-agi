@@ -99,7 +99,7 @@ describe("Vapi and Retell", () => {
 });
 
 describe("LiveKit", () => {
-  it("sends the URL, the agent name and the prompt, and exchanges key and secret", async () => {
+  it("sends the URL, the agent name and the prompt, and the key and secret write-only", async () => {
     render(<LiveKitForm />);
     type("LiveKit server URL", "wss://demo.livekit.cloud");
     typeSecret("Paste the key", "lk-key");
@@ -109,7 +109,9 @@ describe("LiveKit", () => {
     type("System prompt", "You handle returns.");
     runPreflight();
     await waitFor(() => expect(preflightHarnessJob).toHaveBeenCalled());
-    expect(storeHarnessSecretValues).toHaveBeenCalledWith({
+    // Sent write-only with the preflight, never exchanged for stored refs.
+    expect(storeHarnessSecretValues).not.toHaveBeenCalled();
+    expect(preflightHarnessJob.mock.calls[0][0].credential_values).toEqual({
       LIVEKIT_API_KEY: "lk-key",
       LIVEKIT_API_SECRET: "lk-secret",
     });

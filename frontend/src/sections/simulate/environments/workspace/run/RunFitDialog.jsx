@@ -40,7 +40,7 @@ export default function RunFitDialog({ open, onClose, onRunAnyway }) {
           <Typography sx={{ typography: "m3", fontWeight: 600 }}>
             {`Agent ${agent} calls ${n === 1 ? "a tool" : `${n} tools`} environment ${environment} can't answer`}
           </Typography>
-          <UiOnlyFlag feature="environmentVersions" />
+          <UiOnlyFlag feature="toolFit" />
         </Stack>
         <Typography
           component="div"
