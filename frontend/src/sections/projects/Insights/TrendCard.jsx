@@ -29,7 +29,7 @@ function useWidth(ref) {
   return width;
 }
 
-function TrendTooltip({ row, series }) {
+function TrendTooltip({ row, series, afresh }) {
   const total = Object.values(row.counts).reduce((a, b) => a + b, 0) || 1;
   const items = [...series].reverse().filter((s) => row.counts?.[s.id] > 0);
   return (
@@ -56,6 +56,17 @@ function TrendTooltip({ row, series }) {
       >
         {formatCount(row.n)} analysed · click to open this run
       </Typography>
+      {afresh && (
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          component="div"
+          sx={{ mb: 0.75 }}
+        >
+          Found its categories afresh: its shares don&apos;t compare with
+          earlier runs.
+        </Typography>
+      )}
       <Stack spacing={0.5}>
         {items.map((s) => (
           <Stack key={s.id} direction="row" spacing={0.75} alignItems="center">
@@ -91,6 +102,7 @@ function TrendTooltip({ row, series }) {
 TrendTooltip.propTypes = {
   row: PropTypes.object.isRequired,
   series: PropTypes.array.isRequired,
+  afresh: PropTypes.bool,
 };
 
 /** The 100% stacked area, with a crosshair and tooltip on hover. */
@@ -198,6 +210,19 @@ function TrendChart({ rows, series, runId, onSelectRun }) {
               strokeLinejoin="round"
             />
           ))}
+          {geometry.breaks.map((item) => (
+            <line
+              key={`break-${rows[item.index].runId}`}
+              data-break={rows[item.index].runId}
+              x1={item.x}
+              x2={item.x}
+              y1={geometry.inner.top - 4}
+              y2={geometry.inner.bottom}
+              stroke={theme.palette.text.secondary}
+              strokeWidth={1.25}
+              strokeDasharray="4 3"
+            />
+          ))}
           {ticks.map(({ index, anchor }) => (
             <text
               key={rows[index].runId}
@@ -248,7 +273,11 @@ function TrendChart({ rows, series, runId, onSelectRun }) {
             pointerEvents: "none",
           }}
         >
-          <TrendTooltip row={rows[hover]} series={series} />
+          <TrendTooltip
+            row={rows[hover]}
+            series={series}
+            afresh={hover > 0 && Boolean(rows[hover].fresh)}
+          />
         </Box>
       )}
     </Box>
@@ -425,6 +454,7 @@ export default function TrendCard({
   );
   const current = rows.find((row) => row.runId === runId);
   const chart = rows.length >= 2;
+  const breaks = rows.filter((row, i) => i > 0 && row.fresh).length;
 
   if (!chart && !currentSegments?.length) return null;
 
@@ -453,9 +483,11 @@ export default function TrendCard({
         </Typography>
         {chart && (
           <Typography variant="caption" color="text.secondary" noWrap>
-            {sharedTaxonomy
-              ? "Every run uses the same categories, so shares compare"
-              : "Some runs found their own categories"}
+            {breaks
+              ? `Categories were found afresh at ${breaks === 1 ? "the dashed line" : "each dashed line"}`
+              : sharedTaxonomy
+                ? "Every run uses the same categories, so shares compare"
+                : "Some runs found their own categories"}
           </Typography>
         )}
       </Stack>

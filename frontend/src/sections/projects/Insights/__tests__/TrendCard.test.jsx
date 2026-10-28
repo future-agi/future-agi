@@ -24,6 +24,7 @@ const runs = [
   {
     id: "run-3",
     status: "completed",
+    taxonomy_mode: "discover",
     created_at: "2026-10-28T06:17:00Z",
     finished_at: "2026-10-28T06:19:00Z",
     analysed_count: 9,
@@ -35,6 +36,7 @@ const runs = [
   {
     id: "run-2",
     status: "completed",
+    taxonomy_mode: "classify",
     created_at: "2026-10-28T06:08:00Z",
     finished_at: "2026-10-28T06:09:00Z",
     analysed_count: 12,
@@ -46,6 +48,7 @@ const runs = [
   {
     id: "run-1",
     status: "completed",
+    taxonomy_mode: "discover",
     created_at: "2026-10-28T05:28:00Z",
     finished_at: "2026-10-28T05:31:00Z",
     analysed_count: 12,
@@ -117,6 +120,16 @@ describe("TrendCard legend", () => {
 });
 
 describe("TrendCard chart", () => {
+  it("breaks the chart where a run found its categories afresh", () => {
+    const { container } = renderCard("run-3");
+    const breaks = container.querySelectorAll("[data-break]");
+    expect([...breaks].map((line) => line.dataset.break)).toEqual(["run-3"]);
+    expect(breaks[0]).toHaveAttribute("stroke-dasharray", "4 3");
+    expect(
+      screen.getByText("Categories were found afresh at the dashed line"),
+    ).toBeInTheDocument();
+  });
+
   it("labels runs minutes apart without overlapping, the open one kept", () => {
     const close = runs.map((run) =>
       run.id === "run-2"

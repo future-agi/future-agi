@@ -31,6 +31,18 @@ const runs = [
 describe("buildAreaSeries", () => {
   const { series, rows } = buildAreaSeries(runs, { order: ["a", "b"] });
 
+  it("marks a run that found its categories afresh", () => {
+    const fresh = buildAreaSeries(
+      [
+        { ...runs[0], taxonomy_mode: "discover" },
+        { ...runs[1], taxonomy_mode: "discover" },
+      ],
+      { order: ["a", "b"] },
+    );
+    expect(fresh.rows.map((r) => r.fresh)).toEqual([true, true]);
+    expect(rows.map((r) => r.fresh)).toEqual([false, false]);
+  });
+
   it("orders completed runs oldest first with shares that sum to 1", () => {
     expect(rows.map((r) => r.runId)).toEqual(["r1", "r2"]);
     expect(rows[0].shares).toEqual({ a: 0.75, b: 0.25 });
@@ -104,6 +116,54 @@ describe("trendGeometry", () => {
       margin: { top: 0, right: 0, bottom: 0, left: 40 },
     });
     expect(same.xs).toEqual([40, 140, 240]);
+  });
+});
+
+describe("a rediscovered run", () => {
+  // Two runs on the saved categories, then one that found its own.
+  const series = [
+    { id: "a", color: "#a" },
+    { id: "b", color: "#b" },
+    { id: "c", color: "#c" },
+  ];
+  const rows = [
+    { time: 0, fresh: true, shares: { a: 0.5, b: 0.5 } },
+    { time: 50, shares: { a: 0.75, b: 0.25 } },
+    { time: 100, fresh: true, shares: { c: 1 } },
+  ];
+  const geometry = trendGeometry({
+    rows,
+    series,
+    width: 240,
+    height: 100,
+    margin: { top: 0, right: 0, bottom: 0, left: 40 },
+  });
+
+  it("is never joined to the runs before it", () => {
+    expect(geometry.xs).toEqual([40, 140, 240]);
+    // The earlier categories end at the last run that had them...
+    expect(geometry.bands[0].d).toBe("M40,50L140,25L140,100L40,100Z");
+    expect(geometry.bands[1].d).toBe("M40,0L140,0L140,25L40,50Z");
+    // ...and the run alone after the break is a column of its own, kept
+    // inside the plot.
+    expect(geometry.bands[2].d).toBe("M224,0L240,0L240,100L224,100Z");
+  });
+
+  it("marks the break between them", () => {
+    expect(geometry.breaks).toEqual([{ index: 2, x: 182 }]);
+  });
+
+  it("keeps a column clear of a run close beside it", () => {
+    const close = trendGeometry({
+      rows: [rows[0], rows[1], { ...rows[2], time: 52 }],
+      series,
+      width: 240,
+      height: 100,
+      margin: { top: 0, right: 0, bottom: 0, left: 40 },
+    });
+    const [left] = close.bands[2].d.slice(1).split(",").map(Number);
+    expect(left).toBeGreaterThanOrEqual(close.xs[1]);
+    expect(close.breaks[0].x).toBeGreaterThanOrEqual(close.xs[1]);
   });
 });
 

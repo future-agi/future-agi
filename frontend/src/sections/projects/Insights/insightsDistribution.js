@@ -269,8 +269,11 @@ export function sortCategoryTree(tree, key = "count", direction = "desc") {
  * Series for the trend chart: the share of each top-level category in every
  * completed run, oldest first. A category keeps its slot colour on every
  * run; one past the palette, or a muted one, folds into a grey "Other".
- *   {series: [{id, name, color}], rows: [{runId, time, n, shares, counts}]}
+ *   {series: [{id, name, color}],
+ *    rows: [{runId, time, n, shares, counts, fresh}]}
  * `shares` and `counts` are keyed by series id; shares of a run sum to 1.
+ * `fresh`: the run found its categories afresh, so its shares don't compare
+ * with the runs before it.
  */
 export function buildAreaSeries(
   runs = [],
@@ -306,6 +309,7 @@ export function buildAreaSeries(
       n: run.analysed_count || total,
       shares,
       counts,
+      fresh: run.taxonomy_mode === "discover",
     };
   });
   const series = order
