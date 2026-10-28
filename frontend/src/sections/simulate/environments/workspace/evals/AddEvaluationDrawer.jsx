@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Box, Button, CircularProgress, Stack } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
@@ -23,7 +23,9 @@ import {
 } from "src/api/simulate-environments/environment";
 import { useErrorLocalizationAvailable } from "src/hooks/useErrorLocalization";
 import { useFeatureLocked, CAPABILITY } from "src/hooks/useCapabilities";
+import Iconify from "src/components/iconify";
 import SideDrawer from "../../components/SideDrawer";
+import { CompletionBar } from "./AddEvalsDrawer";
 import EmptyState from "../../components/EmptyState";
 import { EVALS_COPY } from "./evals.constants";
 import { gradingCountsSentence } from "./gradingCounts";
@@ -97,6 +99,11 @@ export default function AddEvaluationDrawer({
   onEdited,
 }) {
   const envId = env?.id;
+  // Vel's batch add: tick several on the list, then the config screen is
+  // walked once per eval, each save its own real add. Editing stays single.
+  const [checked, setChecked] = useState({});
+  const [queue, setQueue] = useState([]);
+  const [index, setIndex] = useState(0);
   const editMode = Boolean(editingEval || editingEvalId);
   const runMode = Boolean(executionId);
   const queryClient = useQueryClient();
@@ -292,17 +299,85 @@ export default function AddEvaluationDrawer({
           : null
       : null;
 
+  const mapping = !editMode && queue.length > 0;
+  const selected = Object.values(checked);
+  const toggle = (item) =>
+    setChecked((c) => {
+      const next = { ...c };
+      if (next[item.id]) delete next[item.id];
+      else next[item.id] = item;
+      return next;
+    });
+  const resetQueue = () => {
+    setChecked({});
+    setQueue([]);
+    setIndex(0);
+  };
+  // A refused add re-throws, so the picker stays on that eval's config.
+  const addQueued = async (config) => {
+    await addPicked(config);
+    if (index === queue.length - 1) {
+      resetQueue();
+      handleClose();
+      return;
+    }
+    setIndex(index + 1);
+  };
+
   if (loaded && !editRefusal) {
     return (
       <EvalPickerDrawer
+        key={mapping ? `q-${index}-${queue[index]?.id}` : "list"}
         open
-        onClose={handleClose}
+        onClose={() => {
+          resetQueue();
+          handleClose();
+        }}
         source="simulation"
         sourceId={runTestId}
         sourceColumns={sourceColumns}
         existingEvals={editMode ? NO_CONFIGS : existingEvals}
         addedEvals={editMode ? null : addedEvals}
-        initialEval={initialEval}
+        initialEval={mapping ? queue[index] : initialEval}
+        multiSelect={!editMode && !mapping}
+        selectedIds={new Set(Object.keys(checked))}
+        onToggleSelect={toggle}
+        keepOpenAfterSave={mapping}
+        keepOpenAfterEditSave={mapping}
+        showClose={mapping}
+        headerAction={
+          !editMode && !mapping ? (
+            <Button
+              variant="contained"
+              size="small"
+              disabled={selected.length === 0}
+              onClick={() => {
+                setQueue(selected);
+                setIndex(0);
+              }}
+              startIcon={<Iconify icon="mingcute:add-line" width={16} />}
+              sx={{ textTransform: "none", fontSize: "12px" }}
+            >
+              {`Add Evaluations${selected.length ? ` (${selected.length})` : ""}`}
+            </Button>
+          ) : null
+        }
+        progress={
+          mapping ? (
+            <CompletionBar
+              pct={Math.round((index / queue.length) * 100)}
+              index={index}
+              total={queue.length}
+            />
+          ) : null
+        }
+        primaryLabel={
+          mapping
+            ? index === queue.length - 1
+              ? `Add ${queue.length} ${queue.length === 1 ? "evaluation" : "evaluations"}`
+              : "Next"
+            : null
+        }
         lockedFilters={SINGLE_EVALS_ONLY}
         hideCompositeCreate
         requireInputs
@@ -319,7 +394,7 @@ export default function AddEvaluationDrawer({
               }
             : null
         }
-        onEvalAdded={editMode ? saveEdit : addPicked}
+        onEvalAdded={editMode ? saveEdit : mapping ? addQueued : addPicked}
       />
     );
   }
