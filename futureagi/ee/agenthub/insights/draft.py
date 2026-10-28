@@ -57,7 +57,13 @@ def draft_config(
             str(raw.get("agent_description") or agent_description).split()
         )[:400],
         "instructions": " ".join(str(raw.get("instructions", "")).split())[:600],
-        "attributes": clean_attributes(raw.get("attributes")),
+        # A filter decides which units the report reads, so it is the user's
+        # choice: a drafted "only include when true" on a failures report
+        # (resolved_by_agent) would leave out the failures it is meant to find.
+        "attributes": [
+            {**attribute, "filter_by": False}
+            for attribute in clean_attributes(raw.get("attributes"))
+        ],
         "examples_read": len(loaded),
         "cost_usd": spend.cost_usd,
     }
