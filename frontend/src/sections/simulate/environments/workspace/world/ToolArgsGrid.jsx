@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { Box, Stack, Typography } from "@mui/material";
+import { Box, Button, Stack, Typography } from "@mui/material";
 
 const MONO = "ui-monospace, Menlo, monospace";
 const TYPE_WORD = {
@@ -32,27 +32,28 @@ export const realToolArgs = (tool) =>
     };
   });
 
-// Vel's argument grid: name, type, and the values the contract allows.
-export default function ToolArgsGrid({ args }) {
+// Vel's argument grid: name, type, and the values the contract allows. The
+// Contract tab lists only the limits, each prefixed with its tool, with Edit.
+export default function ToolArgsGrid({ args, onEdit, rowGap = 0.25 }) {
   return (
     <Box
       sx={{
         display: "grid",
-        gridTemplateColumns: "minmax(140px, 260px) minmax(90px, 120px) 1fr",
+        gridTemplateColumns: `minmax(140px, 260px) minmax(90px, 120px) 1fr${onEdit ? " auto" : ""}`,
         columnGap: 1.5,
-        rowGap: 0.25,
+        rowGap,
         alignItems: "baseline",
       }}
     >
       {args.map((a) => (
-        <ArgCells key={a.name} arg={a} />
+        <ArgCells key={`${a.tool || ""}.${a.name}`} arg={a} onEdit={onEdit ? () => onEdit(a) : null} />
       ))}
     </Box>
   );
 }
-ToolArgsGrid.propTypes = { args: PropTypes.array.isRequired };
+ToolArgsGrid.propTypes = { args: PropTypes.array.isRequired, onEdit: PropTypes.func, rowGap: PropTypes.number };
 
-function ArgCells({ arg }) {
+function ArgCells({ arg, onEdit }) {
   const optional = arg.required === false;
   const typeWord = arg.type ? TYPE_WORD[arg.type] || arg.type : "-";
   return (
@@ -60,6 +61,9 @@ function ArgCells({ arg }) {
       <Typography
         sx={{ typography: "s3", fontFamily: MONO, color: "text.secondary", minWidth: 0, overflowWrap: "anywhere" }}
       >
+        {arg.tool && (
+          <Box component="span" sx={{ color: "text.subtitle" }}>{`${arg.tool}.`}</Box>
+        )}
         {arg.name}
         {optional && (
           <Box component="span" sx={{ color: "text.disabled" }}>
@@ -87,7 +91,12 @@ function ArgCells({ arg }) {
           </Typography>
         ) : null}
       </Stack>
+      {onEdit && (
+        <Button size="small" onClick={onEdit} sx={{ minWidth: 0, color: "text.secondary" }}>
+          Edit
+        </Button>
+      )}
     </>
   );
 }
-ArgCells.propTypes = { arg: PropTypes.object.isRequired };
+ArgCells.propTypes = { arg: PropTypes.object.isRequired, onEdit: PropTypes.func };

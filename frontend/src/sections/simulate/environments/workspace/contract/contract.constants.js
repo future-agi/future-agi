@@ -17,8 +17,8 @@ export const VERIFIER_KINDS = [
 // Every copy string on the contract tab, so nothing is inlined in the JSX.
 export const CONTRACT_COPY = {
   endConditions: {
-    title: "Run end conditions",
-    subtitle: "When a run is over, and which kind of over it was",
+    title: "When a conversation ends",
+    subtitle: "What ends a conversation, and what that means for its result",
     notAuthored: "Not authored yet",
     // A built environment's build writes them; a template or fork is never built.
     notAuthoredBuilt: "The build writes these once it has read how a run of this agent ends.",
@@ -83,11 +83,10 @@ export const CONTRACT_COPY = {
 
   actors: {
     heading: "Actors",
-    headingBlurb:
-      "Other parties in the world, each with a goal that is not the task. They pull the episode off-course, which is what makes them part of the environment's dynamics rather than part of the task.",
+    headingBlurb: "Other parties in the world, each with a goal that pulls the conversation off the task.",
     calloutLead: "Not the same as a persona.",
     calloutBody:
-      "The persona is who your agent is serving, the one whose goal the task is. An actor is someone else: you are trying to book a cab, and your colleague is saying let's get pizza instead.",
+      "The persona is who your agent serves; an actor is someone else, the colleague who wants pizza instead.",
     calloutLink: "See scenarios",
     create: "Create actor",
     castTitle: (n) => `In this environment (${n})`,

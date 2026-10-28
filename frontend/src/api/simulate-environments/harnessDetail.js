@@ -135,6 +135,8 @@ export function harnessDetailToEnvironment(detail) {
     amendments: contract?.amendments || null,
     subGoals: contract?.sub_goals || null,
     endConditions: contract?.end_conditions || null,
+    // The seed every conversation starts from (settings.seed), so a run replays.
+    runSeed: settings.seed ?? null,
     useCases: contract?.real_use_cases || null,
     personas: world?.personas || null,
     stores: world?.stores || null,
