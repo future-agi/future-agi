@@ -69,7 +69,6 @@ func ExtractTextFromContents(reqBody []byte) string {
 	return strings.Join(parts, " ")
 }
 
-// ExtractTextFromResponse extracts text from a Google GenAI response body.
 // EmbedInputCharacters counts the characters of text an embedContent request
 // sends, the unit some embedding models are priced in. The response carries
 // no usage to price from.
@@ -89,6 +88,7 @@ func EmbedInputCharacters(reqBody []byte) int {
 	return characters
 }
 
+// ExtractTextFromResponse extracts text from a Google GenAI response body.
 func ExtractTextFromResponse(respBody []byte) string {
 	var m struct {
 		Candidates []struct {
