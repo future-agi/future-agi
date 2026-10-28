@@ -103,6 +103,8 @@ export const paths = {
           `${ROOTS.DASHBOARD}/simulate/environments/${envId}?tab=${tab}`,
         execution: (envId, testId, executionId) =>
           `${ROOTS.DASHBOARD}/simulate/environments/${envId}/runs/${testId}/${executionId}`,
+        compare: (envId) =>
+          `${ROOTS.DASHBOARD}/simulate/environments/${envId}/compare`,
       },
     },
     feed: `${ROOTS.DASHBOARD}/error-feed`,

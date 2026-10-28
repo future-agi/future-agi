@@ -31,4 +31,10 @@ describe("simulate.environments path constants", () => {
       "/dashboard/simulate/environments/e1/runs/t1/x1",
     );
   });
+
+  it("builds the compare page path from an env id", () => {
+    expect(env.compare("e1")).toBe(
+      "/dashboard/simulate/environments/e1/compare",
+    );
+  });
 });

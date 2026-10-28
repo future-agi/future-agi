@@ -347,6 +347,12 @@ const WorkspaceExecutionDetail = lazyWithRetry(
       "src/sections/simulate/environments/workspace/runs/WorkspaceExecutionDetail"
     ),
 );
+const CompareRunsPage = lazyWithRetry(
+  () =>
+    import(
+      "src/sections/simulate/environments/workspace/compare/CompareRunsPage"
+    ),
+);
 const RunTestDetail = lazyWithRetry(
   () => import("src/pages/dashboard/run-tests/RunTestDetail"),
 );
@@ -1526,6 +1532,12 @@ export const dashboardRoutes = (
               replace
             />
           ),
+        },
+        {
+          // Its own page, not a workspace child: the workspace only hands its
+          // Outlet to a run detail.
+          path: "environments/:envId/compare",
+          element: <CompareRunsPage />,
         },
         {
           path: "environments/:envId",
