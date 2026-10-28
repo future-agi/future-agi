@@ -127,7 +127,7 @@ socket.getaddrinfo = resolve
 socket.socket.connect = connect
 if ca:
     original_context = ssl.create_default_context
-    ssl.create_default_context = lambda: original_context(cafile=ca)
+    ssl.create_default_context = lambda **kwargs: original_context(cafile=ca)
 namespace["_worker"]()
 """
         return real_popen(
