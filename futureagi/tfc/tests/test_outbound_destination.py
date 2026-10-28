@@ -28,7 +28,9 @@ def test_public_request_preserves_host_method_query_and_body(outbound_wire):
         "body": '{"value": 3}',
     }
     assert outbound_wire.received[0][2]["Accept-Encoding"] == "identity"
-    events = [json.loads(line) for line in outbound_wire.events.read_text().splitlines()]
+    events = [
+        json.loads(line) for line in outbound_wire.events.read_text().splitlines()
+    ]
     assert events == [
         ["dns", "public.fixture.test"],
         ["connect", ["93.184.216.34", outbound_wire.port]],
@@ -76,7 +78,9 @@ def test_https_uses_hostname_for_sni_and_certificate_verification(monkeypatch):
     response.getheader.side_effect = lambda key, default=None: default
     response.getheaders.return_value = []
     response.read.return_value = b""
-    monkeypatch.setattr(destination.ssl, "create_default_context", lambda **kwargs: context)
+    monkeypatch.setattr(
+        destination.ssl, "create_default_context", lambda **kwargs: context
+    )
     monkeypatch.setattr(
         destination,
         "_resolve",

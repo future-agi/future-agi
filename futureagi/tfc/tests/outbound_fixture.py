@@ -41,6 +41,9 @@ def outbound_wire(monkeypatch, tmp_path):
             size = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(size).decode()
             received.append((self.command, self.path, dict(self.headers), body))
+            if self.path == "/drop-response":
+                self.close_connection = True
+                return
             if self.path == "/slow-headers":
                 time.sleep(2)
             if self.path == "/redirect":
@@ -116,12 +119,27 @@ def resolve(host, service, **kwargs):
         raise OSError("unexpected test resolution")
     if mode == "slow-dns":
         time.sleep(2)
-    addresses = ["93.184.216.34", "10.1.2.3"] if mode == "mixed" else ["93.184.216.34"]
-    return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, int(service))) for ip in addresses]
+    addresses = {
+        "mixed": ["93.184.216.34", "10.1.2.3"],
+        "fallback": ["93.184.216.34", "93.184.216.35"],
+        "fallback-v6": ["2606:4700::1111", "93.184.216.35"],
+        "fallback-mixed": ["93.184.216.34", "93.184.216.35", "10.1.2.3"],
+        "all-unavailable": ["93.184.216.34", "93.184.216.35"],
+        "slow-connect": ["93.184.216.34", "93.184.216.35"],
+    }.get(mode, ["93.184.216.34"])
+    return [(socket.AF_INET6 if ":" in ip else socket.AF_INET,
+             socket.SOCK_STREAM, 6, "", (ip, int(service))) for ip in addresses]
 def connect(sock, address):
     event("connect", list(address))
     if sock.family not in (socket.AF_INET, socket.AF_INET6):
         raise OSError("unexpected socket family")
+    if mode == "slow-connect":
+        time.sleep(2)
+    if mode == "all-unavailable" or (
+        mode in ("fallback", "fallback-v6", "fallback-mixed")
+        and address[0] != "93.184.216.35"
+    ):
+        raise ConnectionRefusedError("synthetic public address unavailable")
     return real_connect(sock, ("127.0.0.1", port))
 socket.getaddrinfo = resolve
 socket.socket.connect = connect
