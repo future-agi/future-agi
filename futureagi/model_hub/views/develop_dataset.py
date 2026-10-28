@@ -10354,93 +10354,11 @@ class AddApiColumnView(APIView):
                     logger.error(f"Error replacing variable: {str(e)}")
         return value
 
-    def _make_api_call(self, cell, config):
-        """Make API call for a single cell and return the result"""
-        try:
-            # Process parameters
-            processed_params = {}
-            for param_name, param_config in config.get("params", {}).items():
-                if param_config["type"] == "PlainText":
-                    processed_params[param_name] = param_config["value"]
-                elif param_config["type"] == "Secret":
-                    processed_params[param_name] = SecretModel.objects.get(
-                        id=param_config["value"]
-                    ).actual_key
-                elif param_config["type"] == "Variable":
-                    try:
-                        param_cell = Cell.objects.get(
-                            column__id=self._replace_variables(
-                                param_config["value"], cell.row
-                            ),
-                            row=cell.row,
-                        )
-                        processed_params[param_name] = param_cell.value
-                    except Exception as e:
-                        logger.error(f"Error replacing variable: {str(e)}")
+    def _make_api_call(self, cell, config, *, dataset=None):
+        """Keep legacy background callers on the canonical API-column transport."""
+        from model_hub.views.dynamic_columns import AddApiColumnView as ApiColumn
 
-            # Process headers
-            processed_headers = {}
-            for header_name, header_config in config.get("headers", {}).items():
-                if header_config["type"] == "PlainText":
-                    processed_headers[header_name] = header_config["value"]
-                elif header_config["type"] == "Secret":
-                    # secret = get_object_or_404(Secret, id=header_config['value'])
-                    processed_headers[header_name] = SecretModel.objects.get(
-                        id=header_config["value"]
-                    ).actual_key
-                elif header_config["type"] == "Variable":
-                    try:
-                        header_cell = Cell.objects.get(
-                            column__id=self._replace_variables(
-                                header_config["value"], cell.row
-                            ),
-                            row=cell.row,
-                        )
-                        processed_headers[header_name] = header_cell.value
-                    except Exception as e:
-                        logger.error(f"Error replacing variable: {str(e)}")
-
-            # Process body if it exists
-            body = {}
-            if "body" in config:
-                for key, values in config["body"].items():
-                    if not cell:
-                        body[key] = values
-                    else:
-                        body[key] = self._replace_variables(values, cell.row)
-
-            # Process URL
-            url = config["url"]
-
-            # Make the API call
-            response = requests.request(
-                method=config["method"],
-                url=url,
-                params=processed_params,
-                headers=processed_headers,
-                json=body if isinstance(body, dict) else None,
-                data=body if isinstance(body, str) else None,
-                timeout=30,
-            )
-            response.raise_for_status()
-
-            # Process response based on output_type
-            if config["output_type"] == "string":
-                return str(response.text), {"response_status": response.status_code}
-            elif config["output_type"] == "object":
-                return response.json(), {"response_status": response.status_code}
-            elif config["output_type"] == "array":
-                return json.dumps(response.json()), {
-                    "response_status": response.status_code
-                }
-            elif config["output_type"] == "number":
-                return str(response.text), {"response_status": response.status_code}
-            else:
-                return response.text, {"response_status": response.status_code}
-
-        except Exception as e:
-            logger.exception(f"API call error: {str(e)}")
-            return str(e), {"response_status": 400}
+        return ApiColumn()._make_api_call(cell, config, dataset=dataset)
 
     def post(self, request, dataset_id, *args, **kwargs):
         try:
@@ -10915,7 +10833,7 @@ class ConditionalColumnView(APIView):
             elif output_type == "api_call":
                 executor = AddApiColumnView()
                 if not source_column:
-                    return executor._make_api_call(cell=None, config=config)
+                    return executor._make_api_call(cell=Cell(row=row), config=config, dataset=row.dataset)
                 return executor._make_api_call(
                     cell=Cell.objects.get(column=source_column, row=row), config=config
                 )

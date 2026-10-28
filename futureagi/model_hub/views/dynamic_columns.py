@@ -5,7 +5,6 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
-import requests
 import structlog
 from django.db import close_old_connections, transaction
 from django.db.models import Q
@@ -69,6 +68,7 @@ from tfc.temporal import temporal_activity
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
+from tfc.utils import outbound_destination
 
 logger = structlog.get_logger(__name__)
 
@@ -1086,18 +1086,32 @@ class AddApiColumnView(APIView):
                     logger.error(f"Error replacing variable: {str(e)}")
         return value
 
-    def _make_api_call(self, cell, config):
-        """Make API call for a single cell and return the result"""
+    @staticmethod
+    def _stored_secret(secret_id, dataset):
+        if dataset is None or dataset.organization_id is None:
+            raise outbound_destination.DestinationError("secret_scope_missing")
+        # Background threads have no reliable middleware workspace context.
+        return SecretModel.no_workspace_objects.get(
+            id=secret_id,
+            organization_id=dataset.organization_id,
+            workspace_id=dataset.workspace_id,
+            deleted=False,
+        ).actual_key
+
+    def _make_api_call(self, cell, config, *, dataset=None):
+        """Make a bounded API call within the authorized dataset's tenant scope."""
         try:
+            if dataset is None and cell is not None:
+                dataset = cell.row.dataset
             # Process parameters
             processed_params = {}
             for param_name, param_config in config.get("params", {}).items():
                 if param_config["type"] == "PlainText":
                     processed_params[param_name] = param_config["value"]
                 elif param_config["type"] == "Secret":
-                    processed_params[param_name] = SecretModel.objects.get(
-                        id=param_config["value"]
-                    ).actual_key
+                    processed_params[param_name] = self._stored_secret(
+                        param_config["value"], dataset
+                    )
                 elif param_config["type"] == "Variable":
                     try:
                         raw_val = param_config["value"]
@@ -1118,10 +1132,9 @@ class AddApiColumnView(APIView):
                 if header_config["type"] == "PlainText":
                     processed_headers[header_name] = header_config["value"]
                 elif header_config["type"] == "Secret":
-                    # secret = get_object_or_404(Secret, id=header_config['value'])
-                    processed_headers[header_name] = SecretModel.objects.get(
-                        id=header_config["value"]
-                    ).actual_key
+                    processed_headers[header_name] = self._stored_secret(
+                        header_config["value"], dataset
+                    )
                 elif header_config["type"] == "Variable":
                     try:
                         raw_val = header_config["value"]
@@ -1160,7 +1173,7 @@ class AddApiColumnView(APIView):
                 url = self._replace_variables(url, cell.row)
 
             # Make the API call
-            response = requests.request(
+            response = outbound_destination.request(
                 method=config["method"],
                 url=url,
                 params=processed_params,
@@ -1186,8 +1199,10 @@ class AddApiColumnView(APIView):
                 return response.text, {"response_status": response.status_code}
 
         except Exception as e:
-            logger.exception(f"API call error: {str(e)}")
-            return str(e), {"response_status": 400}
+            # Codes only: exception messages may contain stored header/URL secrets.
+            reason = str(e) if isinstance(e, outbound_destination.DestinationError) else type(e).__name__
+            logger.warning("API column request refused or failed", reason=reason)
+            return outbound_destination.PUBLIC_ERROR, {"response_status": 400}
 
     @validated_request(
         request_serializer=AddApiColumnRequestSerializer,
@@ -1595,11 +1610,12 @@ class ConditionalColumnView(APIView):
                 executor = AddApiColumnView()
                 if not source_column:
                     return executor._make_api_call(
-                        cell=None, config=config.get("config")
+                        cell=Cell(row=row), config=config.get("config"), dataset=row.dataset
                     )
                 return executor._make_api_call(
                     cell=Cell.objects.get(column=source_column, row=row),
                     config=config.get("config"),
+                    dataset=row.dataset,
                 )
 
             elif output_type == "run_prompt":
@@ -3189,6 +3205,7 @@ def add_api_column_async(
     config, dataset_id, concurrency, new_column_id, is_rerun=False
 ):
     view = AddApiColumnView()
+    dataset = Dataset.no_workspace_objects.get(id=dataset_id)
     # Process all rows ordered by row order
     rows = list(
         Row.objects.filter(dataset_id=dataset_id, deleted=False).order_by("order")
@@ -3223,7 +3240,7 @@ def add_api_column_async(
                         value=None,
                     )
                 )
-                future_to_row[executor.submit(wrapped_make_api_call, cell, config)] = (
+                future_to_row[executor.submit(wrapped_make_api_call, cell, config, dataset=dataset)] = (
                     row
                 )
 
@@ -3249,13 +3266,18 @@ def add_api_column_async(
                 try:
                     value, value_infos = future.result()
                     existing_cell = existing_cells_map.get(str(row.id))
+                    result_status = (
+                        CellStatus.ERROR.value
+                        if value_infos and value_infos.get("response_status", 200) >= 400
+                        else CellStatus.PASS.value
+                    )
 
                     if existing_cell:
                         existing_cell.value = value
                         existing_cell.value_infos = (
                             json.dumps(value_infos) if value_infos else None
                         )
-                        existing_cell.status = CellStatus.PASS.value
+                        existing_cell.status = result_status
                         cells_to_update.append(existing_cell)
                         total_processed += 1
                     else:
@@ -3268,7 +3290,7 @@ def add_api_column_async(
                                 value_infos=json.dumps(
                                     value_infos if value_infos else {}
                                 ),
-                                status=CellStatus.PASS.value,
+                                status=result_status,
                             )
                         )
                         total_processed += 1
@@ -3314,7 +3336,7 @@ def add_api_column_async(
                 cell = Cell(
                     dataset_id=dataset_id, column_id=new_column_id, row=row, value=None
                 )
-                future_to_row[executor.submit(wrapped_make_api_call, cell, config)] = (
+                future_to_row[executor.submit(wrapped_make_api_call, cell, config, dataset=dataset)] = (
                     row
                 )
 
@@ -3334,6 +3356,7 @@ def add_api_column_async(
                             value_infos=json.dumps(value_infos)
                             if value_infos
                             else None,
+                            status=(CellStatus.ERROR.value if value_infos and value_infos.get("response_status", 200) >= 400 else CellStatus.PASS.value),
                         )
                     )
                     total_processed += 1
@@ -3512,7 +3535,7 @@ class PreviewDatasetOperationView(APIView):
             if "column_id" not in config:
                 # Create a temporary cell with the row so variable substitution works
                 cell = Cell(row=row, value=None)
-                value = api_caller._make_api_call(cell=cell, config=api_config)
+                value = api_caller._make_api_call(cell=cell, config=api_config, dataset=dataset)
                 results.append({"row_id": str(row.id), "output": json.dumps(value)})
             else:
                 cell = Cell.objects.get(
@@ -3521,7 +3544,7 @@ class PreviewDatasetOperationView(APIView):
                     column__dataset=dataset,
                     deleted=False,
                 )
-                value = api_caller._make_api_call(cell, api_config)
+                value = api_caller._make_api_call(cell, api_config, dataset=dataset)
                 results.append(
                     {
                         "row_id": str(row.id),
