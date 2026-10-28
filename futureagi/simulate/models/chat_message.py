@@ -18,7 +18,6 @@ class ChatMessageModel(BaseModel):
         USER = "user", "User"
         ASSISTANT = "assistant", "Assistant"
         TOOL = "tool", "Tool"
-        SUB_ACTOR = "sub_actor", "Sub-actor"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 

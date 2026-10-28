@@ -40,9 +40,9 @@ from simulate.temporal.types.activities import (
     RunToolCallEvaluationInput,
     RunToolCallEvaluationOutput,
 )
-from simulate.utils.chat_simulation import sub_actor_label
 from simulate.utils.eval_summary import derive_kpi_output_type
 from simulate.utils.processing_outcomes import build_skipped_eval_output_payload
+from simulate.utils.stored_transcript_roles import sub_actor_label
 from simulate.utils.verdicts import has_stored_verdict
 from tfc.utils.case import to_camel_case, to_snake_case
 from tfc.utils.storage_client import server_reachable_url
@@ -276,19 +276,11 @@ def _build_transcript_data(call_execution):
                         chat_message, "messages"
                     ):
                         continue
-                    speaker = chat_message.role
-                    if speaker == "sub_actor":
-                        names = [
-                            item.get("name")
-                            for item in chat_message.content or []
-                            if isinstance(item, dict)
-                        ]
-                        speaker = sub_actor_label(next(filter(None, names), None))
                     if chat_message.messages:
                         for message in chat_message.messages:
                             if not isinstance(message, str):
                                 message = str(message)
-                            transcript_text.append(f"{speaker}: {message}")
+                            transcript_text.append(f"{chat_message.role}: {message}")
                             if chat_message.role == "user":
                                 user_chat_transcript_text.append(message)
                             elif chat_message.role == "assistant":

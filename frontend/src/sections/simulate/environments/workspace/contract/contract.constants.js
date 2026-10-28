@@ -89,7 +89,6 @@ export const CONTRACT_COPY = {
       audio_mix: "Heard nearby",
       audio_handoff: "Takes the phone",
       ivr: "Phone menu",
-      thread_message: "Writes in the chat",
     },
     scenarios: (n) => `In ${n} scenario${n === 1 ? "" : "s"}`,
   },

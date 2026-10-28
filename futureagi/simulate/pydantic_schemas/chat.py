@@ -8,7 +8,6 @@ class ChatRole(str, Enum):
     USER = "user"
     ASSISTANT = "assistant"
     TOOL = "tool"
-    SUB_ACTOR = "sub_actor"
 
 
 class SimulationCallType(str, Enum):

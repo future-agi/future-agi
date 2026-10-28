@@ -1531,10 +1531,6 @@ def _store_alk_chat_messages(
         if role in {"user", "customer"}:
             current = {"user": seg, "agent": []}
             exchanges.append(current)
-        elif role == ChatRole.SUB_ACTOR:
-            # Someone on the person's side who is not them: a message of its own.
-            exchanges.append({"sub_actor": seg, "user": None, "agent": []})
-            current = None
         elif role in _CHAT_AGENT_SPEAKER_ROLES:
             if current is None:
                 current = {"user": None, "agent": []}
@@ -1549,20 +1545,12 @@ def _store_alk_chat_messages(
             if seg.get("tool_calls"):
                 item["tool_calls"] = seg["tool_calls"]
             speaker = (seg.get("speaker_role") or "").lower()
-            if speaker == ChatRole.SUB_ACTOR and seg.get("speaker_name"):
-                item["name"] = seg["speaker_name"]
             if speaker in {"tool_calls", "tool_call_result"}:
                 item["kind"] = speaker
             if isinstance(seg.get("start_time_ms"), int):
                 item["start_time_ms"] = seg["start_time_ms"]
             content_items.append(item)
         joined = "\n".join(t for t in texts if t)
-        reported = [seg.get("tokens") for seg in segs]
-        tokens = (
-            sum(reported)
-            if reported and all(isinstance(one, int) for one in reported)
-            else estimate_tokens_text(joined)
-        )
         return ChatMessageModel(
             id=uuid.uuid4(),
             role=role,
@@ -1573,19 +1561,13 @@ def _store_alk_chat_messages(
             created_at=created_at,
             organization=run_test.organization,
             workspace=run_test.workspace,
-            tokens=tokens,
+            tokens=estimate_tokens_text(joined),
             latency_ms=latency_ms,
         )
 
     rows: list[ChatMessageModel] = []
     for index, exchange in enumerate(exchanges):
         created_at = base + timedelta(seconds=index)
-        if exchange.get("sub_actor") is not None:
-            rows.append(
-                _row(
-                    ChatRole.SUB_ACTOR, "sub_actor", [exchange["sub_actor"]], created_at
-                )
-            )
         if exchange["user"] is not None:
             rows.append(_row(ChatRole.USER, "user", [exchange["user"]], created_at))
         agent_segs = exchange["agent"]

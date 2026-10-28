@@ -247,62 +247,6 @@ def test_a_rerun_without_sub_actors_clears_the_record(organization, workspace):
     assert "harness_sub_actors" not in metadata
 
 
-@pytest.mark.django_db
-def test_a_second_chat_participant_is_its_own_message_with_its_name(
-    organization, workspace
-):
-    from simulate.models.chat_message import ChatMessageModel
-
-    call = _ingest(
-        organization,
-        workspace,
-        "chat-one",
-        CallExecution.SimulationCallType.TEXT,
-        {
-            "messages": [
-                {"role": "user", "content": "One item please."},
-                {"role": "assistant", "content": "Added."},
-                {
-                    "role": "sub_actor",
-                    "name": "Rowan",
-                    "content": "Add one more.",
-                    "tokens": 42,
-                },
-                {"role": "user", "content": "Just the one."},
-                {"role": "assistant", "content": "Done."},
-            ]
-        },
-    )
-
-    rows = list(
-        ChatMessageModel.objects.filter(call_execution=call).order_by(
-            "created_at", "role"
-        )
-    )
-    assert [row.role for row in rows] == [
-        "user",
-        "assistant",
-        "sub_actor",
-        "user",
-        "assistant",
-    ]
-    rowan = next(row for row in rows if row.role == "sub_actor")
-    assert rowan.content == [
-        {"role": "sub_actor", "content": "Add one more.", "name": "Rowan"}
-    ]
-    # The tokens the model reported for writing it, not an estimate from its text.
-    assert rowan.tokens == 42
-    from simulate.tasks.alk_sim import _build_transcript_text
-    from simulate.temporal.activities.xl import _build_transcript_data
-
-    said = _build_transcript_text(call)
-    assert "Rowan (not the customer): Add one more." in said
-    assert "Assistant: Add one more." not in said
-    assert "Rowan (not the customer): Add one more." in (
-        _build_transcript_data(call)["transcript"]
-    )
-
-
 def test_the_environment_s_list_is_a_stage_output_and_an_emptied_list_replaces_it():
     from simulate.services.hosted_harness_gateway import authoring_stage_outputs
 
