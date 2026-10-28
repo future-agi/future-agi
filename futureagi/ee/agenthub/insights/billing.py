@@ -39,12 +39,21 @@ ASK_TOKENS = (12_000, 1_600)
 DRAFT_TOKENS = (2_900, 400)
 PREVIEW_UNITS = 3
 
-# The agent writes a report over several calls with tools (a controller, a
-# reader per category, the writer and its verifier), and answers a question
-# the same way in up to 8 calls. Cloud's test reports of 20 and 21 sessions
-# took 86,000 to 126,000 tokens in and 9,000 to 11,400 out to write; a
-# question took 50,300 in and 4,100 out over 7 calls (here, at 8).
-AGENT_REPORT_TOKENS = (130_000, 12_000)
+# The agent names the categories a report finds, then writes it over several
+# calls with tools: a controller, an investigator for each category it looks
+# into, the writer and its verifier. It answers a question the same way in up
+# to 8 calls. Cloud's test reports of 18 to 21 sessions took 90,700 tokens in
+# and 9,700 out to name and write with two categories investigated, and
+# 121,400 to 141,700 in and 9,700 to 12,100 out with three: about 38,000 in
+# and 1,500 out a category, and about 12,000 in and 6,900 out besides (here,
+# 16,000 and 7,000). Fewer than 8 units make a single category
+# (``clustering.base_cluster_count``), so one investigator; no report that
+# small was measured, so it is priced from those two parts. More units are
+# sized for the three measured. A question took 50,300 in and 4,100 out over
+# 7 calls (here, at 8).
+AGENT_REPORT_TOKENS = (16_000, 7_000)
+AGENT_CATEGORY_TOKENS = (38_000, 1_500)
+AGENT_CATEGORIES = 3
 AGENT_ASK_TOKENS = (58_000, 4_700)
 
 # The insights-agent/v2 reader reads a unit's whole span graph with tools over
@@ -87,19 +96,40 @@ def _price(tier: str, tokens: tuple[int, int], models: dict | None = None) -> fl
     return call_cost((models or {}).get(tier) or model_for(tier), 0.0, *tokens)
 
 
-def _run_cost(sample_size: int, read: float, classify: float, write: float) -> float:
+def report_categories(sample_size: int) -> int:
+    """The categories the agent investigates in a report over
+    ``sample_size`` units: one when they are too few for discovery to split
+    (a run into saved categories found on more may have a few), else as many
+    as Cloud's test reports did."""
+    from ee.agenthub.insights.clustering import base_cluster_count
+
+    return min(AGENT_CATEGORIES, base_cluster_count(max(0, sample_size)))
+
+
+def _run_cost(
+    sample_size: int,
+    read: float,
+    classify: float,
+    write: float,
+    category: float = 0.0,
+) -> float:
     batches = -(-max(0, sample_size) // CLASSIFY_BATCH)
-    return sample_size * read + batches * classify + write
+    investigated = report_categories(sample_size) * category if category else 0.0
+    return sample_size * read + batches * classify + write + investigated
 
 
-def _step_prices(models: dict | None = None, **sizing) -> tuple[float, float, float]:
-    # The agent (any contract) reads the units and writes the report;
-    # classifying into saved categories is always the built-in engine's.
-    write = AGENT_REPORT_TOKENS if sizing.get("contract") else REPORT_TOKENS
+def _step_prices(
+    models: dict | None = None, **sizing
+) -> tuple[float, float, float, float]:
+    # The agent (any contract) reads the units and writes the report, with a
+    # part for each category it investigates; classifying into saved
+    # categories is always the built-in engine's.
+    agent = bool(sizing.get("contract"))
     return (
         _price(FAST, read_tokens(**sizing), models),
         _price(FAST, CLASSIFY_TOKENS),
-        _price(THINKING, write, models),
+        _price(THINKING, AGENT_REPORT_TOKENS if agent else REPORT_TOKENS, models),
+        _price(THINKING, AGENT_CATEGORY_TOKENS, models) if agent else 0.0,
     )
 
 

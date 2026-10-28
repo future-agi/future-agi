@@ -143,6 +143,58 @@ def test_estimates_are_within_twice_what_clouds_test_steps_cost(step, actual):
     assert actual / 2 <= estimate <= actual * 2
 
 
+# Naming the categories and writing, on Cloud's test reports of 18 to 21
+# sessions (the agent's request log): two categories investigated, then three
+# on four reports (the last one classified into saved categories, unnamed).
+WRITE_TWO = (4_631 + 86_047, 469 + 9_280)
+WRITE_THREE = [
+    (6_285 + 135_428, 888 + 11_251),
+    (8_554 + 112_848, 685 + 11_384),
+    (7_145 + 126_393, 660 + 9_055),
+    (123_080, 10_842),
+]
+
+
+@pytest.mark.parametrize(
+    ("categories", "measured"),
+    [(2, WRITE_TWO), *((3, tokens) for tokens in WRITE_THREE)],
+)
+def test_a_reports_writing_is_sized_by_the_categories_it_investigates(
+    categories, measured
+):
+    write = [
+        base + categories * each
+        for base, each in zip(
+            billing.AGENT_REPORT_TOKENS, billing.AGENT_CATEGORY_TOKENS, strict=True
+        )
+    ]
+    actual = _usd(SONNET, *measured)
+    assert actual / 1.25 <= _usd(SONNET, *write) <= actual * 1.25
+
+
+def test_a_report_of_fewer_than_8_units_is_written_for_its_one_category():
+    """Cloud estimated a report of 4 sessions at 74 credits and one of 49 at
+    130: 68 of each was writing, sized for the three categories its test
+    reports investigated. Fewer than 8 units make one category, so one
+    investigator. No report that small was measured: its writing is the
+    measured two-category one less what a category added, and its reading
+    what a session took on the 18-session report."""
+    from ee.agenthub.insights import agent
+
+    v2 = {"contract": agent.CONTRACT_V2, "unit": "sessions", "models": AGENT_MODELS}
+    three = [sum(each) / len(WRITE_THREE) for each in zip(*WRITE_THREE, strict=True)]
+    one = [2 * two - each for two, each in zip(WRITE_TWO, three, strict=True)]
+    actual = _usd(HAIKU, 4 * 223_591 // 18, 4 * 38_605 // 18) + _usd(SONNET, *one)
+    assert actual / 1.5 <= billing.run_cost(4, **v2) <= actual * 1.5
+    sizes = (1, 4, 7, 8, 21, 300)
+    assert [billing.report_categories(n) for n in sizes] == [1, 1, 1, 3, 3, 3]
+    # An eighth unit is read, and splits the report into the three measured.
+    assert billing.run_cost(8, **v2) - billing.run_cost(7, **v2) == pytest.approx(
+        _usd(HAIKU, *billing.read_tokens(agent.CONTRACT_V2, "sessions"))
+        + 2 * _usd(SONNET, *billing.AGENT_CATEGORY_TOKENS)
+    )
+
+
 @pytest.mark.django_db
 @pytest.mark.parametrize("action", ["ask", "draft", "preview"])
 def test_action_estimate_explains_a_credit_refusal(
