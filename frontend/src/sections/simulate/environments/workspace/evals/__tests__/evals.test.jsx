@@ -489,8 +489,15 @@ describe("EvalsStep — remove on a backend-backed env", () => {
     expect(await screen.findByText("no_misselling")).toBeInTheDocument();
     expect(screen.getByText("Library")).toBeInTheDocument();
     expect(screen.queryByText(/credits per/)).toBeNull();
-    expect(screen.getByText("{{conversation}}")).toBeInTheDocument();
-    expect(screen.getByText("Call recording")).toBeInTheDocument();
+    // Vel's mapping chips: one "input → what fills it" chip per input, in a
+    // single wrapped row, with no READS heading.
+    const chip = screen.getByLabelText("conversation → Call recording");
+    expect(chip).toHaveTextContent("conversation");
+    expect(chip).toHaveTextContent("Call recording");
+    expect(
+      screen.getByLabelText("agent_prompt → Agent instructions"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("READS")).toBeNull();
     // The raw source never reaches the screen.
     expect(screen.queryByText("voice_recording")).toBeNull();
   });
