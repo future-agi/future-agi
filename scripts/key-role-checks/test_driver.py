@@ -1,5 +1,8 @@
 """Small stdlib-only checks; no Django, services, or network calls."""
 
+from contextlib import redirect_stdout
+import io
+import json
 from pathlib import Path
 import socket
 import sys
@@ -8,7 +11,7 @@ from types import SimpleNamespace
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from check_results import compare, load  # noqa: E402
+from check_results import compare, load, main  # noqa: E402
 from socket_guard import _audit, _loopback  # noqa: E402
 
 
@@ -66,6 +69,32 @@ class ComparisonTests(unittest.TestCase):
                 '<testcase classname="m" name="b"><error/></testcase></testsuite></testsuites>'
             )
             self.assertEqual(load(path), {"m::a": "failed", "m::b": "error"})
+
+    def test_runtime_errors_are_not_policy_assertion_red(self):
+        import xml.etree.ElementTree as ET
+
+        families = (
+            ("test_key_role_scope", "test_bootstrap_role_and_authenticated_identity"),
+            ("test_key_management_scope", "test_system_key_changes_require_current_org_admin"),
+            ("test_key_tool_scope", "test_key_tools_use_current_org_membership"),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            raw = Path(directory)
+            for label in ("red", "green", "base_accounts", "head_accounts", "dev_accounts", "replay_accounts"):
+                suite = ET.Element("testsuite")
+                for module, name in families:
+                    case = ET.SubElement(suite, "testcase", classname=f"accounts.tests.{module}", name=name)
+                    if label == "red":
+                        failure = ET.SubElement(case, "failure", message="RuntimeError: unavailable service")
+                        failure.text = "E   RuntimeError: unavailable service"
+                ET.ElementTree(suite).write(raw / f"{label}.xml")
+                (raw / f"{label}.exit").write_text("1" if label == "red" else "0")
+            with redirect_stdout(io.StringIO()):
+                code = main(raw, raw / "results")
+            result = json.loads((raw / "results/comparison.json").read_text())
+            self.assertEqual(code, 1)
+            self.assertFalse(result["red_assertions_proven"])
+            self.assertEqual(result["status"], "BLOCKED")
 
     def test_empty_or_duplicate_results_are_refused(self):
         with tempfile.TemporaryDirectory() as directory:
