@@ -1417,6 +1417,8 @@ export const endpoints = {
     insightsRuns: () => apiPath("/tracer/insights/runs/"),
     insightsRun: (runId) =>
       apiPath("/tracer/insights/runs/{run_id}/", { run_id: runId }),
+    insightsRunStop: (runId) =>
+      apiPath("/tracer/insights/runs/{run_id}/stop/", { run_id: runId }),
     insightsRunUnits: (runId) =>
       apiPath("/tracer/insights/runs/{run_id}/units/", { run_id: runId }),
     insightsRunMedia: (runId) =>

@@ -24,6 +24,7 @@ import { unitWord } from "src/sections/projects/observePopulation";
 import { useCanStartRuns } from "src/sections/projects/runPermission";
 import {
   deleteConfig,
+  failedRunNext,
   forgetConfig,
   insightsErrorMessage,
   insightsKeys,
@@ -258,6 +259,7 @@ function ReportCard({ config, selected, onOpen, onRerun, onDelete }) {
       : `Last run ${relativeTime(run.finished_at || run.created_at)}`
     : "Not run yet";
   const stage = active ? STAGES[stageIndex(run.stage)] : null;
+  const failed = failedRunNext(run);
   const open = () => !renaming && onOpen(config.id);
 
   return (
@@ -352,24 +354,33 @@ function ReportCard({ config, selected, onOpen, onRerun, onDelete }) {
         </Stack>
       ) : run?.status === "failed" ? (
         <Stack spacing={0.5}>
-          <Typography variant="caption" color="error.main">
-            {run.analysed_count ? "Last run failed" : "Failed before analysing"}
+          <Typography
+            variant="caption"
+            color={failed.stopped ? "text.secondary" : "error.main"}
+          >
+            {failed.stopped
+              ? "Last run stopped"
+              : run.analysed_count
+                ? "Last run failed"
+                : "Failed before analysing"}
           </Typography>
           <Typography variant="caption">{runOutcome(run)}</Typography>
           <Typography variant="caption" color="text.secondary">
             {runFailureReason(run)}
           </Typography>
-          <Button
-            size="small"
-            color="inherit"
-            sx={{ alignSelf: "flex-start" }}
-            onClick={(event) => {
-              event.stopPropagation();
-              onRerun(config);
-            }}
-          >
-            Retry
-          </Button>
+          {failed.rerun && (
+            <Button
+              size="small"
+              color="inherit"
+              sx={{ alignSelf: "flex-start" }}
+              onClick={(event) => {
+                event.stopPropagation();
+                onRerun(config);
+              }}
+            >
+              {failed.rerun}
+            </Button>
+          )}
         </Stack>
       ) : segments.length > 0 ? (
         <Stack spacing={1}>

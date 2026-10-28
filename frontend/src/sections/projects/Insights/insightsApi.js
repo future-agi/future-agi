@@ -73,6 +73,13 @@ export const fetchUnits = async (runId, params = {}, signal) =>
 export const startRun = async (body, signal) =>
   result(await axios.post(endpoints.project.insightsRuns(), body, { signal }));
 
+export const stopRun = async (runId, signal) =>
+  result(
+    await axios.post(endpoints.project.insightsRunStop(runId), undefined, {
+      signal,
+    }),
+  );
+
 export const patchConfig = async (configId, body) =>
   result(await axios.patch(endpoints.project.insightsConfig(configId), body));
 
@@ -210,6 +217,23 @@ export const runFailureReason = (run) =>
     { statusCode: 400, result: run.error },
     "The report could not be completed. Try again in a moment.",
   );
+
+/**
+ * What a failed run offers next, by its `error_code`: someone stopped it
+ * ("stopped": run it again), only an administrator can fix it ("license":
+ * the License settings; "model_setup": nothing to click, its reason says
+ * what to change), or another try may work ("": Retry).
+ */
+export function failedRunNext(run) {
+  const code = run?.error_code || "";
+  const stopped = code === "stopped";
+  const needsAdmin = code === "license" || code === "model_setup";
+  return {
+    stopped,
+    license: code === "license",
+    rerun: stopped ? "Run again" : needsAdmin ? null : "Retry",
+  };
+}
 
 const creditsFrom = (data) =>
   data?.credits_estimate != null

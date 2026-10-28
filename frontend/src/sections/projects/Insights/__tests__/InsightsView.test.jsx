@@ -146,6 +146,10 @@ function renderAt(search) {
                 </>
               }
             />
+            <Route
+              path="/dashboard/settings/ee-licenses"
+              element={<div>License page</div>}
+            />
           </Routes>
         </MemoryRouter>
       </ThemeProvider>
@@ -359,6 +363,66 @@ describe("InsightsView", () => {
       expect(postsTo("/tracer/insights/runs/")).toHaveLength(1),
     );
     expect(postsTo("/tracer/insights/runs/")[0][1].population).toEqual(rows);
+  });
+
+  describe("a run that retrying can't help", () => {
+    const LICENCE =
+      "Insights couldn't use Future AGI's managed models: this licence couldn't be activated with the managed service. Check it in Settings → License, or set INSIGHTS_FAST_MODEL and INSIGHTS_THINKING_MODEL to models your own gateway serves.";
+    const GATEWAY =
+      "The model gateway doesn't serve turing_flash, so trying again won't help: an administrator needs to check the Insights model settings.";
+
+    function serveFailed(error, errorCode) {
+      const failed = {
+        ...runFixture.result,
+        status: "failed",
+        analysed_count: 0,
+        skipped_count: 0,
+        error,
+        error_code: errorCode,
+      };
+      const config = { ...configDetail, latest_run: failed, runs: [failed] };
+      mocks.readQuery.mockImplementation((url) => {
+        if (url === "/tracer/insights/configs/")
+          return ok({ configs: [config] });
+        if (url === `/tracer/insights/configs/${CONFIG_ID}/`) return ok(config);
+        if (url === `/tracer/insights/runs/${RUN_ID}/`) return ok(failed);
+        return ok({ units: [], total: 0 });
+      });
+    }
+
+    it("names the licence and leads to the License settings instead of Retry", async () => {
+      serveFailed(LICENCE, "license");
+      renderAt(`?report=${CONFIG_ID}`);
+      // On the page and in the rail, whole: not "Try again shortly".
+      expect(await screen.findAllByText(LICENCE)).toHaveLength(2);
+      expect(screen.queryByText(/Try again/)).toBeNull();
+      expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "License settings" }));
+      expect(await screen.findByText("License page")).toBeInTheDocument();
+    });
+
+    it("offers nothing to click when only the model settings can fix it", async () => {
+      serveFailed(GATEWAY, "model_setup");
+      renderAt(`?report=${CONFIG_ID}`);
+      expect(await screen.findAllByText(GATEWAY)).toHaveLength(2);
+      expect(screen.getAllByText("Failed before analysing")).toHaveLength(2);
+      expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+      expect(
+        screen.queryByRole("button", { name: "License settings" }),
+      ).toBeNull();
+    });
+
+    it("reads a stopped run as stopped, by whom, with Run again", async () => {
+      serveFailed("Stopped by Ada.", "stopped");
+      renderAt(`?report=${CONFIG_ID}`);
+      expect(await screen.findAllByText("Stopped by Ada.")).toHaveLength(2);
+      expect(screen.getByText("Stopped")).toBeInTheDocument();
+      expect(screen.getByText("Last run stopped")).toBeInTheDocument();
+      expect(screen.queryByText("Failed before analysing")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+      fireEvent.click(screen.getAllByRole("button", { name: "Run again" })[0]);
+      expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    });
   });
 
   it.each(

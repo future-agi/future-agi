@@ -25,6 +25,8 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import Iconify from "src/components/iconify";
+import { useRouter } from "src/routes/hooks";
+import { paths } from "src/routes/paths";
 import {
   VIEWER_CANT_RUN,
   useCanStartRuns,
@@ -43,6 +45,7 @@ import RunProgress from "./RunProgress";
 import TrendCard from "./TrendCard";
 import {
   deleteConfig,
+  failedRunNext,
   forgetConfig,
   insightsErrorMessage,
   insightsKeys,
@@ -476,6 +479,50 @@ ReportBody.propTypes = {
   onMethod: PropTypes.func.isRequired,
 };
 
+// A failed run, and what to do next: run it again when another try could
+// work, the License settings when the licence is why, nothing to click when
+// only the model settings can fix it (its reason says what to change).
+function FailedRun({ run, onRerun }) {
+  const router = useRouter();
+  const next = failedRunNext(run);
+  let action = null;
+  if (next.rerun)
+    action = (
+      <Button color="inherit" size="small" onClick={onRerun}>
+        {next.rerun}
+      </Button>
+    );
+  else if (next.license)
+    action = (
+      <Button
+        color="inherit"
+        size="small"
+        sx={{ whiteSpace: "nowrap" }}
+        onClick={() => router.push(paths.dashboard.settings.eeLicenses)}
+      >
+        License settings
+      </Button>
+    );
+  return (
+    <Alert severity={next.stopped ? "info" : "error"} action={action}>
+      <Typography variant="subtitle2">
+        {next.stopped
+          ? "Stopped"
+          : run.analysed_count
+            ? "This run failed"
+            : "Failed before analysing"}
+      </Typography>
+      <Typography variant="body2">{runOutcome(run)}</Typography>
+      {runFailureReason(run)}
+    </Alert>
+  );
+}
+
+FailedRun.propTypes = {
+  run: PropTypes.object.isRequired,
+  onRerun: PropTypes.func.isRequired,
+};
+
 export default function ReportPage({
   projectId,
   configId,
@@ -638,24 +685,7 @@ export default function ReportPage({
   else if (active) body = <RunProgress run={run} />;
   else if (run.status === "failed")
     body = (
-      <Alert
-        severity="error"
-        action={
-          <Button
-            color="inherit"
-            size="small"
-            onClick={() => setRerun({ rediscover: false })}
-          >
-            Retry
-          </Button>
-        }
-      >
-        <Typography variant="subtitle2">
-          {run.analysed_count ? "This run failed" : "Failed before analysing"}
-        </Typography>
-        <Typography variant="body2">{runOutcome(run)}</Typography>
-        {runFailureReason(run)}
-      </Alert>
+      <FailedRun run={run} onRerun={() => setRerun({ rediscover: false })} />
     );
   else
     body = (
