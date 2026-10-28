@@ -79,6 +79,39 @@ const TABS = [
   { id: "ci", label: "CI" },
   { id: "mcp", label: "Your agent (MCP)" },
   { id: "train", label: "Train (RL)" },
+  { id: "package", label: "Package" },
+];
+
+/* Where a run happens (--mode) — what each one means for the person's data
+   and their terminal. */
+const MODES = [
+  {
+    id: "hosted",
+    label: "Hosted",
+    line: "Your agent and this world run here. Close the terminal and it keeps going.",
+  },
+  {
+    id: "hybrid",
+    label: "Hybrid",
+    line: "Your agent runs on your machine and talks to this world here — only its messages and tool calls cross. Keep the terminal open.",
+  },
+  {
+    id: "local",
+    label: "Local",
+    line: "Your agent and the world both run on your machine; results stay there until you export them.",
+  },
+];
+
+/* What each exit code means — so a script reacts to the right problem. */
+const EXIT_CODES = [
+  ["0", "Done. A detached run was accepted."],
+  ["2", "Bad input or an empty selection — nothing was submitted."],
+  ["3", "Sign-in or permission problem."],
+  ["4", "Budget or usage limit — nothing new started."],
+  ["5", "Infrastructure or provider failure, not your agent."],
+  ["6", "A real regression (with --fail-on-regression)."],
+  ["7", "Evidence missing, or the runs can't be compared."],
+  ["130", "You stopped a local run. A hosted run keeps going."],
 ];
 
 export default function RunFromCodeDrawer({
@@ -104,8 +137,11 @@ export default function RunFromCodeDrawer({
   trainEvals = [],
 }) {
   const [tab, setTab] = useState("cli");
+  const [mode, setMode] = useState("hosted");
+  const local = mode !== "hosted";
   const id = env?.id || "env_…";
-  const flags = `--attempts ${repeats} --concurrency ${batchAt || parallel}`;
+  const agentFlag = local ? " --agent my-agent" : "";
+  const flags = `--mode ${mode}${agentFlag} --attempts ${repeats} --concurrency ${batchAt || parallel}`;
   const cap = `--budget ${budget} --budget-unit credits`;
 
   const cli = [
@@ -114,6 +150,16 @@ export default function RunFromCodeDrawer({
       body: "Once per machine. Sign-in opens the browser; in CI use FI_API_KEY.",
       cmd: INSTALL_CMD,
     },
+    ...(local
+      ? [
+          {
+            title: "Register your agent",
+            body: "The agent on your machine — how to start it. The test checks it answers; it isn't a pass.",
+            hint: "--type http --url … for an agent behind a URL; --mapping for another input/output shape.",
+            cmd: "agent-learn agent add my-agent --type process --command python --arg agent.py --workdir .\nagent-learn agent test my-agent",
+          },
+        ]
+      : []),
     {
       title: "Preview the cost",
       body: "The same scope, estimate and limit check as the run plan — nothing runs.",
@@ -127,13 +173,25 @@ export default function RunFromCodeDrawer({
     {
       title: "Run this environment",
       body: `Runs every scenario against ${agentName ? `the agent at ${agentName}` : "its agent"} — the same run as Run simulation${batchAt ? `; it's over 200 conversations, so ${batchAt} at once` : ""}. No new calls start past --budget. It prints the run's ID and its link here.`,
-      hint: "--scenario or --group picks a subset; --mode hybrid tests a local build against this world.",
+      hint:
+        mode === "hosted"
+          ? "--detach gives you the terminal back; the run keeps going. Follow it with agent-learn status <run-id> --watch — Ctrl-C stops watching, not the run. --scenario or --group picks a subset."
+          : "Keep the terminal open — your agent is part of the run. Ctrl-C stops it and says where the partial results are (exit 130). --scenario or --group picks a subset.",
       cmd: `agent-learn run --env ${id} ${flags} ${cap}`,
     },
     {
       title: "Read the results",
       body: "Pass rate, the failing scenarios and why, with a link to the run here — the same run, by its ID.",
+      hint: "agent-learn logs <run-id> --trial <trial-id> shows one conversation's events — nothing new runs.",
       cmd: "agent-learn results <run-id> --failed-only --include checks,usage,trace",
+    },
+    {
+      title: "Fix it and rerun the same test",
+      body: "The same scenarios and settings, on your changed agent — so the difference is the agent, not the test.",
+      hint: "--failed-only reruns just what failed: quick for checking a fix, but not a full comparison. Then agent-learn compare <run-id> <new-run-id> --scope identical.",
+      cmd: local
+        ? 'agent-learn agent version my-agent --message "Fix the failing case"\nagent-learn rerun <run-id> --agent my-agent@2'
+        : "agent-learn rerun <run-id> --agent <agent>@<new-version>",
     },
     {
       title: "Check what it cost",
@@ -149,6 +207,7 @@ export default function RunFromCodeDrawer({
 
 plan = client.runs.preview(
     environment="${id}",
+    mode="${mode}",${local ? `\n    agent="my-agent",` : ""}
     attempts=${repeats},
     budget={"amount": ${budget}, "unit": "credits"},
 )
@@ -192,6 +251,7 @@ agent-learn run --env ${id} --agent my-agent --mode hybrid --attempts ${repeats}
 
 const plan = await client.runs.preview({
   environment: "${id}",
+  mode: "${mode}",${local ? `\n  agent: "my-agent",` : ""}
   attempts: ${repeats},
   budget: { amount: ${budget}, unit: "credits" }
 });
@@ -221,6 +281,36 @@ jobs:
         env:
           FI_API_KEY: \${{ secrets.FI_API_KEY }}
           BASELINE_RUN: \${{ vars.BASELINE_RUN }}   # e.g. main's last run`;
+
+  /* A private world package: start one, preview and check it, publish it
+     to the workspace, and adopt it — the same steps whoever runs them. */
+  const packageSteps = [
+    {
+      title: "Start a world package",
+      body: "A starter for a game, an app, a workflow or an empty world — edit it next to your code.",
+      cmd: "agent-learn world init my-world --template app",
+    },
+    {
+      title: "Try it in a sandbox",
+      body: "Open it with a starting state and look around before checking it.",
+      cmd: `agent-learn world preview ./my-world --mode ${mode === "local" ? "local" : "hosted"} --budget 50`,
+    },
+    {
+      title: "Check it",
+      body: "Starts, resets, a reference run passes, deliberate mistakes fail, and episodes stay apart. Publishing needs every check.",
+      cmd: "agent-learn world validate ./my-world --budget 50",
+    },
+    {
+      title: "Publish it privately",
+      body: "An unchangeable version, visible to you or your workspace.",
+      cmd: "agent-learn world publish ./my-world --visibility workspace --version 1.0.0 --notes ./CHANGES.md --validation <validation-id>",
+    },
+    {
+      title: "Build environments from it",
+      body: "You or a teammate adopt the released world for an agent, then run it like any environment.",
+      cmd: "agent-learn env adopt my-world@1.0.0 --agent <agent> --name my-world-tests",
+    },
+  ];
 
   const prompt = `Run ${env?.name || "this environment"} with ${repeats} repeats and summarise what failed and why.`;
 
@@ -344,7 +434,121 @@ jobs:
               ))}
             </ToggleButtonGroup>
 
-            {tab === "cli" && <LocalSteps steps={cli} />}
+            {/* Where it runs — every command and call below follows it. */}
+            {["cli", "python", "node"].includes(tab) && (
+              <Box>
+                <Label>Where it runs</Label>
+                <ToggleButtonGroup
+                  exclusive
+                  size="small"
+                  value={mode}
+                  onChange={(_, v) => v && setMode(v)}
+                  aria-label="Where it runs"
+                >
+                  {MODES.map((m) => (
+                    <ToggleButton key={m.id} value={m.id}>
+                      {m.label}
+                    </ToggleButton>
+                  ))}
+                </ToggleButtonGroup>
+                <Typography
+                  sx={{
+                    fontSize: 12,
+                    lineHeight: "16px",
+                    color: "text.tertiary",
+                    mt: 0.75,
+                  }}
+                >
+                  {MODES.find((m) => m.id === mode)?.line}
+                </Typography>
+              </Box>
+            )}
+
+            {tab === "cli" && (
+              <Stack spacing={2.5}>
+                <LocalSteps steps={cli} />
+                {/* For scripts and CI: never prompt, read the output, react
+                    to the right exit code. */}
+                <Box>
+                  <Label>For scripts and CI</Label>
+                  <CodeBlock
+                    code={`agent-learn run --env ${id} ${flags} ${cap} --non-interactive --yes --output json`}
+                  />
+                  <Typography
+                    sx={{
+                      fontSize: 12,
+                      lineHeight: "16px",
+                      color: "text.tertiary",
+                      mt: 1,
+                      mb: 1,
+                    }}
+                  >
+                    --non-interactive never prompts — a missing choice or budget
+                    is an error. --yes accepts the plan shown; it never allows
+                    live tools or a bigger budget. --output json prints the run
+                    for your script.
+                  </Typography>
+                  <Box
+                    sx={{
+                      border: "1px solid",
+                      borderColor: "divider",
+                      borderRadius: 1,
+                      "& > * + *": {
+                        borderTop: "1px solid",
+                        borderColor: "divider",
+                      },
+                    }}
+                  >
+                    {EXIT_CODES.map(([code, meaning]) => (
+                      <Stack
+                        key={code}
+                        direction="row"
+                        spacing={1.5}
+                        sx={{ px: 1.5, py: 0.625 }}
+                      >
+                        <Typography
+                          sx={{
+                            fontSize: 12,
+                            lineHeight: "18px",
+                            fontFamily: "monospace",
+                            width: 32,
+                            flexShrink: 0,
+                          }}
+                        >
+                          {code}
+                        </Typography>
+                        <Typography
+                          sx={{
+                            fontSize: 12,
+                            lineHeight: "18px",
+                            color: "text.secondary",
+                          }}
+                        >
+                          {meaning}
+                        </Typography>
+                      </Stack>
+                    ))}
+                  </Box>
+                </Box>
+              </Stack>
+            )}
+
+            {tab === "package" && (
+              <Stack spacing={1.5}>
+                <Typography
+                  sx={{
+                    fontSize: 13,
+                    lineHeight: "20px",
+                    color: "text.secondary",
+                  }}
+                >
+                  Package your own world — its tools, data and rules — check it,
+                  and publish it privately so your team can build environments
+                  from it. Public publishing isn&apos;t available.
+                </Typography>
+                <LocalSteps steps={packageSteps} />
+              </Stack>
+            )}
 
             {tab === "python" && (
               <Stack spacing={2}>
@@ -411,10 +615,10 @@ jobs:
                     color: "text.tertiary",
                   }}
                 >
-                  The reward is this environment&apos;s evals. The first
-                  trainer is TRL. Training, development and held-out cases
-                  stay apart, and the trained model is checked on held-out
-                  cases it never saw — no improvement is a valid result.
+                  The reward is this environment&apos;s evals. The first trainer
+                  is TRL. Training, development and held-out cases stay apart,
+                  and the trained model is checked on held-out cases it never
+                  saw — no improvement is a valid result.
                 </Typography>
               </Stack>
             )}
