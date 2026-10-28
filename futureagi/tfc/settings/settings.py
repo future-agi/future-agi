@@ -891,6 +891,11 @@ DEPLOYMENT_TELEMETRY_SLACK_WEBHOOK = os.getenv(
     SLACK_WEBHOOK_CHANNEL,
 )
 ERROR_LOGS_WEBHOOK = os.getenv("ERROR_LOGS_WEBHOOK", "").strip()
+# Dedicated production-certification channel; deliberately NOT the
+# critical-error webhook so campaign notifications stay off the pager path.
+PRODUCTION_CERTIFICATION_SLACK_WEBHOOK = os.getenv(
+    "PRODUCTION_CERTIFICATION_SLACK_WEBHOOK", ""
+).strip()
 
 AIRBYTE_HEADERS = {
     "Content-Type": "application/json",

@@ -675,3 +675,41 @@ async def _hosted_harness_gateway_workflow_running_async(job_id: str) -> bool:
             return False
         raise
     return description.status == WorkflowExecutionStatus.RUNNING
+
+
+def start_certification_workflow(campaign_id: str) -> str:
+    return async_to_sync(_start_certification_workflow_async)(campaign_id)
+
+
+async def _start_certification_workflow_async(campaign_id: str) -> str:
+    from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
+
+    from simulate.temporal.types.certification import CertificationWorkflowInput
+    from simulate.temporal.workflows.certification_workflow import (
+        ProductionCertificationWorkflow,
+    )
+    from tfc.temporal.common.client import get_client
+
+    client = await get_client()
+    workflow_id = f"certification-{campaign_id}"
+    await client.start_workflow(
+        ProductionCertificationWorkflow.run,
+        CertificationWorkflowInput(campaign_id=campaign_id),
+        id=workflow_id,
+        task_queue=QUEUE_RUNNER,
+        id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
+        id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+    )
+    return workflow_id
+
+
+def cancel_certification_workflow(campaign_id: str) -> None:
+    async_to_sync(_cancel_certification_workflow_async)(campaign_id)
+
+
+async def _cancel_certification_workflow_async(campaign_id: str) -> None:
+    from tfc.temporal.common.client import get_client
+
+    client = await get_client()
+    handle = client.get_workflow_handle(f"certification-{campaign_id}")
+    await handle.signal("cancel")
