@@ -28,6 +28,8 @@ const FixedTab = ({
   >
     <ButtonBase
       onClick={() => onClick(tabKey)}
+      // The tooltip would otherwise become the tab's name ("Press 3").
+      aria-label={locked ? `${label}, Enterprise feature` : label}
       sx={{
         display: "inline-flex",
         alignItems: "center",

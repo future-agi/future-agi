@@ -197,6 +197,10 @@ describe("ObserveTabBar — Insights tab", () => {
     ).toBeInTheDocument();
     fireEvent.click(insightsTab());
     expect(onTabChange).toHaveBeenCalledWith("insights");
+    // Named by the tab, not by its tooltip ("Enterprise feature · Press 4").
+    expect(
+      screen.getByRole("button", { name: "Insights, Enterprise feature" }),
+    ).toBe(insightsTab());
   });
 
   it("shows no lock when Insights is allowed", () => {

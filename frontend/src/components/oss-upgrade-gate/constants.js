@@ -85,8 +85,10 @@ export const FEATURES = {
     footnote:
       "Jev evaluators come with every edition, open source included: add one from Evals with your own TypeSafe key.",
     docsUrl: "https://docs.futureagi.com/docs/observe/features/instant-eval",
-    // The preview is an example run, not this workspace's data: blur all of it.
+    // The preview is an example run, not this workspace's data: blur all of
+    // it, enough that none of its invented text can be read.
     blurFrom: 0,
+    blur: 16,
   },
   insights: {
     eyebrow: "Enterprise feature",
@@ -102,6 +104,7 @@ export const FEATURES = {
     ],
     docsUrl: "https://docs.futureagi.com/docs/observe/features/insights",
     blurFrom: 0,
+    blur: 16,
   },
   usageSummary: {
     eyebrow: "Cloud feature",
