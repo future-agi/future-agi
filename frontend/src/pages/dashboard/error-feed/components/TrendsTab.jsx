@@ -13,6 +13,7 @@ import {
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
 import { useErrorFeedTrends } from "src/api/errorFeed/error-feed";
+import { useSharedIssue } from "../sharedIssueContext";
 
 // ── Events over time — dual-axis area + bars ────────────────────────────────
 function EventsLineChart({ eventsData }) {
@@ -563,7 +564,20 @@ MetricCards.propTypes = { metrics: PropTypes.array.isRequired };
 // ── Main TrendsTab ──────────────────────────────────────────────────────────
 export default function TrendsTab({ error }) {
   const clusterId = error?.cluster_id;
-  const { data, isLoading } = useErrorFeedTrends(clusterId);
+  const shared = useSharedIssue();
+  const fetched = useErrorFeedTrends(shared ? null : clusterId);
+  const data = shared ? shared.trends : fetched.data;
+  const isLoading = shared ? false : fetched.isLoading;
+
+  if (shared && !data) {
+    return (
+      <Stack alignItems="center" justifyContent="center" sx={{ py: 6 }}>
+        <Typography fontSize="13px" color="text.disabled">
+          No trend data for this issue.
+        </Typography>
+      </Stack>
+    );
+  }
 
   if (isLoading || !data) {
     return (

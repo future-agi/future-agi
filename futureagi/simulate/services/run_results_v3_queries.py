@@ -1166,6 +1166,10 @@ def build_run_comparison(
     }
 
 
+def build_run_reliability(execution: TestExecution) -> dict[str, Any]:
+    return build_reliability(run_calls_queryset(execution), execution.trials)
+
+
 def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
     from simulate.services.run_dashboard_v3 import build_run_dashboard
 
@@ -1348,7 +1352,7 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
             ),
         ),
         "dashboard": build_run_dashboard(
-            queryset, summary, evaluations, risk, reliability, comparison
+            queryset, summary, evaluations, risk, comparison
         ),
         "failure_breakdown": [
             {

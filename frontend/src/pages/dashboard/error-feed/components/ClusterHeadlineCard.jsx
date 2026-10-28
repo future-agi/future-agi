@@ -15,6 +15,7 @@ import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { purple } from "src/theme/palette";
 import openExternal from "../openExternal";
 import { useErrorFeedStore } from "../store";
+import { useSharedIssue } from "../sharedIssueContext";
 import { CONFIDENCE, MESSAGE_TYPE, RUN_STATE, STEP_STATUS } from "../constants";
 
 // Short relative label for the cached-analysis timestamp (date-fns, same
@@ -52,7 +53,7 @@ const CONFIDENCE_LABEL = {
 const ACCENT = purple[500];
 
 // ── State: not_analyzed (empty) ──────────────────────────────────────────────
-function NotAnalyzedState({ onAnalyze }) {
+function NotAnalyzedState({ onAnalyze, readOnly = false }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   return (
@@ -77,42 +78,49 @@ function NotAnalyzedState({ onAnalyze }) {
       </Box>
       <Stack flex={1} gap={0.4} minWidth={0}>
         <Typography fontSize="14px" fontWeight={600} color="text.primary">
-          No analysis yet
+          {readOnly ? "No analysis saved" : "No analysis yet"}
         </Typography>
         <Typography
           fontSize="12px"
           color="text.secondary"
           sx={{ lineHeight: 1.55 }}
         >
-          No analysis yet — get a plain-English explanation and a suggested fix.
+          {readOnly
+            ? "No analysis saved for this issue."
+            : "No analysis yet — get a plain-English explanation and a suggested fix."}
         </Typography>
       </Stack>
-      <Button
-        size="small"
-        variant="contained"
-        startIcon={<Iconify icon="mdi:star-four-points" width={13} />}
-        onClick={onAnalyze}
-        sx={{
-          height: 32,
-          fontSize: "12.5px",
-          fontWeight: 600,
-          borderRadius: "8px",
-          textTransform: "none",
-          // White button in dark theme, purple in light.
-          bgcolor: isDark ? "#fff" : ACCENT,
-          color: isDark ? "#111" : "#fff",
-          px: 1.75,
-          "&:hover": { bgcolor: isDark ? "#e8e8e8" : "#6845E8" },
-          boxShadow: "none",
-          flexShrink: 0,
-        }}
-      >
-        Debug this cluster
-      </Button>
+      {!readOnly && (
+        <Button
+          size="small"
+          variant="contained"
+          startIcon={<Iconify icon="mdi:star-four-points" width={13} />}
+          onClick={onAnalyze}
+          sx={{
+            height: 32,
+            fontSize: "12.5px",
+            fontWeight: 600,
+            borderRadius: "8px",
+            textTransform: "none",
+            // White button in dark theme, purple in light.
+            bgcolor: isDark ? "#fff" : ACCENT,
+            color: isDark ? "#111" : "#fff",
+            px: 1.75,
+            "&:hover": { bgcolor: isDark ? "#e8e8e8" : "#6845E8" },
+            boxShadow: "none",
+            flexShrink: 0,
+          }}
+        >
+          Debug this cluster
+        </Button>
+      )}
     </Stack>
   );
 }
-NotAnalyzedState.propTypes = { onAnalyze: PropTypes.func };
+NotAnalyzedState.propTypes = {
+  onAnalyze: PropTypes.func,
+  readOnly: PropTypes.bool,
+};
 
 const ANALYSIS_STEP_LABELS = [
   "Sampling traces",
@@ -210,7 +218,13 @@ function AnalyzingState({ activeStepIdx }) {
 AnalyzingState.propTypes = { activeStepIdx: PropTypes.number };
 
 // ── State: analyzed (default after run) ──────────────────────────────────────
-function AnalyzedState({ data, linkedIssue, onCreateLinear, onOpenAnalyze }) {
+function AnalyzedState({
+  data,
+  linkedIssue,
+  onCreateLinear,
+  onOpenAnalyze,
+  readOnly = false,
+}) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   return (
@@ -251,69 +265,71 @@ function AnalyzedState({ data, linkedIssue, onCreateLinear, onOpenAnalyze }) {
         </Typography>
       </Stack>
 
-      <Stack
-        direction="row"
-        alignItems="center"
-        gap={0.75}
-        sx={{ mt: 0.25, flexWrap: "wrap" }}
-      >
-        <Button
-          size="small"
-          variant="outlined"
-          startIcon={
-            <Iconify
-              icon="simple-icons:linear"
-              width={12}
-              sx={{ color: "#5E6AD2" }}
-            />
-          }
-          onClick={
-            linkedIssue?.url
-              ? () => openExternal(linkedIssue.url)
-              : onCreateLinear
-          }
-          sx={{
-            height: 28,
-            fontSize: "12px",
-            borderRadius: "6px",
-            textTransform: "none",
-            borderColor: "divider",
-            color: "text.primary",
-            "&:hover": {
-              borderColor: "text.secondary",
-              bgcolor: isDark ? alpha("#fff", 0.04) : alpha("#000", 0.03),
-            },
-          }}
+      {!readOnly && (
+        <Stack
+          direction="row"
+          alignItems="center"
+          gap={0.75}
+          sx={{ mt: 0.25, flexWrap: "wrap" }}
         >
-          {linkedIssue?.url
-            ? `View ${linkedIssue.id || "Linear issue"}`
-            : "Create Linear issue"}
-        </Button>
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={
+              <Iconify
+                icon="simple-icons:linear"
+                width={12}
+                sx={{ color: "#5E6AD2" }}
+              />
+            }
+            onClick={
+              linkedIssue?.url
+                ? () => openExternal(linkedIssue.url)
+                : onCreateLinear
+            }
+            sx={{
+              height: 28,
+              fontSize: "12px",
+              borderRadius: "6px",
+              textTransform: "none",
+              borderColor: "divider",
+              color: "text.primary",
+              "&:hover": {
+                borderColor: "text.secondary",
+                bgcolor: isDark ? alpha("#fff", 0.04) : alpha("#000", 0.03),
+              },
+            }}
+          >
+            {linkedIssue?.url
+              ? `View ${linkedIssue.id || "Linear issue"}`
+              : "Create Linear issue"}
+          </Button>
 
-        <Box sx={{ flex: 1 }} />
+          <Box sx={{ flex: 1 }} />
 
-        <Button
-          size="small"
-          variant="outlined"
-          startIcon={<Iconify icon="mdi:text-search" width={13} />}
-          onClick={onOpenAnalyze}
-          sx={{
-            height: 28,
-            fontSize: "12px",
-            fontWeight: 600,
-            borderRadius: "6px",
-            textTransform: "none",
-            borderColor: "divider",
-            color: "text.primary",
-            "&:hover": {
-              borderColor: "text.secondary",
-              bgcolor: isDark ? alpha("#fff", 0.04) : alpha("#000", 0.03),
-            },
-          }}
-        >
-          View reasoning
-        </Button>
-      </Stack>
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={<Iconify icon="mdi:text-search" width={13} />}
+            onClick={onOpenAnalyze}
+            sx={{
+              height: 28,
+              fontSize: "12px",
+              fontWeight: 600,
+              borderRadius: "6px",
+              textTransform: "none",
+              borderColor: "divider",
+              color: "text.primary",
+              "&:hover": {
+                borderColor: "text.secondary",
+                bgcolor: isDark ? alpha("#fff", 0.04) : alpha("#000", 0.03),
+              },
+            }}
+          >
+            View reasoning
+          </Button>
+        </Stack>
+      )}
     </Stack>
   );
 }
@@ -325,6 +341,7 @@ AnalyzedState.propTypes = {
   }),
   onCreateLinear: PropTypes.func,
   onOpenAnalyze: PropTypes.func,
+  readOnly: PropTypes.bool,
 };
 
 // ── Main: ClusterHeadlineCard ────────────────────────────────────────────────
@@ -336,6 +353,7 @@ export default function ClusterHeadlineCard({
 }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
+  const readOnly = !!useSharedIssue();
   const cachedRca = useMemo(() => cachedRcaFrom(error), [error]);
   const clusterId = error?.cluster_id;
 
@@ -511,30 +529,34 @@ export default function ClusterHeadlineCard({
             >
               Analyzed {data?.analyzedAt ?? "just now"}
             </Typography>
-            <CustomTooltip show title="Re-run analysis (1 credit)" arrow>
-              <Box
-                onClick={(e) => {
-                  e.stopPropagation();
-                  runAnalysis();
-                }}
-                sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  width: 22,
-                  height: 22,
-                  borderRadius: "5px",
-                  cursor: "pointer",
-                  color: "text.disabled",
-                  "&:hover": {
-                    color: "text.primary",
-                    bgcolor: isDark ? alpha("#fff", 0.06) : alpha("#000", 0.04),
-                  },
-                }}
-              >
-                <Iconify icon="mdi:refresh" width={13} />
-              </Box>
-            </CustomTooltip>
+            {!readOnly && (
+              <CustomTooltip show title="Re-run analysis (1 credit)" arrow>
+                <Box
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    runAnalysis();
+                  }}
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: 22,
+                    height: 22,
+                    borderRadius: "5px",
+                    cursor: "pointer",
+                    color: "text.disabled",
+                    "&:hover": {
+                      color: "text.primary",
+                      bgcolor: isDark
+                        ? alpha("#fff", 0.06)
+                        : alpha("#000", 0.04),
+                    },
+                  }}
+                >
+                  <Iconify icon="mdi:refresh" width={13} />
+                </Box>
+              </CustomTooltip>
+            )}
           </Stack>
         )}
 
@@ -570,7 +592,7 @@ export default function ClusterHeadlineCard({
       <Collapse in={!collapsed} timeout={220} unmountOnExit>
         <Box sx={{ mt: 1.5 }}>
           {state === "not_analyzed" && (
-            <NotAnalyzedState onAnalyze={runAnalysis} />
+            <NotAnalyzedState onAnalyze={runAnalysis} readOnly={readOnly} />
           )}
           {state === "analyzing" && (
             <AnalyzingState activeStepIdx={activeStepIdx} />
@@ -588,6 +610,7 @@ export default function ClusterHeadlineCard({
               }
               onCreateLinear={onCreateLinear ?? noop}
               onOpenAnalyze={onOpenAnalyze ?? noop}
+              readOnly={readOnly}
             />
           )}
         </Box>
