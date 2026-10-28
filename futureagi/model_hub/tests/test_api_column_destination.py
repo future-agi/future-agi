@@ -24,8 +24,7 @@ def legacy_transport(monkeypatch):
     # These refusals must precede worker startup as well as any network activity.
     worker = Mock(side_effect=AssertionError("unexpected outbound worker"))
     monkeypatch.setattr(subprocess, "Popen", worker)
-    yield transport
-    worker.assert_not_called()
+    return transport, worker
 
 
 def config(url="http://public.fixture.test/value"):
@@ -61,20 +60,27 @@ def config(url="http://public.fixture.test/value"):
     ],
 )
 def test_nonpublic_destinations_are_refused(host, legacy_transport):
+    transport, worker = legacy_transport
     assert (
         columns.AddApiColumnView()._make_api_call(None, config(f"http://{host}/"))
         == ERROR
     )
+    worker.assert_not_called()
+    transport.assert_not_called()
 
 
 @pytest.mark.parametrize(
     "url", ["ftp://public.fixture.test/x", "http://name:pass@public.fixture.test/x"]
 )
 def test_url_authority_is_validated(url, legacy_transport):
+    transport, worker = legacy_transport
     assert columns.AddApiColumnView()._make_api_call(None, config(url)) == ERROR
+    worker.assert_not_called()
+    transport.assert_not_called()
 
 
 def test_row_substitution_is_checked_before_transport(monkeypatch, legacy_transport):
+    transport, worker = legacy_transport
     view = columns.AddApiColumnView()
     monkeypatch.setattr(view, "_resolve_cell_value", lambda variable, row: "127.0.0.1")
     cell = SimpleNamespace(
@@ -83,10 +89,13 @@ def test_row_substitution_is_checked_before_transport(monkeypatch, legacy_transp
         )
     )
     assert view._make_api_call(cell, config("http://{{column}}/value")) == ERROR
+    worker.assert_not_called()
+    transport.assert_not_called()
 
 
 @pytest.mark.parametrize("location", ["headers", "params"])
 def test_foreign_secret_is_not_resolved(location, monkeypatch, legacy_transport):
+    transport, worker = legacy_transport
     record = SimpleNamespace(
         id="foreign",
         organization_id="other-org",
@@ -131,4 +140,5 @@ def test_foreign_secret_is_not_resolved(location, monkeypatch, legacy_transport)
     workspaces.no_workspace_objects.filter.assert_called_once_with(
         id="own-workspace", organization_id="own-org", is_default=True
     )
-    legacy_transport.assert_not_called()
+    worker.assert_not_called()
+    transport.assert_not_called()
