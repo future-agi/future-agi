@@ -13,3 +13,16 @@ get {
 auth:bearer {
   token: {{access_token}}
 }
+
+docs {
+  Owners and Admins with an active organization membership receive the
+  organization API key. Other active members receive a personal API key bound
+  to their own account and permissions. Workspace admin access alone does not
+  grant access to the organization key. An inactive or removed membership
+  cannot retrieve keys.
+
+  The response remains { status: "success", data: { id, api_key, secret_key } }.
+  SDK initialization using an API key returns that same key, without changing
+  its type. A disabled organization key must be enabled through key management
+  before it can be retrieved again.
+}

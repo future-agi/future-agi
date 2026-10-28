@@ -1,5 +1,3 @@
-from typing import Optional
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -9,7 +7,7 @@ from ai_tools.registry import register_tool
 
 
 class CreateApiKeyInput(PydanticBaseModel):
-    name: Optional[str] = Field(
+    name: str | None = Field(
         default=None, description="Optional name/label for the API key"
     )
     key_type: str = Field(
@@ -33,16 +31,13 @@ class CreateApiKeyTool(BaseTool):
         from django.db import IntegrityError
 
         from accounts.models.user import OrgApiKey
-        from accounts.models.workspace import OrganizationRoles
+        from accounts.services.api_keys import can_manage_system_keys
 
         org = context.organization
         actor = context.user
 
         # Permission check
-        if actor.organization_role not in [
-            OrganizationRoles.OWNER,
-            OrganizationRoles.ADMIN,
-        ]:
+        if not can_manage_system_keys(actor, org):
             return ToolResult.error(
                 "You do not have permission to create API keys. "
                 "Only Owner or Admin roles can create API keys.",

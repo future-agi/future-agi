@@ -161,6 +161,10 @@ Open <http://localhost:3000>, create your account (or sign in with the one the
 installer made), then copy the API key and secret key from **Keys** in the
 sidebar.
 
+The organization key is available to active organization Owners and Admins.
+When retrieving keys through `/accounts/keys/`, other active members receive a
+personal key with their own permissions; the response format is unchanged.
+
 **3. Send your first trace**
 
 ```bash

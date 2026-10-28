@@ -25,16 +25,13 @@ class RevokeApiKeyTool(BaseTool):
     def execute(self, params: RevokeApiKeyInput, context: ToolContext) -> ToolResult:
 
         from accounts.models.user import OrgApiKey
-        from accounts.models.workspace import OrganizationRoles
+        from accounts.services.api_keys import can_manage_system_keys, visible_api_keys
 
         org = context.organization
         actor = context.user
 
         # Permission check
-        if actor.organization_role not in [
-            OrganizationRoles.OWNER,
-            OrganizationRoles.ADMIN,
-        ]:
+        if not can_manage_system_keys(actor, org):
             return ToolResult.error(
                 "You do not have permission to revoke API keys. "
                 "Only Owner or Admin roles can revoke API keys.",
@@ -42,9 +39,7 @@ class RevokeApiKeyTool(BaseTool):
             )
 
         try:
-            api_key = OrgApiKey.no_workspace_objects.get(
-                id=params.key_id, organization=org
-            )
+            api_key = visible_api_keys(actor, org).get(id=params.key_id)
         except OrgApiKey.DoesNotExist:
             return ToolResult.not_found("API Key", str(params.key_id))
 

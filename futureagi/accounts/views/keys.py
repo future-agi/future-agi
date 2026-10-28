@@ -8,13 +8,14 @@ from django.conf import settings
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import ViewSet
 
 from accounts.models import OrgApiKey
-from accounts.permissions import RequiresIndependentAuth
+from accounts.permissions import HasKeyOrganizationMembership, RequiresIndependentAuth
 from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
     AccountsStringResultResponseSerializer,
@@ -27,13 +28,19 @@ from accounts.serializers.org_api_key import (
     OrgApiKeySerializer,
     UserSecretKeySerializer,
 )
+from accounts.services.api_keys import (
+    bootstrap_api_key,
+    key_org_level,
+    request_key_organization,
+    visible_api_keys,
+)
 from analytics.utils import (
     MixpanelEvents,
     get_mixpanel_properties,
     track_mixpanel_event,
 )
 from model_hub.models.api_key import mask_key
-from tfc.constants.roles import RolePermissions
+from tfc.constants.levels import Level
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
@@ -65,27 +72,21 @@ class GetKeysView(APIView):
         responses={200: SecretKeysResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
     )
     def get(self, request, *args, **kwargs):
-        user_organization = (
-            getattr(request, "organization", None) or self.request.user.organization
-        )
-        if request.headers.get("X-Api-Key") is not None:
+        user_organization = request_key_organization(request)
+        # Trust the authenticator's credential, never the presence of a header.
+        org_api_key = getattr(request, "org_api_key", None)
+        if org_api_key is not None:
             properties = get_mixpanel_properties(user=request.user)
             track_mixpanel_event(MixpanelEvents.SDK_INIT.value, properties)
 
         try:
-            apiKeys = OrgApiKey.no_workspace_objects.filter(
-                organization=user_organization, type="system", enabled=True
-            )
-            if not apiKeys.exists():
-                org_api_key = OrgApiKey.no_workspace_objects.create(
-                    organization=user_organization, type="system"
-                )
-            else:
-                org_api_key = apiKeys.first()
-
+            if org_api_key is None:
+                org_api_key = bootstrap_api_key(request.user, user_organization)
             serialized_keys = OrgApiKeySerializer(org_api_key)
             return Response({"status": "success", "data": serialized_keys.data})
 
+        except PermissionDenied:
+            raise
         except Exception:
             traceback.print_exc()
             return self._gm.internal_server_error_response(
@@ -95,7 +96,10 @@ class GetKeysView(APIView):
 
 class SecretKeyAPIViewSet(ViewSet):
     _gm = GeneralMethods()
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HasKeyOrganizationMembership]
+
+    def key_queryset(self, request):
+        return visible_api_keys(request.user, request_key_organization(request))
 
     def get_permissions(self):
         permission_classes = list(self.permission_classes)
@@ -120,10 +124,6 @@ class SecretKeyAPIViewSet(ViewSet):
     )
     @action(detail=False, methods=["GET"])
     def get_secret_keys(self, request, *args, **kwargs):
-        user_organization = (
-            getattr(request, "organization", None) or self.request.user.organization
-        )
-
         try:
             search = request.query_params.get("search", None)
             # Support both 'current_page_index' (frontend) and 'page_number' (legacy)
@@ -145,10 +145,7 @@ class SecretKeyAPIViewSet(ViewSet):
             # Build base queryset with select_related to avoid N+1 queries
             # Sandbox ingest keys belong to the platform, not to the user.
             apiKeys = (
-                OrgApiKey.objects.filter(organization=user_organization, deleted=False)
-                .exclude(type="ingest")
-                .select_related("user")
-                .order_by(order_by)
+                self.key_queryset(request).select_related("user").order_by(order_by)
             )
 
             if search:
@@ -219,11 +216,7 @@ class SecretKeyAPIViewSet(ViewSet):
                 return self._gm.bad_request(get_error_message("KEY_ID_REQUIRED"))
 
             try:
-                apikey = OrgApiKey.objects.get(
-                    id=key_id,
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                )
+                apikey = self.key_queryset(request).get(id=key_id)
                 if apikey.enabled:
                     return self._gm.bad_request(get_error_message("API_KEY_ENABLED"))
                 apikey.enabled = True
@@ -253,11 +246,7 @@ class SecretKeyAPIViewSet(ViewSet):
                 return self._gm.bad_request(get_error_message("KEY_ID_REQUIRED"))
 
             try:
-                apikey = OrgApiKey.objects.get(
-                    id=key_id,
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                )
+                apikey = self.key_queryset(request).get(id=key_id)
                 if not apikey.enabled:
                     return self._gm.bad_request(get_error_message("API_KEY_DISABLED"))
                 apikey.enabled = False
@@ -284,16 +273,14 @@ class SecretKeyAPIViewSet(ViewSet):
 
             if OrgApiKey.objects.filter(
                 name=key_name,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
+                organization=request_key_organization(request),
                 deleted=False,
             ).exists():
                 return self._gm.bad_request(get_error_message("KEY_NAME_EXISTS"))
 
             org_key = OrgApiKey.objects.create(
                 name=key_name,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
+                organization=request_key_organization(request),
                 type="user",
                 user=request.user,
             )
@@ -333,31 +320,15 @@ class SecretKeyAPIViewSet(ViewSet):
     @action(detail=False, methods=["DELETE"])
     def delete_secret_key(self, request, *args, **kwargs):
         try:
-            # Check role in the current org (membership first, FK fallback)
-            _current_org = (
-                getattr(request, "organization", None) or request.user.organization
-            )
-            from accounts.models.organization_membership import OrganizationMembership
-
-            _mem = (
-                OrganizationMembership.no_workspace_objects.filter(
-                    user=request.user, organization=_current_org, is_active=True
-                ).first()
-                if _current_org
-                else None
-            )
-            _role = _mem.role if _mem else request.user.organization_role
-            if _role not in RolePermissions.OWNER_ROLES:
-                return self._gm.bad_request(get_error_message("UNAUTHORIZED_ACCESS"))
-
             key_id = request.validated_data.get("key_id")
             if not key_id:
                 return self._gm.bad_request(get_error_message("KEY_ID_REQUIRED"))
-            org_key = OrgApiKey.objects.get(
-                id=key_id,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-            )
+            org_key = self.key_queryset(request).get(id=key_id)
+            # Keep personal-key deletion owner-only; org admins manage system keys.
+            required_level = Level.ADMIN if org_key.type == "system" else Level.OWNER
+            level = key_org_level(request.user, request_key_organization(request))
+            if level is None or level < required_level:
+                return self._gm.bad_request(get_error_message("UNAUTHORIZED_ACCESS"))
             org_key.deleted = True
             org_key.deleted_at = timezone.now()
             org_key.save(update_fields=["deleted", "deleted_at"])

@@ -1,5 +1,3 @@
-from typing import Optional
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -15,7 +13,7 @@ from ai_tools.registry import register_tool
 
 
 class ListApiKeysInput(PydanticBaseModel):
-    key_type: Optional[str] = Field(
+    key_type: str | None = Field(
         default=None,
         description="Filter by key type: 'system', 'user', or 'mcp'",
     )
@@ -34,17 +32,13 @@ class ListApiKeysTool(BaseTool):
 
     def execute(self, params: ListApiKeysInput, context: ToolContext) -> ToolResult:
 
-        from accounts.models.user import OrgApiKey
+        from accounts.services.api_keys import visible_api_keys
 
         org = context.organization
 
         # Sandbox ingest keys belong to the platform, so they are never listed,
         # whatever ``key_type`` asks for.
-        qs = (
-            OrgApiKey.no_workspace_objects.filter(organization=org)
-            .exclude(type="ingest")
-            .order_by("-created_at")
-        )
+        qs = visible_api_keys(context.user, org).order_by("-created_at")
 
         if params.key_type:
             qs = qs.filter(type=params.key_type.lower())
