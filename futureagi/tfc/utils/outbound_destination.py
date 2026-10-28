@@ -16,6 +16,7 @@ import socket
 import ssl
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -25,6 +26,10 @@ import requests
 DEFAULT_TIMEOUT = 30.0
 MAX_BODY_BYTES = 5 * 1024 * 1024
 PUBLIC_ERROR = "destination not allowed or unreachable"
+# Shared across callers, including preview, conditional, create and rerun threads.
+MAX_CONCURRENT_REQUESTS = 32
+_WORKER_SLOTS = threading.BoundedSemaphore(MAX_CONCURRENT_REQUESTS)
+_PROTOCOL_ASSIGNMENT_NETWORK = ipaddress.ip_network("192.0.0.0/24")
 # Translation/tunnel forms are refused altogether, not only their private subset.
 _TRANSITION_NETWORKS = tuple(
     ipaddress.ip_network(value)
@@ -60,6 +65,7 @@ def _require_public(address):
                 or any(ip in network for network in _TRANSITION_NETWORKS)
             )
         )
+        or (ip.version == 4 and ip in _PROTOCOL_ASSIGNMENT_NETWORK)
         or str(ip) == "168.63.129.16"
     ):
         raise DestinationError("address_class")
@@ -134,11 +140,15 @@ def _connect(address, port, timeout):
 
 def _exchange(payload):
     _parse_url(payload["url"])
+    # Request.prepare() alone does not merge the defaults of requests.request().
+    headers = requests.utils.default_headers()
+    headers.update(payload.get("headers") or {})
+    headers = {name: value for name, value in headers.items() if value is not None}
     prepared = requests.Request(
         method=payload["method"],
         url=payload["url"],
         params=payload.get("params"),
-        headers=payload.get("headers"),
+        headers=headers,
         json=payload.get("json"),
         data=payload.get("data"),
     ).prepare()
@@ -173,7 +183,10 @@ def _exchange(payload):
     headers["Connection"] = "close"
     if parsed.scheme == "https":
         connection = http.client.HTTPSConnection(
-            host, port, timeout=payload["timeout"], context=ssl.create_default_context()
+            host,
+            port,
+            timeout=payload["timeout"],
+            context=ssl.create_default_context(cafile=requests.certs.where()),
         )
     else:
         connection = http.client.HTTPConnection(host, port, timeout=payload["timeout"])
@@ -244,7 +257,7 @@ def request(
 ):
     """Return a bounded requests.Response or raise DestinationError.
 
-    The timeout includes child startup, DNS, TLS, headers and streaming body.
+    The timeout includes capacity waiting, child startup, DNS, TLS and body reads.
     Secrets travel over a private pipe, never command-line arguments or files.
     """
     started = time.monotonic()
@@ -264,24 +277,30 @@ def request(
         "max_bytes": max_bytes,
     }
     encoded = jsonlib.dumps(payload).encode("utf-8")
+    remaining = timeout - (time.monotonic() - started)
+    if remaining <= 0 or not _WORKER_SLOTS.acquire(timeout=remaining):
+        raise DestinationError("deadline")
     try:
-        with subprocess.Popen(
-            [sys.executable, "-I", str(Path(__file__).resolve())],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-        ) as process:
-            try:
-                remaining = timeout - (time.monotonic() - started)
-                if remaining <= 0:
-                    raise subprocess.TimeoutExpired(process.args, timeout)
-                output, _ = process.communicate(encoded, timeout=remaining)
-            except BaseException:
-                process.kill()
-                process.communicate()
-                raise
-            if process.returncode != 0:
-                raise DestinationError("worker_exit")
+        try:
+            with subprocess.Popen(
+                [sys.executable, "-I", str(Path(__file__).resolve())],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            ) as process:
+                try:
+                    remaining = timeout - (time.monotonic() - started)
+                    if remaining <= 0:
+                        raise subprocess.TimeoutExpired(process.args, timeout)
+                    output, _ = process.communicate(encoded, timeout=remaining)
+                except BaseException:
+                    process.kill()
+                    process.communicate()
+                    raise
+                if process.returncode != 0:
+                    raise DestinationError("worker_exit")
+        finally:
+            _WORKER_SLOTS.release()
         result = jsonlib.loads(output)
         if "error" in result:
             raise DestinationError(result["error"])
