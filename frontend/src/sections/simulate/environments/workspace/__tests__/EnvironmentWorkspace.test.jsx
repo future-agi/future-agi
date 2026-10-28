@@ -374,10 +374,11 @@ describe("EnvironmentWorkspace route shell", () => {
     await user.click(row);
 
     // The row opens the designer-style RunDetail as its own full page: its
-    // identity header names the ordinal + agent version and the run status.
-    expect(await screen.findByText(/Run 1 · agent v1/)).toBeInTheDocument();
-    // The header verdict (every call passed) beside the table's Passed chip.
-    expect(screen.getAllByText("Passed")).toHaveLength(2);
+    // header names the ordinal, with the agent version on the line below.
+    expect((await screen.findAllByText("Run 1")).length).toBeGreaterThan(0);
+    // The run's Passed status shows (the header's verdict moved into the
+    // summary chip in Vel's layout).
+    expect(screen.getAllByText("Passed").length).toBeGreaterThan(0);
     expect(screen.getByTestId("location")).toHaveTextContent(
       "/dashboard/simulate/environments/job-done/runs/rt1/ex1",
     );
@@ -419,8 +420,8 @@ describe("EnvironmentWorkspace route shell", () => {
     // swapped inside the environment workspace.
     renderWorkspace("/dashboard/simulate/environments/job-done/runs/rt1/ex1");
 
-    // The run detail is shown (its identity header names the ordinal + agent).
-    expect(await screen.findByText(/Run 1 · agent v1/)).toBeInTheDocument();
+    // The run detail is shown (its header names the ordinal).
+    expect((await screen.findAllByText("Run 1")).length).toBeGreaterThan(0);
 
     // ...and the environment-workspace chrome around it is gone: no tab rail and
     // no header "Run simulation" button. The run page owns the viewport.

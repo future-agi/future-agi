@@ -85,6 +85,22 @@ export const UI_ONLY_FEATURES = Object.freeze({
     label: "Share run",
     ask: "read-only share links and a PDF for a run",
   },
+  rerunSnapshot: {
+    label: "Re-run exact snapshot",
+    ask: "re-running a run on its pinned scenario versions, environment version and seed",
+  },
+  regradeRun: {
+    label: "Re-grade run",
+    ask: "re-grading a finished run's stored calls after a grader changed, with its credit cost",
+  },
+  runEvalsOnCalls: {
+    label: "Run evals on selected calls",
+    ask: "grading chosen calls of a run with chosen evaluations, without new calls",
+  },
+  deleteEvalColumn: {
+    label: "Delete eval column",
+    ask: "removing one evaluation's results from a run",
+  },
   environmentSettings: {
     label: "Environment settings",
     ask: "editing simulation defaults, egress, environment variables and the simulated user's model",

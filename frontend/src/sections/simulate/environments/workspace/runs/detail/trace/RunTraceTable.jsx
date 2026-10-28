@@ -39,8 +39,10 @@ import { TraceGroupByPicker, TraceColumnsPicker } from "./TracePickers";
 import StatusFilterChips from "./StatusFilterChips";
 import {
   CLOSED_GROUP_VIEW,
+  DEFAULT_GROUP_BY,
   GROUPINGS,
   OUTCOME_LABELS,
+  SPLITS_TRIALS,
   VOICE_ONLY_COLUMNS,
   compactHiddenSx,
   defaultTraceColumns,
@@ -82,7 +84,12 @@ export default function RunTraceTable({
   rerunDisabledReason = null,
   onTickableChange,
 }) {
-  const [groupBy, setGroupBy] = useState("goal");
+  const [groupBy, setGroupBy] = useState(DEFAULT_GROUP_BY);
+  // A grouping the server refused. Every axis is offered and sent; one the
+  // server can't group by falls back to the default, with a note, never an
+  // error page.
+  const [refusedGroupBy, setRefusedGroupBy] = useState(null);
+  const shownGroupBy = groupBy === refusedGroupBy ? DEFAULT_GROUP_BY : groupBy;
   // The eval column whose ⋮ menu is open: { evalId, name, anchorEl } or null.
   const [evalMenuFor, setEvalMenuFor] = useState(null);
   const [page, setPage] = useState(1);
@@ -111,16 +118,17 @@ export default function RunTraceTable({
     () => ({
       all: groupState.all,
       expanded:
-        groupState.expandedByAxis[groupBy] ?? CLOSED_GROUP_VIEW.expanded,
+        groupState.expandedByAxis[shownGroupBy] ?? CLOSED_GROUP_VIEW.expanded,
     }),
-    [groupState, groupBy],
+    [groupState, shownGroupBy],
   );
   const setGroupView = useCallback(
     (update) =>
       setGroupState((prev) => {
         const current = {
           all: prev.all,
-          expanded: prev.expandedByAxis[groupBy] ?? CLOSED_GROUP_VIEW.expanded,
+          expanded:
+            prev.expandedByAxis[shownGroupBy] ?? CLOSED_GROUP_VIEW.expanded,
         };
         const next = typeof update === "function" ? update(current) : update;
         // Collapse all closes every axis, not just the one on screen.
@@ -128,10 +136,13 @@ export default function RunTraceTable({
           return { all: false, expandedByAxis: {} };
         return {
           all: next.all,
-          expandedByAxis: { ...prev.expandedByAxis, [groupBy]: next.expanded },
+          expandedByAxis: {
+            ...prev.expandedByAxis,
+            [shownGroupBy]: next.expanded,
+          },
         };
       }),
-    [groupBy],
+    [shownGroupBy],
   );
   const expandedForRef = useRef(null);
   const [filters, setFilters] = useState(initialFilters);
@@ -186,9 +197,9 @@ export default function RunTraceTable({
       limit: PAGE_SIZE,
       search: "",
       filters: serverFilters,
-      groupBy,
+      groupBy: shownGroupBy,
     }),
-    [page, serverFilters, groupBy],
+    [page, serverFilters, shownGroupBy],
   );
   useEffect(() => {
     onQueryChange?.(listQuery);
@@ -209,6 +220,18 @@ export default function RunTraceTable({
     isLoading,
     error,
   } = useRunCalls(executionId, listQuery);
+  // A server error (5xx) is an outage, not a refusal of the axis.
+  const groupingRefused =
+    !!error &&
+    groupBy !== DEFAULT_GROUP_BY &&
+    // No grouping sends no group_by, so there is nothing to refuse.
+    groupBy !== "" &&
+    shownGroupBy === groupBy &&
+    !(error.statusCode >= 500);
+  useEffect(() => {
+    if (groupingRefused) setRefusedGroupBy(groupBy);
+  }, [groupingRefused, groupBy]);
+  const labelOfGroup = (id) => GROUPINGS.find((g) => g.id === id)?.label;
 
   // Calls ticked for a re-run. The selection survives paging: "all matching"
   // is a mode with the unticked calls as exceptions, never a list of ids.
@@ -494,7 +517,7 @@ export default function RunTraceTable({
           setPage(1);
         }}
       />
-      {groupBy && (
+      {shownGroupBy && (
         <FormControlLabel
           control={
             <Switch
@@ -612,6 +635,7 @@ export default function RunTraceTable({
       <StatusFilterChips
         value={statusChip}
         counts={statusCounts}
+        runActive={runActive}
         onChange={(value) => {
           setFilters((current) => {
             const {
@@ -667,6 +691,21 @@ export default function RunTraceTable({
         wrap
         sx={{ containerType: "inline-size" }}
       >
+        {refusedGroupBy && refusedGroupBy === groupBy && (
+          <Typography
+            role="status"
+            sx={{
+              px: 2,
+              py: 0.75,
+              typography: "s3",
+              color: "text.subtitle",
+              borderTop: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            {`Grouping by ${labelOfGroup(groupBy)} isn't available yet. Showing ${labelOfGroup(DEFAULT_GROUP_BY)}.`}
+          </Typography>
+        )}
         {banner && (
           <Stack
             direction="row"
@@ -702,9 +741,9 @@ export default function RunTraceTable({
             overflowY: "auto",
           }}
         >
-          {isLoading ? (
+          {isLoading || groupingRefused ? (
             <EmptyState icon="solar:hourglass-linear" title="Loading calls…" />
-          ) : error ? (
+          ) : error && !groupingRefused ? (
             <EmptyState
               icon="solar:danger-triangle-linear"
               title="Couldn't load calls"
@@ -717,19 +756,19 @@ export default function RunTraceTable({
             />
           ) : (
             <TraceTable
-              key={groupBy}
+              key={shownGroupBy}
               columns={shownColumns}
               groups={groups}
-              rows={groupBy ? null : tasks}
+              rows={shownGroupBy ? null : tasks}
+              trials={runTrials}
+              trialsSplit={SPLITS_TRIALS.has(shownGroupBy)}
               evals={shownEvals}
               subGoalEvals={subGoalEvals}
               groupView={groupView}
               onGroupViewChange={setGroupView}
               expandedForRef={expandedForRef}
               firstColumnLabel={
-                groupBy
-                  ? GROUPINGS.find((g) => g.id === groupBy)?.label
-                  : undefined
+                shownGroupBy ? labelOfGroup(shownGroupBy) : undefined
               }
               onOpen={onOpenCall}
               activeCallId={activeCallId}

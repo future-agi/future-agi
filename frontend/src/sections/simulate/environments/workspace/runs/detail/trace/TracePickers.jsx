@@ -15,6 +15,7 @@ import {
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import useIsTruncated from "src/hooks/useIsTruncated";
+import SoonChip from "../../../../components/SoonChip";
 import {
   TRACE_COLUMNS,
   defaultTraceColumns,
@@ -23,7 +24,8 @@ import {
   toolbarButtonSx,
 } from "./traceTable.constants";
 
-// Group-by axis picker.
+// Group-by axis picker. An axis the API can't group by yet carries a soon
+// chip but stays pickable: the table sends it and falls back if refused.
 export function TraceGroupByPicker({ value, onChange }) {
   const [anchor, setAnchor] = useState(null);
   const current = GROUPINGS.find((g) => g.id === value) || GROUPINGS[0];
@@ -79,6 +81,7 @@ export function TraceGroupByPicker({ value, onChange }) {
             <Typography sx={{ typography: "s2", flex: 1 }}>
               {g.label}
             </Typography>
+            {g.soon && <SoonChip label={g.label} what={g.soon} size="tiny" />}
           </MenuItem>
         ))}
       </Menu>

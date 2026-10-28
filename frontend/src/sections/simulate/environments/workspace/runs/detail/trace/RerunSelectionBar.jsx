@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
 import { useRef, useState } from "react";
+import { enqueueSnackbar } from "notistack";
 import {
   Box,
   Button,
@@ -14,6 +15,8 @@ import CustomTooltip from "src/components/tooltip";
 import { MAX_CALLS_PER_RUN } from "src/api/simulate-environments/rerunScenarios";
 
 import TrialsPicker from "../../../scenarios/TrialsPicker";
+import UiOnlyFlag from "../../../../components/UiOnlyFlag";
+import { UI_ONLY_STARTED } from "../runHeaderFormat";
 
 // The toolbar's height, without its outlined-button colours: a contained
 // button keeps its own text colour.
@@ -32,7 +35,7 @@ const plural = (n, one, many = `${one}s`) =>
 
 // One choice in the Re-run menu: a title, what it does, and a disabled look
 // that keeps the row readable (a disabled item can't take focus otherwise).
-function RerunOption({ icon, title, description, blocked, onSelect }) {
+function RerunOption({ icon, title, description, blocked, onSelect, flag }) {
   return (
     <Box
       role="menuitem"
@@ -61,9 +64,12 @@ function RerunOption({ icon, title, description, blocked, onSelect }) {
     >
       <Iconify icon={icon} width={16} sx={{ mt: "2px", flexShrink: 0 }} />
       <Box sx={{ minWidth: 0 }}>
-        <Typography sx={{ typography: "s2", fontWeight: 700 }}>
-          {title}
-        </Typography>
+        <Stack direction="row" alignItems="center" spacing={0.75}>
+          <Typography sx={{ typography: "s2", fontWeight: 700 }}>
+            {title}
+          </Typography>
+          {flag}
+        </Stack>
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
           {description}
         </Typography>
@@ -77,6 +83,8 @@ RerunOption.propTypes = {
   description: PropTypes.string.isRequired,
   blocked: PropTypes.bool.isRequired,
   onSelect: PropTypes.func.isRequired,
+  // A marker beside the title, such as the UI-only flag.
+  flag: PropTypes.node,
 };
 
 /**
@@ -307,6 +315,20 @@ export default function RerunSelectionBar({
             description="Makes the calls again with the current agent and env, and records a new run."
             blocked={blocked}
             onSelect={start}
+          />
+          <Divider />
+          {/* Vel's grading of chosen calls with chosen evals has no backend
+              yet: it starts nothing. */}
+          <RerunOption
+            icon="solar:checklist-minimalistic-linear"
+            title="Run evals on these calls"
+            description="No calls are made. Pick evaluations and score just these calls."
+            blocked={false}
+            flag={<UiOnlyFlag feature="runEvalsOnCalls" />}
+            onSelect={() => {
+              closeMenu();
+              enqueueSnackbar(UI_ONLY_STARTED, { variant: "info" });
+            }}
           />
         </Box>
       </Popover>

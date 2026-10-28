@@ -3,6 +3,11 @@ import React, { useEffect, useRef, useState } from "react";
 import {
   Box,
   Checkbox,
+  IconButton,
+  ListItemIcon,
+  ListItemText,
+  Menu,
+  MenuItem,
   Stack,
   Typography,
   Table,
@@ -18,7 +23,7 @@ import {
 
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
-import { BUILD_TONES } from "../../../../buildEnvironment/buildTones";
+import SoonChip from "../../../../components/SoonChip";
 import {
   defaultTraceColumns,
   headCellSx,
@@ -46,6 +51,7 @@ import {
   UnscoredEval,
 } from "./traceCells";
 import TraceGroupHeaderRow from "./TraceGroupHeaderRow";
+import SubGoalsSummary from "./SubGoalsSummary";
 
 // The theme hides every border on a table's last row, which here is the head
 // row and the final call row. The column dividers are cell left borders, so put
@@ -119,6 +125,70 @@ const clampSx = {
 const hasPersonaDetails = (p) =>
   !!(p && (p.name || p.voice || p.age || p.traits?.length));
 
+// A row is one keyboard stop; this ring shows where focus is.
+const rowFocusSx = {
+  "&:focus-visible": {
+    outline: "2px solid",
+    outlineColor: "primary.main",
+    outlineOffset: -2,
+  },
+};
+
+// The persona, as one line to scan by: who, then how old and how they sound.
+// Every field, traits included, is on the hover card.
+function PersonaCell({ persona }) {
+  if (!hasPersonaDetails(persona))
+    return (
+      <Typography sx={{ typography: "s3", color: "text.disabled" }}>
+        -
+      </Typography>
+    );
+  const sub = [persona.age, persona.voice].filter(Boolean).join(" · ");
+  return (
+    <CustomTooltip
+      show
+      arrow
+      size="small"
+      placement="right"
+      title={
+        <Stack spacing={0.5} sx={{ maxWidth: 300 }}>
+          <Field
+            icon="solar:user-id-linear"
+            label="Name"
+            value={persona.name}
+          />
+          <Field icon="solar:user-linear" label="Voice" value={persona.voice} />
+          <Field
+            icon="solar:users-group-rounded-linear"
+            label="Age"
+            value={persona.age}
+          />
+          <Field
+            icon="solar:tag-linear"
+            label="Traits"
+            value={persona.traits?.join(", ")}
+          />
+        </Stack>
+      }
+    >
+      <Box sx={{ minWidth: 0, maxWidth: 210 }}>
+        <Typography
+          noWrap
+          sx={{ typography: "s2", fontWeight: "fontWeightMedium" }}
+        >
+          {persona.name || "-"}
+        </Typography>
+        {sub && (
+          <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
+            {sub}
+          </Typography>
+        )}
+      </Box>
+    </CustomTooltip>
+  );
+}
+PersonaCell.propTypes = { persona: PropTypes.object };
+
 export default function TraceTable({
   groups,
   rows = null,
@@ -135,7 +205,11 @@ export default function TraceTable({
   runActive = false,
   renderEvalHeaderAction = null,
   selection = null,
+  trials = 1,
+  trialsSplit = false,
 }) {
+  // The row whose ⋯ menu is open: { task, anchorEl } or null.
+  const [rowMenu, setRowMenu] = useState(null);
   // A parent that unmounts this table (a filter's loading or empty state)
   // passes the open/closed groups in, so they survive the remount. Without
   // one, the table keeps them itself.
@@ -235,11 +309,22 @@ export default function TraceTable({
         key={t.id}
         ref={active ? activeRowRef : undefined}
         aria-selected={active}
+        // Every cell opens the call by mouse; by keyboard the row is one stop
+        // and Enter opens it. Only the row's own Enter: a control inside it
+        // (the tick, the menu) keeps its key.
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.target === e.currentTarget && e.key === "Enter") {
+            e.preventDefault();
+            onOpen(t);
+          }
+        }}
         sx={{
           cursor: "pointer",
           bgcolor: active ? "action.selected" : "transparent",
           // Scrolled into view below the pinned head and group rows, not under.
           scrollMarginTop: GROUP_BAND_PX + HEAD_ROW_PX + GROUP_ROW_PX,
+          ...rowFocusSx,
         }}
       >
         {selection && (
@@ -283,25 +368,29 @@ export default function TraceTable({
                     typography: "s2",
                     fontWeight: "fontWeightSemiBold",
                     maxWidth: 300,
+                    flex: 1,
+                    minWidth: 0,
                   }}
                 >
                   {t.scenario}
                 </Typography>
-                {t.critical && (
-                  <CustomTooltip
-                    show
-                    arrow
-                    title="Critical: a failure here is a release blocker"
-                  >
-                    <Box sx={{ display: "flex" }}>
-                      <Iconify
-                        icon="solar:danger-triangle-bold"
-                        width={12}
-                        sx={{ color: BUILD_TONES.red }}
-                      />
-                    </Box>
-                  </CustomTooltip>
-                )}
+                <IconButton
+                  size="small"
+                  aria-label="Row actions"
+                  aria-haspopup="menu"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setRowMenu({ task: t, anchorEl: e.currentTarget });
+                  }}
+                  onKeyDown={(e) => e.stopPropagation()}
+                  sx={{ p: 0.25, flexShrink: 0 }}
+                >
+                  <Iconify
+                    icon="solar:menu-dots-bold"
+                    width={14}
+                    sx={{ color: "text.subtitle" }}
+                  />
+                </IconButton>
               </Stack>
               <Stack direction="row" alignItems="center" spacing={0.75}>
                 <Typography
@@ -331,87 +420,14 @@ export default function TraceTable({
                   </>
                 )}
               </Stack>
-              {t.subGoalResults?.length > 0 && (
-                <Stack spacing={0.5} sx={{ mt: 1 }}>
-                  {t.subGoalResults.map((goal, goalIndex) => {
-                    const verdict = runOutcome(
-                      goal.passed === true
-                        ? "passed"
-                        : goal.passed === false
-                          ? "failed"
-                          : "inconclusive",
-                    );
-                    return (
-                      <Stack
-                        key={`${goal.name}-${goalIndex}`}
-                        direction="row"
-                        alignItems="center"
-                        spacing={0.75}
-                      >
-                        <Typography
-                          sx={{ typography: "s3", color: "text.secondary" }}
-                        >
-                          {goal.name}
-                        </Typography>
-                        {goal.passed == null ? (
-                          <Typography
-                            sx={{ typography: "s3", color: verdict.color }}
-                          >
-                            {verdict.label}
-                          </Typography>
-                        ) : (
-                          <Box
-                            role="img"
-                            aria-label={verdict.label}
-                            title={verdict.label}
-                            sx={{ display: "flex", color: verdict.color }}
-                          >
-                            <Iconify
-                              icon={goal.passed ? "mdi:check" : "mdi:close"}
-                              width={16}
-                              aria-hidden="true"
-                            />
-                          </Box>
-                        )}
-                      </Stack>
-                    );
-                  })}
-                </Stack>
-              )}
+              <SubGoalsSummary results={t.subGoalResults} />
             </Box>
           </TableCell>
         )}
 
         {show("persona") && (
           <TableCell sx={bodyCellSx} onClick={() => onOpen(t)}>
-            {hasPersonaDetails(t.personaDetails) ? (
-              <Stack spacing={0.5} sx={{ minWidth: 210 }}>
-                <Field
-                  icon="solar:user-id-linear"
-                  label="Name"
-                  value={t.personaDetails.name}
-                />
-                <Field
-                  icon="solar:user-linear"
-                  label="Voice"
-                  value={t.personaDetails.voice}
-                />
-                <Field
-                  icon="solar:users-group-rounded-linear"
-                  label="Age"
-                  value={t.personaDetails.age}
-                />
-                <Field
-                  icon="solar:tag-linear"
-                  label="Traits"
-                  value={t.personaDetails.traits?.join(", ")}
-                />
-              </Stack>
-            ) : (
-              <Typography sx={{ typography: "s3", color: "text.disabled" }}>
-                -
-              </Typography>
-            )}
+            <PersonaCell persona={t.personaDetails} />
           </TableCell>
         )}
 
@@ -488,6 +504,7 @@ export default function TraceTable({
               value={t.latencyMs}
               suffix="ms"
               loading={callLive}
+              missingTip="No response time was reported."
             />
           </TableCell>
         )}
@@ -522,7 +539,9 @@ export default function TraceTable({
             <TableCell
               key={e.id}
               sx={{ ...bodyCellSx, p: 0, position: "relative" }}
-              onClick={() => onOpen(t)}
+              // A verdict opens the call on that eval; an empty cell opens
+              // the call.
+              onClick={() => (r ? onOpen(t, { evalId: e.id }) : onOpen(t))}
             >
               {r?.score != null || r?.label ? (
                 <Score result={r} />
@@ -685,6 +704,8 @@ export default function TraceTable({
                   <React.Fragment key={g.label}>
                     <TraceGroupHeaderRow
                       group={g}
+                      trials={trials}
+                      trialsSplit={trialsSplit}
                       loading={groupLive(g)}
                       collapsed={!isOpen(g.label)}
                       onToggle={() => toggleGroup(g.label)}
@@ -706,6 +727,49 @@ export default function TraceTable({
           </TableBody>
         </Table>
       </Box>
+      <Menu
+        anchorEl={rowMenu?.anchorEl}
+        open={!!rowMenu}
+        onClose={() => setRowMenu(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+        transformOrigin={{ vertical: "top", horizontal: "right" }}
+        slotProps={{ paper: { sx: { minWidth: 200 } } }}
+      >
+        <MenuItem
+          onClick={() => {
+            const task = rowMenu?.task;
+            setRowMenu(null);
+            if (task) onOpen(task);
+          }}
+          sx={{ typography: "s2" }}
+        >
+          <ListItemIcon>
+            <Iconify icon="solar:eye-linear" width={16} />
+          </ListItemIcon>
+          <ListItemText
+            primary="Open call"
+            primaryTypographyProps={{ typography: "s2" }}
+          />
+        </MenuItem>
+        {/* Whether the scenario must pass isn't sent with a call yet. */}
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          sx={{ px: 2, py: 0.75 }}
+        >
+          <Typography
+            sx={{ typography: "s2", color: "text.disabled", flex: 1 }}
+          >
+            Must-pass
+          </Typography>
+          <SoonChip
+            label="Must-pass"
+            what="Whether a scenario must pass"
+            size="tiny"
+          />
+        </Stack>
+      </Menu>
     </Box>
   );
 }
@@ -716,6 +780,8 @@ TraceTable.propTypes = {
   subGoalEvals: PropTypes.array,
   // The head of the first column: the axis the rows are grouped by.
   firstColumnLabel: PropTypes.string,
+  // Opens a call: `onOpen(task)`, or `onOpen(task, { evalId })` from an eval
+  // cell, to land on that eval.
   onOpen: PropTypes.func,
   columns: PropTypes.instanceOf(Set),
   activeCallId: PropTypes.string,
@@ -731,6 +797,11 @@ TraceTable.propTypes = {
   runActive: PropTypes.bool,
   // Optional per-eval node shown after the eval's name in its header cell.
   renderEvalHeaderAction: PropTypes.func,
+  // The run's repeats per scenario, so a group can count its scenarios.
+  trials: PropTypes.number,
+  // The axis can split one scenario's repeats across groups (Status), so a
+  // group counts calls instead.
+  trialsSplit: PropTypes.bool,
   // Present when calls can be ticked: adds a checkbox column. `canSelect`
   // decides per call; the page box covers this page's selectable calls.
   selection: PropTypes.shape({

@@ -280,7 +280,8 @@ describe("mapCallRow", () => {
     expect(t.idealOutcome).toBe("Refund is created after account verification");
     expect(t.conversationBranch).toBe("duplicate-charge-refund");
     expect(t.status).toBe("passed");
-    expect(t.critical).toBe(false);
+    // Must-pass isn't in the API: no flag is invented.
+    expect(t).not.toHaveProperty("critical");
     expect(t.csat).toBe(8.2);
     expect(t.turns).toBe(5);
     expect(t.latencyMs).toBe(320);

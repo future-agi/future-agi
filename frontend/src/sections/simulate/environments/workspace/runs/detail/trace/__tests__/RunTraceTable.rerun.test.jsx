@@ -243,7 +243,7 @@ describe("RunTraceTable — selecting calls to re-run", () => {
     expect(
       screen.queryByRole("checkbox", { name: "Select all calls on this page" }),
     ).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Failed/ }));
+    await user.click(screen.getByRole("button", { name: /Failing/ }));
     expect(
       screen.queryByRole("checkbox", { name: "Select all calls on this page" }),
     ).not.toBeInTheDocument();
@@ -368,7 +368,7 @@ describe("RunTraceTable — selecting calls to re-run", () => {
     await openRows(user);
     await user.click(rowBox("refund · Trial 1"));
 
-    await user.click(screen.getByRole("button", { name: /Failed/ }));
+    await user.click(screen.getByRole("button", { name: /Failing/ }));
 
     expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
   });

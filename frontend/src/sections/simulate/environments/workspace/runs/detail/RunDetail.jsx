@@ -1,7 +1,8 @@
 import PropTypes from "prop-types";
 import { useEffect, useRef, useState } from "react";
 import { enqueueSnackbar } from "notistack";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { ErrorBoundary } from "react-error-boundary";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { harnessEnvironmentQuery } from "src/api/simulate-environments/environment";
 import { alpha } from "@mui/material/styles";
@@ -16,23 +17,33 @@ import {
 } from "@mui/material";
 
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import { CustomTabs } from "src/components/tabs/tabs";
 import { paths } from "src/routes/paths";
-import { fToNow } from "src/utils/format-time";
 import {
   useRunDetail,
   useOptimizationRuns,
   runVerdict,
 } from "src/api/simulate-environments/runDetail";
-import { exportRunResults } from "src/api/simulate-environments/runAnalytics";
 import {
   callDetailKeyPrefix,
   runAnalyticsKey,
 } from "src/api/simulate-environments/runEvals";
-import { useRerunCallsInRun } from "src/api/simulate-environments/rerunScenarios";
+import {
+  listMatchingCalls,
+  uniqueScenarioKeys,
+  useRerunCallsInRun,
+} from "src/api/simulate-environments/rerunScenarios";
+import {
+  SAMPLE_PROOF_KIND,
+  SAMPLE_PROVENANCE,
+  SAMPLE_REGRADE,
+} from "src/api/simulate-environments/_fixtures/detail/runHeader";
 
 import SectionCard from "../../../components/SectionCard";
 import EmptyState from "../../../components/EmptyState";
+import UiOnlyFlag from "../../../components/UiOnlyFlag";
+import useUiSample from "../../../hooks/useUiSample";
 import StatusChip from "../StatusChip";
 import StopRunControl from "../StopRunControl";
 import AddEvaluationDrawer from "../../evals/AddEvaluationDrawer";
@@ -48,9 +59,53 @@ import LaunchOptimizationDrawer from "./fixmyagent/LaunchOptimizationDrawer";
 import BetaChip from "./fixmyagent/BetaChip";
 import { useSelfImprovementOpen } from "./fixmyagent/selfImprovement";
 import RunAnalytics from "./RunAnalytics";
-import ReliabilityHeadline from "./ReliabilityHeadline";
+import RunSummaryChip, { ProofKindChip } from "./RunSummaryChip";
+import ShareMenu from "./ShareMenu";
+import RerunMenu from "./RerunMenu";
+import RunProgressBar from "./RunProgressBar";
 import useCallListNavigation from "./useCallListNavigation";
 import useOpenCallParam from "./useOpenCallParam";
+import {
+  UI_ONLY_STARTED,
+  agoLabel,
+  costLabel,
+  formatSpan,
+  plural,
+  runSpanMs,
+  scenarioCount,
+  unitFor,
+} from "./runHeaderFormat";
+
+// The run page's tabs, kept in `?tab=`. The calls table is the default and
+// leaves the param off.
+const RUN_TABS = ["tasks", "trials", "analytics"];
+
+// What a tab shows when it throws while rendering: a retry, never a blank page.
+function TabError({ resetErrorBoundary }) {
+  return (
+    <SectionCard>
+      <EmptyState
+        icon="solar:danger-triangle-linear"
+        title="This tab failed to load"
+        body="Something went wrong showing it. Try again."
+        action={
+          <Button size="small" variant="outlined" onClick={resetErrorBoundary}>
+            Retry
+          </Button>
+        }
+      />
+    </SectionCard>
+  );
+}
+TabError.propTypes = { resetErrorBoundary: PropTypes.func };
+
+// One clause of the header's second line, after a middle dot.
+const dot = (node) => (
+  <>
+    {" · "}
+    {node}
+  </>
+);
 
 /**
  * The designer-style run/execution detail page.
@@ -71,7 +126,23 @@ export default function RunDetail({
   creditBanner = null,
 }) {
   const navigate = useNavigate();
-  const [tab, setTab] = useState("tasks");
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get("tab");
+  const tab = RUN_TABS.includes(tabParam) ? tabParam : "tasks";
+  const setTab = (next) =>
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev);
+        if (next === "tasks") params.delete("tab");
+        else params.set("tab", next);
+        return params;
+      },
+      { replace: true },
+    );
+  const showProofKind = useUiSample("proofKind");
+  const showProvenance = useUiSample("provenance");
+  const showRegrade = useUiSample("regrade");
   // Filters handed to the calls table from elsewhere on the page (an analytics
   // tile, a diagnosis issue). `seq` remounts the table so a repeat hand-off
   // re-applies even after the table's own filters were changed.
@@ -82,7 +153,7 @@ export default function RunDetail({
   };
   const [addingEvals, setAddingEvals] = useState(false);
   // Whether the table has a call to tick for a re-run; a run made before calls
-  // carried their scenario has none, so it keeps the whole-run Run again.
+  // carried their scenario has none, so the header re-runs it whole.
   const [hasTickableCalls, setHasTickableCalls] = useState(null);
   const [allEvalsOpen, setAllEvalsOpen] = useState(false);
   // The exact query the trace table reads, or null when it isn't mounted.
@@ -97,7 +168,7 @@ export default function RunDetail({
   });
   const [debugging, setDebugging] = useState(false);
   const [launching, setLaunching] = useState(false);
-  const [exporting, setExporting] = useState(false);
+  const [resolvingFailing, setResolvingFailing] = useState(false);
   const {
     identity,
     stats,
@@ -133,7 +204,9 @@ export default function RunDetail({
   const queryClient = useQueryClient();
   // The environment's selected evals carry each eval's description and labelled
   // inputs, which the All Evaluations drawer's expanded rows show.
-  const envDetail = useQuery(harnessEnvironmentQuery(env?.id, { enabled: allEvalsOpen }));
+  const envDetail = useQuery(
+    harnessEnvironmentQuery(env?.id, { enabled: allEvalsOpen }),
+  );
   const appliedEvals = envDetail.data?.evaluations?.selected;
 
   // Analytics and an open call drawer don't poll for grading, so both are
@@ -167,28 +240,65 @@ export default function RunDetail({
   // finish. Stop simulation is the exception and stays in its own control.
   const live =
     identity?.status === "running" || identity?.status === "cancelling";
-  // finishedAt is a known gap (the executions row carries no end time), so the
-  // sub-line reports when the run STARTED rather than inventing a finish.
-  const startedLabel = identity?.startedAt ? fToNow(identity.startedAt) : "";
+  const unit = unitFor(stats.agentType, env?.surface);
+  const finished = identity?.runState === "finished";
+  // A finished run says when it finished; otherwise when it started.
+  const finishedLabel = identity?.finishedAt
+    ? agoLabel(identity.finishedAt)
+    : null;
+  const startedLabel = identity?.startedAt
+    ? agoLabel(identity.startedAt)
+    : null;
+  const tookLabel = identity?.finishedAt
+    ? formatSpan(runSpanMs(identity.startedAt, identity.finishedAt))
+    : null;
+  const scenarios = scenarioCount(identity, stats);
+  const notScored = stats.notScored ?? 0;
 
-  const back = () =>
-    navigate(
-      paths.dashboard.simulate.environments.workspaceTab(env.id, "runs"),
-    );
+  // Back to whichever page opened the run (the runs tab, the compare page);
+  // a run opened cold, from a pasted link, goes to its environment's runs.
+  const back = () => {
+    if (location.key !== "default") navigate(-1);
+    else
+      navigate(
+        paths.dashboard.simulate.environments.workspaceTab(env.id, "runs"),
+      );
+  };
 
-  const exportResults = async () => {
-    setExporting(true);
+  // A run whose calls carry their scenario re-runs the failing ones; one whose
+  // calls don't (made before calls carried it) can only re-run whole.
+  // Nothing shows until the table has said which.
+  const rerunFailing = hasTickableCalls === true && stats.failed > 0;
+  const rerunWhole = hasTickableCalls === false;
+  const rerunDisabledReason = live
+    ? "Wait for this run to finish before re-running it"
+    : runStarting
+      ? "Starting the run…"
+      : resolvingFailing
+        ? "Finding the failing scenarios…"
+        : null;
+  const runFailingAgain = async () => {
+    setResolvingFailing(true);
     try {
-      await exportRunResults(executionId);
-      enqueueSnackbar("Run export downloaded", { variant: "success" });
+      const calls = await listMatchingCalls(executionId, {
+        status: ["failed", "error"],
+      });
+      const keys = uniqueScenarioKeys(calls);
+      if (keys.length) onStartRun?.(keys, identity?.trials || 1);
+      else
+        enqueueSnackbar("No failing scenario could be found to re-run", {
+          variant: "info",
+        });
     } catch {
-      enqueueSnackbar("Run export could not be generated", {
+      enqueueSnackbar("Couldn't find the failing scenarios. Try again.", {
         variant: "error",
       });
     } finally {
-      setExporting(false);
+      setResolvingFailing(false);
     }
   };
+  const runWholeAgain = () =>
+    onStartRun?.(identity?.scenarioIds || undefined, identity?.trials || 1);
 
   return (
     <Box
@@ -211,7 +321,7 @@ export default function RunDetail({
           flexShrink: 0,
         }}
       >
-        <IconButton size="small" onClick={back}>
+        <IconButton size="small" aria-label="Back" onClick={back}>
           <Iconify
             icon="solar:alt-arrow-left-linear"
             width={18}
@@ -244,10 +354,11 @@ export default function RunDetail({
               </Box>
             )}
             {identity || !runLoading ? (
-              <Typography noWrap sx={{ typography: "s1_2", fontWeight: 700 }}>
-                {identity
-                  ? `Run ${identity.ordinal} · agent ${identity.agentVersion ?? "-"}`
-                  : "Run"}
+              <Typography
+                noWrap
+                sx={{ typography: "s1_2", fontWeight: 700, flexShrink: 0 }}
+              >
+                {identity ? `Run ${identity.ordinal}` : "Run"}
               </Typography>
             ) : (
               <Skeleton
@@ -259,22 +370,72 @@ export default function RunDetail({
               />
             )}
             {status && <StatusChip status={status} />}
+            <RunSummaryChip
+              executionId={executionId}
+              enabled={!!identity && !live}
+            />
+            {showProofKind && <ProofKindChip proof={SAMPLE_PROOF_KIND} />}
             <StopRunControl
               executionId={executionId}
               stoppable={!!identity?.stoppable}
               label="Stop simulation"
             />
           </Stack>
-          <Typography noWrap sx={{ typography: "s2", color: "text.subtitle" }}>
-            {env.name} · {stats.total} tasks
-            {startedLabel ? ` · started ${startedLabel}` : ""}
+          <Typography
+            data-testid="run-subline"
+            noWrap
+            sx={{ typography: "s2", color: "text.subtitle" }}
+          >
+            {env.name}
+            {identity?.agentVersion ? ` · agent ${identity.agentVersion}` : ""}
+            {identity &&
+              dot(
+                `${plural(scenarios, "scenario")}${
+                  (identity.trials || 1) > 1
+                    ? ` × ${identity.trials} repeats`
+                    : ""
+                }`,
+              )}
+            {finished && finishedLabel
+              ? dot(`finished ${finishedLabel}`)
+              : startedLabel
+                ? dot(`started ${startedLabel}`)
+                : null}
+            {finished && dot(`took ${tookLabel ?? "-"}`)}
+            {identity && dot(`cost ${costLabel(stats.cost)}`)}
+            {notScored > 0 &&
+              dot(
+                <CustomTooltip
+                  show
+                  arrow
+                  size="small"
+                  placement="bottom-start"
+                  title={`${plural(notScored, unit)} ended in an error or without enough evidence to grade, so ${notScored === 1 ? "it isn't" : "they aren't"} scored. They count neither for nor against the agent.`}
+                >
+                  <Box component="span" sx={{ cursor: "default" }}>
+                    {`${notScored} not scored`}
+                  </Box>
+                </CustomTooltip>,
+              )}
+            {showProvenance &&
+              dot(
+                <CustomTooltip
+                  show
+                  arrow
+                  size="small"
+                  placement="bottom-start"
+                  title={SAMPLE_PROVENANCE.command}
+                >
+                  <Box component="span" sx={{ cursor: "default" }}>
+                    {SAMPLE_PROVENANCE.label}
+                  </Box>
+                </CustomTooltip>,
+              )}
+            {showProvenance && (
+              <UiOnlyFlag sx={{ ml: 0.75, verticalAlign: "middle" }} />
+            )}
           </Typography>
         </Box>
-
-        <ReliabilityHeadline
-          executionId={executionId}
-          enabled={!!identity && !live}
-        />
 
         {/* A backed run opens its evals, to grade again or add to; a
             client-only env keeps its store picker. */}
@@ -300,48 +461,21 @@ export default function RunDetail({
             borderColor: "divider",
             typography: "s2",
             fontWeight: 600,
+            flexShrink: 0,
           }}
         >
           {backed ? "Run evals" : "Add evals"}
         </Button>
-        <Button
-          variant="outlined"
-          size="small"
-          onClick={exportResults}
-          disabled={live || exporting}
-          startIcon={
-            <Iconify icon="solar:download-minimalistic-linear" width={15} />
-          }
-          sx={{
-            color: "text.primary",
-            borderColor: "divider",
-            typography: "s2",
-            fontWeight: 600,
-          }}
-        >
-          {exporting ? "Exporting…" : "Export"}
-        </Button>
-        {hasTickableCalls === false && (
-          <Button
-            variant="outlined"
-            size="small"
-            disabled={live || runStarting}
-            startIcon={<Iconify icon="solar:refresh-linear" width={15} />}
-            onClick={() =>
-              onStartRun?.(
-                identity?.scenarioIds || undefined,
-                identity?.trials || 1,
-              )
-            }
-            sx={{
-              color: "text.primary",
-              borderColor: "divider",
-              typography: "s2",
-              fontWeight: 600,
-            }}
-          >
-            Run again
-          </Button>
+        <ShareMenu executionId={executionId} disabled={live} />
+        {(rerunFailing || rerunWhole) && onStartRun && (
+          <RerunMenu
+            failing={rerunFailing}
+            scenarios={scenarios}
+            runLabel={identity ? `run ${identity.ordinal}` : "this run"}
+            trials={identity?.trials || 1}
+            disabledReason={rerunDisabledReason}
+            onRun={rerunFailing ? runFailingAgain : runWholeAgain}
+          />
         )}
         <Button
           variant="contained"
@@ -350,11 +484,64 @@ export default function RunDetail({
           onClick={() => setDebugging(true)}
           disabled={live}
           startIcon={<Iconify icon="solar:magnifer-linear" width={15} />}
-          sx={{ typography: "s2", fontWeight: 700 }}
+          sx={{ typography: "s2", fontWeight: 700, flexShrink: 0 }}
         >
           Debug failures
         </Button>
       </Stack>
+      {live && identity && (
+        <RunProgressBar
+          stats={stats}
+          startedAt={identity.startedAt}
+          unit={unit}
+        />
+      )}
+      {showRegrade && (
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1.25}
+          sx={{
+            px: 3,
+            py: 0.875,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            flexShrink: 0,
+          }}
+        >
+          <Iconify
+            icon="solar:restart-linear"
+            width={16}
+            sx={{ color: "text.subtitle", flexShrink: 0 }}
+          />
+          <Typography
+            sx={{
+              typography: "s2",
+              color: "text.secondary",
+              flex: 1,
+              minWidth: 0,
+            }}
+          >
+            {SAMPLE_REGRADE.line}
+          </Typography>
+          <UiOnlyFlag feature="regradeRun" />
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={() =>
+              enqueueSnackbar(UI_ONLY_STARTED, { variant: "info" })
+            }
+            sx={{
+              color: "text.primary",
+              borderColor: "divider",
+              flexShrink: 0,
+              whiteSpace: "nowrap",
+            }}
+          >
+            {SAMPLE_REGRADE.action}
+          </Button>
+        </Stack>
+      )}
       {creditBanner}
 
       <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
@@ -397,7 +584,7 @@ export default function RunDetail({
               >
                 <Tab
                   value="tasks"
-                  label={`Test runs (${stats.total})`}
+                  label={`Scenarios (${stats.total})`}
                   sx={{ minHeight: 38 }}
                 />
                 {hasTrials && (
@@ -420,91 +607,104 @@ export default function RunDetail({
                 />
               </CustomTabs>
 
-              {tab === "tasks" && (
-                <RunTraceTable
-                  key={tableHandoff.seq}
-                  executionId={executionId}
-                  onOpenCall={(task) =>
-                    showCall({ task, source: "table", page: null })
-                  }
-                  onQueryChange={setTableQuery}
-                  activeCallId={openCall?.task.id ?? null}
-                  activePage={openCall?.page ?? null}
-                  // Same gating as the All Evaluations drawer below; a client-only
-                  // env has no server evals to act on.
-                  evalActions={
-                    backed
-                      ? {
-                          runTestId: testId,
-                          canRun: executionStatus === "completed",
-                          grading: executionStatus === "evaluating",
-                          rerunPending: evalRun.isPending,
-                          onRerun: evalRun.requestRerun,
-                          onEdit: evalRun.requestEdit,
-                        }
-                      : null
-                  }
-                  initialFilters={tableHandoff.filters}
-                  // Ticked calls re-run either inside this run (their rows are
-                  // refilled in place) or as a new simulation, through the same
-                  // start as any run: that one opens the new run.
-                  onRerunScenarios={onStartRun}
-                  onRerunInRun={rerunInRun.mutate}
-                  onTickableChange={setHasTickableCalls}
-                  runTrials={identity?.trials || 1}
-                  rerunDisabledReason={
-                    live
-                      ? "Wait for this run to finish before re-running calls"
-                      : runStarting
-                        ? "Starting the run…"
-                        : rerunInRun.isPending
-                          ? "Starting the re-run…"
-                          : null
-                  }
-                />
-              )}
-
-              {tab === "trials" && hasTrials && (
-                <SectionCard
-                  title="Self-improvement runs"
-                  subtitle="Optimizations launched against this run"
-                  action={
-                    <Button
-                      variant="outlined"
-                      size="small"
-                      onClick={() => setLaunching(true)}
-                      startIcon={
-                        <Iconify icon="solar:magic-stick-3-linear" width={15} />
-                      }
-                      sx={{
-                        color: "text.primary",
-                        borderColor: "divider",
-                        typography: "s2",
-                        fontWeight: 600,
-                      }}
-                    >
-                      Launch optimization
-                    </Button>
-                  }
-                  sx={{ border: "none" }}
-                >
-                  <OptimizationRunsList
-                    runs={optimizationRuns}
-                    isLoading={optimizationsLoading}
-                    onOpen={openOptimization}
+              {/* Wraps every tab body, so one that throws while it renders
+                  shows a retry here instead of taking the page down. */}
+              <ErrorBoundary resetKeys={[tab]} FallbackComponent={TabError}>
+                {tab === "tasks" && (
+                  <RunTraceTable
+                    key={tableHandoff.seq}
+                    executionId={executionId}
+                    // From an eval cell, the call opens on that eval.
+                    onOpenCall={(task, opened) =>
+                      showCall({
+                        task,
+                        source: "table",
+                        page: null,
+                        focusEvalId: opened?.evalId ?? null,
+                      })
+                    }
+                    onQueryChange={setTableQuery}
+                    activeCallId={openCall?.task.id ?? null}
+                    activePage={openCall?.page ?? null}
+                    // Same gating as the All Evaluations drawer below; a client-only
+                    // env has no server evals to act on.
+                    evalActions={
+                      backed
+                        ? {
+                            runTestId: testId,
+                            canRun: executionStatus === "completed",
+                            grading: executionStatus === "evaluating",
+                            rerunPending: evalRun.isPending,
+                            onRerun: evalRun.requestRerun,
+                            onEdit: evalRun.requestEdit,
+                          }
+                        : null
+                    }
+                    initialFilters={tableHandoff.filters}
+                    // Ticked calls re-run either inside this run (their rows are
+                    // refilled in place) or as a new simulation, through the same
+                    // start as any run: that one opens the new run.
+                    onRerunScenarios={onStartRun}
+                    onRerunInRun={rerunInRun.mutate}
+                    onTickableChange={setHasTickableCalls}
+                    runTrials={identity?.trials || 1}
+                    rerunDisabledReason={
+                      live
+                        ? "Wait for this run to finish before re-running calls"
+                        : runStarting
+                          ? "Starting the run…"
+                          : rerunInRun.isPending
+                            ? "Starting the re-run…"
+                            : null
+                    }
                   />
-                </SectionCard>
-              )}
+                )}
 
-              {tab === "analytics" && (
-                <RunAnalytics
-                  executionId={executionId}
-                  onOpenCall={(task) =>
-                    showCall({ task, source: "analytics", page: null })
-                  }
-                  onOpenCalls={openCallsWith}
-                />
-              )}
+                {tab === "trials" && hasTrials && (
+                  <SectionCard
+                    title="Self-improvement runs"
+                    subtitle="Optimizations launched against this run"
+                    action={
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        onClick={() => setLaunching(true)}
+                        startIcon={
+                          <Iconify
+                            icon="solar:magic-stick-3-linear"
+                            width={15}
+                          />
+                        }
+                        sx={{
+                          color: "text.primary",
+                          borderColor: "divider",
+                          typography: "s2",
+                          fontWeight: 600,
+                        }}
+                      >
+                        Launch optimization
+                      </Button>
+                    }
+                    sx={{ border: "none" }}
+                  >
+                    <OptimizationRunsList
+                      runs={optimizationRuns}
+                      isLoading={optimizationsLoading}
+                      onOpen={openOptimization}
+                    />
+                  </SectionCard>
+                )}
+
+                {tab === "analytics" && (
+                  <RunAnalytics
+                    executionId={executionId}
+                    onOpenCall={(task) =>
+                      showCall({ task, source: "analytics", page: null })
+                    }
+                    onOpenCalls={openCallsWith}
+                  />
+                )}
+              </ErrorBoundary>
             </>
           )}
         </Box>
@@ -564,6 +764,9 @@ export default function RunDetail({
         task={openCall?.task ?? null}
         executionId={backed ? executionId : null}
         agentType={stats.agentType}
+        // Set only by an eval cell; a prev/next step opens the next call
+        // without it.
+        focusEvalId={openCall?.focusEvalId ?? null}
         onClose={() => showCall(null)}
         hasPrev={callNav.hasPrev}
         hasNext={callNav.hasNext}
@@ -576,6 +779,7 @@ export default function RunDetail({
         onClose={() => setDebugging(false)}
         executionId={executionId}
         stats={stats}
+        runLabel={identity ? `Run ${identity.ordinal}` : "Run"}
         onLaunch={() => {
           setDebugging(false);
           setLaunching(true);
@@ -605,6 +809,8 @@ RunDetail.propTypes = {
   env: PropTypes.shape({
     id: PropTypes.string,
     name: PropTypes.string,
+    // "voice" or "chat": words a run's calls when the run doesn't say.
+    surface: PropTypes.string,
     platform: PropTypes.shape({
       runTestId: PropTypes.string,
       testExecutionId: PropTypes.string,
