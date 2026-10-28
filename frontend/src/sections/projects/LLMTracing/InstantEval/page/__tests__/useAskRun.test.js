@@ -278,6 +278,75 @@ describe("useAskRun", () => {
     expect(calls("/rows")).toHaveLength(0);
   });
 
+  it("reads the squares again once a retry ends where the run ended before", async () => {
+    // Five rows that all failed (a rejected key), retried and answered: the
+    // run settles at five both times.
+    let phase = "failed";
+    const ids = ["s1", "s2", "s3", "s4", "s5"];
+    http.get.mockImplementation((url) => {
+      if (url === "/summary")
+        return Promise.resolve(
+          ok(
+            phase === "failed"
+              ? summary({ status: "completed", total: 5, failed: 5 })
+              : phase === "retrying"
+                ? summary({ status: "running", total: 5 })
+                : summary({ status: "completed", total: 5, answered: 5 }),
+          ),
+        );
+      return Promise.resolve(
+        ok({
+          rows: ids.map((id) =>
+            phase === "failed"
+              ? {
+                  ...row(id, null),
+                  answers: { [CONFIG]: { answer: null, status: "failed" } },
+                }
+              : row(id, phase === "answered" ? "Yes" : null),
+          ),
+          next_cursor: null,
+          total: 5,
+        }),
+      );
+    });
+    http.post.mockImplementation(() => {
+      phase = "retrying";
+      return Promise.resolve(ok({ status: "running", message: "Retrying." }));
+    });
+    const { result } = renderHook(
+      () =>
+        useAskRun({
+          projectId: "p1",
+          taskId: "task-1",
+          unit: "sessions",
+          tz: "UTC",
+        }),
+      { wrapper: wrapper() },
+    );
+    await tick(0);
+    await tick(0);
+    expect(result.current.status).toBe("done");
+    const statuses = () =>
+      result.current.records.map((r) => r.answers[CONFIG].status);
+    expect(statuses()).toEqual(Array(5).fill("failed"));
+
+    await act(async () => {
+      await result.current.control("retry_failed");
+    });
+    await tick(0);
+    expect(result.current.status).toBe("running");
+
+    phase = "answered";
+    await tick(SUMMARY_POLL_MS);
+    await tick(0);
+    expect(result.current.status).toBe("done");
+    expect(result.current.answered).toBe(5);
+    // The squares agree with the counts, not the failures before the retry.
+    expect(result.current.records.map((r) => r.answers[CONFIG].answer)).toEqual(
+      Array(5).fill("Yes"),
+    );
+  });
+
   it("pauses through the control endpoint and reads the summary again", async () => {
     let status = "running";
     http.get.mockImplementation(() =>

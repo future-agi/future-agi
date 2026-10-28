@@ -344,9 +344,17 @@ export function useAskRun({
   const runLive = status === "running" || status === "preparing";
   const recordsStep = Math.max(1, Math.ceil(total / 20));
   const recordsMark = runLive ? Math.floor(settled / recordsStep) : settled;
+  // Each time the run goes live again (Retry, Read more, Resume) it can end
+  // where it ended before: five failed rows retried and answered settle at
+  // five again. Each stretch reads its squares anew, as the rows table does,
+  // rather than reusing the squares cached when the last one ended.
+  const [stretch, setStretch] = useState({ live: runLive, count: 0 });
+  if (stretch.live !== runLive)
+    setStretch({ live: runLive, count: stretch.count + (runLive ? 1 : 0) });
   const recordsQuery = useQuery({
     queryKey: [
       ...askRunKeys.records(projectId, taskId, zone),
+      stretch.count,
       recordsMark,
       total,
       runLive,
