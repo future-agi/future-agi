@@ -149,61 +149,79 @@ def _plain(text: str) -> str:
     return NOTE.sub(" ", text)
 
 
-def _label(text: str, end: str) -> str:
-    """A step's name or a failure's message as its line shows it: bare when
-    it holds no ``end`` (what follows it on the line), else as a JSON string,
-    so the line says where it stops (``own_words``)."""
-    if text and end not in text and not text.startswith('"'):
+def _name(text: str) -> str:
+    """A step's name as its line shows it: bare, or as a JSON string when it
+    holds a space (or starts with a quote mark), so the line says where the
+    name ends (``own_words``)."""
+    if text and " " not in text and not text.startswith('"'):
         return text
     return json.dumps(text, ensure_ascii=False)
 
 
 # A line of a unit's text: who speaks, or a Tool or Step and its name, then
-# the unit's own words; " -> " leads to what a call returned, and a failed
-# call's reads "ERROR <message>: <output>" (``_step_line``, ``_exchange``).
+# the unit's own words. A call's one " -> " leads to what it returned, which
+# for a failed call reads "ERROR <message>"; a failure's output, or all a call
+# returned when its arguments hold " -> ", goes on lines of their own below
+# it, each after "-> " (``_call``). Session text holds no line break, so each
+# of its fields runs to the end of its line or to that one arrow.
+_ARROW = " -> "
 _STRING = r'"(?:[^"\\]|\\.)*"'
 _SPEAKS = re.compile(r"[ \t]*(?:\[Turn \d+\] )?(?:User|Assistant): ")
 _CALL = re.compile(rf"[ \t]*(Tool|Step) (?:{_STRING}|\S+)")
-_ARROW = re.compile(r"(?= -> )")
-_FAILED = re.compile(rf"ERROR(?: ({_STRING}|.+?))?(?:: |$)")
+_RETURNED = re.compile(r"[ \t]*->(?: |$)", re.MULTILINE)
+_FAILED = re.compile(r"ERROR(?: |$)")
 
 
-def _line_words(line: str) -> list[tuple[int, int]]:
+def _call(head: str, args: str, output: str, error: str | None = None) -> str:
+    """A call as text: ``head[ args][ -> output]``, or, when it failed (with
+    ``error`` its message), ``head[ args] -> ERROR[ error]``. A failure's
+    output, or all a call returned when ``args`` hold " -> ", goes below it,
+    each part on a line of its own after "-> ", so no part's own ": " or
+    " -> " can read as where the next one starts (``own_words``)."""
+    line = f"{head} {args}" if args else head
+    returned = [output] if output else []
+    if error is not None:
+        returned.insert(0, f"ERROR {error}" if error else "ERROR")
+    if _ARROW in args:
+        # Below the call even when it returned nothing (a bare "->"), so the
+        # arguments end where their line does.
+        returned = returned or [""]
+    elif len(returned) < 2:
+        return f"{line}{_ARROW}{returned[0]}" if returned else line
+    return "\n".join([line, *(f"  -> {part}".rstrip() for part in returned)])
+
+
+def _line_words(line: str, below: bool = False) -> list[tuple[int, int]]:
     """Where a line holds the unit's own words: a message, a call's
     arguments, what it returned or a failure's message. Everything else is
     the engine's: who speaks, a step's name and kind, the arrow, "ERROR", a
     note, the "…" a clipped field ends with, a session's heading and a line
-    cut short. Any " -> " on a step's line is taken for the arrow."""
+    cut short. ``below``: what the call returned is on the lines below it."""
     speaks = _SPEAKS.match(line)
-    call = None if speaks else _CALL.match(line)
+    result = None if speaks else _RETURNED.match(line)
+    call = None if speaks or result else _CALL.match(line)
+    # Where what a call returned starts on the line, if it does.
+    returned = None
     if speaks:
         marks = [(0, speaks.end())]
+    elif result:
+        marks = [(0, result.end())]
+        returned = result.end()
     elif call:
-        arrows = [m.start() for m in _ARROW.finditer(line, call.end())]
+        arrow = -1 if below else line.find(_ARROW, call.end())
         # A Tool's arguments are the unit's; a Step's kind runs to its arrow.
         if call.group(1) == "Tool":
             marks = [(0, call.end())]
         else:
-            marks = [(0, arrows[0] if arrows else len(line))]
-        for at in arrows:
-            marks.append((at, at + 4))
-            failed = _FAILED.match(line, at + 4)
-            if not failed:
-                continue
-            if failed.group(1) is None:
-                marks.append((at + 4, failed.end()))
-                continue
-            start, end = failed.span(1)
-            marks += [(at + 4, start), (end, failed.end())]
-            message = failed.group(1)
-            if message.startswith('"'):
-                # Its quotes are the engine's, and an escaped one all of it.
-                quoted = re.fullmatch(_STRING, message) and "\\" not in message
-                marks += (
-                    [(start, start + 1), (end - 1, end)] if quoted else [(start, end)]
-                )
+            marks = [(0, arrow if arrow >= 0 else len(line))]
+        if arrow >= 0:
+            returned = arrow + len(_ARROW)
+            marks.append((arrow, returned))
     else:
         return []
+    failed = None if returned is None else _FAILED.match(line, returned)
+    if failed:
+        marks.append(failed.span())
     marks += [m.span() for m in NOTE.finditer(line)]
     words, at = [], 0
     for start, end in [*sorted(marks), (len(line), len(line))]:
@@ -222,19 +240,27 @@ def own_words(content: str, start: int, end: int) -> tuple[int, int] | None:
     """The part of ``content[start:end]`` (a quote found there) that is the
     unit's own words, never the engine's around them. Across a call's parts
     the last one with words in it is kept: what the call returned, or a
-    failure's message. None across lines, which joins two parts of the
-    conversation, or with none of the unit's words in it."""
+    failure's message. None across lines of two messages or calls, which
+    joins two parts of the conversation, or with none of the unit's words in
+    it."""
     first = content.rfind("\n", 0, start) + 1
-    last = content.find("\n", first)
-    last = len(content) if last < 0 else last
-    if end > last:
-        return None
+    # What a call returned, below it, is read with the call's line.
+    while first and _RETURNED.match(content, first):
+        first = content.rfind("\n", 0, first - 1) + 1
     kept = None
-    for a, b in _line_words(content[first:last]):
-        a, b = max(first + a, start), min(first + b, end)
-        if a < b and re.search(r"\w", content[a:b]):
-            kept = (a, b)
-    return kept
+    while True:
+        last = content.find("\n", first)
+        last = len(content) if last < 0 else last
+        below = bool(_RETURNED.match(content, last + 1))
+        for a, b in _line_words(content[first:last], below):
+            a, b = max(first + a, start), min(first + b, end)
+            if a < b and re.search(r"\w", content[a:b]):
+                kept = (a, b)
+        if end <= last:
+            return kept
+        if not below:
+            return None
+        first = last + 1
 
 
 def _io(span) -> tuple[str, str]:
@@ -311,25 +337,18 @@ def _field(step: dict, key: str, chars: int) -> str:
 
 
 def _step_line(step: dict, chars: int) -> str:
-    """``Tool name {args} -> result``, or ``Step name (kind) -> ERROR ...``."""
+    """``Tool name {args} -> result``, or ``Step name (kind) -> ERROR ...``,
+    with what it returned below it when ``_call`` says so."""
     kind = str(step.get("observation_type") or "") or "span"
-    name = _label(_clip(step.get("name") or kind, 80), " ")
+    name = _name(_clip(step.get("name") or kind, 80))
     if kind == "tool":
-        line = f"Tool {name}"
-        args = _field(step, "input", chars)
-        if args:
-            line += f" {args}"
+        head, args = f"Tool {name}", _field(step, "input", chars)
     else:
-        line = f"Step {name} ({kind})"
-    result = _field(step, "output", chars)
+        head, args = f"Step {name} ({kind})", ""
+    error = None
     if _step_failed(step):
-        message = _clip(step.get("status_message") or "", 200)
-        result = (
-            "ERROR"
-            + (f" {_label(message, ': ')}" if message else "")
-            + (f": {result}" if result else "")
-        )
-    return f"{line} -> {result}" if result else line
+        error = _clip(step.get("status_message") or "", 200)
+    return _call(head, args, _field(step, "output", chars), error)
 
 
 def _step_lines(steps: list[dict], *, chars: int, budget: int, total: int) -> list:
@@ -399,18 +418,16 @@ def _exchange(
     total = max((s.get("in_trace") or 0 for s in shown), default=0)
     lines = [f"{indent}{head}User: {user}"]
     lines += [
-        f"{indent}{line}"
+        indent + line.replace("\n", f"\n{indent}")
         for line in _step_lines(
             shown, chars=step_chars, budget=step_budget, total=max(total, len(shown))
         )
     ]
     failed = _is_error(root) or any(_step_failed(s) for s in shown)
     if _is_error(root):
+        name = _name(_clip(root.name or "turn", 80))
         message = _clip(root.status_message or "", 200)
-        lines.append(
-            f"{indent}Step {_label(_clip(root.name or 'turn', 80), ' ')} (turn) -> ERROR"
-            + (f" {_label(message, ': ')}" if message else "")
-        )
+        lines.append(indent + _call(f"Step {name} (turn)", "", "", message))
     lines.append(f"{indent}Assistant: {answer}")
     return _Turn("\n".join(lines), failed)
 

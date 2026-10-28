@@ -406,7 +406,7 @@ def _find(content: str, quote: str) -> tuple[int, int] | None:
     """Where ``quote`` first occurs in the unit's text, exactly, else with
     its whitespace normalised: the unit's own words there (``own_words``),
     without the engine's around them, such as "Assistant: " or a failed
-    call's "ERROR <message>: "."""
+    call's "-> ERROR "."""
     words = quote.split()
     if not words:
         return None

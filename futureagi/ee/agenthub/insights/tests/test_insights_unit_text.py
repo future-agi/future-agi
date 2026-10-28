@@ -48,9 +48,11 @@ class TestUnitText:
         order = [
             "[Turn 1] User: Order HB-48213 shows two charges",
             'Tool lookup_order {"order_id": "HB-48213"} -> {"order_id"',
-            'Tool issue_refund {"order_id": "HB-48213", "amount": 61.2} -> ERROR '
-            'refund_declined: {"error": "refund_declined", "message": "Charge is '
-            'still pending settlement; refunds open after settlement."}',
+            # A failure's output goes below it, on a line of its own.
+            'Tool issue_refund {"order_id": "HB-48213", "amount": 61.2}\n'
+            "  -> ERROR refund_declined\n"
+            '  -> {"error": "refund_declined", "message": "Charge is still pending '
+            'settlement; refunds open after settlement."}',
             "Assistant: Done. I've refunded $61.20",
             "[Turn 2] User: Great, so I don't need to do anything else?",
         ]
@@ -102,8 +104,9 @@ class TestUnitText:
         assert len(text) <= units.SESSION_CHARS
         assert (
             "[Turn 23] User: So will the export finish by tonight?\n"
-            'Tool check_export_job {"job": "exp_77"} -> ERROR quota_exceeded: '
-            '{"status": "failed", "error": "quota_exceeded", "retry_after": "24h"}\n'
+            'Tool check_export_job {"job": "exp_77"}\n'
+            "  -> ERROR quota_exceeded\n"
+            '  -> {"status": "failed", "error": "quota_exceeded", "retry_after": "24h"}\n'
             "Assistant: Yes, the export is running and will finish by tonight."
         ) in text
         turns = [int(n) for n in re.findall(r"\[Turn (\d+)\]", text)]
@@ -142,9 +145,9 @@ class TestUnitText:
         )
         text = out["cust_001"].content
         assert (
-            '  Tool issue_refund {"order_id": "HB-48213", "amount": 61.2} -> ERROR'
-            in text
-        )
+            '  Tool issue_refund {"order_id": "HB-48213", "amount": 61.2}\n'
+            "    -> ERROR refund_declined\n    -> {"
+        ) in text
         # Only the turns a user's text shows are read for their steps.
         assert len(reader.asked[0]) == 2 + units.USER_TURNS_PER_SESSION
 
@@ -343,25 +346,29 @@ class TestQuotes:
             '{"error": "refund_declined", "message": "Charge is still pending '
             'settlement; refunds open after settlement."}'
         )
+        call = 'Tool issue_refund {"order_id": "HB-48213", "amount": 61.2}'
         for quote, published in (
-            (f"ERROR refund_declined: {declined}", declined),
-            (f"-> ERROR refund_declined: {declined[:27]}", declined[:27]),
-            (
-                'Tool issue_refund {"order_id": "HB-48213", "amount": 61.2} -> '
-                f"ERROR refund_declined: {declined}",
-                declined,
-            ),
+            ("ERROR refund_declined", "refund_declined"),
             ("-> ERROR refund_declined", "refund_declined"),
+            (f"-> {declined}", declined),
+            (f"{call}\n  -> ERROR refund_declined\n  -> {declined}", declined),
+            # The call's lines quoted as one: what it returned.
+            (f"{call} -> ERROR refund_declined -> {declined[:27]}", declined[:27]),
+            (call, '{"order_id": "HB-48213", "amount": 61.2}'),
             ('Tool lookup_order {"order_id": "HB-48213"}', '{"order_id": "HB-48213"}'),
             ("Assistant: Done. I've refunded $61.20", "Done. I've refunded $61.20"),
             (
                 "[Turn 1] User: Order HB-48213 shows two charges",
                 "Order HB-48213 shows two charges",
             ),
-            # Joins two turns, holds none of the session's words, or isn't there.
+            # Joins two turns, or a call and the answer after it, holds none of
+            # the session's words, or isn't there (the line no longer reads
+            # "ERROR <message>: <output>").
             ("within a week. [Turn 2] User: Great, so I don't", None),
+            ('after settlement."} Assistant: Done.', None),
             ("Tool issue_refund", None),
             ("-> ERROR", None),
+            (f"ERROR refund_declined: {declined}", None),
             ("ERROR refund_declined: the refund was declined", None),
         ):
             kept, dropped = verified_evidence([{"quote": quote}], content, "7")
@@ -373,7 +380,8 @@ class TestQuotes:
             assert content[e["start"] : e["end"]] == published
             assert e["evidence_id"] == f"7:{e['start']}:{len(published)}"
             assert any(published in field for field in fields), quote
-        # The tool's own result still backs the failure it contradicts.
+        # The tool's own error, on the line below the call, still backs the
+        # failure it contradicts.
         out = reading(
             content,
             {
@@ -383,26 +391,96 @@ class TestQuotes:
                 "failure_basis": "contradicted",
                 "evidence": [
                     {"quote": "Done. I've refunded $61.20", "supports": "failure"},
-                    {
-                        "quote": f"ERROR refund_declined: {declined}",
-                        "supports": "failure",
-                    },
+                    {"quote": "-> ERROR refund_declined", "supports": "failure"},
                 ],
             },
         )
         assert out["failure_present"] and "unbacked_failure" not in out
         assert [e["quote"] for e in out["evidence"]] == [
             "Done. I've refunded $61.20",
-            declined,
+            "refund_declined",
         ]
 
-    def test_a_name_or_message_that_could_run_on_reads_as_a_string(self):
-        """A name with a space, or a message with ": ", would leave a line
-        unclear about where the engine's words start again: it is shown as a
-        JSON string, and a quote through it keeps only the session's words."""
+    def test_a_tool_error_with_a_json_body_backs_the_failure_it_contradicts(
+        self, monkeypatch
+    ):
+        """An HTTP tool's error carries its JSON body, quotes and ": " in it.
+        It reads as written, so a quote of it, whole or in part, is the span's
+        status message and backs a claim the tool contradicts."""
+        reader = seed.FakeReader(seeded("sess_refund_failed"))
+        message = 'HTTPError: 402 {"error": "card_declined"}'
+        refund = next(s for s in reader.steps if s["name"] == "issue_refund")
+        refund.update(status_message=message, output="", output_chars=0)
+        monkeypatch.setattr("tracer.services.clickhouse.v2.get_reader", lambda: reader)
+        monkeypatch.setattr(units, "_user_labels", lambda ids: {})
+        loaded = units.load_units("sessions", "project", ["sess_refund_failed"])
+        content = loaded["sess_refund_failed"].content
+        assert (
+            'Tool issue_refund {"order_id": "HB-48213", "amount": 61.2} -> '
+            f"ERROR {message}\nAssistant: Done."
+        ) in content
+        for quote in (message, f"-> ERROR {message}", "card_declined"):
+            out = reading(
+                content,
+                {
+                    "lens_answer": "Agent said a refund went through after the "
+                    "refund tool reported the card declined",
+                    "failure_present": True,
+                    "failure_basis": "contradicted",
+                    "evidence": [
+                        {"quote": "Done. I've refunded $61.20", "supports": "failure"},
+                        {"quote": quote, "supports": "failure"},
+                    ],
+                },
+            )
+            assert out["failure_present"], quote
+            assert "unbacked_failure" not in out and out["dropped_quotes"] == 0
+            published = out["evidence"][1]["quote"]
+            assert published in message and "ERROR" not in published, quote
+        assert published == "card_declined"
+
+    def test_a_calls_parts_read_whole_whatever_they_hold(self):
+        """A name with a space reads as a string. A result, an argument or an
+        error that holds " -> " or ": " reads as written: what the call
+        returned goes below it when the line couldn't otherwise say where its
+        parts start, and a quote of a part keeps all of it."""
         from ee.agenthub.insights.agent import verified_evidence
 
+        def published(content, quote):
+            kept, _ = verified_evidence([{"quote": quote}], content, "7")
+            return [e["quote"] for e in kept]
+
+        booked = '{"route": "SFO -> JFK", "status": "booked", "price": 412}'
         step = {
+            "observation_type": "tool",
+            "name": "book_flight",
+            "input": '{"from": "SFO"}',
+            "output": booked,
+        }
+        line = units._step_line(step, units.STEP_CHARS)
+        assert line == f'Tool book_flight {{"from": "SFO"}} -> {booked}'
+        content = f"[Turn 1] User: Book it\n{line}\nAssistant: Booked."
+        assert published(content, booked) == [booked]
+        assert published(content, line) == [booked]
+        assert published(content, "SFO -> JFK") == ["SFO -> JFK"]
+        # An argument holding the arrow: what the call returned goes below.
+        route = '{"route": "SFO -> JFK"}'
+        line = units._step_line({**step, "input": route}, units.STEP_CHARS)
+        assert line == f"Tool book_flight {route}\n  -> {booked}"
+        content = f"[Turn 1] User: Book it\n{line}\nAssistant: Booked."
+        assert published(content, route) == [route]
+        assert published(content, f"Tool book_flight {route}") == [route]
+        assert published(content, f"Tool book_flight {route} -> {booked}") == [booked]
+        assert published(content, f"-> {booked}") == [booked]
+        # Even when it returned nothing.
+        line = units._step_line({**step, "input": route, "output": ""}, 300)
+        assert line == f"Tool book_flight {route}\n  ->"
+        content = f"[Turn 1] User: Book it\n{line}\nAssistant: Booked."
+        assert published(content, route) == [route]
+        assert published(content, f"{route} ->") == [route]
+        # A name with a space; an error with ": " and an output, then its
+        # output below; an error with " -> " and none, on the call's line.
+        failed = {
             "observation_type": "tool",
             "name": "execute_tool issue_refund",
             "status": "ERROR",
@@ -410,34 +488,30 @@ class TestQuotes:
             "input": '{"amount": 61.2}',
             "output": '{"status": "declined"}',
         }
-        line = units._step_line(step, units.STEP_CHARS)
+        line = units._step_line(failed, units.STEP_CHARS)
         assert line == (
-            'Tool "execute_tool issue_refund" {"amount": 61.2} -> '
-            'ERROR "ValueError: refund declined": {"status": "declined"}'
+            'Tool "execute_tool issue_refund" {"amount": 61.2}\n'
+            "  -> ERROR ValueError: refund declined\n"
+            '  -> {"status": "declined"}'
         )
-        plain = units._step_line({**step, "name": "issue_refund"}, units.STEP_CHARS)
-        assert plain.startswith('Tool issue_refund {"amount"')
         content = f"[Turn 1] User: Refund me\n{line}\nAssistant: Done."
-        for quote, published in (
-            (
-                'ERROR "ValueError: refund declined": {"status": "declined"}',
-                '{"status": "declined"}',
-            ),
-            ('"ValueError: refund declined"', "ValueError: refund declined"),
-            ('refund declined": {"status"', '{"status"'),
+        for quote, words in (
+            ("ERROR ValueError: refund declined", "ValueError: refund declined"),
+            ('-> {"status": "declined"}', '{"status": "declined"}'),
             ('issue_refund" {"amount": 61.2}', '{"amount": 61.2}'),
+            (line, '{"status": "declined"}'),
         ):
-            kept, _ = verified_evidence([{"quote": quote}], content, "7")
-            assert [e["quote"] for e in kept] == [published], quote
-        # An escaped message isn't the span's text as written.
-        escaped = units._step_line(
-            {**step, "status_message": '"x" declined', "output": ""}, units.STEP_CHARS
-        )
-        assert escaped.endswith('-> ERROR "\\"x\\" declined"')
-        kept, dropped = verified_evidence(
-            [{"quote": '\\"x\\" declined'}], f"Assistant: ok\n{escaped}", "7"
-        )
-        assert (kept, dropped) == ([], 1)
+            assert published(content, quote) == [words], quote
+        # A line below a call is the tool's, as its result backs a claim.
+        below = content.index('{"status": "declined"}')
+        assert facets._speaker(content, below) == "tool"
+        timeout = {**failed, "status_message": "upstream -> timeout", "output": ""}
+        line = units._step_line(timeout, units.STEP_CHARS)
+        assert line.endswith('{"amount": 61.2} -> ERROR upstream -> timeout')
+        content = f"[Turn 1] User: Refund me\n{line}\nAssistant: Done."
+        assert published(content, "ERROR upstream -> timeout") == [
+            "upstream -> timeout"
+        ]
 
 
 # How a fast model read each seeded session: right on the failures, and the
