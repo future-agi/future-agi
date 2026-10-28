@@ -663,13 +663,15 @@ function SeriesTable({
                     <td key={buckets[index]?.key ?? index} style={cell}>
                       {point.y == null
                         ? "-"
-                        : point.y >= 1000
-                          ? point.y.toLocaleString(undefined, {
-                              maximumFractionDigits: 0,
-                            })
-                          : point.y % 1 === 0
-                            ? point.y
-                            : point.y.toFixed(2)}
+                        : item.unit === "ms"
+                          ? fmt(point.y, item.unit)
+                          : point.y >= 1000
+                            ? point.y.toLocaleString(undefined, {
+                                maximumFractionDigits: 0,
+                              })
+                            : point.y % 1 === 0
+                              ? point.y
+                              : point.y.toFixed(2)}
                     </td>
                   ))}
                 </tr>

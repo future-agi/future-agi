@@ -236,6 +236,8 @@ describe("Run widget editor", () => {
     const table = screen.getByRole("table");
     expect(table).toHaveTextContent("1m 1s");
     expect(table).not.toHaveTextContent(/K ms/);
+    // Each call's cell too, not raw milliseconds like "61,000".
+    expect(table).not.toHaveTextContent(/\d{1,3},\d{3}/);
   });
 
   it("Save adds the widget to the Custom widgets section", async () => {
