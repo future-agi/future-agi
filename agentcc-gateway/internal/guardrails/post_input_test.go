@@ -86,6 +86,9 @@ func TestPostRejectionPreservesPreStageDiagnosticsAndFeedback(t *testing.T) {
 		if result.Error == nil || result.Reflection == nil || !strings.Contains(result.Reflection.Reason, "remove bad") || rc.Response != nil {
 			t.Fatalf("private feedback lost: %+v", result)
 		}
+		if rc.Metadata["guardrail_name"] != "block" || rc.Metadata["guardrail_action"] != "blocked" {
+			t.Fatalf("blocking rule identity changed: %v", rc.Metadata)
+		}
 		warnings, present := rc.Metadata["guardrail_warnings"]
 		if present != hadWarnings || (hadWarnings && warnings != "safe pre-stage warning") || len(rc.GuardrailResults) != 3 || rc.GuardrailResults[0].Message != "safe pre-stage result" {
 			t.Fatalf("pre-stage diagnostics changed: metadata=%v results=%+v", rc.Metadata, rc.GuardrailResults)

@@ -70,6 +70,7 @@ func TestManagedGuardrailsStartWithoutGlobalEnable(t *testing.T) {
 					"guardrails": map[string]interface{}{"checks": map[string]interface{}{"data-leakage-prevention": map[string]interface{}{"enabled": true, "action": "block", "confidence_threshold": 0.8, "config": checkConfig}}},
 				}
 			}
+			unresolved := json.RawMessage(`{"providers":{"openai":{"enabled":true,"api_key":"tenant-provider-fixture","models":["gpt-4o"]}},"guardrails":{"checks":{"llama-guard":{"enabled":true,"action":"block","config":{"stage":"post","on_block":"reflect"}}}}}`)
 			var logMu sync.Mutex
 			var logs []struct {
 				RequestID          string            `json:"request_id"`
@@ -81,7 +82,8 @@ func TestManagedGuardrailsStartWithoutGlobalEnable(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				switch r.URL.Path {
 				case "/agentcc/org-configs/bulk/":
-					json.NewEncoder(w).Encode(map[string]interface{}{"status": true, "result": map[string]interface{}{orgID: orgConfig(false)}})
+					configs := map[string]interface{}{orgID: orgConfig(false), "invalid-startup": unresolved}
+					json.NewEncoder(w).Encode(map[string]interface{}{"status": true, "result": configs})
 				case "/agentcc/api-keys/bulk/":
 					json.NewEncoder(w).Encode(map[string]interface{}{"status": true, "result": []interface{}{map[string]interface{}{"id": "synced-byok-key", "name": "ordinary-byok", "owner": orgID, "key_hash": auth.HashKey(gatewayKey), "models": []string{"gpt-4o"}, "providers": []string{"openai"}, "metadata": map[string]string{"org_id": orgID}}}})
 				case "/agentcc/webhook/logs/":
@@ -209,7 +211,15 @@ logging:
 				}
 				return status, headers, body
 			}
-			status, _, body := chat("safe")
+			status, _, body, err := request("GET", "/-/orgs/invalid-startup/config", adminToken, nil)
+			if err != nil || status != 200 || !bytes.Contains(body, []byte("llama-guard")) {
+				t.Fatalf("startup sync did not store the config as received: status=%d error=%v body=%s", status, err, body)
+			}
+			status, _, body, err = request("PUT", "/-/orgs/"+orgID+"/config", adminToken, unresolved)
+			if err != nil || status != 400 || !bytes.Contains(body, []byte("invalid_guardrail_config")) {
+				t.Fatalf("unresolved reflecting check admitted: status=%d error=%v body=%s", status, err, body)
+			}
+			status, _, body = chat("safe")
 			if status != 200 || !bytes.Contains(body, []byte("accepted answer")) {
 				t.Fatalf("disabled static rules affected managed safe request: status=%d body=%s", status, body)
 			}
@@ -219,7 +229,7 @@ logging:
 			}
 			blockedRequestID := headers.Get("x-agentcc-request-id")
 			updated, _ := json.Marshal(orgConfig(true))
-			status, _, body, err := request("PUT", "/-/orgs/"+orgID+"/config", adminToken, updated)
+			status, _, body, err = request("PUT", "/-/orgs/"+orgID+"/config", adminToken, updated)
 			if err != nil || status != 200 {
 				t.Fatalf("update managed reflection: status=%d error=%v body=%s", status, err, body)
 			}
@@ -227,6 +237,16 @@ logging:
 			var repaired models.ChatCompletionResponse
 			if json.Unmarshal(body, &repaired) != nil || status != 200 || headers.Get("x-agentcc-reflexion-attempts") != "1" || repaired.Usage == nil || repaired.Usage.TotalTokens != 4 || bytes.Contains(body, []byte("PR334_PRIVATE")) || providerCalls.Load() != 4 || wrongCredentials.Load() != 0 {
 				t.Fatalf("managed BYOK reflection failed: status=%d calls=%d wrong-key=%d headers=%v body=%s", status, providerCalls.Load(), wrongCredentials.Load(), headers, body)
+			}
+			bulk, _ := json.Marshal(map[string]interface{}{orgID: unresolved, "valid-tenant": orgConfig(true)})
+			status, _, body, err = request("POST", "/-/orgs/configs/bulk", adminToken, bulk)
+			var bulkResult map[string]interface{}
+			if err != nil || status != 200 || json.Unmarshal(body, &bulkResult) != nil || len(bulkResult) != 2 || bulkResult["status"] != "ok" || bulkResult["loaded"] != float64(2) {
+				t.Fatalf("bulk did not store all configs: status=%d error=%v body=%s", status, err, body)
+			}
+			status, _, body = chat("safe")
+			if status != 400 || !bytes.Contains(body, []byte("invalid_guardrail_config")) || providerCalls.Load() != 4 {
+				t.Fatalf("bulk-loaded invalid config did not fail closed: status=%d calls=%d body=%s", status, providerCalls.Load(), body)
 			}
 			if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
 				t.Fatal(err)

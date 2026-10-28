@@ -1738,7 +1738,6 @@ func TestRetryer_Backoff_CappedAtMaxDelay(t *testing.T) {
 	}
 }
 
-
 // 17. TestFailover_Execute_WithRetry — failover with retry: first provider fails
 // 500 twice (retry kicks in), then succeeds on a different provider.
 func TestFailover_Execute_WithRetry(t *testing.T) {
@@ -2029,13 +2028,21 @@ func TestCircuitBreaker_StateChangeCallback(t *testing.T) {
 		providerID string
 		healthy    bool
 	}
-	var mu sync.Mutex
-	var changes []stateChange
-
+	changes := make(chan stateChange, 3)
 	onChange := func(pid string, healthy bool) {
-		mu.Lock()
-		defer mu.Unlock()
-		changes = append(changes, stateChange{providerID: pid, healthy: healthy})
+		changes <- stateChange{providerID: pid, healthy: healthy}
+	}
+	assertChange := func(healthy bool) {
+		t.Helper()
+		want := stateChange{"provider-1", healthy}
+		select {
+		case got := <-changes:
+			if got != want {
+				t.Fatalf("state change = %+v, want %+v", got, want)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out waiting for state change %+v", want)
+		}
 	}
 
 	cb := NewCircuitBreaker("provider-1", cfg, onChange)
@@ -2044,25 +2051,21 @@ func TestCircuitBreaker_StateChangeCallback(t *testing.T) {
 	for i := 0; i < cfg.FailureThreshold; i++ {
 		cb.RecordFailure(serverErr())
 	}
+	assertChange(false)
 
-	// Wait for cooldown, which re-admits the provider: should fire (provider-1, true).
-	time.Sleep(cfg.Cooldown + 5*time.Millisecond)
-	cb.Allow() // half-open
+	// Synchronize with the cooldown callback, not a scheduling-dependent sleep.
+	assertChange(true)
+	if !cb.Allow() {
+		t.Fatal("provider was not readmitted after cooldown")
+	}
 	for i := 0; i < cfg.SuccessThreshold; i++ {
 		cb.RecordSuccess()
 	}
-	// Closing should fire (provider-1, true) again.
-
-	mu.Lock()
-	defer mu.Unlock()
-	want := []stateChange{{"provider-1", false}, {"provider-1", true}, {"provider-1", true}}
-	if len(changes) != len(want) {
-		t.Fatalf("got %d state changes, want %d; changes: %+v", len(changes), len(want), changes)
-	}
-	for i, w := range want {
-		if changes[i] != w {
-			t.Errorf("change[%d] = %+v, want %+v", i, changes[i], w)
-		}
+	assertChange(true) // Closing fires (provider-1, true) again.
+	select {
+	case extra := <-changes:
+		t.Fatalf("unexpected extra state change: %+v", extra)
+	default:
 	}
 }
 
@@ -2222,7 +2225,7 @@ func TestCBRegistry_ConcurrentGet(t *testing.T) {
 // 1. TestModelFallbacks_GetChain — returns configured fallback chain
 func TestModelFallbacks_GetChain(t *testing.T) {
 	mf := NewModelFallbacks(map[string][]string{
-		"gpt-4o":         {"claude-sonnet-4-20250514", "gemini-2.0-pro"},
+		"gpt-4o":                   {"claude-sonnet-4-20250514", "gemini-2.0-pro"},
 		"claude-sonnet-4-20250514": {"gpt-4o"},
 	})
 

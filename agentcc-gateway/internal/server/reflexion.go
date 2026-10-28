@@ -41,11 +41,18 @@ func (h *Handlers) chatAttempt(ctx context.Context, rc *models.RequestContext, p
 const maxReflexionStreamBytes = 2 << 20
 const maxReflexionStreamChunks = 8192
 
+type bufferedTool struct {
+	id        string
+	kind      string
+	name      strings.Builder
+	arguments strings.Builder
+}
+
 type bufferedChoice struct {
 	content   strings.Builder
 	reasoning strings.Builder
 	finish    string
-	tools     map[int]*models.ToolCall
+	tools     map[int]*bufferedTool
 }
 
 type bufferedCandidate struct {
@@ -114,7 +121,7 @@ func (b *bufferedCandidate) add(chunk models.StreamChunk) error {
 		}
 		choice := b.choices[c.Index]
 		if choice == nil {
-			choice = &bufferedChoice{tools: make(map[int]*models.ToolCall)}
+			choice = &bufferedChoice{tools: make(map[int]*bufferedTool)}
 			b.choices[c.Index] = choice
 		}
 		if c.Delta.Content != nil {
@@ -132,18 +139,18 @@ func (b *bufferedCandidate) add(chunk models.StreamChunk) error {
 			}
 			t := choice.tools[d.Index]
 			if t == nil {
-				t = &models.ToolCall{}
+				t = &bufferedTool{}
 				choice.tools[d.Index] = t
 			}
 			if d.ID != "" {
-				t.ID = d.ID
+				t.id = d.ID
 			}
 			if d.Type != "" {
-				t.Type = d.Type
+				t.kind = d.Type
 			}
 			if d.Function != nil {
-				t.Function.Name += d.Function.Name
-				t.Function.Arguments += d.Function.Arguments
+				t.name.WriteString(d.Function.Name)
+				t.arguments.WriteString(d.Function.Arguments)
 			}
 		}
 	}
@@ -204,7 +211,8 @@ func (b *bufferedCandidate) response() *models.ChatCompletionResponse {
 		}
 		sort.Ints(tools)
 		for _, j := range tools {
-			m.ToolCalls = append(m.ToolCalls, *c.tools[j])
+			t := c.tools[j]
+			m.ToolCalls = append(m.ToolCalls, models.ToolCall{ID: t.id, Type: t.kind, Function: models.FunctionCall{Name: t.name.String(), Arguments: t.arguments.String()}})
 		}
 		r.Choices = append(r.Choices, models.Choice{Index: i, Message: m, FinishReason: c.finish})
 	}
@@ -223,7 +231,7 @@ func (b *bufferedCandidate) keepAccounting(chunk models.StreamChunk) {
 	}
 }
 
-// harvestQueued settles usage that already arrived after an in-band failure
+// harvestQueued settles usage that already arrived before a failure
 // (often a separate usage-only trailer). It never waits for more frames.
 func (b *bufferedCandidate) harvestQueued(chunks <-chan models.StreamChunk) {
 	for {
@@ -256,6 +264,10 @@ func collectCandidate(ctx context.Context, chunks <-chan models.StreamChunk, err
 		select {
 		case c, ok := <-chunks:
 			if !ok {
+				// Cancellation can close the stream after the pre-select check.
+				if ctx.Err() != nil {
+					return b, models.ErrRequestTimeout("request canceled while buffering response")
+				}
 				// Providers enqueue errors before closing the data channel. Do not
 				// mistake a partial stream with a queued error for successful EOF.
 				select {
@@ -287,6 +299,7 @@ func collectCandidate(ctx context.Context, chunks <-chan models.StreamChunk, err
 				continue
 			}
 			if err != nil {
+				b.harvestQueued(chunks)
 				return b, err
 			}
 		case <-ctx.Done():

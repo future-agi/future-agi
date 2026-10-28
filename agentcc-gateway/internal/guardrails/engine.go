@@ -156,11 +156,12 @@ func (e *Engine) run(ctx context.Context, rules []resolvedRule, input *CheckInpu
 		}
 
 		tg := TriggeredGuardrail{
-			Name:      rule.guardrail.Name(),
-			Score:     checkResult.Score,
-			Threshold: effectiveThreshold,
-			Action:    effectiveAction,
-			Message:   checkResult.Message,
+			Name:             rule.guardrail.Name(),
+			Score:            checkResult.Score,
+			Threshold:        effectiveThreshold,
+			Action:           effectiveAction,
+			Message:          checkResult.Message,
+			OperationalError: checkResult.OperationalError,
 		}
 		if !checkResult.OperationalError && effectiveAction == ActionBlock {
 			tg.Reflection = rule.reflection
@@ -170,9 +171,8 @@ func (e *Engine) run(ctx context.Context, rules []resolvedRule, input *CheckInpu
 		switch effectiveAction {
 		case ActionBlock:
 			result.Blocked = true
-			// Post checks all run so a reject rule cannot be bypassed by an
-			// earlier reflect rule. Pre-stage blocks still short-circuit.
-			if input.Response == nil {
+			// Continue only while a later reject could still veto repair.
+			if input.Response == nil || !tg.Reflection.Enabled {
 				return result
 			}
 		case ActionWarn:
@@ -255,12 +255,7 @@ func (e *Engine) runSync(ctx context.Context, rule resolvedRule, input *CheckInp
 }
 
 func (e *Engine) runAsync(rule resolvedRule, input *CheckInput) {
-	owned, err := snapshotInput(input)
-	if err != nil {
-		return
-	}
-	input = owned
-	// Acquire semaphore slot to bound concurrency. Drop if full.
+	// Acquire semaphore slot before cloning the payload. Drop if full.
 	select {
 	case e.asyncSem <- struct{}{}:
 	default:
@@ -270,6 +265,14 @@ func (e *Engine) runAsync(rule resolvedRule, input *CheckInput) {
 		)
 		return
 	}
+
+	owned, err := snapshotInput(input)
+	if err != nil {
+		<-e.asyncSem
+		slog.Warn("async guardrail snapshot failed", "guardrail", rule.guardrail.Name())
+		return
+	}
+	input = owned
 
 	go func() {
 		defer func() { <-e.asyncSem }()

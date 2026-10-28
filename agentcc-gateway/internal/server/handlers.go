@@ -1601,6 +1601,12 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 
 		chunk, err := waitForFirstStreamChunk(callCtx, candidateChunks, candidateErrCh)
 		if err != nil {
+			if rc.BufferedResponse {
+				failed := newBufferedCandidate()
+				failed.harvestQueued(candidateChunks)
+				rc.Response = failed.response()
+				rc.ResolvedModel = rc.Response.Model
+			}
 			h.engine.EndProviderAttempt(callCtx, rc)
 			cancelAndDrainStream(attemptCancel, candidateChunks)
 			return err

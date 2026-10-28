@@ -94,6 +94,7 @@ type RetryAdmission interface {
 type ResponseValidator interface {
 	Plugin
 	BufferResponse(rc *models.RequestContext) bool
+	ReflectionDebug(rc *models.RequestContext) bool
 	ObserveResponse(ctx context.Context, rc *models.RequestContext)
 }
 

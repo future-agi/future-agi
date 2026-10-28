@@ -251,6 +251,7 @@ func main() {
 	var grEngine *guardrails.Engine
 	var policyStore *policy.Store
 	var onOrgConfigChange func(string) // called when an org config changes (e.g. invalidate guardrail cache)
+	validateOrgReflectionConfig := guardrails.NewPlugin(nil, nil, nil, nil, nil).ValidateOrgReflectionConfig
 	if cfg.Guardrails.Enabled || cfg.ControlPlane.URL != "" {
 		// The global switch controls operator-defined static rules, not tenant
 		// policies delivered by the control plane. Managed mode always needs
@@ -363,6 +364,7 @@ func main() {
 		}
 
 		guardrailPlugin := guardrails.NewPlugin(grEngine, guardrailRegistry, dynamicFactory, policyStore, tenantStore)
+		validateOrgReflectionConfig = guardrailPlugin.ValidateOrgReflectionConfig
 		plugins = append(plugins, guardrailPlugin)
 		onOrgConfigChange = func(orgID string) {
 			guardrailPlugin.InvalidateDynamicCache(orgID)
@@ -586,6 +588,7 @@ func main() {
 
 	// Create and start server (shares the same ModelDB pointer for hot-reload).
 	srv := server.New(cfg, *configPath, registry, engine, keyStore, grEngine, policyStore, metricsRegistry, &sharedModelDB, tenantStore, onOrgConfigChange, redisClient)
+	srv.SetOrgReflectionConfigValidator(validateOrgReflectionConfig)
 
 	// Register onChange callback on tenantStore so that periodic sync (MergeBulk)
 	// evicts the OrgProviderCache for any org whose config changed. Without this,

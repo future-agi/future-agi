@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -184,6 +185,12 @@ func (e *Engine) processCandidates(ctx context.Context, rc *models.RequestContex
 	}
 	limit, retries := reflexion.MaxAttempts, 0
 	debug := false
+	for _, p := range e.plugins {
+		if v, ok := p.(ResponseValidator); ok && v.ReflectionDebug(rc) {
+			debug = true
+			break
+		}
+	}
 	pendingReflection := false
 	var finalErr error
 	for {
@@ -215,6 +222,9 @@ func (e *Engine) processCandidates(ctx context.Context, rc *models.RequestContex
 			err = rc.Attempts.Denied
 		}
 		rc.RecordTiming("provider", rc.Timings["provider"]+time.Since(start))
+		if err == nil && !rc.IsStream {
+			err = candidateResponseError(rc.Response)
+		}
 		e.EndProviderAttempt(ctx, rc)
 		rc.Request = original
 		if err != nil {
@@ -283,6 +293,21 @@ func (e *Engine) processCandidates(ctx context.Context, rc *models.RequestContex
 	publishAttempts(rc, retries, debug)
 	e.runFinalPlugins(context.WithoutCancel(ctx), rc)
 	return finalErr
+}
+
+func candidateResponseError(response *models.ChatCompletionResponse) error {
+	if response == nil || len(response.Choices) == 0 {
+		return models.ErrUpstreamProvider(http.StatusBadGateway, "upstream response has no choices")
+	}
+	if raw, ok := response.Extra["error"]; ok && !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return models.ErrUpstreamProvider(http.StatusBadGateway, "upstream response returned an error")
+	}
+	for _, choice := range response.Choices {
+		if choice.FinishReason == "error" {
+			return models.ErrUpstreamProvider(http.StatusBadGateway, "upstream response returned an error")
+		}
+	}
+	return nil
 }
 
 // Upstream validation errors can echo the private answer and evaluator feedback.
@@ -362,7 +387,7 @@ func reflectionRequest(original *models.ChatCompletionRequest, response *models.
 	if err != nil {
 		return nil, err
 	}
-	feedback, _ := json.Marshal("The preceding answer failed the response checks below. Produce a corrected answer to the original request. Do not repeat the rejected answer.\n" + reason)
+	feedback, _ := json.Marshal("The preceding answer failed the response checks below. Produce a corrected answer to the original request. Comply with the intent of these checks. Do not use alternate spellings, lookalike or invisible characters, spacing, encodings, or other obfuscation to bypass them. If the original request cannot be answered within these checks, say so briefly instead. Do not repeat the rejected answer.\n" + reason)
 	content, _ := json.Marshal(text)
 	req.Messages = append(req.Messages, models.Message{Role: "assistant", Content: content}, models.Message{Role: "user", Content: feedback})
 	return req, nil

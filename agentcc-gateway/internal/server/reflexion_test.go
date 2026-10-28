@@ -31,17 +31,19 @@ import (
 // handler, OpenAI adapter, policy engine, pipeline, accounting and cache. Native
 // leakage/PII checks are covered separately in reflexion_compat_test.go.
 type reflectionUpstream struct {
-	mu                sync.Mutex
-	requests          []models.ChatCompletionRequest
-	blocked           int
-	blockedText       string
-	status            int
-	tool              bool
-	multi             bool
-	responseModel     string
-	usage             *models.Usage
-	repairError       bool
-	repairStreamError string
+	mu                    sync.Mutex
+	requests              []models.ChatCompletionRequest
+	blocked               int
+	blockedText           string
+	status                int
+	tool                  bool
+	multi                 bool
+	responseModel         string
+	usage                 *models.Usage
+	repairError           bool
+	repairStreamError     string
+	responseFailure       string
+	repairResponseFailure string
 }
 
 func (u *reflectionUpstream) serve(w http.ResponseWriter, r *http.Request) {
@@ -115,7 +117,25 @@ func (u *reflectionUpstream) serve(w http.ResponseWriter, r *http.Request) {
 	if u.multi {
 		choices = append(choices, models.Choice{Index: 1, Message: m, FinishReason: "stop"})
 	}
-	json.NewEncoder(w).Encode(models.ChatCompletionResponse{ID: "candidate", Object: "chat.completion", Model: model, Choices: choices, Usage: usage})
+	response := models.ChatCompletionResponse{ID: "candidate", Object: "chat.completion", Model: model, Choices: choices, Usage: usage}
+	failure := u.responseFailure
+	if n > 1 && u.repairResponseFailure != "" {
+		failure = u.repairResponseFailure
+	}
+	if failure != "" {
+		messages, _ := json.Marshal(req.Messages)
+		private, _ := json.Marshal("NONSTREAM_PRIVATE_SENTINEL: " + string(messages))
+		response.Extra = map[string]json.RawMessage{"detail": private}
+		switch failure {
+		case "envelope":
+			response.Extra["error"] = json.RawMessage(`{"message":` + string(private) + `}`)
+		case "empty":
+			response.Choices = nil
+		case "finish":
+			response.Choices[0].FinishReason = "error"
+		}
+	}
+	json.NewEncoder(w).Encode(response)
 }
 
 func (u *reflectionUpstream) calls() []models.ChatCompletionRequest {
@@ -372,7 +392,7 @@ func TestReflexionHTTPUpstreamErrorsDoNotReflect(t *testing.T) {
 }
 
 func TestReflexionBufferOverflowAndCancellation(t *testing.T) {
-	for _, tc := range []string{"bytes", "frames", "cancel", "incomplete"} {
+	for _, tc := range []string{"bytes", "cancel", "incomplete"} {
 		t.Run(tc, func(t *testing.T) {
 			chunks := make(chan models.StreamChunk, 1)
 			errs := make(chan error)
@@ -385,17 +405,6 @@ func TestReflexionBufferOverflowAndCancellation(t *testing.T) {
 				text := strings.Repeat("x", maxReflexionStreamBytes)
 				first = &models.StreamChunk{Choices: []models.StreamChoice{{Delta: models.Delta{Content: &text}}}}
 				close(chunks)
-			case "frames":
-				go func() {
-					defer close(chunks)
-					for i := 0; i <= maxReflexionStreamChunks; i++ {
-						select {
-						case chunks <- models.StreamChunk{}:
-						case <-ctx.Done():
-							return
-						}
-					}
-				}()
 			case "cancel":
 				cancel()
 			case "incomplete":

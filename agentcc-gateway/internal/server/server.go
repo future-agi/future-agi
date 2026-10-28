@@ -53,6 +53,7 @@ type Server struct {
 	handlers         *Handlers
 	keyStore         *auth.KeyStore
 	keyHandlers      *KeyHandlers
+	orgHandlers      *OrgConfigHandlers
 	metricsRegistry  *metrics.Registry
 	batchProcessor   *batch.Processor
 	clusterMgr       *cluster.Manager
@@ -68,6 +69,14 @@ type Server struct {
 func (s *Server) SetKeyRevocationPublisher(pub KeyRevocationPublisher) {
 	if s.keyHandlers != nil {
 		s.keyHandlers.SetRevocationPublisher(pub)
+	}
+}
+
+// SetOrgReflectionConfigValidator attaches request-time guardrail resolution to
+// admin config admission. Call after New() and before Start().
+func (s *Server) SetOrgReflectionConfigValidator(fn func(*tenant.OrgConfig) error) {
+	if fn != nil {
+		s.orgHandlers.validateReflectionConfig = fn
 	}
 }
 
@@ -573,6 +582,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	// Per-org config admin endpoints (multi-tenant).
 	{
 		orgHandlers := NewOrgConfigHandlers(tenantStore, cfg.Admin.Token, orgProviderCache)
+		s.orgHandlers = orgHandlers
 		if onOrgConfigChange != nil {
 			orgHandlers.SetOnConfigChange(onOrgConfigChange)
 		}
@@ -891,6 +901,15 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	handler = middleware.LicenseAuth(cfg.LicenseAuth, redisstate.NewLicenseStore(redisClient))(handler)
 	handler = middleware.RequestID(handler)
 	if cfg.CORS.Enabled {
+		if len(cfg.CORS.ExposedHeaders) == 0 {
+			next := handler
+			handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if w.Header().Get("Access-Control-Allow-Origin") != "" {
+					w.Header().Set("Access-Control-Expose-Headers", w.Header().Get("Access-Control-Expose-Headers")+", X-Agentcc-Reflexion-Attempts, X-Agentcc-Provider-Attempts, X-Agentcc-Usage-Incomplete")
+				}
+				next.ServeHTTP(w, r)
+			})
+		}
 		handler = middleware.CORS(cfg.CORS)(handler)
 	}
 	handler = middleware.Recovery(handler)

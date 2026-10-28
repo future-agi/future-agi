@@ -191,7 +191,7 @@ func TestReflexionAttemptCostUsesRequestedModelFallback(t *testing.T) {
 	}
 }
 
-func TestPostRejectScrubsTenantWarningsFromRequestLog(t *testing.T) {
+func TestPostRejectSkipsTenantWarningsInRequestLog(t *testing.T) {
 	u := &reflectionUpstream{blocked: 9}
 	upstream := httptest.NewServer(http.HandlerFunc(u.serve))
 	defer upstream.Close()
@@ -206,13 +206,12 @@ func TestPostRejectScrubsTenantWarningsFromRequestLog(t *testing.T) {
 	if w.Code != 403 || len(u.calls()) != 1 || observer.snapshot.Response != nil || observer.metadata["guardrail_warnings"] != "safe pre-stage warning" {
 		t.Fatalf("status=%d calls=%d metadata=%v", w.Code, len(u.calls()), observer.metadata)
 	}
-	if len(observer.snapshot.GuardrailResults) != 2 {
-		t.Fatalf("diagnostics lost: %+v", observer.snapshot.GuardrailResults)
+	if len(observer.snapshot.GuardrailResults) != 1 || observer.metadata["guardrail_name"] != "reject" {
+		t.Fatalf("reject did not short-circuit tenant warnings: %+v metadata=%v", observer.snapshot.GuardrailResults, observer.metadata)
 	}
-	for _, result := range observer.snapshot.GuardrailResults {
-		if result.Message != "response check failed" || result.Score != 1 || (result.Action != "block" && result.Action != "warn") {
-			t.Fatalf("unsafe or incomplete diagnostic: %+v", result)
-		}
+	result := observer.snapshot.GuardrailResults[0]
+	if result.Message != "response check failed" || result.Score != 1 || result.Action != "block" || result.Name != "reject" {
+		t.Fatalf("unsafe or incomplete diagnostic: %+v", result)
 	}
 	logger.Close()
 	select {

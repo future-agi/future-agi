@@ -59,12 +59,13 @@ type Guardrail interface {
 
 // TriggeredGuardrail records a guardrail that was triggered during execution.
 type TriggeredGuardrail struct {
-	Name       string           `json:"name"`
-	Score      float64          `json:"score"`
-	Threshold  float64          `json:"threshold"`
-	Action     Action           `json:"action"`
-	Message    string           `json:"message"`
-	Reflection reflexion.Policy `json:"-"`
+	Name             string           `json:"name"`
+	Score            float64          `json:"score"`
+	Threshold        float64          `json:"threshold"`
+	Action           Action           `json:"action"`
+	Message          string           `json:"message"`
+	OperationalError bool             `json:"operational_error,omitempty"`
+	Reflection       reflexion.Policy `json:"-"`
 }
 
 // PipelineResult is the aggregate result of running all guardrails in a stage.

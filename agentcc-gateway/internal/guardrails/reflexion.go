@@ -11,6 +11,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
 	"github.com/futureagi/agentcc-gateway/internal/reflexion"
+	"github.com/futureagi/agentcc-gateway/internal/tenant"
 )
 
 func configuredStage(cfg map[string]interface{}, fallback Stage) Stage {
@@ -37,46 +38,75 @@ func (p *GuardrailPlugin) validateReflectionConfig(rc *models.RequestContext) *m
 		}
 	}
 	if p.tenantStore != nil {
-		if cfg := p.tenantStore.Get(rc.Metadata["org_id"]); cfg != nil && cfg.Guardrails != nil {
-			for name, check := range cfg.Guardrails.Checks {
-				if check == nil || !check.Enabled {
-					continue
-				}
-				if _, err := reflexion.Parse(check.Config); err != nil {
-					return models.ErrBadRequest("invalid_guardrail_config", err.Error())
-				}
-				if p.engine != nil && p.engine.HasRule(name) {
-					continue
-				}
-				g := p.getGuardrail(rc.Metadata["org_id"], name, check)
-				if g == nil {
-					if check.Config["on_block"] == "reflect" {
-						return models.ErrBadRequest("invalid_guardrail_config", "reflect check has no registered implementation")
-					}
-					continue
-				}
-				stage := "pre"
-				if configuredStage(check.Config, g.Stage()) == StagePost {
-					stage = "post"
-				}
-				if _, err := reflexion.Validate(check.Config, name, stage, check.Action, "sync"); err != nil {
-					return models.ErrBadRequest("invalid_guardrail_config", err.Error())
-				}
+		orgID := rc.Metadata["org_id"]
+		return p.validateOrgReflectionConfig(orgID, p.tenantStore.Get(orgID))
+	}
+	return nil
+}
+
+// ValidateOrgReflectionConfig uses request-time resolution without consulting or
+// populating the live tenant cache: this config has not been accepted yet.
+func (p *GuardrailPlugin) ValidateOrgReflectionConfig(cfg *tenant.OrgConfig) error {
+	resolver := NewPlugin(p.engine, p.registry, p.dynamicFactory, nil, nil)
+	if err := resolver.validateOrgReflectionConfig("", cfg); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (p *GuardrailPlugin) validateOrgReflectionConfig(orgID string, cfg *tenant.OrgConfig) *models.APIError {
+	if cfg == nil || cfg.Guardrails == nil {
+		return nil
+	}
+	for name, check := range cfg.Guardrails.Checks {
+		if check == nil || !check.Enabled {
+			continue
+		}
+		if _, err := reflexion.Parse(check.Config); err != nil {
+			return models.ErrBadRequest("invalid_guardrail_config", err.Error())
+		}
+		if p.engine != nil && p.engine.HasRule(name) {
+			continue
+		}
+		g := p.getGuardrail(orgID, name, check)
+		if g == nil {
+			if check.Config["on_block"] == "reflect" {
+				return models.ErrBadRequest("invalid_guardrail_config", "reflect check has no registered implementation")
 			}
+			continue
+		}
+		stage := "pre"
+		if configuredStage(check.Config, g.Stage()) == StagePost {
+			stage = "post"
+		}
+		if _, err := reflexion.Validate(check.Config, name, stage, check.Action, "sync"); err != nil {
+			return models.ErrBadRequest("invalid_guardrail_config", err.Error())
 		}
 	}
 	return nil
 }
 
 func (p *GuardrailPlugin) BufferResponse(rc *models.RequestContext) bool {
+	return p.reflectionRequested(rc, false)
+}
+
+// ReflectionDebug includes diagnostics even when the first candidate passes.
+func (p *GuardrailPlugin) ReflectionDebug(rc *models.RequestContext) bool {
+	return p.reflectionRequested(rc, true)
+}
+
+func (p *GuardrailPlugin) reflectionRequested(rc *models.RequestContext, debugOnly bool) bool {
 	keyPolicy, reqPolicy, err := p.resolvePolicy(rc)
 	if err != nil || reqPolicy == policy.RequestPolicyDisabled {
 		return false
 	}
 	if p.engine != nil {
 		for _, rule := range p.engine.postGuardrails {
+			if rule.mode != "" && rule.mode != "sync" {
+				continue
+			}
 			action, _, enabled := effectiveCheckPolicy(rule.guardrail.Name(), rule.action, rule.threshold, keyPolicy, reqPolicy)
-			if enabled && action == ActionBlock && rule.reflection.Enabled {
+			if enabled && action == ActionBlock && rule.reflection.Enabled && (!debugOnly || rule.reflection.Debug) {
 				return true
 			}
 		}
@@ -95,7 +125,7 @@ func (p *GuardrailPlugin) BufferResponse(rc *models.RequestContext) bool {
 					continue
 				}
 				r, err := reflexion.Parse(check.Config)
-				if err != nil || !r.Enabled {
+				if err != nil || !r.Enabled || (debugOnly && !r.Debug) {
 					continue
 				}
 				g := p.getGuardrail(rc.Metadata["org_id"], name, check)
@@ -141,12 +171,14 @@ func (p *GuardrailPlugin) postBlock(rc *models.RequestContext, checks *PipelineR
 	rc.Metadata["guardrail_action"] = "blocked"
 	decision := &pipeline.ReflectionDecision{MaxAttempts: reflexion.MaxAttempts}
 	allow := true
+	operationalError := false
 	var reasons []string
 	for _, tg := range checks.Triggered {
 		if tg.Action != ActionBlock {
 			continue
 		}
 		rc.Metadata["guardrail_name"] = tg.Name
+		operationalError = operationalError || tg.OperationalError
 		if !tg.Reflection.Enabled {
 			allow = false
 		}
@@ -159,6 +191,9 @@ func (p *GuardrailPlugin) postBlock(rc *models.RequestContext, checks *PipelineR
 		})
 	}
 	result := pipeline.ResultError(models.ErrGuardrailBlocked("content_blocked", "Response blocked by guardrail"))
+	if operationalError {
+		result = pipeline.ResultError(models.ErrGuardrailBlocked("guardrail_evaluation_failed", "Response guardrail evaluation failed"))
+	}
 	if allow {
 		decision.Reason = strings.Join(reasons, "\n")
 		result.Reflection = decision

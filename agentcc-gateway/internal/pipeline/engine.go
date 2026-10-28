@@ -180,6 +180,11 @@ func (e *Engine) RunPostPlugins(ctx context.Context, rc *models.RequestContext) 
 	}
 	result := e.validateResponse(ctx, rc)
 	if result.Error != nil {
+		// A cache hit must not silently start paid repair work. Fail closed with
+		// an explicit bypass instruction so the caller can choose to regenerate.
+		if rc.Flags.CacheHit && result.Reflection != nil {
+			result.Error = models.ErrGuardrailBlocked("cached_response_blocked", "Cached response blocked by guardrail; bypass the cache to regenerate")
+		}
 		rc.Response = nil
 		rc.AddError(result.Error)
 	}

@@ -614,7 +614,7 @@ Every modality below has dedicated routes in the gateway. The **specific models*
 
 ### 🛡️ Built-in guardrails — 18 scanners, all inline
 
-Every guardrail runs in the pipeline with configurable request/response/streaming phases. Pre-stage blocks short-circuit; synchronous post-stage checks all run so a reject-only rule can veto response repair. Packages live under [`internal/guardrails/`](./internal/guardrails/).
+Every guardrail runs in the pipeline with configurable request/response/streaming phases. Pre-stage blocks short-circuit. In synchronous post-stage evaluation, an effective reject-only block ends evaluation and skips later checks, including tenant checks after a static block. Repairable blocks continue so later reject-only or operational blocks can veto response repair. Packages live under [`internal/guardrails/`](./internal/guardrails/).
 
 #### Opt-in response repair (reflexion)
 
@@ -636,6 +636,8 @@ guardrails:
 ```
 
 With `control_plane.url` configured, the guardrail plugin is initialized for tenant policies even when `guardrails.enabled` is false or omitted. That global switch gates only the operator's static rules. Managed checks use the same fields in their existing `config` map, plus `config.stage: post`; without an explicit dynamic stage, the check implementation's stage remains the default. Static `rule.stage` remains authoritative. Invalid common settings are rejected rather than coerced or silently clamped.
+
+The control plane validates retry settings before activation. Single-org `PUT` updates are also validated by the gateway: invalid enabled checks return `400 invalid_guardrail_config` without changing stored configs or caches, even for a new tenant. Bulk loads and control-plane sync store configs as received without gateway admission; invalid retry settings or unresolved reflecting checks that reach storage fail closed at request time with `400 invalid_guardrail_config` before any provider call.
 
 - The default permits **one additional generation**, not one total call. The whole-request repair allowance never resets when another rule fails, and any reject-only failed check stops repair. Pre-stage blocks, async/warn/log checks, upstream errors, evaluator transport/auth/parse failures and check timeouts do not trigger repair.
 - Only the model receives the rejected assistant text and failure reason. Checks and final observers see the original request, not synthetic feedback history. Blocked tool-call, reasoning-block and multi-choice responses are rejected rather than inventing an invalid tool conversation. Passing responses of those shapes are still supported.

@@ -34,6 +34,7 @@ type GuardrailPlugin struct {
 	// Cache for dynamically created guardrails (e.g., FI Eval with per-org API keys).
 	dynamicMu    sync.RWMutex
 	dynamicCache map[string]map[string]Guardrail // org_id -> check_name -> guardrail
+	dynamicGen   map[string]uint64               // org_id -> invalidation count
 }
 
 // NewPlugin creates a new guardrail pipeline plugin.
@@ -53,6 +54,7 @@ func NewPlugin(engine *Engine, registry map[string]Guardrail, dynamicFactory Dyn
 		failOpen:       failOpen,
 		defaultTimeout: timeout,
 		dynamicCache:   make(map[string]map[string]Guardrail),
+		dynamicGen:     make(map[string]uint64),
 	}
 }
 
@@ -118,20 +120,27 @@ func (p *GuardrailPlugin) ProcessResponse(ctx context.Context, rc *models.Reques
 		checks := p.engine.RunPost(ctx, input, keyPolicy, reqPolicy)
 		if checks.Blocked {
 			result = p.postBlock(rc, checks)
+			if result.Reflection == nil {
+				return result
+			}
 		} else {
 			p.applyMetadata(rc, checks)
 		}
 	}
-	// Do not return early: any reject-only rule vetoes repair of this candidate.
+	// A reflectable static block still needs the tenant rules' veto checks.
+	blockingName := rc.Metadata["guardrail_name"]
 	dynamic := p.runOrgGuardrails(ctx, rc, StagePost)
 	if dynamic.Error == nil {
+		if result.Error != nil {
+			rc.Metadata["guardrail_name"] = blockingName
+		}
 		return result
 	}
 	if result.Error == nil {
 		return dynamic
 	}
 	if dynamic.Reflection == nil {
-		result.Reflection = nil
+		return dynamic
 	} else if result.Reflection != nil {
 		result.Reflection.MaxAttempts = min(result.Reflection.MaxAttempts, dynamic.Reflection.MaxAttempts)
 		result.Reflection.Reason += "\n" + dynamic.Reflection.Reason
@@ -229,11 +238,12 @@ func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.Reque
 		}
 
 		tg := TriggeredGuardrail{
-			Name:      name,
-			Score:     cr.Score,
-			Threshold: threshold,
-			Action:    action,
-			Message:   cr.Message,
+			Name:             name,
+			Score:            cr.Score,
+			Threshold:        threshold,
+			Action:           action,
+			Message:          cr.Message,
+			OperationalError: cr.OperationalError,
 		}
 		if stage == StagePost && action == ActionBlock && !cr.OperationalError {
 			tg.Reflection, _ = reflexion.Parse(check.Config)
@@ -245,6 +255,9 @@ func (p *GuardrailPlugin) runOrgGuardrails(ctx context.Context, rc *models.Reque
 			result.Blocked = true
 			if stage == StagePre {
 				return p.processResult(rc, result)
+			}
+			if !tg.Reflection.Enabled {
+				return p.postBlock(rc, result)
 			}
 		case ActionWarn:
 			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %s", name, cr.Message))
@@ -334,17 +347,23 @@ func (p *GuardrailPlugin) createDynamicGuardrail(orgID, name string, cfg map[str
 		return nil
 	}
 
+	p.dynamicMu.RLock()
+	gen := p.dynamicGen[orgID]
+	p.dynamicMu.RUnlock()
 	g := p.dynamicFactory(name, cfg)
 	if g == nil {
 		return nil
 	}
 
-	// Cache it for future requests.
+	// Cache it for future requests, unless the org's config changed while it was
+	// being built: publishing then would restore an implementation of the old config.
 	p.dynamicMu.Lock()
-	if _, ok := p.dynamicCache[orgID]; !ok {
-		p.dynamicCache[orgID] = make(map[string]Guardrail)
+	if p.dynamicGen[orgID] == gen {
+		if _, ok := p.dynamicCache[orgID]; !ok {
+			p.dynamicCache[orgID] = make(map[string]Guardrail)
+		}
+		p.dynamicCache[orgID][name] = g
 	}
-	p.dynamicCache[orgID][name] = g
 	p.dynamicMu.Unlock()
 
 	slog.Info("created dynamic guardrail from org config",
@@ -581,5 +600,9 @@ func (p *GuardrailPlugin) buildBlockMessage(result *PipelineResult) string {
 func (p *GuardrailPlugin) InvalidateDynamicCache(orgID string) {
 	p.dynamicMu.Lock()
 	delete(p.dynamicCache, orgID)
+	if p.dynamicGen == nil {
+		p.dynamicGen = make(map[string]uint64)
+	}
+	p.dynamicGen[orgID]++
 	p.dynamicMu.Unlock()
 }
