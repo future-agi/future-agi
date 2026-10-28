@@ -12,7 +12,7 @@ import {
 import { useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import { formatCount, formatShare, isYesNo } from "./askAnswers";
-import { chartQuestions } from "./askSummary";
+import { chartQuestions, runTally } from "./askSummary";
 import {
   MIN_CONSISTENT_SESSIONS,
   MIN_ROWS,
@@ -336,10 +336,19 @@ export default function AskPatterns({
   // Recomputed at most every 10 seconds while answers arrive, and at once
   // for a new question or answer in focus.
   const focusKey = `${shownFocus?.configId || ""}|${shownFocus?.answer || ""}`;
+  // Until enough rows are answered there are no patterns to recompute, only
+  // the count so far: each new count is taken at once, and so is the first
+  // count with enough rows, so patterns appear as soon as they can.
+  const answeredNow = runTally(
+    summary,
+    questions.find((item) => item.configId === shownFocus?.configId) ||
+      questions[0],
+  ).answered;
+  const gathering = answeredNow < MIN_ANSWERED ? String(answeredNow) : "enough";
   const counts = useThrottled(
     summary,
     running ? PATTERNS_EVERY_MS : 0,
-    focusKey,
+    `${focusKey}|${gathering}`,
   );
   const result = useMemo(
     () =>

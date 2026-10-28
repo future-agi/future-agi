@@ -420,6 +420,41 @@ describe("AskPatterns", () => {
     expect(screen.getByText(/^Nothing stands out: no day/)).toBeInTheDocument();
   });
 
+  it("counts the answers so far as they land, and finds patterns once there are enough", () => {
+    // Runs 9e0df0dd and feb70a5c: "(0 so far)" stayed while 11 and then 21
+    // rows were answered, held by the 10-second recheck.
+    const answeredFirst = (count) =>
+      run.records.map((record, i) =>
+        i < count ? record : { ...record, answers: {} },
+      );
+    const view = renderViz(AskPatterns, {
+      records: answeredFirst(0),
+      running: true,
+    });
+    const rerender = (count) =>
+      view.rerender(
+        <ThemeProvider theme={theme}>
+          <AskPatterns
+            records={answeredFirst(count)}
+            questions={QUESTIONS}
+            focus={{ configId: RESOLVED, answer: null }}
+            window={run.window}
+            running
+          />
+        </ThemeProvider>,
+      );
+    rerender(3);
+    rerender(7);
+    expect(
+      screen.getByText("Patterns appear once 12 rows are answered (7 so far)."),
+    ).toBeInTheDocument();
+    rerender(11);
+    expect(screen.getByText(/\(11 so far\)/)).toBeInTheDocument();
+    rerender(run.records.length);
+    expect(screen.queryByText(/Patterns appear once/)).toBeNull();
+    expect(screen.getByText(/2–5 PM/)).toBeInTheDocument();
+  });
+
   it("states the share, not a finding, when nothing stands out at 12 answers", () => {
     // 12 answered, 8 "No": the run 97cbf545 on harbor-conversations.
     const twelve = run.records.slice(0, 12).map((record, i) => ({
