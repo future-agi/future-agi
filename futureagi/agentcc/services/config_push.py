@@ -337,6 +337,7 @@ def _inject_fi_credentials(checks, org_id):
     targets_local_platform = _normalize_url(cfg.get("base_url")) == _normalize_url(
         django_settings.BASE_URL
     )
+    cfg["platform"] = targets_local_platform
     if not targets_local_platform:
         logger.info(
             "fi_credentials_skipped_cross_env",

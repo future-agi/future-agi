@@ -68,12 +68,26 @@ func New(name string, cfg map[string]interface{}) *FutureAGIGuardrail {
 	return newGuardrail(name, cfg, true)
 }
 
-// NewTenant uses literal tenant credentials without gateway environment fallbacks.
-// Its destination is not egress-guarded yet: the backend pushes the platform's own
-// BASE_URL, which is loopback or private on many self-hosted installs.
-func NewTenant(name string, cfg map[string]interface{}) *FutureAGIGuardrail {
+// NewTenant guards tenant destinations; platform checks use only the operator's
+// platform URL (control_plane.url, else FI_BASE_URL).
+func NewTenant(name string, cfg map[string]interface{}, allowPrivate bool, platformURL string) *FutureAGIGuardrail {
 	g := newGuardrail(name, cfg, false)
 	g.requireCredentials = true
+	if platform, _ := cfg["platform"].(bool); platform && platformURL != "" {
+		g.baseURL = platformURL
+		g.client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+			// Literal origins never equate different IDNs or loopback addresses.
+			if req.URL.Scheme != via[0].URL.Scheme || req.URL.Host != via[0].URL.Host {
+				return fmt.Errorf("futureagi redirect must stay within the control-plane origin")
+			}
+			if len(via) >= 10 {
+				return fmt.Errorf("stopped after 10 redirects")
+			}
+			return nil
+		}
+	} else {
+		g.client = guardrails.TenantHTTPClient(g.client.Timeout, allowPrivate)
+	}
 	return g
 }
 
@@ -157,11 +171,10 @@ func newGuardrail(name string, cfg map[string]interface{}, operator bool) *Futur
 		if g.secretKey == "" {
 			g.secretKey = os.Getenv("FI_SECRET_KEY")
 		}
-	}
-	// The operator's platform URL is not a secret, so tenant checks use it too.
-	if g.baseURL == "https://api.futureagi.com" {
-		if envURL := os.Getenv("FI_BASE_URL"); envURL != "" {
-			g.baseURL = envURL
+		if g.baseURL == "https://api.futureagi.com" {
+			if envURL := os.Getenv("FI_BASE_URL"); envURL != "" {
+				g.baseURL = envURL
+			}
 		}
 	}
 
