@@ -132,7 +132,7 @@ def member_user(user, db):
     # Also update the OrganizationMembership (source of truth for role checks)
     OrganizationMembership.no_workspace_objects.filter(
         user=user, is_active=True
-    ).update(role="Member")
+    ).update(role="Member", level=3)
     return user
 
 
