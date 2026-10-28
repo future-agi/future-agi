@@ -127,6 +127,7 @@ class CertificationCampaignViewSet(viewsets.ViewSet):
             _CC.State.COMPLETED,
             _CC.State.COMPLETED_WITH_FAILURES,
             _CC.State.CANCELED,
+            _CC.State.FAILED,
         ):
             return Response(
                 {"detail": f"campaign is already {campaign.state}"},

@@ -16,12 +16,12 @@ from simulate.serializers.harness_job import (
     HarnessJobAdjustmentSerializer,
     HarnessJobCreateSerializer,
     HarnessJobExtendSerializer,
-    HarnessScenarioAmendSerializer,
     HarnessJobReadSerializer,
     HarnessPreflightResponseSerializer,
     HarnessPreflightSerializer,
     HarnessRunCreateResponseSerializer,
     HarnessRunCreateSerializer,
+    HarnessScenarioAmendSerializer,
     HarnessSecretFileUploadResponseSerializer,
     HarnessSecretValuesResponseSerializer,
     HarnessSecretValuesSerializer,
@@ -308,6 +308,7 @@ class HarnessJobViewSet(viewsets.ViewSet):
     @action(detail=True, methods=["post"], url_path="scenarios/amend")
     def amend_scenarios(self, request, pk=None):
         return get_harness_provider().amend_scenarios(request, pk)
+
     @validated_request(
         request_serializer=HarnessRunCreateSerializer,
         responses={202: HarnessRunCreateResponseSerializer},
@@ -331,4 +332,9 @@ class HarnessJobViewSet(viewsets.ViewSet):
 
     @action(detail=False, methods=["get"])
     def health(self, request):
-        return Response(get_harness_provider().health())
+        from simulate.services.hosted_sandbox.factory import sandbox_runtime_reference
+
+        health = get_harness_provider().health()
+        snapshot_name, snapshot_digest = sandbox_runtime_reference()
+        health["snapshot"] = {"name": snapshot_name, "digest": snapshot_digest}
+        return Response(health)

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 from rest_framework import serializers
 
 
@@ -31,7 +33,80 @@ class CertificationCampaignCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 "deployment_identity must not contain credentials or tokens"
             )
+        required_components = {
+            "futureagi-application-backend",
+            "futureagi-application-temporal-worker-simulation-runner",
+        }
+        namespace = value.get("namespace")
+        helm = value.get("helm_release")
+        snapshot = value.get("alk_snapshot")
+        components = value.get("components")
+        digest = value.get("release_digest")
+        if not isinstance(namespace, str) or not namespace:
+            raise serializers.ValidationError("namespace is required")
+        if not isinstance(helm, dict) or not isinstance(helm.get("name"), str):
+            raise serializers.ValidationError("Helm release name is required")
+        if not isinstance(helm.get("revision"), int) or helm["revision"] < 1:
+            raise serializers.ValidationError("Helm release revision must be positive")
+        if not isinstance(snapshot, dict) or not all(
+            isinstance(snapshot.get(key), str) and snapshot[key]
+            for key in ("name", "digest")
+        ):
+            raise serializers.ValidationError(
+                "ALK snapshot name and digest are required"
+            )
+        if not isinstance(components, list):
+            raise serializers.ValidationError("components must be a list")
+        by_name = {
+            component.get("name"): component
+            for component in components
+            if isinstance(component, dict)
+        }
+        if set(by_name) != required_components:
+            raise serializers.ValidationError(
+                "components must contain exactly the backend and simulation runner"
+            )
+        if any(
+            not isinstance(by_name[name].get("images"), dict)
+            or not by_name[name]["images"]
+            or any(
+                not isinstance(image_id, str) or "@sha256:" not in image_id
+                for image_id in by_name[name]["images"].values()
+            )
+            for name in required_components
+        ):
+            raise serializers.ValidationError(
+                "component images must be nonempty maps of immutable sha256 references"
+            )
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise serializers.ValidationError("release_digest must be lowercase sha256")
+        stable_identity = {
+            "namespace": namespace,
+            "helm_release": helm,
+            "components": components,
+        }
+        actual = hashlib.sha256(
+            json.dumps(stable_identity, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        if actual != digest:
+            raise serializers.ValidationError(
+                "release_digest does not match the immutable release identity"
+            )
         return value
+
+    def validate(self, attrs):
+        identity = attrs["deployment_identity"]
+        expected = (
+            f"gke-release:{identity['release_digest'][:16]}:"
+            f"{identity['alk_snapshot']['digest']}"
+        )
+        if attrs["deployment_id"] != expected:
+            raise serializers.ValidationError(
+                {
+                    "deployment_id": "does not match the release and ALK snapshot identity"
+                }
+            )
+        return attrs
 
 
 class CertificationCaseReadSerializer(serializers.Serializer):
