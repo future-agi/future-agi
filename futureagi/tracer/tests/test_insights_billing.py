@@ -96,6 +96,27 @@ class TestPricing:
         assert priced > 0
         assert priced == llm.call_cost("turing_flash", 0.0, 1_000_000, 100_000)
 
+    @pytest.mark.parametrize(
+        ("model", "per_million"),
+        [
+            # Cloud's Insights agent, through AgentCC: Anthropic list prices.
+            ("claude-haiku-5-5", 0.1 + 0.5),
+            ("claude-sonnet-5-5", 2 + 10),
+            # The built-in engine's defaults.
+            ("turing_flash", 1.1 + 5.5),
+            ("turing_large", 5.5 + 27.5),
+        ],
+    )
+    def test_the_models_cloud_runs_insights_on_are_never_priced_at_the_ceiling(
+        self, model, per_million
+    ):
+        """A call the gateway didn't price (cut off, or no cost header) falls
+        back to the price list. Haiku 5.5 wasn't on it, so it was charged
+        the $15 / $75 ceiling, and Sonnet 5.5 matched Sonnet 5's entry."""
+        cost, priced = llm.usage_cost(model, None, 1_000_000, 1_000_000)
+        assert priced is True
+        assert cost == pytest.approx(per_million)
+
     def test_no_tokens_or_no_model_costs_nothing(self):
         assert llm.call_cost("turing_flash", 0.0, 0, 0) == 0.0
         assert llm.call_cost("", 0.0, 500, 50) == 0.0
