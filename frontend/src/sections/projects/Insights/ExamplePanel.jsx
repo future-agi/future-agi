@@ -113,6 +113,10 @@ function withSpeakers(text, brokeAt) {
   return parts;
 }
 
+// A long conversation opens with the end of the turn before the one where it
+// broke still in view, so it reads as the middle of something.
+const TURN_LEAD_PX = 48;
+
 /**
  * The unit's full content with every evidence quote marked. A long
  * conversation scrolls in its own box, opened at the turn where it broke
@@ -137,7 +141,7 @@ function HighlightedContent({ content, evidence, brokeAt }) {
     const target = turn || container.querySelector("mark");
     if (!target) return;
     container.scrollTop = turn
-      ? Math.max(0, target.offsetTop - 12)
+      ? Math.max(0, target.offsetTop - TURN_LEAD_PX)
       : Math.max(0, target.offsetTop - container.clientHeight / 3);
   }, [segments, brokeAt]);
   return (

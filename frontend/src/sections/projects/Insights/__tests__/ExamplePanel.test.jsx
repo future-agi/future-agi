@@ -125,7 +125,7 @@ describe("ExamplePanel", () => {
       "The turn where it broke",
     );
     // The conversation box (not the panel) is scrolled to turn 23.
-    expect(box.scrollTop).toBe(23 * 100 - 12);
+    expect(box.scrollTop).toBe(23 * 100 - 48);
   });
 
   it("says nothing is highlighted when no quote is found in the content", () => {
