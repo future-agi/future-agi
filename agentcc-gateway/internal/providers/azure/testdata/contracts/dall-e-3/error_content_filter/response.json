@@ -1,0 +1,28 @@
+{
+  "error": {
+    "code": "contentFilter",
+    "message": "Your task failed as a result of our safety system.",
+    "inner_error": {
+      "code": "ResponsibleAIPolicyViolation",
+      "revised_prompt": "A photorealistic depiction of a violent street fight between two people.",
+      "content_filter_results": {
+        "hate": {
+          "filtered": false,
+          "severity": "safe"
+        },
+        "self_harm": {
+          "filtered": false,
+          "severity": "safe"
+        },
+        "sexual": {
+          "filtered": false,
+          "severity": "safe"
+        },
+        "violence": {
+          "filtered": true,
+          "severity": "high"
+        }
+      }
+    }
+  }
+}

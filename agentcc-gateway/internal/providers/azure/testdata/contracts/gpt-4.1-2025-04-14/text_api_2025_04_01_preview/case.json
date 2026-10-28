@@ -1,0 +1,3 @@
+{
+  "notes": "Synthetic, from github.com/Azure/azure-rest-api-specs at 7b9f1ff0714627e3680552703174ffe11538d5c5, specification/cognitiveservices/data-plane/OpenAIInference/preview/2025-04-01-preview/inference.json (createChatCompletionResponse: prompt_filter_results and content_filter_results with custom_blocklists, usage with prompt_tokens_details and completion_tokens_details, which 2024-10-21 lacks) and its example chat_completions.json (the same request). The test calls this case at api-version 2025-04-01-preview (apiVersions in contract_test.go). Ids, times, text and token counts invented."
+}

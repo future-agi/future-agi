@@ -1,0 +1,6 @@
+{
+  "model": "gpt-4o-mini-tts",
+  "input": "Hi! What are you going to make?",
+  "voice": "fable",
+  "response_format": "mp3"
+}

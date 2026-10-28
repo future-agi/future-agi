@@ -1,0 +1,17 @@
+{
+  "created": 1793170700,
+  "data": [
+    {
+      "b64_json": "iVBORw0KGgoAAAANSUhEUg=="
+    }
+  ],
+  "usage": {
+    "total_tokens": 4180,
+    "input_tokens": 20,
+    "output_tokens": 4160,
+    "input_tokens_details": {
+      "text_tokens": 20,
+      "image_tokens": 0
+    }
+  }
+}

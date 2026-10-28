@@ -1,0 +1,18 @@
+{
+  "status": 429,
+  "headers": {
+    "retry-after": "6",
+    "retry-after-ms": "6000",
+    "x-ratelimit-remaining-requests": "119",
+    "x-ratelimit-remaining-tokens": "0",
+    "apim-request-id": "b7e4c1a9-5f2d-4c08-8e3b-91d6a0f2c4e7"
+  },
+  "recordable": false,
+  "notes": "Synthetic. Body: the errorResponse shape (github.com/Azure/azure-rest-api-specs at 7b9f1ff0714627e3680552703174ffe11538d5c5, specification/cognitiveservices/data-plane/OpenAIInference/stable/2024-10-21/inference.json) with only code and message, as the service sends a 429, in the wording litellm's logs quote for a rate-limited Azure deployment. Headers: retry-after (seconds) and retry-after-ms, which openai-python's Azure client and other gateways read, and x-ratelimit-remaining-requests / -tokens, which litellm's Azure client forwards; apim-request-id from the spec's response headers. Values invented. learn.microsoft.com was not reachable from the authoring session. Not recordable: it means exhausting a deployment's quota.",
+  "sanity_gaps": [
+    {
+      "failure": "carries no retry hint",
+      "reason": "known gap A5: retry-after, retry-after-ms and the x-ratelimit-remaining-* headers are dropped; models.APIError has no retry field, so the gateway's retry and failover, and the client's backoff, ignore when Azure says to come back"
+    }
+  ]
+}

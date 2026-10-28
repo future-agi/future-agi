@@ -1,0 +1,8 @@
+{
+  "status": 400,
+  "headers": {
+    "apim-request-id": "8c2d5b1e-0a7f-4e93-b6d4-2e9f1c7a5b38"
+  },
+  "recordable": false,
+  "notes": "Synthetic. The live service answers a prompt its content filter blocks with 400 and error.code content_filter, error.innererror.code ResponsibleAIPolicyViolation and the per-category verdicts in error.innererror.content_filter_result; the 2024-10-21 spec (github.com/Azure/azure-rest-api-specs at 7b9f1ff0714627e3680552703174ffe11538d5c5, specification/cognitiveservices/data-plane/OpenAIInference/stable/2024-10-21/inference.json, errorResponse) spells these inner_error / content_filter_results instead, so the field names follow the live shape as client libraries handle it (openai-python Azure users, as quoted in the tests of pydantic-ai tests/models/test_openai.py and litellm tests/unit/llms/azure/test_azure_exception_mapping.py) and the severities the spec's contentFilterSeverityResult enum. The message is the service's wording as litellm logs quote it. learn.microsoft.com was not reachable from the authoring session. Not recordable: inducing it means sending a prompt that trips the filter. A streaming request: the prompt filter answers before any chunk, which pins StreamChatCompletion's pre-stream error path. The golden pins type \"\": gap A6 (Azure's own error bodies carry no type)."
+}

@@ -3,7 +3,7 @@
   "model": "gpt-4.1-2025-04-14",
   "source": "synthetic",
   "recorded_at": null,
-  "notes": "Synthetic: authored from the Azure OpenAI data-plane inference spec for the gateway's default api-version, github.com/Azure/azure-rest-api-specs specification/cognitiveservices/data-plane/OpenAIInference/stable/2024-10-21/inference.json (createChatCompletionResponse, createChatCompletionStreamResponse, promptFilterResults, contentFilterChoiceResults, contentFilterSeverityResult, azureChatExtensionsMessageContext, citation) and its examples chat_completions.json and chat_completions_azure_search_minimum.json, whose ids and created times are kept. learn.microsoft.com was not reachable from the authoring sandbox. Azure routes by deployment, not by the body's model: the directory is the deployment name, here named after the model snapshot it serves, and the test checks the URL path /openai/deployments/<directory>/chat/completions. Azure's divergences from OpenAI: prompt_filter_results at the top level (passed through ChatCompletionResponse.Extra), content_filter_results on each choice, and message.context for On Your Data. stream_text follows the 2024-10-21 stream schema, which lists no content-filter fields. Live Azure streams are expected to carry content-filter annotations on their chunks too, but that could not be checked against learn.microsoft.com from here, so the fixture carries none and a recording should replace it.",
+  "notes": "Synthetic: authored from the Azure OpenAI data-plane inference spec for the gateway's default api-version, github.com/Azure/azure-rest-api-specs specification/cognitiveservices/data-plane/OpenAIInference/stable/2024-10-21/inference.json (createChatCompletionResponse, createChatCompletionStreamResponse, promptFilterResults, contentFilterChoiceResults, contentFilterSeverityResult, azureChatExtensionsMessageContext, citation) and its examples chat_completions.json and chat_completions_azure_search_minimum.json, whose ids and created times are kept. learn.microsoft.com was not reachable from the authoring sandbox. Azure routes by deployment, not by the body's model: the directory is the deployment name, here named after the model snapshot it serves, and the test checks the URL path /openai/deployments/<directory>/chat/completions. Azure's divergences from OpenAI: prompt_filter_results at the top level (passed through ChatCompletionResponse.Extra), content_filter_results on each choice, and message.context for On Your Data. stream_text follows the 2024-10-21 stream schema, which lists no content-filter fields. Live Azure streams are expected to carry content-filter annotations on their chunks too, but that could not be checked against learn.microsoft.com from here, so the fixture carries none and a recording should replace it. The error_*, stream_error_content_filter and list_models cases are described in their case.json; text_api_2025_04_01_preview is called at api-version 2025-04-01-preview.",
   "allowed_unknown_fields": [
     {
       "path": "$.choices[].content_filter_results",
@@ -18,8 +18,32 @@
       "reason": "known gap O1: message.refusal is dropped (models.Message has no refusal field). A structured-outputs refusal arrives as content null plus a refusal string, so the client receives content null, no refusal and finish_reason \"stop\": an empty answer it cannot tell from a refusal. null in every case without a refusal"
     },
     {
+      "path": "$.data[].capabilities",
+      "reason": "known gap A8: a listed model's capabilities (chat_completion, embeddings, completion, fine_tune, inference) are dropped; models.ModelObject has no field for them, so nothing can tell a chat model from an embedding model in the list"
+    },
+    {
+      "path": "$.data[].created_at",
+      "reason": "known gap A8: Azure names the creation time created_at; models.ModelObject reads created, so every model is listed with created 0 (list_models sanity gap)"
+    },
+    {
+      "path": "$.data[].deprecation",
+      "reason": "known gap A8: a listed model's deprecation dates (end of inference and fine-tune support) are dropped, so a retiring model cannot be seen in the list"
+    },
+    {
+      "path": "$.data[].lifecycle_status",
+      "reason": "known gap A8: a listed model's lifecycle_status (preview or generally-available) is dropped"
+    },
+    {
+      "path": "$.data[].status",
+      "reason": "known gap A8: a listed model's status (a fine-tune's state; succeeded for base models) is dropped"
+    },
+    {
       "path": "chunk:$.choices[].logprobs",
       "reason": "known gap O3: streamed choice logprobs are dropped (models.StreamChoice has no logprobs field), so a stream with logprobs: true carries none to the client; the non-stream path keeps them. null unless logprobs were requested"
+    },
+    {
+      "path": "error:$.error.innererror",
+      "reason": "known gap A4: a content-filter rejection's innererror (code ResponsibleAIPolicyViolation and the per-category verdicts in content_filter_result) is dropped; parseProviderError keeps message, type and code, so the client cannot tell which category blocked the prompt"
     }
   ],
   "allowed_unknown_shapes": []

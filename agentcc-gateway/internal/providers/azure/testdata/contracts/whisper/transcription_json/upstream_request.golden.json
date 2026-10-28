@@ -1,0 +1,19 @@
+{
+  "body": {
+    "file": {
+      "bytes": 9612,
+      "content_type": "application/octet-stream",
+      "filename": "audio.mp3",
+      "sha256": "6dd3517c62ec8bb1c3f14e4d8bb162f7a3d4bcea66ab45dfd26cd75dc78ff297"
+    },
+    "model": "whisper",
+    "response_format": "json"
+  },
+  "headers": {
+    "api-key": "REDACTED",
+    "content-type": "multipart/form-data; boundary=<random>"
+  },
+  "method": "POST",
+  "path": "/openai/deployments/whisper/audio/transcriptions",
+  "query": "api-version=2024-10-21"
+}
