@@ -224,13 +224,13 @@ describe("ScenariosStep", () => {
     });
   });
 
-  it("shows the empty placeholder with a disabled (coming-soon) Add when there are no scenarios", async () => {
+  it("shows the empty placeholder with an enabled Add when there are no scenarios", async () => {
     // The empty-state gate reads the server's unfiltered suite total now, so the
     // list source must report an empty suite (not just an empty envState).
     listScenarios.mockImplementation((jobId, params) => queryScenarioFixture(params, []));
     renderStep([]);
     expect(await screen.findByText("No scenarios yet")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add scenarios" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add scenarios" })).toBeEnabled();
   });
 
   it("enables the edit pencil", async () => {

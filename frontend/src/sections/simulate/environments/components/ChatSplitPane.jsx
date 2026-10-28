@@ -7,6 +7,7 @@ import {
   useState,
 } from "react";
 import PropTypes from "prop-types";
+import { subscribeComposerScaffold } from "../buildEnvironment/console/composerScaffoldBus";
 import { alpha } from "@mui/material/styles";
 import { Box, IconButton, Stack } from "@mui/material";
 import Iconify from "src/components/iconify";
@@ -168,6 +169,9 @@ export default function ChatSplitPane({ chat, children, busy = false, replies = 
 
   const collapse = useCallback(() => setOpen(false), [setOpen]);
   const expand = useCallback(() => setOpen(true), [setOpen]);
+
+  // An ask pinned in the composer (Add scenarios → From chat) has to be seen.
+  useEffect(() => subscribeComposerScaffold(() => setOpen(true)), [setOpen]);
 
   const onPointerDown = (event) => {
     // Primary button only: a right-click opens the context menu, which can

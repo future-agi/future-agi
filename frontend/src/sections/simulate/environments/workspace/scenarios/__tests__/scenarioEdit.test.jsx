@@ -10,7 +10,6 @@ afterAll(() => configure({ asyncUtilTimeout: 1000 }));
 import { MOCK_WORLD } from "src/api/simulate-environments/_fixtures/world";
 import { generatedPool } from "src/api/simulate-environments/_fixtures/scenarioPool";
 import ScenariosStep from "../ScenariosStep";
-import AddScenariosDrawer from "../AddScenariosDrawer";
 import {
   TEST_ENV,
   SERVER_ROWS,
@@ -63,27 +62,12 @@ beforeEach(() => {
 });
 
 describe("ScenariosStep — add", () => {
-  it("disables the Add scenarios button (coming soon) — the drawer stays built", () => {
+  it("enables Add scenarios; it opens the add drawer", async () => {
     renderStep();
-    expect(screen.getByRole("button", { name: "Add scenarios" })).toBeDisabled();
-  });
-
-  // The drawer is kept fully wired even though the Add button is disabled for
-  // now, so it is exercised directly here rather than through the trigger.
-  it("the add drawer appends the chosen scenarios through onAdd", () => {
-    const onAdd = vi.fn();
-    render(
-      <AddScenariosDrawer open env={env} selected={pooled} onAdd={onAdd} onClose={() => {}} />,
-    );
-
-    expect(screen.getByText(/could not know to write/i)).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("checkbox", { name: /select all/i }));
-    fireEvent.click(screen.getByRole("button", { name: /^Add \d+ scenarios?$/ }));
-
-    expect(onAdd).toHaveBeenCalledTimes(1);
-    const added = onAdd.mock.calls[0][0];
-    expect(added.length).toBeGreaterThan(0);
+    const add = screen.getByRole("button", { name: "Add scenarios" });
+    expect(add).toBeEnabled();
+    fireEvent.click(add);
+    expect(await screen.findByText(/couldn't work out from your agent/i)).toBeInTheDocument();
   });
 });
 

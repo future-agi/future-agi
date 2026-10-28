@@ -29,7 +29,6 @@ export const SCENARIOS_COPY = {
   searchPlaceholder: "Search scenarios by name, task or use case…",
   addLabel: "Add scenarios",
   addShortLabel: "Add",
-  addComingSoon: "Coming soon",
   editLabel: "Edit scenario",
   openRow: (name) => `Open ${name}`,
   removeLabel: "Remove from this environment",
