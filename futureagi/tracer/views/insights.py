@@ -31,6 +31,7 @@ from rest_framework import serializers, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from accounts.authentication import workspace_read_only
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
@@ -1263,6 +1264,8 @@ class InsightPreviewView(InsightsLicenseRequired, APIView):
         return self._gm.success_response({"units": units})
 
 
+# A count and a price, open to Viewers: nothing is written or spent.
+@workspace_read_only
 class InsightEstimateView(InsightsLicenseRequired, APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
