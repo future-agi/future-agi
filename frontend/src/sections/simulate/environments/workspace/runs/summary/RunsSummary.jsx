@@ -85,6 +85,10 @@ export default function RunsSummary({ env, envState, onOpenRun }) {
     coveredScenarioCount ??
     countCoveredScenarios(rows, envState.scenarios?.length ?? 0);
   const baseline = overview.baseline;
+  // The headline and chips read the latest run against the chosen baseline,
+  // or the run before it when there's none (or the baseline is the latest).
+  const reference =
+    baseline && baseline.id !== overview.latest?.id ? baseline : overview.previous;
 
   const toggle = (row) =>
     setSelected((prev) =>
@@ -140,12 +144,12 @@ export default function RunsSummary({ env, envState, onOpenRun }) {
           spacing={2}
           sx={{ px: 2.5, py: 1.5, flexWrap: "wrap", rowGap: 1 }}
         >
-          <RunsHeadline latest={overview.latest} previous={overview.previous} />
+          <RunsHeadline latest={overview.latest} previous={reference} />
           {overview.evals.length > 0 && (
             <EvalCheckChips
               evals={overview.evals}
               latest={overview.latest}
-              previous={overview.previous}
+              previous={reference}
               focusId={focusId}
               onFocus={setFocusId}
             />

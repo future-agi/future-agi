@@ -219,6 +219,15 @@ describe("Runs table", () => {
     expect(screen.getByRole("button", { name: "Compare" })).toBeDisabled();
   });
 
+  it("the headline compares the latest run with the chosen baseline", () => {
+    renderSummary();
+    expect(screen.getByText(/pts vs Run 2/)).toBeInTheDocument();
+    tick(1);
+    fireEvent.click(screen.getByRole("button", { name: "Set as baseline" }));
+    expect(screen.getByText(/pts vs Run 1/)).toBeInTheDocument();
+    expect(screen.queryByText(/pts vs Run 2/)).toBeNull();
+  });
+
   it("Set as baseline is flagged, sends nothing, is kept per environment in the workspace store, and turns on ± deltas computed from the real run numbers (noise is a soon chip)", () => {
     renderSummary();
     // No baseline, no deltas.
