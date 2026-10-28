@@ -874,7 +874,6 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 	}
 }
 
-// writeAnthropicErrorFromError converts an error to Anthropic error format.
 // translatedChatCompletion calls provider with a request translated from
 // another dialect: over the Responses API when the model refuses the request on
 // chat completions, as gpt-5.6 refuses function tools while it reasons.
@@ -893,6 +892,7 @@ func translatedStreamChatCompletion(ctx context.Context, provider providers.Prov
 	return provider.StreamChatCompletion(ctx, req)
 }
 
+// writeAnthropicErrorFromError converts an error to Anthropic error format.
 func writeAnthropicErrorFromError(w http.ResponseWriter, err error) {
 	var apiErr *models.APIError
 	if errors.As(err, &apiErr) {
