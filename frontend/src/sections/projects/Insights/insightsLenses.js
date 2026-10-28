@@ -130,7 +130,13 @@ export function facetChips(facets = {}) {
             : "neutral",
     });
   }
-  if (facets.failure_mode) {
+  // "none", or a failure the unit no longer counts (nothing backed it), is
+  // not a failure to show.
+  if (
+    facets.failure_mode &&
+    facets.failure_present !== false &&
+    String(facets.failure_mode).trim().toLowerCase() !== "none"
+  ) {
     chips.push({
       key: "failure_mode",
       label: facets.failure_mode,

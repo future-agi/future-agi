@@ -174,6 +174,19 @@ describe("unit facets and links", () => {
     ]);
   });
 
+  it("shows no failure for 'none' or one the unit no longer counts", () => {
+    const keys = (facets) => facetChips(facets).map((c) => c.key);
+    expect(keys({ failure_mode: "none", failure_present: false })).toEqual([]);
+    expect(keys({ failure_mode: "None" })).toEqual([]);
+    // The reading named a failure nothing in the conversation backed.
+    expect(
+      keys({ failure_mode: "made-up delivery time", failure_present: false }),
+    ).toEqual([]);
+    expect(
+      keys({ failure_mode: "false refund claim", failure_present: true }),
+    ).toEqual(["failure_mode"]);
+  });
+
   it("checks attribute keys", () => {
     expect(attributeError({ key: "asked_for_human" }, [])).toBe("");
     expect(attributeError({ key: "Asked" }, [])).toMatch(/Lowercase/);

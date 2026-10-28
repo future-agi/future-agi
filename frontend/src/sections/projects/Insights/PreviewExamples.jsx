@@ -12,6 +12,9 @@ function leftOutReason(unit, lens, attributes) {
     (a) => a.filter_by && a.type === "boolean" && !facets.attributes?.[a.key],
   );
   if (filter) return `“${filter.key}” is false`;
+  // A failure the reading named but nothing it could quote shows.
+  if (lens === "failures" && facets.unbacked_failure)
+    return "Named a failure the conversation doesn't show";
   if (lens === "failures" && !facets.failure_present)
     return "No agent failure found";
   return "Not relevant to the question";
