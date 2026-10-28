@@ -10,8 +10,8 @@ import { ENV_SHAPE, ENV_STATE_SHAPE, CHECKLIST_COPY } from "./overview.constants
 // for envs that have not been seeded yet (no agent, no derived world) — a
 // scratch env arrives with everything derived, so every step would read as
 // pre-complete and the checklist would mislead.
-export default function NextStepsChecklist({ env, envState, onGo }) {
-  const scenarioCount = envState?.scenarios?.length || 0;
+export default function NextStepsChecklist({ env, envState, onGo, scenarioCount: serverScenarioCount }) {
+  const scenarioCount = serverScenarioCount ?? (envState?.scenarios?.length || 0);
   const evalCount = envState?.evals?.length || 0;
   const runCount = envState?.runs?.length || 0;
 
@@ -140,4 +140,5 @@ NextStepsChecklist.propTypes = {
   env: ENV_SHAPE.isRequired,
   envState: ENV_STATE_SHAPE,
   onGo: PropTypes.func,
+  scenarioCount: PropTypes.number,
 };

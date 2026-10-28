@@ -30,7 +30,13 @@ const DEFAULT_SHOWN_EVALS = 5;
 const GRAPH_RUN_OPTIONS = [1, 2, 3, 4, 5];
 const DEFAULT_GRAPH_RUNS = 1;
 
-export default function RunsSummary({ env, envState, onOpenRun, onGo }) {
+export default function RunsSummary({
+  env,
+  envState,
+  scenarioCount: scenarioCountProp,
+  onOpenRun,
+  onGo,
+}) {
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(RUNS_PAGE_SIZE);
   const [graphRuns, setGraphRuns] = useState(DEFAULT_GRAPH_RUNS);
@@ -70,7 +76,7 @@ export default function RunsSummary({ env, envState, onOpenRun, onGo }) {
   // fallback only serves mock runs and environments with no run-test.
   const scenarioCount =
     coveredScenarioCount ??
-    countCoveredScenarios(rows, envState.scenarios?.length ?? 0);
+    countCoveredScenarios(rows, scenarioCountProp ?? envState.scenarios?.length ?? 0);
 
   // Which eval lines to draw. Until the user picks, the first five; the last
   // one cannot be unticked (an empty chart reads as a bug, not a choice).
@@ -245,6 +251,7 @@ export default function RunsSummary({ env, envState, onOpenRun, onGo }) {
 RunsSummary.propTypes = {
   env: PropTypes.shape({ id: PropTypes.string, name: PropTypes.string, versioning: PropTypes.object }).isRequired,
   envState: PropTypes.shape({ scenarios: PropTypes.array }).isRequired,
+  scenarioCount: PropTypes.number,
   onOpenRun: PropTypes.func,
   onGo: PropTypes.func,
 };

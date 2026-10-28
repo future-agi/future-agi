@@ -10,6 +10,7 @@ import {
   amendScenarios,
   scenarioCoverage,
 } from "src/api/simulate-environments/scenarios";
+import { harnessEnvironmentKey } from "src/api/simulate-environments/environment";
 import {
   environmentVersionsKey,
   refreshDrafts,
@@ -119,6 +120,8 @@ export function useAmendScenarios(jobId) {
     mutationFn: (body) => amendScenarios(jobId, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: harnessScenariosListKey(jobId) });
+      // The header and tab badge read the scenario count from the detail.
+      queryClient.invalidateQueries({ queryKey: harnessEnvironmentKey(jobId) });
       // Only the list: a saved version's own diff and scenarios never change.
       queryClient.invalidateQueries({
         queryKey: environmentVersionsKey(jobId),
