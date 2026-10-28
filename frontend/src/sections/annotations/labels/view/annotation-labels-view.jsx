@@ -207,24 +207,6 @@ export default function AnnotationLabelsView() {
               ),
             }}
           />
-          <TextField
-            size="small"
-            select
-            value={filters.type}
-            onChange={handleTypeFilter}
-            sx={{ minWidth: 160 }}
-            SelectProps={{
-              displayEmpty: true,
-              renderValue: (v) =>
-                TYPE_OPTIONS.find((o) => o.value === v)?.label || "All Types",
-            }}
-          >
-            {TYPE_OPTIONS.map((opt) => (
-              <MenuItem key={opt.value} value={opt.value}>
-                {opt.label}
-              </MenuItem>
-            ))}
-          </TextField>
           <ToggleButtonGroup
             exclusive
             size="small"
@@ -243,6 +225,24 @@ export default function AnnotationLabelsView() {
             <ToggleButton value="active">Active</ToggleButton>
             <ToggleButton value="archived">Archived</ToggleButton>
           </ToggleButtonGroup>
+          <TextField
+            size="small"
+            select
+            value={filters.type}
+            onChange={handleTypeFilter}
+            sx={{ minWidth: 160 }}
+            SelectProps={{
+              displayEmpty: true,
+              renderValue: (v) =>
+                TYPE_OPTIONS.find((o) => o.value === v)?.label || "All Types",
+            }}
+          >
+            {TYPE_OPTIONS.map((opt) => (
+              <MenuItem key={opt.value} value={opt.value}>
+                {opt.label}
+              </MenuItem>
+            ))}
+          </TextField>
           <Box sx={{ flex: 1 }} />
           <Button
             variant="contained"
