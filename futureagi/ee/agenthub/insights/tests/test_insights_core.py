@@ -768,6 +768,8 @@ class TestSavingCategories:
         from types import SimpleNamespace
 
         monkeypatch.setattr(pipeline.billing, "charge_run", lambda run: 0.0)
+        # What the run cost is recorded in the database; not the question here.
+        monkeypatch.setattr(pipeline, "_record_cost", lambda run, charged: None)
         saves = []
         config = SimpleNamespace(
             **asked, taxonomy={}, save=lambda **kwargs: saves.append(kwargs)
