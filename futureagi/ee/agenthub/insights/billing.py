@@ -46,11 +46,10 @@ PREVIEW_UNITS = 3
 # and 9,700 out to name and write with two categories investigated, and
 # 121,400 to 141,700 in and 9,700 to 12,100 out with three: about 38,000 in
 # and 1,500 out a category, and about 12,000 in and 6,900 out besides (here,
-# 16,000 and 7,000). Fewer than 8 units make a single category
-# (``clustering.base_cluster_count``), so one investigator; no report that
-# small was measured, so it is priced from those two parts. More units are
-# sized for the three measured. A question took 50,300 in and 4,100 out over
-# 7 calls (here, at 8).
+# 16,000 and 7,000). A report is sized for at most the three measured, and
+# fewer when its units can't make three (``report_categories``); no report
+# of one was measured, so it is priced from those two parts. A question
+# took 50,300 in and 4,100 out over 7 calls (here, at 8).
 AGENT_REPORT_TOKENS = (16_000, 7_000)
 AGENT_CATEGORY_TOKENS = (38_000, 1_500)
 AGENT_CATEGORIES = 3
@@ -96,14 +95,20 @@ def _price(tier: str, tokens: tuple[int, int], models: dict | None = None) -> fl
     return call_cost((models or {}).get(tier) or model_for(tier), 0.0, *tokens)
 
 
-def report_categories(sample_size: int) -> int:
-    """The categories the agent investigates in a report over
-    ``sample_size`` units: one when they are too few for discovery to split
-    (a run into saved categories found on more may have a few), else as many
-    as Cloud's test reports did."""
+def report_categories(sample_size: int, saved: bool = False) -> int:
+    """At most the categories the agent investigates in a report over
+    ``sample_size`` units, up to the three Cloud's test reports did.
+    Discovery makes one category of fewer than 8 units and, from 8, groups
+    of at least 3 (``clustering.discover``). A run into the report's
+    ``saved`` categories, found on other units, can put each unit in a
+    different one. Units the lens leaves out make fewer: this counts the
+    sample, so it is the upper end."""
     from ee.agenthub.insights.clustering import base_cluster_count
 
-    return min(AGENT_CATEGORIES, base_cluster_count(max(0, sample_size)))
+    n = max(0, sample_size)
+    if saved:
+        return min(AGENT_CATEGORIES, max(1, n))
+    return min(AGENT_CATEGORIES, base_cluster_count(n), max(1, n // 3))
 
 
 def _run_cost(
@@ -112,10 +117,11 @@ def _run_cost(
     classify: float,
     write: float,
     category: float = 0.0,
+    saved: bool = False,
 ) -> float:
     batches = -(-max(0, sample_size) // CLASSIFY_BATCH)
-    investigated = report_categories(sample_size) * category if category else 0.0
-    return sample_size * read + batches * classify + write + investigated
+    categories = report_categories(sample_size, saved) if category else 0
+    return sample_size * read + batches * classify + write + categories * category
 
 
 def _step_prices(
@@ -133,21 +139,28 @@ def _step_prices(
     )
 
 
-def run_cost(sample_size: int, **sizing) -> float:
+def run_cost(sample_size: int, saved_categories: bool = False, **sizing) -> float:
     """About what a report over ``sample_size`` units costs, in USD.
     ``sizing`` is ``read_tokens``'s (the contract, unit and typical unit
-    size) and the agent's ``models``."""
-    return _run_cost(sample_size, *_step_prices(**sizing))
+    size) and the agent's ``models``; ``saved_categories``, that the run
+    sorts the units into the report's saved categories."""
+    return _run_cost(sample_size, *_step_prices(**sizing), saved=saved_categories)
 
 
 def largest_sample(
-    credits_left: float, low: int, high: int, step: int = 10, **sizing
+    credits_left: float,
+    low: int,
+    high: int,
+    step: int = 10,
+    saved_categories: bool = False,
+    **sizing,
 ) -> int | None:
     """The largest sample from ``high`` down to ``low`` (in ``step``s) whose
     report costs no more than ``credits_left``, or None when none does."""
     prices = _step_prices(**sizing)
     for size in range(high, low - 1, -step):
-        if credits(_run_cost(size, *prices)) <= credits_left + 1e-9:
+        cost = _run_cost(size, *prices, saved=saved_categories)
+        if credits(cost) <= credits_left + 1e-9:
             return size
     return None
 

@@ -186,13 +186,85 @@ def test_a_report_of_fewer_than_8_units_is_written_for_its_one_category():
     one = [2 * two - each for two, each in zip(WRITE_TWO, three, strict=True)]
     actual = _usd(HAIKU, 4 * 223_591 // 18, 4 * 38_605 // 18) + _usd(SONNET, *one)
     assert actual / 1.5 <= billing.run_cost(4, **v2) <= actual * 1.5
-    sizes = (1, 4, 7, 8, 21, 300)
-    assert [billing.report_categories(n) for n in sizes] == [1, 1, 1, 3, 3, 3]
-    # An eighth unit is read, and splits the report into the three measured.
+    sizes = (1, 4, 7, 8, 9, 21, 300)
+    assert [billing.report_categories(n) for n in sizes] == [1, 1, 1, 2, 3, 3, 3]
+    # Discovery groups 8 units in threes at least: an eighth unit is read,
+    # and is priced for a second category at most.
     assert billing.run_cost(8, **v2) - billing.run_cost(7, **v2) == pytest.approx(
         _usd(HAIKU, *billing.read_tokens(agent.CONTRACT_V2, "sessions"))
-        + 2 * _usd(SONNET, *billing.AGENT_CATEGORY_TOKENS)
+        + _usd(SONNET, *billing.AGENT_CATEGORY_TOKENS)
     )
+    # Into saved categories each unit can fall in a different one.
+    saved = [billing.report_categories(n, saved=True) for n in (1, 2, 4, 7, 300)]
+    assert saved == [1, 2, 3, 3, 3]
+
+
+@pytest.mark.parametrize("n", range(1, 13))
+def test_discovery_makes_no_more_categories_than_a_report_is_priced_for(n):
+    """Discovery splits up to 12 units into three groups at most, none under
+    three units: fewer than 8 make one category, and 8 make two at most."""
+    import numpy as np
+
+    from ee.agenthub.insights import clustering
+
+    vectors = np.random.default_rng(n).normal(size=(n, 16))
+    labels = clustering.kmeans(vectors, clustering.base_cluster_count(n), min_size=3)
+    assert int(labels.max()) + 1 <= billing.report_categories(n)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("rediscover", [False, True])
+def test_a_run_again_into_saved_categories_is_checked_for_the_ones_it_may_investigate(
+    auth_client, observe_project, organization, workspace, user, monkeypatch, rediscover
+):
+    """Run again sorts a few units into the report's saved categories, found
+    on more units, and the agent investigates each one that has members (up
+    to three, as on Cloud's tests); discovered afresh, they make one."""
+    from ee.agenthub.insights import agent
+    from tracer.tests.test_insights_api import RUNS, population
+
+    engine = {"kind": "omega", "contract": agent.CONTRACT_V2, "models": AGENT_MODELS}
+    monkeypatch.setattr(agent, "resolve_engine", lambda: engine)
+    monkeypatch.setattr(billing, "applies", lambda: True)
+    monkeypatch.setattr(billing, "credits", lambda cost: cost * 100)
+    checked = []
+    refusal = SimpleNamespace(error_code="FREE_TIER_LIMIT", limit=0, current_usage=0)
+    monkeypatch.setattr(
+        billing, "check", lambda org, cost: checked.append(cost) or refusal
+    )
+    tops = [{"id": f"t{i}", "name": f"Top {i}", "level": 1} for i in range(3)]
+    subs = [
+        {**top, "id": f"s{i}", "level": 2, "parent_id": top["id"]}
+        for i, top in enumerate(tops)
+    ]
+    config = InsightConfig.objects.create(
+        project=observe_project,
+        organization=organization,
+        workspace=workspace,
+        created_by=user,
+        name="Failures",
+        unit="sessions",
+        lens="failures",
+        question="Where did the agent fail?",
+        taxonomy={"tops": tops, "subs": subs},
+    )
+    response = auth_client.post(
+        RUNS,
+        {
+            "project_id": str(observe_project.id),
+            "config_id": str(config.id),
+            "population": population(4),
+            "reset_taxonomy": rediscover,
+        },
+        format="json",
+    )
+    assert response.status_code == 403, response.json()
+    assert response.json()["code"] == "insights_credits"
+    v2 = {"contract": agent.CONTRACT_V2, "unit": "sessions", "models": AGENT_MODELS}
+    category = _usd(SONNET, *billing.AGENT_CATEGORY_TOKENS)
+    expected = billing.run_cost(4, **v2) + (0 if rediscover else 2 * category)
+    assert checked == [pytest.approx(expected)]
+    assert not InsightRun.objects.exists()
 
 
 @pytest.mark.django_db

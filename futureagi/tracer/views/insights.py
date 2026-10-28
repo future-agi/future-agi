@@ -906,14 +906,25 @@ def _credit_estimate(
 
 
 def _credits_refused(
-    gm, org, step: str, *, sample_size=None, unit=None, project=None, engine=None
+    gm,
+    org,
+    step: str,
+    *,
+    sample_size=None,
+    unit=None,
+    project=None,
+    engine=None,
+    saved_categories=False,
 ):
     """A 402/403 when billing refuses a step: why, what it needs, what is
-    left and, for a report, the largest sample that fits on ``engine``."""
+    left and, for a report, the largest sample that fits on ``engine`` (into
+    the report's saved categories when ``saved_categories``)."""
     billing = _billing()
     if billing is None:
         return None
     sizing = _sizing(unit, project, engine) if step != "draft" else {}
+    if saved_categories:
+        sizing["saved_categories"] = True
     try:
         verdict = _credit_verdict(
             billing,
@@ -1443,6 +1454,11 @@ class InsightRunCreateView(InsightsLicenseRequired, APIView):
             unit=unit,
             project=project,
             engine=engine,
+            # Sorted into the saved categories (as create_run decides), a
+            # few units can fall in several, not the one discovery makes.
+            saved_categories=config is not None
+            and bool((config.taxonomy or {}).get("subs"))
+            and not data.get("reset_taxonomy"),
         )
         if refused:
             return refused
