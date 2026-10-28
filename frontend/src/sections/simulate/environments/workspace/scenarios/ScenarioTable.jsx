@@ -587,7 +587,7 @@ function BatchHeaderRow({ batch, colSpan, hidden, onToggle }) {
   return (
     <TableRow>
       <TableCell colSpan={colSpan} sx={{ px: 2, py: 1.25, borderBottom: "1px solid", borderColor: "divider", bgcolor: "background.paper" }}>
-        <Stack direction="row" alignItems="center" spacing={1.25}>
+        <Stack direction="row" alignItems="center" spacing={1.25} sx={{ position: "sticky", left: 16, width: "fit-content" }}>
           <Box
             sx={{
               width: 28, height: 28, borderRadius: "50%", flexShrink: 0, display: "grid", placeItems: "center",
@@ -596,7 +596,7 @@ function BatchHeaderRow({ batch, colSpan, hidden, onToggle }) {
           >
             {author.initials}
           </Box>
-          <Box flex={1} minWidth={0}>
+          <Box minWidth={0}>
             <Stack direction="row" alignItems="center" spacing={0.75}>
               <Typography sx={{ typography: "s2", fontWeight: 600 }}>
                 {`${author.name} added ${count} scenario${count === 1 ? "" : "s"}`}
@@ -618,7 +618,7 @@ function BatchHeaderRow({ batch, colSpan, hidden, onToggle }) {
             variant="outlined"
             onClick={onToggle}
             endIcon={<Iconify icon={hidden ? "solar:alt-arrow-down-linear" : "solar:alt-arrow-up-linear"} width={12} />}
-            sx={{ flexShrink: 0, color: "text.primary", borderColor: "divider" }}
+            sx={{ flexShrink: 0, ml: 1.5, color: "text.primary", borderColor: "divider" }}
           >
             {`${hidden ? "Show" : "Hide"} ${count}`}
           </Button>
