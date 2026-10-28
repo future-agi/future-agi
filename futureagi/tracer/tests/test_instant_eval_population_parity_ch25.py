@@ -323,3 +323,93 @@ def test_each_users_sessions_are_read_inside_the_window(seeded, observe_project)
     )
     # U1's three sessions; U5's only session is before the window.
     assert len(sessions) == 3
+
+
+def _user_is(*labels, op="in"):
+    return {
+        "column_id": "user_id",
+        "filter_config": {
+            "col_type": "SYSTEM_METRIC",
+            "filter_type": "text",
+            "filter_op": op,
+            "filter_value": list(labels) if op in ("in", "not_in") else labels[0],
+        },
+    }
+
+
+def _sessions_grid_total(client, project, filters) -> int:
+    """The total the Sessions grid itself reports for these filters."""
+    response = client.get(
+        "/tracer/trace-session/list_sessions/",
+        {
+            "project_id": str(project.id),
+            "filters": json.dumps(filters),
+            "page_number": 0,
+            "page_size": 50,
+        },
+    )
+    assert response.status_code == 200, response.content
+    return int(response.json()["result"]["metadata"]["total_rows"])
+
+
+@pytest.mark.parametrize(
+    ("unit", "user_filter", "truth"),
+    [
+        ("sessions", _user_is("user-U1"), 3),
+        ("sessions", _user_is("user-U1", op="equals"), 3),
+        ("sessions", _user_is("user-U1", "user-U3"), 5),
+        ("sessions", _user_is("user-U1", op="not_in"), 4),
+        ("sessions", _user_is("nobody"), 0),
+        ("traces", _user_is("user-U1"), 6),
+        ("spans", _user_is("user-U3"), 4),
+        ("users", _user_is("user-U1", "user-U3"), 2),
+    ],
+)
+def test_a_view_filtered_by_user_id_counts_and_picks_what_its_grid_shows(
+    seeded, observe_project, auth_client, unit, user_filter, truth
+):
+    """A User ID filter is the users' label, which the spans don't carry.
+    Counting and picking a filtered view reads the same rows its grid lists."""
+    project_id = str(observe_project.id)
+    filters = [WINDOW, user_filter]
+    # As a start counts: users to the end, past an estimate's time budget.
+    population = users_service.count_view(project_id, unit, filters, finish=True)
+    assert (population.count, population.lower_bound) == (truth, False)
+    if unit == "sessions":
+        assert _sessions_grid_total(auth_client, observe_project, filters) == truth
+    picked = users_service.pick_view(
+        project_id, unit, population.filters, n=100, after=None
+    )
+    assert len(picked) == truth
+
+
+def test_both_estimates_count_a_sessions_view_filtered_by_user_id(
+    seeded, observe_project, auth_client, monkeypatch
+):
+    """What the Ask page and a new Insights report ask first: on a Sessions
+    view filtered by User ID, each counts the sessions the grid shows."""
+    from tfc.capabilities import service as capability_service
+    from tfc.capabilities.service import CapabilityDecision
+
+    monkeypatch.setattr(capability_service, "_configured", True)
+    monkeypatch.setattr(
+        capability_service,
+        "check",
+        lambda feature_id, **_: CapabilityDecision(allowed=True, feature_id=feature_id),
+    )
+    filters = [WINDOW, _user_is("user-U1")]
+    project = str(observe_project.id)
+    asked = auth_client.post(
+        "/tracer/instant-eval/estimate/",
+        {"project_id": project, "unit": "sessions", "filters": filters},
+        format="json",
+    )
+    assert asked.status_code == 200, asked.content
+    assert asked.json()["result"]["population"] == 3
+    report = auth_client.post(
+        "/tracer/insights/estimate/",
+        {"project_id": project, "unit": "sessions", "scope": {"filters": filters}},
+        format="json",
+    )
+    assert report.status_code == 200, report.content
+    assert report.json()["result"]["population"] == 3

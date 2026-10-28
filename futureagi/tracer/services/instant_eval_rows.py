@@ -133,10 +133,64 @@ def window_problem(filters: list[dict]) -> str | None:
     return None
 
 
+_USER_OPS = {"in", "equals", "not_in", "not_equals", "is_null", "is_not_null"}
+
+
+def _session_user_filters(project_id: str, filters: list[dict]) -> list[dict]:
+    """A User ID filter as the Sessions grid reads it: its view resolves each
+    label to the users' ids first (the session builder can't read the label),
+    a positive set of no one matching nothing and a negative one restricting
+    nothing."""
+    from tracer.services.clickhouse.query_builders.base import NIL_UUID
+    from tracer.services.clickhouse.v2.end_user_dict_reader import (
+        resolve_end_user_ids_by_user_id,
+    )
+    from tracer.services.user_filter_capabilities import is_native_user_id_filter
+    from tracer.utils.filters import FilterEngine
+
+    out = []
+    resolved: dict[str, list[str]] = {}
+    for item in filters:
+        if not is_native_user_id_filter(item):
+            out.append(item)
+            continue
+        _, config = FilterEngine._normalize_filter_params(item)
+        op = config.get("filter_op") or "in"
+        if op not in _USER_OPS:
+            raise PopulationUnavailable(
+                "The Sessions view can't filter users that way."
+            )
+        leaf = {"col_type": "SYSTEM_METRIC", "filter_type": "text", "filter_op": op}
+        if op not in ("is_null", "is_not_null"):
+            values = config.get("filter_value")
+            values = values if isinstance(values, list) else [values]
+            values = [str(v) for v in values if v not in (None, "")]
+            if not values:
+                continue
+            ids: list[str] = []
+            for value in dict.fromkeys(values):
+                if value not in resolved:
+                    resolved[value] = resolve_end_user_ids_by_user_id(
+                        value, project_id=str(project_id)
+                    )
+                ids.extend(resolved[value])
+            negated = op in ("not_in", "not_equals")
+            if not ids:
+                if negated:
+                    continue
+                ids = [NIL_UUID]
+            leaf["filter_op"] = "not_in" if negated else "in"
+            leaf["filter_value"] = list(dict.fromkeys(ids))
+        out.append({"column_id": "end_user_id", "filter_config": leaf})
+    return out
+
+
 def _builder(project_id: str, row_type: str, ui_filters: list[dict]):
     from tracer.services.clickhouse.v2.dispatch import get_v2_class
 
     query_type, id_col = _BUILDER[row_type]
+    if row_type == "sessions":
+        ui_filters = _session_user_filters(project_id, ui_filters)
     return (
         get_v2_class(query_type)(project_id=str(project_id), filters=ui_filters),
         id_col,
@@ -170,6 +224,8 @@ def count_population(
         # query reads.
         builder.build()
         sql, params = builder.build_count_query()
+    except PopulationUnavailable:
+        raise
     except ValueError as exc:
         raise PopulationUnavailable(
             "These filters can't be counted on the server."
