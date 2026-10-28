@@ -256,7 +256,15 @@ const FeatureGateOverlay = ({
                 href={onPrimary ? undefined : primaryHref}
                 target={onPrimary ? undefined : "_blank"}
                 rel={onPrimary ? undefined : "noopener"}
-                endIcon={<Iconify icon="solar:arrow-right-up-linear" />}
+                endIcon={
+                  <Iconify
+                    icon={
+                      onPrimary
+                        ? "solar:arrow-right-linear"
+                        : "solar:arrow-right-up-linear"
+                    }
+                  />
+                }
               >
                 {primaryLabel}
               </Button>
