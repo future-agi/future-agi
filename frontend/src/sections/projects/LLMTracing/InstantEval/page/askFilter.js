@@ -145,22 +145,26 @@ const Z = 1.96;
 /**
  * A share read from a sample, with its 95% Wilson interval. With the whole
  * population size `N`, a finite-population correction narrows the interval
- * as the sample covers more of it (and closes it when it covers all).
+ * as the sample covers more of it (and closes it when it covers all). The
+ * correction scales the sample size (n·(N−1)/(N−n)), not the half-width: a
+ * shrunk half-width around Wilson's shifted centre can leave the share
+ * outside its own interval (10 of 10 read "≈ 100% (95% CI 73–99%)").
  */
 export function wilson(x, n, N) {
   if (!n) return null;
   const p = x / n;
   if (N && n >= N) return { p, lo: p, hi: p };
-  const fpc = N && N > 1 ? Math.sqrt((N - n) / (N - 1)) : 1;
+  const m = N && N > 1 ? (n * (N - 1)) / (N - n) : n;
   const z2 = Z * Z;
-  const denom = 1 + z2 / n;
-  const center = (p + z2 / (2 * n)) / denom;
-  const half =
-    ((Z * Math.sqrt((p * (1 - p)) / n + z2 / (4 * n * n))) / denom) * fpc;
+  const denom = 1 + z2 / m;
+  const center = (p + z2 / (2 * m)) / denom;
+  const half = (Z * Math.sqrt((p * (1 - p)) / m + z2 / (4 * m * m))) / denom;
+  // The interval holds p; the clamp only keeps rounding (0.9999…) from
+  // leaving it a hair outside.
   return {
     p,
-    lo: Math.max(0, center - half),
-    hi: Math.min(1, center + half),
+    lo: Math.max(0, Math.min(p, center - half)),
+    hi: Math.min(1, Math.max(p, center + half)),
   };
 }
 

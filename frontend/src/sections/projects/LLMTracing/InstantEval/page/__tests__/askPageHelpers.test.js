@@ -277,6 +277,24 @@ describe("a sample's estimate for the whole view", () => {
     expect(estimateWords("No", open)).toBe("≈ 38% No (95% CI 35–41%)");
   });
 
+  it("always holds the share it estimates, however lopsided the sample", () => {
+    // 10 of 10 No, read from a view of 49: "≈ 100% No (95% CI 73–99%)".
+    const all = wilson(10, 10, 49);
+    expect(all.hi).toBe(1);
+    expect(estimateWords("No", all)).toBe("≈ 100% No (95% CI 76–100%)");
+    expect(wilson(0, 10, 49).lo).toBe(0);
+    for (const [x, n, N] of [
+      [1, 10, 49],
+      [9, 10, 12],
+      [380, 1000, 1100],
+      [3, 40, 41],
+    ]) {
+      const { p, lo, hi } = wilson(x, n, N);
+      expect(lo).toBeLessThanOrEqual(p);
+      expect(hi).toBeGreaterThanOrEqual(p);
+    }
+  });
+
   it("estimates the problem answer, or the one in focus", () => {
     const run = {
       sample: { is_sample: true, population: 104233 },
