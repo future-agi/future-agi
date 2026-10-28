@@ -394,7 +394,7 @@ def ingest_request_logs(logs):
         logger.exception("webhook_dispatch_failed", org_id=str(org.id))
 
     try:
-        _send_email_alerts(org, logs)
+        _send_email_alerts(org, entries)
     except Exception:
         logger.exception("email_alert_dispatch_failed", org_id=str(org.id))
 
