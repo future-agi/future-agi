@@ -395,6 +395,30 @@ describe("run detail header", () => {
     expect(onStartRun).toHaveBeenCalledTimes(1);
   });
 
+  it("with failures, the caret still re-runs the whole run, as Vel's does", async () => {
+    const onStartRun = vi.fn();
+    const user = userEvent.setup();
+    useRunDetail.mockReturnValue({
+      identity: identity({ scenarioIds: ["a", "b"] }),
+      stats: stats(),
+      isLoading: false,
+    });
+    renderDetail({ onStartRun });
+
+    await user.click(
+      screen.getByRole("button", { name: "More re-run options" }),
+    );
+    expect(screen.getByText("Re-run run 3 · 2 scenarios")).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: /default for comparisons/ }),
+    ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("menuitem", { name: /Run as configured now/ }),
+    );
+    expect(onStartRun).toHaveBeenCalledWith(["a", "b"], 3);
+    expect(listMatchingCalls).not.toHaveBeenCalled();
+  });
+
   it("re-runs the whole run as configured now when no call carries its scenario", async () => {
     tickable = false;
     const onStartRun = vi.fn();
@@ -413,6 +437,16 @@ describe("run detail header", () => {
     );
     expect(onStartRun).toHaveBeenCalledWith(["a", "b"], 3);
     expect(listMatchingCalls).not.toHaveBeenCalled();
+  });
+
+  it("keeps the header Re-run on the Analytics tab, where the calls table isn't mounted", () => {
+    renderDetail({
+      initialEntries: ["/run?tab=analytics"],
+      onStartRun: vi.fn(),
+    });
+    expect(
+      screen.getByRole("button", { name: "Re-run what didn't pass" }),
+    ).toBeInTheDocument();
   });
 
   it("offers the whole-run Re-run on a run with nothing failing", () => {
@@ -435,6 +469,12 @@ describe("run detail header", () => {
     const share = screen.getByRole("button", { name: "Share" });
     expect(share).not.toHaveTextContent("Share");
     await user.click(share);
+    expect(
+      screen.getByText(/stamped with every version this run held fixed/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: /Choose Save as PDF/ }),
+    ).toBeInTheDocument();
     const items = screen.getAllByRole("menuitem");
     expect(items[0]).toHaveTextContent("Export results");
     expect(within(items[0]).queryByLabelText("UI only")).toBeNull();

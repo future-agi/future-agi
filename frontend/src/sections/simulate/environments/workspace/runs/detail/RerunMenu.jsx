@@ -42,9 +42,9 @@ const itemText = {
 
 /**
  * Re-run from the run header. After a run with failures the one-click action
- * re-runs the scenarios that didn't pass; the caret holds the two re-run
- * modes. A run whose calls carry no scenario can't name its failures, so it
- * re-runs whole. "Re-run exact snapshot" has no backend yet and starts nothing.
+ * re-runs the scenarios that didn't pass; the caret always re-runs the whole
+ * run, in one of the two modes. "Re-run exact snapshot" has no backend yet and
+ * starts nothing.
  */
 export default function RerunMenu({
   failing = false,
@@ -53,19 +53,19 @@ export default function RerunMenu({
   trials = 1,
   disabledReason = null,
   onRun,
+  onRunWhole,
 }) {
   const [anchor, setAnchor] = useState(null);
   const disabled = !!disabledReason;
-  const heading = failing
-    ? "Re-run the scenarios that didn't pass"
-    : `Re-run ${runLabel} · ${plural(scenarios, "scenario")}`;
+  const heading = `Re-run ${runLabel} · ${plural(scenarios, "scenario")}`;
   const snapshot = () => {
     setAnchor(null);
     enqueueSnackbar(UI_ONLY_STARTED, { variant: "info" });
   };
+  const runFailing = () => onRun();
   const runNow = () => {
     setAnchor(null);
-    onRun();
+    (onRunWhole ?? onRun)();
   };
   const caret = (e) => setAnchor(e.currentTarget);
 
@@ -85,7 +85,7 @@ export default function RerunMenu({
                 variant="outlined"
                 size="small"
                 disabled={disabled}
-                onClick={runNow}
+                onClick={runFailing}
                 startIcon={<Iconify icon="solar:refresh-linear" width={15} />}
                 sx={{
                   ...buttonSx,
@@ -167,7 +167,12 @@ export default function RerunMenu({
             <ListItemText
               primary={
                 <Stack direction="row" alignItems="center" spacing={0.75}>
-                  <span>Re-run exact snapshot</span>
+                  <span>
+                    Re-run exact snapshot
+                    <Box component="span" sx={{ ml: 0.75, typography: "s3" }}>
+                      default for comparisons
+                    </Box>
+                  </span>
                   <UiOnlyFlag feature="rerunSnapshot" />
                 </Stack>
               }
@@ -185,7 +190,7 @@ export default function RerunMenu({
             </ListItemIcon>
             <ListItemText
               primary="Run as configured now"
-              secondary={`Today's agent, scenarios and evals, ${plural(trials, "repeat")}, in a new run.`}
+              secondary={`Picks up every edit since: today's agent, scenarios and evals, ${plural(trials, "repeat")}, in a new run.`}
               {...itemText}
             />
           </MenuItem>
@@ -202,6 +207,8 @@ RerunMenu.propTypes = {
   runLabel: PropTypes.string.isRequired,
   trials: PropTypes.number,
   disabledReason: PropTypes.string,
-  // Starts the real re-run, as configured now.
+  // The one-click re-run: the failing scenarios, or the whole run.
   onRun: PropTypes.func.isRequired,
+  // The caret's "Run as configured now": the whole run. Defaults to onRun.
+  onRunWhole: PropTypes.func,
 };

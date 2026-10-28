@@ -265,11 +265,12 @@ export default function RunDetail({
       );
   };
 
-  // A run whose calls carry their scenario re-runs the failing ones; any other
-  // run (nothing failed, or calls made before they carried their scenario)
-  // re-runs whole. Nothing shows until the table has said which.
-  const rerunFailing = hasTickableCalls === true && stats.failed > 0;
-  const rerunWhole = hasTickableCalls !== null && !rerunFailing;
+  // A run with failures re-runs them, unless its calls predate carrying their
+  // scenario (the table says so); any other run re-runs whole. The failing
+  // calls are fetched on click, so the Analytics tab offers it too.
+  const rerunFailing =
+    !!identity && stats.failed > 0 && hasTickableCalls !== false;
+  const rerunWhole = !!identity && !rerunFailing;
   const rerunDisabledReason = live
     ? "Wait for this run to finish before re-running it"
     : runStarting
@@ -510,6 +511,7 @@ export default function RunDetail({
             trials={identity?.trials || 1}
             disabledReason={rerunDisabledReason}
             onRun={rerunFailing ? runFailingAgain : runWholeAgain}
+            onRunWhole={runWholeAgain}
           />
         )}
         <Button
@@ -580,7 +582,7 @@ export default function RunDetail({
       {creditBanner}
 
       <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
-        <Box sx={{ p: 2 }}>
+        <Box sx={{ p: 2, pt: 0.5 }}>
           {loadFailed ? (
             <EmptyState
               icon="solar:danger-triangle-linear"

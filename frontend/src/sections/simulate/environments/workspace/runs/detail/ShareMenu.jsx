@@ -126,6 +126,12 @@ export default function ShareMenu({ executionId, disabled = false }) {
           >
             Share this run&apos;s report
           </Typography>
+          <Typography
+            sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}
+          >
+            Pass rate and every scenario&apos;s result, each with its trace.
+            Read-only, stamped with every version this run held fixed.
+          </Typography>
         </Box>
         <ShareItem
           icon="solar:download-minimalistic-linear"
@@ -136,7 +142,7 @@ export default function ShareMenu({ executionId, disabled = false }) {
         <ShareItem
           icon="solar:link-linear"
           title="Copy read-only link"
-          description="Pass rate and every scenario's result, each with its trace. Read-only."
+          description="Anyone with the link sees the report, read-only."
           uiOnly
           onClick={uiOnly}
         />
@@ -150,7 +156,7 @@ export default function ShareMenu({ executionId, disabled = false }) {
         <ShareItem
           icon="solar:printer-linear"
           title="Download PDF"
-          description="The same report, through the print dialog."
+          description="Opens the print dialog. Choose Save as PDF. Evidence links stay clickable."
           uiOnly
           onClick={uiOnly}
         />
