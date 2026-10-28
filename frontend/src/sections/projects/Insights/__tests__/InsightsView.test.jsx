@@ -1162,6 +1162,37 @@ describe("InsightsView", () => {
     );
   });
 
+  it("opens a users report's user from its category on the days it read", async () => {
+    mocks.enriched = true;
+    const window = ["2026-10-08T00:00:00+00:00", "2026-10-15T00:00:00+00:00"];
+    const base = mocks.readQuery.getMockImplementation();
+    mocks.readQuery.mockImplementation((url, options) =>
+      url === `/tracer/insights/runs/${RUN_ID}/`
+        ? ok({
+            ...enrichedRunFixture.result,
+            unit: "users",
+            scope: { label: "Custom", window },
+          })
+        : base(url, options),
+    );
+    renderAt(`?report=${CONFIG_ID}&category=a55e9078defc`);
+    fireEvent.click(await screen.findByRole("button", { name: "Users" }));
+    const table = await screen.findByRole("table");
+    fireEvent.click(within(table).getByText("cust_omar_702").closest("tr"));
+    const url = new URL(
+      (await screen.findByTestId("user-page")).textContent,
+      "https://app.test",
+    );
+    expect(url.pathname).toBe("/dashboard/users/cust_omar_702");
+    // The Sessions list there opens on Today unless told otherwise.
+    expect(url.searchParams.get("userTab")).toBe("sessions");
+    const dates = JSON.parse(url.searchParams.get("sessionDateFilter"));
+    expect(dates.dateOption).toBe("Custom");
+    expect(dates.dateFilter.map((value) => new Date(value).getTime())).toEqual(
+      window.map((value) => new Date(value).getTime()),
+    );
+  });
+
   it("marks the evidence inside the example's content", async () => {
     mocks.enriched = true;
     const unitId = "5b2ca31b-3453-52f3-a646-a8801b377c16";
