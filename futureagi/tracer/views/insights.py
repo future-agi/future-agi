@@ -76,6 +76,9 @@ ESTIMATE_SAMPLE_IDS = 20
 UNITS_PAGE = 50
 MAX_CONTENT_UNITS = 20
 ASKS_PER_HOUR = 120
+# Each cited image shown rebuilds its unit from ClickHouse (the browser keeps
+# it an hour): a bound on what one organization can make that cost.
+MEDIA_VIEWS_PER_HOUR = 600
 # Units of the last reports whose measured size sizes a new estimate.
 TYPICAL_UNITS = 200
 
@@ -1649,6 +1652,8 @@ class InsightRunMediaView(InsightsLicenseRequired, APIView):
         ).first()
         if row is None:
             return self._gm.not_found("This example is not part of the report.")
+        if not _spend("media", run.organization_id, MEDIA_VIEWS_PER_HOUR):
+            return _rate_limited(self._gm)
         try:
             image = broker.cited_image(run, row, params["media"])
         except broker.BrokerError as refused:

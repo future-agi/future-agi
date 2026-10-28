@@ -318,6 +318,13 @@ def test_a_cited_image_is_served_to_its_own_organization_only(
         assert auth_client.get(url, params).status_code == code
     assert built == [kept.unit_id]
 
+    # Past the organization's hourly bound nothing more is rebuilt.
+    monkeypatch.setattr(views, "_spend", lambda kind, *a: kind != "media")
+    limited = auth_client.get(url, {"unit_id": kept.unit_id, "media": "m1"})
+    assert limited.status_code == 429
+    assert built == [kept.unit_id]
+    monkeypatch.setattr(views, "_spend", lambda *a: True)
+
     # Another organization's run is not found, whatever it cites.
     other = Organization.objects.create(name="Other org")
     InsightRun.objects.filter(id=created["run_id"]).update(organization=other)
