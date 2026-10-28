@@ -2459,6 +2459,41 @@ describe("a sample size typed in", () => {
       );
     });
 
+    it("says a budget pause beside the sample chosen, not under every row", async () => {
+      // Cloud, a Pause budget tripped: billing stops every choice.
+      const PAUSED =
+        "Jev runs are paused by your budget limit. Raise or remove it in billing to run this.";
+      fakes.estimate.mockImplementation(
+        costed({
+          ...smallEstimate(49),
+          credit_check: {
+            allowed: false,
+            error_code: "BUDGET_PAUSED",
+            credits_left: null,
+            blocked: true,
+            message: PAUSED,
+          },
+        }),
+      );
+      renderAt(askLink(PROJECT, { unit: "sessions" }));
+      const all = await screen.findByRole("radio", {
+        name: /Every one of the 49/,
+      });
+      // Every row is the choice: its card says why it can't run.
+      expect(all.parentElement).toHaveTextContent(PAUSED);
+      fireEvent.click(
+        screen.getByRole("button", { name: "Read a sample instead" }),
+      );
+      fireEvent.change(
+        screen.getByRole("spinbutton", { name: "Custom sample size" }),
+        { target: { value: "5" } },
+      );
+      await screen.findByText(/Reads 5 sessions/, {}, { timeout: 4000 });
+      // The sample is the choice now: the pause is said there, once.
+      expect(screen.getAllByText(PAUSED)).toHaveLength(1);
+      expect(all.parentElement).not.toHaveTextContent(PAUSED);
+    });
+
     it("reads every row for a sample as big as the view", async () => {
       fakes.estimate.mockImplementation(costed(smallEstimate(108)));
       fakes.startAskRun.mockResolvedValue({

@@ -364,6 +364,9 @@ function ScopeCard({
       : choiceCost(custom.estimate, custom.size, questions)
     : choiceCost(estimate, shownSize, questions);
   const allCost = choiceCost(estimate, null, questions);
+  // A budget pause stops every choice: it is said once, beside the one
+  // chosen, not under a choice that isn't.
+  const noteHere = (cost, chosen) => !cost?.blocked || chosen;
   const noun = count === 1 ? meta.noun : meta.plural;
   const counted = `${formatCount(count, estimate?.population_is_lower_bound)} ${noun}`;
   const headline = fixed
@@ -499,7 +502,8 @@ function ScopeCard({
               note={
                 typed && custom.problem ? (
                   <SizeProblem problem={custom.problem} onUse={custom.onText} />
-                ) : sampleCost?.creditLimited ? (
+                ) : sampleCost?.creditLimited &&
+                  noteHere(sampleCost, sampled) ? (
                   <CreditNote
                     cost={sampleCost}
                     estimate={estimate}
@@ -545,14 +549,14 @@ function ScopeCard({
             detail={costLine(allCost, unit, estimate)}
             noteIsReason={!allCost?.allowed}
             note={
-              allCost?.creditLimited ? (
+              allCost?.creditLimited && noteHere(allCost, !sampled) ? (
                 <CreditNote
                   cost={allCost}
                   estimate={estimate}
                   unit={unit}
                   onChoose={onChoose}
                 />
-              ) : !allCost?.allowed ? (
+              ) : allCost?.creditLimited ? null : !allCost?.allowed ? (
                 `Over the ${estimate.max_rows.toLocaleString()}-row limit for one run. Read a sample, or narrow the filters.`
               ) : allCost.needsConfirm ? (
                 allCost.credits != null ? (
@@ -602,6 +606,21 @@ function ScopeCard({
                   `${costLine(sampleCost, unit, custom.estimate)}. Picked at random; the same rows each time.`
                 ) : null}
               </Typography>
+              {sampled && sampleCost?.creditLimited && (
+                <Typography
+                  variant="caption"
+                  color="text.primary"
+                  component="p"
+                  sx={{ mt: 0.5 }}
+                >
+                  <CreditNote
+                    cost={sampleCost}
+                    estimate={estimate}
+                    unit={unit}
+                    onChoose={(size) => custom.onText(String(size))}
+                  />
+                </Typography>
+              )}
             </>
           ) : (
             <Link
