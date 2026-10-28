@@ -1122,7 +1122,9 @@ const outcomeOf = (rec, { model } = {}) => {
       : `Reproduced the failures on ${r.failingToday ?? "some"} of ${plural(all, "scenario")}`;
     return {
       ending: { key: "suggestion", label: "Suggestion only" },
-      headline: `${reproduced}. A diagnosis and a suggested fix — not proven: we can only call this agent, so no change could be tried.`,
+      headline: record.suggestChosen
+        ? `${reproduced}. A diagnosis and a suggested fix — not proven: you chose suggest only, so no change was tried.`
+        : `${reproduced}. A diagnosis and a suggested fix — not proven: we can only call this agent, so no change could be tried.`,
       suggestion,
       checks: [],
       held: null,

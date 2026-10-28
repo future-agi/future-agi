@@ -1343,7 +1343,8 @@ export default function RunResults({
               runViaOf(sourceRun).label !== "Console" &&
               (() => {
                 const ci = ciOf(sourceRun);
-                const cmd = `fai sim run ${env?.id} --repeats ${sourceRun.repeats || 3}${ci ? ` --fail-under ${ci.failUnder}` : ""}`;
+                /* Re-run the same way: the same pinned configuration. */
+                const cmd = `agent-learn rerun ${sourceRun.id}`;
                 return (
                   <>
                     {" · "}

@@ -323,7 +323,7 @@ export default function MyEnvironmentsTable({
               {row.original.managed === "code" && (
                 <Tooltip
                   arrow
-                  title="Managed in code — versions come from fai env push"
+                  title="Managed in code — versions come from agent-learn env save"
                 >
                   <Iconify
                     icon="solar:code-square-linear"

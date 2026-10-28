@@ -69,27 +69,43 @@ const body = { fontSize: 13, lineHeight: "20px", color: "text.secondary" };
 const clean = (code) =>
   typeof code === "string" ? code.replace(/^\n+/, "").replace(/\n+$/, "") : "";
 
-/* How the agent is built → how `fai env init` points at it. */
+/* How the agent is built → how `agent-learn agent add` registers it. */
 const SIM_FRAMEWORKS = [
   {
     id: "openai-agents",
     label: "OpenAI Agents SDK",
-    agent: "--entry agent.py:agent",
+    agent: "--type process --runtime openai-agents --path .",
   },
-  { id: "langgraph", label: "LangGraph", agent: "--entry graph.py:graph" },
-  { id: "crewai", label: "CrewAI", agent: "--entry crew.py:crew" },
-  { id: "pydantic-ai", label: "Pydantic AI", agent: "--entry agent.py:agent" },
+  {
+    id: "langgraph",
+    label: "LangGraph",
+    agent: "--type process --runtime langgraph --path .",
+  },
+  {
+    id: "crewai",
+    label: "CrewAI",
+    agent: "--type process --runtime crewai --path .",
+  },
+  {
+    id: "pydantic-ai",
+    label: "Pydantic AI",
+    agent: "--type process --runtime pydantic-ai --path .",
+  },
   {
     id: "http",
     label: "Any language, over HTTP (TypeScript, Vercel AI SDK, Mastra…)",
-    agent: "--agent-url http://localhost:3000/chat",
+    agent: "--type http --url http://localhost:3000/chat",
   },
   {
     id: "vapi",
     label: "Vapi (voice)",
-    agent: "--vapi-assistant <assistant-id>",
+    agent: "--type platform --provider vapi --provider-agent <assistant-id>",
   },
-  { id: "retell", label: "Retell (voice)", agent: "--retell-agent <agent-id>" },
+  {
+    id: "retell",
+    label: "Retell (voice)",
+    agent: "--type platform --provider retell --provider-agent <agent-id>",
+  },
 ];
 
 /* Prototype sessions get a representative framework list when the tracer
@@ -694,7 +710,10 @@ function SimulateSection({ keys }) {
       {mode === "cli" && (
         <>
           <Step n={1} title="Install and sign in">
-            <Body>Once per machine — adds the Python SDK and the fai CLI.</Body>
+            <Body>
+              Once per machine — installs agent-learning-kit: the Python SDK and
+              the agent-learn CLI.
+            </Body>
             <CodeBlock code={INSTALL_CMD} />
             <Typography
               sx={{
@@ -728,7 +747,7 @@ function SimulateSection({ keys }) {
               ))}
             </TextField>
             <CodeBlock
-              code={`fai env init my-first-env ${framework.agent} --scenarios 10\nfai env up my-first-env && fai sim run my-first-env --repeats 3`}
+              code={`agent-learn agent add my-agent ${framework.agent}\nagent-learn env build my-first-env --agent my-agent --request "What my agent should handle"\nagent-learn run --env my-first-env --attempts 3 --budget 100 --budget-unit credits`}
             />
           </Step>
           {listen(3)}
@@ -740,8 +759,8 @@ function SimulateSection({ keys }) {
           <Step n={1} title="Install and add your keys">
             <Body>Your keys are already in — copy and run.</Body>
             <CodeBlock
-              code={`pip install futureagi\n${keys.envShown}`}
-              copyText={`pip install futureagi\n${keys.envCopy}`}
+              code={`pip install agent-learning-kit\n${keys.envShown}`}
+              copyText={`pip install agent-learning-kit\n${keys.envCopy}`}
             />
           </Step>
           <Step n={2} title="Define it and run it">

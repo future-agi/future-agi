@@ -13,7 +13,7 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CodeBlock from "src/components/code-block";
-import { pythonTrain, serveCmd, INSTALL_CMD } from "../environments/fromCode";
+import { trainCmd, serveCmd, INSTALL_CMD } from "../environments/fromCode";
 import SideDrawer from "../components/SideDrawer";
 import LocalSteps from "../environments/LocalSteps";
 import { CopyField } from "../components/primitives";
@@ -56,8 +56,8 @@ const dryRunOutput = (e, budget, repeats) => {
   to, so what you copy runs exactly what you'd run here.
 
   Also says where the environment is managed: in the console (edits here make
-  versions; `fai env pull` exports it to code) or in code (versions come from
-  `fai env push`; console edits become a draft to merge).
+  versions; `agent-learn env pull` exports it to code) or in code (versions
+  come from `agent-learn env save`; console edits become a draft to merge).
 */
 
 function Label({ children }) {
@@ -105,7 +105,8 @@ export default function RunFromCodeDrawer({
 }) {
   const [tab, setTab] = useState("cli");
   const id = env?.id || "env_…";
-  const flags = `--repeats ${repeats} --parallel ${batchAt || parallel}`;
+  const flags = `--attempts ${repeats} --concurrency ${batchAt || parallel}`;
+  const cap = `--budget ${budget} --budget-unit credits`;
 
   const cli = [
     {
@@ -116,7 +117,7 @@ export default function RunFromCodeDrawer({
     {
       title: "Preview the cost",
       body: "The same scope, estimate and limit check as the run plan — nothing runs.",
-      cmd: `fai sim run ${id} ${flags} --budget ${budget} --dry-run`,
+      cmd: `agent-learn run --env ${id} ${flags} ${cap} --dry-run`,
       after: estimate && (
         <Box sx={{ mt: 1 }}>
           <CodeBlock code={dryRunOutput(estimate, budget, repeats)} />
@@ -126,44 +127,44 @@ export default function RunFromCodeDrawer({
     {
       title: "Run this environment",
       body: `Runs every scenario against ${agentName ? `the agent at ${agentName}` : "its agent"} — the same run as Run simulation${batchAt ? `; it's over 200 conversations, so ${batchAt} at once` : ""}. No new calls start past --budget. It prints the run's ID and its link here.`,
-      hint: "--scenarios picks a subset; --agent-url tests a local build.",
-      cmd: `RUN_ID=$(fai sim run ${id} ${flags} --budget ${budget} --print-id)`,
+      hint: "--scenario or --group picks a subset; --mode hybrid tests a local build against this world.",
+      cmd: `agent-learn run --env ${id} ${flags} ${cap}`,
     },
     {
       title: "Read the results",
       body: "Pass rate, the failing scenarios and why, with a link to the run here — the same run, by its ID.",
-      cmd: "fai sim results --run $RUN_ID --failures",
+      cmd: "agent-learn results <run-id> --failed-only --include checks,usage,trace",
     },
     {
       title: "Check what it cost",
       body: "The run's itemized credits, free-tier adjustment and what's pending on your own accounts — the same lines as its Cost tab.",
       hint: `usage show --group-by agent compares versions; admins set limits with usage budget set. A --budget over your admin's ${fmtCredits(WORKSPACE_POLICY.maxRunCredits)} per run is refused here too.`,
-      cmd: "fai usage show --run $RUN_ID",
+      cmd: "agent-learn usage show --run <run-id>",
     },
   ];
 
-  const python = `from fi.simulate import Environment
+  /* The doc's call sequence — preview, create, wait — on an authenticated
+     client; the final method signatures ship with the release. */
+  const python = `# client: an authenticated SDK client for this project
 
-env = Environment.get("${id}")
+plan = client.runs.preview(
+    environment="${id}",
+    attempts=${repeats},
+    budget={"amount": ${budget}, "unit": "credits"},
+)
+print(plan.trial_count, plan.cost_estimate)   # same estimate as the run plan
 
-plan = env.run(repeats=${repeats}, budget=${budget}, dry_run=True)
-print(plan.trials, plan.estimate)     # same estimate as the run plan
+run = client.runs.create(
+    plan_id=plan.id,
+    idempotency_key="ci-candidate-commit",    # a retry returns this same run
+)
+result = client.runs.wait(run.id)             # waiting never starts another run
+print(result.status, result.failed_cases, result.usage)
+print(run.ui_url)                             # the same run, here`;
 
-run = env.run(repeats=${repeats}, parallel=${parallel}, budget=${budget})
-for result in run.stream():          # each conversation as it ends
-    print(result.scenario.slug, result.passed, result.score)
-
-summary = run.wait()                 # pass rate, failures; run.url opens it here
-print(summary.pass_rate, run.url)`;
-
-  const pythonOwnAgent = `from fi.simulate import AgentInput, AgentResponse
-
-def my_agent(input: AgentInput) -> AgentResponse:
-    # call your framework here — OpenAI Agents SDK, LangGraph, CrewAI…
-    reply, calls = call_my_framework(input.messages)
-    return AgentResponse(content=reply, tool_calls=calls)
-
-run = env.run(agent=my_agent, repeats=${repeats})`;
+  const pythonOwnAgent = `agent-learn agent add my-agent --type process --command python --arg agent.py --workdir .
+agent-learn agent test my-agent
+agent-learn run --env ${id} --agent my-agent --mode hybrid --attempts ${repeats} ${cap}`;
 
   /* The training plan's dry run — rollouts and held-out evaluation priced
      like a run, the trainer's own cost said as unknown, the budget applied. */
@@ -187,16 +188,21 @@ run = env.run(agent=my_agent, repeats=${repeats})`;
     ].join("\n");
   })();
 
-  const node = `import { Environment } from "@futureagi/simulate";
+  const node = `// client: an authenticated SDK client for this project
 
-const env = await Environment.get("${id}");
+const plan = await client.runs.preview({
+  environment: "${id}",
+  attempts: ${repeats},
+  budget: { amount: ${budget}, unit: "credits" }
+});
+console.log(plan.trialCount, plan.costEstimate);  // same estimate as the run plan
 
-const plan = await env.run({ repeats: ${repeats}, budget: ${budget}, dryRun: true });
-console.log(plan.trials, plan.estimate);  // same estimate as the run plan
-
-const run = await env.run({ repeats: ${repeats}, parallel: ${parallel}, budget: ${budget} });
-const summary = await run.wait();         // pass rate, failures, credits used
-console.log(summary.passRate, summary.usage.credits, run.url);`;
+const run = await client.runs.create({
+  planId: plan.id,
+  idempotencyKey: "ci-candidate-commit"           // a retry returns this same run
+});
+const result = await client.runs.wait(run.id);
+console.log(result.status, result.failedCases, result.usage);`;
 
   const ci = `# .github/workflows/simulate.yml
 name: Simulate
@@ -206,11 +212,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: pip install futureagi
+      - run: pip install agent-learning-kit
       # CI needs a limit: a run without one fails before it starts.
-      - run: fai sim run ${id} ${flags} --budget ${budget} --fail-under 0.9
+      - run: |
+          agent-learn run --env ${id} --mode hosted --group must-pass ${cap} --non-interactive --yes --output json > run.json
+          agent-learn compare $BASELINE_RUN $(jq -r .run_id run.json) --scope identical --fail-on-regression
+          agent-learn export $(jq -r .run_id run.json) --format junit --destination ./results.xml
         env:
-          FI_API_KEY: \${{ secrets.FI_API_KEY }}`;
+          FI_API_KEY: \${{ secrets.FI_API_KEY }}
+          BASELINE_RUN: \${{ vars.BASELINE_RUN }}   # e.g. main's last run`;
 
   const prompt = `Run ${env?.name || "this environment"} with ${repeats} repeats and summarise what failed and why.`;
 
@@ -296,7 +306,7 @@ jobs:
                         component="span"
                         sx={{ fontFamily: "monospace", fontSize: 12 }}
                       >
-                        fai env push
+                        agent-learn env save
                       </Box>
                       {repo ? ` in ${repo}` : ""}. Changes made here become a
                       draft you merge into the repo.
@@ -311,7 +321,10 @@ jobs:
                 </Typography>
                 {managedIn !== "code" && (
                   <Box sx={{ mt: 1 }}>
-                    <CopyField value={`fai env pull ${id}`} onCopy={onPulled} />
+                    <CopyField
+                      value={`agent-learn env pull ${id}`}
+                      onCopy={onPulled}
+                    />
                   </Box>
                 )}
               </Box>
@@ -336,13 +349,11 @@ jobs:
             {tab === "python" && (
               <Stack spacing={2}>
                 <Box>
-                  <Label>Run it and stream the results</Label>
+                  <Label>Preview, run and read the results</Label>
                   <CodeBlock code={python} />
                 </Box>
                 <Box>
-                  <Label>
-                    Or test your agent from code, without deploying it
-                  </Label>
+                  <Label>Or test your local agent, without deploying it</Label>
                   <CodeBlock code={pythonOwnAgent} />
                 </Box>
               </Stack>
@@ -357,7 +368,7 @@ jobs:
 
             {tab === "ci" && (
               <Box>
-                <Label>Block a pull request when the pass rate drops</Label>
+                <Label>Block a pull request on a regression</Label>
                 <CodeBlock code={ci} />
                 <Typography
                   sx={{
@@ -367,10 +378,12 @@ jobs:
                     mt: 1,
                   }}
                 >
-                  The run shows up here with its commit and pull request.
-                  --fail-under exits 1 below the pass rate you set. Without
+                  The run shows up here with its commit and pull request. The
+                  comparison runs the identical scenarios as the baseline: it
+                  exits 6 on a real regression and 7 when the two runs
+                  can&apos;t be compared — never a silent pass. Without
                   --budget, or with one over your admin&apos;s per-run limit,
-                  the job fails before anything runs.
+                  the job fails before anything runs (exit 4).
                 </Typography>
               </Box>
             )}
@@ -378,17 +391,17 @@ jobs:
             {tab === "train" && (
               <Stack spacing={2}>
                 <Box>
-                  <Label>Drive episodes from your training loop</Label>
-                  <CodeBlock code={pythonTrain(id)} />
+                  <Label>Train a model on this environment</Label>
+                  <CodeBlock code={trainCmd(id)} />
                 </Box>
                 {trainPlan && (
                   <Box>
-                    <Label>What plan.estimate prints</Label>
+                    <Label>What train create shows before it starts</Label>
                     <CodeBlock code={trainPlan} />
                   </Box>
                 )}
                 <Box>
-                  <Label>Or serve copies to a trainer on another machine</Label>
+                  <Label>Or pull it for a trainer on another machine</Label>
                   <CodeBlock code={serveCmd(id)} />
                 </Box>
                 <Typography
@@ -398,8 +411,10 @@ jobs:
                     color: "text.tertiary",
                   }}
                 >
-                  The reward is this environment&apos;s evals. Works with
-                  OpenEnv, TRL, verifiers and gym-style loops.
+                  The reward is this environment&apos;s evals. The first
+                  trainer is TRL. Training, development and held-out cases
+                  stay apart, and the trained model is checked on held-out
+                  cases it never saw — no improvement is a valid result.
                 </Typography>
               </Stack>
             )}
@@ -452,6 +467,6 @@ RunFromCodeDrawer.propTypes = {
   /** "console" | "code" */
   managedIn: PropTypes.string,
   repo: PropTypes.string,
-  /** Called when the fai env pull command is copied (marks it managed in code). */
+  /** Called when the agent-learn env pull command is copied (marks it managed in code). */
   onPulled: PropTypes.func,
 };

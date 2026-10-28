@@ -1,7 +1,7 @@
 /*
   Where an environment is managed. "code" when it was built from the CLI
-  (`fai env init` writes it to the developer's machine) or exported with
-  `fai env pull`; otherwise "console", where edits here make the versions.
+  (`agent-learn env build` / `run --mode local`) or exported with
+  `agent-learn env pull`; otherwise "console", where edits here make the versions.
 */
 export const managedOf = (env, envState) => {
   const explicit = envState?.managedIn || env?.managedIn;

@@ -45,7 +45,9 @@ import {
   limitRows,
   optimizationId,
   OPTIMIZER_MODELS,
+  PER_CONVERSATION,
 } from "../../_mock/optimizationRuns";
+import { fixDepthOf } from "../../_mock/rsiModel";
 import { goalWords, improvementRunName } from "../../_mock/optimizer";
 import {
   baseRunOf,
@@ -167,6 +169,9 @@ export default function ImprovementSetup({
   const [edits, setEdits] = useState({});
   const [goal, setGoal] = useState("pass-rate");
   const [budget, setBudget] = useState(null);
+  /* How far it goes (approval mode): search and prove, or suggest only —
+     measure, diagnose and suggest a change, with no trials. */
+  const [suggestOnly, setSuggestOnly] = useState(false);
   /* The agent's other environments can add their must-pass sets (RSI PRD:
      "Targets come from one environment; the others add their must-pass
      sets"), and the search can try earlier versions' changes again. */
@@ -193,6 +198,7 @@ export default function ImprovementSetup({
     setEdits({});
     setGoal("pass-rate");
     setBudget(null);
+    setSuggestOnly(false);
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
   /* Another agent picked in the same drawer: its own name, goals,
      environments and budget (the budgets come from its own limits). */
@@ -404,12 +410,40 @@ export default function ImprovementSetup({
           main,
         ).label
       : null;
-  /* Measuring today is part of what it spends. */
-  const estimate = improvementEstimate({
+  /* An agent we can only call always ends in a suggestion. */
+  const onlySuggests = fixDepthOf(es?.agent).depth === "suggestion";
+  /* Measuring today is part of what it spends. Suggest only measures the
+     target and held-back scenarios once, and runs no trials. */
+  const searched = improvementEstimate({
     preview,
     surface: main?.surface,
     firstConversations: todayConversations(today),
   });
+  const estimate = (() => {
+    if (!suggestOnly || !preview) return searched;
+    const per = PER_CONVERSATION[main?.surface === "voice" ? "voice" : "chat"];
+    const conv =
+      (preview.trainMeasured + preview.heldMeasured) * (preview.repeats || 3) +
+      todayConversations(today);
+    const usd = conv * per;
+    return {
+      parts: [
+        {
+          id: "measure",
+          label: "Measuring",
+          detail: "a suggestion only — no candidates run",
+          conversations: conv,
+          usd,
+        },
+      ],
+      runs: 0,
+      conversations: conv,
+      low: Math.round(usd * 0.8),
+      likely: Math.round(usd),
+      high: Math.round(usd * 1.25),
+      minutes: Math.max(3, Math.round(searched.minutes / 4)),
+    };
+  })();
   const overBudget = estimate.likely > spend;
 
   const agentModel = useMemo(() => {
@@ -492,6 +526,7 @@ export default function ImprovementSetup({
       lineage: acrossLineage ? lineageVersions : undefined,
       base: from,
       today: first,
+      ...(suggestOnly && { depth: "suggestion" }),
     });
   };
 
@@ -814,6 +849,37 @@ export default function ImprovementSetup({
                     />
                   </Box>
                 </Stack>
+                {/* How far it goes — the approval mode. */}
+                <Box sx={{ mt: 1.25 }}>
+                  <Typography sx={fieldLabel}>How far it goes</Typography>
+                  <Select
+                    size="small"
+                    fullWidth
+                    value={onlySuggests || suggestOnly ? "suggest" : "search"}
+                    disabled={onlySuggests}
+                    onChange={(e) =>
+                      setSuggestOnly(e.target.value === "suggest")
+                    }
+                    sx={selectSx}
+                  >
+                    <MenuItem value="search">
+                      Search and prove — tries changes, proves the best on
+                      held-back scenarios
+                    </MenuItem>
+                    <MenuItem value="suggest">
+                      Suggest only — diagnoses and suggests a change, no trials
+                    </MenuItem>
+                  </Select>
+                  <Typography
+                    sx={{ typography: "s3", color: "text.tertiary", mt: 0.5 }}
+                  >
+                    {onlySuggests
+                      ? "We can only call this agent, so an improvement ends in a suggested change."
+                      : suggestOnly
+                        ? "Nothing is tried or proven. Apply the suggestion yourself; a run on the new version proves it."
+                        : "Nothing ships on its own either way — a winner comes back as a draft."}
+                  </Typography>
+                </Box>
                 {/* An evaluation as the goal is only as good as its agreement with people. */}
                 {shaky && (
                   <Stack

@@ -1,7 +1,8 @@
 /*
   The "from code" snippets — the same text wherever an environment is built
   from code: Build environment → From code, Get started, Settings → Developer.
-  They follow the developer spec (fi.simulate). Keep them in step with it.
+  They follow the developer spec: the agent-learn CLI and the fi.simulate
+  module, both installed by agent-learning-kit. Keep them in step with it.
 */
 export const PYTHON_DEFINE = `from fi.simulate import Environment, World, Persona, Scenario, verifiers
 
@@ -20,8 +21,10 @@ env.push()                           # optional: versions here`;
 export const AGENT_PROMPT =
   "Build an environment for my refund agent, run it three times against 40 scenarios including prompt-injection attacks, and fix whatever fails most.";
 
-/* Install the Python SDK and the fai CLI, and sign in — once per machine. */
-export const INSTALL_CMD = "pip install futureagi && fai login";
+/* Install agent-learning-kit (the Python SDK and the agent-learn CLI), and
+   sign in — once per machine. */
+export const INSTALL_CMD =
+  "pip install agent-learning-kit && agent-learn auth login";
 
 /* The docs index written for coding agents. */
 export const AGENT_DOCS_URL = "https://docs.futureagi.com/llms.txt";
@@ -29,27 +32,15 @@ export const AGENT_DOCS_URL = "https://docs.futureagi.com/llms.txt";
 export const MCP_ADD_CMD =
   "claude mcp add futureagi --transport http https://api.futureagi.com/mcp";
 
-/* Training — the RL side of the same environment. */
-export const pythonTrain = (
-  id = "my-environment",
-) => `from fi.simulate import Environment
+/* Training — the doc's one TRL path (Week 3): a reviewed experiment on this
+   environment, then the trained model checked on held-out cases it never saw. */
+export const trainCmd = (id = "my-environment") => `agent-learn train create --env ${id} \\
+  --trainer trl --base-model <base-model> --mode rollout \\
+  --train-split ${id}/train --dev-split ${id}/dev --holdout ${id}/holdout \\
+  --reward ${id}/reward --resources ./resources.yaml --budget 5000
+agent-learn train start <experiment-id>
+agent-learn train status <experiment-id> --watch
+agent-learn train results <experiment-id>   # held-out: trained model vs the original`;
 
-env = Environment.get("${id}")
-
-obs = env.reset(seed=7)                   # one episode: a scenario played once
-done = False
-while not done:
-    action = policy(obs)                  # a message and/or tool calls
-    obs, reward, done, info = env.step(action)
-
-# many episodes at once, written for your trainer — priced and capped like a run
-plan = env.rollout(policy, episodes=1_000, held_out=100, budget=5_000,
-                   dry_run=True)
-print(plan.estimate)                      # rollouts and held-out eval, in credits
-job = env.rollout(policy, episodes=1_000, held_out=100, parallel=256,
-                  budget=5_000, out="rollouts.jsonl",
-                  key="train-2026-10-27")  # same key again reuses this job
-print(job.usage)                          # itemized, even with no improvement`;
-
-export const serveCmd = (id = "my-environment") =>
-  `fai env serve ${id} --replicas 256`;
+/* A permitted copy of the environment for a trainer on another machine. */
+export const serveCmd = (id = "my-environment") => `agent-learn env pull ${id}`;

@@ -3054,11 +3054,13 @@ function PanelBuildLocally() {
   const [mode, setMode] = useState("cli");
   const [os, setOs] = useState("mac");
   const install =
-    os === "windows" ? "py -m pip install futureagi" : "pip install futureagi";
+    os === "windows"
+      ? "py -m pip install agent-learning-kit"
+      : "pip install agent-learning-kit";
   const steps = [
     {
       title: "Install the CLI",
-      body: "Once per machine — it adds fai to your path.",
+      body: "Once per machine — it adds agent-learn to your path. Then sign in with agent-learn auth login.",
       extra: (
         <Box sx={{ mb: 1 }}>
           <ProviderRow options={OS_OPTIONS} value={os} onChange={setOs} />
@@ -3067,16 +3069,16 @@ function PanelBuildLocally() {
       cmd: install,
     },
     {
-      title: "Initialize for your agent",
-      body: "Every environment belongs to one agent in Agents — name it here.",
-      hint: "--version picks the agent's version (its production one by default), --scenarios 10 to 1,000.",
-      cmd: 'fai env init my-environment --agent "My agent" --scenarios 10',
+      title: "Register your agent and build for it",
+      body: "Every environment belongs to one agent in Agents — register it, then build its environment.",
+      hint: "--request says what to test; you review the proposed world and scenarios before it's saved.",
+      cmd: 'agent-learn agent add my-agent --type process --command python --arg agent.py\nagent-learn env build my-environment --agent my-agent --request "Refunds and cancellations"',
     },
     {
-      title: "Build it on your machine",
-      body: "Builds the world locally and opens a secure tunnel back to this workspace.",
-      hint: "Nothing in the world leaves your machine — the tunnel carries results, traces and scores.",
-      cmd: "fai env up my-environment",
+      title: "Run it on your machine",
+      body: "Runs your agent and the world locally; results stay on your machine until you export them.",
+      hint: "--mode hybrid keeps your agent local and runs the world here instead.",
+      cmd: "agent-learn run --env my-environment --mode local --attempts 3 --budget 100 --budget-unit credits",
     },
   ];
   return (
@@ -3102,7 +3104,7 @@ function PanelBuildLocally() {
               sx={{ fontSize: 13, lineHeight: "20px", color: "text.secondary" }}
             >
               Define the environment next to your agent and run it from Python.
-              Install with pip install futureagi.
+              Install with pip install agent-learning-kit.
             </Typography>
             <CodeBlock code={PYTHON_DEFINE} />
             <Typography
@@ -3166,7 +3168,7 @@ function PanelBuildLocally() {
         />
         <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}>
           {mode === "cli"
-            ? "Once fai env up connects, the environment shows up in My environments."
+            ? "Once it's built, the environment shows up in My environments."
             : "It shows up in My environments, marked Managed in code."}
         </Typography>
       </Stack>

@@ -45,7 +45,7 @@ export default function NewImprovement({ open, onClose }) {
   /* Picked, but nowhere to score it yet. */
   const needsEnv = !!picked && !env;
 
-  const start = ({ name, model, writerModel, envIds, goal, budget, limits, seed, lineage, reread, textSearch, optimizerId, base, today }) => {
+  const start = ({ name, model, writerModel, envIds, goal, budget, limits, seed, lineage, reread, textSearch, optimizerId, base, today, depth }) => {
     const es = state.byEnv[env.id];
     /* Measuring today is a real run of the environment, recorded first. */
     if (today) commit({ type: "recordRun", envId: env.id, run: today });
@@ -59,7 +59,7 @@ export default function NewImprovement({ open, onClose }) {
       limits, budget, regressionEnvIds: envIds, lineage,
       /* Measuring today is spent before the search: inside the budget and the Cost. */
       spentFirst: today ? todaySpend(today, env.surface) : 0,
-      extra: { ...(name && { name }), ...(model && { model }), ...(writerModel && { writerModel }) },
+      extra: { ...(name && { name }), ...(model && { model }), ...(writerModel && { writerModel }), ...(depth && { fixDepth: depth, suggestChosen: true }) },
     });
     commit({ type: "patchEnvState", envId: env.id, patch: { optimizations: [...(es.optimizations || []), record] } });
     close();

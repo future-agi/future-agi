@@ -14,6 +14,7 @@ import {
   ListItemText,
   Tab,
   Tabs,
+  TextField,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
@@ -235,7 +236,10 @@ export default function DiagnosisPane({
   onOpenPrevious,
   onHandToAgent,
   picked = null,
+  onEditChange = null,
 }) {
+  /* Editing a proposed change's wording before the search: one at a time. */
+  const [editing, setEditing] = useState(null);
   /* First open of this runId: play the analyzer animation. Every
      subsequent open in this session: skip straight to the results. */
   const [phase, setPhase] = useState(() =>
@@ -1212,6 +1216,19 @@ export default function DiagnosisPane({
                             sx={{ typography: "s2", fontWeight: 600 }}
                           >
                             {p.title}
+                            {p.edited && (
+                              <Box
+                                component="span"
+                                sx={{
+                                  typography: "s3",
+                                  fontWeight: 500,
+                                  color: "text.tertiary",
+                                  ml: 1,
+                                }}
+                              >
+                                Edited
+                              </Box>
+                            )}
                           </Typography>
                           <Typography
                             sx={{
@@ -1282,6 +1299,36 @@ export default function DiagnosisPane({
                                 View affected calls
                               </Button>
                             )}
+                            {/* Your wording, tried by the search as written. */}
+                            {!running &&
+                              onEditChange &&
+                              p.diff.some((d) => d.type === "add") && (
+                                <Button
+                                  size="small"
+                                  variant="outlined"
+                                  onClick={() =>
+                                    setEditing({
+                                      id: p.id,
+                                      text: p.diff
+                                        .filter((d) => d.type === "add")
+                                        .map((d) => d.text)
+                                        .join("\n"),
+                                    })
+                                  }
+                                  startIcon={
+                                    <Iconify
+                                      icon="solar:pen-linear"
+                                      width={14}
+                                    />
+                                  }
+                                  sx={{
+                                    color: "text.primary",
+                                    borderColor: "divider",
+                                  }}
+                                >
+                                  Edit
+                                </Button>
+                              )}
                             {/* This proposal alone, for a coding agent. */}
                             {!running && (
                               <CopyBriefButton
@@ -1292,55 +1339,135 @@ export default function DiagnosisPane({
                               />
                             )}
                           </Stack>
-                          <Stack spacing={0.375} sx={{ mt: 1.125 }}>
-                            {p.diff.map((d) => (
-                              <Stack
-                                key={d.text}
-                                direction="row"
-                                spacing={0.875}
-                                sx={{
-                                  px: 1.125,
-                                  py: 0.75,
-                                  borderRadius: "4px",
-                                  bgcolor:
-                                    d.type === "add"
-                                      ? "status.success.bg"
-                                      : "status.danger.bg",
+                          {editing?.id === p.id ? (
+                            <Box sx={{ mt: 1.125 }}>
+                              <TextField
+                                multiline
+                                minRows={2}
+                                fullWidth
+                                size="small"
+                                autoFocus
+                                value={editing.text}
+                                onChange={(e) =>
+                                  setEditing({
+                                    ...editing,
+                                    text: e.target.value,
+                                  })
+                                }
+                                inputProps={{
+                                  "aria-label": `Wording for ${p.title}`,
                                 }}
+                                sx={{
+                                  "& textarea": {
+                                    typography: "s3",
+                                    fontFamily:
+                                      "ui-monospace, Menlo, monospace",
+                                  },
+                                }}
+                              />
+                              <Stack
+                                direction="row"
+                                alignItems="center"
+                                spacing={1}
+                                sx={{ mt: 0.75 }}
                               >
                                 <Typography
                                   sx={{
                                     typography: "s3",
-                                    fontWeight: 600,
-                                    color:
-                                      d.type === "add"
-                                        ? "status.success.fg"
-                                        : "status.danger.fg",
-                                    flexShrink: 0,
+                                    color: "text.tertiary",
+                                    flex: 1,
                                   }}
                                 >
-                                  {d.type === "add" ? "+" : "−"}
+                                  One line per added line. The search tries this
+                                  wording as written.
                                 </Typography>
-                                <Typography
-                                  sx={{
-                                    typography: "s3",
-                                    fontFamily:
-                                      "ui-monospace, Menlo, monospace",
-                                    color:
-                                      d.type === "add"
-                                        ? "text.primary"
-                                        : "text.disabled",
-                                    textDecoration:
-                                      d.type === "add"
-                                        ? "none"
-                                        : "line-through",
+                                {p.edited && (
+                                  <Button
+                                    size="small"
+                                    onClick={() => {
+                                      onEditChange(p.id, null);
+                                      setEditing(null);
+                                    }}
+                                    sx={{ color: "text.secondary" }}
+                                  >
+                                    Undo edit
+                                  </Button>
+                                )}
+                                <Button
+                                  size="small"
+                                  onClick={() => setEditing(null)}
+                                  sx={{ color: "text.secondary" }}
+                                >
+                                  Cancel
+                                </Button>
+                                <Button
+                                  size="small"
+                                  variant="contained"
+                                  color="primary"
+                                  disabled={!editing.text.trim()}
+                                  onClick={() => {
+                                    onEditChange(
+                                      p.id,
+                                      editing.text.split("\n"),
+                                    );
+                                    setEditing(null);
                                   }}
                                 >
-                                  {d.text}
-                                </Typography>
+                                  Save
+                                </Button>
                               </Stack>
-                            ))}
-                          </Stack>
+                            </Box>
+                          ) : (
+                            <Stack spacing={0.375} sx={{ mt: 1.125 }}>
+                              {p.diff.map((d) => (
+                                <Stack
+                                  key={d.text}
+                                  direction="row"
+                                  spacing={0.875}
+                                  sx={{
+                                    px: 1.125,
+                                    py: 0.75,
+                                    borderRadius: "4px",
+                                    bgcolor:
+                                      d.type === "add"
+                                        ? "status.success.bg"
+                                        : "status.danger.bg",
+                                  }}
+                                >
+                                  <Typography
+                                    sx={{
+                                      typography: "s3",
+                                      fontWeight: 600,
+                                      color:
+                                        d.type === "add"
+                                          ? "status.success.fg"
+                                          : "status.danger.fg",
+                                      flexShrink: 0,
+                                    }}
+                                  >
+                                    {d.type === "add" ? "+" : "−"}
+                                  </Typography>
+                                  <Typography
+                                    sx={{
+                                      typography: "s3",
+                                      fontFamily:
+                                        "ui-monospace, Menlo, monospace",
+                                      color:
+                                        d.type === "add"
+                                          ? "text.primary"
+                                          : "text.disabled",
+                                      textDecoration:
+                                        d.type === "add"
+                                          ? "none"
+                                          : "line-through",
+                                    }}
+                                  >
+                                    {d.text}
+                                  </Typography>
+                                </Stack>
+                              ))}
+                            </Stack>
+                          )}
                           <ScopeLine
                             scope={scope}
                             available={available[scope.surface]}
@@ -1456,6 +1583,8 @@ DiagnosisPane.propTypes = {
   verdict: PropTypes.string,
   /* Debug selected: { count, leftOut }. */
   picked: PropTypes.object,
+  /* (proposalId, lines | null) — a person's wording for a change. */
+  onEditChange: PropTypes.func,
   applied: PropTypes.object,
   setApplied: PropTypes.func,
   current: PropTypes.number,

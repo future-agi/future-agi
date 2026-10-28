@@ -17,7 +17,7 @@ import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import {
   PYTHON_DEFINE,
-  pythonTrain,
+  trainCmd,
   serveCmd,
   INSTALL_CMD,
   MCP_ADD_CMD,
@@ -130,12 +130,13 @@ export default function DeveloperPage() {
           <CodeBlock code={INSTALL_CMD} />
           <Note>
             {lang === "python" ? (
-              "Installs the Python SDK and the fai CLI. Check it with fai whoami."
+              "Installs agent-learning-kit: the Python SDK and the agent-learn CLI. Check it with agent-learn auth status."
             ) : (
               <>
-                The TypeScript SDK is coming soon. Until then, test a TypeScript
-                agent with the fai CLI pointed at its URL: fai sim run
-                &lt;environment&gt; --agent-url http://localhost:3000/chat
+                The TypeScript SDK is coming soon. Until then, register a
+                TypeScript agent by its URL: agent-learn agent add my-agent
+                --type http --url http://localhost:3000/chat, then agent-learn
+                run --env &lt;environment&gt; --agent my-agent
               </>
             )}
           </Note>
@@ -143,7 +144,7 @@ export default function DeveloperPage() {
 
         <Section
           title="CI"
-          description="Run an environment on every pull request and fail the check when the pass rate drops."
+          description="Run an environment on every pull request and fail the check on a regression against the baseline."
         >
           <CodeBlock
             code={`# .github/workflows/simulate.yml
@@ -154,8 +155,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: pip install futureagi
-      - run: fai sim run <environment-id> --repeats 3 --fail-under 0.9
+      - run: pip install agent-learning-kit
+      - run: |
+          agent-learn run --env <environment-id> --mode hosted --group must-pass --budget 100 --budget-unit credits --non-interactive --yes --output json > run.json
+          agent-learn compare <baseline-run> $(jq -r .run_id run.json) --scope identical --fail-on-regression
+          agent-learn export $(jq -r .run_id run.json) --format junit --destination ./results.xml
         env:
           FI_API_KEY: \${{ secrets.FI_API_KEY }}
           FI_SECRET_KEY: \${{ secrets.FI_SECRET_KEY }}`}
@@ -163,7 +167,9 @@ jobs:
           <Note>
             Add the two keys above as repository secrets. Copy an
             environment&apos;s ID, or the whole command, from its Code button.
-            Runs from CI show their commit and pull request on the run page.
+            Runs from CI show their commit and pull request on the run page. It
+            exits 6 on a real regression and 7 when the two runs can&apos;t be
+            compared.
           </Note>
         </Section>
 
@@ -201,15 +207,15 @@ jobs:
 
         <Section
           title="Train (RL)"
-          description="Every environment is also an RL environment: reset, step, and a reward from its verifiers — the same evals that grade a run."
+          description="Train a model on an environment, with its evals as the reward, then check it on held-out cases it never saw."
         >
-          <CodeBlock code={pythonTrain()} />
+          <CodeBlock code={trainCmd()} />
           <Box sx={{ mt: 1.5 }}>
             <CodeBlock code={serveCmd()} />
           </Box>
           <Note>
-            fai env serve runs copies for a trainer on another machine. Works
-            with OpenEnv, TRL, verifiers and gym-style loops.
+            The first trainer is TRL. agent-learn env pull downloads a copy for
+            a trainer on another machine.
           </Note>
         </Section>
 

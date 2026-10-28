@@ -523,28 +523,26 @@ function LocalRun({
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
-  /* A code agent's version is a commit — named and flagged as one. */
+  /* A code agent's version is a commit — named and pinned as one. */
   const shown = versionNameOf(agent, choice.version);
-  const versionFlag = shown.ref
-    ? `--ref ${shown.ref.branch}@${shown.ref.sha}`
-    : `--version ${choice.version}`;
+  const agentRef = `"${agent.name}@${shown.ref ? shown.ref.sha : choice.version}"`;
   const steps = [
     {
       title: "Install the CLI",
       body: "Once per machine.",
-      cmd: "pip install futureagi",
+      cmd: "pip install agent-learning-kit && agent-learn auth login",
     },
     {
       title: "Pull this world for your agent",
       body: `This world's tables, tools and rules, and ${agent.name} at ${shown.main}.`,
-      hint: `These are the defaults Open the build here uses — ${shown.main} and ${choice.count} scenarios. For another version or size, build it In Future AGI.`,
-      cmd: `fai env init ${slug} --world ${template.id} --agent "${agent.name}" ${versionFlag} --scenarios ${choice.count}`,
+      hint: `The world's own scenarios, for ${shown.main}. For another version or size, build it In Future AGI.`,
+      cmd: `agent-learn env adopt ${template.id} --agent ${agentRef} --name ${slug}\nagent-learn env pull ${slug}`,
     },
     {
-      title: "Build it on your machine",
-      body: "Builds the world locally and opens a secure tunnel back to this workspace.",
-      hint: "Nothing in the world leaves your machine — the tunnel carries results, traces and scores.",
-      cmd: `fai env up ${slug}`,
+      title: "Run it on your machine",
+      body: "Runs your agent and this world locally; results stay on your machine until you export them.",
+      hint: "--mode hybrid keeps your agent local and runs the world here instead.",
+      cmd: `agent-learn run --env ${slug} --mode local --attempts 3 --budget 100 --budget-unit credits`,
       onCopy: onRanUp,
     },
   ];

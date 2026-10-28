@@ -198,7 +198,7 @@ const KIND_COPY = {
 
 /* Built to run on the person's machine: the CLI serves the world there. */
 const LOCAL_SEALED_LINE =
-  "Sealed — the agent's tool calls are answered by this environment's world, running on your machine through the CLI (fai env up). Sub-goals are checked against the world's end state and the agent's tool calls.";
+  "Sealed — the agent's tool calls are answered by this environment's world, running on your machine through the CLI (agent-learn run --mode local). Sub-goals are checked against the world's end state and the agent's tool calls.";
 const runsLocally = (env) =>
   env?.runsOn === "local" || env?.builtFrom?.worldSource?.runsOn === "local";
 

@@ -51,6 +51,7 @@ import {
   stopImprovement,
 } from "../_mock/optimizationRuns";
 import CostPartsTable from "./CostPartsTable";
+import { downloadExperiment } from "../_mock/experimentExport";
 import RaiseLimitBar from "./RaiseLimitBar";
 import { creditsLabel } from "../_mock/metering";
 import { RATE_PLAN } from "../_mock/rates";
@@ -237,6 +238,27 @@ export default function ImprovementRunsView({
   );
   /* Behind and not re-checked: Ship waits for the re-check. */
   const holdShip = !!behind && !behind.recheck;
+  /* A repo agent's patch that conflicts with newer commits: a person reviews
+     the rebase before it's re-checked — nothing stale is applied. */
+  const rebaseFirst = !!behind?.conflict && !behind.conflict.resolved;
+  const [rebaseOpen, setRebaseOpen] = useState(false);
+  const acceptRebase = () => {
+    setRebaseOpen(false);
+    patch({
+      optimizations: (envState?.optimizations || []).map((o) =>
+        o.id === record.id
+          ? {
+              ...o,
+              rebase: {
+                onto: behind.prodLabel,
+                path: behind.conflict.path,
+                at: new Date().toISOString(),
+              },
+            }
+          : o,
+      ),
+    });
+  };
   const recheckRun = behind?.recheck
     ? (envState?.runs || []).find((r) => r.id === behind.recheck.runId) || null
     : null;
@@ -544,6 +566,25 @@ export default function ImprovementRunsView({
               </Dialog>
             </>
           )}
+          {/* The whole experiment as a file — baseline, scenarios, changes,
+              trials, result and spend; no credentials. */}
+          {!running && (
+            <Tooltip arrow title="Export experiment">
+              <IconButton
+                size="small"
+                aria-label="Export experiment"
+                onClick={() => downloadExperiment(record, env)}
+                sx={{
+                  border: "1px solid",
+                  borderColor: "divider",
+                  borderRadius: 1,
+                  flexShrink: 0,
+                }}
+              >
+                <Iconify icon="solar:download-minimalistic-linear" width={16} />
+              </IconButton>
+            </Tooltip>
+          )}
           {!running && (
             <Button
               size="small"
@@ -596,6 +637,17 @@ export default function ImprovementRunsView({
                   {`Verify ${kept.name}`}
                 </Button>
               </Tooltip>
+            ) : onShip && holdShip && rebaseFirst && patch ? (
+              <Button
+                size="small"
+                variant="contained"
+                color="primary"
+                onClick={() => setRebaseOpen(true)}
+                startIcon={<Iconify icon="solar:git-pull-request-linear" width={14} />}
+                sx={{ flexShrink: 0 }}
+              >
+                Review rebase
+              </Button>
             ) : onShip && holdShip && onRecheck ? (
               /* Its proof is on an older version: re-checked first. */
               <Button
@@ -624,6 +676,46 @@ export default function ImprovementRunsView({
             ) : null)}
         </Stack>
       </Box>
+
+      {rebaseFirst && (
+        <Dialog
+          open={rebaseOpen}
+          onClose={() => setRebaseOpen(false)}
+          maxWidth="sm"
+          fullWidth
+        >
+          <DialogTitle sx={{ typography: "s1", fontWeight: 600 }}>
+            {`Rebase onto ${behind.prod}`}
+          </DialogTitle>
+          <DialogContent>
+            <Typography sx={{ typography: "s2" }}>
+              {`${behind.since} commit${behind.since === 1 ? "" : "s"} on main changed ${behind.conflict.path} after this patch was written, in the lines it edits.`}
+            </Typography>
+            <Typography
+              sx={{ typography: "s2", color: "text.secondary", mt: 1 }}
+            >
+              {`The rebase keeps main's changes and puts this fix's lines after them. Accept it to re-check the rebased patch on ${behind.prod} — the proof on ${behind.base} doesn't carry over.`}
+            </Typography>
+          </DialogContent>
+          <DialogActions sx={{ px: 3, pb: 2.5 }}>
+            <Button
+              size="small"
+              onClick={() => setRebaseOpen(false)}
+              sx={{ color: "text.secondary" }}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="small"
+              variant="contained"
+              color="primary"
+              onClick={acceptRebase}
+            >
+              Accept rebase
+            </Button>
+          </DialogActions>
+        </Dialog>
+      )}
 
       {/* Fell behind production while it waited — re-check before shipping. */}
       {behind &&
@@ -658,7 +750,11 @@ export default function ImprovementRunsView({
               </Box>
               {behind.recheck
                 ? ` Re-checked on ${behind.prod}${recheckRun ? ` in Run ${recheckRun.ordinal}${recheckRun.finishedAt ? "" : " (still running)"}` : ""} — compare it with its proof on ${behind.base} before it ${behind.git ? "is merged" : "ships"}.`
-                : ` Its proof is on ${behind.base}, so it's re-checked on ${behind.prod} before it ${behind.git ? "is merged" : "ships"}.`}
+                : rebaseFirst
+                  ? ` Its patch conflicts with those commits in ${behind.conflict.path}. Review the rebase onto ${behind.prod} first — nothing is applied until you accept it — then it's re-checked there before it is merged.`
+                  : behind.git
+                    ? ` Its patch is rebased onto ${behind.prod}${behind.conflict ? ` (${behind.conflict.path} merged by you)` : ""} and re-checked there before it is merged — its proof is on ${behind.base}.`
+                    : ` Its proof is on ${behind.base}, so it's re-checked on ${behind.prod} before it ships.`}
             </Typography>
           </Stack>
         )}

@@ -34,6 +34,13 @@ import OptimizationRunView from "./OptimizationRunView";
 import { useSimStore } from "../../store";
 import { improvementPath } from "../../improvements/improvementNav";
 
+/* A change's diff with its added lines replaced by a person's wording; what
+   it removes stays. */
+const editedDiff = (diff = [], lines = []) => [
+  ...diff.filter((d) => d.type !== "add"),
+  ...lines.filter((t) => t.trim()).map((text) => ({ type: "add", text })),
+];
+
 /**
  * Debug failures → Improve.
  *
@@ -90,9 +97,20 @@ export default function FixMyAgentDrawer({
     () => omegaReport({ env, summary: { tasks }, baseline: null }),
     [env, tasks],
   );
+  /* A person's wording for a proposed change, before the search runs:
+     { [proposalId]: ["line", …] } — it replaces the change's added lines,
+     here and in the search's pool, so the trials try that wording. */
+  const [edits, setEdits] = useState({});
+  useEffect(() => {
+    if (open) setEdits({});
+  }, [open]);
+  const withEdits = (p) =>
+    edits[p.id]
+      ? { ...p, diff: editedDiff(p.diff, edits[p.id]), edited: true }
+      : p;
   const proposals = useMemo(
-    () => proposalsFor(env, failing, measured),
-    [env, failing, measured],
+    () => proposalsFor(env, failing, measured).map(withEdits),
+    [env, failing, measured, edits], // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   /*
@@ -199,6 +217,7 @@ export default function FixMyAgentDrawer({
     optimizerId,
     base,
     today,
+    depth,
   }) => {
     /* An outside change re-read at Start is measured first, on that version
        — recorded as a run, and part of what the improvement spends. */
@@ -238,6 +257,8 @@ export default function FixMyAgentDrawer({
         ...(model && { model }),
         ...(writerModel && { writerModel }),
         includedIds: included.map((p) => p.id),
+        /* Suggest only, chosen in the setup. */
+        ...(depth && { fixDepth: depth, suggestChosen: true }),
         /* The diagnosis this attempt was made against, kept with it — six
            weeks on, "why did we try that" is only answerable if the evidence
            travelled with the attempt. */
@@ -251,10 +272,28 @@ export default function FixMyAgentDrawer({
           })),
       },
     });
+    /* Edited changes go into the search as written. */
+    const edited = Object.keys(edits).length
+      ? (() => {
+          const pool = (r) =>
+            r && { ...r, pool: (r.pool || []).map(withEdits) };
+          return {
+            ...record,
+            proposalEdits: edits,
+            ...(record.result && { result: pool(record.result) }),
+            ...(record.pendingResult && {
+              pendingResult: pool(record.pendingResult),
+            }),
+            ...(record.continueResult && {
+              continueResult: pool(record.continueResult),
+            }),
+          };
+        })()
+      : record;
     commit({
       type: "patchEnvState",
       envId: env.id,
-      patch: { optimizations: [...records, record] },
+      patch: { optimizations: [...records, edited] },
     });
     setSetupOpen(false);
     const from = (envState?.runs || []).find((r) => r.id === sourceRunId);
@@ -493,6 +532,14 @@ export default function FixMyAgentDrawer({
         <DiagnosisPane
           tasks={tasks}
           picked={picked}
+          onEditChange={(id, lines) =>
+            setEdits((prev) => {
+              const next = { ...prev };
+              if (lines) next[id] = lines;
+              else delete next[id];
+              return next;
+            })
+          }
           report={report}
           trace={trace}
           proposals={proposals}
