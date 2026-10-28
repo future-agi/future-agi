@@ -2,6 +2,7 @@ package logging
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -158,7 +159,8 @@ func buildRecord(rc *models.RequestContext, cfg config.RequestLoggingConfig) Tra
 	// Determine status code from errors.
 	if len(rc.Errors) > 0 {
 		lastErr := rc.Errors[len(rc.Errors)-1]
-		if apiErr, ok := lastErr.(*models.APIError); ok {
+		var apiErr *models.APIError
+		if errors.As(lastErr, &apiErr) {
 			rec.StatusCode = apiErr.Status
 			rec.ErrorMessage = apiErr.Message
 			rec.ErrorCode = apiErr.Code

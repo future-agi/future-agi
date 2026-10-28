@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -1023,6 +1024,18 @@ func TestBuildRecord_DecisionErrorTextNotLogged(t *testing.T) {
 	rc := decisionRC(t)
 	rc.Response, rc.DecisionResponse = nil, nil
 	rc.Errors = []error{&models.APIError{Status: 422, Code: "upstream_rejected", Message: "vendor says private-state is bad"}}
+	rec := buildRecord(rc, enabledCfg())
+	if rec.StatusCode != 422 || rec.ErrorCode != "upstream_rejected" || strings.Contains(rec.ErrorMessage, "private") {
+		t.Fatalf("status = %d code = %q message = %q", rec.StatusCode, rec.ErrorCode, rec.ErrorMessage)
+	}
+}
+
+// A wrapped decision error is still recorded as its status, not the vendor's text.
+func TestBuildRecord_WrappedDecisionErrorTextNotLogged(t *testing.T) {
+	rc := decisionRC(t)
+	rc.Response, rc.DecisionResponse = nil, nil
+	apiErr := &models.APIError{Status: 422, Code: "upstream_rejected", Message: "vendor says private-state is bad"}
+	rc.Errors = []error{fmt.Errorf("decision call: %w", apiErr)}
 	rec := buildRecord(rc, enabledCfg())
 	if rec.StatusCode != 422 || rec.ErrorCode != "upstream_rejected" || strings.Contains(rec.ErrorMessage, "private") {
 		t.Fatalf("status = %d code = %q message = %q", rec.StatusCode, rec.ErrorCode, rec.ErrorMessage)

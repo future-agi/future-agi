@@ -2916,7 +2916,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
 
   // Instant eval and Insights ask about exactly the traces the grid shows: its
   // date window, filters, chips and toggles, as its list request sends them,
-  // and open with the tab's date preset.
+  // and open with the tab's date preset. "Show simulated calls" isn't carried:
+  // it exists only on simulator projects, where neither is offered.
   const traceViewSeed = useMemo(
     () =>
       viewSeed({
