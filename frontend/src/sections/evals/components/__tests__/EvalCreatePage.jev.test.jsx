@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, userEvent, waitFor } from "src/utils/test-utils";
 import EvalCreatePage from "../EvalCreatePage";
 import axios from "src/utils/axios";
+import { JEV_RUBRIC_ERROR } from "../../utils/jevMapping";
 
 const mocks = vi.hoisted(() => ({
   draft: null,
@@ -267,6 +268,62 @@ describe("EvalCreatePage with a Jev model", () => {
         ),
       { timeout: 4000 },
     );
+  });
+
+  it("doesn't flag or autosave a Score before its levels are written", async () => {
+    // The server refuses a Score without levels; that refusal was a toast.
+    mocks.mutate.mockImplementation((payload, options) => {
+      if (
+        payload.output_type === "percentage" &&
+        !payload.jev_mapping.score.levels.length
+      )
+        options?.onError?.(
+          new Error(
+            "Jev score requires 2 to 10 unique non-empty rubric levels.",
+          ),
+        );
+    });
+    render(<EvalCreatePage />);
+    await screen.findByDisplayValue("Jev latest");
+    mocks.mutate.mockClear();
+    await userEvent.click(screen.getByLabelText("Scoring"));
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Add level" }),
+    );
+    await userEvent.type(screen.getByLabelText("Level 0"), "Unresolved");
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    expect(screen.queryByText(JEV_RUBRIC_ERROR)).toBeNull();
+    expect(screen.getByText(/1 \/ 10 levels · minimum 2/)).toBeInTheDocument();
+    expect(
+      mocks.mutate.mock.calls.filter(
+        ([payload]) => payload.output_type === "percentage",
+      ),
+    ).toEqual([]);
+    expect(mocks.snack).not.toHaveBeenCalled();
+    // A second level makes it runnable: now it saves.
+    await userEvent.click(screen.getByRole("button", { name: "Add level" }));
+    await userEvent.type(screen.getByLabelText("Level 1"), "Resolved");
+    await waitFor(
+      () =>
+        expect(lastPayload()?.jev_mapping?.score).toEqual({
+          levels: ["Unresolved", "Resolved"],
+        }),
+      { timeout: 4000 },
+    );
+    expect(mocks.snack).not.toHaveBeenCalled();
+  });
+
+  it("flags a Score whose levels repeat", async () => {
+    render(<EvalCreatePage />);
+    await screen.findByDisplayValue("Jev latest");
+    await userEvent.click(screen.getByLabelText("Scoring"));
+    for (const index of [0, 1]) {
+      await userEvent.click(
+        await screen.findByRole("button", { name: "Add level" }),
+      );
+      await userEvent.type(screen.getByLabelText(`Level ${index}`), "Same");
+    }
+    expect(await screen.findByText(JEV_RUBRIC_ERROR)).toBeInTheDocument();
   });
 
   it("autosaves a reopened draft's choices in the authored order", async () => {

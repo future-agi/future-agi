@@ -10,6 +10,7 @@ import {
 } from "@mui/material";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
+import { JEV_RUBRIC_ERROR } from "../utils/jevMapping";
 
 export default function JevOutputConfig({
   outputType,
@@ -22,6 +23,15 @@ export default function JevOutputConfig({
   locked,
 }) {
   const levels = mapping.score?.levels || [];
+  // A rubric still being written (under two levels, or one left blank) is not
+  // a mistake yet: the count below says what is missing, and Save and Test
+  // say why they are off. Only a rubric more typing can't fix is flagged.
+  const rubricUnfinished =
+    outputType === "percentage" &&
+    (levels.length < 2 || levels.some((level) => !String(level).trim()));
+  const shownErrors = rubricUnfinished
+    ? errors.filter((error) => error !== JEV_RUBRIC_ERROR)
+    : errors;
   const setLevels = (next) => onChange({ ...mapping, score: { levels: next } });
   const moveLevel = (index, direction) => {
     const next = [...levels];
@@ -42,7 +52,7 @@ export default function JevOutputConfig({
           being checked. Your saved selection is kept; testing is disabled.
         </Alert>
       )}
-      {errors.map((error) => (
+      {shownErrors.map((error) => (
         <Alert key={error} severity="error">
           {error}
         </Alert>

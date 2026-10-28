@@ -421,6 +421,11 @@ const EvalCreatePage = () => {
         messages: evalType === "llm" ? messages : [],
       })
     : [];
+  // The server refuses a Jev setup these rules reject (a Score with no levels
+  // yet, say), so autosave waits until it is runnable; the page already says
+  // what is missing.
+  const jevUnrunnable =
+    isJevModel && evalType !== "code" && jevErrors.length > 0;
 
   const buildUpdatePayload = useCallback(() => {
     const dataInjection = buildDataInjection(contextOptions);
@@ -503,10 +508,11 @@ const EvalCreatePage = () => {
       return;
     }
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    if (jevUnrunnable) return;
     autoSaveTimer.current = setTimeout(() => {
       updateDraft.mutate(buildUpdatePayload(), {
-        // A refused autosave (a Score with no levels, say) used to leave
-        // later edits silently unsaved. Say why, once per reason.
+        // A refused autosave used to leave later edits silently unsaved.
+        // Say why, once per reason.
         onError: (error) => {
           const message = getSafeActionErrorMessage(
             error,
@@ -524,7 +530,7 @@ const EvalCreatePage = () => {
     return () => {
       if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     };
-  }, [draftId, buildUpdatePayload]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [draftId, buildUpdatePayload, jevUnrunnable]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Draft cleanup: drafts with visible_ui=False are hidden from the list.
   // No auto-delete — stale drafts can be cleaned up by a backend cron.

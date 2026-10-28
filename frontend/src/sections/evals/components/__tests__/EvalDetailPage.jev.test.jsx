@@ -335,25 +335,29 @@ describe("Jev editor save and test contract", () => {
   });
 
   it.each([
-    ["one", ["Low"]],
-    ["eleven", Array.from({ length: 11 }, (_, i) => `Level ${i}`)],
-    ["duplicate", ["Low", "Low"]],
-    ["blank", ["Low", "  "]],
-  ])("blocks Save and Test for %s rubric levels", async (_, levels) => {
-    mocks.data.output_type = "percentage";
-    mocks.data.config.jev_mapping = mapping("score", { score: { levels } });
-    render(<EvalDetailPage />);
-    await edit();
-    expect(
-      screen.getByText("Jev rubric score requires 2 to 10 ordered levels"),
-    ).toBeInTheDocument();
-    expect(save()).toBeDisabled();
-    expect(test()).toBeDisabled();
-    fireEvent.click(save());
-    fireEvent.click(test());
-    expect(mocks.update).not.toHaveBeenCalled();
-    expect(mocks.run).not.toHaveBeenCalled();
-  });
+    ["one", ["Low"], false],
+    ["eleven", Array.from({ length: 11 }, (_, i) => `Level ${i}`), true],
+    ["duplicate", ["Low", "Low"], true],
+    ["blank", ["Low", "  "], false],
+  ])(
+    "blocks Save and Test for %s rubric levels",
+    async (_, levels, flagged) => {
+      mocks.data.output_type = "percentage";
+      mocks.data.config.jev_mapping = mapping("score", { score: { levels } });
+      render(<EvalDetailPage />);
+      await edit();
+      // A rubric still being written isn't flagged; its count says what's missing.
+      expect(
+        screen.queryByText("Jev rubric score requires 2 to 10 ordered levels"),
+      ).toEqual(flagged ? expect.anything() : null);
+      expect(save()).toBeDisabled();
+      expect(test()).toBeDisabled();
+      fireEvent.click(save());
+      fireEvent.click(test());
+      expect(mocks.update).not.toHaveBeenCalled();
+      expect(mocks.run).not.toHaveBeenCalled();
+    },
+  );
 
   it("accepts two levels and saves edits and reordering in order", async () => {
     mocks.data.output_type = "percentage";
