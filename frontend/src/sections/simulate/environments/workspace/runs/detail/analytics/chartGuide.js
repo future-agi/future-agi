@@ -17,6 +17,10 @@ export const CHART_GUIDE = {
     "Latency broken down by the voice-pipeline segments callers feel: model thinking, text-to-speech, and speech-to-text. Any red p90 means callers heard silence past your target. Time to first word is not recorded yet.",
   pipeline_cost:
     "Per-call spend, split by voice-pipeline stage. If LLM towers over everything, you're overspending on model tokens (shorter prompt, cheaper model, cache). If TTS or STT dominate, look at voice provider tier. Transport bloat usually means calls staying open too long.",
+  call_duration:
+    "Whole-call length of each measured call in the order it ran, mostly turn count. For waiting time, see Agent response time.",
+  duration_percentiles:
+    "Every timed call's duration, sorted: read across to a percentile, up to the length. p50 is typical, p90 is the longest 10% of calls.",
   task_latency:
     "Each call's average agent response time in the order it ran. Random spikes point at flaky infrastructure; a steady climb means the agent is doing more of something over time (retries, context growth); a step change usually means a new tool or model kicked in mid-run.",
   percentiles:
@@ -25,6 +29,8 @@ export const CHART_GUIDE = {
     "Each call's average time for the agent to start replying after the caller stops talking. Red buckets are at or over the target (1.5 s for voice, 3 s for chat), where callers start to notice silence. A second hump on the right usually means one tool or prompt path is consistently slow.",
   distribution:
     "One row per metric with the four numbers that describe its shape. p90 is the number to defend in a review; the max tells you how bad your worst tail actually got. A big gap between p50 and p99 means a few outliers are dragging the run and are worth investigating first.",
+  attribution:
+    "Which layer to blame first for each failure: the agent, a tool, the environment or the connection.",
   risk: "Scenarios ranked by pass rate, weakest first, with the pass/fail/errored split for each. Scenarios with fewer than 3 evaluated calls are ranked last because their rate is too noisy to act on.",
   tools_volume:
     "How many times the agent called each tool across the run. It shows which tools carry the conversation: a rarely-called tool may be one the agent doesn't know when to use, and a heavily-used one is where a single failure hurts most. Fixes here usually belong to the infra team, not the prompt team.",

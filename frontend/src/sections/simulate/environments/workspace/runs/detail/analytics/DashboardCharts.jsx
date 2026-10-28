@@ -1,13 +1,8 @@
 import PropTypes from "prop-types";
-import {
-  Box,
-  Button,
-  IconButton,
-  Stack,
-  Tooltip as Help,
-  Typography,
-} from "@mui/material";
+import { Box, Button, IconButton, Stack, Typography } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
+import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import {
   Bar,
   BarChart,
@@ -63,52 +58,66 @@ export const format = (value, unit = "number") => {
   return `${number(value)}${{ ms: "ms", seconds: "s", percent: "%" }[unit] || ""}`;
 };
 
-export function Widget({ id, title, subtitle, help, children, wide = false }) {
+// The card every analytics widget sits in. `action` sits after the title (a
+// soon chip); the right edge stays clear for the layout's actions menu.
+export function Widget({ id, title, subtitle, help, action, children }) {
   return (
     <Box
       component="section"
       aria-label={title}
       data-analytics-widget={id}
+      className="analytics-panel"
       sx={{
         minWidth: 0,
+        display: "flex",
+        flexDirection: "column",
         border: "1px solid",
         borderColor: "divider",
         bgcolor: "background.paper",
-        borderRadius: 1.5,
+        borderRadius: 1,
         overflow: "hidden",
-        gridColumn: wide ? "1 / -1" : undefined,
         breakInside: "avoid",
       }}
     >
-      <Stack
-        direction="row"
-        justifyContent="space-between"
-        alignItems="flex-start"
-        sx={{ px: 2, pt: 1.5, pb: 1 }}
-      >
-        <Box>
-          <Typography component="h3" sx={{ fontSize: 13, fontWeight: 600 }}>
+      <Box sx={{ pl: 2.5, pr: 6, pt: 2, pb: 1.5 }}>
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={0.75}
+          flexWrap="wrap"
+          useFlexGap
+        >
+          <Typography
+            component="h3"
+            typography="s1"
+            sx={{ fontWeight: 600, color: "text.primary", lineHeight: 1.3 }}
+          >
             {title}
-            {help && (
-              <Help title={help} arrow>
-                <IconButton
-                  size="small"
-                  aria-label={`About ${title}`}
-                  sx={{ ml: 0.5, fontSize: 13 }}
-                >
-                  ⓘ
-                </IconButton>
-              </Help>
-            )}
           </Typography>
-          {subtitle && (
-            <Typography sx={{ fontSize: 11, color: "text.secondary", mt: 0.4 }}>
-              {subtitle}
-            </Typography>
+          {help && (
+            <CustomTooltip show arrow size="small" placement="top" title={help}>
+              <IconButton
+                size="small"
+                aria-label={`About ${title}`}
+                className="analytics-no-print"
+                sx={{ p: 0.25, color: "text.subtitle" }}
+              >
+                <Iconify icon="solar:info-circle-linear" width={14} />
+              </IconButton>
+            </CustomTooltip>
           )}
-        </Box>
-      </Stack>
-      {children}
+          {action}
+        </Stack>
+        {subtitle && (
+          <Typography
+            typography="s2"
+            sx={{ color: "text.subtitle", mt: 0.5, lineHeight: 1.45 }}
+          >
+            {subtitle}
+          </Typography>
+        )}
+      </Box>
+      <Box sx={{ flex: 1, minHeight: 0 }}>{children}</Box>
     </Box>
   );
 }
@@ -117,8 +126,8 @@ Widget.propTypes = {
   title: PropTypes.string,
   subtitle: PropTypes.string,
   help: PropTypes.string,
+  action: PropTypes.node,
   children: PropTypes.node,
-  wide: PropTypes.bool,
 };
 export function NoMeasurement({ text = "No measurements recorded" }) {
   return (
@@ -470,6 +479,8 @@ export function TrendLine({
   valueLabel,
   percentile = false,
   bucketed = false,
+  formatValue = (value) => format(value, "ms"),
+  noun = "Call",
 }) {
   const theme = useTheme();
   if (!rows.some((row) => row[valueKey] != null)) return <NoMeasurement />;
@@ -497,17 +508,17 @@ export function TrendLine({
           <YAxis
             tick={tick}
             width={64}
-            tickFormatter={(value) => format(value, "ms")}
+            tickFormatter={formatValue}
             axisLine={false}
             tickLine={false}
           />
           <Tooltip
             {...chartTooltipProps(theme)}
-            formatter={(value) => [format(value, "ms"), valueLabel]}
+            formatter={(value) => [formatValue(value), valueLabel]}
             labelFormatter={(label) =>
               percentile
                 ? `Percentile ${label}`
-                : `${bucketed ? "Time bucket" : "Call"} ${label}`
+                : `${bucketed ? "Time bucket" : noun} ${label}`
             }
           />
           <Line
@@ -541,4 +552,6 @@ TrendLine.propTypes = {
   valueLabel: PropTypes.string.isRequired,
   percentile: PropTypes.bool,
   bucketed: PropTypes.bool,
+  formatValue: PropTypes.func,
+  noun: PropTypes.string,
 };

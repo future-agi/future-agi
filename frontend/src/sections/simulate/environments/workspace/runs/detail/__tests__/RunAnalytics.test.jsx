@@ -12,6 +12,9 @@ vi.mock("recharts", async (importOriginal) => ({
 vi.mock("src/api/simulate-environments/runAnalytics", () => ({
   useRunAnalytics: (...args) => useRunAnalytics(...args),
 }));
+vi.mock("src/api/simulate-environments/runDetail", () => ({
+  useRunDetail: () => ({ identity: null, isLoading: false }),
+}));
 
 const { default: RunAnalytics } = await import("../RunAnalytics");
 
@@ -320,7 +323,7 @@ describe("RunAnalytics", () => {
       "Drop-off",
       "Response time p95",
       "Cost / pass",
-      "CSAT satisfied",
+      "Avg CSAT Score",
       "Change vs last run",
     ]) {
       expect(screen.getByText(label)).toBeInTheDocument();
