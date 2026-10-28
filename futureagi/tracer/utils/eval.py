@@ -3170,6 +3170,35 @@ def _resolve_session_path(trace_session: TraceSession, path: str):
     return _MISSING
 
 
+def _public_fields(obj):
+    """``json.dumps`` default for a mapped value: a bare model path
+    ("traces", "spans", a trace or a span) becomes the public fields a mapping
+    could name one by one, so every evaluator receives JSON rather than a
+    Python object it cannot read."""
+    from decimal import Decimal
+
+    if isinstance(obj, (datetime, uuid.UUID)):
+        return str(obj)
+    if isinstance(obj, Decimal):
+        return float(obj)
+    fields = (
+        _SPAN_PUBLIC_FIELDS
+        if hasattr(obj, "observation_type")
+        else _TRACE_PUBLIC_FIELDS
+    )
+    if not any(hasattr(obj, field) for field in fields):
+        raise TypeError(f"{type(obj).__name__} is not a mappable value")
+    out = {"id": str(getattr(obj, "id", ""))}
+    out.update((field, getattr(obj, field, None)) for field in sorted(fields))
+    return out
+
+
+def _mapped_json(value) -> str:
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, default=_public_fields)
+
+
 def _process_trace_mapping(
     mapping: dict | None, trace: Trace, eval_template_id
 ) -> dict:
@@ -3227,7 +3256,7 @@ def _process_trace_mapping(
                 f"Required attribute '{attribute}' for key '{key}' not found "
                 f"on trace {trace.id}"
             )
-        parsed[key] = value if isinstance(value, str) else json.dumps(value)
+        parsed[key] = _mapped_json(value)
 
     return parsed
 
@@ -3555,7 +3584,7 @@ def _process_session_mapping(
                 f"Required attribute '{attribute}' for key '{key}' not found "
                 f"on session {trace_session.id}"
             )
-        parsed[key] = value if isinstance(value, str) else json.dumps(value)
+        parsed[key] = _mapped_json(value)
 
     return parsed
 
