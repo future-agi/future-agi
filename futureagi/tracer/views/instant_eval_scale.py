@@ -268,7 +268,9 @@ class InstantEvalChoiceSerializer(serializers.Serializer):
 class InstantEvalCreditCheckSerializer(serializers.Serializer):
     # Whether the chosen size (at the questions asked) can start.
     allowed = serializers.BooleanField()
-    # FREE_TIER_LIMIT, BUDGET_PAUSED, PAYMENT_REQUIRED, ... when not allowed.
+    # FREE_TIER_LIMIT, BUDGET_LIMIT, BUDGET_PAUSED, PAYMENT_REQUIRED, ...:
+    # why the chosen size can't start, else why a larger run can't (the cap
+    # ``credits_left`` is: the plan's, or a pause budget's), else null.
     error_code = serializers.CharField(allow_null=True)
     current_usage = serializers.FloatField(allow_null=True)
     limit = serializers.FloatField(allow_null=True)
@@ -527,6 +529,10 @@ CREDIT_CHECK_UNAVAILABLE = (
     "Please retry in a moment."
 )
 
+# Refusals that say what is left, so a smaller run may fit: the free tier's
+# credits, or a pause budget the run would cross.
+CAP_CODES = ("FREE_TIER_LIMIT", "BUDGET_LIMIT")
+
 
 def credit_check_unavailable(gm):
     return gm.custom_error_response(
@@ -547,7 +553,7 @@ def shown_credits_per_answer() -> float | None:
 def _credits_left(*results) -> float | None:
     """Credits left this month, from whichever refusal reported the cap."""
     for result in results:
-        if result is not None and result.error_code == "FREE_TIER_LIMIT":
+        if result is not None and result.error_code in CAP_CODES:
             return max(0.0, float(result.limit or 0) - float(result.current_usage or 0))
     return None
 
@@ -555,7 +561,7 @@ def _credits_left(*results) -> float | None:
 def _blocked(*results) -> bool:
     """Billing stops every run: a paused budget, an unpaid invoice."""
     return any(
-        result is not None and result.error_code not in ("", "FREE_TIER_LIMIT")
+        result is not None and result.error_code not in ("", *CAP_CODES)
         for result in results
     )
 
@@ -586,13 +592,18 @@ def _credit_count(credits: float) -> str:
 
 
 def _credit_message(result, credits: float, left: float | None, fits, unit) -> str:
-    if result.error_code == "FREE_TIER_LIMIT" and left is not None:
-        have = f"you have {_amount(left)}" if left >= 0.05 else "you have none"
-        message = (
-            f"This run needs about {_credit_count(credits)}; {have} left this month."
-        )
+    if result.error_code in CAP_CODES and left is not None:
+        budget = result.error_code == "BUDGET_LIMIT"
+        some = left >= 0.05
+        if budget:
+            have = f"your budget limit allows {_amount(left) if some else 'no'} more"
+        else:
+            have = f"you have {_amount(left) if some else 'none'} left"
+        message = f"This run needs about {_credit_count(credits)}; {have} this month."
         if fits:
             return f"{message} A sample of up to {fits:,} {unit} fits."
+        if budget:
+            return f"{message} Raise or remove it in billing to run this."
         return f"{message} Upgrade your plan in billing to run it."
     return CREDIT_MESSAGES.get(result.error_code) or (
         result.reason or "Your plan doesn't allow this run right now."
@@ -928,7 +939,7 @@ class InstantEvalEstimateView(InstantEvalLicenseRequired, APIView):
         reported = refused or ceiling
         credit_check = {
             "allowed": refused is None,
-            "error_code": refused.error_code if refused else None,
+            "error_code": reported.error_code if reported else None,
             "current_usage": getattr(reported, "current_usage", None),
             "limit": getattr(reported, "limit", None),
             "credits_left": left,

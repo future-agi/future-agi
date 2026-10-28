@@ -156,13 +156,14 @@ class CreditCheckUnavailable(Exception):
 
 
 def check(org, cost_usd: float):
-    """The organization's credit cap against a step costing about
-    ``cost_usd``: None when it may run (or this deployment has no billing),
-    else billing's CheckResult. Read-only. Raises CreditCheckUnavailable when
-    billing can't answer, its config included."""
+    """The organization's credit cap and pause budgets against a step
+    costing about ``cost_usd``: None when it may run (or this deployment has
+    no billing), else billing's CheckResult. Read-only. Raises
+    CreditCheckUnavailable when billing can't answer, its config included."""
     if org is None:
         return None
     try:
+        from ee.usage.services.budgets import with_pause_budgets
         from ee.usage.services.metering import check_usage
     except ImportError:
         # No billing module: this deployment doesn't bill.
@@ -171,7 +172,9 @@ def check(org, cost_usd: float):
         amount = _to_credits(cost_usd)
         if amount <= 0:
             return None
-        result = check_usage(str(org.id), EVENT, amount=amount)
+        result = with_pause_budgets(
+            str(org.id), check_usage(str(org.id), EVENT, amount=amount), amount
+        )
     except Exception as exc:
         logger.warning("insight_credit_check_unavailable", exc_info=True)
         raise CreditCheckUnavailable() from exc

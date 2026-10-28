@@ -218,19 +218,26 @@ function CreditNote({ cost, estimate, unit, onChoose }) {
     );
   const left = cost.creditsLeft || 0;
   const fits = cost.fitsSize || 0;
+  // What is left is a pause budget's, not the plan's: the budget is the
+  // user's to raise, so billing is offered alongside a sample that fits.
+  const budget = estimate.credit_check?.error_code === "BUDGET_LIMIT";
+  const some = left >= 0.05;
   return (
     <>
-      This run needs {creditWords(cost.credits)}; you have{" "}
-      {left >= 0.05 ? creditAmount(left) : "none"} left this month.
+      This run needs {creditWords(cost.credits)};{" "}
+      {budget
+        ? `your budget limit allows ${some ? creditAmount(left) : "no"} more`
+        : `you have ${some ? creditAmount(left) : "none"} left`}{" "}
+      this month.
       <Box component="span" sx={{ display: "block", mt: 0.25 }}>
-        {fits > 0 ? (
+        {fits > 0 && (
           <Link component="button" type="button" onClick={() => onChoose(fits)}>
             Read a sample of {fits.toLocaleString()} {unitMeta(unit).plural}{" "}
             instead
           </Link>
-        ) : (
-          billingLink
         )}
+        {fits > 0 && budget && " · "}
+        {(fits <= 0 || budget) && billingLink}
       </Box>
     </>
   );

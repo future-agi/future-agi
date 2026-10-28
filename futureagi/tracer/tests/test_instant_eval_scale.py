@@ -1899,6 +1899,85 @@ def test_reading_more_and_retrying_check_the_credits_left_too(
     assert control("retry_failed").status_code == status.HTTP_200_OK
 
 
+@pytest.mark.requires_ee
+@pytest.mark.django_db
+def test_a_run_that_would_cross_a_pause_budget_is_refused_before_it_starts(
+    auth_client, organization, observe_project, yes_no, fake_view, started, monkeypatch
+):
+    """A "Pause — block further usage" budget of 2 credits with 1.2 used
+    leaves 0.8. A run of 20 answers (1.2 credits) used to start and finish
+    past the budget; it is refused with what it needs and what the budget
+    allows, and the 13 answers that fit start."""
+    from ee.usage.tests.test_pause_budgets import pause_budget
+
+    pause_budget(monkeypatch, organization, 2, 1.2)
+    estimate = _estimate(auth_client, observe_project, sample_size=20)
+    check = estimate["credit_check"]
+    assert (check["allowed"], check["error_code"], check["blocked"]) == (
+        False,
+        "BUDGET_LIMIT",
+        False,
+    )
+    assert round(check["credits_left"], 2) == 0.8
+    assert estimate["credit_max_sample"] == 13
+    assert check["message"] == (
+        "This run needs about 1.2 credits; your budget limit allows 0.8 more "
+        "this month. A sample of up to 13 sessions fits."
+    )
+
+    refused = _start(auth_client, observe_project, [yes_no], sample_size=20)
+    assert refused.status_code == status.HTTP_403_FORBIDDEN
+    detail = refused.json()["result"]
+    assert (detail["error_code"], detail["sample_size"]) == ("BUDGET_LIMIT", 13)
+    assert not InstantEvalRun.objects.filter(project=observe_project).exists()
+
+    # A sample under the budget can start; reading all 40 still can't, and
+    # the estimate says which cap that is.
+    fits = _estimate(auth_client, observe_project, sample_size=10)
+    assert fits["credit_check"]["allowed"] is True
+    assert fits["credit_check"]["error_code"] == "BUDGET_LIMIT"
+    assert round(fits["credit_check"]["credits_left"], 2) == 0.8
+    by_size = {c["sample_size"]: c for c in fits["choices"]}
+    assert by_size[None]["credit_limited"] is True
+    assert (
+        _start(auth_client, observe_project, [yes_no], sample_size=13).status_code
+        == 200
+    )
+
+
+@pytest.mark.requires_ee
+@pytest.mark.django_db
+def test_reading_more_and_retrying_are_refused_at_a_reached_pause_budget(
+    auth_client, organization, observe_project, answered_run, monkeypatch
+):
+    from ee.usage.tests.test_pause_budgets import pause_budget
+
+    task, _ = answered_run
+
+    def control(action, **body):
+        return auth_client.post(
+            CONTROL,
+            {
+                "project_id": str(observe_project.id),
+                "eval_task_id": str(task.id),
+                "action": action,
+                **body,
+            },
+            format="json",
+        )
+
+    pause_budget(monkeypatch, organization, 2, 2)
+    more = control("read_more", more=5)
+    assert more.status_code == status.HTTP_403_FORBIDDEN
+    assert more.json()["result"]["error_code"] == "BUDGET_LIMIT"
+    assert more.json()["result"]["message"] == (
+        "This run needs about 0.6 credits; your budget limit allows no more "
+        "this month. Raise or remove it in billing to run this."
+    )
+    assert control("retry_failed").status_code == status.HTTP_403_FORBIDDEN
+    assert InstantEvalRun.objects.get(eval_task_id=task.id).rows_requested == 12
+
+
 def _billing(monkeypatch, *, cloud=True, markup="1.2", config=True):
     """This deployment's billing as Instant eval reads it: on Cloud or not,
     and the markup on the 0.0005 eval fee its billing config sets, or no

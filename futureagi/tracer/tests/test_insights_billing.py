@@ -292,6 +292,50 @@ class TestCreditCap:
         )
 
     @pytest.mark.django_db
+    def test_a_report_that_would_cross_a_pause_budget_is_refused_before_it_starts(
+        self, auth_client, organization, observe_project, started, monkeypatch
+    ):
+        """A pause budget is crossed only once the usage is counted, so a
+        report that started under it ran whole past it. It is refused up
+        front, with what it needs and what the budget allows."""
+        from ee.usage.tests.test_pause_budgets import pause_budget
+
+        needed = billing.credits(billing.run_cost(10))
+        # Half of what the report needs is left under the budget.
+        pause_budget(monkeypatch, organization, 100, 100 - needed / 2)
+        response = auth_client.post(
+            RUNS, new_run_body(observe_project, n=30, sample_size=10), format="json"
+        )
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        body = response.json()
+        assert body["code"] == "insights_credits"
+        detail = body["result"]
+        assert detail["error_code"] == "BUDGET_LIMIT"
+        assert detail["credits_estimate"] == needed
+        assert detail["credits_left"] == pytest.approx(needed / 2)
+        assert detail["message"] == (
+            f"This report needs about {views._credit_count(needed)}; your budget "
+            f"limit allows {views._credit_amount(needed / 2)} more this month. "
+            "Raise or remove it in billing to run this."
+        )
+        assert not InsightRun.objects.exists()
+        assert started == []
+
+    @pytest.mark.django_db
+    def test_a_report_under_a_pause_budget_starts(
+        self, auth_client, organization, observe_project, started, monkeypatch
+    ):
+        from ee.usage.tests.test_pause_budgets import pause_budget
+
+        needed = billing.credits(billing.run_cost(10))
+        pause_budget(monkeypatch, organization, 100, 100 - needed)
+        response = auth_client.post(
+            RUNS, new_run_body(observe_project, n=30, sample_size=10), format="json"
+        )
+        assert response.status_code == status.HTTP_200_OK, response.content
+        assert len(started) == 1
+
+    @pytest.mark.django_db
     def test_unpaid_invoices_refuse_with_402(
         self, auth_client, observe_project, started, refuse
     ):
@@ -438,6 +482,29 @@ def test_a_cloud_without_its_billing_config_limits_the_estimate(config_missing, 
     # Not null: a null estimate tells the page the report isn't billed.
     assert out["credits_estimate"] is not None
     assert checked == []
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("step", ["ask", "draft", "preview"])
+def test_a_reached_pause_budget_refuses_every_step_and_its_estimate(
+    monkeypatch, organization, step
+):
+    from ee.usage.tests.test_pause_budgets import pause_budget
+
+    pause_budget(monkeypatch, organization, 2, 2)
+    refused = views._credits_refused(views.GeneralMethods(), organization, step)
+    assert refused.status_code == status.HTTP_403_FORBIDDEN
+    detail = refused.data["result"]
+    assert detail["error_code"] == "BUDGET_LIMIT"
+    assert detail["credits_left"] == 0.0
+    assert detail["message"].startswith(f"{views._STEPS[step]} needs about")
+    assert detail["message"].endswith(
+        "your budget limit allows no more this month. "
+        "Raise or remove it in billing to run this."
+    )
+    out = views._credit_estimate(organization, 0, None, step=step)
+    assert out["credit_limited"] is True
+    assert out["credit_message"] == detail["message"]
 
 
 @pytest.mark.parametrize("step", ["run", "ask", "draft", "preview"])

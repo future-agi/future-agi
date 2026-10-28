@@ -720,16 +720,26 @@ def _credit_verdict(
         return None
     needed = billing.credits(cost_usd)
     left = fits = None
-    if refused.error_code == "FREE_TIER_LIMIT":
+    # The free tier's credits, or a pause budget the step would cross: what
+    # is left, and the largest report sample it pays for.
+    if refused.error_code in ("FREE_TIER_LIMIT", "BUDGET_LIMIT"):
+        budget = refused.error_code == "BUDGET_LIMIT"
         left = max(0.0, float(refused.limit or 0) - float(refused.current_usage or 0))
         if unit is not None:
             fits = billing.largest_sample(
                 left, MIN_SAMPLE, MAX_SAMPLE, **(sizing or {})
             )
-        have = f"you have {_credit_amount(left)}" if left >= 0.05 else "you have none"
-        message = f"{what} needs about {_credit_count(needed)}; {have} left this month."
+        some = left >= 0.05
+        if budget:
+            amount = _credit_amount(left) if some else "no"
+            have = f"your budget limit allows {amount} more"
+        else:
+            have = f"you have {_credit_amount(left) if some else 'none'} left"
+        message = f"{what} needs about {_credit_count(needed)}; {have} this month."
         if fits:
             message += f" A sample of up to {fits:,} {unit} fits."
+        elif budget:
+            message += " Raise or remove it in billing to run this."
         else:
             message += " Upgrade your plan in billing to run it."
     else:

@@ -197,14 +197,17 @@ def jev_credits_per_answer() -> float | None:
 
 
 def check_usage(org_id: str, event_type: str, amount: float):
-    """Billing's cap for ``amount`` of ``event_type``: its CheckResult, or
-    NOT_BILLED where this deployment has no billing module. A billing error
-    (its Redis or config down) raises."""
+    """Billing's cap for ``amount`` of ``event_type``, the organization's
+    pause budgets included: its CheckResult, or NOT_BILLED where this
+    deployment has no billing module. A billing error (its Redis, database
+    or config down) raises."""
     try:
+        from ee.usage.services.budgets import with_pause_budgets
         from ee.usage.services.metering import check_usage as _check_usage
     except ImportError:
         return NOT_BILLED
-    return _check_usage(org_id, event_type, amount=amount)
+    result = _check_usage(org_id, event_type, amount=amount)
+    return with_pause_budgets(org_id, result, amount)
 
 
 def emit_trace_investigation_usage(event_payload: dict) -> None:

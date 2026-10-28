@@ -842,6 +842,41 @@ describe("the Ask page", () => {
     ).toBeEnabled();
   });
 
+  it("says what a pause budget allows and offers billing with the sample that fits", async () => {
+    fakes.estimate.mockResolvedValue({
+      ...ESTIMATE,
+      credit_check: {
+        allowed: false,
+        error_code: "BUDGET_LIMIT",
+        current_usage: 70,
+        limit: 100,
+        credits_left: 30,
+        blocked: false,
+        message:
+          "This run needs about 60 credits; your budget limit allows 30 more this month.",
+      },
+      credit_max_sample: 500,
+    });
+    renderAt(askLink(PROJECT, { unit: "sessions" }));
+    await screen.findByRole("radio", { name: /A sample of 1,000/ });
+    expect(
+      screen.getByText(
+        /This run needs about 60 credits; your budget limit allows 30 more this month\./,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/you have 30 left/)).toBeNull();
+    const offers = screen.getAllByRole("button", {
+      name: "Read a sample of 500 sessions instead",
+    });
+    expect(offers).toHaveLength(2);
+    const links = screen.getAllByRole("link", { name: "Open billing" });
+    expect(links).toHaveLength(2);
+    for (const link of links) {
+      expect(link).toHaveAttribute("href", "/dashboard/settings/billing");
+      expect(link.closest("[aria-disabled='true']")).toBeNull();
+    }
+  });
+
   it("links to billing outside the card when no sample fits", async () => {
     fakes.estimate.mockResolvedValue({
       ...ESTIMATE,
