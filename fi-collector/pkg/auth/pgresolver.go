@@ -2,9 +2,11 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -36,6 +38,38 @@ type ResolveResult struct {
 	// for as long as this result is cached, so a refused agent costs no
 	// database statement per request; a new result starts without one.
 	finding *routeFinding
+	// failed holds digests of names with deterministic value/check failures
+	// until their retry time (failedProjectRetry).
+	failed map[[sha256.Size]byte]time.Time
+}
+
+// failedProjectRetry is how long a project name with a permanent value failure is
+// not tried again for the same key: its spans are dropped as unresolvable
+// meanwhile. Only fixed-size SHA-256 digests and expiry times are retained,
+// never request strings. maxFailedProjects also bounds the map allocation.
+const (
+	failedProjectRetry = time.Minute
+	maxFailedProjects  = 4096
+)
+
+// markFailed records that creating name failed.
+func (r *ResolveResult) markFailed(name string, now time.Time) {
+	if validateProjectName(name, "project_name") != nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.failed == nil || len(r.failed) >= maxFailedProjects {
+		for n, until := range r.failed {
+			if !now.Before(until) {
+				delete(r.failed, n)
+			}
+		}
+		if r.failed == nil || len(r.failed) >= maxFailedProjects {
+			r.failed = map[[sha256.Size]byte]time.Time{}
+		}
+	}
+	r.failed[sha256.Sum256([]byte(name))] = now.Add(failedProjectRetry)
 }
 
 // SimulationAgent is what key validation reads about the agent of a sandbox
@@ -166,15 +200,22 @@ func (r *ResolveResult) projectIDsInWorkspace(workspaceID string, hidden bool) (
 	return result, true
 }
 
-// MissingProjects returns project names not yet in the map, thread-safe.
+// MissingProjects returns project names not yet in the map, thread-safe,
+// leaving out names whose permanent value failure was less than failedProjectRetry
+// ago.
 func (r *ResolveResult) MissingProjects(names []string) []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	now := time.Now()
 	var missing []string
 	for _, name := range names {
-		if _, ok := r.Projects[name]; !ok {
-			missing = append(missing, name)
+		if _, ok := r.Projects[name]; ok {
+			continue
 		}
+		if until, failed := r.failed[sha256.Sum256([]byte(name))]; failed && now.Before(until) {
+			continue
+		}
+		missing = append(missing, name)
 	}
 	return missing
 }
@@ -375,6 +416,11 @@ func (r *PGResolver) ResolveProjects(
 func (r *PGResolver) ResolveProjectsWithTypes(
 	ctx context.Context, orgID, workspaceID string, names []string,
 ) (map[string]ResolvedProject, error) {
+	for _, name := range names {
+		if err := validateProjectName(name, "project_name"); err != nil {
+			return nil, err
+		}
+	}
 	if len(names) == 0 {
 		return nil, nil
 	}
@@ -436,6 +482,9 @@ func requireExactlyOneDefaultWorkspace(orgID string, ids []string) (string, erro
 // and returns its ID. Mirrors the Django get_or_create_project() in
 // tracer/utils/otel.py — same defaults, same unique constraint.
 func (r *PGResolver) GetOrCreateProject(ctx context.Context, orgID, workspaceID, name, traceType string) (string, error) {
+	if err := validateProjectName(name, "project_name"); err != nil {
+		return "", err
+	}
 	if traceType == "" {
 		traceType = ProjectTypeObserve
 	}

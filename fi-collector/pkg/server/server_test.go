@@ -61,6 +61,7 @@ func TestServerEnd2End(t *testing.T) {
 	})
 
 	s := New(Config{GRPCAddr: "127.0.0.1:0", BatchMaxRows: 1, BatchMaxAge: 50 * time.Millisecond}, w, nil, nil, nil)
+	s.cfg.HTTPAddr = "" // Test only gRPC; never bind the production HTTP port.
 	addr := testTCPAddr(t)
 	s.cfg.GRPCAddr = addr
 
@@ -313,6 +314,7 @@ func TestServerEnd2End_WritesTraceRow(t *testing.T) {
 	// curatedwriter over the SAME chwriter (as production: server.New wires it).
 	addr := testTCPAddr(t)
 	s := New(Config{GRPCAddr: addr, BatchMaxRows: 1, BatchMaxAge: 50 * time.Millisecond}, w, nil, nil, nil)
+	s.cfg.HTTPAddr = "" // Test only gRPC; never bind the production HTTP port.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = s.Run(ctx) }()
@@ -701,6 +703,7 @@ func TestPricerWiredThroughGRPCExport(t *testing.T) {
 	stub := &stubPricer{cost: 0.0099}
 	addr := testTCPAddr(t)
 	s := New(Config{GRPCAddr: addr, BatchMaxRows: 1, BatchMaxAge: 50 * time.Millisecond}, w, nil, nil, nil, WithPricer(stub))
+	s.cfg.HTTPAddr = "" // Test only gRPC; never bind the production HTTP port.
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -976,9 +979,9 @@ func TestGRPCAcceptsSpanLargerThanFourMiB(t *testing.T) {
 }
 
 // An over-cap message must be rejected AND show up in the collector's own
-// logs. The transport rejects it before the handler runs, so only the
-// stats.Handler sees it — this pins that the error is logged (else the drop
-// is invisible server-side and diagnosable only from client logs).
+// logs (else the drop is diagnosable only from client logs). It is refused
+// from its length prefix, before it is read or leased, with INVALID_ARGUMENT:
+// Some exporters (Python, Java) retry RESOURCE_EXHAUSTED without RetryInfo.
 func TestGRPCOverCapRejectionIsLogged(t *testing.T) {
 	chSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
@@ -1036,17 +1039,19 @@ func TestGRPCOverCapRejectionIsLogged(t *testing.T) {
 
 	req := ptraceotlp.NewExportRequestFromTraces(traces)
 	_, err = client.Export(context.Background(), req)
-	if status.Code(err) != codes.ResourceExhausted {
-		t.Fatalf("want ResourceExhausted, got %v", err)
+	if status.Code(err) != codes.InvalidArgument || !strings.Contains(err.Error(), "FI_GRPC_MAX_RECV_MIB") {
+		t.Fatalf("want InvalidArgument naming FI_GRPC_MAX_RECV_MIB, got %v", err)
+	}
+	if p := s.wire.peak.Load(); p != 0 {
+		t.Errorf("an over-cap message leased %d wire bytes, want it refused from its length prefix", p)
 	}
 
-	// stats.End may fire concurrently with the client seeing the status.
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
 		logMu.Lock()
 		got := logBuf.String()
 		logMu.Unlock()
-		if strings.Contains(got, "grpc message over size cap") && strings.Contains(got, "ResourceExhausted") {
+		if strings.Contains(got, "OTLP request refused") && strings.Contains(got, `"reason":"body_size"`) && strings.Contains(got, "InvalidArgument") {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
