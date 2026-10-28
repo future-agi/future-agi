@@ -98,6 +98,32 @@ def test_protocol_assignment_range_is_explicitly_refused(monkeypatch):
     spawn.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    "address",
+    [
+        "[2002:a9fe:a9fe::1]",
+        "[64:ff9b::a9fe:a9fe]",
+        "[64:ff9b:1::a00:1]",
+        "[::a9fe:a9fe]",
+        "[::ffff:a9fe:a9fe]",
+        "[2001:0::1]",
+    ],
+)
+def test_transition_ranges_are_explicitly_refused(address, monkeypatch):
+    # Emulate older IPv6 classifications without changing the production guard.
+    for name in ("is_global", "is_private", "is_reserved", "is_site_local"):
+        monkeypatch.setattr(
+            destination.ipaddress.IPv6Address,
+            name,
+            property(lambda self, value=name == "is_global": value),
+        )
+    spawn = Mock(side_effect=AssertionError("preflight must precede worker startup"))
+    monkeypatch.setattr(destination.subprocess, "Popen", spawn)
+    with pytest.raises(destination.DestinationError, match="^address_class$"):
+        destination.request(method="GET", url=f"http://{address}/")
+    spawn.assert_not_called()
+
+
 def test_https_keeps_requests_default_ca_bundle(monkeypatch):
     context = Mock()
     make_context = Mock(return_value=context)
