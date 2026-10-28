@@ -550,7 +550,9 @@ describe("InsightsView", () => {
       expect(
         screen.queryByRole("link", { name: "Open billing" }),
       ).not.toBeInTheDocument();
-      expect(screen.getByText(/Please retry in a moment\./)).toBeInTheDocument();
+      expect(
+        screen.getByText(/Please retry in a moment\./),
+      ).toBeInTheDocument();
       fireEvent.click(button);
       expect(postsTo("/tracer/insights/draft/")).toHaveLength(0);
       expect(postsTo("/tracer/insights/preview/")).toHaveLength(0);
@@ -561,9 +563,11 @@ describe("InsightsView", () => {
       expect(
         screen.queryByRole("button", { name: "Retry cost check" }),
       ).not.toBeInTheDocument();
-      expect(mocks.actionCredits.mock.calls.filter(
-        ([, body]) => body.action === action,
-      )).toHaveLength(2);
+      expect(
+        mocks.actionCredits.mock.calls.filter(
+          ([, body]) => body.action === action,
+        ),
+      ).toHaveLength(2);
       expect(postsTo("/tracer/insights/runs/")).toHaveLength(0);
     },
   );
@@ -1844,7 +1848,9 @@ describe("InsightsView", () => {
       );
       renderAt("?new=1&lens=failures");
       expect(await screen.findByRole("alert")).toHaveTextContent(unavailable);
-      expect(screen.getByRole("button", { name: "Retry cost check" })).toBeEnabled();
+      expect(
+        screen.getByRole("button", { name: "Retry cost check" }),
+      ).toBeEnabled();
       expect(screen.queryByRole("link", { name: "Open billing" })).toBeNull();
       const [line] = await screen.findAllByText(
         /Analysing all 108 sessions · about \d+ minutes/,
@@ -1959,6 +1965,32 @@ describe("InsightsView", () => {
         within(why).getByRole("link", { name: "Open billing" }),
       ).toHaveAttribute("href", "/dashboard/settings/billing");
       expect(screen.getByRole("button", { name: "Run report" })).toBeDisabled();
+    });
+
+    it("says in full why a paused budget holds the report, with billing", async () => {
+      const paused =
+        "AI features are paused by your budget limit. Raise or remove it in billing to run this.";
+      mocks.post.mockImplementation((url, body) =>
+        url === "/tracer/insights/estimate/"
+          ? estimate(body.sample_size, {
+              credit_limited: true,
+              credit_max_sample: null,
+              credit_message: paused,
+            })
+          : ok({ run_id: RUN_ID, config_id: CONFIG_ID }),
+      );
+      renderAt("?new=1&lens=failures");
+      const run = await screen.findByRole("button", { name: "Run report" });
+      await waitFor(() => expect(run).toBeDisabled());
+      // The footer beside Run report: the whole sentence, not cut off, and
+      // the way to billing.
+      const footer = run.closest(".MuiStack-root");
+      const why = within(footer).getByText(/AI features are paused/);
+      expect(why).toHaveTextContent(paused);
+      expect(why).not.toHaveClass("MuiTypography-noWrap");
+      expect(
+        within(why).getByRole("link", { name: "Open billing" }),
+      ).toHaveAttribute("href", "/dashboard/settings/billing");
     });
 
     it.each([

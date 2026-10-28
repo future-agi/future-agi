@@ -502,16 +502,16 @@ export default function NewReport({
   const credits =
     (fixed ? handedCost.data?.credits : count.data?.credits) || null;
   const creditLimited = Boolean(credits?.limited);
+  const creditBlocker = creditLimited
+    ? credits.message || "The credits left this month don't cover this report."
+    : "";
   const blocker = questionMissing
     ? "Write the question this report should answer."
     : attributeProblem
       ? "Fix the attribute keys first."
       : noData
         ? `There are no ${UNITS[draft.unit].plural} in this scope.`
-        : creditLimited
-          ? credits.message ||
-            "The credits left this month don't cover this report."
-          : "";
+        : creditBlocker;
 
   const runReport = () =>
     starting.run(async () => {
@@ -780,7 +780,8 @@ export default function NewReport({
               </Typography>
             )}
           </Stack>
-          {((fixed ? handedCost.isError : count.isError) || credits?.unavailable) && (
+          {((fixed ? handedCost.isError : count.isError) ||
+            credits?.unavailable) && (
             <Alert
               severity="error"
               action={
@@ -1014,8 +1015,15 @@ export default function NewReport({
                 />
               </Typography>
             ) : (
-              <Typography variant="body2" color="text.secondary" noWrap>
-                {blocker ||
+              // Wraps rather than cuts off: a refusal is read whole, with
+              // its way to billing.
+              <Typography variant="body2" color="text.secondary">
+                {blocker ? (
+                  <ErrorText
+                    message={blocker}
+                    billing={blocker === creditBlocker && !credits.unavailable}
+                  />
+                ) : (
                   [
                     sentence,
                     estimate,
@@ -1023,7 +1031,8 @@ export default function NewReport({
                     "it keeps running if you leave",
                   ]
                     .filter(Boolean)
-                    .join(" · ")}
+                    .join(" · ")
+                )}
               </Typography>
             )}
           </Box>
