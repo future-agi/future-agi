@@ -145,6 +145,11 @@ export function harnessDetailToEnvironment(detail) {
     // and how it is run (`settings.agent.mode`), for the Overview's facts.
     source: settings.source ?? null,
     agentMode: settings.agent?.mode ?? null,
+    // How the build runs (isolation, resources, parallelism), what it may reach
+    // (allowed egress domains) and what it keeps, for the Settings tab.
+    runtime: settings.runtime ?? null,
+    security: settings.security ?? null,
+    artifacts: settings.artifacts ?? null,
     // Real per-table field types and per-tool callables, when ALK read them
     // from source. Empty for provider agents, which have neither.
     dataSchema: contract?.data_schema || null,

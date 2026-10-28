@@ -136,7 +136,7 @@ export default function WorkspacePanels({
         // only needs the store for its scenario count.
         return <RunsSummary env={env} envState={envState} onOpenRun={openRun} onGo={go} />;
       case "settings":
-        return <SettingsPanel env={env} envState={envState} locked={locked} backed={backed} />;
+        return <SettingsPanel env={env} envState={envState} patch={patch} locked={locked} backed={backed} />;
       default:
         return (
           // The next-steps checklist's "Add evaluations" step and its CTA
