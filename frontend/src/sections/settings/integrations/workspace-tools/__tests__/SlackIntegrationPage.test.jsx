@@ -133,6 +133,30 @@ describe("Slack integration page", () => {
     expect(screen.getByText("Token revoked in Slack")).toBeInTheDocument();
   });
 
+  it("reconnects a connected workspace to renew Slack access, as dev's manage dialog did", () => {
+    mocks.connections = [active];
+    mocks.install.mockImplementation((_, { onSuccess }) =>
+      onSuccess({
+        data: {
+          result: {
+            authorization_url: "https://slack.com/oauth/v2/authorize?x=2",
+          },
+        },
+      }),
+    );
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "More actions" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Reconnect Slack" }));
+    // The same connection is renewed, not a second one installed.
+    expect(mocks.install).toHaveBeenCalledWith("c1", expect.anything());
+    expect(window.sessionStorage.getItem("slack-integration-return-to")).toBe(
+      PAGE,
+    );
+    expect(mocks.assign).toHaveBeenCalledWith(
+      "https://slack.com/oauth/v2/authorize?x=2",
+    );
+  });
+
   it("disconnects the real connection only after a confirm that names the Error Feed impact", () => {
     mocks.connections = [active];
     renderPage();

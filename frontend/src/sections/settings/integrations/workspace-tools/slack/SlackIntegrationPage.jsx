@@ -179,14 +179,14 @@ export default function SlackIntegrationPage() {
 
   /* Real Slack OAuth: the backend returns Slack's authorize URL, and Slack sends the person back to
      Integrations, which forwards them here (SLACK_RETURN_TO_KEY). */
-  const addToSlack = () => {
+  const installSlack = (connectionId) => {
     setInstallError("");
     try {
       window.sessionStorage.setItem(SLACK_RETURN_TO_KEY, location.pathname);
     } catch {
       /* storage unavailable */
     }
-    startInstall(connection && !on ? connection.id : undefined, {
+    startInstall(connectionId, {
       onSuccess: (response) => {
         const url = response?.data?.result?.authorization_url;
         if (!url) {
@@ -201,6 +201,11 @@ export default function SlackIntegrationPage() {
         setInstallError(getErrorMessage(error, "Could not connect Slack.")),
     });
   };
+  // A first install, or a broken connection fixed in place.
+  const addToSlack = () =>
+    installSlack(connection && !on ? connection.id : undefined);
+  // A working connection renewed in place, as dev's manage dialog offered.
+  const reconnect = () => installSlack(connection.id);
   const remove = () =>
     deleteConnection(connection.id, {
       onSuccess: () => resetSlackRouting(),
@@ -285,6 +290,16 @@ export default function SlackIntegrationPage() {
                 <Iconify icon="solar:menu-dots-bold" />
               </IconButton>
               <Menu anchorEl={menu} open={!!menu} onClose={() => setMenu(null)}>
+                <MenuItem
+                  disabled={starting}
+                  onClick={() => {
+                    setMenu(null);
+                    reconnect();
+                  }}
+                  sx={{ typography: "s2" }}
+                >
+                  Reconnect Slack
+                </MenuItem>
                 <MenuItem
                   onClick={() => {
                     setMenu(null);

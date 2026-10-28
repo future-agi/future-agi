@@ -20,10 +20,10 @@ test('ERR-E2E-003: failed Slack reconnect can recover and the connection can be 
     id: 'ERR-E2E-003', area: 'error-feed',
     userGoal: 'A developer can recover from a denied Slack reconnect and disconnect the integration',
     steps: [
-      'connect Slack and open its card in Settings Integrations',
+      'connect Slack and open its page from Settings Integrations',
       'attempt to reconnect but deny consent and see the error',
       'retry the reconnect successfully',
-      'disconnect Slack from the integration card',
+      'disconnect Slack from its page',
     ],
     backendChecks: [
       'denied consent leaves the existing connection active and unchanged',
@@ -44,27 +44,31 @@ test('ERR-E2E-003: failed Slack reconnect can recover and the connection can be 
   await testInfo.attach('slack-connection', { body: JSON.stringify(original), contentType: 'application/json' });
 
   await page.goto('/dashboard/settings/integrations', { waitUntil: 'domcontentloaded' });
-  await page.getByText('E2E Slack Workspace', { exact: true }).click();
-  await expect(page.getByRole('dialog', { name: 'Manage E2E Slack Workspace' })).toBeVisible({ timeout: UI_READY });
+  // Slack has its own page now: the Integrations card names the workspace and opens it.
+  await page.getByText(/E2E Slack Workspace/).first().click();
+  await expect(page).toHaveURL(/\/settings\/integrations\/slack/, { timeout: UI_READY });
+  const slackMenu = async (item: string) => {
+    await page.getByRole('button', { name: 'More actions' }).first().click();
+    await page.getByRole('menuitem', { name: item, exact: true }).click();
+  };
   await page.route(`${E2E.slackMockUrl}/oauth/v2/authorize**`, async (route) => {
     await route.continue({ url: `${route.request().url()}&deny=1` });
   });
-  await page.getByRole('button', { name: 'Reconnect Slack' }).click();
+  await slackMenu('Reconnect Slack');
   await expect(page).toHaveURL(/slack=error/, { timeout: UI_READY });
   await expect(page.getByText('Could not connect Slack. Please try again.')).toBeVisible({ timeout: UI_READY });
   const afterDenied = await actor.api.get<ConnectionList>(CONNECTIONS_PATH);
   expect(afterDenied.result.connections.find((connection) => connection.platform === 'slack')?.id).toBe(original!.id);
 
   await page.unroute(`${E2E.slackMockUrl}/oauth/v2/authorize**`);
-  await page.getByText('E2E Slack Workspace', { exact: true }).click();
-  await page.getByRole('button', { name: 'Reconnect Slack' }).click();
+  await slackMenu('Reconnect Slack');
   await expect(page).toHaveURL(/slack=connected/, { timeout: UI_READY });
   const afterReconnect = await actor.api.get<ConnectionList>(CONNECTIONS_PATH);
   expect(afterReconnect.result.connections.find((connection) => connection.platform === 'slack')?.id).toBe(original!.id);
 
-  await page.getByText('E2E Slack Workspace', { exact: true }).click();
-  await page.getByRole('button', { name: 'Disconnect', exact: true }).click();
-  await expect(page.getByText('E2E Slack Workspace', { exact: true })).toHaveCount(0, { timeout: UI_READY });
+  await slackMenu('Disconnect');
+  await page.getByRole('dialog').getByRole('button', { name: 'Disconnect', exact: true }).click();
+  await expect(page.getByText(/E2E Slack Workspace/)).toHaveCount(0, { timeout: UI_READY });
   const afterDisconnect = await actor.api.get<ConnectionList>(CONNECTIONS_PATH);
   expect(afterDisconnect.result.connections.filter((connection) => connection.platform === 'slack')).toEqual([]);
   await req.dispose();
