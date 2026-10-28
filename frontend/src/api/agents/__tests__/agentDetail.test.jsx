@@ -102,6 +102,8 @@ describe("toRun", () => {
         name: "ride-voice-agent",
       },
       agentVersion: { id: "93956ae6", number: 3 },
+      environmentVersion: { id: "7e1c2a90", number: 7 },
+      partial: false,
       passed: 3,
       failed: 7,
       skipped: 0,
@@ -115,6 +117,8 @@ describe("toRun", () => {
     const r = toRun(SIMULATE_RUN);
     expect(r.environment).toBeNull();
     expect(r.agentVersion).toBeNull();
+    expect(r.environmentVersion).toBeNull();
+    expect(r.partial).toBeNull();
     expect(r.passRate).toBeNull();
     expect(r.completedAt).toBeNull();
   });
@@ -129,6 +133,7 @@ describe("toVersion", () => {
       label: "v2",
       isActive: true,
       isLatest: true,
+      isDraft: false,
       commitMessage: "Shorter greeting",
       createdAt: "2026-10-15T09:00:00Z",
     });
@@ -238,12 +243,14 @@ describe("hooks", () => {
         id: "e5391b8a",
         name: "ride-voice-agent",
         status: "ready",
+        agentVersion: { id: "93956ae6", number: 3 },
         lastRun: toRun(ENVIRONMENT_RUN),
       },
       {
         id: "e9999999",
         name: "Refund edge cases",
         status: "failed",
+        agentVersion: null,
         lastRun: null,
       },
     ]);

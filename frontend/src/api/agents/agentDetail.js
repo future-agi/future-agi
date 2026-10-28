@@ -26,6 +26,8 @@ export const toRun = (raw) => ({
   status: raw.status,
   environment: raw.environment ?? null,
   agentVersion: toVersionRef(raw.agent_version),
+  environmentVersion: toVersionRef(raw.environment_version),
+  partial: raw.partial ?? null,
   passed: raw.outcome_passed ?? null,
   failed: raw.outcome_failed ?? null,
   skipped: raw.outcome_skipped ?? null,
@@ -44,6 +46,7 @@ export const toVersion = (v) => ({
   label: v.version_name_display || `v${v.version_number}`,
   isActive: !!v.is_active,
   isLatest: !!v.is_latest,
+  isDraft: v.status === "draft",
   commitMessage: v.commit_message ?? null,
   createdAt: v.created_at ?? null,
 });
@@ -55,11 +58,25 @@ export const mapAgentDetail = (raw) => ({
   provider: raw.provider || null,
   createdAt: raw.created_at ?? null,
   activeVersionId: raw.active_version?.id ?? null,
+  activeVersionNumber: raw.active_version?.version_number ?? null,
   versionCount: raw.version_count,
   agentKind: raw.agent_kind ?? null,
   source: raw.source ?? null,
   environmentCount: raw.environment_count,
   observabilityEnabled: raw.observability_enabled,
+  observeProject: raw.observe_project
+    ? { id: raw.observe_project.id, name: raw.observe_project.name }
+    : null,
+  agentType: raw.agent_type ?? null,
+  description: raw.description || null,
+  contactNumber: raw.contact_number || null,
+  inbound: typeof raw.inbound === "boolean" ? raw.inbound : null,
+  targetSpeaksFirst:
+    typeof raw.target_speaks_first === "boolean"
+      ? raw.target_speaks_first
+      : null,
+  languages: raw.languages ?? [],
+  model: raw.model || raw.model_details?.model || null,
 });
 
 const toStoredAgent = (d) => ({
@@ -79,6 +96,7 @@ export const mapVersionDetail = (raw) => ({
   createdAt: raw.created_at ?? null,
   agentKind: raw.agent_kind ?? null,
   apiKey: raw.api_key ?? null,
+  source: raw.source ?? null,
   config: raw.configuration_snapshot ?? {},
 });
 
@@ -166,9 +184,44 @@ export function useAgentEnvironments(agentId) {
         name: e.name,
         // Mapped like the My Environments table: a built environment is Ready.
         status: envStatusFor(e.stage, e.status),
+        // The version this environment tests by default: its own pin, not
+        // whatever its last run happened to use.
+        agentVersion: toVersionRef(e.agent_version),
         lastRun: e.last_run ? toRun(e.last_run) : null,
       })),
     enabled: !!agentId,
+  });
+}
+
+const invalidateVersions = (queryClient, agentId) =>
+  Promise.all([
+    queryClient.invalidateQueries({ queryKey: agentDetailQueryKey(agentId) }),
+    queryClient.invalidateQueries({
+      queryKey: ["agent-definition-versions", agentId],
+    }),
+    queryClient.invalidateQueries({ queryKey: ["agents", "version", agentId] }),
+  ]);
+
+// Makes a version the one in production. Environments keep the version each
+// is pinned to; only the marker moves.
+export function useActivateVersion(agentId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ versionId }) =>
+      axios.post(
+        endpoints.agentDefinitions.activateVersion(agentId, versionId),
+      ),
+    onSuccess: () => invalidateVersions(queryClient, agentId),
+  });
+}
+
+export function useDeleteAgent(agentId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      axios.delete(endpoints.agentDefinitions.deleteOne(agentId)),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["agents", "connected"] }),
   });
 }
 
@@ -181,5 +234,36 @@ export function useSetObservability(agentId) {
       }),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: agentDetailQueryKey(agentId) }),
+  });
+}
+
+// Links a code agent to the Observe project its production traces land in;
+// a null projectId clears it. The observability switch is left as it is.
+export function useLinkObserveProject(agentId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ projectId }) =>
+      axios.put(endpoints.agentDefinitions.edit(agentId), {
+        production_project_id: projectId,
+      }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: agentDetailQueryKey(agentId) }),
+  });
+}
+
+// The snippets the Observe setup drawer shows: install, keys, telemetry and
+// the instrumentation list, each in Python and TypeScript.
+export function useObserveSetupCode() {
+  return useQuery({
+    queryKey: ["observe-setup-code"],
+    queryFn: async () =>
+      unwrap(
+        (
+          await axios.get(endpoints.project.getCodeBlockTracer, {
+            params: { project_type: "observe" },
+          })
+        ).data,
+      ),
+    staleTime: Infinity,
   });
 }

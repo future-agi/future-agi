@@ -4,12 +4,21 @@ import { Box, Stack, Typography } from "@mui/material";
 import { paths } from "src/routes/paths";
 import { rateTone } from "./format";
 
-const NEUTRAL_BAR = "rgba(161,161,170,.75)";
 // TestExecution.ExecutionStatus: pending, running, evaluating, cancelling,
 // completed, failed, cancelled.
 const IN_PROGRESS = ["pending", "running", "evaluating", "cancelling"];
 
 export const isRunning = (run) => IN_PROGRESS.includes(run.status);
+
+// "agent v3 × environment v7": what a run held fixed, named the same way
+// everywhere. A run recorded before versioning may know only one side.
+export const pairLabel = (run) =>
+  [
+    run.agentVersion && `agent v${run.agentVersion.number}`,
+    run.environmentVersion && `environment v${run.environmentVersion.number}`,
+  ]
+    .filter(Boolean)
+    .join(" × ") || null;
 
 export const runPath = (run) =>
   run.kind === "environment" && run.environment
@@ -48,15 +57,15 @@ export function PassRateCell({ run }) {
               rate == null
                 ? "transparent"
                 : rate < 50
-                  ? "#DC2626"
-                  : NEUTRAL_BAR,
+                  ? "error.main"
+                  : "text.disabled",
           }}
         />
       </Box>
       <Typography
         sx={{
-          typography: "s3",
-          fontWeight: 600,
+          typography: "s2",
+          fontWeight: 500,
           fontVariantNumeric: "tabular-nums",
           width: 76,
           textAlign: "right",

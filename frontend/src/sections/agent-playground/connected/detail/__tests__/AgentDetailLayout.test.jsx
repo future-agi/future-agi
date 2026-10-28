@@ -21,7 +21,7 @@ import AgentDetailIndexRedirect from "../AgentDetailIndexRedirect";
 import { agentDetailPath, resolveVersionId } from "../agentDetailTabs";
 
 vi.mock("src/utils/axios", () => ({
-  default: { get: vi.fn(), put: vi.fn() },
+  default: { get: vi.fn(), put: vi.fn(), delete: vi.fn() },
   endpoints: {
     agentDefinitions: {
       detail: (id) => `/simulate/agent-definitions/${id}/`,
@@ -29,8 +29,18 @@ vi.mock("src/utils/axios", () => ({
         `/simulate/agent-definitions/${id}/versions/${v}/`,
       edit: (id) => `/simulate/agent-definitions/${id}/edit/`,
       versions: (id) => `/simulate/agent-definitions/${id}/versions/`,
+      deleteOne: (id) => `/simulate/agent-definitions/${id}/delete/`,
     },
   },
+}));
+
+const auth = { role: "Owner" };
+vi.mock("src/auth/hooks", () => ({ useAuthContext: () => auth }));
+
+const enqueueSnackbar = vi.fn();
+vi.mock("notistack", async (importOriginal) => ({
+  ...(await importOriginal()),
+  useSnackbar: () => ({ enqueueSnackbar }),
 }));
 
 let currentLocation;
@@ -109,6 +119,9 @@ const base = (a) => `/dashboard/agents/connected/${a.id}`;
 
 beforeEach(() => {
   axios.get.mockReset();
+  axios.delete.mockReset();
+  enqueueSnackbar.mockReset();
+  auth.role = "Owner";
 });
 
 describe("agentDetailTabs", () => {
@@ -145,8 +158,90 @@ describe("AgentDetailLayout", () => {
     expect(screen.getByText("Vapi")).toBeInTheDocument();
     const subline = screen.getByTestId("agent-detail-subline");
     expect(subline).toHaveTextContent(HOSTED.assistant_id);
-    expect(subline).toHaveTextContent("Created 13-10-2026");
-    expect(subline).toHaveTextContent("No environments");
+    expect(subline).toHaveTextContent(/Connected \d+d ago/);
+    expect(subline).toHaveTextContent("No environment yet");
+  });
+
+  it("says how a new version arrives, and that it's coming soon", async () => {
+    serve(HOSTED);
+    renderAt(`${base(HOSTED)}/overview`);
+    expect(await screen.findByRole("button", { name: "Sync" })).toBeDisabled();
+  });
+
+  it("offers an upload for an uploaded agent", async () => {
+    serve({ ...CODE, source: "archive" });
+    renderAt(`${base(CODE)}/overview`);
+    expect(
+      await screen.findByRole("button", { name: "Upload new version" }),
+    ).toBeDisabled();
+  });
+
+  it("blocks Delete while an environment tests the agent", async () => {
+    serve(CODE);
+    renderAt(`${base(CODE)}/overview`);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "More actions" }),
+    );
+    const item = await screen.findByRole("menuitem", { name: /^Delete/ });
+    expect(item).toHaveAttribute("aria-disabled", "true");
+    expect(item).toHaveTextContent(
+      "Tested by 1 environment. Delete those environments first.",
+    );
+  });
+
+  it("gives a viewer no More menu, so no Delete", async () => {
+    auth.role = "workspace_viewer";
+    serve(HOSTED);
+    renderAt(`${base(HOSTED)}/overview`);
+    await screen.findByRole("heading", { name: "Northwind Pharmacy" });
+    expect(screen.queryByRole("button", { name: "More actions" })).toBeNull();
+  });
+
+  it("deletes an agent after confirming and goes back to Connected agents", async () => {
+    serve(HOSTED);
+    axios.delete.mockResolvedValue({ data: { message: "ok" } });
+    renderAt(`${base(HOSTED)}/overview`);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "More actions" }),
+    );
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    expect(axios.delete).not.toHaveBeenCalled();
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await waitFor(() =>
+      expect(axios.delete).toHaveBeenCalledWith(
+        `/simulate/agent-definitions/${HOSTED.id}/delete/`,
+      ),
+    );
+    await waitFor(() =>
+      expect(currentLocation.pathname).toBe("/dashboard/agents/connected"),
+    );
+    expect(enqueueSnackbar).toHaveBeenCalledWith("Northwind Pharmacy deleted", {
+      variant: "success",
+    });
+  });
+
+  it("shows the server's reason when the agent can't be deleted", async () => {
+    serve(HOSTED);
+    axios.delete.mockRejectedValue({
+      response: {
+        data: { detail: "Northwind is tested by 1 environment." },
+      },
+    });
+    renderAt(`${base(HOSTED)}/overview`);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "More actions" }),
+    );
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await waitFor(() =>
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        "Northwind is tested by 1 environment.",
+        { variant: "error" },
+      ),
+    );
+    expect(currentLocation.pathname).toBe(`${base(HOSTED)}/overview`);
   });
 
   it("shows GitHub and the environment count for a code agent", async () => {
@@ -218,7 +313,7 @@ describe("AgentDetailLayout", () => {
     serve(HOSTED);
     renderAt(`${base(HOSTED)}/overview`);
     const select = await screen.findByRole("combobox");
-    await waitFor(() => expect(select).toHaveTextContent("v2 · active"));
+    await waitFor(() => expect(select).toHaveTextContent("v2 · in production"));
   });
 
   it("writes the picked version to ?v= and clears it for the active one", async () => {

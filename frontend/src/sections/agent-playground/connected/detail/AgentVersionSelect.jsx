@@ -52,11 +52,11 @@ export default function AgentVersionSelect({ agentId, value, onChange }) {
       onChange={(e) => onChange(e.target.value)}
       renderValue={() => {
         if (!selected) return "";
-        return selected.isActive
-          ? `${selected.label} · active`
-          : `Viewing ${selected.label}`;
+        if (selected.isActive) return `${selected.label} · in production`;
+        if (selected.isDraft) return `${selected.label} · draft`;
+        return `Viewing ${selected.label}`;
       }}
-      sx={{ height: 32, typography: "s2", fontWeight: 600, minWidth: 120 }}
+      sx={{ height: 32, typography: "s2", fontWeight: 500, minWidth: 120 }}
       // Long histories scroll inside the menu instead of running off the page.
       MenuProps={{
         PaperProps: { sx: { maxHeight: 320 }, onScroll: onMenuScroll },
@@ -68,12 +68,15 @@ export default function AgentVersionSelect({ agentId, value, onChange }) {
         <MenuItem key={v.id} value={v.id} sx={{ typography: "s2" }}>
           <Box
             component="span"
-            sx={{ fontFamily: MONO, fontWeight: 600, mr: 1 }}
+            sx={{ fontFamily: MONO, fontWeight: 500, mr: 1 }}
           >
             {v.label}
           </Box>
           <Box component="span" sx={{ color: "text.subtitle" }}>
-            {[v.isActive ? "active" : null, ago(v.createdAt)]
+            {[
+              v.isActive ? "in production" : v.isDraft ? "draft" : null,
+              ago(v.createdAt),
+            ]
               .filter(Boolean)
               .join(" · ")}
           </Box>
