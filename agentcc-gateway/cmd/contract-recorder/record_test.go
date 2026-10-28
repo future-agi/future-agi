@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/providers/contracttest"
+	"github.com/futureagi/agentcc-gateway/internal/providers/contractwatch"
 )
 
 const testKey = "sk-ant-test-0123456789"
@@ -299,5 +300,13 @@ func TestParseFlagsRejects(t *testing.T) {
 	}
 	if _, err := parseFlags([]string{"-providers-dir", filepath.Join(dir, "missing")}, io.Discard); err == nil {
 		t.Error("missing -providers-dir: want an error")
+	}
+}
+
+// TestExitNothingMatchesModelWatch pins the "nothing to record" exit status
+// the daily model-watch workflow reads from results.jsonl.
+func TestExitNothingMatchesModelWatch(t *testing.T) {
+	if exitNothing != contractwatch.RecorderExitNothing {
+		t.Errorf("exitNothing = %d, contractwatch.RecorderExitNothing = %d", exitNothing, contractwatch.RecorderExitNothing)
 	}
 }
