@@ -1,0 +1,36 @@
+# Every PR states whether it needs a public docs change, so the docs PR is
+# raised with the code instead of drifting behind it. The PR body must carry
+# exactly one `Docs:` line: a future-agi/docs PR, or `none (<reason>)`.
+# Skips drafts, release-please PRs, and dev<->main release/back-merge PRs.
+name: docs-declaration
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+    branches: [dev, main]
+
+permissions: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    if: >-
+      !github.event.pull_request.draft &&
+      !startsWith(github.head_ref, 'release-please--') &&
+      github.head_ref != 'dev' && github.head_ref != 'main'
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const usage = 'Add one line to the PR body:\n' +
+              '  Docs: future-agi/docs#<n>   (or the full https://github.com/future-agi/docs/pull/<n> URL)\n' +
+              '  Docs: none (<why no docs change is needed>)';
+            const body = (context.payload.pull_request.body || '').replace(/<!--[\s\S]*?-->/g, '');
+            // Case-sensitive: a lowercase `docs:` line is a commit subject, not the declaration.
+            const values = [...body.matchAll(/^[^\S\r\n]*Docs:[^\S\r\n]*(.*)$/gm)].map(m => m[1].trim());
+
+            if (values.length > 1) return core.setFailed(`More than one Docs: line. Keep one.\n${usage}`);
+            const value = values[0] || '';
+            if (/(https:\/\/github\.com\/future-agi\/docs\/pull\/\d+|future-agi\/docs#\d+)/i.test(value)) return core.info(`Docs PR: ${value}`);
+            if (/^none\s*\(\s*[^)\s][^)]*\)/i.test(value)) return core.info(`No docs change: ${value}`);
+            core.setFailed(value ? `Docs: "${value}" is not a docs PR link or none (<reason>).\n${usage}` : `Docs: line is missing or empty.\n${usage}`);
