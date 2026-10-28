@@ -25,6 +25,7 @@ and citations must point at units of the run.
 
 from __future__ import annotations
 
+import itertools
 import json
 import math
 import os
@@ -36,6 +37,7 @@ import structlog
 
 from ee.agenthub.insights.facets import lens_for, normalise
 from ee.agenthub.insights.llm import InsightModelError, Spend, usage_cost
+from ee.agenthub.insights.units import own_words
 
 logger = structlog.get_logger(__name__)
 
@@ -401,22 +403,25 @@ def run_context(settings: dict, unit: str, run_id: str) -> dict:
 
 # ─── Receipts, checked host-side ────────────────────────────────────────────
 def _find(content: str, quote: str) -> tuple[int, int] | None:
-    if not quote:
-        return None
-    at = content.find(quote)
-    if at >= 0:
-        return at, at + len(quote)
-    # Whitespace-normalised match, mapped back to real offsets.
+    """Where ``quote`` first occurs in the unit's text, exactly, else with
+    its whitespace normalised: the unit's own words there (``own_words``),
+    without the engine's around them, such as "Assistant: " or a failed
+    call's "ERROR <message>: "."""
     words = quote.split()
     if not words:
         return None
-    pattern = r"\s+".join(re.escape(w) for w in words)
-    match = re.search(pattern, content)
-    return (match.start(), match.end()) if match else None
+    exact = re.finditer(re.escape(quote), content)
+    loose = re.finditer(r"\s+".join(re.escape(w) for w in words), content)
+    for match in itertools.chain(exact, loose):
+        span = own_words(content, *match.span())
+        if span:
+            return span
+    return None
 
 
 def verified_evidence(evidence, content: str, key: str) -> tuple[list[dict], int]:
-    """Keep quotes that occur in the unit's text, with their real offsets."""
+    """Keep quotes that occur in the unit's text, as its own words there,
+    with their real offsets."""
     kept, dropped = [], 0
     for item in evidence if isinstance(evidence, list) else []:
         if not isinstance(item, dict):

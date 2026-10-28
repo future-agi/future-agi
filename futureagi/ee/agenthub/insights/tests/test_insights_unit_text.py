@@ -326,6 +326,119 @@ class TestQuotes:
         assert out["failure_present"] and out["failure_basis"] == "shown"
         assert included(out, "failures", [])
 
+    def test_a_quote_is_published_as_the_sessions_words_never_the_engines(self, text):
+        """On the real run two tool quotes read 'ERROR quota_exceeded: {…}':
+        the JSON was the tool's, the "ERROR <message>: " the engine's. Each
+        published quote is now text of one of the session's spans (an input,
+        an output or a status message), as the tester checked them."""
+        from ee.agenthub.insights.agent import verified_evidence
+
+        content = text["sess_refund_failed"]
+        roots, steps = seed.spans(
+            "sess_refund_failed", seed.SESSIONS["sess_refund_failed"][1]
+        )
+        fields = [r.input for r in roots] + [r.output for r in roots]
+        fields += [s[k] for s in steps for k in ("input", "output", "status_message")]
+        declined = (
+            '{"error": "refund_declined", "message": "Charge is still pending '
+            'settlement; refunds open after settlement."}'
+        )
+        for quote, published in (
+            (f"ERROR refund_declined: {declined}", declined),
+            (f"-> ERROR refund_declined: {declined[:27]}", declined[:27]),
+            (
+                'Tool issue_refund {"order_id": "HB-48213", "amount": 61.2} -> '
+                f"ERROR refund_declined: {declined}",
+                declined,
+            ),
+            ("-> ERROR refund_declined", "refund_declined"),
+            ('Tool lookup_order {"order_id": "HB-48213"}', '{"order_id": "HB-48213"}'),
+            ("Assistant: Done. I've refunded $61.20", "Done. I've refunded $61.20"),
+            (
+                "[Turn 1] User: Order HB-48213 shows two charges",
+                "Order HB-48213 shows two charges",
+            ),
+            # Joins two turns, holds none of the session's words, or isn't there.
+            ("within a week. [Turn 2] User: Great, so I don't", None),
+            ("Tool issue_refund", None),
+            ("-> ERROR", None),
+            ("ERROR refund_declined: the refund was declined", None),
+        ):
+            kept, dropped = verified_evidence([{"quote": quote}], content, "7")
+            if published is None:
+                assert (kept, dropped) == ([], 1), quote
+                continue
+            assert [e["quote"] for e in kept] == [published], quote
+            (e,) = kept
+            assert content[e["start"] : e["end"]] == published
+            assert e["evidence_id"] == f"7:{e['start']}:{len(published)}"
+            assert any(published in field for field in fields), quote
+        # The tool's own result still backs the failure it contradicts.
+        out = reading(
+            content,
+            {
+                "lens_answer": "Agent said a refund went through after the refund "
+                "tool declined it",
+                "failure_present": True,
+                "failure_basis": "contradicted",
+                "evidence": [
+                    {"quote": "Done. I've refunded $61.20", "supports": "failure"},
+                    {
+                        "quote": f"ERROR refund_declined: {declined}",
+                        "supports": "failure",
+                    },
+                ],
+            },
+        )
+        assert out["failure_present"] and "unbacked_failure" not in out
+        assert [e["quote"] for e in out["evidence"]] == [
+            "Done. I've refunded $61.20",
+            declined,
+        ]
+
+    def test_a_name_or_message_that_could_run_on_reads_as_a_string(self):
+        """A name with a space, or a message with ": ", would leave a line
+        unclear about where the engine's words start again: it is shown as a
+        JSON string, and a quote through it keeps only the session's words."""
+        from ee.agenthub.insights.agent import verified_evidence
+
+        step = {
+            "observation_type": "tool",
+            "name": "execute_tool issue_refund",
+            "status": "ERROR",
+            "status_message": "ValueError: refund declined",
+            "input": '{"amount": 61.2}',
+            "output": '{"status": "declined"}',
+        }
+        line = units._step_line(step, units.STEP_CHARS)
+        assert line == (
+            'Tool "execute_tool issue_refund" {"amount": 61.2} -> '
+            'ERROR "ValueError: refund declined": {"status": "declined"}'
+        )
+        plain = units._step_line({**step, "name": "issue_refund"}, units.STEP_CHARS)
+        assert plain.startswith('Tool issue_refund {"amount"')
+        content = f"[Turn 1] User: Refund me\n{line}\nAssistant: Done."
+        for quote, published in (
+            (
+                'ERROR "ValueError: refund declined": {"status": "declined"}',
+                '{"status": "declined"}',
+            ),
+            ('"ValueError: refund declined"', "ValueError: refund declined"),
+            ('refund declined": {"status"', '{"status"'),
+            ('issue_refund" {"amount": 61.2}', '{"amount": 61.2}'),
+        ):
+            kept, _ = verified_evidence([{"quote": quote}], content, "7")
+            assert [e["quote"] for e in kept] == [published], quote
+        # An escaped message isn't the span's text as written.
+        escaped = units._step_line(
+            {**step, "status_message": '"x" declined', "output": ""}, units.STEP_CHARS
+        )
+        assert escaped.endswith('-> ERROR "\\"x\\" declined"')
+        kept, dropped = verified_evidence(
+            [{"quote": '\\"x\\" declined'}], f"Assistant: ok\n{escaped}", "7"
+        )
+        assert (kept, dropped) == ([], 1)
+
 
 # How a fast model read each seeded session: right on the failures, and the
 # two accusations the built-in engine made of correct agents on the real run.

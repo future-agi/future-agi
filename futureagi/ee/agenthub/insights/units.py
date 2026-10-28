@@ -149,6 +149,94 @@ def _plain(text: str) -> str:
     return NOTE.sub(" ", text)
 
 
+def _label(text: str, end: str) -> str:
+    """A step's name or a failure's message as its line shows it: bare when
+    it holds no ``end`` (what follows it on the line), else as a JSON string,
+    so the line says where it stops (``own_words``)."""
+    if text and end not in text and not text.startswith('"'):
+        return text
+    return json.dumps(text, ensure_ascii=False)
+
+
+# A line of a unit's text: who speaks, or a Tool or Step and its name, then
+# the unit's own words; " -> " leads to what a call returned, and a failed
+# call's reads "ERROR <message>: <output>" (``_step_line``, ``_exchange``).
+_STRING = r'"(?:[^"\\]|\\.)*"'
+_SPEAKS = re.compile(r"[ \t]*(?:\[Turn \d+\] )?(?:User|Assistant): ")
+_CALL = re.compile(rf"[ \t]*(Tool|Step) (?:{_STRING}|\S+)")
+_ARROW = re.compile(r"(?= -> )")
+_FAILED = re.compile(rf"ERROR(?: ({_STRING}|.+?))?(?:: |$)")
+
+
+def _line_words(line: str) -> list[tuple[int, int]]:
+    """Where a line holds the unit's own words: a message, a call's
+    arguments, what it returned or a failure's message. Everything else is
+    the engine's: who speaks, a step's name and kind, the arrow, "ERROR", a
+    note, the "…" a clipped field ends with, a session's heading and a line
+    cut short. Any " -> " on a step's line is taken for the arrow."""
+    speaks = _SPEAKS.match(line)
+    call = None if speaks else _CALL.match(line)
+    if speaks:
+        marks = [(0, speaks.end())]
+    elif call:
+        arrows = [m.start() for m in _ARROW.finditer(line, call.end())]
+        # A Tool's arguments are the unit's; a Step's kind runs to its arrow.
+        if call.group(1) == "Tool":
+            marks = [(0, call.end())]
+        else:
+            marks = [(0, arrows[0] if arrows else len(line))]
+        for at in arrows:
+            marks.append((at, at + 4))
+            failed = _FAILED.match(line, at + 4)
+            if not failed:
+                continue
+            if failed.group(1) is None:
+                marks.append((at + 4, failed.end()))
+                continue
+            start, end = failed.span(1)
+            marks += [(at + 4, start), (end, failed.end())]
+            message = failed.group(1)
+            if message.startswith('"'):
+                # Its quotes are the engine's, and an escaped one all of it.
+                quoted = re.fullmatch(_STRING, message) and "\\" not in message
+                marks += (
+                    [(start, start + 1), (end - 1, end)] if quoted else [(start, end)]
+                )
+    else:
+        return []
+    marks += [m.span() for m in NOTE.finditer(line)]
+    words, at = [], 0
+    for start, end in [*sorted(marks), (len(line), len(line))]:
+        if start > at:
+            piece = line[at:start]
+            first = at + len(piece) - len(piece.lstrip())
+            rest = piece.rstrip()
+            rest = rest[:-1].rstrip() if rest.endswith("…") else rest
+            if at + len(rest) > first:
+                words.append((first, at + len(rest)))
+        at = max(at, end)
+    return words
+
+
+def own_words(content: str, start: int, end: int) -> tuple[int, int] | None:
+    """The part of ``content[start:end]`` (a quote found there) that is the
+    unit's own words, never the engine's around them. Across a call's parts
+    the last one with words in it is kept: what the call returned, or a
+    failure's message. None across lines, which joins two parts of the
+    conversation, or with none of the unit's words in it."""
+    first = content.rfind("\n", 0, start) + 1
+    last = content.find("\n", first)
+    last = len(content) if last < 0 else last
+    if end > last:
+        return None
+    kept = None
+    for a, b in _line_words(content[first:last]):
+        a, b = max(first + a, start), min(first + b, end)
+        if a < b and re.search(r"\w", content[a:b]):
+            kept = (a, b)
+    return kept
+
+
 def _io(span) -> tuple[str, str]:
     attrs = span.attrs_string or {}
     text_in = _readable(attrs.get("input.value") or span.input)
@@ -225,7 +313,7 @@ def _field(step: dict, key: str, chars: int) -> str:
 def _step_line(step: dict, chars: int) -> str:
     """``Tool name {args} -> result``, or ``Step name (kind) -> ERROR ...``."""
     kind = str(step.get("observation_type") or "") or "span"
-    name = _clip(step.get("name") or kind, 80)
+    name = _label(_clip(step.get("name") or kind, 80), " ")
     if kind == "tool":
         line = f"Tool {name}"
         args = _field(step, "input", chars)
@@ -238,7 +326,7 @@ def _step_line(step: dict, chars: int) -> str:
         message = _clip(step.get("status_message") or "", 200)
         result = (
             "ERROR"
-            + (f" {message}" if message else "")
+            + (f" {_label(message, ': ')}" if message else "")
             + (f": {result}" if result else "")
         )
     return f"{line} -> {result}" if result else line
@@ -320,8 +408,8 @@ def _exchange(
     if _is_error(root):
         message = _clip(root.status_message or "", 200)
         lines.append(
-            f"{indent}Step {_clip(root.name or 'turn', 80)} (turn) -> ERROR"
-            + (f" {message}" if message else "")
+            f"{indent}Step {_label(_clip(root.name or 'turn', 80), ' ')} (turn) -> ERROR"
+            + (f" {_label(message, ': ')}" if message else "")
         )
     lines.append(f"{indent}Assistant: {answer}")
     return _Turn("\n".join(lines), failed)
