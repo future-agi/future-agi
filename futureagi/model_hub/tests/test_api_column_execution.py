@@ -1,6 +1,7 @@
 """API-column output compatibility and explicit tenant scope in each entry path."""
 
 import json
+from importlib import import_module
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -109,13 +110,17 @@ def test_secret_scope_without_middleware(
     ) == "own-value"
 
 
-def test_preview_and_conditional_without_source_keep_dataset_scope(monkeypatch):
+@pytest.mark.parametrize("module_name", ["dynamic_columns", "develop_dataset"])
+def test_preview_and_conditional_without_source_keep_dataset_scope(
+    monkeypatch, module_name
+):
+    conditional_columns = import_module(f"model_hub.views.{module_name}")
     dataset = SimpleNamespace(organization_id="organization", workspace_id="workspace")
     row = SimpleNamespace(id="row", dataset=dataset)
     seen = []
 
     def invoke(self, cell, config, *, dataset=None):
-        seen.append((cell.row, dataset))
+        seen.append((getattr(cell, "row", None), dataset))
         return ERROR
 
     monkeypatch.setattr(columns.AddApiColumnView, "_make_api_call", invoke)
@@ -123,7 +128,11 @@ def test_preview_and_conditional_without_source_keep_dataset_scope(monkeypatch):
     columns.PreviewDatasetOperationView()._preview_api_call(
         {"config": config("http://public.fixture.test")}, [row], "organization", dataset
     )
-    result = columns.ConditionalColumnView()._process_branch(
+    monkeypatch.setattr(conditional_columns.AddApiColumnView, "_make_api_call", invoke)
+    monkeypatch.setattr(
+        conditional_columns, "Cell", lambda **kwargs: SimpleNamespace(**kwargs)
+    )
+    result = conditional_columns.ConditionalColumnView()._process_branch(
         row,
         {
             "branch_node_config": {
@@ -134,7 +143,7 @@ def test_preview_and_conditional_without_source_keep_dataset_scope(monkeypatch):
         "organization",
     )
     assert result == ERROR
-    assert seen == [(row, dataset), (row, dataset)]
+    assert seen == [(row, dataset), (None, dataset)]
 
 
 @pytest.mark.parametrize("rerun", [False, True])
