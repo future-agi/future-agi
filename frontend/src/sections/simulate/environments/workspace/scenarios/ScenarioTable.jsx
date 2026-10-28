@@ -62,12 +62,12 @@ function HeadLabel({ h }) {
     return (
       <Stack direction="row" alignItems="center" spacing={0.75} sx={{ minWidth: 0 }}>
         <Box component="span">Scenario</Box>
-        <SoonChip label="State" what="A scenario's state, like needs review or stale" size="tiny" />
-        <SoonChip label="Source" what="Where a scenario came from: the build, chat, by hand or an import" size="tiny" />
+        <SoonChip label="State" detail="Whether a scenario is valid, needs a re-check after a change, is outdated, stale or archived." what="A scenario's state, like needs review or stale" size="tiny" />
+        <SoonChip label="Source" detail="Whether a scenario came from the build, the builder chat, was written by hand, or was imported (Error Feed, production, dataset or script)." what="Where a scenario came from: the build, chat, by hand or an import" size="tiny" />
       </Stack>
     );
-  if (h === "Must-pass") return <SoonChip label="Must-pass" what="Scenarios an improvement may never break" size="tiny" />;
-  if (h === "Last runs") return <SoonChip label="Last runs" what="This scenario in the environment's last runs" plural size="tiny" />;
+  if (h === "Must-pass") return <SoonChip label="Must-pass" detail="A must-pass scenario is a release blocker: an improvement that makes it fail is rejected." what="Scenarios an improvement may never break" size="tiny" />;
+  if (h === "Last runs") return <SoonChip label="Last runs" detail="How this scenario did in the environment's most recent runs, oldest to latest." what="This scenario in the environment's last runs" plural size="tiny" />;
   return (
     <Tooltip arrow title={HEAD_TIPS[h] || ""} disableHoverListener={!HEAD_TIPS[h]}>
       <Box component="span" sx={{ overflow: "hidden", textOverflow: "ellipsis" }}>{h}</Box>

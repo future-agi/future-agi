@@ -112,7 +112,7 @@ export default function VersionBar({ env, envState }) {
             </Typography>
             {!sample && (
               <SoonChip
-                label="Version"
+                label="Version" detail="Every change to the world, scenarios, evaluations or simulated caller would save a new environment version, so runs can be compared like for like."
                 what="The environment version"
                 size="tiny"
               />

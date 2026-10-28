@@ -181,7 +181,7 @@ export default function CompareTable({
         <Stack direction="row" alignItems="center" spacing={1} minWidth={0}>
           <ColHead>What each run did with it</ColHead>
           <SoonChip
-            label="Deciding moment"
+            label="Deciding moment" detail="The turn where each call was won or lost."
             what="The moment that decided each call"
             size="tiny"
           />

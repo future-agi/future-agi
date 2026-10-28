@@ -128,7 +128,7 @@ export default function CompareVerdict({ read, runs = [] }) {
               </Typography>
             </CustomTooltip>
             <SoonChip
-              label="Noise band"
+              label="Noise band" detail="How much this agent's pass rate moves between identical runs, measured, so the verdict can say whether a change is real."
               what="A noise band measured for this agent"
               size="tiny"
             />
@@ -206,7 +206,7 @@ export default function CompareVerdict({ read, runs = [] }) {
           What each run pinned
         </Typography>
         <SoonChip
-          label="Held fixed"
+          label="Held fixed" detail="What each run pinned (environment version, evaluations, simulated caller), so you know the comparison is like for like."
           what="What each run held fixed (environment version, evaluations, simulated caller)"
           size="tiny"
         />

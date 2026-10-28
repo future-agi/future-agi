@@ -316,14 +316,14 @@ export default function ScenarioSheet({
         </Row>
         <Row label="Health">
           <SoonChip
-            label="Health"
+            label="Health" detail="Whether the scenario can still run, and whether it is still correct for the current agent."
             what="Whether a scenario can still run and is still correct"
             size="tiny"
           />
         </Row>
         <Row label="Protection">
           <SoonChip
-            label="Protection"
+            label="Protection" detail="Whether an improvement may break this scenario: must-pass, remembered as a past regression, or passing."
             what="Whether an improvement may break a scenario (must-pass, regression memory or passing)"
             size="tiny"
           />

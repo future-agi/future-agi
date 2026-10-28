@@ -119,7 +119,7 @@ export default function AgentVersionScope({ runs, value, onChange, shown }) {
         })}
       </Stack>
       <SoonChip
-        label="Environment version"
+        label="Environment version" detail="Which environment version each run used, so you can filter to runs on the same world and scenarios."
         what="The environment version each run used"
         sx={{ ml: 1 }}
       />

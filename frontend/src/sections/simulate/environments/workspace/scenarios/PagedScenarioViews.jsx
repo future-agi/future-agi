@@ -121,7 +121,7 @@ export default function PagedScenarioViews({
               <Typography sx={{ typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
                 {`${suiteTotal.toLocaleString()} scenario${suiteTotal === 1 ? "" : "s"}`}
               </Typography>
-              <SoonChip label="Stale" what="Scenarios whose proof is out of date after a change" size="tiny" />
+              <SoonChip label="Stale" detail="Scenarios whose proof is out of date after a world or contract change, so their results count for nothing until re-proved." what="Scenarios whose proof is out of date after a change" size="tiny" />
               <SoonChip label="Archived" what="Scenarios set aside without being deleted" size="tiny" />
             </Stack>
           )}

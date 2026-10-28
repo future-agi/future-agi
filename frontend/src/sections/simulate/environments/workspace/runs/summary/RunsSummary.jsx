@@ -213,7 +213,7 @@ export default function RunsSummary({ env, envState, onOpenRun }) {
                   . Rates in points, everything else in percent.
                 </Typography>
                 <SoonChip
-                  label="Noise"
+                  label="Noise" detail="How much a pass rate moves between identical runs, so a small change can be told apart from chance."
                   what="The noise band between two runs"
                   size="tiny"
                 />

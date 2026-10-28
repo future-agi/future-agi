@@ -100,7 +100,7 @@ export default function AgentLine({
         {" · "}
       </Typography>
       <SoonChip
-        label="Default"
+        label="Default" detail="Which agent version this environment runs by default when you start a run."
         what="Which agent version this environment tests by default"
         size="tiny"
       />

@@ -50,7 +50,7 @@ export default function ToolsCard({ tools, entrypoints, sample, onAddMcp }) {
       title={
         <Stack direction="row" alignItems="center" spacing={0.75}>
           <span>{`Tools · ${tools.length}`}</span>
-          {sample ? <UiOnlyFlag feature="toolFidelity" /> : <SoonChip label="Tiers" what="Each tool's Fixed, Recorded, Simulated or Live setting and its faults" plural size="tiny" />}
+          {sample ? <UiOnlyFlag feature="toolFidelity" /> : <SoonChip label="Tiers" detail="How each tool answers during a run: Fixed (a set response), Recorded (a real response played back), Simulated (answered by the environment's world, reading and writing its data) or Live (the real tool). Faults are timeouts, errors or slow replies injected on purpose." what="Each tool's Fixed, Recorded, Simulated or Live setting and its faults" plural size="tiny" />}
         </Stack>
       }
       subtitle={
@@ -173,7 +173,7 @@ export default function ToolsCard({ tools, entrypoints, sample, onAddMcp }) {
                     <Typography sx={{ typography: "s3", fontFamily: MONO, color: "text.secondary" }}>
                       {`tools/${tool.name}.py`}
                     </Typography>
-                    <SoonChip label="Code" what="The handler code the world runs for this tool" size="tiny" />
+                    <SoonChip label="Code" detail="The handler the environment runs to answer this tool, so you can read exactly what a call gets back." what="The handler code the world runs for this tool" size="tiny" />
                   </Stack>
                 )}
               </Collapse>

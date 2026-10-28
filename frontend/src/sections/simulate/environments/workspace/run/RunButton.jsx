@@ -81,7 +81,7 @@ export default function RunButton({
       </Typography>
       <Box>
         <SoonChip
-          label="Estimate"
+          label="Estimate" detail="The credits a run will use, shown before you start it."
           what="A credit estimate before a run"
           size="tiny"
         />

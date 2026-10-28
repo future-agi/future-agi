@@ -55,7 +55,7 @@ export default function UnmeasuredBanner({ status, harnessOutcomeStatus, sx }) {
         )}
       </Box>
       <SoonChip
-        label="Cause"
+        label="Cause" detail="Whether the simulated caller, the grader or the infrastructure stopped this call from getting a verdict."
         what="Why a call produced no verdict"
         size="tiny"
       />

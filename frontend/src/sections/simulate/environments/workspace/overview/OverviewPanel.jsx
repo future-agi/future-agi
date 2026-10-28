@@ -101,7 +101,7 @@ export default function OverviewPanel({ env, envState, patch, onGo, locked = fal
         <Fact label={OVERVIEW_COPY.facts.transports} value={transports || "-"} />
         <Fact
           label={OVERVIEW_COPY.facts.packs}
-          value={<SoonChip label="Packs" what="Scenario packs" plural size="tiny" sx={{ mt: 0.25 }} />}
+          value={<SoonChip label="Packs" detail="Ready-made scenario sets (for example red-team or safety) added to the environment." what="Scenario packs" plural size="tiny" sx={{ mt: 0.25 }} />}
         />
       </Stack>
 

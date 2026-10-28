@@ -116,12 +116,12 @@ export default function ReliabilityHeadline({ reliability }) {
       )}
       <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
         <SoonChip
-          label="Your bar"
+          label="Your bar" detail="A pass rate you set for this environment, so each run shows whether it clears it."
           what="A pass-rate bar for this environment"
           size="tiny"
         />
         <SoonChip
-          label="Causes"
+          label="Causes" detail="Why calls failed: the agent, the simulated caller, the grader or the infrastructure."
           what="Verdict causes per run"
           plural
           size="tiny"

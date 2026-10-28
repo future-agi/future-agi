@@ -51,7 +51,7 @@ export function RulesSection({ rules, onEdit }) {
       title={
         <Stack direction="row" alignItems="center" spacing={0.75}>
           <span>{`Rules (${rules.length})`}</span>
-          <SoonChip label="Coverage" what="Which sub-goals and scenarios test each rule" size="tiny" />
+          <SoonChip label="Coverage" detail="For each rule, the sub-goals and scenarios that test it, so an untested rule stands out." what="Which sub-goals and scenarios test each rule" size="tiny" />
         </Stack>
       }
       subtitle="From the agent's prompt. When a new agent version changes one, it's either a fix, and the suite stays, or a spec change, and the rule, its sub-goals and their scenarios change. Someone confirms which."
@@ -107,7 +107,7 @@ export function ArgLimitsSection({ limits, onEdit, onGo }) {
       title={
         <Stack direction="row" alignItems="center" spacing={0.75}>
           <span>{`Argument limits (${limits.length})`}</span>
-          <SoonChip label="Ranges" what="Lowest and highest values for number arguments" plural size="tiny" />
+          <SoonChip label="Ranges" detail="For number arguments, the lowest and highest value a tool call may use. A call outside them counts as the agent's mistake." what="Lowest and highest values for number arguments" plural size="tiny" />
         </Stack>
       }
       subtitle="Values a tool call has to stay inside. A call outside them is the agent's mistake, not the world's. Every tool's arguments are on World → Tools."

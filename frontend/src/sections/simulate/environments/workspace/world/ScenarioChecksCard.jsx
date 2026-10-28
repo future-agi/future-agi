@@ -47,7 +47,7 @@ export default function ScenarioChecksCard({ sample, onGo }) {
         {sample ? (
           <UiOnlyFlag feature="scenarioChecks" />
         ) : (
-          <SoonChip label="Checks" what="The checks that prove each scenario before it runs" plural size="tiny" />
+          <SoonChip label="Checks" detail="Before a scenario counts, it is proved: setup stages its data, a known-good run passes, an empty run fails, and wrong actions are caught." what="The checks that prove each scenario before it runs" plural size="tiny" />
         )}
         <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}>
           What proves each scenario before it runs

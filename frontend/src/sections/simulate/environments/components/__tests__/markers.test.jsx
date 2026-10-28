@@ -60,4 +60,29 @@ describe("SoonChip", () => {
       await screen.findByText("Status counts aren't in the API yet"),
     ).toBeInTheDocument();
   });
+
+  it("says it's new in this design and nothing that showed before is missing", async () => {
+    render(<SoonChip label="Owner" what="Owner" />);
+    fireEvent.mouseOver(screen.getByText("Owner soon"));
+    expect(
+      await screen.findByText(
+        "New in this design. Nothing that showed here before is missing; it fills in once the API sends it.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("explains the field itself when given a detail", async () => {
+    render(
+      <SoonChip
+        label="Tiers"
+        what="Tool tiers"
+        plural
+        detail="How each tool answers in a run: Fixed, Recorded, Simulated or Live."
+      />,
+    );
+    fireEvent.mouseOver(screen.getByText("Tiers soon"));
+    expect(
+      await screen.findByText("How each tool answers in a run: Fixed, Recorded, Simulated or Live."),
+    ).toBeInTheDocument();
+  });
 });

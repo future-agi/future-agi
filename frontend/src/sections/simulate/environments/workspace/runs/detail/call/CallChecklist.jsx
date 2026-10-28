@@ -66,7 +66,7 @@ export default function CallChecklist({ subGoalResults = [], checks = [] }) {
               {`${met} of ${subGoalResults.length} sub-goals met`}
             </Typography>
             <SoonChip
-              label="Critical"
+              label="Critical" detail="Critical sub-goals decide the verdict; supporting ones only add detail."
               what="Which sub-goals are critical"
               size="tiny"
             />
@@ -134,7 +134,7 @@ export default function CallChecklist({ subGoalResults = [], checks = [] }) {
         >
           Reference path
         </Typography>
-        <SoonChip label="Reference path" what="The reference path" />
+        <SoonChip label="Reference path" detail="The path a known-good call takes through the scenario, to compare this call against." what="The reference path" />
       </Stack>
     </Stack>
   );
