@@ -77,6 +77,18 @@ export const VIEWS = [
     icon: "solar:list-linear",
     blurb: "One row per scenario",
   },
+  {
+    id: "grid",
+    label: "Grid view",
+    icon: "solar:widget-4-linear",
+    blurb: "One column per run",
+  },
+  {
+    id: "summary",
+    label: "Summary view",
+    icon: "solar:chart-square-linear",
+    blurb: "Totals per run",
+  },
 ];
 
 export const ROW_HEIGHTS = [

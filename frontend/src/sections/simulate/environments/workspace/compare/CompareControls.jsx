@@ -600,6 +600,7 @@ function DisplayPanel({
                   title={v.blurb}
                 >
                   <ButtonBase
+                    aria-label={v.label}
                     aria-pressed={on}
                     onClick={() => set({ view: v.id })}
                     sx={{
@@ -691,6 +692,15 @@ function DisplayPanel({
             }
           />
         ))}
+      </Section>
+      <Divider />
+
+      <Section title="Charts">
+        <Check
+          label="Score distribution"
+          checked={!!view.showChart}
+          onChange={() => set({ showChart: !view.showChart })}
+        />
       </Section>
       <Divider />
 

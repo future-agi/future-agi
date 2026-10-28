@@ -35,6 +35,12 @@ import CompareActions, {
   SavedViews,
 } from "./CompareControls";
 import CompareTable from "./CompareTable";
+import CompareGrid from "./CompareGrid";
+import CompareSummary from "./CompareSummary";
+import CompareVerdict from "./CompareVerdict";
+import ScoreDistribution from "./ScoreDistribution";
+import CallCompareDrawer from "./CallCompareDrawer";
+import { readComparison } from "./compareStats";
 import { CALL_CAP, useComparison } from "./useComparison";
 import { comparisonPayload, downloadComparison } from "./exportComparison";
 import { coverageFromRuns, subtitleText, withIdentity } from "./compareFormat";
@@ -103,6 +109,7 @@ function CompareRuns() {
   const [params, setParams] = useSearchParams();
   const [addAnchor, setAddAnchor] = useState(null);
   const [query, setQuery] = useState("");
+  const [openRow, setOpenRow] = useState(null);
 
   const { env, bootstrapState, notFound, error, refetch, isLoading } =
     useEnvironment(envId);
@@ -141,6 +148,12 @@ function CompareRuns() {
     [runs],
   );
   const comparison = useComparison(envId, comparedIds);
+  const { rows: comparedRows, isLoading: callsLoading } = comparison;
+  const read = useMemo(
+    () =>
+      callsLoading ? null : readComparison({ rows: comparedRows }, comparedIds),
+    [callsLoading, comparedRows, comparedIds],
+  );
 
   // Saved views live in this browser, per environment; the active one rides
   // in the URL, so a link carries the reading as well as the runs.
@@ -236,6 +249,7 @@ function CompareRuns() {
         env,
         runs,
         comparison: comparison.isLoading ? null : { rows },
+        read,
       }),
     );
 
@@ -300,6 +314,7 @@ function CompareRuns() {
     : coverageFromRuns(runs);
   // The calls are in, and none of them failed to load.
   const callsReady = !comparison.isLoading && !comparison.error;
+  const showChart = view.showChart && callsReady && comparison.evals.length > 0;
   const rowPad = ROW_HEIGHTS.find((h) => h.id === view.rowHeight)?.py ?? 1.5;
   const runLabel = (id) => runs.find((r) => r.id === id)?.label ?? id;
 
@@ -429,6 +444,8 @@ function CompareRuns() {
           </Typography>
         ))}
 
+        {callsReady && <CompareVerdict read={read} runs={runs} />}
+
         <Box
           sx={{
             border: "1px solid",
@@ -438,11 +455,23 @@ function CompareRuns() {
             overflow: "hidden",
           }}
         >
+          {showChart && (
+            <ScoreDistribution
+              rows={comparison.rows}
+              runs={runs}
+              evals={comparison.evals}
+            />
+          )}
           <Stack
             direction="row"
             alignItems="center"
             spacing={2}
-            sx={{ px: 2.5, py: 1.25 }}
+            sx={{
+              px: 2.5,
+              py: 1.25,
+              borderTop: showChart ? "1px solid" : "none",
+              borderColor: "divider",
+            }}
           >
             <Box sx={{ flex: 1, minWidth: 0 }}>
               <Stack direction="row" alignItems="center" spacing={1}>
@@ -517,6 +546,17 @@ function CompareRuns() {
                     : "These runs have no calls to compare."
                 }
               />
+            ) : view.view === "summary" ? (
+              <CompareSummary comparison={comparison} runs={runs} />
+            ) : view.view === "grid" ? (
+              <CompareGrid
+                groups={groups}
+                runs={runs}
+                runStats={comparison.runStats}
+                evals={comparison.evals}
+                view={view}
+                onOpen={setOpenRow}
+              />
             ) : (
               <CompareTable
                 groups={groups}
@@ -524,11 +564,20 @@ function CompareRuns() {
                 evals={comparison.evals}
                 view={view}
                 rowPad={rowPad}
+                onOpen={setOpenRow}
               />
             )}
           </Box>
         </Box>
       </Box>
+
+      <CallCompareDrawer
+        row={openRow}
+        rows={rows}
+        runs={runs}
+        onOpenRow={setOpenRow}
+        onClose={() => setOpenRow(null)}
+      />
     </Stack>
   );
 }
