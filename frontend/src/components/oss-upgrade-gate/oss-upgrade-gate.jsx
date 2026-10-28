@@ -29,6 +29,7 @@ export default function OSSUpgradeGate({ feature, image, imageDark, reasonCode }
       title={config.title}
       description={config.description}
       steps={config.steps}
+      blurFrom={config.blurFrom}
       footnote={reason?.note || config.footnote}
       primaryLabel={reason?.label || UPGRADE_CTA}
       primaryHref={reason?.toLicense ? undefined : CONTACT_URL}

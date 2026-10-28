@@ -71,32 +71,37 @@ export const FEATURES = {
     ],
   },
   instantEval: {
-    eyebrow: "Cloud feature",
+    eyebrow: "Enterprise feature",
     title: "Upgrade to use Instant eval",
     description:
       "Ask a question in plain English and Jev answers it for a sample or every trace, session or user in view; the first answers come in seconds.",
     image: instantEvalPreview,
     imageDark: instantEvalPreviewDark,
     steps: [
-      "Talk to us to enable Instant eval on your workspace.",
+      "Talk to us about an Enterprise license that includes Instant eval.",
       "Pick a view in Observe and ask Jev a yes/no or category question.",
       "Answers land on a timeline as they come in, with what stands out.",
     ],
     footnote:
       "Jev evaluators come with every edition, open source included: add one from Evals with your own TypeSafe key.",
+    docsUrl: "https://docs.futureagi.com/docs/observe/features/instant-eval",
+    // The preview is an example run, not this workspace's data: blur all of it.
+    blurFrom: 0,
   },
   insights: {
-    eyebrow: "Cloud feature",
+    eyebrow: "Enterprise feature",
     title: "Upgrade to use Insights",
     description:
       "Reports that sort your traces, sessions or users into categories, with the numbers behind each and what sets them apart.",
     image: insightsPreview,
     imageDark: insightsPreviewDark,
     steps: [
-      "Talk to us to enable Insights on your workspace.",
+      "Talk to us about an Enterprise license that includes Insights.",
       "Choose what to learn (usage, failures, experience) and which data to read.",
       "Get categories, findings and examples, and run the report again as your traffic changes.",
     ],
+    docsUrl: "https://docs.futureagi.com/docs/observe/features/insights",
+    blurFrom: 0,
   },
   usageSummary: {
     eyebrow: "Cloud feature",
