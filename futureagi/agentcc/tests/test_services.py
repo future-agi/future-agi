@@ -832,7 +832,8 @@ class TestLogIngestion:
             last_triggered_at=timezone.now(),
         )
 
-        send_alert_email_activity(
+        # The function itself: the activity wrapper closes the test's DB connection.
+        send_alert_email_activity._original_func(
             str(alert.id), "error.occurred", {"request_id": "email-failed-1"}
         )
 
