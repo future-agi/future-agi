@@ -170,7 +170,7 @@ def test_key_authenticated_bootstrap_keeps_exact_key(key_scope, key_type):
         ).exists()
 
 
-def test_spoofed_key_header_does_not_change_bearer_role(key_scope):
+def test_extra_key_header_does_not_change_bearer_role(key_scope):
     scope = key_scope[0]
     user = scope.users[Level.VIEWER]
     key = returned_key(

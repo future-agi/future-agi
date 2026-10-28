@@ -45,7 +45,7 @@ def test_removed_owner_has_no_role_or_private_workspace(
         )
     clear_workspace_context()
     # Mint a real bearer AFTER removal, so revoked-token refusal cannot mask a
-    # stale-role fallback. This is the verifier's six-case public-view probe.
+    # stale-role fallback. Six public-view cases.
     client = session_client(removed, scope.org)
     response = client.get("/accounts/workspaces/")
     clear_workspace_context()
