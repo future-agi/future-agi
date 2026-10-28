@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   draft: null,
   mutate: vi.fn(),
   snack: vi.fn(),
+  navigate: vi.fn(),
   // When set, the capability hooks read Jev's entry from /api/capabilities/
   // for real: its answer, or "fail" for a fetch that fails.
   capabilities: null,
@@ -24,7 +25,7 @@ vi.mock("notistack", async (original) => ({
 vi.mock("react-router", async (original) => ({
   ...(await original()),
   useParams: () => ({ draftId: "draft-1" }),
-  useNavigate: () => vi.fn(),
+  useNavigate: () => mocks.navigate,
 }));
 vi.mock("src/auth/hooks", () => ({
   useAuthContext: () => ({ role: "Owner" }),
@@ -116,15 +117,24 @@ vi.mock("src/components/resizablePanels/ResizablePanels", () => ({
   ),
 }));
 vi.mock("../LLMPromptEditor", () => ({
-  default: ({ model, onModelChange }) => (
-    <select
-      aria-label="Evaluator model"
-      value={model}
-      onChange={(e) => onModelChange(e.target.value)}
-    >
-      <option value="jev-latest">Jev latest</option>
-      <option value="turing_large">Turing Large</option>
-    </select>
+  default: ({ model, onModelChange, messages, onMessagesChange }) => (
+    <>
+      <select
+        aria-label="Evaluator model"
+        value={model}
+        onChange={(e) => onModelChange(e.target.value)}
+      >
+        <option value="jev-latest">Jev latest</option>
+        <option value="turing_large">Turing Large</option>
+      </select>
+      <textarea
+        aria-label="System prompt"
+        value={messages?.find((m) => m.role === "system")?.content ?? ""}
+        onChange={(e) =>
+          onMessagesChange([{ role: "system", content: e.target.value }])
+        }
+      />
+    </>
   ),
 }));
 vi.mock("src/components/PromptCards/PromptEditor", () => ({
@@ -311,6 +321,75 @@ describe("EvalCreatePage with a Jev model", () => {
       { timeout: 4000 },
     );
     expect(mocks.snack).not.toHaveBeenCalled();
+  });
+
+  it("saves the prompt while it holds an unfinished Jev Score, and says so", async () => {
+    render(<EvalCreatePage />);
+    await screen.findByDisplayValue("Jev latest");
+    await userEvent.click(screen.getByLabelText("Scoring"));
+    expect(
+      await screen.findByText(`Not saved yet: ${JEV_RUBRIC_ERROR}`),
+    ).toBeInTheDocument();
+    mocks.mutate.mockClear();
+    await userEvent.type(
+      screen.getByLabelText("System prompt"),
+      "Was it resolved?",
+    );
+    // The prompt saves; the Jev part (model, output type, mapping) is held,
+    // so the server keeps the last setup it could run.
+    await waitFor(
+      () =>
+        expect(lastPayload()).toEqual(
+          expect.objectContaining({
+            instructions: "Was it resolved?",
+            messages: [{ role: "system", content: "Was it resolved?" }],
+          }),
+        ),
+      { timeout: 4000 },
+    );
+    for (const held of ["model", "output_type", "jev_mapping", "eval_type"])
+      expect(lastPayload()).not.toHaveProperty(held);
+    expect(mocks.snack).not.toHaveBeenCalled();
+  });
+
+  const leavePrevented = () => {
+    const event = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+
+  it("asks before leaving while the Jev settings are held", async () => {
+    render(<EvalCreatePage />);
+    await screen.findByDisplayValue("Jev latest");
+    expect(leavePrevented()).toBe(false);
+    await userEvent.click(screen.getByLabelText("Scoring"));
+    // The browser asks on a reload or a closed tab...
+    expect(leavePrevented()).toBe(true);
+    // ...and the page's own way out asks first.
+    await userEvent.click(screen.getByText("Evals List"));
+    expect(
+      await screen.findByText("Leave without the Jev settings?"),
+    ).toBeInTheDocument();
+    expect(mocks.navigate).not.toHaveBeenCalledWith("/dashboard/evaluations");
+    await userEvent.click(screen.getByRole("button", { name: "Leave" }));
+    expect(mocks.navigate).toHaveBeenCalledWith("/dashboard/evaluations");
+  });
+
+  it("leaves without asking once the Jev setup can run", async () => {
+    render(<EvalCreatePage />);
+    await screen.findByDisplayValue("Jev latest");
+    await userEvent.click(screen.getByLabelText("Scoring"));
+    for (const [index, level] of ["Unresolved", "Resolved"].entries()) {
+      await userEvent.click(
+        await screen.findByRole("button", { name: "Add level" }),
+      );
+      await userEvent.type(screen.getByLabelText(`Level ${index}`), level);
+    }
+    expect(screen.queryByText(/Not saved yet/)).toBeNull();
+    expect(leavePrevented()).toBe(false);
+    await userEvent.click(screen.getByText("Evals List"));
+    expect(screen.queryByText("Leave without the Jev settings?")).toBeNull();
+    expect(mocks.navigate).toHaveBeenCalledWith("/dashboard/evaluations");
   });
 
   it("flags a Score whose levels repeat", async () => {

@@ -48,6 +48,7 @@ import { useCompositeChildrenUnionKeys } from "../hooks/useCompositeChildrenKeys
 import CodeEvalEditor, { PYTHON_CODE_TEMPLATE } from "./CodeEvalEditor";
 import CompositeDetailPanel from "./CompositeDetailPanel";
 import UnsavedChangesDialog from "src/sections/projects/MonitorsView/UnsavedChangesDialog";
+import { useBeforeUnload } from "src/hooks/useBeforeUnload";
 import {
   extractVariables,
   extractVariablesFromMessages,
@@ -156,6 +157,35 @@ const resolveContextOptions = (dataInjection) => {
     return ["full_row"];
   }
   return ["variables_only"];
+};
+
+// What Jev's server check reads. While the setup can't run, autosave holds
+// these back, so the server keeps the last runnable setup, and saves the rest
+// (the prompt, threshold, template format).
+const JEV_CHECKED_FIELDS = [
+  "eval_type",
+  "model",
+  "output_type",
+  "choice_scores",
+  "multi_choice",
+  "check_internet",
+  "mode",
+  "tools",
+  "knowledge_bases",
+  "data_injection",
+  "few_shot_examples",
+  "jev_mapping",
+];
+
+const withoutJevFields = (payload) => {
+  // Messages beyond the system prompt need the confirmation that sits in the
+  // held mapping; a system prompt alone saves.
+  const held = hasExtraJevMessages(payload.messages)
+    ? [...JEV_CHECKED_FIELDS, "messages"]
+    : JEV_CHECKED_FIELDS;
+  return Object.fromEntries(
+    Object.entries(payload).filter(([key]) => !held.includes(key)),
+  );
 };
 
 const EvalCreatePage = () => {
@@ -422,10 +452,13 @@ const EvalCreatePage = () => {
       })
     : [];
   // The server refuses a Jev setup these rules reject (a Score with no levels
-  // yet, say), so autosave waits until it is runnable; the page already says
-  // what is missing.
+  // yet, say). Until it is runnable, autosave holds back the fields Jev's
+  // check reads and saves the rest; the header says what is not saved yet.
   const jevUnrunnable =
     isJevModel && evalType !== "code" && jevErrors.length > 0;
+  const jevNotSavedReason = jevUnrunnable ? jevErrors[0] : null;
+  useBeforeUnload(Boolean(jevNotSavedReason));
+  const [confirmLeave, setConfirmLeave] = useState(false);
 
   const buildUpdatePayload = useCallback(() => {
     const dataInjection = buildDataInjection(contextOptions);
@@ -508,9 +541,9 @@ const EvalCreatePage = () => {
       return;
     }
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
-    if (jevUnrunnable) return;
     autoSaveTimer.current = setTimeout(() => {
-      updateDraft.mutate(buildUpdatePayload(), {
+      const payload = buildUpdatePayload();
+      updateDraft.mutate(jevUnrunnable ? withoutJevFields(payload) : payload, {
         // A refused autosave used to leave later edits silently unsaved.
         // Say why, once per reason.
         onError: (error) => {
@@ -801,7 +834,11 @@ const EvalCreatePage = () => {
               underline="hover"
               color="text.secondary"
               sx={{ cursor: "pointer" }}
-              onClick={() => navigate("/dashboard/evaluations")}
+              onClick={() =>
+                jevNotSavedReason
+                  ? setConfirmLeave(true)
+                  : navigate("/dashboard/evaluations")
+              }
             >
               Evals List
             </Link>
@@ -826,6 +863,17 @@ const EvalCreatePage = () => {
               }}
             >
               Draft
+            </Typography>
+          )}
+          {jevNotSavedReason && (
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              noWrap
+              title={jevNotSavedReason}
+              sx={{ maxWidth: 520 }}
+            >
+              Not saved yet: {jevNotSavedReason}
             </Typography>
           )}
         </Box>
@@ -1652,6 +1700,17 @@ const EvalCreatePage = () => {
           }
         />
       </Box>
+      <UnsavedChangesDialog
+        open={confirmLeave}
+        onClose={() => setConfirmLeave(false)}
+        onConfirm={() => {
+          setConfirmLeave(false);
+          navigate("/dashboard/evaluations");
+        }}
+        title="Leave without the Jev settings?"
+        message={`The Jev settings can't be saved yet: ${jevNotSavedReason}. If you leave now, they are lost.`}
+        confirmLabel="Leave"
+      />
       <UnsavedChangesDialog
         open={pendingMode !== null}
         onClose={handleCancelModeSwitch}

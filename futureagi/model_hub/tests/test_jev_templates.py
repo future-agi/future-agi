@@ -306,6 +306,75 @@ def test_r03_ui_draft_switched_to_llm_judge_saves_with_jev(auth_client):
 
 
 @pytest.mark.django_db
+def test_a_held_jev_autosave_saves_the_prompt_and_keeps_the_runnable_setup(
+    auth_client,
+):
+    """The create page's autosave while a Jev Score has no levels yet: the
+    whole payload is refused, so the page holds back the fields Jev's check
+    reads and sends the rest. The prompt saves; the last runnable setup
+    stays."""
+    prompt = "Was the issue resolved in {{conversation}}?"
+    with patch("tfc.ee_gates._jev_denied_off_cloud", return_value=False):
+        draft = auth_client.post(
+            "/model-hub/eval-templates/create-v2/",
+            {
+                "is_draft": True,
+                "eval_type": "llm",
+                "output_type": "pass_fail",
+                "model": "turing_large",
+                "pass_threshold": 0.5,
+            },
+            format="json",
+        )
+        assert draft.status_code == 200, draft.data
+        url = f"/model-hub/eval-templates/{draft.data['result']['id']}/update/"
+        runnable = auth_client.put(
+            url,
+            {
+                "eval_type": "llm",
+                "model": "jev-latest",
+                "output_type": "pass_fail",
+                "jev_mapping": {"revision": "jev-map-v1", "question_type": "noul"},
+            },
+            format="json",
+        )
+        assert runnable.status_code == 200, runnable.data
+        unfinished = auth_client.put(
+            url,
+            {
+                "instructions": prompt,
+                "model": "jev-latest",
+                "output_type": "percentage",
+                "jev_mapping": {
+                    "revision": "jev-map-v1",
+                    "question_type": "score",
+                    "score": {"levels": []},
+                },
+            },
+            format="json",
+        )
+        assert unfinished.status_code == 400, unfinished.data
+        held = auth_client.put(
+            url,
+            {
+                "instructions": prompt,
+                "messages": [{"role": "system", "content": prompt}],
+                "pass_threshold": 0.6,
+                "error_localizer_enabled": False,
+                "template_format": "mustache",
+            },
+            format="json",
+        )
+    assert held.status_code == 200, held.data
+    template = EvalTemplate.objects.get(id=draft.data["result"]["id"])
+    assert template.criteria == prompt
+    assert template.config["messages"] == [{"role": "system", "content": prompt}]
+    assert template.model == "jev-latest"
+    assert template.output_type_normalized == "pass_fail"
+    assert template.config["jev_mapping"]["question_type"] == "noul"
+
+
+@pytest.mark.django_db
 def test_jev_create_refuses_choice_scores_outside_0_1_like_any_model(auth_client):
     """Jev skips only the generic "choice_scores is required" (it answers a
     missing choice with its own typed code). Its scores are checked as for
