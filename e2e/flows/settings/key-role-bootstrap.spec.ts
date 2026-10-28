@@ -83,6 +83,7 @@ test('SET-E2E-004: key access follows the current organization role and removal'
       const expectedIds = (index === 0 ? [pairs[0].id, pairs[1].id, targetId] : [pairs[1].id]).sort();
       expect(listed.result.table.map(row => row.id).sort()).toEqual(expectedIds);
       expect(listed.result.metadata.total_rows).toBe(expectedIds.length);
+      if (index === 0) expect(listed.result.table.find(row => row.id === targetId)!.key_name).toBe(name);
       const context = await scopes.openContext(browser, actor);
       // Abort external assets/telemetry rather than contacting any production host.
       await context.route('**/*', route => new URL(route.request().url()).hostname === 'localhost'
@@ -129,6 +130,9 @@ test('SET-E2E-004: key access follows the current organization role and removal'
         expect(info.id).toBe(actor.userId);
         expect(info.organization.id).toBe(actor.organizationId);
         expect(info.org_level).toBe(index === 0 ? 15 : 1);
+        const reused = await keyClients[index].get(BOOTSTRAP);
+        expect(reused.status()).toBe(200);
+        expect((await reused.json() as Bootstrap).data.id).toBe(pairs[index].id);
       }
       const denied = await keyClients[1].delete(KEY_DELETE, { data: { key_id: targetId } });
       expect(denied.status(), 'C: Viewer cannot delete keys').toBe(wrong === 'key-action' ? 200 : 403);

@@ -16,6 +16,7 @@ scripts="$repo/scripts/key-role-checks"
 run="$repo/.key-role-checks/$(date -u +%Y%m%dT%H%M%SZ)-$$"
 mkdir -p "$run/raw" "$run/results"
 printf '%s\n' "git:$base" "git:$red" "git:$head" "git:$dev" > "$run/results/revisions.txt"
+printf 'history_base=git:%s\nhistory_tests=git:%s\n' "$history" "$head" >> "$run/results/revisions.txt"
 
 # Detached, new checkouts only: the shipped tree and every existing branch stay intact.
 for label in base red head dev removal history; do
