@@ -47,20 +47,29 @@ class TestTemporalActivityIntegration:
 class TestPostRegistrationFlow:
     """Integration tests for post-registration flow."""
 
-    @patch("accounts.utils._run_post_registration")
+    @patch("accounts.models.demo_seed.DemoSeedRequest.objects.get_or_create")
     @patch("tfc.temporal.drop_in.start_activity")
     def test_process_post_registration_calls_start_activity(
-        self, mock_start_activity, mock_run
+        self, mock_start_activity, mock_intent
     ):
         """Test that process_post_registration calls start_activity."""
+        from temporalio.common import WorkflowIDConflictPolicy
+
         from accounts.utils import process_post_registration
 
-        process_post_registration("user-123", "password123")
+        process_post_registration("user-123", "password123", organization_id="org-123")
+        mock_intent.assert_called_once_with(
+            organization_id="org-123", defaults={"user_id": "user-123"}
+        )
 
         mock_start_activity.assert_called_once_with(
             "run_post_registration_activity",
             args=("user-123", "password123"),
+            kwargs={"organization_id": "org-123"},
             queue="default",
+            task_id="post-registration-org-123",
+            id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+            dispatch_timeout_seconds=2,
         )
 
 

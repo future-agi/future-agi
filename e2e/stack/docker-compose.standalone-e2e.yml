@@ -22,8 +22,14 @@ services:
     # SAML checks the response Destination against BASE_URL/saml2_auth/acs/.
     environment:
       BASE_URL: http://localhost:${BACKEND_PORT:-8100}
+      DJANGO_SETTINGS_MODULE: tfc.settings.e2e
       # Simulate cutoff (#3502): every org a run signs up is after it; lib/existing-customer.ts dates one before it.
       RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF: "2026-10-01T00:00:00Z"
+    volumes:
+      - ./e2e/stack/backend/settings_e2e.py:/app/backend/tfc/settings/e2e.py:ro
+      - ./e2e/stack/backend/urls_e2e.py:/app/backend/tfc/urls_e2e.py:ro
+      - ./e2e/stack/backend/e2e_clean_signup.py:/app/backend/accounts/views/e2e_clean_signup.py:ro
+      - ./e2e/stack/backend/e2e_feed_issue.py:/app/backend/tracer/views/e2e_feed_issue.py:ro
     extra_hosts:
       - "agentcc-gateway:127.0.0.1"
     # A crash should fail the run loudly instead of restarting quietly.

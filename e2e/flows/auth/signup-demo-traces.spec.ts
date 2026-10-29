@@ -14,7 +14,8 @@ const ONBOARDING = '/accounts/onboarding/';
 // accounts/user_onboard.py: the existing sample is one 35-span trace per project.
 const PROJECT_NAMES = ['Demo SQL Agent (Experiment)', 'Demo SQL Agent (Observe)'];
 const DATASET_NAMES = ['Demo-dataset', 'Image-Demo-dataset'];
-const TRACE_NAME = 'SQL Agent Executor';
+const TRACE_NAME = 'SQL Agent Trace';
+const ROOT_SPAN_NAME = 'SQL Agent Executor';
 const SPAN_COUNT = 35;
 // Captured from the running Observe trace grid and trace detail drawer.
 const TRACE_CELLS = '.clean-data-table:visible .ag-row [col-id="trace_name"]';
@@ -150,7 +151,7 @@ test('AUTH-E2E-004: fresh signup seeds demo traces visible in Observe', {
       await page.locator(TRACE_CELLS).click();
     }, { timeout: UI_READY });
     await test.step('inspect the demo span tree', async () => {
-      await expect(page.getByText(TRACE_NAME, { exact: true }).first()).toBeVisible({ timeout: UI_READY });
+      await expect(page.getByText(ROOT_SPAN_NAME, { exact: true }).first()).toBeVisible({ timeout: UI_READY });
       await expect(page.getByText('RunnableSequence', { exact: true }).first()).toBeVisible({ timeout: UI_READY });
     }, { timeout: UI_READY });
   } finally {

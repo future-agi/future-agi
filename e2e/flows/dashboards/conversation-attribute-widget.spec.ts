@@ -244,21 +244,32 @@ test('DASH-E2E-009: a saved conversation widget excludes child-model call-metric
           await attach('native-http-head', { ...receipt });
           if (!/\bapplication\/(?:[\w.-]+\+)?json\b/i.test(receipt.contentType!)) { receipt.error = 'non_json_body_omitted'; return; }
           receipt.body = await readJsonWithin(response);
-        } catch { receipt.error = 'response_json_unreadable'; }
+        } catch {
+          if (receipt.error !== 'request_cancelled') receipt.error = 'response_json_unreadable';
+        }
         finally { receipt.endedAt = Date.now(); receipt.settled = true; }
       })();
       pending.add(capture); void capture.finally(() => pending.delete(capture));
     };
     const onFailed = (outgoing: Request) => {
-      const receipt = requests.get(outgoing); if (receipt) Object.assign(receipt, { error: 'request_failed', settled: true, endedAt: Date.now() });
+      const receipt = requests.get(outgoing); if (receipt) Object.assign(receipt, {
+        error: outgoing.failure()?.errorText === 'net::ERR_ABORTED' ? 'request_cancelled' : 'request_failed',
+        settled: true, endedAt: Date.now(),
+      });
     };
     page.on('request', onRequest); page.on('response', onResponse); page.on('requestfailed', onFailed);
     const readNative = async <T>(path: string, input: Wire | undefined, since = 0, method = 'POST', complete?: (body: T) => boolean): Promise<Receipt<T>> => {
-      const matches = (r: Receipt<unknown>) => r.path === path && r.method === method && r.startedAt >= since &&
-        (input === undefined || isDeepStrictEqual(r.input, input)) && r.settled &&
-        Boolean(r.error || r.status !== 200 || !complete || complete(r.body as T));
-      await expect.poll(() => receipts.some(matches), { timeout: UI_READY }).toBe(true);
-      const matching = receipts.filter(matches);
+      const matchingReceipts = () => {
+        const candidates = receipts.filter(r => r.path === path && r.method === method && r.startedAt >= since &&
+          (input === undefined || isDeepStrictEqual(r.input, input)));
+        // Changing category/search cancels the old request. Require its actual
+        // replacement response; an old success cannot satisfy the new search.
+        const cancelled = candidates.map(r => r.error).lastIndexOf('request_cancelled');
+        return candidates.slice(cancelled + 1).filter(r => r.settled &&
+          Boolean(r.error || r.status !== 200 || !complete || complete(r.body as T)));
+      };
+      await expect.poll(() => matchingReceipts().length, { timeout: UI_READY }).toBeGreaterThan(0);
+      const matching = matchingReceipts();
       const receipt = (matching.find(r => r.error || r.status !== 200) ?? matching.at(-1)!) as Receipt<T>;
       await attach(`native-${path.split('/').filter(Boolean).at(-1)}`, receipt);
       expect(receipt.error).toBeUndefined(); expect(receipt.status).toBe(200); expect(receipt.scope).toEqual(expectedScope); expect(receipt.authorized).toBe(true);

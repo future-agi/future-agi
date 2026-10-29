@@ -13,6 +13,7 @@ Pattern:
 # Config (no temporalio)
 from tfc.temporal.schedules.billing import BILLING_SCHEDULES
 from tfc.temporal.schedules.config import ScheduleConfig
+from tfc.temporal.schedules.demo_seeding import DEMO_SEEDING_SCHEDULES
 from tfc.temporal.schedules.deployment_telemetry import (
     DEPLOYMENT_TELEMETRY_SCHEDULES,
 )
@@ -30,6 +31,7 @@ from tfc.temporal.schedules.tracer import TRACER_SCHEDULES
 
 # All schedules to be registered
 ALL_SCHEDULES = [
+    *DEMO_SEEDING_SCHEDULES,
     *MODEL_HUB_SCHEDULES,
     *TRACER_SCHEDULES,
     *SIMULATE_SCHEDULES,

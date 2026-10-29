@@ -1,7 +1,7 @@
 import json
 import os
 import uuid
-from functools import partial
+from copy import deepcopy
 
 import structlog
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
@@ -81,6 +81,7 @@ def create_image_dataset(organization_id, user_id):
                 "source": DatasetSourceChoices.DEMO.value,
             }
         )
+        image_dataset_serializer.is_valid(raise_exception=True)
         if image_dataset_serializer.is_valid():
             image_dataset = image_dataset_serializer.save()
             img_col_map = {}
@@ -250,6 +251,7 @@ def create_image_dataset(organization_id, user_id):
         logger.exception(
             f"An unexpected error occurred during demo dataset creation for organization {organization_id}: {e}"
         )
+        raise
 
 
 def upload_demo_dataset(organization_id, user_id):
@@ -267,6 +269,7 @@ def upload_demo_dataset(organization_id, user_id):
             }
         )
 
+        dataset_serializer.is_valid(raise_exception=True)
         if dataset_serializer.is_valid():
             dataset = dataset_serializer.save()
             # image_dataset = image_dataset_serializer.save()
@@ -299,7 +302,7 @@ def upload_demo_dataset(organization_id, user_id):
             logger.info(f"REVCOLMAP after OTHERS: {rev_col_map}")
 
             # --- Update Run Prompt Config and Create RUN_PROMPT columns ---
-            rp_config = run_prompt_config["config"]
+            rp_config = deepcopy(run_prompt_config["config"])
             logger.info(f"rev_col_map before rp_config: {rev_col_map}")
             try:
                 if (
@@ -404,7 +407,8 @@ def upload_demo_dataset(organization_id, user_id):
                         "Failed to find a suitable target column for experiment creation"
                     )
 
-            exp_pr_config = prompt_config[0]
+            experiment_prompt_config = deepcopy(prompt_config)
+            exp_pr_config = experiment_prompt_config[0]
             logger.info(f"rev_col_map before exp_rp_config: {rev_col_map}")
             try:
                 if (
@@ -432,7 +436,7 @@ def upload_demo_dataset(organization_id, user_id):
                 name="Response Generation",
                 dataset=dataset,
                 column_id=rev_col_map[experiment_target_old_col_id],
-                prompt_config=prompt_config,
+                prompt_config=experiment_prompt_config,
                 status=StatusType.COMPLETED.value,
             )
             exp_dataset = ExperimentDatasetTable.objects.create(
@@ -1035,16 +1039,20 @@ Include a brief note explaining how your answer connects to the context.
             )
     except Organization.DoesNotExist:
         logger.error(f"Organization with ID {organization_id} not found.")
+        raise
     except EvalTemplate.DoesNotExist:
         logger.error("Required EvalTemplate 'Answer Similarity' not found.")
+        raise
     except KeyError as e:
         logger.error(
             f"KeyError during demo dataset creation: {e}. This might indicate missing data in JSON files or mapping issues."
         )
+        raise
     except Exception as e:
         logger.exception(
             f"An unexpected error occurred during demo dataset creation for organization {organization_id}: {e}"
         )
+        raise
 
 
 def create_demo_prompt_template(
@@ -1227,7 +1235,7 @@ def create_demo_prompt_template(
         return None
 
 
-def create_demo_traces_and_spans(organization_id, user_id=None):
+def create_demo_traces_and_spans(organization_id, user_id=None, *, publish=True):
     try:
         organization = Organization.objects.get(id=organization_id)
 
@@ -1375,7 +1383,9 @@ def create_demo_traces_and_spans(organization_id, user_id=None):
 
             trace = Trace.objects.create(**trace_kwargs)
 
-            create_observation_spans(project, trace, organization, project_version)
+            create_observation_spans(
+                project, trace, organization, project_version, publish=publish
+            )
 
     except Exception as e:
         logger.exception(f"Error creating demo traces and spans: {str(e)}")
@@ -1401,7 +1411,9 @@ def get_input_output_span(otel_span: dict, decoder):
     return input_val, output_val
 
 
-def create_observation_spans(project, trace, organization, project_version):
+def create_observation_spans(
+    project, trace, organization, project_version, *, publish=True
+):
     decoder = AttributeDecoder()
     main_span_id = str(os.urandom(8).hex())
     main_span_kwargs = {
@@ -4531,11 +4543,20 @@ def create_observation_spans(project, trace, organization, project_version):
         ObservationSpan(**obs_span_kwarg) for obs_span_kwarg in spans_to_create
     )
     EvalLogger.objects.bulk_create(eval_loggers)
-    transaction.on_commit(partial(_enqueue_demo_trace_publication, str(trace.id)))
+    from accounts.models.demo_seed import DemoTracePublication
+
+    if publish:
+        DemoTracePublication.objects.get_or_create(trace=trace)
+        transaction.on_commit(
+            lambda trace_id=str(trace.id): _enqueue_demo_trace_publication(trace_id),
+            robust=True,
+        )
 
 
 def _enqueue_demo_trace_publication(trace_id):
-    # Retry publication independently: repeating signup would duplicate demo data.
+    # The pending row is committed with the trace. Recovery retries lost starts.
+    from temporalio.common import WorkflowIDConflictPolicy
+
     import tfc.temporal.background_tasks.activities  # noqa: F401
     from tfc.temporal.drop_in import start_activity
     from tracer.services.clickhouse.v2.trace_writer import dual_write_enabled
@@ -4546,6 +4567,8 @@ def _enqueue_demo_trace_publication(trace_id):
             args=(trace_id,),
             queue="default",
             task_id=f"publish-demo-trace-{trace_id}",
+            id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+            dispatch_timeout_seconds=2,
         )
 
 
@@ -4585,11 +4608,46 @@ def _write_demo_trace_to_clickhouse(trace, spans):
         database=config["database"],
     ) as client:
         client.insert(
-            "traces", [_trace_to_row(trace)], column_names=list(_TRACE_COLUMNS)
+            "traces",
+            [_trace_to_row(trace)],
+            column_names=list(_TRACE_COLUMNS),
+            settings={"async_insert": 0},
         )
         client.insert(
             "trace_sessions",
             [trace_session_to_row(trace.session)],
             column_names=list(_TRACE_SESSION_COLUMNS),
+            settings={"async_insert": 0},
         )
-        client.insert("spans", rows, column_names=list(CH_INSERT_COLUMNS))
+        # Publication is serialized by its pending-row lock. Re-inserting saved
+        # spans after a lost acknowledgement would double additive MV metrics,
+        # even though ReplacingMergeTree deduplicates the source rows under FINAL.
+        published_ids = {
+            row[0]
+            for row in client.query(
+                "SELECT id FROM spans FINAL "
+                "WHERE project_id = {project:UUID} AND trace_id = {trace:String}",
+                parameters={"project": str(trace.project_id), "trace": str(trace.id)},
+            ).result_rows
+        }
+        id_column = CH_INSERT_COLUMNS.index("id")
+        rows = [row for row in rows if row[id_column] not in published_ids]
+        if not rows:
+            return
+        # trace_name normally uses a cached dictionary. A brand-new trace can
+        # miss that cache at insert time and permanently store a blank name.
+        # We already have the authoritative name; make every demo span agree.
+        span_columns = [*CH_INSERT_COLUMNS, "trace_name"]
+        # clickhouse-connect's automatic type lookup excludes materialized
+        # columns even with the setting enabled, so supply server-reported types.
+        span_types = {
+            column["name"]: column["type"]
+            for column in client.query("DESCRIBE TABLE spans").named_results()
+        }
+        client.insert(
+            "spans",
+            [(*row, trace.name or "") for row in rows],
+            column_names=span_columns,
+            column_type_names=[span_types[column] for column in span_columns],
+            settings={"insert_allow_materialized_columns": 1, "async_insert": 0},
+        )
