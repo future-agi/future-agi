@@ -64673,7 +64673,7 @@
         "/tracer/insights/runs/{run_id}/stop/": {
             "post": {
                 "operationId": "tracer_insights_runs_stop_create",
-                "description": "Stop a run in flight: it reads nothing more and isn't written. The\nwork it already did is charged. Stopping it again answers the same.",
+                "description": "Stop a run in flight: it reads nothing more and isn't written. The\nwork finished before the stop is charged, and its counts are final:\nwhat calls under way read is dropped. Stopping it again answers the\nsame.",
                 "parameters": [
                     {
                         "name": "data",
@@ -151540,6 +151540,8 @@
                 "population_size",
                 "sample_size",
                 "analysed_count",
+                "excluded_count",
+                "failed_count",
                 "skipped_count",
                 "taxonomy_mode",
                 "distribution",
@@ -151585,6 +151587,14 @@
                 },
                 "analysed_count": {
                     "title": "Analysed count",
+                    "type": "integer"
+                },
+                "excluded_count": {
+                    "title": "Excluded count",
+                    "type": "integer"
+                },
+                "failed_count": {
+                    "title": "Failed count",
                     "type": "integer"
                 },
                 "skipped_count": {
@@ -152363,6 +152373,8 @@
                 "population_size",
                 "sample_size",
                 "analysed_count",
+                "excluded_count",
+                "failed_count",
                 "skipped_count",
                 "taxonomy_mode",
                 "result",
@@ -152430,6 +152442,14 @@
                 },
                 "analysed_count": {
                     "title": "Analysed count",
+                    "type": "integer"
+                },
+                "excluded_count": {
+                    "title": "Excluded count",
+                    "type": "integer"
+                },
+                "failed_count": {
+                    "title": "Failed count",
                     "type": "integer"
                 },
                 "skipped_count": {

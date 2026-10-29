@@ -100312,6 +100312,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "population_size",
         "sample_size",
         "analysed_count",
+        "excluded_count",
+        "failed_count",
         "skipped_count",
         "taxonomy_mode",
         "result",
@@ -100379,6 +100381,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         analysed_count: {
           title: "Analysed count",
+          type: "integer",
+        },
+        excluded_count: {
+          title: "Excluded count",
+          type: "integer",
+        },
+        failed_count: {
+          title: "Failed count",
           type: "integer",
         },
         skipped_count: {
@@ -117816,6 +117826,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "population_size",
         "sample_size",
         "analysed_count",
+        "excluded_count",
+        "failed_count",
         "skipped_count",
         "taxonomy_mode",
         "distribution",
@@ -117861,6 +117873,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         analysed_count: {
           title: "Analysed count",
+          type: "integer",
+        },
+        excluded_count: {
+          title: "Excluded count",
+          type: "integer",
+        },
+        failed_count: {
+          title: "Failed count",
           type: "integer",
         },
         skipped_count: {

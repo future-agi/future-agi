@@ -74929,7 +74929,9 @@ export const getTracerInsightsRunsStopCreateUrl = (runId: string) => {
 
 /**
  * Stop a run in flight: it reads nothing more and isn't written. The
-work it already did is charged. Stopping it again answers the same.
+work finished before the stop is charged, and its counts are final:
+what calls under way read is dropped. Stopping it again answers the
+same.
  */
 export const tracerInsightsRunsStopCreate = async (
   runId: string,

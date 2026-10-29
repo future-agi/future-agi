@@ -27309,6 +27309,8 @@ export interface InsightRunSummaryApi {
   population_size: number;
   sample_size: number;
   analysed_count: number;
+  excluded_count: number;
+  failed_count: number;
   skipped_count: number;
   /** @minLength 1 */
   taxonomy_mode: string;
@@ -27668,6 +27670,8 @@ export interface InsightRunDetailApi {
   population_size: number;
   sample_size: number;
   analysed_count: number;
+  excluded_count: number;
+  failed_count: number;
   skipped_count: number;
   /** @minLength 1 */
   taxonomy_mode: string;

@@ -58867,6 +58867,8 @@ export const TracerInsightsConfigsListResponse = zod.object({
           population_size: zod.number(),
           sample_size: zod.number(),
           analysed_count: zod.number(),
+          excluded_count: zod.number(),
+          failed_count: zod.number(),
           skipped_count: zod.number(),
           taxonomy_mode: zod.string().min(1),
           distribution: zod.array(zod.object({}).passthrough()),
@@ -58885,6 +58887,8 @@ export const TracerInsightsConfigsListResponse = zod.object({
               population_size: zod.number(),
               sample_size: zod.number(),
               analysed_count: zod.number(),
+              excluded_count: zod.number(),
+              failed_count: zod.number(),
               skipped_count: zod.number(),
               taxonomy_mode: zod.string().min(1),
               distribution: zod.array(zod.object({}).passthrough()),
@@ -58933,6 +58937,8 @@ export const TracerInsightsConfigsReadResponse = zod.object({
       population_size: zod.number(),
       sample_size: zod.number(),
       analysed_count: zod.number(),
+      excluded_count: zod.number(),
+      failed_count: zod.number(),
       skipped_count: zod.number(),
       taxonomy_mode: zod.string().min(1),
       distribution: zod.array(zod.object({}).passthrough()),
@@ -58951,6 +58957,8 @@ export const TracerInsightsConfigsReadResponse = zod.object({
           population_size: zod.number(),
           sample_size: zod.number(),
           analysed_count: zod.number(),
+          excluded_count: zod.number(),
+          failed_count: zod.number(),
           skipped_count: zod.number(),
           taxonomy_mode: zod.string().min(1),
           distribution: zod.array(zod.object({}).passthrough()),
@@ -59109,6 +59117,8 @@ export const TracerInsightsConfigsPartialUpdateResponse = zod.object({
       population_size: zod.number(),
       sample_size: zod.number(),
       analysed_count: zod.number(),
+      excluded_count: zod.number(),
+      failed_count: zod.number(),
       skipped_count: zod.number(),
       taxonomy_mode: zod.string().min(1),
       distribution: zod.array(zod.object({}).passthrough()),
@@ -59127,6 +59137,8 @@ export const TracerInsightsConfigsPartialUpdateResponse = zod.object({
           population_size: zod.number(),
           sample_size: zod.number(),
           analysed_count: zod.number(),
+          excluded_count: zod.number(),
+          failed_count: zod.number(),
           skipped_count: zod.number(),
           taxonomy_mode: zod.string().min(1),
           distribution: zod.array(zod.object({}).passthrough()),
@@ -59175,6 +59187,8 @@ export const TracerInsightsConfigsDeleteResponse = zod.object({
       population_size: zod.number(),
       sample_size: zod.number(),
       analysed_count: zod.number(),
+      excluded_count: zod.number(),
+      failed_count: zod.number(),
       skipped_count: zod.number(),
       taxonomy_mode: zod.string().min(1),
       distribution: zod.array(zod.object({}).passthrough()),
@@ -59193,6 +59207,8 @@ export const TracerInsightsConfigsDeleteResponse = zod.object({
           population_size: zod.number(),
           sample_size: zod.number(),
           analysed_count: zod.number(),
+          excluded_count: zod.number(),
+          failed_count: zod.number(),
           skipped_count: zod.number(),
           taxonomy_mode: zod.string().min(1),
           distribution: zod.array(zod.object({}).passthrough()),
@@ -59594,6 +59610,8 @@ export const TracerInsightsRunsReadResponse = zod.object({
     population_size: zod.number(),
     sample_size: zod.number(),
     analysed_count: zod.number(),
+    excluded_count: zod.number(),
+    failed_count: zod.number(),
     skipped_count: zod.number(),
     taxonomy_mode: zod.string().min(1),
     result: zod.object({}).passthrough(),
@@ -59702,7 +59720,9 @@ export const TracerInsightsRunsMediaListResponse = zod.instanceof(File);
 
 /**
  * Stop a run in flight: it reads nothing more and isn't written. The
-work it already did is charged. Stopping it again answers the same.
+work finished before the stop is charged, and its counts are final:
+what calls under way read is dropped. Stopping it again answers the
+same.
  */
 export const TracerInsightsRunsStopCreateParams = zod.object({
   run_id: zod.string(),
