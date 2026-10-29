@@ -593,7 +593,7 @@ def test_boolean_plan_preserves_presence_all_history_and_existing_batch_sizes(va
     sql, params = builder.build_filter_candidate_seed_page(
         slice_start=start, slice_end=end, limit=200
     )
-    witness, root = sql.split("SELECT trace_id, id AS root_span_id, start_time", 1)
+    witness, root = sql.split("SELECT trace_id, start_time", 1)
     assert (
         "SELECT DISTINCT trace_id" in witness
         and "matching_scalar_trace_identities" in witness
