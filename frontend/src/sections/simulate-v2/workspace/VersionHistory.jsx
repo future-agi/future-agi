@@ -464,7 +464,7 @@ const WORDING_TONE = { added: "status.success.fg" };
 
 /* Each changed rule, use case or argument as it read before and after — a
    removed line struck through, an added one in green. */
-function ContractWording({ items }) {
+export function ContractWording({ items }) {
   if (!items.length) return null;
   return (
     <Stack spacing={0.75} sx={{ mt: 0.75, mb: 0.25 }}>

@@ -128,7 +128,7 @@ import { groupsOf as orgGroupsOf, groupRunPlanOf } from "../_mock/scenarioOrg";
 import AttachmentsCard from "./data/AttachmentsCard";
 import DataProposalCard from "./data/DataProposalCard";
 import ActorsPanel from "./ActorsPanel";
-import VersionHistoryMenu from "./VersionHistory";
+import HistoryPage from "./HistoryPage";
 import { envOf } from "../_mock/runGroup";
 import { RUN_PLAN_PARAMS, runPlanRequestOf } from "../_mock/runPlanLink";
 import { withPinnedWorld, worldToolsFor } from "../_mock/toolFit";
@@ -3312,8 +3312,7 @@ export default function EnvironmentWorkspace() {
             ) : panel === "analytics" ? (
               <AnalyticsPanel env={worldEnv} envState={envState} />
             ) : panel === "history" ? (
-              <VersionHistoryMenu
-                page
+              <HistoryPage
                 env={worldEnv}
                 envState={envState}
                 patch={patch}
