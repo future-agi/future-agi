@@ -48,13 +48,14 @@ const ExecutionsList = ({
 
   const scrollContainerRef = useScrollEnd(fetchNext, [fetchNext]);
 
-  // Auto-select top execution whenever the newest item changes
+  // Select the newest execution only when the history first opens. Once a
+  // user has chosen an execution, refreshing the list must not replace it.
   const firstExecutionId = executions[0]?.id;
   useEffect(() => {
-    if (firstExecutionId) {
+    if (firstExecutionId && !selectedExecutionId) {
       onExecutionChange(firstExecutionId);
     }
-  }, [firstExecutionId, onExecutionChange]);
+  }, [firstExecutionId, onExecutionChange, selectedExecutionId]);
 
   return (
     <Box
