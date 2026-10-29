@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Box,
   Stack,
@@ -7,7 +8,10 @@ import {
   Button,
   CircularProgress,
   Divider,
+  MenuItem,
+  Select,
 } from "@mui/material";
+import { paths } from "src/routes/paths";
 import Iconify from "src/components/iconify";
 import { getSurface } from "../_mock/surfaces";
 import { useConnectedAgents } from "../store";
@@ -26,6 +30,7 @@ import {
   useBuildForAgent,
   useTryWorld,
   worldChannelOf,
+  worldPacksOf,
 } from "./worldSource";
 import { generatedPool } from "../_mock/scenarios";
 import { estimateRunPlan, rangeLabel } from "../_mock/pricing";
@@ -64,7 +69,12 @@ export default function TemplateBuildPanel({
   template,
   showName = false,
   initialMode = "try",
+  entry = null,
+  blocked = null,
 }) {
+  const navigate = useNavigate();
+  /* Starter pack by default; a named pack or the full world on request. */
+  const [pack, setPack] = useState("starter");
   /* "try" — the world with its sample agent; "agent" — with one of yours. */
   const [mode, setMode] = useState(initialMode);
   const tryWorld = useTryWorld();
@@ -102,7 +112,23 @@ export default function TemplateBuildPanel({
   const surface = getSurface(env.surface);
   const rows = (env.seed?.tables || []).reduce((a, t) => a + t.rows, 0);
   const sample = sampleAgentOf(template);
-  const scenarioCount = generatedPool(template).length;
+  const packs = worldPacksOf(template);
+  const picked = packs.find((p) => p.id === pack) || packs[0];
+  const scenarioCount = picked.count;
+  const release = entry?.release?.version || null;
+  /* An unedited sample copy of this release already exists: open it again
+     rather than making another — Make another copy is still offered. */
+  const existing = (store.myEnvironments || []).find((e) => {
+    const es = store.byEnv?.[e.id];
+    return (
+      e.templateId === template.id &&
+      (e.release || null) === release &&
+      es?.agent?.sample &&
+      (es.envVersions || []).length <= 1 &&
+      !es.pendingChanges?.length
+    );
+  });
+  const tryIt = () => tryWorld(template, { pack, release });
   const evalCount = (template.evalPreset || []).length;
   /* What a first run of it costs — the run plan's estimate, at 3 attempts. */
   const tryEstimate = estimateRunPlan({
@@ -184,7 +210,7 @@ export default function TemplateBuildPanel({
               },
               {
                 icon: "solar:checklist-minimalistic-linear",
-                text: `${scenarioCount} scenarios, already proven, and ${evalCount} evaluation${evalCount === 1 ? "" : "s"}.`,
+                text: `${picked.name} · ${scenarioCount} proved scenarios, and ${evalCount} evaluation${evalCount === 1 ? "" : "s"}.`,
               },
               {
                 icon: "solar:play-circle-linear",
@@ -192,8 +218,8 @@ export default function TemplateBuildPanel({
               },
               {
                 icon: "solar:wallet-money-linear",
-                text: `Opening it is free. A run of all ${scenarioCount} × 3 attempts ≈ ${rangeLabel(tryEstimate.platform.low, tryEstimate.platform.high, tryEstimate.platform.unknown)}.`,
-                hint: "Confirmed in the run plan before anything starts, with its limit. The sample agent's own model calls aren't charged to you.",
+                text: `Opening it is free. A run of ${scenarioCount} × 3 attempts ≈ ${rangeLabel(tryEstimate.platform.low, tryEstimate.platform.high, tryEstimate.platform.unknown)}.`,
+                hint: "Confirmed in the run plan before anything starts, with its limit. The sample agent's own model calls aren't charged to you. A free run shows only if your account has one.",
               },
             ].map((row) => (
               <Stack
@@ -231,19 +257,61 @@ export default function TemplateBuildPanel({
               borderColor: "divider",
             }}
           >
+            {/* Which pack it runs — the starter pack unless picked. */}
+            <Select
+              size="small"
+              value={pack}
+              onChange={(e) => setPack(e.target.value)}
+              inputProps={{ "aria-label": "Scenario pack" }}
+              sx={{ typography: "s2", minWidth: 180 }}
+            >
+              {packs.map((p) => (
+                <MenuItem key={p.id} value={p.id} sx={{ typography: "s2" }}>
+                  {`${p.name} · ${p.count}`}
+                </MenuItem>
+              ))}
+            </Select>
+            <Box flex={1} />
+            {existing && !blocked && (
+              <Button
+                size="small"
+                color="inherit"
+                onClick={tryIt}
+                sx={{ color: "text.secondary", whiteSpace: "nowrap" }}
+              >
+                Make another copy
+              </Button>
+            )}
             <Button
               variant="contained"
               color="primary"
-              onClick={() => tryWorld(template)}
+              disabled={!!blocked}
+              onClick={() =>
+                existing
+                  ? navigate(
+                      paths.dashboard.simulate.environmentDetail(existing.id),
+                    )
+                  : tryIt()
+              }
               startIcon={<Iconify icon="solar:play-bold" width={16} />}
               sx={{ whiteSpace: "nowrap" }}
             >
-              Try it now
+              {existing ? "Run again" : "Try it now"}
             </Button>
-            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-              Opens a ready environment
-            </Typography>
           </Stack>
+          {existing && !blocked && (
+            <Typography
+              sx={{
+                typography: "s3",
+                color: "text.subtitle",
+                px: 2.5,
+                pb: 1.75,
+                mt: -1,
+              }}
+            >
+              {`You already have an unedited copy of this release — ${existing.name}. Run again opens it.`}
+            </Typography>
+          )}
         </SectionCard>
       ) : (
         <SectionCard
@@ -398,7 +466,7 @@ export default function TemplateBuildPanel({
               <Button
                 variant="contained"
                 color="primary"
-                disabled={!agent}
+                disabled={!agent || !!blocked}
                 onClick={() => setDialogOpen(true)}
                 startIcon={
                   <Iconify icon="solar:magic-stick-3-bold" width={16} />
@@ -494,6 +562,10 @@ TemplateBuildPanel.propTypes = {
   template: PropTypes.object,
   showName: PropTypes.bool,
   initialMode: PropTypes.oneOf(["try", "agent"]),
+  /* The catalogue task (V01…M10): release and readiness. */
+  entry: PropTypes.object,
+  /* Why it can't be adopted — Try it now and Build are off. */
+  blocked: PropTypes.string,
 };
 
 /* What the commands build on the machine, and what Open the build builds: the

@@ -15,7 +15,7 @@ import { paths } from "src/routes/paths";
 import { buildPresetFor } from "../agents/agentViewUtils";
 import { agentStatusOf, isComingSoon } from "../_mock/rsiModel";
 import { worldFromTemplate } from "../_mock/agentWorlds";
-import { generatedPool } from "../_mock/scenarios";
+import { generatedPool, getPacks, getRows } from "../_mock/scenarios";
 import { MODALITY_FOR } from "../_mock/fidelity";
 import { runtimeTypeFor } from "../_mock/builder";
 import { useSimStore } from "../store";
@@ -60,11 +60,18 @@ export const sampleAgentOf = (template, now = new Date().toISOString()) => ({
 export function useTryWorld() {
   const navigate = useNavigate();
   const { dispatch } = useSimStore();
-  return useCallback((template) => {
+  return useCallback((template, { pack = "starter", release = null } = {}) => {
     const now = new Date().toISOString();
-    const env = { ...template, id: `${template.id}-${Math.random().toString(36).slice(2, 8)}`, templateId: template.id };
+    const env = {
+      ...template,
+      id: `${template.id}-${Math.random().toString(36).slice(2, 8)}`,
+      templateId: template.id,
+      /* The exact release and pack it was made from — runs and copies name them. */
+      ...(release && { release }),
+      pack,
+    };
     dispatch({ type: "adoptEnvironment", env, now });
-    const scenarios = generatedPool(env);
+    const scenarios = scenariosForPack(env, pack);
     const tools = (env.tools || []).map((t) => ({ ...t }));
     const base = {
       envVersions: [{
@@ -128,3 +135,24 @@ export function useBuildForAgent() {
     state: { presetSource: { ...buildPresetFor(agent, choice), ...(worldSource && { worldSource }) } },
   }), [navigate]);
 }
+
+/** The packs a world offers: the five-case starter pack first (the default), each named pack, then the full world. */
+export const worldPacksOf = (template) => {
+  const packs = getPacks(template).map((p) => ({ id: p.id, name: p.name, blurb: p.blurb, count: getRows(p.id, template).length }));
+  const full = packs.reduce((n, p) => n + p.count, 0);
+  return [
+    { id: "starter", name: "Starter pack", blurb: "One case from each pack — the default.", count: Math.min(5, full) },
+    ...packs.filter((p) => p.count),
+    { id: "full", name: "Full world", blurb: "Every pack.", count: full },
+  ];
+};
+
+
+/** The scenarios a pack runs: starter = the first case of each pack; a named pack its own; full = all. */
+export const scenariosForPack = (env, packId = "starter") => {
+  if (packId === "full") return generatedPool(env);
+  if (packId === "starter") {
+    return getPacks(env).map((p) => getRows(p.id, env)[0]).filter(Boolean).slice(0, 5);
+  }
+  return getRows(packId.replace(/^.*::/, `${env.id}::`), env);
+};

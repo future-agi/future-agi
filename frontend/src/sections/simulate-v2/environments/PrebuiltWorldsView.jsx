@@ -27,6 +27,8 @@ import { SaasSandboxCard } from "./SaasSandbox";
 import { QuietTag, WorldCard } from "./LandingBits";
 import { AGENT_TYPES } from "./connectOptions";
 import WorldDrawer from "./WorldDrawer";
+import CopyCommandButton from "../components/CopyCommandButton";
+import { CATALOGUE_CLI, READINESS } from "../_mock/catalogue";
 
 /*
   Every prebuilt world, filterable. A world is the world only — open one to
@@ -40,11 +42,15 @@ export default function PrebuiltWorldsView({ onBack, bare = false }) {
   const [query, setQuery] = useState("");
   const [type, setType] = useState("all");
   const [domain, setDomain] = useState("all");
+  /* Ready, Coming soon (starter cases not proved), Retired or Withdrawn. */
+  const [readiness, setReadiness] = useState("all");
   const [open, setOpen] = useState(null);
   const shown = useMemo(
-    () => filterWorlds(worlds, { query, type, domain }),
-    [worlds, query, type, domain],
+    () => filterWorlds(worlds, { query, type, domain, readiness }),
+    [worlds, query, type, domain, readiness],
   );
+  const readinessCount = (id) =>
+    worlds.filter((w) => (w.readiness || "ready") === id).length;
   const domains = useMemo(
     () =>
       [...new Set(worlds.map((w) => w.domain))].sort((a, b) =>
@@ -54,7 +60,9 @@ export default function PrebuiltWorldsView({ onBack, bare = false }) {
   );
   /* The SaaS sandbox is one more world, pinned first under "Any agent". */
   const total = worldTotal();
-  const withSandbox = sandboxMatches({ query, type, domain });
+  const withSandbox =
+    (readiness === "all" || readiness === "ready") &&
+    sandboxMatches({ query, type, domain });
   const countOf = (id) =>
     id === "all"
       ? total
@@ -78,7 +86,12 @@ export default function PrebuiltWorldsView({ onBack, bare = false }) {
   const grid = {
     display: "grid",
     gap: 1.5,
-    gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr", lg: "repeat(3, 1fr)" },
+    /* minmax(0, …) so a card's one-line footer truncates instead of widening its column. */
+    gridTemplateColumns: {
+      xs: "minmax(0, 1fr)",
+      sm: "repeat(2, minmax(0, 1fr))",
+      lg: "repeat(3, minmax(0, 1fr))",
+    },
   };
   const selectSx = {
     height: 34,
@@ -134,11 +147,14 @@ export default function PrebuiltWorldsView({ onBack, bare = false }) {
         </Stack>
       )}
 
+      {/* Wraps rather than widening the page when the drawer is narrow. */}
       <Stack
         direction={{ xs: "column", md: "row" }}
         spacing={1.25}
+        useFlexGap
+        flexWrap="wrap"
         alignItems={{ md: "center" }}
-        sx={{ mb: 2 }}
+        sx={{ mb: 2, minWidth: 0 }}
       >
         <Box
           sx={{
@@ -164,7 +180,7 @@ export default function PrebuiltWorldsView({ onBack, bare = false }) {
           <InputBase
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search worlds"
+            placeholder="Search tasks, domains or tools"
             inputProps={{ "aria-label": "Search worlds" }}
             sx={{
               typography: "s2",
@@ -229,6 +245,34 @@ export default function PrebuiltWorldsView({ onBack, bare = false }) {
           ))}
         </Select>
 
+        <Select
+          size="small"
+          value={readiness}
+          onChange={(e) => setReadiness(e.target.value)}
+          inputProps={{ "aria-label": "Readiness" }}
+          sx={{ ...selectSx, minWidth: 150 }}
+        >
+          <MenuItem value="all" sx={{ typography: "s2" }}>
+            Any readiness
+          </MenuItem>
+          {Object.entries(READINESS).map(([id, r]) => (
+            <MenuItem key={id} value={id} sx={{ typography: "s2", gap: 0.75 }}>
+              {r.label}
+              <Box
+                component="span"
+                sx={{
+                  ml: "auto",
+                  pl: 1.5,
+                  color: "text.disabled",
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {readinessCount(id)}
+              </Box>
+            </MenuItem>
+          ))}
+        </Select>
+
         <Box flex={1} />
         <Typography
           sx={{
@@ -240,6 +284,8 @@ export default function PrebuiltWorldsView({ onBack, bare = false }) {
         >
           {`${listed.length + (withSandbox ? 1 : 0)} of ${total} worlds`}
         </Typography>
+        {/* The same list from the CLI. */}
+        <CopyCommandButton command={CATALOGUE_CLI} label="CLI" />
       </Stack>
 
       {listed.length || withSandbox ? (
@@ -268,6 +314,7 @@ export default function PrebuiltWorldsView({ onBack, bare = false }) {
                 setQuery("");
                 setType("all");
                 setDomain("all");
+                setReadiness("all");
               }}
             >
               Clear filters
@@ -276,7 +323,13 @@ export default function PrebuiltWorldsView({ onBack, bare = false }) {
         />
       )}
 
-      <WorldDrawer world={open} onClose={() => setOpen(null)} />
+      <WorldDrawer
+        world={open}
+        onClose={() => setOpen(null)}
+        onOpenWorld={(id) =>
+          setOpen(worlds.find((w) => w.catalogueId === id) || null)
+        }
+      />
     </Box>
   );
 }

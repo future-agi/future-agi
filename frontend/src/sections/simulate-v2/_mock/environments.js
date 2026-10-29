@@ -19,6 +19,7 @@
 
 import { AGENT_TYPE_GROUPS, getAgentType } from "./agentTypes.js";
 import { TWIN_CATALOG } from "./twins.js";
+import { CATALOGUE_TEMPLATES } from "./catalogue.js";
 
 /*
   Generate one env template per twin service so browsing the twin
@@ -202,6 +203,9 @@ export const ENVIRONMENT_TEMPLATES = [
     ],
     evalPreset: ["task_success", "ui_grounding", "step_efficiency", "safety"],
   },
+
+  /* The rest of the ready-worlds catalogue (_mock/catalogue.js). */
+  ...CATALOGUE_TEMPLATES,
 
   /* ─────────────────────── Simulation ─────────────────────── */
   {

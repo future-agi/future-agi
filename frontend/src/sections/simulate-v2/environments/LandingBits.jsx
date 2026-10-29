@@ -192,6 +192,16 @@ export function WorldCard({ world, onOpen, selected = false, soon = false }) {
           {world.name}
         </Typography>
         {soon && <QuietTag>Coming soon</QuietTag>}
+        {/* A task that can't be adopted, or a retired release, says so on the card. */}
+        {!soon && world.readiness && world.readiness !== "ready" && (
+          <QuietTag>
+            {world.readiness === "soon"
+              ? "Coming soon"
+              : world.readiness === "retired"
+                ? "Retired"
+                : "Withdrawn"}
+          </QuietTag>
+        )}
         <QuietTag>{world.typeLabel}</QuietTag>
       </Stack>
       <Typography
@@ -227,7 +237,9 @@ export function WorldCard({ world, onOpen, selected = false, soon = false }) {
             fontVariantNumeric: "tabular-nums",
           }}
         >
-          {`${world.tools} tools · ${world.tables} tables · ${world.scenarios} scenarios`}
+          {world.catalogueId
+            ? `${world.catalogueId} · ${world.release.version} · ${world.tools} tools · ${world.scenarios} cases`
+            : `${world.tools} tools · ${world.tables} tables · ${world.scenarios} scenarios`}
         </Typography>
         <Typography
           noWrap

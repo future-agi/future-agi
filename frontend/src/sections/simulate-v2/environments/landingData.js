@@ -10,6 +10,7 @@
 import { gatewayServerForHost } from "../_mock/gatewayMcp";
 import { mcpServerHost } from "../_mock/mcpServers";
 import { ENVIRONMENT_TEMPLATES } from "../_mock/environments";
+import { CATALOGUE } from "../_mock/catalogue";
 import { packStats } from "../_mock/scenarios";
 import { TWIN_CATALOG } from "../_mock/twins";
 
@@ -283,38 +284,75 @@ const DOMAIN_LABEL = {
   ecommerce: "E-commerce", fintech: "Finance", travel: "Travel", software: "Software", robotics: "Robotics",
   gaming: "Games", research: "Research", operations: "Operations", ml: "Machine learning", hardware: "Hardware",
   support: "Support", sales: "Sales",
+  scheduling: "Scheduling", knowledge: "Knowledge", healthcare: "Healthcare", telecom: "Telecom",
+  utilities: "Utilities", insurance: "Insurance", hospitality: "Hospitality", automotive: "Automotive",
+  property: "Property", education: "Education", hr: "HR", logistics: "Logistics", saas: "SaaS",
+  finance: "Finance", procurement: "Procurement", it: "IT", apps: "Apps · synthetic",
 };
 export const domainLabelOf = (d) => DOMAIN_LABEL[d] || (d ? d.charAt(0).toUpperCase() + d.slice(1) : "Other");
 
-/** Prebuilt worlds — the template catalogue, most used first. */
-export const prebuiltWorlds = () => ENVIRONMENT_TEMPLATES
-  .filter((t) => t.agentType !== "twin_backed" && worldTypeOf(t.agentType))
-  .map((t) => {
-    const type = worldTypeOf(t.agentType);
-    return {
-      id: t.id,
-      name: t.name,
-      tagline: t.tagline,
-      type: type.id,
-      typeLabel: type.label,
-      domain: t.domain,
-      domainLabel: domainLabelOf(t.domain),
-      tools: (t.tools || []).length,
-      tables: (t.seed?.tables || []).length,
-      scenarios: packStats(t).scenarios,
-      popularity: t.popularity || 0,
-      template: t,
-    };
-  })
-  /* Every type is open — most used first. */
-  .sort((a, b) => b.popularity - a.popularity);
+/* One card's worth of a world template. */
+const worldCardOf = (t, entry = null) => {
+  const type = worldTypeOf(t.agentType);
+  return {
+    id: entry ? entry.id : t.id,
+    name: t.name,
+    tagline: entry ? entry.task : t.tagline,
+    type: type.id,
+    typeLabel: type.label,
+    domain: t.domain,
+    domainLabel: domainLabelOf(t.domain),
+    tools: (t.tools || []).length,
+    toolNames: (t.tools || []).map((x) => x.name),
+    tables: (t.seed?.tables || []).length,
+    scenarios: packStats(t).scenarios,
+    popularity: t.popularity || 0,
+    template: t,
+    /* The catalogue's own: task ID, release, readiness, launch world. */
+    ...(entry && {
+      catalogueId: entry.id,
+      catalogueDomain: entry.domain,
+      release: entry.release,
+      readiness: entry.release.status,
+      launch: !!entry.launch,
+      entry,
+    }),
+  };
+};
 
-/** Worlds a search, a type and a domain leave. */
-export const filterWorlds = (worlds, { query = "", type = "all", domain = "all" } = {}) => {
+/* The launch worlds lead, in the doc's order. */
+const LAUNCH_ORDER = ["V15", "V01", "V06", "V12", "V11"];
+
+/**
+ * Prebuilt worlds — the 30-task catalogue (launch worlds first, then by
+ * task ID), plus worlds for agent types that are Coming soon.
+ */
+export const prebuiltWorlds = () => {
+  const byId = Object.fromEntries(ENVIRONMENT_TEMPLATES.map((t) => [t.id, t]));
+  const tasks = CATALOGUE
+    .map((c) => (byId[c.templateId] ? worldCardOf(byId[c.templateId], c) : null))
+    .filter(Boolean)
+    .sort((a, b) => {
+      const la = LAUNCH_ORDER.indexOf(a.catalogueId);
+      const lb = LAUNCH_ORDER.indexOf(b.catalogueId);
+      if (la !== lb) return (la < 0 ? 99 : la) - (lb < 0 ? 99 : lb);
+      /* Domain tasks (V) before app-shaped ones (M). */
+      return `${a.catalogueId[0] === "V" ? 0 : 1}${a.catalogueId}`.localeCompare(`${b.catalogueId[0] === "V" ? 0 : 1}${b.catalogueId}`);
+    });
+  const used = new Set(CATALOGUE.map((c) => c.templateId));
+  const others = ENVIRONMENT_TEMPLATES
+    .filter((t) => t.agentType !== "twin_backed" && worldTypeOf(t.agentType) && !used.has(t.id))
+    .map((t) => worldCardOf(t));
+  return [...tasks, ...others];
+};
+
+/** Worlds a search, a type, a domain and a readiness leave. Search covers the task, its ID and its tools. */
+export const filterWorlds = (worlds, { query = "", type = "all", domain = "all", readiness = "all" } = {}) => {
   const q = query.trim().toLowerCase();
   return worlds.filter((w) => (type === "all" || w.type === type)
     && (domain === "all" || w.domain === domain)
-    && (!q || `${w.name} ${w.tagline} ${w.domainLabel} ${w.typeLabel}`.toLowerCase().includes(q)));
+    && (readiness === "all" || (w.readiness || "ready") === readiness)
+    && (!q || `${w.name} ${w.tagline} ${w.domainLabel} ${w.typeLabel} ${w.catalogueId || ""} ${w.catalogueDomain || ""} ${(w.toolNames || []).join(" ")}`.toLowerCase().includes(q)));
 };
 
 /* ── the New environment journey ───────────────────────────────────────── */
