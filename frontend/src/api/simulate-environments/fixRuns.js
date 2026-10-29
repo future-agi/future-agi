@@ -87,6 +87,7 @@ export function useFixRun(fixId) {
 const PATCH_OFFER_CODES = new Set([
   "fix_github_not_connected",
   "fix_github_commit_unknown",
+  "github_repository_invalid",
 ]);
 
 // The app's axios rejects with the body spread plus statusCode; an

@@ -135,7 +135,11 @@ describe("fixErrorOf", () => {
     ).toBe("fix_candidate_not_proven");
   });
 
-  it.each(["fix_github_not_connected", "fix_github_commit_unknown"])(
+  it.each([
+    "fix_github_not_connected",
+    "fix_github_commit_unknown",
+    "github_repository_invalid",
+  ])(
     "offers the patch on %s",
     (code) => {
       expect(
