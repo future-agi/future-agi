@@ -2830,7 +2830,7 @@ export default function EnvironmentWorkspace() {
           }
           onRepairCompat={() =>
             navigate(
-              `${paths.dashboard.agents}/connected/${agentIdOf(agentKey)}?tab=connections`,
+              `${paths.dashboard.agents}/connected/${agentIdOf(agentKey)}?tab=compatibility&env=${encodeURIComponent(envId)}`,
             )
           }
           seedFrom={

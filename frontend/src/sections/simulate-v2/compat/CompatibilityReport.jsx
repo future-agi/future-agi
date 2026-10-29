@@ -76,6 +76,9 @@ function CapabilityRow({ row, titles, onRepair, onRetest }) {
           </Typography>
         )}
         <Box sx={{ textAlign: "right" }}>
+          {row.repair === "agent" && onRepair && (
+            <TextLink onClick={() => onRepair(row)}>Add the tools</TextLink>
+          )}
           {row.repair === "connection" && onRepair && (
             <TextLink onClick={() => onRepair(row)}>Repair</TextLink>
           )}

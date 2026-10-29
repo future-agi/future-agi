@@ -17,10 +17,12 @@ import { takesSnapshot } from "./candidateSource";
 import { proofKindOf } from "./rsiModel";
 import { membersOf } from "./improvementPolicy";
 import { isConnectOnly } from "./envModel";
-import { knownToolsFor, requiredToolsOf } from "./toolFit";
+import { agentToolsFor, knownToolsFor, requiredToolsOf } from "./toolFit";
 import { currentAgentVersion, currentEnvVersion } from "./versions";
 import { hashSeed } from "./runStream";
 import { familyOf } from "./testedVersions";
+
+const agentVersionWord = (v) => (v?.label ? `${v.label} ` : "");
 
 export const COMPAT_STATUS = {
   supported: { label: "Supported", dot: "passed", rank: 0 },
@@ -39,6 +41,9 @@ export const CAPABILITIES = [
   { id: "streaming", label: "Streaming" },
   { id: "files", label: "Files and artifacts" },
   { id: "toolSchema", label: "Tool discovery" },
+  /* The gap people hit first: a case needs a tool (an MCP, a file write)
+     the agent doesn't have — those cases can't pass, so they're blocked. */
+  { id: "toolsNeeded", label: "Tools the cases need" },
   { id: "toolRouting", label: "Controlled tool routing" },
   { id: "state", label: "State before and after" },
   { id: "audio", label: "Audio and timing" },
@@ -90,7 +95,9 @@ export const compatibilityOf = ({ env, envState, agent = envState?.agent, scenar
   /* Stale: evidence that no longer matches — a credential changed, or the
      source moved on after the last test. */
   const testedAt = test?.at ? Date.parse(test.at) : null;
-  const versionAt = Date.parse(version?.createdAt || version?.at || "") || null;
+  /* Only a version that was actually saved — a stand-in "v1" is dated now. */
+  const saved = (envState?.agentVersions || []).find((x) => x.label === version?.label);
+  const versionAt = Date.parse(saved?.createdAt || saved?.at || "") || null;
   const staleWhy = v.disconnected
     ? "A credential it uses changed since the last test"
     : testedAt && versionAt && versionAt > testedAt
@@ -127,6 +134,31 @@ export const compatibilityOf = ({ env, envState, agent = envState?.agent, scenar
   const agentTools = known.length;
   if (kind === "builtin" || kind === "platform" || code) add("toolSchema", "supported", `${agentTools} tools with their arguments and results are known.`);
   else add("toolSchema", "partial", `${agentTools} tools are known from the world; the endpoint doesn't list its own — calls are matched by name and arguments.`);
+
+  /* Tools the cases need that this agent version doesn't have. */
+  const agentHas = new Set(agentToolsFor(env, envState, version?.label).map((t) => t.name));
+  const missing = {};
+  requested.forEach((s) =>
+    requiredToolsOf(s, known)
+      .filter((t) => !agentHas.has(t))
+      .forEach((t) => {
+        (missing[t] = missing[t] || []).push(s.id);
+      }),
+  );
+  const missingNames = Object.keys(missing);
+  if (!agentHas.size)
+    add("toolsNeeded", "untested", "This agent's tools aren't known yet — sync it or run the connection check, then we can say which cases it can't do.", { affected: writeCases, repair: "test" });
+  else if (missingNames.length)
+    add(
+      "toolsNeeded",
+      "blocked",
+      `${agent?.name || "This agent"} ${agentVersionWord(version)}has no ${missingNames.slice(0, 3).join(", ")}${missingNames.length > 3 ? ` or ${missingNames.length - 3} more` : ""} — ${missingNames.length === 1 ? "it's" : "they're"} needed by ${new Set(Object.values(missing).flat()).size} case${new Set(Object.values(missing).flat()).size === 1 ? "" : "s"}, which would fail for a missing tool, not the agent's judgment. Add ${missingNames.length === 1 ? "it" : "them"} to the agent, or run the rest.`,
+      { affected: [...new Set(Object.values(missing).flat())], repair: "agent", blocks: true },
+    );
+  else {
+    const used = new Set(requested.flatMap((s) => requiredToolsOf(s, known))).size;
+    add("toolsNeeded", "supported", `The agent has every tool the requested cases call${used ? ` — all ${used}` : ""}.`);
+  }
 
   /* Controlled tool routing — the one that most often blocks cases. */
   const prod = test?.productionTools || [];

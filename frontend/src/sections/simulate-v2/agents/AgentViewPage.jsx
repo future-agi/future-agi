@@ -1273,7 +1273,12 @@ export default function AgentViewPage() {
           envId={params.get("env")}
           mainEnvId={mainEnv?.envId}
           onPickEnv={(id) => setQuery({ env: id })}
-          onRepair={() => setQuery({ tab: "connections", env: null })}
+          onRepair={(row) =>
+            setQuery({
+              tab: row?.repair === "agent" ? "definition" : "connections",
+              env: null,
+            })
+          }
         />
       )}
       {tab === "connections" && (
