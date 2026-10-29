@@ -3,7 +3,7 @@ name: sdk-sync
 # Carries every backend release into futureagi-sdk. When release-images has
 # published the images of a vX.Y.Z tag, this checks out the SDK repository,
 # refreshes its contract slice from this tag's api_contracts/openapi/swagger.json,
-# regenerates the Python and TypeScript clients and the MCP tool list, pins the
+# regenerates the Python and TypeScript clients, pins the
 # release in sdkgen/contracts/BACKEND_VERSION, and opens a pull request on the
 # SDK's dev branch that merges itself once the SDK's CI and E2E (against this
 # very release image) pass. From there the SDK's promote and release-please
@@ -106,7 +106,10 @@ jobs:
           python -m pip install --quiet pyyaml
           python sdkgen/sync_contract.py "$GITHUB_WORKSPACE/api_contracts/openapi/swagger.json" --backend-version "$VERSION"
           python sdkgen/generate.py
-          if git diff --quiet -- . ':!sdkgen/contracts/BACKEND_VERSION'; then
+          # feat (a minor SDK release) only when generated client code changed. The slice
+          # itself carries x-source-sha256, a hash of the whole monorepo swagger that moves
+          # on nearly every release, so it must not decide; nor must the pin.
+          if git diff --quiet -- python typescript; then
             echo "type=chore" >> "$GITHUB_OUTPUT"
             echo "no API change for the SDK in $VERSION; pinning the release only"
           else
@@ -131,11 +134,17 @@ jobs:
           git config user.email "futureagi-release-bot[bot]@users.noreply.github.com"
           git checkout -B "$branch"
           git add -A
-          git commit -q -m "$title" -m "Contract slice, generated clients and MCP tool list regenerated from future-agi $VERSION (api_contracts/openapi/swagger.json). Pinned in sdkgen/contracts/BACKEND_VERSION; the E2E workflow tests against futureagi/standalone:$VERSION."
+          if git diff --cached --quiet; then
+            # A re-run for a version the SDK already carries (a release-images re-dispatch,
+            # or a manual run of the pinned version): nothing to sync.
+            echo "futureagi-sdk is already synced with $VERSION; nothing to do"
+            exit 0
+          fi
+          git commit -q -m "$title" -m "Contract slice and generated clients regenerated from future-agi $VERSION (api_contracts/openapi/swagger.json). Pinned in sdkgen/contracts/BACKEND_VERSION; the E2E workflow tests against futureagi/standalone:$VERSION."
           git push -f origin "$branch"
           fence='```'
           body=$(printf '%s\n\n%s\n%s\n%s\n\n%s\n' \
-            "Backend release **$VERSION** synced into the SDK: contract slice, generated Python and TypeScript clients, MCP tool list, and sdkgen/contracts/BACKEND_VERSION. The E2E workflow on this PR runs against futureagi/standalone:$VERSION. Merges itself when CI and E2E pass." \
+            "Backend release **$VERSION** synced into the SDK: contract slice, generated Python and TypeScript clients, and sdkgen/contracts/BACKEND_VERSION. The E2E workflow on this PR runs against futureagi/standalone:$VERSION. Merges itself when CI and E2E pass; its CI fails if the release added MCP tools the SDK catalog does not list yet (sdkgen/check_mcp_parity.py), which is the cue to add their catalog entries." \
             "$fence" "$(cat "$RUNNER_TEMP/diffstat.txt")" "$fence" \
             "Opened by future-agi's sdk-sync workflow: $SOURCE_RUN")
           number=$(gh pr list --head "$branch" --base "$BASE" --state open --json number --jq '.[0].number // empty')
