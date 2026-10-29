@@ -1,12 +1,20 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 
 import axios, { endpoints } from "src/utils/axios";
+
+import { fetchRunCalls, mapCallRow } from "./runCalls";
 
 import {
   FIXTURE_PULL_REQUEST_URL,
   fixtureFixRun,
   fixtureFixRuns,
   fixturePatch,
+  fixtureRunTasks,
   updateFixtureFixRun,
 } from "./_fixtures/fixRuns";
 
@@ -196,4 +204,37 @@ export function useShipCandidate(fix) {
     mutationFn: (candidateId) => shipCandidate(fix, candidateId),
     onSuccess: () => refreshFix(queryClient, fix),
   });
+}
+
+// One check run's per-call results, mapped the way the run page maps them.
+export async function fetchCheckRunTasks(testExecutionId) {
+  if (fromFixtures()) return fixtureRunTasks(testExecutionId);
+  const data = await fetchRunCalls(testExecutionId, {
+    page: 1,
+    page_size: 200,
+  });
+  return (data.results ?? []).map((row) => mapCallRow(row));
+}
+
+// The baseline's and one candidate's check-run results, for the Per scenario
+// tab: what the scenario did before the change and after it.
+export function useFixScenarioRows(fix, candidateId) {
+  const baseline = (fix.check_runs || []).find((r) => r.label === "baseline");
+  const candidate = (fix.candidates || []).find((c) => c.id === candidateId);
+  const runs = [baseline, ...(candidate?.check_runs || [])].filter(Boolean);
+  const results = useQueries({
+    queries: runs.map((run) => ({
+      queryKey: ["agent-fix-run-check-tasks", run.test_execution_id],
+      queryFn: () => fetchCheckRunTasks(run.test_execution_id),
+      enabled: !!run.test_execution_id,
+      staleTime: 1000 * 60 * 5,
+    })),
+  });
+  const [before, ...after] = results;
+  return {
+    before: baseline ? before?.data ?? [] : [],
+    after: after.flatMap((r) => r.data ?? []),
+    run: candidate?.check_runs?.[0],
+    isLoading: results.some((r) => r.isLoading),
+  };
 }

@@ -367,3 +367,46 @@ export function fixturePatch(candidateId) {
     "",
   ].join("\n");
 }
+
+// Per-scenario results of each check run (GET /simulate/v3/test-executions/
+// {id}/calls/ mapped by mapCallRow), for the Per scenario tab.
+const SCENARIOS = [
+  { key: "late-cancel", name: "Late cancellation" },
+  { key: "late-cancel-2", name: "Late cancellation, repeat caller" },
+  { key: "late-cancel-3", name: "Late cancellation, angry caller" },
+  { key: "on-time-cancel", name: "Cancellation with notice" },
+  { key: "refund-window", name: "Refund window" },
+];
+
+const BASELINE = {
+  "late-cancel": "failed",
+  "late-cancel-2": "failed",
+  "late-cancel-3": "failed",
+  "on-time-cancel": "passed",
+  "refund-window": "passed",
+};
+
+const BY_ATTEMPT = {
+  1: BASELINE,
+  2: { ...BASELINE, "late-cancel": "passed" },
+  3: {
+    ...BASELINE,
+    "late-cancel": "passed",
+    "late-cancel-2": "passed",
+    "on-time-cancel": "failed",
+  },
+};
+
+export function fixtureRunTasks(testExecutionId) {
+  const attempt = Number(/-c(\d+)$/.exec(testExecutionId || "")?.[1]);
+  const statuses = BY_ATTEMPT[attempt] || BASELINE;
+  return SCENARIOS.flatMap((s) =>
+    [1, 2, 3].map((trial) => ({
+      id: `${testExecutionId}-${s.key}-${trial}`,
+      sourceScenarioKey: s.key,
+      sourceScenario: s.name,
+      trialIndex: trial,
+      status: statuses[s.key],
+    })),
+  );
+}
