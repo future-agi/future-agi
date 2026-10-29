@@ -1068,6 +1068,7 @@ class TestMakeDefault:
             (State.STOPPING, Outcome.FINALIST, ("fix_run_active", 409)),
             (State.READY, Outcome.PENDING, ("fix_candidate_not_proven", 422)),
             (State.READY, Outcome.REJECTED, ("fix_candidate_not_proven", 422)),
+            (State.READY, Outcome.FINALIST, ("fix_candidate_not_proven", 422)),
         ],
     )
     def test_refuses_an_unproven_candidate_or_a_fix_still_running(

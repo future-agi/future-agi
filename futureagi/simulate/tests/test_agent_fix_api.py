@@ -755,7 +755,7 @@ class TestUserApi:
         fix_run = _fix_run(source_run)
         candidate = _candidate(fix_run)
         AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
-            outcome=AgentFixCandidate.Outcome.FINALIST
+            outcome=AgentFixCandidate.Outcome.WINNER
         )
         close_fix_run(fix_run.id, AgentFixRun.State.READY)
         return fix_run, candidate

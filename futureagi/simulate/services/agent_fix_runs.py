@@ -207,19 +207,17 @@ def _set_aside_rejected(fix_run: AgentFixRun) -> None:
 
 
 def make_candidate_default(candidate: AgentFixCandidate, *, user: Any) -> str:
-    """Make a finished run's proven candidate the environment's default, on the user's word."""
+    """Make a finished fix's winner the environment's default, on the user's word."""
     fix_run = candidate.fix_run
     if fix_run.state in AgentFixRun.ACTIVE_STATES:
         raise HostedHarnessError(
             "fix_run_active", "wait for the fix to finish", status_code=409
         )
-    if candidate.outcome not in (
-        AgentFixCandidate.Outcome.WINNER,
-        AgentFixCandidate.Outcome.FINALIST,
-    ):
+    # Only the winner went through the final check; a finalist passed its screens only.
+    if candidate.outcome != AgentFixCandidate.Outcome.WINNER:
         raise HostedHarnessError(
             "fix_candidate_not_proven",
-            "only a proven candidate can become the default",
+            "only the fix's winner can become the default",
             status_code=422,
         )
     outcome = agent_kind(fix_run.environment).make_default(candidate, user=user)
