@@ -360,6 +360,7 @@ CI covers frontend, sharded backend pytest, Go collector tests/builds, deploymen
 
 | Workflow                           | Trigger                                                                          | Purpose                                                                                            |
 | ---------------------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `backend-ci.yml`                   | PR/push to `dev`, `main`; merge groups                                           | 10-way sharded pytest run (Docker Compose stack) gated by the required `backend-tests` check       |
 | `frontend-feature.yml`             | push to `feat/*`, `fix/*`, `chore/*`, `docs/*`, `refactor/*`, `test/*`, `perf/*` | Branch-name validation, type check, unit tests, build verification                                 |
 | `frontend-develop.yml`             | push to `develop`/`dev` + PRs into `main`/`develop`/`dev`                        | Quality gates, integration tests, build check, Lighthouse (PRs only)                               |
 | `frontend-main.yml`                | push to `main`                                                                   | Full suite with coverage + production build                                                        |
@@ -374,6 +375,13 @@ CI covers frontend, sharded backend pytest, Go collector tests/builds, deploymen
 | `release-images.yml`               | a `vX.Y.Z` tag, after one `production` review; manual, for single components (image builds: the newest release only) | Builds every image natively for amd64 and arm64 (the backend in both variants: the default tags and `-slim`), checks each against its size budget, then tags it; publishes the pinned code-executor base when it is new; then calls `helm-release.yml` for the chart |
 | `helm-release.yml`                 | called by `release-images.yml` at a `vX.Y.Z` tag once its images exist; manual retry from the tag | Packages the chart with the images' digests, checks the package with Helm 3 and 4, installs it on kind with the published images, pushes it to GHCR (never over a published version), signs it with cosign, attests its provenance, attaches it to the GitHub Release with the images lock, the Hauler manifest and `support-bundle.sh`, and pushes the Artifact Hub metadata |
 | `base-digest-check.yml`            | weekly, manual                                                                   | Fails when a digest-pinned base image (e.g. `python:3.11-slim-bookworm`) has moved, listing the new digest |
+
+The backend CI splits the pytest suite across 10 shards using historical
+`.test_durations` timings (`--splitting-algorithm least_duration`) and only
+marks the run green when every shard succeeds or is legitimately skipped — the
+single required status check is `backend-tests`. Integration tests run inside
+those shards (not as a separate gate), so a backend change is fully exercised
+before it lands on `dev`/`main`.
 
 A push to a feature branch runs only `frontend-feature.yml`, not the main or develop pipelines. This keeps GitHub Actions minutes targeted — no overlapping workflows.
 
