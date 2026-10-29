@@ -1,4 +1,5 @@
 import {
+  keepPreviousData,
   useMutation,
   useQueries,
   useQuery,
@@ -13,17 +14,23 @@ import { fetchRunCalls, mapCallRow } from "./runCalls";
 export const FIX_LIVE_STATES = new Set(["queued", "running", "stopping"]);
 export const FIX_POLL_MS = 5000;
 
-export const fixRunsKey = (envId) => ["agent-fix-runs", envId];
+export const FIX_RUNS_PAGE_SIZE = 25;
+
+// The page and size sit after the env id, so invalidating fixRunsKey(envId)
+// refreshes every page of that environment.
+export const fixRunsKey = (envId, page, pageSize) =>
+  page == null ? ["agent-fix-runs", envId] : ["agent-fix-runs", envId, page, pageSize];
 export const fixRunKey = (fixId) => ["agent-fix-run", fixId];
 
 export const fixPollInterval = (fix) =>
   fix && FIX_LIVE_STATES.has(fix.state) ? FIX_POLL_MS : false;
 
-export async function listFixRuns(envId) {
+// One server page, 1-based, as { results, count }.
+export async function listFixRuns(envId, { page = 1, limit = FIX_RUNS_PAGE_SIZE } = {}) {
   const res = await axios.get(endpoints.agentFixRuns.list(), {
-    params: { environment_id: envId },
+    params: { environment_id: envId, page, limit },
   });
-  return Array.isArray(res.data) ? res.data : res.data?.results ?? [];
+  return res.data;
 }
 
 export async function getFixRun(fixId) {
@@ -31,18 +38,26 @@ export async function getFixRun(fixId) {
   return res.data;
 }
 
-export function useEnvironmentFixRuns(envId) {
+// 0-based page in, like the other environment lists; count is the server's
+// total across pages. Polls while a fix on the visible page is live.
+export function useEnvironmentFixRuns(
+  envId,
+  { page = 0, pageSize = FIX_RUNS_PAGE_SIZE } = {},
+) {
   const { data, isLoading } = useQuery({
-    queryKey: fixRunsKey(envId),
-    queryFn: () => listFixRuns(envId),
+    queryKey: fixRunsKey(envId, page, pageSize),
+    queryFn: () => listFixRuns(envId, { page: page + 1, limit: pageSize }),
     enabled: !!envId,
+    placeholderData: keepPreviousData,
     refetchInterval: (query) =>
-      (query.state.data || []).some((f) => FIX_LIVE_STATES.has(f.state))
+      (query.state.data?.results || []).some((f) =>
+        FIX_LIVE_STATES.has(f.state),
+      )
         ? FIX_POLL_MS
         : false,
   });
-  const fixes = data ?? [];
-  return { fixes, count: fixes.length, isLoading };
+  const fixes = data?.results ?? [];
+  return { fixes, count: data?.count ?? 0, isLoading };
 }
 
 export function useFixRun(fixId) {

@@ -53,6 +53,7 @@ const fixtures = (envId) =>
   FIX_RUN_FIXTURES.map((f) => ({ ...f, environment_id: envId }));
 let hookValue;
 vi.mock("src/api/simulate-environments/fixRuns", () => ({
+  FIX_RUNS_PAGE_SIZE: 25,
   useEnvironmentFixRuns: () => hookValue,
 }));
 

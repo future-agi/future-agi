@@ -1,11 +1,16 @@
 import PropTypes from "prop-types";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Box, Link, Typography } from "@mui/material";
 
 import { DataTable } from "src/components/data-table";
+import DataTablePagination from "src/components/data-table/DataTablePagination";
 import { paths } from "src/routes/paths";
 import { fDateTime } from "src/utils/format-time";
-import { useEnvironmentFixRuns } from "src/api/simulate-environments/fixRuns";
+import {
+  FIX_RUNS_PAGE_SIZE,
+  useEnvironmentFixRuns,
+} from "src/api/simulate-environments/fixRuns";
 
 import FixStatusChip from "./FixStatusChip";
 import {
@@ -137,15 +142,25 @@ const columns = [
 
 export default function ImprovementsPanel({ env }) {
   const navigate = useNavigate();
-  const { fixes } = useEnvironmentFixRuns(env.id);
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(FIX_RUNS_PAGE_SIZE);
+  const { fixes, count } = useEnvironmentFixRuns(env.id, { page, pageSize });
   return (
     // The tab body scrolls as a block; a full-height panel makes the grid
-    // scroll inside itself, so the column header stays put.
-    <Box sx={{ height: "100%", minHeight: 0, display: "flex" }}>
+    // scroll inside itself, so the column header stays put and the pager
+    // sits under it.
+    <Box
+      sx={{
+        height: "100%",
+        minHeight: 0,
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
       <DataTable
         columns={columns}
         data={fixes}
-        rowCount={fixes.length}
+        rowCount={count}
         getRowId={(fix) => fix.id}
         onRowClick={(fix) =>
           navigate(
@@ -156,6 +171,18 @@ export default function ImprovementsPanel({ env }) {
         headerHeight={HEADER_HEIGHT}
         emptyMessage="Nothing has been improved in this environment yet. Debug failures on a finished run starts one."
       />
+      {count > 0 && (
+        <DataTablePagination
+          page={page}
+          pageSize={pageSize}
+          total={count}
+          onPageChange={setPage}
+          onPageSizeChange={(size) => {
+            setPageSize(size);
+            setPage(0);
+          }}
+        />
+      )}
     </Box>
   );
 }

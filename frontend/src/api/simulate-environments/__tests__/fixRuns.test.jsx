@@ -44,8 +44,21 @@ describe("fix-run reads", () => {
     expect(created).toEqual([...created].sort().reverse());
     expect(result.current.count).toBe(result.current.fixes.length);
     expect(axios.get).toHaveBeenCalledWith("/simulate/api/agent-fix-runs/", {
-      params: { environment_id: "env-1" },
+      params: { environment_id: "env-1", page: 1, limit: 25 },
     });
+  });
+
+  it("asks for one page and reports the server's total", async () => {
+    const { result } = renderHook(
+      () => useEnvironmentFixRuns("env-1", { page: 1, pageSize: 10 }),
+      { wrapper: makeWrapper() },
+    );
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(axios.get).toHaveBeenCalledWith("/simulate/api/agent-fix-runs/", {
+      params: { environment_id: "env-1", page: 2, limit: 10 },
+    });
+    expect(result.current.fixes).toHaveLength(FIX_RUN_FIXTURES.length - 10);
+    expect(result.current.count).toBe(FIX_RUN_FIXTURES.length);
   });
 
   it("stamps the asked environment on every fixture fix", async () => {

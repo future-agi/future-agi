@@ -88,7 +88,13 @@ export function createFixRunsAxios(actual) {
   const get = vi.fn((url, config = {}) => {
     const params = config.params || {};
     if (url === FIX_RUN_ENDPOINTS.list()) {
-      return ok(fixtureFixRuns(params.environment_id));
+      const all = fixtureFixRuns(params.environment_id);
+      const page = params.page ?? 1;
+      const limit = params.limit ?? 25;
+      return ok({
+        count: all.length,
+        results: all.slice((page - 1) * limit, page * limit),
+      });
     }
     if (url === FIX_RUN_ENDPOINTS.launchOptions()) {
       return ok(fixtureLaunchOptions(params.source_run_id));
