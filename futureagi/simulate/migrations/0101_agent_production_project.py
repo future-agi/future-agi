@@ -4,7 +4,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("simulate", "0099_harness_versioning"),
+        ("simulate", "0100_code_archive"),
         ("tracer", "0117_merge_error_feed_and_simulation_project"),
     ]
 

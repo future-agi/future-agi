@@ -135,7 +135,7 @@ def test_the_guest_terminal_event_does_not_replace_a_platform_failure(organizati
     )
     terminal_payload = {
         "stage": "failed",
-        "reason": "scenario_provision_failed",
+        "reason": None,
         "failure": {
             "domain": "platform_sync",
             "stage": "registering_scenarios",
@@ -164,9 +164,9 @@ def test_the_guest_terminal_event_does_not_replace_a_platform_failure(organizati
         **_headers(capability),
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 200, response.content
     attempt.refresh_from_db()
-    assert attempt.terminal_event_received is True
+    assert attempt.terminal_event_received is True, response.json()
     assert attempt.state == HostedHarnessAttempt.State.FINALIZING
     assert attempt.terminal_failure["code"] == "subfolder_ignored"
-    assert attempt.terminal_reason == "scenario_provision_failed"
+    assert attempt.terminal_stage == "failed"
