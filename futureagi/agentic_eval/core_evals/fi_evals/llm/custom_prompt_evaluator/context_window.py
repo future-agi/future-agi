@@ -231,10 +231,13 @@ def chunk_large_text(
 # ─── Private helpers ───
 
 def _truncate_string(s: str, max_chars: int) -> str:
-    """Truncate a string with a marker."""
+    """Truncate a string with a marker, guaranteeing output length <= max_chars."""
     if len(s) <= max_chars:
         return s
-    return s[:max_chars - 30] + f"\n... [truncated, {len(s)} total chars]"
+    logger.debug("context_window_field_truncated", original_length=len(s), limit=max_chars)
+    marker = f"\n... [truncated, {len(s)} total chars]"
+    prefix_len = max(0, max_chars - len(marker))
+    return s[:prefix_len] + marker
 
 
 def _format_dict(
