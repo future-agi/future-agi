@@ -274,7 +274,7 @@ export const productionConversationsOf = (env) => {
   const voice = env.surface === "voice";
   const day = 24 * 60 * 60 * 1000;
   const now = Date.now();
-  return Array.from({ length: 5 }, (_, i) => {
+  return Array.from({ length: 12 }, (_, i) => {
     const key = `${env.id}:conv:${i}`;
     const c = callerOf(key);
     const thing = noun(tools[i % Math.max(1, tools.length)]);

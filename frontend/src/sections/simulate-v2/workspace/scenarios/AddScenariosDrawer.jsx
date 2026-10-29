@@ -102,12 +102,12 @@ const MORE_ROUTES = [
     icon: "solar:pen-new-square-linear",
     hint: "Write one: situation, starting state, what passes, what must not happen",
   },
-  /* Phase 2 — a production conversation's caller turns, replayed verbatim. */
+  /* Production traces — exact picked traces become reviewed drafts. */
   {
     id: "replay",
-    label: "Production, word for word",
+    label: "Production traces",
     icon: "solar:server-linear",
-    hint: "Replay a production conversation's caller turns exactly as they were said",
+    hint: "Pick exact production traces, then reproduce, keep, replay, vary or pull out a pattern",
   },
   {
     id: "dataset",
