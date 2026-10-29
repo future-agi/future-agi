@@ -6,6 +6,7 @@ import { RouterLink } from "src/routes/components";
 import { paths } from "src/routes/paths";
 
 import { OUTCOME_LABEL, pct, pts } from "./fixRunView";
+import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 
 const GRID = "minmax(260px, 1fr) 170px 110px";
 const num = { fontVariantNumeric: "tabular-nums" };
@@ -24,7 +25,7 @@ function PassCell({ rate }) {
           sx={{
             typography: "s3",
             ...num,
-            color: delta > 0 ? "status.success.fg" : "status.danger.fg",
+            color: delta > 0 ? BUILD_TONES.green : BUILD_TONES.red,
           }}
         >
           {`${delta > 0 ? "▲" : "▼"} ${Math.abs(delta)} pts`}

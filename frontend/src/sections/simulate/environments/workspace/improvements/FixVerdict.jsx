@@ -5,6 +5,7 @@ import { Box, Button, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 
 import { checksLine, headline, verdictCards, winnerOf } from "./fixRunView";
+import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 
 const num = { fontVariantNumeric: "tabular-nums" };
 const line = { typography: "s3", color: "text.subtitle" };
@@ -28,7 +29,7 @@ function Card({ card }) {
               typography: "s3",
               fontWeight: 600,
               ...num,
-              color: card.delta > 0 ? "status.success.fg" : "status.danger.fg",
+              color: card.delta > 0 ? BUILD_TONES.green : BUILD_TONES.red,
             }}
           >
             {`${card.delta > 0 ? "▲" : "▼"} ${Math.abs(card.delta)} pts`}
@@ -70,7 +71,7 @@ function Checks({ tiers }) {
           }
           width={14}
           sx={{
-            color: failed.length ? "status.danger.fg" : "text.secondary",
+            color: failed.length ? BUILD_TONES.red : "text.secondary",
             flexShrink: 0,
           }}
         />
@@ -84,7 +85,7 @@ function Checks({ tiers }) {
           noWrap
           sx={{
             typography: "s2",
-            color: "status.danger.fg",
+            color: BUILD_TONES.red,
             flex: 1,
             minWidth: 0,
           }}
@@ -134,9 +135,7 @@ function Checks({ tiers }) {
                 width={14}
                 sx={{
                   color:
-                    t.status === "failed"
-                      ? "status.danger.fg"
-                      : "text.secondary",
+                    t.status === "failed" ? BUILD_TONES.red : "text.secondary",
                   flexShrink: 0,
                 }}
               />
@@ -171,10 +170,7 @@ function MustPassBreaks({ verdict }) {
         Must-pass breaks
       </Typography>
       {counted.map((key) => (
-        <Typography
-          key={key}
-          sx={{ typography: "s2", color: "status.danger.fg" }}
-        >
+        <Typography key={key} sx={{ typography: "s2", color: BUILD_TONES.red }}>
           {key}
         </Typography>
       ))}

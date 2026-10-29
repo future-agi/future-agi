@@ -15,6 +15,7 @@ import {
   listResult,
   winnerOf,
 } from "./fixRunView";
+import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 
 const ROW_HEIGHT = 44;
 const HEADER_HEIGHT = 40;
@@ -90,7 +91,7 @@ const columns = [
             noWrap
             sx={{
               typography: "s3",
-              color: result.broke ? "status.danger.fg" : "text.subtitle",
+              color: result.broke ? BUILD_TONES.red : "text.subtitle",
               fontVariantNumeric: "tabular-nums",
             }}
           >

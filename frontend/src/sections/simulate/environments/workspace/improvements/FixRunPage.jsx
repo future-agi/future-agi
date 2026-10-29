@@ -13,6 +13,8 @@ import EmptyState from "../../components/EmptyState";
 import FixHeader from "./FixHeader";
 import FixRunningView from "./FixRunningView";
 import FixFinishedView, { FinishedActions } from "./FixFinishedView";
+import FixChangesTab from "./FixChangesTab";
+import FixCostTab from "./FixCostTab";
 
 // One page for a fix: it follows a running one and, once it ends, becomes the
 // place to decide on it. The read polls while the fix is live, so the finished
@@ -20,7 +22,7 @@ import FixFinishedView, { FinishedActions } from "./FixFinishedView";
 export default function FixRunPage({ envId, fixId }) {
   const { fix, isLoading, error } = useFixRun(fixId);
   const [tab, setTab] = useState("trials");
-  const [, setReviewing] = useState(null);
+  const [reviewing, setReviewing] = useState(null);
   if (isLoading) return <LoadingScreen />;
   if (error || !fix) {
     return (
@@ -60,7 +62,24 @@ export default function FixRunPage({ envId, fixId }) {
         {live ? (
           <FixRunningView fix={fix} />
         ) : (
-          <FixFinishedView fix={fix} tab={tab} onTab={setTab} />
+          <FixFinishedView
+            fix={fix}
+            tab={tab}
+            onTab={setTab}
+            renderTab={(id) => {
+              if (id === "changes") {
+                return (
+                  <FixChangesTab
+                    key={reviewing}
+                    fix={fix}
+                    candidateId={reviewing}
+                  />
+                );
+              }
+              if (id === "cost") return <FixCostTab fix={fix} />;
+              return null;
+            }}
+          />
         )}
       </Box>
     </Box>
