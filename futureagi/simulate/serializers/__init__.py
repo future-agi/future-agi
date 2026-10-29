@@ -8,6 +8,9 @@ from .requests.agent_definition import (
     AgentDefinitionFilterSerializer,
     FetchAssistantRequestSerializer,
 )
+from .requests.scenarios import (
+    ScenarioBulkDeleteRequestSerializer,
+)
 from .requests.agent_version import (
     AgentVersionCreateRequestSerializer,
 )
@@ -31,6 +34,9 @@ from .response.agent_definition import (
     AgentDefinitionListResponseSerializer,
     AgentDefinitionResponseSerializer,
     FetchAssistantResponseSerializer,
+)
+from .response.scenarios import (
+    ScenarioBulkDeleteResponseSerializer,
 )
 from .response.agent_version import (
     AgentVersionActivateResponseSerializer,
@@ -84,6 +90,7 @@ __all__ = [
     "AgentDefinitionCreateRequestSerializer",
     "AgentDefinitionEditRequestSerializer",
     "AgentDefinitionBulkDeleteRequestSerializer",
+    "ScenarioBulkDeleteRequestSerializer",
     "AgentDefinitionFilterSerializer",
     "FetchAssistantRequestSerializer",
     "AgentVersionCreateRequestSerializer",
@@ -94,6 +101,7 @@ __all__ = [
     "AgentDefinitionListResponseSerializer",
     "AgentDefinitionDetailResponseSerializer",
     "AgentDefinitionBulkDeleteResponseSerializer",
+    "ScenarioBulkDeleteResponseSerializer",
     "AgentDefinitionDeleteResponseSerializer",
     "FetchAssistantResponseSerializer",
     "AgentVersionResponseSerializer",
