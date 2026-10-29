@@ -341,3 +341,74 @@ def set_environment_policy(
             agent_version_id=str(locked.agent_version_id),
         )
         return locked
+
+
+def build_preflight(
+    definition: AgentDefinition, version: AgentVersion | None
+) -> dict[str, Any]:
+    """What a build from this agent would find: the version to build from, its
+    check, its stored code and the credential names it answers for."""
+    from simulate.models import CodeArchive
+    from simulate.services.harness_agent_versions import version_credential_names
+    from simulate.services.harness_versioning.archives import archive_exists
+    from simulate.services.hosted_harness_gateway import _source_object_key
+
+    version = version or production_version(definition) or definition.latest_version
+    checks: list[dict[str, Any]] = []
+
+    def check(name: str, ok: bool, message: str) -> None:
+        checks.append(
+            {"name": name, "status": "ok" if ok else "blocked", "message": message}
+        )
+
+    if version is None:
+        check("version", False, "This agent has no version to build from yet")
+        return {"ok": False, "version_id": None, "checks": checks}
+    runtime = _runtime(version)
+    ready = runtime is None or runtime.preflight_status in (
+        Status.PASSED,
+        Status.LEGACY,
+    )
+    check(
+        "version",
+        ready,
+        f"v{version.version_number} "
+        + ("is ready" if ready else f"is {runtime.preflight_status}"),
+    )
+    if runtime is not None and runtime.source_kind == SourceKind.GITHUB:
+        source = runtime.source or {}
+        stored = CodeArchive.no_workspace_objects.filter(
+            organization_id=definition.organization_id,
+            repository=str(source.get("repository") or "").lower(),
+            commit_sha=str(source.get("commit_sha") or "").lower(),
+        ).exists()
+        check(
+            "code",
+            stored or bool(source.get("commit_sha")),
+            (
+                "the commit's code is stored"
+                if stored
+                else "the commit is pinned; its code is fetched on the first build"
+            ),
+        )
+    elif runtime is not None and runtime.source_kind == SourceKind.ARCHIVE:
+        artifact = str((runtime.source or {}).get("archive_artifact_id") or "")
+        present = bool(artifact) and archive_exists(
+            _source_object_key(definition.organization_id, artifact)
+        )
+        check(
+            "code",
+            present,
+            "the upload is stored" if present else "the upload expired; upload again",
+        )
+    names = version_credential_names(runtime) if runtime is not None else []
+    check(
+        "credentials",
+        True,
+        f"{len(names)} credential name{'s' if len(names) != 1 else ''} come from the version",
+    )
+    return {
+        "ok": all(one["status"] == "ok" for one in checks),
+        "version_id": str(version.id),
+        "checks": checks,
+    }

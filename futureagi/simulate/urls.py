@@ -102,6 +102,7 @@ from .views.agent_version import (
     RestoreAgentVersionView,
 )
 from .views.agent_versions import (
+    AgentBuildPreflightView,
     AgentVersionChangeView,
     AgentVersionCompatibilityView,
     AgentVersionDiscardView,
@@ -336,6 +337,11 @@ urlpatterns = [
         "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/compatibility/",
         AgentVersionCompatibilityView.as_view(),
         name="agent-versions-compatibility",
+    ),
+    path(
+        "agent-definitions/<uuid:agent_id>/build-preflight/",
+        AgentBuildPreflightView.as_view(),
+        name="agent-build-preflight",
     ),
     path(
         "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/restore/",

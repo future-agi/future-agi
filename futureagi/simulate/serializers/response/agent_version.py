@@ -301,3 +301,17 @@ class AgentVersionCompatibilityResponseSerializer(serializers.Serializer):
     )
     prompt_changed = serializers.BooleanField(read_only=True, required=False)
     model_changed = serializers.BooleanField(read_only=True, required=False)
+
+
+class AgentBuildPreflightCheckSerializer(serializers.Serializer):
+    name = serializers.CharField(read_only=True)
+    status = serializers.ChoiceField(choices=("ok", "blocked"), read_only=True)
+    message = serializers.CharField(read_only=True)
+
+
+class AgentBuildPreflightResponseSerializer(serializers.Serializer):
+    """Whether an environment can be built from the agent, and from which version."""
+
+    ok = serializers.BooleanField(read_only=True)
+    version_id = serializers.CharField(read_only=True, allow_null=True)
+    checks = AgentBuildPreflightCheckSerializer(many=True, read_only=True)

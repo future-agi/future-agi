@@ -12,6 +12,7 @@ from simulate.serializers.requests.agent_version import (
     AgentVersionChangeRequestSerializer,
 )
 from simulate.serializers.response.agent_version import (
+    AgentBuildPreflightResponseSerializer,
     AgentVersionActionResponseSerializer,
     AgentVersionChangeResponseSerializer,
     AgentVersionCompatibilityResponseSerializer,
@@ -183,3 +184,23 @@ class AgentVersionCompatibilityView(_AgentVersionView):
         body = {"environment_id": str(environment.id), "version_id": str(version.id)}
         body.update(environment_compatibility(environment, version))
         return Response(AgentVersionCompatibilityResponseSerializer(body).data)
+
+
+class AgentBuildPreflightView(_AgentVersionView):
+    """GET /agent-definitions/{id}/build-preflight/?version_id=."""
+
+    @swagger_auto_schema(
+        responses={
+            200: AgentBuildPreflightResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+        }
+    )
+    def get(self, request, agent_id, *args, **kwargs):
+        agent = self._agent(request, agent_id)
+        version_id = request.query_params.get("version_id")
+        version = self._version(agent, version_id) if version_id else None
+        return Response(
+            AgentBuildPreflightResponseSerializer(
+                agent_versions.build_preflight(agent, version)
+            ).data
+        )

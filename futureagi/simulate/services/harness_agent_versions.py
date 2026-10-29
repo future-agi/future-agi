@@ -2583,6 +2583,89 @@ def _provider_identifiers(connector: str, config: Mapping[str, Any]):
     )
 
 
+def _bind_connected_agent(
+    job: HostedHarnessJob, definition: AgentDefinition, metadata: dict[str, Any]
+) -> AgentVersion:
+    """Pin a new environment to a connected agent's version: the one the creation
+    names, else production. The environment takes the version's source and
+    credential names and writes nothing to the agent; it follows production unless
+    the creation pins it."""
+    payload = job.payload
+    agent = dict(payload.get("agent") or {})
+    requested = metadata.get("agent_version_id")
+    version = None
+    if requested:
+        version = AgentVersion.no_workspace_objects.filter(
+            id=requested, agent_definition=definition
+        ).first()
+        if version is None:
+            raise HostedHarnessError(
+                "version_not_found",
+                "that version is not one of this agent's",
+                status_code=404,
+            )
+    version = version or definition.active_version or definition.latest_version
+    if version is None:
+        raise HostedHarnessError(
+            "agent_has_no_version",
+            "This agent has no version to build from yet",
+            status_code=409,
+        )
+    runtime = _side_row(version.id)
+    if runtime is not None and runtime.preflight_status not in (
+        Status.PASSED,
+        Status.LEGACY,
+    ):
+        raise HostedHarnessError(
+            "version_not_ready",
+            "This version has not passed its check yet",
+            status_code=409,
+            details={"preflight_status": runtime.preflight_status},
+        )
+    source = dict(payload.get("source") or {})
+    if runtime is not None and runtime.source_kind in (
+        HarnessAgentVersionRuntime.SourceKind.GITHUB,
+        HarnessAgentVersionRuntime.SourceKind.ARCHIVE,
+    ):
+        access = (runtime.agent_payload or {}).get("source_access") or {}
+        source = {
+            **source,
+            "kind": str(runtime.source_kind),
+            **{name: value for name, value in (runtime.source or {}).items() if value},
+            **{
+                name: access[name]
+                for name in ("visibility", "installation_id")
+                if access.get(name)
+            },
+        }
+    names = version_credential_names(runtime) if runtime is not None else []
+    metadata.update(
+        agent_definition_owner=CONNECTED_OWNER,
+        agent_definition_id=str(definition.id),
+        build_agent_version_id=str(version.id),
+    )
+    metadata.setdefault(POLICY_KEY, POLICY_FOLLOW)
+    job.agent_version = version
+    job.payload = {
+        **payload,
+        "source": source,
+        "agent": {
+            **agent,
+            "secret_refs": {name: agent_version_secret_ref(name) for name in names},
+        },
+        "metadata": metadata,
+    }
+    job.save(update_fields=["agent_version", "payload", "updated_at"])
+    logger.info(
+        "harness_environment_agent_bound job=%s definition=%s version=%s names=%d",
+        job.id,
+        definition.id,
+        version.id,
+        len(names),
+    )
+    return version
+
+
 def ensure_environment_agent(
     job: HostedHarnessJob,
     *,
@@ -2614,9 +2697,7 @@ def ensure_environment_agent(
         found, reason = _requested_definition(job, raw_id, connector)
         if found is not None:
             if not environment_owned(found.id):
-                # TODO: bind the customer's agent (connected branch) once P26/P26a
-                # merge.
-                reason = "connected_unavailable"
+                return _bind_connected_agent(job, found, metadata)
             elif key is not None and key == _definition_key(found):
                 definition = found
             else:
