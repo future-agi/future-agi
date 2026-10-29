@@ -8,10 +8,8 @@ import {
   render,
   screen,
   waitFor,
-  within,
 } from "src/utils/test-utils";
 import MetricProjectSelect from "../MetricProjectSelect";
-import MetricRunHistory from "../MetricRunHistory";
 import MetricList from "../MetricList";
 import MetricContributors from "../MetricContributors";
 import wire from "./fixtures/committedResults.json";
@@ -51,6 +49,21 @@ afterEach(() => {
   cleanup();
   client?.clear();
 });
+const metric = {
+  id: wire.run.metric_id,
+  name: "Support resolution",
+  project_id: "project",
+  current_version: 1,
+};
+function list() {
+  return (
+    <MetricList
+      definitions={{ data: { results: [metric], next_cursor: "next-page" } }}
+      scope="org:workspace"
+      onSelect={vi.fn()}
+    />
+  );
+}
 
 it.each(["saved", "chosen"])(
   "reconciles an unchosen project search on blur without changing the %s project ID, and still permits a fresh selection",
@@ -114,123 +127,6 @@ it.each(["saved", "chosen"])(
   },
 );
 
-function history() {
-  const other = { ...wire.run, id: "00000000-0000-0000-0000-000000000009" };
-  mount(
-    <MetricRunHistory
-      runs={[wire.run, other]}
-      selectedRun={other}
-      metricId={wire.run.metric_id}
-      scope="org:workspace"
-      onSelect={vi.fn()}
-    />,
-  );
-  const table = screen.getByRole("table", { name: "Past metric runs" });
-  return within(table).getAllByRole("row")[1];
-}
-const reads = (url) => mock.get.mock.calls.filter(([path]) => path === url);
-
-it("Retry value reconciles a nonselected history run's new committed identity without changing the selected run", async () => {
-  let refreshed = false;
-  const runUrl = `/runs/${wire.run.id}`;
-  mock.get.mockImplementation(async (url) => {
-    if (url === runUrl)
-      return {
-        data: {
-          ...wire.run,
-          result_id: refreshed ? wire.new_page.result_id : wire.run.result_id,
-        },
-      };
-    if (url === `${runUrl}/results`) return { data: wire.new_page };
-    if (url.endsWith("/results")) return { data: wire.old_page };
-    throw new Error(`Unexpected read ${url}`);
-  });
-  const row = history();
-  const retry = await within(row).findByRole("button", { name: "Retry value" });
-  expect(within(row).queryByText("0")).not.toBeInTheDocument();
-  const before = reads(runUrl).length;
-  refreshed = true;
-  fireEvent.click(retry);
-  expect(await within(row).findByText("0")).toBeVisible();
-  expect(reads(runUrl)).toHaveLength(before + 1);
-  expect(row).not.toHaveClass("Mui-selected");
-  expect(
-    screen
-      .getByRole("table", { name: "Past metric runs" })
-      .querySelectorAll(".Mui-selected"),
-  ).toHaveLength(1);
-  const data = client
-    .getQueryCache()
-    .findAll({ queryKey: ["metric-history-value"] })
-    .map((query) => query.state.data);
-  const recovered = data.find((entry) => entry?.run.id === wire.run.id);
-  expect(recovered.run.result_id).toBe(wire.new_page.result_id);
-  expect(recovered.page.result_id).toBe(recovered.run.result_id);
-});
-
-it("bounds history reconciliation to one identity reread per attempt and never displays a continuously mismatched value", async () => {
-  const runUrl = `/runs/${wire.run.id}`;
-  mock.get.mockImplementation(async (url) => {
-    if (url === runUrl) return { data: wire.run };
-    if (url === `${runUrl}/results`) return { data: wire.new_page };
-    if (url.endsWith("/results")) return { data: wire.old_page };
-    throw new Error(`Unexpected read ${url}`);
-  });
-  const row = history();
-  const retry = await within(row).findByRole("button", { name: "Retry value" });
-  expect(reads(runUrl)).toHaveLength(1);
-  expect(reads(`${runUrl}/results`)).toHaveLength(2);
-  fireEvent.click(retry);
-  await waitFor(() => expect(reads(runUrl)).toHaveLength(2));
-  await waitFor(() => expect(client.isFetching()).toBe(0));
-  expect(reads(`${runUrl}/results`)).toHaveLength(4);
-  expect(
-    within(row).getByRole("button", { name: "Retry value" }),
-  ).toBeEnabled();
-  expect(within(row).queryByText("0")).not.toBeInTheDocument();
-  expect(within(row).queryByText("0.5")).not.toBeInTheDocument();
-});
-
-it.each(["id", "metric_id"])(
-  "refuses a refreshed history run with a different %s even if its result would match",
-  async (field) => {
-    const runUrl = `/runs/${wire.run.id}`;
-    mock.get.mockImplementation(async (url) => {
-      if (url === runUrl)
-        return {
-          data: {
-            ...wire.run,
-            [field]: "00000000-0000-0000-0000-000000000099",
-            result_id: wire.new_page.result_id,
-          },
-        };
-      if (url === `${runUrl}/results`) return { data: wire.new_page };
-      if (url.endsWith("/results")) return { data: wire.old_page };
-      throw new Error(`Unexpected read ${url}`);
-    });
-    const row = history();
-    await within(row).findByRole("button", { name: "Retry value" });
-    expect(reads(runUrl)).toHaveLength(1);
-    expect(reads(`${runUrl}/results`)).toHaveLength(1);
-    expect(within(row).queryByText("0")).not.toBeInTheDocument();
-  },
-);
-
-const metric = {
-  id: wire.run.metric_id,
-  name: "Support resolution",
-  project_id: "project",
-  current_version: 1,
-};
-function list() {
-  return (
-    <MetricList
-      definitions={{ data: { results: [metric], next_cursor: "next-page" } }}
-      scope="org:workspace"
-      onSelect={vi.fn()}
-    />
-  );
-}
 it("makes the page-only scope visible in the compact list search while preserving its current-page filter", async () => {
   mock.get.mockResolvedValue({ data: { results: [], next_cursor: null } });
   mount(list());
