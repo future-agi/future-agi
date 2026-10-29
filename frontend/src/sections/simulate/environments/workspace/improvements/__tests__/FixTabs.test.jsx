@@ -31,7 +31,10 @@ describe("Changes tab", () => {
     expect(
       screen.getByText("Cancel the booking and confirm the refund."),
     ).toBeInTheDocument();
-    expect(screen.getByText("Trial 3 · Winner")).toBeInTheDocument();
+    expect(screen.queryByText("Trial 3 · Winner")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Download patch" }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("combobox")).toBeNull();
   });
 

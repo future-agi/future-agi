@@ -10,7 +10,7 @@ import {
 } from "src/api/simulate-environments/fixRuns";
 
 import { downloadText } from "./downloadText";
-import { OUTCOME_LABEL, winnerOf } from "./fixRunView";
+import { winnerOf } from "./fixRunView";
 import { parseDiff } from "./parseDiff";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 
@@ -62,9 +62,6 @@ function DiffLine({ line }) {
 }
 DiffLine.propTypes = { line: PropTypes.object.isRequired };
 
-const label = (c) =>
-  `Trial ${c.attempt} · ${OUTCOME_LABEL[c.outcome] || c.outcome}`;
-
 // The design's Changes tab (WinnerChanges): the chosen trial's change against
 // the version it started from, as a diff.
 export default function FixChangesTab({ fix, candidateId }) {
@@ -84,16 +81,7 @@ export default function FixChangesTab({ fix, candidateId }) {
   const files = parseDiff(patch);
   return (
     <Box>
-      <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1.5 }}>
-        <Typography sx={{ typography: "s2", fontWeight: 600, flexShrink: 0 }}>
-          {label(candidate)}
-        </Typography>
-        <Typography
-          sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}
-          noWrap
-        >
-          {candidate.summary}
-        </Typography>
+      <Stack direction="row" justifyContent="flex-end" sx={{ mb: 1.5 }}>
         {patch && (
           <Button
             size="small"
