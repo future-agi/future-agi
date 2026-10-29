@@ -168,6 +168,32 @@ describe("a Viewer on the Ask page", () => {
     expect(screen.getByText(VIEWER_CANT_RUN)).toBeInTheDocument();
   });
 
+  it("can't retry the rows of a run that answered nothing", () => {
+    // Run ee2c89df: the alert's Retry stayed enabled for a Viewer and the
+    // server refused it with a bare "That didn't work."
+    const allFailed = {
+      ...runningRun,
+      status: "done",
+      answered: 0,
+      failed: 5,
+      pending: 0,
+      total: 5,
+      summary: {
+        total: 5,
+        counts: { [CONFIG]: { __error__: 5 } },
+        unsure: {},
+        groups: {},
+        failure: { message: "TypeSafe rejected the key.", every: true },
+      },
+    };
+    renderAs(
+      "workspace_viewer",
+      <AskRunView projectId="project-1" run={allFailed} unit="traces" />,
+    );
+    expect(screen.getByRole("button", { name: "Retry 5 rows" })).toBeDisabled();
+    expect(screen.getByText(VIEWER_CANT_RUN)).toBeInTheDocument();
+  });
+
   it("leaves a Member the run's controls", () => {
     renderAs(
       "workspace_member",

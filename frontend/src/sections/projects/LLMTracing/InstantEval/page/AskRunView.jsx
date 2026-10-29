@@ -1315,7 +1315,7 @@ export default function AskRunView({
                   size="small"
                   variant="outlined"
                   color="inherit"
-                  disabled={acting}
+                  disabled={acting || !canRun}
                   startIcon={<Iconify icon="mdi:refresh" width={16} />}
                   onClick={() => control("retry_failed")}
                 >
