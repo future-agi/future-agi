@@ -288,7 +288,8 @@ def _observed(environment: HostedHarnessJob, watched: WatchedSource, head: str) 
             source__commit_sha=head,
         )
         # A legacy row is shared: its stored source may be another environment's.
-        .exclude(preflight_status=Status.LEGACY).values(
+        .exclude(preflight_status=Status.LEGACY)
+        .values(
             "preflight_status",
             "agent_payload__requested_by_environments",
             "agent_payload__created_for_environment",
@@ -522,6 +523,15 @@ def _observe_one(
         or environment.agent_version
     )
     first_new = next_version_number(parent.agent_definition_id)
+    # The GitHub App installation the repository was connected through: without it a
+    # fix on the new version cannot open a pull request.
+    installation_id = (
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_version_id=parent.id
+        )
+        .values_list("agent_payload__source_access__installation_id", flat=True)
+        .first()
+    )
     # No transaction or lock around it: its activation takes the environment's lock
     # after releasing the definition's.
     version = create_agent_version(
@@ -535,6 +545,7 @@ def _observe_one(
             "commit_sha": head,
             "visibility": "public",
             "repository_id": watched.repository_id,
+            **({"installation_id": installation_id} if installation_id else {}),
         },
         trigger=Trigger.PUSH,
         user=None,
