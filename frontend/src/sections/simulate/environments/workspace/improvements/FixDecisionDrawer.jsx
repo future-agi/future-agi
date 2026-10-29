@@ -82,7 +82,9 @@ export default function FixDecisionDrawer({ fix, open, onClose }) {
             : fixName(fix)}
         </Typography>
         <Box sx={{ ...table, p: 1.5, mb: 2 }}>
-          <FixStatusChip state={fix.state} />
+          <Box sx={{ display: "inline-flex" }}>
+            <FixStatusChip state={fix.state} />
+          </Box>
           {headline(fix) && (
             <Typography sx={{ typography: "s2", fontWeight: 600, mt: 1 }}>
               {headline(fix)}
@@ -189,7 +191,7 @@ export default function FixDecisionDrawer({ fix, open, onClose }) {
                   direction="row"
                   spacing={1}
                   alignItems="center"
-                  sx={rowSx(i + 1)}
+                  sx={{ ...rowSx(i + 1), display: "flex" }}
                 >
                   <Iconify
                     icon={
