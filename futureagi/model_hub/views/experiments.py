@@ -11,7 +11,7 @@ import pandas as pd
 import structlog
 from django.db import DatabaseError, connection, transaction
 from django.db.models import Count, Exists, Max, OuterRef, Prefetch, Q
-from django.http import FileResponse
+from django.http import FileResponse, Http404
 from django_filters import rest_framework as django_filters
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_yasg import openapi
@@ -40,7 +40,7 @@ from model_hub.models.experiments import (
     ExperimentPromptConfig,
     ExperimentsTable,
 )
-from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+from model_hub.models.run_prompt import PromptVersion
 from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
     DatasetRowDiffRequestSerializer,
@@ -101,11 +101,19 @@ from model_hub.services.dataset_table_snapshot import (
 from model_hub.services.lifecycle import bulk_soft_delete
 from model_hub.tasks.experiment_runner import process_experiments
 from model_hub.utils.eval_result_columns import infer_eval_result_column_data_type
+from model_hub.utils.experiment_reference_scope import (
+    agent_version_for,
+    eval_template_for,
+    prompt_version_for,
+    validate_eval_references,
+    validate_prompt_references,
+)
 from model_hub.utils.function_eval_params import (
     has_function_params_schema,
     normalize_eval_runtime_config,
 )
 from model_hub.utils.utils import get_diff
+from model_hub.utils.workspace_scope import request_workspace
 from model_hub.views.experiment_runner import ExperimentRunner
 from tfc.middleware.workspace_context import get_current_workspace
 from tfc.utils.api_contracts import validated_request
@@ -1910,10 +1918,10 @@ class GetRowDiffV2View(APIView):
             )
 
 
-class ExperimentListAPIView(BaseModelViewSetMixin, generics.ListAPIView):
+class ExperimentListAPIView(generics.ListAPIView):
     _gm = GeneralMethods()
     serializer_class = ExperimentListSerializer
-    queryset = ExperimentsTable.objects.all()
+    queryset = ExperimentsTable.objects.none()
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, OrderingFilter, SearchFilter]
     filterset_class = ExperimentFilter
@@ -1922,8 +1930,10 @@ class ExperimentListAPIView(BaseModelViewSetMixin, generics.ListAPIView):
     search_fields = ["name", "status"]
 
     def get_queryset(self):
-        # Get base queryset with automatic filtering from mixin
-        queryset = super().get_queryset()
+        if getattr(self, "swagger_fake_view", False):
+            return ExperimentsTable.objects.none()
+        # Experiments inherit tenancy through their dataset, not a direct field.
+        queryset = _scoped_experiment_queryset(self.request)
         dataset_id = self.request.query_params.get("dataset_id")
         if dataset_id:
             queryset = queryset.filter(dataset_id=dataset_id)
@@ -1956,7 +1966,7 @@ class ExperimentStatsView(APIView):
             getattr(request, "organization", None) or request.user.organization
         )
         try:
-            experiment = ExperimentsTable.objects.prefetch_related(
+            experiment = _scoped_experiment_queryset(request).prefetch_related(
                 "experiments_datasets",
                 "experiments_datasets__columns",
                 "user_eval_template_ids",
@@ -2330,7 +2340,7 @@ class ExperimentStatsView(APIView):
             )
 
         except ExperimentsTable.DoesNotExist:
-            return self._gm.bad_request(get_error_message("EXPERIMENT_NOT_FOUND"))
+            return self._gm.not_found(get_error_message("EXPERIMENT_NOT_FOUND"))
         except Exception as e:
             logger.exception(f"Error in fetching experiment's details: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_GET_EXP_DATA"))
@@ -2351,7 +2361,7 @@ class ExperimentStatsV2View(APIView):
             getattr(request, "organization", None) or request.user.organization
         )
         try:
-            experiment = ExperimentsTable.objects.prefetch_related(
+            experiment = _scoped_experiment_queryset(request).prefetch_related(
                 "experiment_datasets",
                 "experiment_datasets__columns",
                 "user_eval_template_ids",
@@ -2686,7 +2696,7 @@ class ExperimentStatsV2View(APIView):
             )
 
         except ExperimentsTable.DoesNotExist:
-            return self._gm.bad_request(get_error_message("EXPERIMENT_NOT_FOUND"))
+            return self._gm.not_found(get_error_message("EXPERIMENT_NOT_FOUND"))
         except Exception as e:
             logger.exception(f"Error in fetching v2 experiment stats: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_GET_EXP_DATA"))
@@ -3452,15 +3462,14 @@ class AddExperimentEvalView(APIView):
             save_as_template = validated_data.get("save_as_template", False)
             run = validated_data.get("run", False)
             try:
-                experiment = ExperimentsTable.objects.select_related("dataset").get(
-                    id=experiment_id,
-                    dataset__organization=organization,
-                    deleted=False,
-                )
+                experiment = _scoped_experiment_queryset(request, organization).select_related("dataset").get(id=experiment_id)
             except ExperimentsTable.DoesNotExist:
                 return self._gm.not_found("Experiment not found")
 
             template_id = validated_data.get("template_id")
+            workspace = request_workspace(request)
+            validate_eval_references([validated_data], organization, workspace)
+            selected_template = eval_template_for(organization, workspace, template_id)
             # Save as template if requested
             if UserEvalMetric.objects.filter(
                 name=validated_data.get("name"),
@@ -3471,9 +3480,7 @@ class AddExperimentEvalView(APIView):
                 return self._gm.bad_request(get_error_message("EVAL_NAME_EXISTS"))
 
             if save_as_template:
-                template = EvalTemplate.no_workspace_objects.get(
-                    id=validated_data.get("template_id")
-                )
+                template = selected_template
                 if (
                     EvalTemplate.objects.filter(
                         name=validated_data.get("name"),
@@ -3497,6 +3504,7 @@ class AddExperimentEvalView(APIView):
                     choices=template.choices,
                     multi_choice=template.multi_choice,
                     organization=organization,
+                    workspace=workspace,
                     owner=OwnerChoices.USER.value,
                     output_type_normalized=template.output_type_normalized,
                     choice_scores=template.choice_scores,
@@ -3520,7 +3528,7 @@ class AddExperimentEvalView(APIView):
                 template_id = new_template.id
 
             logger.info(f"CONFIG: {validated_data.get('config')}")
-            selected_template = EvalTemplate.no_workspace_objects.get(id=template_id)
+            selected_template = eval_template_for(organization, workspace, template_id)
             try:
                 normalized_config = normalize_eval_runtime_config(
                     selected_template.config, validated_data.get("config", {})
@@ -3536,6 +3544,8 @@ class AddExperimentEvalView(APIView):
                 name=validated_data.get("name"),
                 organization=organization,
                 dataset_id=eval_dataset.id,
+                workspace=workspace,
+                kb_id=validated_data.get("kb_id"),
                 template_id=template_id,
                 config=normalized_config,
                 status=StatusType.EXPERIMENT_EVALUATION.value,
@@ -3591,6 +3601,8 @@ class AddExperimentEvalView(APIView):
                 }
             )
 
+        except Http404 as e:
+            return self._gm.not_found(str(e))
         except Exception as e:
             logger.exception(f"Error in adding additional eval: {str(e)}")
             return self._gm.bad_request(
@@ -3992,11 +4004,7 @@ class ExperimentsTableV2View(APIView):
         try:
             # Validate dataset belongs to org
             try:
-                dataset = Dataset.objects.get(
-                    id=data["dataset_id"],
-                    organization=organization,
-                    deleted=False,
-                )
+                dataset = _scoped_dataset_queryset(request, organization).get(id=data["dataset_id"])
             except Dataset.DoesNotExist:
                 return self._gm.not_found("Dataset not found")
 
@@ -4016,6 +4024,10 @@ class ExperimentsTableV2View(APIView):
             if experiment_name_exists(data["name"], dataset):
                 return self._gm.bad_request(get_error_message("EXPERIMENT_NAME_EXISTS"))
 
+            workspace = request_workspace(request)
+            validate_eval_references(data.get("user_eval_metrics", []), organization, workspace)
+            validate_prompt_references(data.get("prompt_config", []), organization, workspace)
+
             # Validate UI-selected prompt/agent versions BEFORE creating
             # experiment/snapshot to fail fast and avoid wasted compute.
             experiment_type = data.get("experiment_type", "llm")
@@ -4031,8 +4043,8 @@ class ExperimentsTableV2View(APIView):
 
                     if is_agent:
                         try:
-                            gv = GV.no_workspace_objects.select_related("graph").get(
-                                id=entry["agent_version"]
+                            gv = agent_version_for(
+                                organization, workspace, entry["agent_id"], entry["agent_version"],
                             )
                         except GV.DoesNotExist:
                             return self._gm.bad_request(
@@ -4051,9 +4063,9 @@ class ExperimentsTableV2View(APIView):
                         validated_agent_versions[entry["agent_version"]] = gv
                     else:
                         try:
-                            prompt_version = PromptVersion.objects.select_related(
-                                "original_template"
-                            ).get(id=entry["prompt_version"])
+                            prompt_version = prompt_version_for(
+                                organization, workspace, entry["prompt_id"], entry["prompt_version"],
+                            )
                         except PromptVersion.DoesNotExist:
                             return self._gm.bad_request(
                                 f"PromptVersion {entry['prompt_version']} not found."
@@ -4104,12 +4116,10 @@ class ExperimentsTableV2View(APIView):
 
                 if is_agent:
                     # Agent entry → one EDT + one EAC
-                    from agent_playground.models.graph_version import GraphVersion as GV
-
                     gv = validated_agent_versions.get(entry["agent_version"])
                     if not gv:
-                        gv = GV.no_workspace_objects.select_related("graph").get(
-                            id=entry["agent_version"]
+                        gv = agent_version_for(
+                            organization, workspace, entry["agent_id"], entry["agent_version"],
                         )
 
                     agent_name = (
@@ -4170,9 +4180,9 @@ class ExperimentsTableV2View(APIView):
                             entry["prompt_version"]
                         )
                         if not prompt_version:
-                            prompt_version = PromptVersion.objects.select_related(
-                                "original_template"
-                            ).get(id=entry["prompt_version"])
+                            prompt_version = prompt_version_for(
+                                organization, workspace, entry["prompt_id"], entry["prompt_version"],
+                            )
                         prompt_template = prompt_version.original_template
 
                     # Resolve voice_input_column for STT
@@ -4294,6 +4304,8 @@ class ExperimentsTableV2View(APIView):
                 f"Experiment created successfully. experiment_id={experiment.id}"
             )
 
+        except Http404 as e:
+            return self._gm.not_found(str(e))
         except ValueError as e:
             return self._gm.bad_request(str(e))
         except Exception as e:
@@ -4324,15 +4336,14 @@ class ExperimentsTableV2View(APIView):
         )
 
         try:
-            experiment = ExperimentsTable.objects.get(
-                id=experiment_id,
-                dataset__organization=organization,
-                deleted=False,
-            )
+            experiment = _scoped_experiment_queryset(request, organization).get(id=experiment_id)
         except ExperimentsTable.DoesNotExist:
             return self._gm.not_found("Experiment not found")
 
         try:
+            workspace = request_workspace(request)
+            validate_eval_references(data.get("user_eval_metrics", []), organization, workspace)
+            validate_prompt_references(data.get("prompt_config", []), organization, workspace)
             # --- Update column_id with change detection ---
             column_changed = False
             if "column_id" in data:
@@ -4437,6 +4448,8 @@ class ExperimentsTableV2View(APIView):
             )
             return self._gm.success_response(exp_serializer.data)
 
+        except Http404 as e:
+            return self._gm.not_found(str(e))
         except ValueError as e:
             return self._gm.bad_request(str(e))
         except Exception as e:
@@ -4658,9 +4671,10 @@ def _create_eval_metrics_inline(
     Returns:
         List of created UserEvalMetric instances.
     """
+    validate_eval_references(eval_entries, organization, workspace)
     created = []
     for entry in eval_entries:
-        template = EvalTemplate.no_workspace_objects.get(id=entry["template_id"])
+        template = eval_template_for(organization, workspace, entry["template_id"])
 
         config = _with_default_reason_column(entry["config"])
         # Translate original column UUIDs in mapping to snapshot column UUIDs
@@ -4930,6 +4944,9 @@ def _diff_and_update_configs(experiment, new_entries):
 
     experiment_type = experiment.experiment_type
     snapshot_dataset = experiment.snapshot_dataset
+    organization = experiment.dataset.organization
+    workspace = experiment.dataset.workspace
+    validate_prompt_references(new_entries, organization, workspace)
 
     # Build ID maps for existing configs
     old_epcs = ExperimentPromptConfig.objects.filter(
@@ -4973,10 +4990,8 @@ def _diff_and_update_configs(experiment, new_entries):
                     eac.graph_version_id
                 ) != str(entry["agent_version"])
                 if changed:
-                    from agent_playground.models.graph_version import GraphVersion as GV
-
-                    gv = GV.no_workspace_objects.select_related("graph").get(
-                        id=entry["agent_version"]
+                    gv = agent_version_for(
+                        organization, workspace, entry["agent_id"], entry["agent_version"],
                     )
                     if gv.status == "draft":
                         raise ValueError(
@@ -4995,11 +5010,10 @@ def _diff_and_update_configs(experiment, new_entries):
                     rerun_agent_ids.append(entry_id)
             else:
                 # NEW agent → create EDT + EAC + output columns
-                from agent_playground.models.graph_version import GraphVersion as GV
                 from model_hub.views.experiment_runner import ExperimentRunner
 
-                gv = GV.no_workspace_objects.select_related("graph").get(
-                    id=entry["agent_version"]
+                gv = agent_version_for(
+                    organization, workspace, entry["agent_id"], entry["agent_version"],
                 )
                 if gv.status == "draft":
                     raise ValueError(
@@ -5067,12 +5081,10 @@ def _diff_and_update_configs(experiment, new_entries):
             prompt_template = None
             prompt_version = None
             if experiment_type == "llm" and entry.get("prompt_id"):
-                prompt_template = PromptTemplate.objects.filter(
-                    id=entry["prompt_id"],
-                ).first()
-                prompt_version = PromptVersion.objects.filter(
-                    id=entry["prompt_version"],
-                ).first()
+                prompt_version = prompt_version_for(
+                    organization, workspace, entry["prompt_id"], entry["prompt_version"],
+                )
+                prompt_template = prompt_version.original_template
                 if prompt_version and prompt_version.is_draft:
                     raise ValueError(
                         f"Prompt '{prompt_template.name if prompt_template else ''} {prompt_version.template_version}' is in draft state and cannot be used in experiments."
@@ -5230,6 +5242,7 @@ def _diff_and_update_evals(
 
     Updates the experiment's M2M relationship and returns IDs of evals to re-run.
     """
+    validate_eval_references(new_eval_entries, organization, workspace)
     old_metrics = list(experiment.user_eval_template_ids.all())
     old_by_id = {str(m.id): m for m in old_metrics}
 
@@ -5252,7 +5265,7 @@ def _diff_and_update_evals(
             # FE gets snapshot UUIDs from GET detail, so incoming mapping
             # is already in snapshot UUIDs — no translation needed.
             incoming_mapping = (entry.get("config") or {}).get("mapping", {})
-            template = EvalTemplate.no_workspace_objects.get(id=entry["template_id"])
+            template = eval_template_for(organization, workspace, entry["template_id"])
             _validate_eval_metric_mapping(template, {"mapping": incoming_mapping})
 
             if _has_eval_changed(metric, entry, incoming_mapping):

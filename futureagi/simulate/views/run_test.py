@@ -141,6 +141,7 @@ from simulate.services.agent_definition import resolve_api_key_for_version
 from simulate.services.call_rerun import clear_call_for_rerun
 from simulate.services.eval_config_edit import (
     EvalConfigEditRefused,
+    unknown_eval_group_ids,
     update_eval_config,
     visible_eval_template_query,
 )
@@ -691,6 +692,16 @@ class CreateRunTestView(APIView):
                 forbidden = _voice_sim_gate_response(user_organization, self.gm)
                 if forbidden is not None:
                     return forbidden
+
+            if unknown_eval_group_ids(
+                [
+                    config.get("eval_group")
+                    for config in validated_data.get("evaluations_config", [])
+                ],
+                user_organization,
+                getattr(request, "workspace", None),
+            ):
+                return self.gm.bad_request("Eval group not found")
 
             # Create the RunTest
             with transaction.atomic():

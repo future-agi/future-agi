@@ -46,6 +46,26 @@ def visible_eval_template_query(user_organization, workspace):
     return template_query | workspace_query
 
 
+def unknown_eval_group_ids(eval_group_ids, user_organization, workspace):
+    """The ids among ``eval_group_ids`` that name neither a sample eval group
+    nor one of ``user_organization``'s eval groups visible from ``workspace``.
+
+    Empty values are ignored. Another organization's group is reported like an
+    id that does not exist.
+    """
+    from model_hub.models.eval_groups import EvalGroup
+    from tfc.utils.tenant_scope import workspace_scope_q
+
+    wanted = {str(group_id) for group_id in eval_group_ids if group_id}
+    if not wanted:
+        return set()
+    found = EvalGroup.no_workspace_objects.filter(id__in=wanted).filter(
+        Q(is_sample=True)
+        | (Q(organization=user_organization) & workspace_scope_q(workspace))
+    )
+    return wanted - {str(group_id) for group_id in found.values_list("id", flat=True)}
+
+
 def update_eval_config(
     eval_config, validated, *, organization, workspace, before_save=None
 ):

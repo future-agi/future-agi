@@ -80,7 +80,7 @@ from model_hub.constants import (
     get_curl_ts_code,
 )
 from model_hub.db_routing import DATABASE_FOR_DATASET_LIST
-from model_hub.models.api_key import ApiKey, SecretModel
+from model_hub.models.api_key import ApiKey
 from model_hub.models.choices import (
     BooleanChoices,
     CellStatus,
@@ -285,6 +285,7 @@ from model_hub.utils.kb_helpers import (
 from model_hub.utils.SQL_queries import SQLQueryHandler
 from model_hub.utils.synthetic_task_manager import SyntheticTaskManager
 from model_hub.utils.utils import contains_sql, get_diff
+from model_hub.utils.workspace_scope import knowledge_base_in_scope
 from model_hub.views.eval_runner import EvaluationRunner
 from model_hub.views.run_prompt import PROVIDERS_WITH_JSON
 from model_hub.views.utils.dataset_limit import dataset_add_refusal
@@ -336,6 +337,13 @@ try:
 except ImportError:
     ROW_LIMIT_REACHED_MESSAGE = None
     log_and_deduct_cost_for_resource_request = None
+
+from model_hub.utils.comparison_scope import (
+    require_comparison_datasets,
+    require_comparison_metadata,
+    require_comparison_rows,
+)
+from model_hub.utils.secret_scope import scoped_secret
 
 logger = structlog.get_logger(__name__)
 
@@ -1679,12 +1687,7 @@ class ColumnConfigView(APIView):
         responses={200: ColumnConfigResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
     )
     def get(self, request, column_id):
-        column = get_object_or_404(
-            Column,
-            id=column_id,
-            dataset__organization=getattr(request, "organization", None)
-            or request.user.organization,
-        )
+        column = get_object_or_404(_request_column_queryset(request), id=column_id)
 
         if column.source == SourceChoices.EXPERIMENT.value:
             config = self.get_experiment_config(column)
@@ -1705,8 +1708,8 @@ class ColumnConfigView(APIView):
     def get_optimisation_evaluation_config(self, column):
         evaluation_id = column.source_id.split("-sourceid-")[1]
         optimisation_id = column.source_id.split("-sourceid-")[0]
-        optimisation = get_object_or_404(OptimizationDataset, id=optimisation_id)
-        evaluation = get_object_or_404(UserEvalMetric, id=evaluation_id)
+        optimisation = get_object_or_404(OptimizationDataset, id=optimisation_id, dataset=column.dataset, deleted=False)
+        evaluation = get_object_or_404(UserEvalMetric, id=evaluation_id, dataset=column.dataset, deleted=False)
         return {
             "name": column.name,
             "template": evaluation.template.id,
@@ -1719,7 +1722,7 @@ class ColumnConfigView(APIView):
         }
 
     def get_experiment_config(self, column):
-        experiment = get_object_or_404(ExperimentsTable, id=column.source_id)
+        experiment = get_object_or_404(ExperimentsTable, id=column.source_id, dataset=column.dataset, deleted=False)
         user_eval_template_ids = list(
             experiment.user_eval_template_ids.values("id", "name")
         )
@@ -1732,7 +1735,7 @@ class ColumnConfigView(APIView):
         }
 
     def get_optimization_config(self, column):
-        optimization = get_object_or_404(OptimizationDataset, id=column.source_id)
+        optimization = get_object_or_404(OptimizationDataset, id=column.source_id, dataset=column.dataset, deleted=False)
         user_eval_template_ids = list(
             optimization.user_eval_template_ids.values("id", "name")
         )
@@ -1747,7 +1750,7 @@ class ColumnConfigView(APIView):
         }
 
     def get_run_prompt_config(self, column):
-        run_prompt = get_object_or_404(RunPrompter, id=column.source_id)
+        run_prompt = get_object_or_404(RunPrompter, id=column.source_id, dataset=column.dataset, deleted=False)
         tool_names = list(run_prompt.tools.values_list("name", flat=True))
         return {
             "name": column.name,
@@ -1765,7 +1768,7 @@ class ColumnConfigView(APIView):
         }
 
     def get_evaluation_config(self, column):
-        evaluation = get_object_or_404(UserEvalMetric, id=column.source_id)
+        evaluation = get_object_or_404(UserEvalMetric, id=column.source_id, dataset=column.dataset, deleted=False)
         return {
             "name": column.name,
             "template": evaluation.template.id,
@@ -1778,8 +1781,13 @@ class ColumnConfigView(APIView):
     def get_experiment_evaluation_config(self, column):
         evaluation_id = column.source_id.split("-sourceid-")[1]
         experiment_id = column.source_id.split("-sourceid-")[0]
-        evaluation = get_object_or_404(UserEvalMetric, id=evaluation_id)
-        experiment_dataset = get_object_or_404(ExperimentDatasetTable, id=experiment_id)
+        evaluation = get_object_or_404(UserEvalMetric, id=evaluation_id, dataset=column.dataset, deleted=False)
+        experiment_dataset = get_object_or_404(
+            _request_experiment_dataset_queryset(self.request), id=experiment_id,
+        )
+        parent = _scoped_experiment_for_dataset(self.request, experiment_dataset)
+        if parent.dataset_id != column.dataset_id:
+            raise Http404("Experiment not found")
         return {
             "name": column.name,
             "template": evaluation.template.id,
@@ -4138,15 +4146,8 @@ class GetColumnDetailView(APIView):
     )
     def get(self, request, dataset_id, *args, **kwargs):
         try:
-            dataset = Dataset.objects.filter(
-                id=dataset_id,
-                deleted=False,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-            ).first()
-            exp_dataset = ExperimentDatasetTable.objects.filter(
-                id=dataset_id, deleted=False
-            ).first()
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
+            exp_dataset = _request_experiment_dataset_queryset(request).filter(id=dataset_id).first()
 
             include_prompt = request.GET.get("include_prompt", False)
             source = request.GET.get("source", None)
@@ -4165,7 +4166,7 @@ class GetColumnDetailView(APIView):
                             SourceChoices.RUN_PROMPT.value,
                         ]
                 columns = Column.objects.filter(
-                    id__in=column_order, deleted=False, source__in=sources
+                    id__in=column_order, dataset=dataset, deleted=False, source__in=sources
                 ).order_by(
                     Case(
                         *[
@@ -4187,8 +4188,14 @@ class GetColumnDetailView(APIView):
                         }
                     )
             elif exp_dataset:
-                columns_in_experiment = list(exp_dataset.columns.all())
-                experiment = exp_dataset.experiments_datasets_created.first()
+                try:
+                    experiment = _scoped_experiment_for_dataset(request, exp_dataset)
+                except ExperimentDatasetIntegrityError:
+                    return self._gm.not_found("Dataset not found")
+                columns_in_experiment = list(exp_dataset.columns.filter(
+                    dataset_id__in=[experiment.dataset_id, experiment.snapshot_dataset_id],
+                    deleted=False,
+                ))
                 user_eval_metric = list(experiment.user_eval_template_ids.all())
                 total_columns = []
                 for metric in user_eval_metric:
@@ -4203,9 +4210,13 @@ class GetColumnDetailView(APIView):
                     )
                     total_columns.extend(cols_used)
 
-                total_columns.append(experiment.column.id)
-                if experiment.column.source == SourceChoices.RUN_PROMPT.value:
-                    run_prompt = RunPrompter.objects.get(id=experiment.column.source_id)
+                if experiment.column_id:
+                    total_columns.append(experiment.column_id)
+                if experiment.column_id and experiment.column.source == SourceChoices.RUN_PROMPT.value:
+                    run_prompt = RunPrompter.objects.get(
+                        id=experiment.column.source_id, dataset=experiment.column.dataset,
+                        organization=_request_organization(request), deleted=False,
+                    )
                     # Extract all column UUIDs from messages
                     message_column_ids = []
                     for message in run_prompt.messages:
@@ -4258,7 +4269,7 @@ class GetColumnDetailView(APIView):
                     column_config.append({"id": str(column.id), "name": column.name})
 
             else:
-                return self._gm.bad_request("Dataset Not Found")
+                return self._gm.not_found("Dataset not found")
 
             return self._gm.success_response({"columns": column_config})
 
@@ -4420,6 +4431,8 @@ class AddColumnsView(APIView):
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
+            if not _request_dataset_queryset(request).filter(id=dataset_id).exists():
+                return self._gm.not_found("Dataset not found")
             columns_data = request.validated_data.get("new_columns_data")
 
             if not columns_data or not isinstance(columns_data, list):
@@ -4545,7 +4558,9 @@ class AddEmptyColumnsView(APIView):
         try:
             num_cols = request.validated_data.get("num_cols", 0)
 
-            dataset = get_object_or_404(Dataset, id=dataset_id)
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
+            if dataset is None:
+                return self._gm.not_found("Dataset not found")
 
             added_columns = []
 
@@ -4616,17 +4631,22 @@ class GetCellDataView(APIView):
                     "Both row_ids and column_ids are required"
                 )
 
-            # Get dataset
-            # dataset = get_object_or_404(Dataset, id=dataset_id, deleted=False)
+            rows = _request_row_queryset(request).filter(id__in=row_ids)
+            columns = _request_column_queryset(request).filter(id__in=column_ids)
+            # Preserve partial results for stale/deleted IDs, but reject foreign IDs.
+            owned_datasets = Dataset.all_objects.filter(
+                _request_workspace_filter(request), organization=_request_organization(request),
+            )
+            if (
+                Row.all_objects.filter(id__in=row_ids).exclude(dataset__in=owned_datasets).exists()
+                or Column.all_objects.filter(id__in=column_ids).exclude(dataset__in=owned_datasets).exists()
+            ):
+                return self._gm.not_found("Cells not found")
 
-            # Get cells for specified rows and columns
             cells = Cell.objects.filter(
-                # dataset=dataset,
-                row_id__in=row_ids,
-                column_id__in=column_ids,
+                row_id__in=rows.values("id"),
+                column_id__in=columns.values("id"),
                 deleted=False,
-                column__dataset__organization=getattr(request, "organization", None)
-                or request.user.organization,
             ).select_related("column")
 
             # Organize data by row_id and column_id
@@ -4678,6 +4698,8 @@ class AddStaticColumnView(APIView):
     def post(self, request, dataset_id, *args, **kwargs):
         try:
             with transaction.atomic():
+                if not _request_dataset_queryset(request).filter(id=dataset_id).exists():
+                    return self._gm.not_found("Dataset not found")
                 new_column_name = request.validated_data.get("new_column_name")
                 column_type = request.validated_data.get("column_type")
                 source = request.validated_data.get("source")
@@ -4791,6 +4813,8 @@ class AddMultipleStaticColumnsView(APIView):
         """
         try:
             with transaction.atomic():
+                if not _request_dataset_queryset(request).filter(id=dataset_id).exists():
+                    return self._gm.not_found("Dataset not found")
                 columns_data = request.validated_data.get("columns", [])
 
                 if not columns_data or not isinstance(columns_data, list):
@@ -4923,7 +4947,9 @@ class DeleteColumnView(APIView):
     def delete(self, request, dataset_id, column_id, *args, **kwargs):
         try:
             now = timezone.now()
-            dataset = get_object_or_404(Dataset, id=dataset_id)
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
+            if dataset is None:
+                return self._gm.not_found("Dataset not found")
             column = get_object_or_404(Column, id=column_id, dataset=dataset)
 
             # Delete associated source model based on source type
@@ -5042,7 +5068,9 @@ class DeleteRowView(APIView):
     def delete(self, request, dataset_id, *args, **kwargs):
         try:
             now = timezone.now()
-            dataset = get_object_or_404(Dataset, id=dataset_id, deleted=False)
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
+            if dataset is None:
+                return self._gm.not_found("Dataset not found")
             row_ids = request.data.get("row_ids", [])
             selected_all_rows = request.data.get("selected_all_rows", False)
 
@@ -5124,7 +5152,9 @@ class AddEmptyRowsView(APIView):
                 return self._gm.bad_request(num_rows_err)
 
             # Get dataset and verify it exists
-            dataset = get_object_or_404(Dataset, id=dataset_id)
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
+            if dataset is None:
+                return self._gm.not_found("Dataset not found")
             organization = (
                 getattr(request, "organization", None) or request.user.organization
             )
@@ -5470,7 +5500,9 @@ class AddDataRowsView(APIView):
             if not rows:
                 return self._gm.bad_request(get_error_message("DATA_MISSING"))
 
-            dataset = get_object_or_404(Dataset, id=dataset_id)
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
+            if dataset is None:
+                return self._gm.not_found("Dataset not found")
 
             # Validate row limit
             organization = (
@@ -5680,6 +5712,10 @@ class UpdateColumnNameView(APIView):
     )
     def put(self, request, dataset_id, column_id, *args, **kwargs):
         try:
+            if not _request_dataset_queryset(request).filter(id=dataset_id).exists():
+                return self._gm.not_found("Dataset not found")
+            if not _request_column_queryset(request).filter(dataset_id=dataset_id, id=column_id).exists():
+                return self._gm.not_found("Column not found")
             new_column_name = request.validated_data.get("new_column_name")
 
             if len(new_column_name) > 255:
@@ -5807,7 +5843,9 @@ class EditDatasetBehaviorView(APIView):
             dataset_config = request.validated_data.get("dataset_config", {})
 
             # Get dataset
-            dataset = get_object_or_404(Dataset, id=dataset_id, deleted=False)
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
+            if dataset is None:
+                return self._gm.not_found("Dataset not found")
 
             if dataset_config:
                 dataset.dataset_config = {
@@ -5996,17 +6034,22 @@ class UpdateCellValueView(APIView):
                 return self._gm.bad_request(
                     get_error_message("MISSING_ROW_ID_COLUMN_ID_AND_NEW_VALUE")
                 )
-            # Get the cell and verify it exists
-            try:
-                cell = get_object_or_404(
-                    Cell, dataset_id=dataset_id, row_id=row_id, column_id=column_id
-                )
-            except Exception:
-                cell = get_object_or_404(Cell, row_id=row_id, column_id=column_id)
+            # Authorize through the row's dataset, including legacy cells whose
+            # redundant dataset FK is null. Never drop the requested dataset.
+            scoped_rows = _request_row_queryset(request).filter(dataset_id=dataset_id)
+            cell = Cell.objects.filter(
+                Q(dataset_id=dataset_id) | Q(dataset__isnull=True),
+                row_id=row_id,
+                row_id__in=scoped_rows.values("id"),
+                column_id=column_id,
+                column__dataset_id=dataset_id,
+                column__deleted=False,
+                deleted=False,
+            ).select_related("column").first()
+            if cell is None:
+                return self._gm.not_found("Cell not found")
 
-            # Update the cell value
-            # cell.value = str(new_value)
-            column = get_object_or_404(Column, id=column_id)
+            column = cell.column
             column_data_type = column.data_type
 
             # Check if column is editable (non-editable source types cannot be edited)
@@ -6323,7 +6366,9 @@ class UpdateRowView(APIView):
             if not rows:
                 return self._gm.bad_request(get_error_message("DATA_MISSING"))
 
-            dataset = get_object_or_404(Dataset, id=dataset_id)
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
+            if dataset is None:
+                return self._gm.not_found("Dataset not found")
 
             # Get valid columns for this dataset
             columns = Column.objects.filter(dataset=dataset, deleted=False).exclude(
@@ -6396,7 +6441,9 @@ class UpdateColumnTypeView(APIView):
             force_update = request.validated_data.get("force_update", False)
 
             # Get dataset and column
-            dataset = get_object_or_404(Dataset, id=dataset_id)
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
+            if dataset is None:
+                return self._gm.not_found("Dataset not found")
             column = get_object_or_404(Column, id=column_id, dataset=dataset)
 
             # Validate data type
@@ -7216,7 +7263,9 @@ class DownloadDatasetView(APIView):
     def get(self, request, dataset_id, *args, **kwargs):
         try:
             # Get dataset and verify it exists
-            dataset = get_object_or_404(Dataset, id=dataset_id)
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
+            if dataset is None:
+                return self._gm.not_found("Dataset not found")
 
             # Get all columns in the correct order
             _exp_sources = [
@@ -8636,6 +8685,10 @@ class EditAndRunUserEvalView(APIView):
                         f"{get_error_message('COLUMN_DELETED')} {eval_metric.name}"
                     )
 
+                requested_kb_id = request_data.get("kb_id") or eval_metric.kb_id
+                if requested_kb_id and not knowledge_base_in_scope(request, requested_kb_id):
+                    return self._gm.not_found("Knowledge base not found")
+
                 if save_as_template:
                     template = eval_metric.template
 
@@ -8995,6 +9048,9 @@ class AddUserEvalView(CreateAPIView):
             id1 = dataset_id
 
             template_id = validated_data.get("template_id")
+            kb_id = validated_data.get("kb_id")
+            if kb_id and not knowledge_base_in_scope(request, kb_id):
+                return self._gm.not_found("Knowledge base not found")
             if save_as_template:
                 try:
                     if (
@@ -9146,17 +9202,6 @@ class AddUserEvalView(CreateAPIView):
                     "composite_weight_overrides"
                 ),
             )
-            if kb_id:
-                try:
-                    KnowledgeBaseFile.objects.get(
-                        id=kb_id,
-                        organization=getattr(request, "organization", None)
-                        or request.user.organization,
-                    )
-                except KnowledgeBaseFile.DoesNotExist:
-                    pass
-            else:
-                pass
 
             if run:
                 with transaction.atomic():
@@ -10354,17 +10399,21 @@ class AddApiColumnView(APIView):
                     logger.error(f"Error replacing variable: {str(e)}")
         return value
 
-    def _make_api_call(self, cell, config):
-        """Make API call for a single cell and return the result"""
+    def _make_api_call(self, cell, config, dataset=None):
+        """Make API calls with credentials scoped to the authorized row's dataset."""
         try:
+            if cell is not None and cell.row is not None:
+                dataset = cell.row.dataset
+            organization_id = dataset.organization_id if dataset is not None else None
+            workspace_id = dataset.workspace_id if dataset is not None else None
             # Process parameters
             processed_params = {}
             for param_name, param_config in config.get("params", {}).items():
                 if param_config["type"] == "PlainText":
                     processed_params[param_name] = param_config["value"]
                 elif param_config["type"] == "Secret":
-                    processed_params[param_name] = SecretModel.objects.get(
-                        id=param_config["value"]
+                    processed_params[param_name] = scoped_secret(
+                        param_config["value"], organization_id, workspace_id,
                     ).actual_key
                 elif param_config["type"] == "Variable":
                     try:
@@ -10384,9 +10433,8 @@ class AddApiColumnView(APIView):
                 if header_config["type"] == "PlainText":
                     processed_headers[header_name] = header_config["value"]
                 elif header_config["type"] == "Secret":
-                    # secret = get_object_or_404(Secret, id=header_config['value'])
-                    processed_headers[header_name] = SecretModel.objects.get(
-                        id=header_config["value"]
+                    processed_headers[header_name] = scoped_secret(
+                        header_config["value"], organization_id, workspace_id,
                     ).actual_key
                 elif header_config["type"] == "Variable":
                     try:
@@ -10915,7 +10963,7 @@ class ConditionalColumnView(APIView):
             elif output_type == "api_call":
                 executor = AddApiColumnView()
                 if not source_column:
-                    return executor._make_api_call(cell=None, config=config)
+                    return executor._make_api_call(cell=None, config=config, dataset=row.dataset)
                 return executor._make_api_call(
                     cell=Cell.objects.get(column=source_column, row=row), config=config
                 )
@@ -11235,10 +11283,10 @@ class AddVectorDBColumnView(APIView):
             sub_type = config.get("sub_type")
 
             if sub_type == "pinecone":
-                return self._query_pinecone(embedding_vector, config)
+                return self._query_pinecone(embedding_vector, config, organization_id, workspace_id)
 
             elif sub_type == "qdrant":
-                return self._query_qdrant(embedding_vector, config)
+                return self._query_qdrant(embedding_vector, config, organization_id, workspace_id)
 
             elif sub_type == "weaviate":
                 return self._query_weaviate(
@@ -11252,7 +11300,7 @@ class AddVectorDBColumnView(APIView):
             logger.exception("vector_embedding_database_error", sub_type=sub_type)
             return str(e)
 
-    def _query_pinecone(self, query, config):
+    def _query_pinecone(self, query, config, organization_id=None, workspace_id=None):
         """
                 {
             "indexName": "apicall2",
@@ -11273,7 +11321,7 @@ class AddVectorDBColumnView(APIView):
 
         Pinecone = load_extra("pinecone", "vectordb").Pinecone
 
-        pc = Pinecone(api_key=SecretModel.objects.get(id=config["api_key"]).actual_key)
+        pc = Pinecone(api_key=scoped_secret(config["api_key"], organization_id, workspace_id).actual_key)
         index = pc.Index(config["index_name"])
         query_object = {}
 
@@ -11313,7 +11361,7 @@ class AddVectorDBColumnView(APIView):
         # Return both ID and full match info including metadata
         return metadata
 
-    def _query_qdrant(self, query, config):
+    def _query_qdrant(self, query, config, organization_id=None, workspace_id=None):
         """Query Qdrant vector database
 
                 {
@@ -11361,7 +11409,7 @@ class AddVectorDBColumnView(APIView):
 
             client = QdrantClient(
                 url=config["url"],
-                api_key=SecretModel.objects.get(id=config["api_key"]).actual_key,
+                api_key=scoped_secret(config["api_key"], organization_id, workspace_id).actual_key,
             )
             # query=[0.2, 0.1, 0.9, 0.7]
 
@@ -11407,7 +11455,7 @@ class AddVectorDBColumnView(APIView):
             )
 
         auth = AuthApiKey(
-            api_key=SecretModel.objects.get(id=config["api_key"]).actual_key
+            api_key=scoped_secret(config["api_key"], organization_id, workspace_id).actual_key
         )
         connect_kwargs = {"auth_client_secret": auth}
         if key and use_hybrid:
@@ -13245,12 +13293,8 @@ class GetBaseColumnsView(APIView):
                 "dataset_ids", []
             ) or request.query_params.getlist("datasetIds", [])
 
-            # Verify all datasets exist and aren't deleted in one query
-            dataset_count = Dataset.objects.filter(
-                id__in=dataset_ids, deleted=False
-            ).count()
-            if dataset_count != len(dataset_ids):
-                return self._gm.bad_request(get_error_message("INVALID_DATASET_IDS"))
+            # Authorize the entire selection, not only the datasets returned by a filter.
+            require_comparison_datasets(request, dataset_ids)
 
             # Get all columns per dataset in a single query
             excluded_sources = [
@@ -13285,6 +13329,8 @@ class GetBaseColumnsView(APIView):
 
             return self._gm.success_response({"base_columns": list(common_columns)})
 
+        except Http404:
+            raise
         except Exception as e:
             logger.exception(f"Error in fetching base columns: {str(e)}")
             return self._gm.internal_server_error_response(
@@ -13322,6 +13368,7 @@ class GetCompareDatasetRow(APIView):
                 )
                 with open(metadata_path) as f:
                     metadata = json.load(f)
+                require_comparison_metadata(request, metadata)
                 if time.time() - loop_start > 300:
                     return self._gm.bad_request(
                         "Timeout while waiting for metadata to be ready"
@@ -13529,6 +13576,8 @@ class GetCompareDatasetRow(APIView):
 
             return self._gm.success_response(response)
 
+        except Http404:
+            raise
         except Exception as e:
             logger.exception(f"Error in fetching compare dataset row: {str(e)}")
             return self._gm.internal_server_error_response(str(e))
@@ -13553,7 +13602,13 @@ class GetCompareDatasetRow(APIView):
                 code="method_not_allowed",
             )
         try:
-            # Import the activity to register it
+            try:
+                with open(get_compare_metadata_path(compare_id)) as metadata_file:
+                    metadata = json.load(metadata_file)
+            except (OSError, ValueError) as exc:
+                raise Http404("Comparison not found") from exc
+            require_comparison_metadata(request, metadata)
+            # Import the activity to register it only after authorizing the cache.
             import tfc.temporal.background_tasks.activities  # noqa: F401
             from tfc.temporal.drop_in import start_activity
 
@@ -13574,6 +13629,8 @@ class GetCompareDatasetRow(APIView):
             return self._gm.success_response(
                 {"message": "File(s) deleted successfully"}
             )
+        except Http404:
+            raise
         except Exception as e:
             logger.exception(f"Error in deleting compare dataset file: {str(e)}")
             return self._gm.internal_server_error_response(
@@ -14264,8 +14321,11 @@ class CompareDatasetsView(APIView):
     def post(self, request, dataset_id, *args, **kwargs):
         try:
             start_time = time.time()
-            # Pagination parameters
+            # Authorize all request and row-map parents before reading or creating cache files.
             validated_data = request.validated_data
+            requested_ids = [str(dataset_id), *map(str, validated_data["dataset_ids"])]
+            require_comparison_datasets(request, requested_ids)
+            require_comparison_rows(requested_ids, validated_data["dataset_info"])
             page_size = validated_data["page_size"]
             current_page = validated_data["current_page_index"]
             base_column_name = validated_data["base_column_name"]
@@ -14301,6 +14361,9 @@ class CompareDatasetsView(APIView):
 
             if os.path.exists(metadata_path):
                 metadata = self.read_metadata_safely(metadata_path)
+                cached_ids = require_comparison_metadata(request, metadata)
+                if set(map(str, cached_ids)) != set(requested_ids):
+                    raise Http404("Comparison not found")
                 if metadata.get("total_pages") < num_pages_to_fetch:
                     return self._gm.bad_request(
                         get_error_message("FAILED_TO_COMPARE_DATASETS")
@@ -14690,6 +14753,8 @@ class CompareDatasetsView(APIView):
 
             return self._gm.success_response(compare_json)
 
+        except Http404:
+            raise
         except Exception as e:
             logger.exception(f"Error in comparing the datasets: {str(e)}")
             # return self._gm.bad_request(get_error_message('FAILED_TO_COMPARE_DATASETS'))
@@ -14712,8 +14777,10 @@ class DownloadComparisonDatasetView(APIView):
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
-            # Get main dataset and validate request data
-            get_object_or_404(Dataset, id=dataset_id, deleted=False)
+            # Resolve every dataset in the request scope before reading data.
+            datasets = _request_dataset_queryset(request)
+            if not datasets.filter(id=dataset_id).exists():
+                return self._gm.not_found("Dataset not found")
             validated_data = request.validated_data
             compare_id = (
                 str(validated_data["compare_id"])
@@ -14749,10 +14816,12 @@ class DownloadComparisonDatasetView(APIView):
             # Ensure main dataset is included in comparison
             if str(dataset_id) not in dataset_ids:
                 dataset_ids.insert(0, str(dataset_id))
-            comparison_datasets = [
-                get_object_or_404(Dataset, id=ds_id, deleted=False)
-                for ds_id in dataset_ids
-            ]
+            comparison_datasets = []
+            for ds_id in dataset_ids:
+                dataset = datasets.filter(id=ds_id).first()
+                if dataset is None:
+                    return self._gm.not_found("Dataset not found")
+                comparison_datasets.append(dataset)
 
             if not dataset_info or not common_column_names:
                 return self._gm.bad_request(
@@ -14784,12 +14853,17 @@ class DownloadComparisonDatasetView(APIView):
                     if base_val in dataset_info and ds_id in dataset_info[base_val]:
                         row_id = dataset_info[base_val][ds_id]
 
-                    # If we have a row_id, fetch cells directly
+                    # A client-supplied row must belong to this authorized dataset.
                     if row_id:
-                        # Fetch all common columns for this row in one query
+                        row = _request_row_queryset(request, dataset=ds).filter(id=row_id).first()
+                        if row is None:
+                            return self._gm.not_found("Row not found")
                         cells = Cell.objects.filter(
-                            row_id=row_id,
+                            dataset=ds,
+                            row=row,
+                            column__dataset=ds,
                             column__name__in=common_column_names,
+                            column__deleted=False,
                             deleted=False,
                         ).select_related("column")
 
@@ -14845,7 +14919,8 @@ class CompareDatasetsStatsView(APIView):
             if str(dataset_id) not in dataset_ids:
                 dataset_ids.insert(0, str(dataset_id))
 
-            base_columns = Column.objects.filter(
+            require_comparison_datasets(request, dataset_ids)
+            base_columns = _request_column_queryset(request).filter(
                 dataset__in=dataset_ids, name=base_column_name, deleted=False
             ).values_list("id", flat=True)
 
@@ -14935,6 +15010,8 @@ class CompareDatasetsStatsView(APIView):
                 case _:
                     return self._gm.bad_request(get_error_message("INVALID_STAT_TYPE"))
 
+        except Http404:
+            raise
         except Exception as e:
             logger.exception(f"Error in comparing the datasets stats: {str(e)}")
             return self._gm.internal_server_error_response(
@@ -14959,6 +15036,10 @@ class AddCompareExperimentEvalView(APIView):
         )
 
         request_data = request.validated_data
+        require_comparison_datasets(request, [dataset_id, *request_data.get("dataset_ids", [])])
+        get_object_or_404(
+            _request_eval_template_queryset(request), id=request_data["template_id"],
+        )
         serializer = UserEvalSerializer(data=request_data)
         run = request_data.get("run", False)
         save_as_template = request_data.get("save_as_template", False)
@@ -15174,8 +15255,9 @@ class CompareDatasetsStartEvalsProcess(APIView):
             if str(dataset_id) not in dataset_ids:
                 dataset_ids.append(str(dataset_id))
 
+            require_comparison_datasets(request, dataset_ids)
             # Fetch all UserEvalMetrics in one query
-            user_eval_metrics = UserEvalMetric.objects.filter(
+            user_eval_metrics = _request_user_eval_metric_queryset(request).filter(
                 name__in=user_eval_names,
                 dataset_id__in=dataset_ids,
                 organization=getattr(request, "organization", None)
@@ -15254,6 +15336,8 @@ class CompareDatasetsStartEvalsProcess(APIView):
                 f"Successfully updated {updated_count} eval(s) status"
             )
 
+        except Http404:
+            raise
         except Exception as e:
             logger.exception(f"Error in starting evaluation process: {str(e)}")
             return self._gm.internal_server_error_response(
@@ -15287,6 +15371,8 @@ class GetCompareEvalsListView(APIView):
                     request, dataset_ids, search_text=search_text
                 )
 
+        except Http404:
+            raise
         except Exception as e:
             logger.exception(f"Error in fetching the eval lists: {str(e)}")
             return self._gm.internal_server_error_response(
@@ -15294,8 +15380,9 @@ class GetCompareEvalsListView(APIView):
             )
 
     def _get_user_evals(self, request, dataset_ids, search_text):
+        require_comparison_datasets(request, dataset_ids)
         # Fetch all relevant UserEvalMetrics in one query with preloaded templates
-        user_evals = UserEvalMetric.objects.filter(
+        user_evals = _request_user_eval_metric_queryset(request).filter(
             dataset_id__in=dataset_ids,
             show_in_sidebar=True,
             organization=getattr(request, "organization", None)
@@ -15373,12 +15460,16 @@ class ComparePreviewRunEvalView(APIView):
             template_id = str(request_data.get("template_id"))
             dataset_ids = [str(did) for did in request_data.get("dataset_ids", [])]
             dataset_info = request_data.get("dataset_info", {})
+            require_comparison_datasets(request, dataset_ids)
+            require_comparison_rows(dataset_ids, dataset_info)
 
             protect = False
             is_only_eval = True
 
             # Get eval template and setup
-            eval_template = EvalTemplate.no_workspace_objects.get(id=template_id)
+            eval_template = get_object_or_404(
+                _request_eval_template_queryset(request), id=template_id,
+            )
             eval_class = globals().get(eval_template.config.get("eval_type_id"))
             responses = []
 
@@ -15421,7 +15512,9 @@ class ComparePreviewRunEvalView(APIView):
                         if ds_id in dataset_info[first_base_value]:
                             row_ids.append(dataset_info[first_base_value][ds_id])
 
-            rows = Row.objects.filter(id__in=row_ids, deleted=False)
+            rows = _request_row_queryset(request).filter(
+                id__in=row_ids, dataset_id__in=dataset_ids,
+            )
 
             # Fetch source from the first dataset if available
             source = (
@@ -15431,8 +15524,8 @@ class ComparePreviewRunEvalView(APIView):
             )
 
             # Fetch all relevant columns in one query
-            all_columns = Column.objects.filter(
-                dataset_id__in=dataset_ids, deleted=False
+            all_columns = _request_column_queryset(request).filter(
+                dataset_id__in=dataset_ids,
             )
             column_map = {
                 (str(col.dataset_id), col.name): str(col.id) for col in all_columns
@@ -15512,6 +15605,8 @@ class ComparePreviewRunEvalView(APIView):
 
             return self._gm.success_response({"responses": responses})
 
+        except Http404:
+            raise
         except Exception as e:
             logger.exception(f"Error in preview the evaluation: {str(e)}")
             return self._gm.internal_server_error_response(

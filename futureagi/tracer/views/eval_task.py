@@ -1850,7 +1850,10 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             }
         return tasks
 
-    @validated_request(request_serializer=EvalTaskSerializer)
+    @validated_request(
+        request_serializer=EvalTaskSerializer,
+        serializer_context=lambda request: {"request": request},
+    )
     def update(self, request, *args, **kwargs):
         return super().update(request, *args, **kwargs)
 
@@ -1877,6 +1880,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
 
     @validated_request(
         request_serializer=EvalTaskSerializer,
+        serializer_context=lambda request: {"request": request},
         responses={
             200: EvalTaskCreateResponseSerializer,
             400: ApiErrorResponseSerializer,
@@ -2998,7 +3002,9 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 return self._gm.bad_request("Eval task ID is required")
 
             # Validate input data
-            serializer = EditEvalTaskSerializer(data=self.request.data)
+            serializer = EditEvalTaskSerializer(
+                data=self.request.data, context={"request": request}
+            )
             if not serializer.is_valid():
                 logger.error(
                     f"Invalid data for eval task update {eval_task_id}: {serializer.errors}"

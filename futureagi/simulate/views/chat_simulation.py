@@ -217,7 +217,12 @@ class TestExecutionChatBatchView(APIView):
             try:
                 test_execution = TestExecution.objects.select_related(
                     "run_test", "run_test__agent_definition", "agent_version"
-                ).get(id=test_execution_id, deleted=False)
+                ).get(
+                    run_test_workspace_filter(request, "run_test"),
+                    id=test_execution_id,
+                    deleted=False,
+                    run_test__organization=get_request_organization(request),
+                )
             except TestExecution.DoesNotExist:
                 return self.gm.bad_request("Test execution not found")
 

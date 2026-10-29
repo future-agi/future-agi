@@ -16,6 +16,13 @@ from tfc.utils.general_methods import GeneralMethods
 logger = structlog.get_logger(__name__)
 
 
+def _is_system_key_relay(request):
+    """Whether the request authenticated with an organization's system API key,
+    as ``model_hub.utils.call_websocket`` (the worker relay) does."""
+    org_api_key = getattr(request, "org_api_key", None)
+    return org_api_key is not None and getattr(org_api_key, "type", None) == "system"
+
+
 class CallWebsocketView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -32,6 +39,13 @@ class CallWebsocketView(APIView):
         try:
             data = request.validated_data
             message = data["message"]
+            if data.get("send_to_uuid") and not _is_system_key_relay(request):
+                # Stream ids are not bound to an organization on every socket,
+                # so only this install's own relay (the organization's system
+                # API key) may publish to one.
+                return self._gm.forbidden_response(
+                    "Only the system relay can send to a stream."
+                )
             org_id = (
                 getattr(request, "organization", None) or request.user.organization
             ).id

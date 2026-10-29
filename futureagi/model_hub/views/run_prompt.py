@@ -1731,7 +1731,7 @@ class AddRunPromptColumnView(APIView):
                 getattr(request, "organization", None) or request.user.organization
             )
             try:
-                dataset = Dataset.objects.get(id=dataset_id)
+                dataset = _request_dataset_queryset(request).get(id=dataset_id)
             except Dataset.DoesNotExist:
                 return self._gm.not_found("Dataset not found")
 
@@ -1863,6 +1863,9 @@ class PreviewRunPromptColumnView(APIView):
             dataset_id = validated_data["dataset_id"]
             config = validated_data["config"]
 
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
+            if dataset is None:
+                return self._gm.not_found("Dataset not found")
             first_n_rows = validated_data.get("first_n_rows")
             orders = list(
                 Row.objects.filter(dataset_id=dataset_id, deleted=False)
@@ -1878,7 +1881,7 @@ class PreviewRunPromptColumnView(APIView):
                         row_indices.append(orders[index - 1])
 
             # Get dataset and selected rows
-            dataset = Dataset.objects.filter(id=dataset_id, deleted=False).first()
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
 
             # Enforce organization isolation
             if not dataset:
@@ -2426,7 +2429,7 @@ class DatasetRunPromptStatsView(APIView):
     def get(self, request, dataset_id):
         try:
             # Enforce organization isolation - verify dataset belongs to user's org
-            dataset = Dataset.objects.filter(id=dataset_id, deleted=False).first()
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
             if (
                 not dataset
                 or dataset.organization_id
@@ -2764,7 +2767,9 @@ class RunPromptForRowsView(APIView):
             )
             user_org_id = user_org.id if hasattr(user_org, "id") else user_org
             run_prompters = list(
-                RunPrompter.objects.filter(id__in=run_prompt_ids, deleted=False)
+                _request_run_prompter_queryset(request).filter(
+                    id__in=run_prompt_ids, dataset__in=_request_dataset_queryset(request),
+                )
             )
             if len(run_prompters) != len(set(map(str, run_prompt_ids))):
                 return self._gm.not_found("Run prompt not found")

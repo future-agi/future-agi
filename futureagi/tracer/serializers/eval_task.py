@@ -4,6 +4,8 @@ from django.conf import settings
 from rest_framework import serializers
 
 from tfc.utils.serializer_fields import JsonValueField
+from tfc.utils.tenant_scope import scope_to_caller
+from tracer.serializers.relation_scope import scope_relations
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_task import (
     EvalTask,
@@ -343,6 +345,16 @@ class EvalTaskSerializer(serializers.ModelSerializer):
     progress = serializers.SerializerMethodField()
     filters = eval_task_filters_field(required=False, allow_null=True, default=dict)
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        scope_relations(
+            self,
+            {
+                "project": ("organization", "workspace"),
+                "evals": ("project__organization", "project__workspace"),
+            },
+        )
+
     def validate_filters(self, value):
         """Never persist a client-selected principal for user-relative filters."""
 
@@ -410,6 +422,12 @@ class EvalTaskLoggerSerializer(serializers.ModelSerializer):
         queryset=EvalTask.objects.all(), many=False
     )
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        scope_relations(
+            self, {"eval_task": ("project__organization", "project__workspace")}
+        )
+
     class Meta:
         model = EvalTaskLogger
         fields = ["id", "eval_task", "status", "errors"]
@@ -447,8 +465,17 @@ class EditEvalTaskSerializer(serializers.Serializer):
         if not value:
             raise serializers.ValidationError("At least one eval config is required.")
         try:
+            # Only the caller's eval configs count; another organization's id
+            # is reported like an id that does not exist.
             eval_objects = list(
-                CustomEvalConfig.objects.filter(id__in=value, deleted=False)
+                scope_to_caller(
+                    CustomEvalConfig.no_workspace_objects.filter(
+                        id__in=value, deleted=False
+                    ),
+                    self.context.get("request"),
+                    organization_field="project__organization",
+                    workspace_field="project__workspace",
+                )
             )
 
             if len(eval_objects) != len(value):

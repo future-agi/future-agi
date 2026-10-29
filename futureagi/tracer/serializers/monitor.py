@@ -91,6 +91,15 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
         fields = "__all__"
         read_only_fields = ("last_checked_at", "logs", "deleted", "deleted_at")
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from tracer.serializers.relation_scope import scope_relations
+
+        scope_relations(self, {"project": ("organization", "workspace")})
+        self.fields["project"].queryset = self.fields["project"].queryset.filter(
+            trace_type="observe"
+        )
+
     def get_metric_name(self, obj):
         if obj.metric_type == MonitorMetricTypeChoices.EVALUATION_METRICS.value:
             if obj.metric:

@@ -20,6 +20,7 @@ from rest_framework.views import APIView
 from agentic_eval.core.embeddings.embedding_manager import EmbeddingManager
 from agentic_eval.core.utils.functions import detect_input_type, is_uuid
 from agentic_eval.core.utils.model_config import ModelConfigs
+from model_hub.utils.workspace_scope import knowledge_base_id_for
 from tfc.telemetry import wrap_for_thread
 
 logger = structlog.get_logger(__name__)
@@ -48,7 +49,6 @@ from model_hub.models.develop_dataset import (
     Column,
     Dataset,
     DataTypeChoices,
-    KnowledgeBaseFile,
     Row,
 )
 from model_hub.models.evals_metric import (
@@ -271,7 +271,7 @@ def bulk_update_or_create_cells(
     return len(cells_to_update), len(cells_to_create)
 
 
-def _is_knowledge_base_uuid(uuid_value):
+def _is_knowledge_base_uuid(uuid_value, dataset=None):
     """
     Check if a UUID value belongs to a KnowledgeBaseFile.
 
@@ -288,11 +288,11 @@ def _is_knowledge_base_uuid(uuid_value):
     if not is_uuid(str(uuid_value)):
         return False
 
-    # Check if it exists in KnowledgeBaseFile
-    try:
-        return KnowledgeBaseFile.objects.filter(id=str(uuid_value)).exists()
-    except Exception:
+    if dataset is None:
         return False
+    return knowledge_base_id_for(
+        dataset.organization_id, dataset.workspace, uuid_value,
+    ) is not None
 
 
 def _extract_column_id_and_path(value):
@@ -390,13 +390,13 @@ def _resolve_column_reference(column_ref, dataset_id):
     """
     # Try as UUID first
     try:
-        return Column.objects.get(id=column_ref)
+        return Column.objects.get(id=column_ref, dataset_id=dataset_id, deleted=False)
     except (Column.DoesNotExist, ValueError):
         pass
 
     # Try as column name within the dataset
     try:
-        return Column.objects.get(name=column_ref, dataset_id=dataset_id)
+        return Column.objects.get(name=column_ref, dataset_id=dataset_id, deleted=False)
     except Column.DoesNotExist:
         return None
 
@@ -625,6 +625,14 @@ def process_mapping(
 ):
     required_field = []
     mapping = []
+    dataset = row.dataset
+    knowledge_bases = {}
+
+    def is_knowledge_base(value):
+        key = str(value)
+        if key not in knowledge_bases:
+            knowledge_bases[key] = _is_knowledge_base_uuid(value, dataset)
+        return knowledge_bases[key]
 
     # Collect all column IDs that need to be fetched (extracting base column IDs from JSON paths)
     # Skip special mapping values — they resolve via runner context, not column lookup
@@ -637,14 +645,14 @@ def process_mapping(
                 if _is_special_mapping_value(item):
                     continue
                 data = item if str(item) != str(replace_column_id) else column_id
-                if data and not _is_knowledge_base_uuid(data):
+                if data and not is_knowledge_base(data):
                     base_col_id, _ = _extract_column_id_and_path(str(data))
                     column_ids_to_fetch.add(str(base_col_id))
         else:
             if _is_special_mapping_value(value):
                 continue
             data = value if str(value) != str(replace_column_id) else column_id
-            if data and not _is_knowledge_base_uuid(data):
+            if data and not is_knowledge_base(data):
                 base_col_id, _ = _extract_column_id_and_path(str(data))
                 column_ids_to_fetch.add(str(base_col_id))
 
@@ -652,7 +660,8 @@ def process_mapping(
     cells_by_column = {}
     if column_ids_to_fetch:
         cells = Cell.objects.filter(
-            column__id__in=column_ids_to_fetch, row=row
+            column__id__in=column_ids_to_fetch, row=row,
+            column__dataset=dataset, column__deleted=False, deleted=False,
         ).select_related("column")
         cells_by_column = {str(cell.column_id): cell for cell in cells}
 
@@ -675,7 +684,7 @@ def process_mapping(
                 try:
                     if data:
                         # Check if it's a KnowledgeBaseFile UUID
-                        if _is_knowledge_base_uuid(data):
+                        if is_knowledge_base(data):
                             # Pass through UUID unchanged
                             data_list.append(str(data))
                         else:
@@ -724,12 +733,15 @@ def process_mapping(
                 eval_template_name == "prompt_instruction_adherence"
                 and key == "prompt"
                 and data
-                and not _is_knowledge_base_uuid(data)
+                and not is_knowledge_base(data)
             ):
                 try:
                     base_col_id, _ = _extract_column_id_and_path(str(data))
-                    prompt_column = Column.objects.get(id=base_col_id)
-                    run_prompter = RunPrompter.objects.get(id=prompt_column.source_id)
+                    prompt_column = Column.objects.get(id=base_col_id, dataset=dataset, deleted=False)
+                    run_prompter = RunPrompter.objects.get(
+                        id=prompt_column.source_id, dataset=dataset,
+                        organization_id=dataset.organization_id, deleted=False,
+                    )
 
                     system_messages = [
                         msg
@@ -755,7 +767,7 @@ def process_mapping(
             try:
                 if data:
                     # Check if it's a KnowledgeBaseFile UUID
-                    if _is_knowledge_base_uuid(data):
+                    if is_knowledge_base(data):
                         # Pass through UUID unchanged
                         mapping.append(str(data))
                         required_field.append(key)
@@ -783,11 +795,12 @@ def process_mapping(
             if run_prompt_column:
                 if key == "output" and not mappings.get("input"):
                     # Skip if value is a KnowledgeBaseFile UUID
-                    if not _is_knowledge_base_uuid(value):
+                    if not is_knowledge_base(value):
                         try:
-                            output_column = Column.objects.get(id=value)
+                            output_column = Column.objects.get(id=value, dataset=dataset, deleted=False)
                             prompt_column = RunPrompter.objects.get(
-                                id=output_column.source_id
+                                id=output_column.source_id, dataset=dataset,
+                                organization_id=dataset.organization_id, deleted=False,
                             )
                             # Get the user prompt from messages
                             prompt = "\n".join(
@@ -1056,10 +1069,11 @@ class EvaluationRunner:
         """Create new column or update existing one"""
 
         if self.is_only_eval and self.replace_column_id and not new_column:
+            column = Column.objects.get(id=self.replace_column_id, dataset=dataset, deleted=False)
             Cell.objects.filter(
-                column__id=self.replace_column_id, deleted=False
+                column=column, row__dataset=dataset, deleted=False,
             ).update(value=None, status=CellStatus.RUNNING.value, value_infos=None)
-            return Column.objects.get(id=self.replace_column_id)
+            return column
 
         # Use select_for_update to prevent race conditions when multiple async tasks
         # try to create the same column simultaneously
@@ -1849,6 +1863,7 @@ class EvaluationRunner:
                     Column.objects.filter(
                         source=SourceChoices.EVALUATION.value,
                         source_id=str(self.user_eval_metric_id),
+                        dataset=self.dataset,
                         deleted=False,
                     )
                     .order_by("created_at")
@@ -2165,7 +2180,7 @@ class EvaluationRunner:
             for item in items:
                 if not item:
                     continue
-                if _is_knowledge_base_uuid(item):
+                if _is_knowledge_base_uuid(item, self.dataset):
                     return True
                 base_col_id, _ = _extract_column_id_and_path(str(item))
                 if _resolve_column_reference(base_col_id, dataset_id):
@@ -2528,6 +2543,19 @@ class EvaluationRunner:
         """
         from evaluations.engine.instance import create_eval_instance
         from evaluations.engine.registry import get_eval_class
+
+        if kb_id:
+            from accounts.models.workspace import Workspace
+
+            workspace = None
+            if self.workspace_id:
+                workspace = Workspace.no_workspace_objects.filter(
+                    id=self.workspace_id, organization_id=self.organization_id,
+                ).first()
+                if workspace is None:
+                    raise ValueError("Knowledge base not found")
+            if knowledge_base_id_for(self.organization_id, workspace, kb_id) is None:
+                raise ValueError("Knowledge base not found")
 
         if eval_class:
             self.eval_class = eval_class

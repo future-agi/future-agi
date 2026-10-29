@@ -35,6 +35,10 @@ from simulate.serializers.run_test import (
     RunTestSerializer,
     harness_run_tests_context,
 )
+from simulate.services.eval_config_edit import (
+    unknown_eval_group_ids,
+    visible_eval_template_query,
+)
 from simulate.services.test_executor import TestExecutor
 from simulate.utils.scenario_completeness import check_scenarios_incomplete
 from simulate.views.run_test import (
@@ -219,6 +223,17 @@ class PromptSimulationListCreateView(APIView):
                 deleted=False,
             )
 
+            request_workspace = getattr(request, "workspace", None)
+            if unknown_eval_group_ids(
+                [
+                    eval_config_data.get("eval_group")
+                    for eval_config_data in validated_data.get("evaluations_config", [])
+                ],
+                user_organization,
+                request_workspace,
+            ):
+                return self.gm.bad_request("Eval group not found")
+
             # Create the simulation run
             with transaction.atomic():
                 # Get workspace from prompt template if available
@@ -258,7 +273,10 @@ class PromptSimulationListCreateView(APIView):
                         if template_id:
                             try:
                                 eval_template = EvalTemplate.no_workspace_objects.get(
-                                    id=template_id
+                                    visible_eval_template_query(
+                                        user_organization, request_workspace
+                                    ),
+                                    id=template_id,
                                 )
 
                                 SimulateEvalConfig.objects.create(

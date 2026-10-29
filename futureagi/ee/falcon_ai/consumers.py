@@ -303,7 +303,9 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
     async def _handle_reconnect(self, content):
         """Replay buffered events for a conversation when a client reconnects."""
         conversation_id = content.get("conversation_id")
-        if not conversation_id:
+        # Replay only the caller's own conversation; any other id answers as
+        # if nothing were buffered.
+        if not conversation_id or not await self._owns_conversation(conversation_id):
             await self.send_json(
                 {"type": "reconnect_status", "data": {"status": "none"}}
             )
@@ -708,6 +710,25 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
                 return message
         except Conversation.DoesNotExist:
             return None
+
+    @database_sync_to_async
+    def _owns_conversation(self, conversation_id):
+        """Whether ``conversation_id`` is this user's conversation in this
+        organization."""
+        from django.core.exceptions import ValidationError
+
+        from ee.falcon_ai.models import Conversation
+        from tfc.utils.tenant_scope import workspace_scope_q
+
+        try:
+            return Conversation.no_workspace_objects.filter(
+                workspace_scope_q(self.workspace),
+                id=conversation_id,
+                user=self.user,
+                organization=self.organization,
+            ).exists()
+        except (ValidationError, ValueError, TypeError):
+            return False
 
     @database_sync_to_async
     def _get_conversation_and_history(self, conversation_id):

@@ -1029,12 +1029,17 @@ class FilterEngine:
         return combined_q, annotations
 
     @staticmethod
-    def get_sql_filter_conditions_for_system_metrics(filters, query):
+    def get_sql_filter_conditions_for_system_metrics(filters, query, params):
         """
         Converts filter conditions into SQL WHERE conditions for evaluation metrics.
 
+        Each value goes into ``params`` (appended in order) behind a ``%s``
+        placeholder, never into the SQL text. Unknown columns and operators
+        add no condition.
+
         :param filters: List of filter conditions in the expected format.
         :param query: Base SQL query to which filter conditions should be applied.
+        :param params: The query's parameter list; values are appended to it.
         :return: Modified SQL query with appended WHERE conditions.
         """
 
@@ -1105,17 +1110,18 @@ class FilterEngine:
                 "less_than_or_equal",
                 "not_equals",
             ]:
-                conditions.append(f"{sql_column} {sql_operator} '{filter_value}'")
+                conditions.append(f"{sql_column} {sql_operator} %s")
+                params.append(str(filter_value))
             elif (
                 filter_op in ["between", "not_between"]
                 and isinstance(filter_value, list)
                 and len(filter_value) == 2
             ):
-                conditions.append(
-                    f"{sql_column} {sql_operator} '{filter_value[0]}' AND '{filter_value[1]}'"
-                )
+                conditions.append(f"{sql_column} {sql_operator} %s AND %s")
+                params.extend([str(filter_value[0]), str(filter_value[1])])
             elif filter_op == "contains":
-                conditions.append(f"{sql_column} {sql_operator} '%{filter_value}%'")
+                conditions.append(f"{sql_column} {sql_operator} %s")
+                params.append(f"%{filter_value}%")
 
         if conditions:
             query += " AND " + " AND ".join(conditions)
@@ -1386,9 +1392,36 @@ class FilterEngine:
         return None, []
 
     @staticmethod
-    def get_sql_filter_conditions_for_eval_metrics(filters, query):
+    def get_sql_filter_conditions_for_eval_metrics(filters, query, params):
+        """WHERE conditions and a HAVING clause for eval metric filters.
+
+        Values go into ``params`` (WHERE values, appended in order) and into the
+        returned HAVING parameter list, behind ``%s`` placeholders, never into
+        the SQL text. A metric column id must be a UUID and a number filter's
+        values numbers; any other filter adds nothing.
+
+        Returns ``(query, having, having_params)``; ``having`` is ``None`` when
+        no HAVING clause applies.
+        """
         conditions = []
         having = None
+        having_params = []
+
+        number_operators = {
+            "greater_than": ">",
+            "less_than": "<",
+            "equals": "=",
+            "not_equals": "<>",
+        }
+
+        def _number(value):
+            if isinstance(value, bool):
+                return None
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                return None
+            return number if number == number else None  # NaN is not a number
 
         for filter_item in filters:
             column_id, filter_config = FilterEngine._normalize_filter_params(
@@ -1420,10 +1453,32 @@ class FilterEngine:
 
             if filter_type == "number":
                 metric_val = None
-                avg_filter = column_id.split("_")
+                avg_filter = str(column_id).split("_")
                 if len(avg_filter) > 1:
                     column_id = avg_filter[0]
-                    metric_val = avg_filter[1]
+                    metric_val = "_".join(avg_filter[1:])
+                try:
+                    column_id = str(uuid.UUID(str(column_id)))
+                except ValueError:
+                    continue
+
+                if filter_op in number_operators:
+                    bounds = [_number(filter_value)]
+                    comparison = f"{number_operators[filter_op]} %s"
+                elif (
+                    filter_op in ("between", "not_between")
+                    and isinstance(filter_value, list | tuple)
+                    and len(filter_value) == 2
+                ):
+                    bounds = [_number(filter_value[0]), _number(filter_value[1])]
+                    keyword = "BETWEEN" if filter_op == "between" else "NOT BETWEEN"
+                    comparison = f"{keyword} %s AND %s"
+                else:
+                    continue
+                if any(bound is None for bound in bounds):
+                    continue
+
+                if metric_val:
                     having = f"""having COALESCE(
                                 (jsonb_extract_path_text(jsonb_object_agg(
                                     'metric_' || COALESCE(em.custom_eval_config_id, sls.custom_eval_config_id),
@@ -1436,73 +1491,34 @@ class FilterEngine:
                                         END,
                                         jsonb_build_object('score', 0.0)
                                     )
-                                ), 'metric_{column_id}', '{metric_val}', 'score'))::numeric, 0.0
-                            )"""
-
-                metric_column_id = f"metric_{column_id}->>'score'"
-                if filter_op == "greater_than":
-                    if metric_val and having:
-                        having += f" > {filter_value};"
-                    else:
-                        conditions.append(
-                            f"({metric_column_id})::numeric > {filter_value}"
-                        )
-                elif filter_op == "less_than":
-                    if metric_val and having:
-                        having += f" < {filter_value};"
-                    else:
-                        conditions.append(
-                            f"({metric_column_id})::numeric < {filter_value}"
-                        )
-                elif filter_op == "equals":
-                    if metric_val and having:
-                        having += f" = {filter_value};"
-                    else:
-                        conditions.append(
-                            f"({metric_column_id})::numeric = {filter_value}"
-                        )
-                elif filter_op == "not_equals":
-                    if metric_val and having:
-                        having += f" <> {filter_value};"
-                    else:
-                        conditions.append(
-                            f"({metric_column_id})::numeric <> {filter_value}"
-                        )
-                elif (
-                    filter_op == "between"
-                    and isinstance(filter_value, list | tuple)
-                    and len(filter_value) == 2
-                ):
-                    if metric_val and having:
-                        having += f"BETWEEN {filter_value[0]} AND {filter_value[1]};"
-                    else:
-                        conditions.append(
-                            f"({metric_column_id})::numeric BETWEEN {filter_value[0]} AND {filter_value[1]}"
-                        )
-                elif (
-                    filter_op == "not_between"
-                    and isinstance(filter_value, list | tuple)
-                    and len(filter_value) == 2
-                ):
-                    if metric_val and having:
-                        having += (
-                            f" NOT BETWEEN {filter_value[0]} AND {filter_value[1]};"
-                        )
-                    else:
-                        conditions.append(
-                            f"({metric_column_id})::numeric NOT BETWEEN {filter_value[0]} AND {filter_value[1]}"
-                        )
+                                ), %s, %s, 'score'))::numeric, 0.0
+                            ) {comparison};"""
+                    having_params = [f"metric_{column_id}", metric_val, *bounds]
+                else:
+                    # column_id is a validated UUID, so this identifier holds
+                    # no caller text.
+                    metric_column_id = f"metric_{column_id}->>'score'"
+                    conditions.append(f"({metric_column_id})::numeric {comparison}")
+                    params.extend(bounds)
 
             elif filter_type == "boolean":
-                conditions.append(f"bool_pass_rate = {filter_value}")
+                if isinstance(filter_value, bool):
+                    boolean = filter_value
+                elif str(filter_value).lower() in ("true", "false"):
+                    boolean = str(filter_value).lower() == "true"
+                else:
+                    continue
+                conditions.append("bool_pass_rate = %s")
+                params.append(boolean)
 
             elif filter_type == "array":
-                conditions.append(f"str_list_values::text ILIKE '%{filter_value}%'")
+                conditions.append("str_list_values::text ILIKE %s")
+                params.append(f"%{filter_value}%")
 
         if conditions:
             query += " AND " + " AND ".join(conditions)
 
-        return query, having
+        return query, having, having_params
 
     @staticmethod
     def get_filter_conditions_for_non_system_metrics(filters):

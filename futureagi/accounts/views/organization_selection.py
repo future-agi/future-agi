@@ -63,15 +63,13 @@ class OrganizationSelectionView(APIView):
                     "You don't have access to this organization"
                 )
 
-            try:
-                selected_org = Organization.objects.get(id=organization_id)
-            except Organization.DoesNotExist:
+            # An organization the caller cannot use answers like one that
+            # does not exist.
+            selected_org = Organization.objects.filter(id=organization_id).first()
+            if selected_org is None or not request.user.can_access_organization(
+                selected_org
+            ):
                 return self._gm.bad_request("Organization not found")
-
-            if not request.user.can_access_organization(selected_org):
-                return self._gm.forbidden_response(
-                    "You don't have access to this organization"
-                )
 
             # Update config with new key
             if not request.user.config:
@@ -227,17 +225,13 @@ class SwitchOrganizationView(APIView):
                     "You don't have access to this organization"
                 )
 
-            try:
-                selected_org = Organization.objects.get(id=organization_id)
-            except Organization.DoesNotExist:
-                return self._gm.bad_request("Organization not found")
-
             user = request.user
 
-            if not user.can_access_organization(selected_org):
-                return self._gm.forbidden_response(
-                    "You don't have access to this organization"
-                )
+            # An organization the caller cannot use answers like one that
+            # does not exist.
+            selected_org = Organization.objects.filter(id=organization_id).first()
+            if selected_org is None or not user.can_access_organization(selected_org):
+                return self._gm.bad_request("Organization not found")
 
             # Get user's membership for role info
             membership = user.get_membership(selected_org)

@@ -138,6 +138,7 @@ from model_hub.utils.function_eval_params import (
     normalize_eval_runtime_config,
 )
 from model_hub.utils.SQL_queries import SQLQueryHandler
+from model_hub.utils.workspace_scope import knowledge_base_in_scope
 from model_hub.views.utils.evals import run_eval_func, run_eval_func_task
 from tfc.constants.api_calls import APICallStatusChoices
 from tfc.middleware.workspace_context import get_current_workspace
@@ -1769,7 +1770,6 @@ class CellErrorLocalizerView(APIView):
     )
     def post(self, request, cell_id=None, *args, **kwargs):
         try:
-            from model_hub.models.develop_dataset import Cell
             from model_hub.models.error_localizer_model import (
                 ErrorLocalizerSource,
                 ErrorLocalizerTask,
@@ -1782,14 +1782,10 @@ class CellErrorLocalizerView(APIView):
 
             org = getattr(request, "organization", None) or request.user.organization
 
-            try:
-                cell = Cell.objects.select_related("column", "row", "dataset").get(
-                    id=cell_id, deleted=False
-                )
-            except Cell.DoesNotExist:
-                return self._gm.not_found("Cell not found.")
+            from model_hub.utils.workspace_scope import scoped_cell_queryset
 
-            if cell.dataset and cell.dataset.organization_id != org.id:
+            cell = scoped_cell_queryset(request).select_related("column", "row", "dataset").filter(id=cell_id).first()
+            if cell is None:
                 return self._gm.not_found("Cell not found.")
 
             column = cell.column
@@ -1829,8 +1825,8 @@ class CellErrorLocalizerView(APIView):
                 # Bulk fetch the source cells in one query
                 source_cells = {
                     str(c.column_id): c
-                    for c in Cell.objects.filter(
-                        row_id=row_id, column_id__in=col_ids, deleted=False
+                    for c in scoped_cell_queryset(request).filter(
+                        row_id=row_id, column_id__in=col_ids,
                     )
                 }
                 for var_name, col_uuid in mapping.items():
@@ -1943,17 +1939,11 @@ class CellErrorLocalizerView(APIView):
         for a given cell, including the analysis once completed.
         """
         try:
-            from model_hub.models.develop_dataset import Cell
             from model_hub.models.error_localizer_model import ErrorLocalizerTask
+            from model_hub.utils.workspace_scope import scoped_cell_queryset
 
-            org = getattr(request, "organization", None) or request.user.organization
-            try:
-                cell = Cell.objects.select_related("dataset").get(
-                    id=cell_id, deleted=False
-                )
-            except Cell.DoesNotExist:
-                return self._gm.not_found("Cell not found.")
-            if cell.dataset and cell.dataset.organization_id != org.id:
+            cell = scoped_cell_queryset(request).select_related("dataset").filter(id=cell_id).first()
+            if cell is None:
                 return self._gm.not_found("Cell not found.")
 
             # Prefer task row when present, but fall back to stored cell metadata
@@ -6885,6 +6875,8 @@ class EvalPlayGroundAPIView(APIView):
 
             model = validated_data.get("model", None)
             kb_id = validated_data.get("kb_id", None)
+            if kb_id and not knowledge_base_in_scope(request, kb_id):
+                return self._gm.not_found("Knowledge base not found")
             error_localizer = validated_data.get("error_localizer", False)
             runtime_config = validated_data.get("config", {}) or {}
             top_level_params = validated_data.get("params", {}) or {}
@@ -7560,6 +7552,9 @@ class EvalPlayGroundFeedbackAPIView(APIView):
                 row_dict = config.get("mappings", {})
             except APICallLog.DoesNotExist:
                 return self._gm.bad_request("Invalid Evaluation Id provided")
+
+            if action_type == "recalculate" and config.get("kb_id") and not knowledge_base_in_scope(request, config["kb_id"]):
+                return self._gm.not_found("Knowledge base not found")
 
             try:
                 feedback = Feedback.objects.get(

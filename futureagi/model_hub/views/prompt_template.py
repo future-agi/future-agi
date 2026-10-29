@@ -133,6 +133,9 @@ from model_hub.utils.websocket_manager import (
     get_websocket_manager,
 )
 from model_hub.utils.workspace_scope import (
+    explicit_workspace_filter,
+    request_organization,
+    request_workspace,
     request_workspace_filter,
     scoped_column_queryset,
     scoped_dataset_queryset,
@@ -381,7 +384,7 @@ def replace_variables(
     return processed_messages
 
 
-def replace_ids_with_column_name(prompt: str) -> str:
+def replace_ids_with_column_name(prompt: str, request=None, *, organization=None, workspace=None) -> str:
     """
     Replace column ID placeholders in the prompt with their corresponding column names.
 
@@ -405,10 +408,18 @@ def replace_ids_with_column_name(prompt: str) -> str:
         if not filtered_placeholders or len(filtered_placeholders) == 0:
             return prompt
 
-        # Fetch all columns in a single query
+        if request is not None:
+            organization = request_organization(request)
+            workspace = request_workspace(request)
+        if organization is None:
+            return prompt
         columns = {
             str(col.id): col.name
-            for col in Column.objects.filter(id__in=filtered_placeholders)
+            for col in Column.no_workspace_objects.filter(
+                explicit_workspace_filter(workspace, "dataset__workspace"),
+                id__in=filtered_placeholders, dataset__organization=organization,
+                dataset__deleted=False, deleted=False,
+            )
         }
         for placeholder in filtered_placeholders:
             try:
@@ -424,56 +435,13 @@ def replace_ids_with_column_name(prompt: str) -> str:
         return prompt
 
 
-async def replace_ids_with_column_name_async(prompt: str) -> str:
-    """
-    Async version of replace_ids_with_column_name for use in async contexts (e.g., WebSocket consumers).
-
-    Replace column ID placeholders in the prompt with their corresponding column names.
-
-    Args:
-        prompt: A string containing placeholders in the format {{column_id}}
-
-    Returns:
-        The prompt string with column IDs replaced by their names
-    """
+async def replace_ids_with_column_name_async(prompt: str, *, organization=None, workspace=None) -> str:
+    """Expand names with explicit scope across the async database boundary."""
     from asgiref.sync import sync_to_async
 
-    try:
-        placeholders = re.findall(r"\{\{(.*?)\}\}", prompt)
-        if not placeholders:
-            return prompt
-
-        # remove non uuid placeholders
-        filtered_placeholders = []
-        for placeholder in placeholders:
-            if is_valid_uuid(placeholder):
-                filtered_placeholders.append(placeholder)
-
-        if not filtered_placeholders or len(filtered_placeholders) == 0:
-            return prompt
-
-        # Fetch all columns in a single query (wrapped with sync_to_async)
-        @sync_to_async
-        def fetch_columns():
-            return {
-                str(col.id): col.name
-                for col in Column.objects.filter(id__in=filtered_placeholders)
-            }
-
-        columns = await fetch_columns()
-
-        for placeholder in filtered_placeholders:
-            try:
-                if placeholder in columns:
-                    prompt = prompt.replace(
-                        f"{{{{{placeholder}}}}}", f"{{{{{columns[placeholder]}}}}}"
-                    )
-            except Exception as e:
-                logger.error(f"Error replacing column ID {placeholder}: {str(e)}")
-        return prompt
-    except Exception as e:
-        logger.exception(f"Error replacing IDs with column names (async): {str(e)}")
-        return prompt
+    return await sync_to_async(replace_ids_with_column_name)(
+        prompt, organization=organization, workspace=workspace,
+    )
 
 
 def _coerce_organization_id(organization_or_id):
@@ -3587,7 +3555,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 Response: A response with the improved prompt.
             """
             existing_prompt = request.data.get("existing_prompt")
-            existing_prompt = replace_ids_with_column_name(existing_prompt)
+            existing_prompt = replace_ids_with_column_name(existing_prompt, request)
             improvement_requirements = request.data.get("improvement_requirements", "")
 
             # Validate the input
@@ -3850,7 +3818,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 Response: A response with improvement suggestions.
             """
             prompt = request.data.get("prompt")
-            prompt = replace_ids_with_column_name(prompt)
+            prompt = replace_ids_with_column_name(prompt, request)
             explanation = request.data.get("explanation")
             example = request.data.get("example", {})
 

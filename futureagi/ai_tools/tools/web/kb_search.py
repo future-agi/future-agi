@@ -6,8 +6,6 @@ relevant content chunks. Uses the EmbeddingManager + ClickHouse
 vector database internally.
 """
 
-from typing import Optional
-
 import structlog
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
@@ -44,6 +42,15 @@ class KBSearchTool(BaseTool):
     input_model = KBSearchInput
 
     def execute(self, params: KBSearchInput, context: ToolContext) -> ToolResult:
+        from model_hub.utils.workspace_scope import knowledge_base_id_for
+
+        # Search only a knowledge base of the caller's organization and
+        # workspace; any other id is not found.
+        if (
+            knowledge_base_id_for(context.organization, context.workspace, params.kb_id)
+            is None
+        ):
+            return ToolResult.not_found("Knowledge base", str(params.kb_id))
         try:
             from agentic_eval.core.embeddings.embedding_manager import EmbeddingManager
 

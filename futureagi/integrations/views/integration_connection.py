@@ -1,5 +1,7 @@
+import ipaddress
 import math
 from datetime import UTC, datetime
+from urllib.parse import urlparse
 
 import structlog
 from django.db import IntegrityError
@@ -65,6 +67,39 @@ def _build_credentials(data: dict) -> dict:
     if pk or sk:
         return {"public_key": pk, "secret_key": sk}
     return {}
+
+
+_UNREACHABLE_HOST_MESSAGE = "This host URL cannot be used for an integration."
+
+
+def _unreachable_host_error(host_url) -> str | None:
+    """An error when ``host_url`` names a host the server must never reach.
+
+    Applies ``tfc.utils.ssrf_guard``'s never-reachable rule (loopback,
+    link-local and cloud metadata addresses) to an IP-literal host and to the
+    local and metadata host names, without a DNS lookup. Private network
+    addresses stay allowed, as for an operator's self-hosted service.
+    """
+    from tfc.utils.ssrf_guard import METADATA_HOSTNAMES, IPClass, classify_ip
+
+    if not host_url:
+        return None
+    try:
+        host = urlparse(str(host_url)).hostname
+    except ValueError:
+        return _UNREACHABLE_HOST_MESSAGE
+    if not host:
+        return None
+    host = host.rstrip(".").lower()
+    if host == "localhost" or host.endswith(".localhost") or host in METADATA_HOSTNAMES:
+        return _UNREACHABLE_HOST_MESSAGE
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return None
+    if classify_ip(address) is IPClass.NEVER:
+        return _UNREACHABLE_HOST_MESSAGE
+    return None
 
 
 def _success_response(result, status_code=status.HTTP_200_OK):
@@ -198,6 +233,10 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                     "Workspace context is required to create an integration."
                 )
 
+            host_error = _unreachable_host_error(data.get("host_url"))
+            if host_error:
+                return _error_response(host_error)
+
             ensure_services_loaded()
 
             # 1. Validate credentials against the platform
@@ -213,19 +252,20 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
             )
 
             if not validation.get("valid"):
-                return _error_response(
-                    validation.get("error", "Invalid credentials.")
-                )
+                return _error_response(validation.get("error", "Invalid credentials."))
 
             organization = (
                 getattr(request, "organization", None) or request.user.organization
             )
             is_action_only = data["platform"] in ACTION_ONLY_PLATFORMS
-            if is_action_only and IntegrationConnection.objects.filter(
-                organization=organization,
-                workspace=workspace,
-                platform=data["platform"],
-            ).exists():
+            if (
+                is_action_only
+                and IntegrationConnection.objects.filter(
+                    organization=organization,
+                    workspace=workspace,
+                    platform=data["platform"],
+                ).exists()
+            ):
                 return _error_response(
                     f"{data['platform'].title()} is already connected for this workspace. "
                     "Edit the existing connection in Settings > Integrations to rotate keys."
@@ -368,15 +408,32 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
         try:
             instance = self.get_object()
             if instance.platform == IntegrationPlatform.SLACK:
-                return _error_response("Reconnect Slack through OAuth to change this connection.")
+                return _error_response(
+                    "Reconnect Slack through OAuth to change this connection."
+                )
             data = request.validated_data
+
+            host_error = _unreachable_host_error(data.get("host_url"))
+            if host_error:
+                return _error_response(host_error)
 
             # Update display_name if provided
             if "display_name" in data:
                 instance.display_name = data["display_name"]
 
-            # If keys are being updated, re-validate
-            if "public_key" in data or "secret_key" in data:
+            keys_changed = "public_key" in data or "secret_key" in data
+            # A new host or certificate is checked with the stored keys before
+            # it is saved, as new keys are.
+            endpoint_changed = (
+                "host_url" in data and data["host_url"] != instance.host_url
+            ) or (
+                "ca_certificate" in data
+                and (data["ca_certificate"] or None)
+                != (instance.ca_certificate or None)
+            )
+
+            # If keys or the endpoint are being updated, re-validate
+            if keys_changed or endpoint_changed:
                 current_creds = CredentialManager.decrypt(
                     bytes(instance.encrypted_credentials)
                 )
@@ -403,7 +460,10 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                         validation.get("error", "Invalid credentials.")
                     )
 
-                instance.encrypted_credentials = CredentialManager.encrypt(new_creds)
+                if keys_changed:
+                    instance.encrypted_credentials = CredentialManager.encrypt(
+                        new_creds
+                    )
 
                 # Clear error state if keys were updated successfully
                 if instance.status == ConnectionStatus.ERROR:
@@ -475,6 +535,10 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                 platform=data["platform"],
                 host_url=data["host_url"],
             )
+
+            host_error = _unreachable_host_error(data.get("host_url"))
+            if host_error:
+                return _error_response(host_error)
 
             ensure_services_loaded()
 

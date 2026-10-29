@@ -194,6 +194,7 @@ from tracer.utils.helper import (
     get_annotation_labels_for_project,
     get_default_trace_config,
     get_project_eval_configs,
+    unvalidated_relation_keys,
     update_column_config_based_on_eval_config,
     update_span_column_config_based_on_annotations,
 )
@@ -3055,6 +3056,10 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         try:
             traces_data = self.request.data.get("traces", [])
             for trace in traces_data:
+                if unvalidated_relation_keys(
+                    Trace, trace, {"project", "project_version", "session"}
+                ):
+                    raise ValueError("Unsupported trace fields")
                 project = (
                     _project_queryset_for_request(request)
                     .filter(id=trace.get("project"))
@@ -7524,7 +7529,9 @@ class GetUserCodeExampleView(APIView):
         project_name = "New Project"
         project_id = request.GET.get("project_id")
         if project_id:
-            project = get_object_or_404(Project, id=project_id)
+            project = get_object_or_404(
+                _project_queryset_for_request(request), id=project_id
+            )
             project_name = project.name
             project_type = project.trace_type
             if project_type != "observe":

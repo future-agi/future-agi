@@ -19,7 +19,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ai_tools.tests.conftest import run_tool
-from ai_tools.tests.fixtures import make_trace
+from ai_tools.tests.fixtures import make_dataset_with_rows, make_trace
 from tfc.ee_gating import EEFeature, FeatureUnavailable
 
 # ---------------------------------------------------------------------------
@@ -93,9 +93,39 @@ def _ai_patches():
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def trace(tool_context):
-    return make_trace(tool_context)
+@pytest.fixture(autouse=True)
+def owned_sources(tool_context):
+    """Wiring controls reference real caller-owned rows, not unknown ids."""
+    from model_hub.models.develop_dataset import Cell, KnowledgeBaseFile
+    from tracer.models.observation_span import ObservationSpan
+    from tracer.models.trace_session import TraceSession
+
+    trace = make_trace(tool_context, id=_FAKE_TRACE_ID)
+    span = ObservationSpan.no_workspace_objects.create(
+        id=_FAKE_SPAN_ID,
+        project=trace.project,
+        trace=trace,
+        name="test-span",
+        observation_type="llm",
+    )
+    session = TraceSession.no_workspace_objects.create(
+        project=trace.project, name="test-session"
+    )
+    _, columns, rows = make_dataset_with_rows(tool_context)
+    cell = Cell.no_workspace_objects.get(row=rows[0], column=columns[0])
+    KnowledgeBaseFile.no_workspace_objects.create(
+        id=_FAKE_KB_ID,
+        name="Test reference",
+        organization=tool_context.organization,
+        workspace=tool_context.workspace,
+    )
+    return {
+        "trace": str(trace.pk),
+        "span": str(span.pk),
+        "session": str(session.pk),
+        "dataset_row": str(rows[0].pk),
+        "cell": str(cell.pk),
+    }
 
 
 @pytest.fixture
@@ -195,12 +225,12 @@ class TestInputValidation:
         assert "input_scope" in result.content
 
     @pytest.mark.requires_ee
-    def test_all_valid_scopes_accepted(self, tool_context, mock_orchestrator):
+    def test_all_valid_scopes_accepted(self, tool_context, mock_orchestrator, owned_sources):
         for scope in ("span", "trace", "session", "dataset_row", "cell"):
             result = run_tool(
                 "evaluate_with_agent",
                 {
-                    "source_id": str(uuid.uuid4()),
+                    "source_id": owned_sources[scope],
                     "input_scope": scope,
                     "criteria": "Is it good?",
                 },
@@ -209,6 +239,127 @@ class TestInputValidation:
             assert (
                 not result.is_error
             ), f"Scope '{scope}' unexpectedly failed: {result.content}"
+
+
+@pytest.mark.requires_ee
+class TestCellSourceScope:
+    @pytest.mark.parametrize("nullable_dataset", [False, True])
+    @pytest.mark.parametrize(
+        "scope",
+        ["own", "organization", "workspace", "dataset_deleted", "row_deleted",
+         "column_deleted", "cell_deleted", "column_mismatch", "dataset_mismatch"],
+    )
+    def test_cell_source_authorization(
+        self, tool_context, owned_sources, mock_orchestrator, nullable_dataset, scope
+    ):
+        from accounts.models import Organization
+        from accounts.models.workspace import Workspace
+        from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
+
+        cell = Cell.no_workspace_objects.select_related("row", "column").get(
+            pk=owned_sources["cell"]
+        )
+        dataset_id = cell.row.dataset_id
+        if nullable_dataset:
+            Cell.no_workspace_objects.filter(pk=cell.pk).update(dataset=None)
+        if scope == "organization":
+            other = Organization.objects.create(name="Other organization")
+            Dataset.no_workspace_objects.filter(pk=dataset_id).update(organization=other)
+        elif scope == "workspace":
+            other = Workspace.no_workspace_objects.create(
+                name="Other workspace", organization=tool_context.organization,
+                created_by=tool_context.user, is_default=False, is_active=True,
+            )
+            Dataset.no_workspace_objects.filter(pk=dataset_id).update(workspace=other)
+        elif scope.endswith("_deleted"):
+            model, pk = {
+                "dataset_deleted": (Dataset, dataset_id),
+                "row_deleted": (Row, cell.row_id),
+                "column_deleted": (Column, cell.column_id),
+                "cell_deleted": (Cell, cell.pk),
+            }[scope]
+            model.no_workspace_objects.filter(pk=pk).update(deleted=True)
+        elif scope in ("column_mismatch", "dataset_mismatch"):
+            other, _, _ = make_dataset_with_rows(tool_context, name="Other dataset")
+            if scope == "column_mismatch":
+                Column.no_workspace_objects.filter(pk=cell.column_id).update(dataset=other)
+            else:
+                Cell.no_workspace_objects.filter(pk=cell.pk).update(dataset=other)
+
+        scout, orchestrator = mock_orchestrator
+        result = run_tool(
+            "evaluate_with_agent",
+            {"source_id": str(cell.pk), "input_scope": "cell", "criteria": "Is it good?"},
+            tool_context,
+        )
+        if scope == "own":
+            assert not result.is_error, result.content
+            scout.return_value.run.assert_called_once()
+            orchestrator.return_value.run.assert_called_once()
+            config = orchestrator.call_args.kwargs["eval_config"]
+            assert config.organization_id == str(tool_context.organization_id)
+        else:
+            assert result.is_error and result.error_code == "NOT_FOUND", result
+            scout.assert_not_called()
+            orchestrator.assert_not_called()
+
+    @pytest.mark.parametrize("target_type", ["cell", "dataset_row", "span", "trace", "session"])
+    @pytest.mark.parametrize("foreign", [False, True])
+    def test_nullable_cell_inspection_keeps_caller_organization(
+        self, tool_context, owned_sources, target_type, foreign
+    ):
+        from django.core.exceptions import ObjectDoesNotExist
+        from accounts.models import Organization
+        from ee.agenthub.eval_orchestrator import EvalConfig, EvalOrchestrator
+        from model_hub.models.develop_dataset import Cell, Dataset
+        from tfc.middleware.workspace_context import clear_workspace_context
+        from tracer.models.project import Project
+
+        source = Cell.no_workspace_objects.get(pk=owned_sources["cell"])
+        Cell.no_workspace_objects.filter(pk=source.pk).update(dataset=None)
+        with (
+            patch("ee.agenthub.eval_orchestrator.orchestrator.TuringClient"),
+            patch("ee.agenthub.eval_orchestrator.orchestrator.LLM"),
+        ):
+            evaluator = EvalOrchestrator(
+                eval_config=EvalConfig(
+                    criteria="Is it good?", input_scope="cell", source_id=str(source.pk),
+                    organization_id=str(tool_context.organization_id),
+                    workspace=tool_context.workspace,
+                ),
+                scout_brief=dict(_SCOUT_BRIEF),
+            )
+        # Inspect real rows without ambient tenancy masking a missing org filter.
+        clear_workspace_context()
+        if foreign:
+            other = Organization.objects.create(name="Other organization")
+            Dataset.no_workspace_objects.filter(pk=source.row.dataset_id).update(
+                organization=other
+            )
+            Project.no_workspace_objects.filter(organization=tool_context.organization).update(
+                organization=other
+            )
+            with pytest.raises(ObjectDoesNotExist):
+                evaluator._tool_inspect_data(target_type, owned_sources[target_type], "detail")
+        else:
+            result = evaluator._tool_inspect_data(target_type, owned_sources[target_type], "detail")
+            assert result
+            if target_type == "cell":
+                assert result["cell_id"] == str(source.pk)
+                assert result["value"] == source.value
+        assert evaluator._org_id == str(tool_context.organization_id)
+
+    def test_caller_organization_takes_precedence(self, tool_context, owned_sources):
+        from accounts.models import Organization
+        from ee.agenthub.eval_orchestrator import EvalConfig, EvalOrchestrator
+
+        other = Organization.objects.create(name="Other organization")
+        evaluator = EvalOrchestrator.__new__(EvalOrchestrator)
+        evaluator.eval_config = EvalConfig(
+            criteria="Is it good?", input_scope="cell", source_id=owned_sources["cell"],
+            organization_id=str(other.pk),
+        )
+        assert evaluator._resolve_organization_id() == str(other.pk)
 
 
 # ---------------------------------------------------------------------------
@@ -415,6 +566,7 @@ class TestOptionalParams:
                 organization_id=str(tool_context.organization_id),
                 eval_template_id=None,
                 kb_id=_FAKE_KB_ID,
+                workspace=tool_context.workspace,
             )
 
     def test_eval_template_id_passed_to_gather_resources(self, tool_context):
@@ -450,6 +602,7 @@ class TestOptionalParams:
                 organization_id=str(tool_context.organization_id),
                 eval_template_id=_FAKE_TEMPLATE_ID,
                 kb_id=None,
+                workspace=tool_context.workspace,
             )
 
     def test_eval_config_carries_kb_and_template(self, tool_context, mock_orchestrator):

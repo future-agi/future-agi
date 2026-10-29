@@ -25,6 +25,7 @@ from model_hub.tasks.develop_dataset import (
     generate_new_rows,
 )
 from model_hub.utils.synthetic_task_manager import SyntheticTaskManager
+from model_hub.utils.workspace_scope import knowledge_base_in_scope
 from model_hub.views.utils.dataset_limit import dataset_add_refusal
 from model_hub.views.utils.synthetic_data import determine_data_type_syn_data
 from rest_framework.permissions import IsAuthenticated
@@ -117,6 +118,8 @@ class CreateSyntheticDataset(APIView):
             validated_data = request.validated_data
             dataset_name = validated_data["dataset"]["name"]
             organization = _request_organization(request)
+            if validated_data.get("kb_id") and not knowledge_base_in_scope(request, validated_data["kb_id"]):
+                return self._gm.not_found("Knowledge base not found")
 
             # SyntheticDataAgent requires the ee module.
             try:
@@ -131,7 +134,6 @@ class CreateSyntheticDataset(APIView):
             if _request_dataset_queryset(request).filter(name=dataset_name).exists():
                 return self._gm.bad_request(get_error_message("DATASET_EXIST_IN_ORG"))
 
-            # if len(set(validated_data['columns']) != len(validated_data['columns'])):
             if len({col["name"] for col in validated_data["columns"]}) != len(
                 validated_data["columns"]
             ):
@@ -326,6 +328,9 @@ class UpdateSyntheticDatasetConfigView(APIView):
     def put(self, request, dataset_id, *args, **kwargs):
         try:
             validated_data = request.validated_data
+
+            if validated_data.get("kb_id") and not knowledge_base_in_scope(request, validated_data["kb_id"]):
+                return self._gm.not_found("Knowledge base not found")
 
             if len({col["name"] for col in validated_data["columns"]}) != len(
                 validated_data["columns"]

@@ -2,7 +2,6 @@ import json
 import re
 from datetime import UTC
 
-from django.db.models import Q
 from django.utils.dateparse import parse_datetime
 from django.utils.timezone import is_aware
 from rest_framework import serializers
@@ -252,58 +251,20 @@ class ObservationSpanSerializer(serializers.ModelSerializer):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        request = self.context.get("request")
-        if not request:
-            return
+        from tracer.serializers.relation_scope import scope_relations
 
-        organization = getattr(request, "organization", None) or getattr(
-            request.user, "organization", None
-        )
-        if not organization:
-            return
-
-        workspace = getattr(request, "workspace", None)
-        project_scope = Q(organization=organization)
-        related_project_scope = Q(project__organization=organization)
-
-        if workspace:
-            if getattr(workspace, "is_default", False):
-                project_workspace_scope = (
-                    Q(workspace=workspace)
-                    | Q(
-                        workspace__is_default=True, workspace__organization=organization
-                    )
-                    | Q(workspace__isnull=True)
-                )
-                related_workspace_scope = (
-                    Q(project__workspace=workspace)
-                    | Q(
-                        project__workspace__is_default=True,
-                        project__workspace__organization=organization,
-                    )
-                    | Q(project__workspace__isnull=True)
-                )
-            else:
-                project_workspace_scope = Q(workspace=workspace)
-                related_workspace_scope = Q(project__workspace=workspace)
-
-            project_scope &= project_workspace_scope
-            related_project_scope &= related_workspace_scope
-
-        project_manager = getattr(Project, "no_workspace_objects", Project.objects)
-        trace_manager = getattr(Trace, "no_workspace_objects", Trace.objects)
-        version_manager = getattr(
-            ProjectVersion, "no_workspace_objects", ProjectVersion.objects
-        )
-
-        self.fields["project"].queryset = project_manager.filter(
-            project_scope, deleted=False
-        )
-        self.fields["trace"].queryset = trace_manager.filter(
-            related_project_scope, deleted=False
-        )
-        self.fields["project_version"].queryset = version_manager.filter(
-            related_project_scope, deleted=False
+        scope_relations(
+            self,
+            {
+                "project": ("organization", "workspace"),
+                "trace": ("project__organization", "project__workspace"),
+                "project_version": ("project__organization", "project__workspace"),
+                "custom_eval_config": ("project__organization", "project__workspace"),
+                "prompt_version": (
+                    "original_template__organization",
+                    "original_template__workspace",
+                ),
+            },
         )
 
     def validate(self, attrs):

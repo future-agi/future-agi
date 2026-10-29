@@ -37,8 +37,14 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
 
     def get_queryset(self):
         custom_eval_config_id = self.kwargs.get("pk")
-        # Get base queryset with automatic filtering from mixin
-        queryset = super().get_queryset()
+        from tfc.utils.tenant_scope import scope_to_caller
+
+        queryset = scope_to_caller(
+            CustomEvalConfig.no_workspace_objects.filter(deleted=False),
+            self.request,
+            organization_field="project__organization",
+            workspace_field="project__workspace",
+        )
 
         if custom_eval_config_id:
             queryset = queryset.filter(id=custom_eval_config_id)
@@ -57,13 +63,18 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
 
         return queryset
 
+    def _template_queryset(self, request):
+        from tracer.serializers.relation_scope import eval_template_queryset
+
+        return eval_template_queryset(request)
+
     def create(self, request, *args, **kwargs):
         try:
             data = request.data
 
             eval_template_id = str(data.get("eval_template"))
             try:
-                eval_template = EvalTemplate.no_workspace_objects.get(
+                eval_template = self._template_queryset(request).get(
                     id=eval_template_id
                 )
             except EvalTemplate.DoesNotExist:
@@ -103,11 +114,8 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
         try:
             custom_eval_config_id = kwargs.get("pk")
             try:
-                custom_eval_config = CustomEvalConfig.objects.get(
-                    id=custom_eval_config_id,
-                    project__organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                    deleted=False,
+                custom_eval_config = self.get_queryset().get(
+                    id=custom_eval_config_id, deleted=False
                 )
             except CustomEvalConfig.DoesNotExist:
                 return self._gm.bad_request(
@@ -119,7 +127,7 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
             eval_template_id = str(data.get("eval_template", "")) or None
             if eval_template_id:
                 try:
-                    eval_template = EvalTemplate.no_workspace_objects.get(
+                    eval_template = self._template_queryset(request).get(
                         id=eval_template_id
                     )
                 except EvalTemplate.DoesNotExist:
@@ -266,13 +274,17 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
             # still goes through the router for EvalGroup (likely landing
             # on `default`) and remains a pre-existing N+1. We do NOT fix
             # that here — fixing the serializer is a separate refactor.
-            queryset = CustomEvalConfig.objects.db_manager(
-                DATABASE_FOR_CUSTOM_EVAL_CONFIG_LIST
-            ).filter(
-                deleted=False,
-                project__organization=getattr(request, "organization", None)
-                or request.user.organization,
-            ).all()
+            queryset = (
+                CustomEvalConfig.objects.db_manager(
+                    DATABASE_FOR_CUSTOM_EVAL_CONFIG_LIST
+                )
+                .filter(
+                    deleted=False,
+                    project__organization=getattr(request, "organization", None)
+                    or request.user.organization,
+                )
+                .all()
+            )
             project_id = query_data.get("project_id")
             if project_id:
                 queryset = queryset.filter(project_id=project_id)

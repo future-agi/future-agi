@@ -15,6 +15,19 @@ class TraceAnnotationSerializer(serializers.ModelSerializer):
         queryset=AnnotationsLabels.objects.all()
     )
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from tracer.serializers.relation_scope import scope_relations
+
+        scope_relations(
+            self,
+            {
+                "trace": ("project__organization", "project__workspace"),
+                "observation_span": ("project__organization", "project__workspace"),
+                "annotation_label": ("organization", "workspace"),
+            },
+        )
+
     class Meta:
         model = TraceAnnotation
         fields = [
@@ -28,6 +41,7 @@ class TraceAnnotationSerializer(serializers.ModelSerializer):
             "annotation_value_float",
             "annotation_value_str_list",
         ]
+        read_only_fields = ["user"]
 
 
 class UUIDListQueryParamField(serializers.Field):
@@ -70,6 +84,12 @@ class GetTraceAnnotationSerializer(StrictInputSerializer):
 
 
 class SpanNotesSerializer(serializers.ModelSerializer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from tracer.serializers.relation_scope import scope_relations
+
+        scope_relations(self, {"span": ("project__organization", "project__workspace")})
+
     class Meta:
         model = SpanNotes
         fields = [
@@ -81,7 +101,13 @@ class SpanNotesSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        read_only_fields = [
+            "id",
+            "created_at",
+            "updated_at",
+            "created_by_user",
+            "created_by_annotator",
+        ]
 
 
 class TraceAnnotationValueResponseSerializer(serializers.Serializer):

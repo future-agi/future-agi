@@ -15,6 +15,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet
 
+from model_hub.utils.workspace_scope import knowledge_base_in_scope
 from simulate.models import AgentDefinition, AgentVersion
 from simulate.serializers.agent_definition import AgentDefinitionSerializer
 from simulate.serializers.requests.agent_definition import (
@@ -300,6 +301,10 @@ class CreateAgentDefinitionView(APIView):
                     ProviderChoices.OTHERS,
                 ]
             )
+            if validated.get("knowledge_base") and not knowledge_base_in_scope(
+                request, validated.get("knowledge_base")
+            ):
+                return self._gm.bad_request("Knowledge base not found")
 
             with transaction.atomic():
                 # Create agent definition — livekit_* fields are NOT model
@@ -734,6 +739,10 @@ class EditAgentDefinitionView(APIView):
             # they live on the related ProviderCredentials row and are
             # routed below via ``_sync_provider_credentials``.
             validated = request.validated_data
+            if validated.get("knowledge_base") and not knowledge_base_in_scope(
+                request, validated.get("knowledge_base")
+            ):
+                return self._gm.bad_request("Knowledge base not found")
             incoming_api_key = validated.get("api_key")
             preserve_existing_api_key = incoming_api_key is not None and is_masked(
                 incoming_api_key

@@ -16,6 +16,7 @@ from model_hub.serializers.develop_dataset_contracts import (
     DevelopDatasetMessageResponseSerializer,
 )
 from model_hub.tasks.develop_dataset import generate_new_columns, generate_new_rows
+from model_hub.utils.workspace_scope import knowledge_base_in_scope
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
@@ -74,6 +75,9 @@ class AddSyntheticData(APIView):
             dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
             if not dataset:
                 return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
+
+            if validated_data.get("kb_id") and not knowledge_base_in_scope(request, validated_data["kb_id"]):
+                return self._gm.not_found("Knowledge base not found")
 
             if validated_data["num_rows"] < 10:
                 return self._gm.bad_request(get_error_message("10_ROWS_REQUIRED"))

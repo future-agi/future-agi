@@ -21,6 +21,7 @@ from tracer.serializers.saved_view import (
     SavedViewReorderSerializer,
     SavedViewUpdateSerializer,
 )
+from tracer.utils.workspace_scope import project_queryset_for_request
 
 logger = structlog.get_logger(__name__)
 
@@ -78,15 +79,15 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
         try:
             project_id = request.query_params.get("project_id")
             if project_id:
-                # Existence check only — does NOT validate workspace/user
-                # access for this project. Workspace/user access is enforced
-                # by `BaseModelViewSetMixin.get_queryset()` below (the actual
-                # SavedView rows it returns are already workspace/user-scoped).
+                # The project must be one of the caller's (organization and
+                # workspace); another organization's id answers like an unknown
+                # one. The SavedView rows themselves are scoped by
+                # `BaseModelViewSetMixin.get_queryset()` below.
                 # Stays on `default`: Project isn't opted in to replica
                 # routing, and a stale 404 here would be confusing right
                 # after a project create.
                 try:
-                    Project.objects.get(id=project_id)
+                    project_queryset_for_request(request).get(id=project_id)
                 except Project.DoesNotExist:
                     return self._gm.not_found("Project not found.")
 
@@ -144,7 +145,7 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
             project = None
             if project_id:
                 try:
-                    project = Project.objects.get(id=project_id)
+                    project = project_queryset_for_request(request).get(id=project_id)
                 except Project.DoesNotExist:
                     return self._gm.not_found("Project not found.")
             else:
@@ -307,6 +308,7 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
             elif requested_name == "":
                 return self._gm.bad_request("View name cannot be empty.")
             else:
+
                 def copy_name(suffix):
                     label = " (Copy)" if suffix is None else f" (Copy {suffix})"
                     return f"{original.name[: max_len - len(label)]}{label}"

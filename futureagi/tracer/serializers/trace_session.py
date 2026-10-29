@@ -1,4 +1,3 @@
-from django.db.models import Q
 from rest_framework import serializers
 
 from tracer.models.project import Project
@@ -31,35 +30,13 @@ class TraceSessionSerializer(serializers.ModelSerializer):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        request = self.context.get("request")
-        if not request:
-            return
+        from tracer.serializers.relation_scope import scope_relations
 
-        organization = getattr(request, "organization", None) or getattr(
-            request.user, "organization", None
-        )
-        if not organization:
-            return
-
-        scope = Q(organization=organization)
-        workspace = getattr(request, "workspace", None)
-        if workspace:
-            if getattr(workspace, "is_default", False):
-                scope &= (
-                    Q(workspace=workspace)
-                    | Q(
-                        workspace__is_default=True,
-                        workspace__organization=organization,
-                    )
-                    | Q(workspace__isnull=True)
-                )
-            else:
-                scope &= Q(workspace=workspace)
-
-        project_manager = getattr(Project, "no_workspace_objects", Project.objects)
-        self.fields["project"].queryset = project_manager.filter(
-            scope,
-            deleted=False,
+        scope_relations(
+            self,
+            {
+                "project": ("organization", "workspace"),
+            },
         )
 
 

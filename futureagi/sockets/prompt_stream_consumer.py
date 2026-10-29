@@ -241,30 +241,28 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
         Sends the appropriate error frame and closes the socket on failure,
         returning ``None``. Returns the template on success.
         """
+        # An id that does not exist and another organization's template get
+        # the same answer, so the reply does not tell them apart.
+        not_in_organization = (
+            "Template not found in the selected workspace's organization."
+        )
         try:
             template = await database_sync_to_async(PromptTemplate.objects.get)(
                 id=template_id
             )
         except PromptTemplate.DoesNotExist:
-            await self._send_ws_error("Template not found.", correlation=correlation)
-            await self.close(code=WS_CLOSE_CODE_NOT_FOUND)
+            template = None
+        if template is None or template.organization_id != org_id:
+            await self._send_ws_error(not_in_organization, correlation=correlation)
+            await self.close(code=WS_CLOSE_CODE_PERMISSION_DENIED)
             return None
 
-        if template.workspace_id:
+        if template.workspace_id and template.workspace_id != workspace.id:
             # Template scoped to a specific workspace — connected workspace
             # must match. Same-org-different-workspace is a leak too
             # (TH-5944 only closed the cross-org hole).
-            if template.workspace_id != workspace.id:
-                await self._send_ws_error(
-                    "Template does not belong to the selected workspace.",
-                    correlation=correlation,
-                )
-                await self.close(code=WS_CLOSE_CODE_PERMISSION_DENIED)
-                return None
-        elif template.organization_id != org_id:
-            # Legacy/org-wide template — fall back to the looser org check.
             await self._send_ws_error(
-                "Template does not belong to the selected workspace's organization.",
+                "Template does not belong to the selected workspace.",
                 correlation=correlation,
             )
             await self.close(code=WS_CLOSE_CODE_PERMISSION_DENIED)
@@ -348,7 +346,6 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
 
     async def handle_improve_prompt(self, content):
         existing_prompt = content.get("existing_prompt")
-        existing_prompt = await replace_ids_with_column_name_async(existing_prompt)
         improvement_requirements = content.get("improvement_requirements", "")
 
         if not existing_prompt:
@@ -381,8 +378,13 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
         correlation = {"improve_id": improve_id}
 
         async def run(workspace, org_id):
+            original_prompt = await replace_ids_with_column_name_async(
+                content.get("original_prompt", ""),
+                organization=org_id,
+                workspace=workspace,
+            )
             await improve_prompt_async(
-                original_prompt=content.get("original_prompt", ""),
+                original_prompt=original_prompt,
                 improvement_suggestions=content.get("improvement_suggestions", ""),
                 examples=content.get("examples", ""),
                 improve_id=improve_id,

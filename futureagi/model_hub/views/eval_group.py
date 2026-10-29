@@ -24,6 +24,7 @@ from model_hub.services.eval_group import (
     filter_eval_templates_for_group_scope,
 )
 from model_hub.utils.function_eval_params import get_function_params_schema
+from model_hub.utils.workspace_scope import knowledge_base_in_scope
 from model_hub.views.utils.utils import fetch_required_keys_for_eval_template
 from tfc.routers import uses_db
 from tfc.utils.api_contracts import ExplicitQueryAutoSchema, validated_request
@@ -481,6 +482,10 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
                 )
             except EvalGroup.DoesNotExist:
                 return self._gm.bad_request("Eval group does not exist for this user.")
+
+            kb_id = (filters or {}).get("kb_id")
+            if kb_id and not knowledge_base_in_scope(request, kb_id):
+                return self._gm.not_found("Knowledge base not found")
 
             response = apply_eval_group(
                 eval_group=eval_group,

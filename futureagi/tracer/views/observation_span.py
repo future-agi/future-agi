@@ -193,6 +193,7 @@ from tracer.utils.helper import (
     get_annotation_labels_by_project,
     get_annotation_labels_for_project,
     get_default_span_config,
+    unvalidated_relation_keys,
     update_column_config_based_on_eval_config,
     update_span_column_config_based_on_annotations,
 )
@@ -1179,8 +1180,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # Handle prompt version name (from PG, small config table)
         if observation_span["prompt_version"]:
             try:
+                # Only a prompt version of the caller's own templates is named.
                 prompt_version = PromptVersion.objects.get(
-                    id=observation_span["prompt_version"]
+                    id=observation_span["prompt_version"],
+                    original_template__organization=_get_request_organization(request),
                 )
                 observation_span["prompt_template_id"] = str(
                     prompt_version.original_template.id
@@ -1489,6 +1492,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 return self._gm.bad_request("observation_spans is required")
 
             for observation_span in observation_span_data:
+                if unvalidated_relation_keys(
+                    ObservationSpan,
+                    observation_span,
+                    {"project", "project_version", "trace"},
+                ):
+                    raise ValueError("Unsupported observation span fields")
                 if not observation_span.get("id"):
                     observation_span["id"] = f"span_{uuid.uuid4().hex[:16]}"
                 observation_span["project"] = Project.objects.get(
@@ -5401,7 +5410,13 @@ def _build_span_response(span):
 
     if data["prompt_version"]:
         try:
-            prompt_version = PromptVersion.objects.get(id=data["prompt_version"])
+            # Only a prompt version of the span project's organization is named.
+            prompt_version = PromptVersion.objects.get(
+                id=data["prompt_version"],
+                original_template__organization_id=getattr(
+                    span.project, "organization_id", None
+                ),
+            )
             data["prompt_template_id"] = str(prompt_version.original_template.id)
             data["prompt_name"] = (
                 str(prompt_version.original_template.name)

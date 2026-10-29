@@ -21,7 +21,6 @@ from django.db.models import (
     When,
 )
 from django.db.models.functions import Coalesce, Greatest
-from django.shortcuts import get_object_or_404
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 from rest_framework.permissions import IsAuthenticated
@@ -94,6 +93,7 @@ from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
 from tfc.utils.parse_errors import parse_serialized_errors
+from tfc.utils.tenant_scope import account_belongs_to_organization
 
 try:
     from ee.usage.models.usage import (
@@ -2426,14 +2426,21 @@ class ManageTeamView(APIView):
             except Workspace.DoesNotExist:
                 return self._gm.bad_request("Invalid workspace ID")
 
-        # Check if member is a primary member or invited member
-        member = get_object_or_404(User, id=member_id)
+        # Check if member is a primary member or invited member. An unknown
+        # id answers like a user outside this organization.
+        member = User.objects.filter(id=member_id).first()
+        if member is None:
+            return self._gm.not_found("Member not found in organization")
 
         if member == user:
             return self._gm.bad_request(get_error_message("USER_CANNOT_REMOVE_ORG"))
 
-        # Check if member belongs to this organization
-        if member.organization == organization:
+        # Check if member belongs to this organization: the legacy
+        # organization field counts only with membership here
+        # (account_belongs_to_organization), so a removed member is not a primary one.
+        if member.organization == organization and account_belongs_to_organization(
+            member, organization
+        ):
             # Primary member - remove from organization (this will delete the user entirely)
             if workspace:
                 # Remove from specific workspace only
@@ -2511,6 +2518,6 @@ class ManageTeamView(APIView):
                     )
 
             except OrganizationMembership.DoesNotExist:
-                return self._gm.bad_request("Member not found in organization")
+                return self._gm.not_found("Member not found in organization")
         else:
-            return self._gm.bad_request("Member not found in organization")
+            return self._gm.not_found("Member not found in organization")

@@ -41,6 +41,24 @@ class CustomEvalConfigSerializer(serializers.ModelSerializer):
             "eval_group",
         ]
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from tracer.serializers.relation_scope import (
+            eval_template_queryset,
+            scope_relations,
+        )
+
+        scope_relations(
+            self,
+            {
+                "project": ("organization", "workspace"),
+                "kb_id": ("organization", "workspace"),
+            },
+        )
+        self.fields["eval_template"].queryset = eval_template_queryset(
+            self.context.get("request")
+        )
+
     def get_eval_group(self, obj):
         if obj.eval_group:
             return obj.eval_group.name

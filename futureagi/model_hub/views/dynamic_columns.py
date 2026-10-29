@@ -23,7 +23,7 @@ from agentic_eval.core.embeddings.serving_client import (
 )
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
-from model_hub.models.api_key import ApiKey, SecretModel
+from model_hub.models.api_key import ApiKey
 from model_hub.models.choices import (
     CellStatus,
     DataTypeChoices,
@@ -56,6 +56,7 @@ from model_hub.serializers.develop_dataset_contracts import (
     PreviewDatasetOperationResponseSerializer,
 )
 from model_hub.utils.json_path_resolver import parse_json_safely, resolve_json_path
+from model_hub.utils.secret_scope import scoped_secret
 from model_hub.utils.utils import (
     contains_sql,
     remove_empty_text_from_messages,
@@ -208,10 +209,10 @@ class AddVectorDBColumnView(APIView):
             sub_type = config.get("sub_type")
 
             if sub_type == "pinecone":
-                return self._query_pinecone(embedding_vector, config)
+                return self._query_pinecone(embedding_vector, config, organization_id, workspace_id)
 
             elif sub_type == "qdrant":
-                return self._query_qdrant(embedding_vector, config)
+                return self._query_qdrant(embedding_vector, config, organization_id, workspace_id)
 
             elif sub_type == "weaviate":
                 return self._query_weaviate(
@@ -225,7 +226,7 @@ class AddVectorDBColumnView(APIView):
             logger.exception(f"Error in vector embedding database: {str(e)}")
             return str(e)
 
-    def _query_pinecone(self, query, config):
+    def _query_pinecone(self, query, config, organization_id=None, workspace_id=None):
         """
                 {
             "indexName": "apicall2",
@@ -246,7 +247,7 @@ class AddVectorDBColumnView(APIView):
 
         Pinecone = load_extra("pinecone", "vectordb").Pinecone
 
-        pc = Pinecone(api_key=SecretModel.objects.get(id=config["api_key"]).actual_key)
+        pc = Pinecone(api_key=scoped_secret(config["api_key"], organization_id, workspace_id).actual_key)
         index = pc.Index(config["index_name"])
         query_object = {}
 
@@ -283,7 +284,7 @@ class AddVectorDBColumnView(APIView):
 
         return metadata_list
 
-    def _query_qdrant(self, query, config):
+    def _query_qdrant(self, query, config, organization_id=None, workspace_id=None):
         """Query Qdrant vector database
 
                 {
@@ -331,7 +332,7 @@ class AddVectorDBColumnView(APIView):
 
             client = QdrantClient(
                 url=config["url"],
-                api_key=SecretModel.objects.get(id=config["api_key"]).actual_key,
+                api_key=scoped_secret(config["api_key"], organization_id, workspace_id).actual_key,
             )
             # query=[0.2, 0.1, 0.9, 0.7]
 
@@ -377,7 +378,7 @@ class AddVectorDBColumnView(APIView):
             )
 
         auth = AuthApiKey(
-            api_key=SecretModel.objects.get(id=config["api_key"]).actual_key
+            api_key=scoped_secret(config["api_key"], organization_id, workspace_id).actual_key
         )
         connect_kwargs = {"auth_client_secret": auth}
         if key and use_hybrid:
@@ -1086,17 +1087,23 @@ class AddApiColumnView(APIView):
                     logger.error(f"Error replacing variable: {str(e)}")
         return value
 
-    def _make_api_call(self, cell, config):
-        """Make API call for a single cell and return the result"""
+    def _make_api_call(self, cell, config, dataset=None):
+        """Make an API call using credentials belonging to the authorized row."""
         try:
+            # Workers do not necessarily inherit authentication's thread context.
+            # Derive authority from the trusted row, never from caller config.
+            if cell is not None and cell.row is not None:
+                dataset = cell.row.dataset
+            organization_id = dataset.organization_id if dataset is not None else None
+            workspace_id = dataset.workspace_id if dataset is not None else None
             # Process parameters
             processed_params = {}
             for param_name, param_config in config.get("params", {}).items():
                 if param_config["type"] == "PlainText":
                     processed_params[param_name] = param_config["value"]
                 elif param_config["type"] == "Secret":
-                    processed_params[param_name] = SecretModel.objects.get(
-                        id=param_config["value"]
+                    processed_params[param_name] = scoped_secret(
+                        param_config["value"], organization_id, workspace_id,
                     ).actual_key
                 elif param_config["type"] == "Variable":
                     try:
@@ -1118,9 +1125,8 @@ class AddApiColumnView(APIView):
                 if header_config["type"] == "PlainText":
                     processed_headers[header_name] = header_config["value"]
                 elif header_config["type"] == "Secret":
-                    # secret = get_object_or_404(Secret, id=header_config['value'])
-                    processed_headers[header_name] = SecretModel.objects.get(
-                        id=header_config["value"]
+                    processed_headers[header_name] = scoped_secret(
+                        header_config["value"], organization_id, workspace_id,
                     ).actual_key
                 elif header_config["type"] == "Variable":
                     try:
@@ -1595,7 +1601,7 @@ class ConditionalColumnView(APIView):
                 executor = AddApiColumnView()
                 if not source_column:
                     return executor._make_api_call(
-                        cell=None, config=config.get("config")
+                        cell=None, config=config.get("config"), dataset=row.dataset
                     )
                 return executor._make_api_call(
                     cell=Cell.objects.get(column=source_column, row=row),

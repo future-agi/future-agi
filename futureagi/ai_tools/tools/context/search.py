@@ -1,5 +1,3 @@
-from typing import Optional
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -16,7 +14,7 @@ from ai_tools.registry import register_tool
 
 class SearchInput(PydanticBaseModel):
     query: str = Field(description="Search query (case-insensitive)")
-    entity_types: Optional[list[str]] = Field(
+    entity_types: list[str] | None = Field(
         default=None,
         description=(
             "Entity types to search. Options: evaluations, datasets, traces, "
@@ -25,6 +23,22 @@ class SearchInput(PydanticBaseModel):
     )
     limit: int = Field(
         default=10, ge=1, le=50, description="Max results per entity type"
+    )
+
+
+def _in_caller_scope(
+    queryset, context, organization_field="organization", workspace_field="workspace"
+):
+    """Rows of the caller's organization visible from its workspace, by the
+    managers' rule; no organization means no rows."""
+    from tfc.utils.tenant_scope import workspace_scope_q
+
+    organization = getattr(context, "organization", None)
+    if organization is None:
+        return queryset.none()
+    return queryset.filter(
+        workspace_scope_q(getattr(context, "workspace", None), workspace_field),
+        **{organization_field: organization},
     )
 
 
@@ -59,7 +73,7 @@ class SearchTool(BaseTool):
         for entity_type in types:
             handler = getattr(self, f"_search_{entity_type}", None)
             if handler:
-                items = handler(params.query, params.limit)
+                items = handler(params.query, params.limit, context)
                 if items:
                     results[entity_type] = items
                     total_found += len(items)
@@ -89,11 +103,13 @@ class SearchTool(BaseTool):
             data={"query": params.query, "total": total_found, "results": data_results},
         )
 
-    def _search_evaluations(self, query: str, limit: int) -> list[dict]:
+    def _search_evaluations(self, query: str, limit: int, context) -> list[dict]:
         from model_hub.models.evaluation import Evaluation
 
         qs = (
-            Evaluation.objects.select_related("eval_template")
+            _in_caller_scope(
+                Evaluation.objects.select_related("eval_template"), context
+            )
             .filter(eval_template__name__icontains=query)
             .order_by("-created_at")[:limit]
         )
@@ -112,12 +128,14 @@ class SearchTool(BaseTool):
             for ev in qs
         ]
 
-    def _search_datasets(self, query: str, limit: int) -> list[dict]:
+    def _search_datasets(self, query: str, limit: int, context) -> list[dict]:
         from model_hub.models.develop_dataset import Dataset
 
-        qs = Dataset.objects.filter(name__icontains=query).order_by("-created_at")[
-            :limit
-        ]
+        qs = (
+            _in_caller_scope(Dataset.objects.all(), context)
+            .filter(name__icontains=query)
+            .order_by("-created_at")[:limit]
+        )
         return [
             {
                 "id": str(ds.id),
@@ -131,11 +149,16 @@ class SearchTool(BaseTool):
             for ds in qs
         ]
 
-    def _search_traces(self, query: str, limit: int) -> list[dict]:
+    def _search_traces(self, query: str, limit: int, context) -> list[dict]:
         from tracer.models.trace import Trace
 
         qs = (
-            Trace.objects.select_related("project")
+            _in_caller_scope(
+                Trace.objects.select_related("project"),
+                context,
+                organization_field="project__organization",
+                workspace_field="project__workspace",
+            )
             .filter(name__icontains=query)
             .order_by("-created_at")[:limit]
         )
@@ -154,12 +177,14 @@ class SearchTool(BaseTool):
             for t in qs
         ]
 
-    def _search_agents(self, query: str, limit: int) -> list[dict]:
+    def _search_agents(self, query: str, limit: int, context) -> list[dict]:
         from simulate.models.agent_definition import AgentDefinition
 
-        qs = AgentDefinition.objects.filter(agent_name__icontains=query).order_by(
-            "-created_at"
-        )[:limit]
+        qs = (
+            _in_caller_scope(AgentDefinition.objects.all(), context)
+            .filter(agent_name__icontains=query)
+            .order_by("-created_at")[:limit]
+        )
         return [
             {
                 "id": str(a.id),
@@ -173,12 +198,19 @@ class SearchTool(BaseTool):
             for a in qs
         ]
 
-    def _search_experiments(self, query: str, limit: int) -> list[dict]:
+    def _search_experiments(self, query: str, limit: int, context) -> list[dict]:
         from model_hub.models.experiments import ExperimentsTable
 
-        qs = ExperimentsTable.objects.filter(name__icontains=query).order_by(
-            "-created_at"
-        )[:limit]
+        qs = (
+            _in_caller_scope(
+                ExperimentsTable.objects.all(),
+                context,
+                organization_field="dataset__organization",
+                workspace_field="dataset__workspace",
+            )
+            .filter(name__icontains=query)
+            .order_by("-created_at")[:limit]
+        )
         return [
             {
                 "id": str(e.id),
@@ -192,12 +224,14 @@ class SearchTool(BaseTool):
             for e in qs
         ]
 
-    def _search_projects(self, query: str, limit: int) -> list[dict]:
+    def _search_projects(self, query: str, limit: int, context) -> list[dict]:
         from tracer.models.project import Project
 
-        qs = Project.objects.filter(name__icontains=query).order_by("-created_at")[
-            :limit
-        ]
+        qs = (
+            _in_caller_scope(Project.objects.all(), context)
+            .filter(name__icontains=query)
+            .order_by("-created_at")[:limit]
+        )
         return [
             {
                 "id": str(p.id),
@@ -211,12 +245,14 @@ class SearchTool(BaseTool):
             for p in qs
         ]
 
-    def _search_prompt_templates(self, query: str, limit: int) -> list[dict]:
+    def _search_prompt_templates(self, query: str, limit: int, context) -> list[dict]:
         from model_hub.models.run_prompt import PromptTemplate
 
-        qs = PromptTemplate.objects.filter(
-            name__icontains=query, deleted=False
-        ).order_by("-created_at")[:limit]
+        qs = (
+            _in_caller_scope(PromptTemplate.objects.all(), context)
+            .filter(name__icontains=query, deleted=False)
+            .order_by("-created_at")[:limit]
+        )
         return [
             {
                 "id": str(pt.id),

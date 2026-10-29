@@ -1,12 +1,19 @@
 from collections import defaultdict
 
 from rest_framework import serializers
+from rest_framework.exceptions import NotFound
 
 from accounts.models import User
 from accounts.utils import get_request_organization
 from model_hub.models.choices import AnnotationTypeChoices
 from model_hub.models.develop_annotations import Annotations, AnnotationsLabels
-from model_hub.models.develop_dataset import Cell, Row
+from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
+from model_hub.utils.workspace_scope import (
+    request_organization,
+    request_workspace_filter,
+    scoped_column_queryset,
+    scoped_dataset_queryset,
+)
 from tracer.models.project import Project
 from tracer.serializers.filters import StrictInputSerializer
 
@@ -141,9 +148,30 @@ class PreviewAnnotationsResponseSerializer(serializers.Serializer):
     result = PreviewAnnotationsResultSerializer()
 
 
+class ScopedProjectRelatedField(serializers.PrimaryKeyRelatedField):
+    """Resolve project identifiers against the caller, never an import-time scope."""
+
+    def get_queryset(self):
+        request = self.context.get("request")
+        organization = request_organization(request)
+        if organization is None:
+            return Project.no_workspace_objects.none()
+        return Project.no_workspace_objects.filter(
+            request_workspace_filter(request), organization=organization,
+        )
+
+    def to_internal_value(self, data):
+        try:
+            return super().to_internal_value(data)
+        except serializers.ValidationError as exc:
+            if any(getattr(error, "code", None) == "does_not_exist" for error in exc.detail):
+                raise NotFound("Project not found") from exc
+            raise
+
+
 class AnnotationsLabelsSerializer(serializers.ModelSerializer):
-    project = serializers.PrimaryKeyRelatedField(
-        queryset=Project.objects.all(), many=False, required=False
+    project = ScopedProjectRelatedField(
+        queryset=Project.no_workspace_objects.none(), many=False, required=False
     )
     trace_annotations_count = serializers.IntegerField(read_only=True, required=False)
     annotation_count = serializers.IntegerField(read_only=True, required=False)
@@ -242,7 +270,33 @@ class AnnotationLabelCreateResponseSerializer(serializers.Serializer):
     result = AnnotationsLabelsSerializer()
 
 
+class ScopedAnnotationGridField(serializers.PrimaryKeyRelatedField):
+    """Resolve grid identifiers afresh for each serializer's caller."""
+
+    def get_queryset(self):
+        request = self.context.get("request")
+        if request_organization(request) is None:
+            return self.queryset.none()
+        if self.queryset.model is Dataset:
+            return scoped_dataset_queryset(request)
+        return scoped_column_queryset(request)
+
+    def to_internal_value(self, data):
+        try:
+            return super().to_internal_value(data)
+        except serializers.ValidationError as exc:
+            if any(getattr(error, "code", None) == "does_not_exist" for error in exc.detail):
+                raise NotFound("Dataset or column not found") from exc
+            raise
+
+
 class AnnotationsSerializer(serializers.ModelSerializer):
+    dataset = ScopedAnnotationGridField(
+        queryset=Dataset.no_workspace_objects.none(), required=False, allow_null=False,
+    )
+    columns = ScopedAnnotationGridField(
+        queryset=Column.no_workspace_objects.none(), many=True, required=False,
+    )
     assigned_users = serializers.SerializerMethodField()
     summary = serializers.SerializerMethodField()
     label_requirements = serializers.SerializerMethodField()
@@ -269,18 +323,45 @@ class AnnotationsSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["organization"]
 
+    def validate(self, attrs):
+        dataset = attrs.get("dataset", getattr(self.instance, "dataset", None))
+        request = self.context.get("request")
+        if dataset is None:
+            raise serializers.ValidationError({"dataset": "A dataset is required."})
+        if not scoped_dataset_queryset(request).filter(id=dataset.id).exists():
+            raise NotFound("Dataset not found")
+        columns = attrs.get("columns")
+        if columns is None and self.instance is not None:
+            columns = self.instance.columns.all()
+        if any(column.dataset_id != dataset.id or column.deleted for column in columns or []):
+            raise NotFound("Column not found")
+        # Validate label IDs before ModelSerializer.save can change any M2M link.
+        labels = self.initial_data.get("labels")
+        if labels is not None:
+            ids = {str(label) for label in labels}
+            if self._scoped_labels().filter(id__in=ids).count() != len(ids):
+                raise NotFound("Annotation label not found")
+        return attrs
+
+    def _scoped_labels(self):
+        request = self.context.get("request")
+        return AnnotationsLabels.no_workspace_objects.filter(
+            request_workspace_filter(request), organization=request_organization(request),
+            deleted=False,
+        )
+
     def create(self, validated_data):
         labels = self.initial_data.get("labels", [])
         instance = super().create(validated_data)
         if labels:
-            instance.labels.set(AnnotationsLabels.objects.filter(id__in=labels))
+            instance.labels.set(self._scoped_labels().filter(id__in=labels))
         return instance
 
     def update(self, instance, validated_data):
         labels = self.initial_data.get("labels", None)
         instance = super().update(instance, validated_data)
         if labels is not None:
-            instance.labels.set(AnnotationsLabels.objects.filter(id__in=labels))
+            instance.labels.set(self._scoped_labels().filter(id__in=labels))
         return instance
 
     def get_labels(self, obj):

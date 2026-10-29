@@ -54,6 +54,10 @@ from model_hub.serializers.develop_annotations import (
     UpdateAnnotationCellsRequestSerializer,
     UserSerializer,
 )
+from model_hub.utils.annotation_scope import (
+    annotation_dataset,
+    validate_annotation_updates,
+)
 from model_hub.utils.auto_annotate import generate_annotations_task
 from model_hub.utils.utils import corpus_builder
 from rest_framework import serializers, viewsets
@@ -621,6 +625,8 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                 logger.debug("emit_annotation_event_failed")
 
             return self._gm.success_response("Annotation created successfully")
+        except (Http404, NotFound, serializers.ValidationError):
+            raise
         except ValidationError:
             transaction.set_rollback(True)
             return self._gm.bad_request(get_error_message("ANNOTATION_CREATION_FAILED"))
@@ -850,6 +856,8 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                 self.process_new_annotaion(annotation, added_labels, label_requirements)
 
             return self._gm.success_response("Annotation updated successfully")
+        except (Http404, NotFound, serializers.ValidationError):
+            raise
         except ValidationError:
             transaction.set_rollback(True)
             return self._gm.bad_request(
@@ -992,6 +1000,11 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                     get_error_message("NOT_AUTHORIZED_TO_UPDATE")
                 )
 
+            # Validate the complete batch before the first get_or_create or save.
+            validate_annotation_updates(
+                request, annotation, label_updates, response_fields_updates
+            )
+
             # Handle label updates
             for update in label_updates:
                 row_id = update.get("row_id")
@@ -1001,7 +1014,9 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                 column_id = update.get("column_id")
                 time_taken = update.get("time_taken")
 
-                label = AnnotationsLabels.objects.get(id=label_id)
+                label = annotation.labels.get(
+                    id=label_id, organization=annotation.organization, deleted=False
+                )
                 auto_annotate = label.settings.get("auto_annotate", False)
 
                 if label.type == AnnotationTypeChoices.CATEGORICAL.value:
@@ -1030,7 +1045,9 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                         )
 
                 try:
-                    column = Column.objects.get(id=column_id)
+                    column = Column.objects.get(
+                        id=column_id, dataset=annotation.dataset, deleted=False
+                    )
                 except Column.DoesNotExist:
                     return self._gm.not_found("Column not found")
 
@@ -1173,7 +1190,9 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                 value = update.get("value")
 
                 try:
-                    column = Column.objects.get(id=column_id)
+                    column = Column.objects.get(
+                        id=column_id, dataset=annotation.dataset, deleted=False
+                    )
                 except Column.DoesNotExist:
                     return self._gm.not_found(
                         f"{get_error_message('COLUMN_NOT_FOUND')} {column_id}"
@@ -1188,6 +1207,8 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
 
             return self._gm.success_response({"message": "Cells updated successfully"})
 
+        except (Http404, NotFound):
+            raise
         except Exception as e:
             logger.exception(f"Error in cell updation: {str(e)}")
             return self._gm.internal_server_error_response(
@@ -1257,10 +1278,10 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                     get_error_message("ONLY_OWNER_CAN_VIEW_TEAMS")
                 )
 
-            try:
-                row = Row.objects.get(id=row_id)
-            except Row.DoesNotExist:
-                return self._gm.bad_request(get_error_message("ROW_NOT_EXIST"))
+            dataset = annotation_dataset(request, annotation)
+            row = get_object_or_404(
+                Row, id=row_id, dataset=dataset, deleted=False
+            )
 
             cells = list(
                 Cell.objects.filter(
@@ -1294,6 +1315,8 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
 
         except Annotations.DoesNotExist:
             return self._gm.not_found(get_error_message("ANNOTATION_ID_NOT_EXIST"))
+        except (Http404, NotFound):
+            raise
         except Exception as e:
             logger.exception(f"Error in reseting the annotation: {str(e)}")
             return self._gm.internal_server_error_response(
@@ -1384,7 +1407,9 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                 cell_value = None
                 cell = None
                 if can_annotate:
-                    column = Column.objects.get(id=column_id)
+                    column = Column.objects.get(
+                        id=column_id, dataset=annotation.dataset, deleted=False
+                    )
                     cell, created = Cell.objects.get_or_create(
                         dataset=annotation.dataset, column=column, row=row
                     )
@@ -1493,9 +1518,18 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
             - If no columns available: (False, None)
         """
 
-        annotation = Annotations.objects.get(id=annotation_id, deleted=False)
-        row = Row.objects.get(id=row_id)
-        label = AnnotationsLabels.objects.get(id=label_id)
+        annotation = get_object_or_404(
+            Annotations.objects.filter(
+                self._workspace_filter(), organization=self._request_organization(),
+                deleted=False,
+            ), id=annotation_id,
+        )
+        dataset = annotation_dataset(self.request, annotation)
+        row = get_object_or_404(Row, id=row_id, dataset=dataset, deleted=False)
+        label = get_object_or_404(
+            annotation.labels, id=label_id, organization=annotation.organization,
+            deleted=False,
+        )
 
         if not annotation.assigned_users.filter(id=user_id).exists():
             return False, None
@@ -1513,7 +1547,7 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
         responses = annotation.responses
         if not cells:
             col = (
-                Column.objects.filter(source_id=source_id)
+                Column.objects.filter(source_id=source_id, dataset=dataset, deleted=False)
                 .order_by("created_at")
                 .first()
             )
@@ -1522,7 +1556,7 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
             return True, col.id
         if len(cells) != responses:
             cols = list(
-                Column.objects.filter(source_id=source_id).order_by("created_at")
+                Column.objects.filter(source_id=source_id, dataset=dataset, deleted=False).order_by("created_at")
             )
             if len(cells) < len(cols):
                 col = cols[len(cells)]
@@ -1628,17 +1662,16 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
         )
 
     def process_new_annotaion(self, annotation, labels, label_requirements):
+        labels = list(labels)
         for label in labels:
             if label.type == AnnotationTypeChoices.CATEGORICAL.value:
-                input_columns = label.settings.get("inputs", [])
-                if input_columns:
-                    for col_id in input_columns:
-                        column = Column.objects.get(id=col_id, deleted=False)
-                        if column.dataset != annotation.dataset:
-                            raise ValidationError(
-                                f"Input column '{column.name}' does not belong to the same dataset as the annotation"
-                            )
+                for col_id in label.settings.get("inputs", []):
+                    if not annotation.dataset_id or not Column.objects.filter(
+                        id=col_id, dataset_id=annotation.dataset_id, deleted=False,
+                    ).exists():
+                        raise ValidationError("Input column not found in annotation dataset")
 
+        for label in labels:
             auto_annotate = label.settings.get("auto_annotate", False)
             responses = annotation.responses
             for response in range(responses):

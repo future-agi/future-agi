@@ -76,6 +76,7 @@ from tfc.utils.api_contracts import validated_api_request
 from tfc.utils.email import email_delivery_configured, email_helper
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.install_setup import manage_py_command
+from tfc.utils.tenant_scope import account_belongs_to_organization
 
 try:
     from ee.usage.utils.usage_entries import (
@@ -276,7 +277,9 @@ def user_signup(request):
                     organization_id=user.organization_id,
                 )
             except Exception:
-                logger.debug("deployment_telemetry_signup_login_event_failed", exc_info=True)
+                logger.debug(
+                    "deployment_telemetry_signup_login_event_failed", exc_info=True
+                )
             return _gm.success_response(_login_payload(user), status=status.HTTP_200_OK)
 
         return _gm.success_response(
@@ -988,8 +991,13 @@ def delete_users(request):
 
     for user_id in user_ids:
         try:
-            # Only allow deleting users from the same organization
+            # Only allow deleting users from the same organization: the
+            # legacy organization field alone is not membership, so an
+            # account whose membership here is inactive or removed answers
+            # like one that does not exist.
             user = User.objects.get(pk=user_id, organization=organization)
+            if not account_belongs_to_organization(user, organization):
+                raise User.DoesNotExist
 
             # Level check: actor must be strictly above target's level
             # (Owners can delete other Owners)
@@ -1049,12 +1057,12 @@ def update_user(request):
     _gm = GeneralMethods()
     data = request.validated_data
 
+    organization = getattr(request, "organization", None) or request.user.organization
     try:
-        user = User.objects.get(
-            pk=data["user_id"],
-            organization=getattr(request, "organization", None)
-            or request.user.organization,
-        )
+        user = User.objects.get(pk=data["user_id"], organization=organization)
+        # The legacy organization field alone is not membership.
+        if not account_belongs_to_organization(user, organization):
+            raise User.DoesNotExist
     except User.DoesNotExist:
         return _gm.bad_request("User does not exist.")
 

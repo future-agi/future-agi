@@ -22,25 +22,25 @@ Mirrors JudgeAgent.run() + _execute_tool() + _compact_old_tool_results().
 import json
 import re
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 import structlog
 
 from agentic_eval.core.llm.llm import LLM
 from agentic_eval.core.utils.model_config import ModelConfigs
-from ee.turing.client import TuringClient
 from ee.agenthub.eval_orchestrator.prompts import ORCHESTRATOR_SYSTEM_PROMPT
 from ee.agenthub.eval_orchestrator.tools import (
     ORCHESTRATOR_TOOLS_BASE,
-    TOOL_SEARCH_KB,
-    TOOL_GET_FEEDBACK_EXAMPLES,
     TOOL_CALL_MCP,
+    TOOL_GET_FEEDBACK_EXAMPLES,
+    TOOL_SEARCH_KB,
 )
 from ee.agenthub.eval_orchestrator.utils import (
+    _truncate,
     build_trace_outline,
     serialize_span_full,
-    _truncate,
 )
+from ee.turing.client import TuringClient
 
 logger = structlog.get_logger(__name__)
 
@@ -48,6 +48,7 @@ logger = structlog.get_logger(__name__)
 # ---------------------------------------------------------------------------
 # Configuration dataclass
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class EvalConfig:
@@ -57,14 +58,19 @@ class EvalConfig:
     Passed to EvalOrchestrator.__init__ alongside the Scout brief.
     Created by the caller before invoking the orchestrator.
     """
-    criteria: str                    # raw eval criteria (may be vague)
-    input_scope: str                 # "span" | "trace" | "session" | "dataset_row" | "cell"
-    source_id: str                   # ID of the object being evaluated
-    choices: Optional[list] = None   # None → scorer mode (0.0–1.0), or ["Passed","Failed"], or custom labels
 
-    eval_template_id: Optional[str] = None       # for feedback retrieval; None on first run
-    kb_id: Optional[str] = None                  # connected KB id, or None
-    available_resources: Optional[dict] = None   # from gather_available_resources()
+    criteria: str  # raw eval criteria (may be vague)
+    input_scope: str  # "span" | "trace" | "session" | "dataset_row" | "cell"
+    source_id: str  # ID of the object being evaluated
+    choices: list | None = (
+        None  # None → scorer mode (0.0–1.0), or ["Passed","Failed"], or custom labels
+    )
+
+    eval_template_id: str | None = None  # for feedback retrieval; None on first run
+    kb_id: str | None = None  # connected KB id, or None
+    available_resources: dict | None = None  # from gather_available_resources()
+    organization_id: str | None = None  # authenticated caller, never a tool argument
+    workspace: Any = None  # authenticated caller's workspace
 
 
 class InputResolver:
@@ -73,12 +79,14 @@ class InputResolver:
     Reserved for future use by the orchestrator tools when cross-scope
     input resolution is needed.
     """
+
     pass
 
 
 # ---------------------------------------------------------------------------
 # EvalOrchestrator
 # ---------------------------------------------------------------------------
+
 
 class EvalOrchestrator:
     """
@@ -105,7 +113,7 @@ class EvalOrchestrator:
         self,
         eval_config: EvalConfig,
         scout_brief: dict,
-        input_resolver: Optional[InputResolver] = None,
+        input_resolver: InputResolver | None = None,
     ) -> None:
         """
         Args:
@@ -138,8 +146,8 @@ class EvalOrchestrator:
         )
 
         if self._orchestrator_is_turing:
-            self.turing_client: Optional[TuringClient] = TuringClient()
-            self.llm: Optional[LLM] = None
+            self.turing_client: TuringClient | None = TuringClient()
+            self.llm: LLM | None = None
         else:
             self.turing_client = None
             self.llm = LLM(
@@ -150,28 +158,34 @@ class EvalOrchestrator:
             )
 
         # Cumulative orchestrator token usage (TuringClient only stores last call)
-        self._orchestrator_token_usage: dict = {"prompt_tokens": 0, "completion_tokens": 0}
+        self._orchestrator_token_usage: dict = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+        }
 
         # Dynamic tool list: only tools for actually-connected resources
         self.tools = self._build_tool_list()
 
         # Tracking state
-        self._final_result: Optional[dict] = None
+        self._final_result: dict | None = None
         self._investigation_complete: bool = False
         self._eval_calls: int = 0
-        self._model_used: Optional[str] = None
+        self._model_used: str | None = None
         self._resources_used: list = []
         self._drill_down_performed: bool = False
         self._orchestrator_turns: int = 0
         # Token tracking per component
         self._eval_token_usage: dict = {"prompt_tokens": 0, "completion_tokens": 0}
-        self._formalization_token_usage: dict = {"prompt_tokens": 0, "completion_tokens": 0}
+        self._formalization_token_usage: dict = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+        }
         # Auto-detected media — pre-populated at init from the source data,
         # also updated by inspect_data calls. Used as fallback in run_eval
         # when the agent doesn't explicitly pass the `media` parameter.
         self._detected_media: list[dict] = []
-        # Cache org_id for scoping inspect queries
-        self._org_id: Optional[str] = self._resolve_organization_id()
+        # Keep the caller's organization for every subsequent inspection.
+        self._org_id: str | None = self._resolve_organization_id()
         self._preload_media()
 
     # ------------------------------------------------------------------
@@ -204,15 +218,17 @@ class EvalOrchestrator:
             # Warn the agent when running low on turns so it wraps up
             remaining = self.MAX_TURNS - turn
             if remaining == 2 and not self._investigation_complete:
-                messages.append({
-                    "role": "user",
-                    "content": (
-                        "WARNING: You have only 2 turns remaining. "
-                        "You MUST call run_eval now (if you haven't already) "
-                        "and then submit_result on the next turn. "
-                        "Do not start new investigations."
-                    ),
-                })
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "WARNING: You have only 2 turns remaining. "
+                            "You MUST call run_eval now (if you haven't already) "
+                            "and then submit_result on the next turn. "
+                            "Do not start new investigations."
+                        ),
+                    }
+                )
 
             try:
                 content = self._call_orchestrator_llm(messages)
@@ -231,10 +247,12 @@ class EvalOrchestrator:
                     )
                     result = self._execute_tool(tool_name, tool_args)
 
-                    messages.append({
-                        "role": "user",
-                        "content": f"Tool result for {tool_name}:\n{json.dumps(result, default=str)}",
-                    })
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": f"Tool result for {tool_name}:\n{json.dumps(result, default=str)}",
+                        }
+                    )
 
                     self._compact_old_tool_results(messages)
 
@@ -277,14 +295,12 @@ class EvalOrchestrator:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _is_turing_model(model_name: Optional[str]) -> bool:
+    def _is_turing_model(model_name: str | None) -> bool:
         lower = (model_name or "").lower()
-        return any(
-            lower.startswith(p) for p in EvalOrchestrator.TURING_MODEL_PREFIXES
-        )
+        return any(lower.startswith(p) for p in EvalOrchestrator.TURING_MODEL_PREFIXES)
 
     @staticmethod
-    def _parse_tool_call_from_response(content: str) -> Optional[dict]:
+    def _parse_tool_call_from_response(content: str) -> dict | None:
         """
         Extract a prompt-based tool call from the model's response.
 
@@ -319,8 +335,12 @@ class EvalOrchestrator:
                 max_tokens=16000,
             )
             usage = self.turing_client.token_usage
-            self._orchestrator_token_usage["prompt_tokens"] += usage.get("prompt_tokens", 0)
-            self._orchestrator_token_usage["completion_tokens"] += usage.get("completion_tokens", 0)
+            self._orchestrator_token_usage["prompt_tokens"] += usage.get(
+                "prompt_tokens", 0
+            )
+            self._orchestrator_token_usage["completion_tokens"] += usage.get(
+                "completion_tokens", 0
+            )
             return content
         else:
             return self.llm._get_completion_content(
@@ -393,7 +413,11 @@ class EvalOrchestrator:
             "",
             "## SCOUT BRIEF",
             json.dumps(
-                {k: v for k, v in self.scout_brief.items() if k != "available_resources"},
+                {
+                    k: v
+                    for k, v in self.scout_brief.items()
+                    if k != "available_resources"
+                },
                 indent=2,
             ),
             "",
@@ -403,10 +427,14 @@ class EvalOrchestrator:
             "",
             "## EVALUATION CHOICES",
             json.dumps(self.eval_config.choices),
-            *([
-                "NOTE: This is scorer mode — 0.0 means not following the rule at all, "
-                "1.0 means following the rule completely."
-            ] if self.scorer else []),
+            *(
+                [
+                    "NOTE: This is scorer mode — 0.0 means not following the rule at all, "
+                    "1.0 means following the rule completely."
+                ]
+                if self.scorer
+                else []
+            ),
             "",
             "## AVAILABLE RESOURCES",
             json.dumps(available, indent=2),
@@ -456,6 +484,9 @@ class EvalOrchestrator:
         overview = structure / metadata only (no content).
         detail   = full input/output content.
         """
+        if getattr(self.eval_config, "workspace", None) is None:
+            raise ValueError("Evaluation workspace is required for inspection")
+
         if depth == "detail":
             self._drill_down_performed = True
 
@@ -473,9 +504,12 @@ class EvalOrchestrator:
             return {"error": f"Unknown target_type: {target_type}"}
 
     def _inspect_span(self, span_id: str, depth: str) -> dict:
+        from tfc.utils.tenant_scope import workspace_scope_q
         from tracer.models.observation_span import ObservationSpan
 
-        qs = ObservationSpan.objects.all()
+        qs = ObservationSpan.objects.filter(
+            workspace_scope_q(self.eval_config.workspace, "project__workspace")
+        )
         if self._org_id:
             qs = qs.filter(project__organization_id=self._org_id)
         span = qs.get(id=span_id)
@@ -494,16 +528,21 @@ class EvalOrchestrator:
             return serialize_span_full(span)
 
     def _inspect_trace(self, trace_id: str, depth: str) -> dict:
-        from tracer.models.trace import Trace
+        from tfc.utils.tenant_scope import workspace_scope_q
         from tracer.models.observation_span import ObservationSpan
+        from tracer.models.trace import Trace
 
-        qs = Trace.objects.all()
+        workspace_scope = workspace_scope_q(
+            self.eval_config.workspace, "project__workspace"
+        )
+        qs = Trace.objects.filter(workspace_scope)
         if self._org_id:
             qs = qs.filter(project__organization_id=self._org_id)
         trace = qs.get(id=trace_id)
-        spans = ObservationSpan.objects.filter(trace_id=trace_id).order_by(
-            "start_time", "created_at"
-        )
+        spans = ObservationSpan.objects.filter(workspace_scope, trace_id=trace_id)
+        if self._org_id:
+            spans = spans.filter(project__organization_id=self._org_id)
+        spans = spans.order_by("start_time", "created_at")
         if depth == "overview":
             return {
                 "trace_id": str(trace.id),
@@ -521,15 +560,23 @@ class EvalOrchestrator:
             }
 
     def _inspect_session(self, session_id: str, depth: str) -> dict:
-        from tracer.models.trace_session import TraceSession
-        from tracer.models.trace import Trace
+        from tfc.utils.tenant_scope import workspace_scope_q
         from tracer.models.observation_span import ObservationSpan
+        from tracer.models.trace import Trace
+        from tracer.models.trace_session import TraceSession
 
-        qs = TraceSession.objects.all()
+        workspace_scope = workspace_scope_q(
+            self.eval_config.workspace, "project__workspace"
+        )
+        qs = TraceSession.objects.filter(workspace_scope)
         if self._org_id:
             qs = qs.filter(project__organization_id=self._org_id)
         session = qs.get(id=session_id)
-        traces = Trace.objects.filter(session_id=session_id)
+        traces = Trace.objects.filter(workspace_scope, session_id=session_id)
+        scoped_spans = ObservationSpan.objects.filter(workspace_scope)
+        if self._org_id:
+            traces = traces.filter(project__organization_id=self._org_id)
+            scoped_spans = scoped_spans.filter(project__organization_id=self._org_id)
 
         if depth == "overview":
             return {
@@ -538,7 +585,7 @@ class EvalOrchestrator:
                     {
                         "trace_id": str(t.id),
                         "name": t.name,
-                        "span_count": ObservationSpan.objects.filter(trace_id=t.id).count(),
+                        "span_count": scoped_spans.filter(trace_id=t.id).count(),
                     }
                     for t in traces
                 ],
@@ -546,24 +593,30 @@ class EvalOrchestrator:
         else:  # detail
             result = {"session_id": str(session.id), "traces": []}
             for t in traces:
-                spans = ObservationSpan.objects.filter(trace_id=t.id).order_by(
+                spans = scoped_spans.filter(trace_id=t.id).order_by(
                     "start_time", "created_at"
                 )
-                result["traces"].append({
-                    "trace_id": str(t.id),
-                    "name": t.name,
-                    "input": t.input,
-                    "output": t.output,
-                    "spans": [serialize_span_full(s) for s in spans],
-                })
+                result["traces"].append(
+                    {
+                        "trace_id": str(t.id),
+                        "name": t.name,
+                        "input": t.input,
+                        "output": t.output,
+                        "spans": [serialize_span_full(s) for s in spans],
+                    }
+                )
             return result
 
     _DATA_TYPE_TO_MEDIA = {"image": "image", "audio": "audio", "document": "pdf"}
 
     def _inspect_dataset_row(self, row_id: str, depth: str) -> dict:
-        from model_hub.models.develop_dataset import Row, Cell
+        from model_hub.models.develop_dataset import Cell, Row
+        from tfc.utils.tenant_scope import workspace_scope_q
 
-        qs = Row.objects.all()
+        qs = Row.objects.filter(
+            workspace_scope_q(self.eval_config.workspace, "dataset__workspace"),
+            dataset__deleted=False,
+        )
         if self._org_id:
             qs = qs.filter(dataset__organization_id=self._org_id)
         row = qs.get(id=row_id)
@@ -580,11 +633,22 @@ class EvalOrchestrator:
         return {"row_id": str(row.id), "cells": result_cells}
 
     def _inspect_cell(self, cell_id: str) -> dict:
-        from model_hub.models.develop_dataset import Cell
+        from django.db.models import F, Q
 
-        qs = Cell.objects.select_related("column", "row")
+        from model_hub.models.develop_dataset import Cell
+        from tfc.utils.tenant_scope import workspace_scope_q
+
+        qs = Cell.objects.select_related("column", "row").filter(
+            Q(dataset__isnull=True) | Q(dataset_id=F("row__dataset_id")),
+            workspace_scope_q(self.eval_config.workspace, "row__dataset__workspace"),
+            row__dataset__deleted=False,
+            row__deleted=False,
+            column__dataset_id=F("row__dataset_id"),
+            column__deleted=False,
+            deleted=False,
+        )
         if self._org_id:
-            qs = qs.filter(dataset__organization_id=self._org_id)
+            qs = qs.filter(row__dataset__organization_id=self._org_id)
         cell = qs.get(id=cell_id)
         data_type = getattr(cell.column, "data_type", "text")
         # Auto-detect media for run_eval fallback
@@ -616,12 +680,14 @@ class EvalOrchestrator:
         try:
             if scope == "cell":
                 from model_hub.models.develop_dataset import Cell
+
                 cell = Cell.objects.select_related("column").get(id=source_id)
                 self._collect_media(
                     getattr(cell.column, "data_type", "text"), cell.value
                 )
             elif scope == "dataset_row":
-                from model_hub.models.develop_dataset import Row, Cell
+                from model_hub.models.develop_dataset import Cell
+
                 cells = Cell.objects.filter(row_id=source_id).select_related("column")
                 for cell in cells:
                     self._collect_media(
@@ -629,21 +695,24 @@ class EvalOrchestrator:
                     )
             elif scope == "span":
                 from tracer.models.observation_span import ObservationSpan
+
                 span = ObservationSpan.objects.get(id=source_id)
                 self._detect_media_in_text(span.input)
                 self._detect_media_in_text(span.output)
             elif scope == "trace":
                 from tracer.models.observation_span import ObservationSpan
+
                 spans = ObservationSpan.objects.filter(trace_id=source_id)
                 for span in spans:
                     self._detect_media_in_text(span.input)
                     self._detect_media_in_text(span.output)
             elif scope == "session":
-                from tracer.models.trace import Trace
                 from tracer.models.observation_span import ObservationSpan
-                trace_ids = Trace.objects.filter(
-                    session_id=source_id
-                ).values_list("id", flat=True)
+                from tracer.models.trace import Trace
+
+                trace_ids = Trace.objects.filter(session_id=source_id).values_list(
+                    "id", flat=True
+                )
                 spans = ObservationSpan.objects.filter(trace_id__in=trace_ids)
                 for span in spans:
                     self._detect_media_in_text(span.input)
@@ -667,11 +736,23 @@ class EvalOrchestrator:
         if any(seg in lower for seg in ("/images/", "/audio/", "/documents/")):
             return True
         # Common media file extensions
-        if any(lower.endswith(ext) for ext in (
-            ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg",
-            ".mp3", ".wav", ".ogg", ".m4a", ".flac",
-            ".pdf",
-        )):
+        if any(
+            lower.endswith(ext)
+            for ext in (
+                ".png",
+                ".jpg",
+                ".jpeg",
+                ".gif",
+                ".webp",
+                ".svg",
+                ".mp3",
+                ".wav",
+                ".ogg",
+                ".m4a",
+                ".flac",
+                ".pdf",
+            )
+        ):
             return True
         return False
 
@@ -684,9 +765,14 @@ class EvalOrchestrator:
             if not self._is_media_url(url):
                 continue
             lower = url.lower()
-            if any(seg in lower for seg in ("/images/", ".png", ".jpg", ".jpeg", ".gif", ".webp")):
+            if any(
+                seg in lower
+                for seg in ("/images/", ".png", ".jpg", ".jpeg", ".gif", ".webp")
+            ):
                 self._collect_media("image", url)
-            elif any(seg in lower for seg in ("/audio/", ".mp3", ".wav", ".ogg", ".m4a")):
+            elif any(
+                seg in lower for seg in ("/audio/", ".mp3", ".wav", ".ogg", ".m4a")
+            ):
                 self._collect_media("audio", url)
             elif any(seg in lower for seg in ("/documents/", ".pdf")):
                 self._collect_media("document", url)
@@ -707,18 +793,27 @@ class EvalOrchestrator:
                 span_ids = [source_id]
             elif input_scope == "trace":
                 span_ids = list(
-                    ObservationSpan.objects.filter(trace_id=source_id)
-                    .values_list("id", flat=True)
+                    ObservationSpan.objects.filter(trace_id=source_id).values_list(
+                        "id", flat=True
+                    )
                 )
             elif input_scope == "session":
                 from tracer.models.trace import Trace
-                trace_ids = Trace.objects.filter(session_id=source_id).values_list("id", flat=True)
+
+                trace_ids = Trace.objects.filter(session_id=source_id).values_list(
+                    "id", flat=True
+                )
                 span_ids = list(
-                    ObservationSpan.objects.filter(trace_id__in=trace_ids)
-                    .values_list("id", flat=True)
+                    ObservationSpan.objects.filter(trace_id__in=trace_ids).values_list(
+                        "id", flat=True
+                    )
                 )
             else:
-                return {"matches": [], "count": 0, "note": f"search_data not supported for {input_scope} scope"}
+                return {
+                    "matches": [],
+                    "count": 0,
+                    "note": f"search_data not supported for {input_scope} scope",
+                }
 
             kw_lower = keyword.lower()
             for span in ObservationSpan.objects.filter(id__in=span_ids):
@@ -736,14 +831,20 @@ class EvalOrchestrator:
                     matched_fields.append("metadata")
 
                 if matched_fields:
-                    results.append({
-                        "span_id": str(span.id),
-                        "name": span.name,
-                        "type": span.observation_type,
-                        "matched_in": matched_fields,
-                        "input_snippet": input_str[:300] if "input" in matched_fields else None,
-                        "output_snippet": output_str[:300] if "output" in matched_fields else None,
-                    })
+                    results.append(
+                        {
+                            "span_id": str(span.id),
+                            "name": span.name,
+                            "type": span.observation_type,
+                            "matched_in": matched_fields,
+                            "input_snippet": input_str[:300]
+                            if "input" in matched_fields
+                            else None,
+                            "output_snippet": output_str[:300]
+                            if "output" in matched_fields
+                            else None,
+                        }
+                    )
 
         except Exception as e:
             logger.error("_tool_search_data failed", error=str(e))
@@ -755,11 +856,25 @@ class EvalOrchestrator:
     # Resource tools (conditionally added to tool list)
     # ------------------------------------------------------------------
 
-    def _tool_search_kb(self, query: str, kb_id: str, top_k: int = 5) -> dict:
-        """Search the connected knowledge base via KBIndexer."""
-        from model_hub.utils.kb_indexer import KBIndexer
+    def _tool_search_kb(self, query: str, kb_id: str = None, top_k: int = 5) -> dict:
+        """Search the connected knowledge base via KBIndexer.
 
+        Only the knowledge base connected on ``eval_config`` (checked by the
+        caller) is searched; a different ``kb_id`` from the model is ignored.
+        """
+        from model_hub.utils.kb_indexer import KBIndexer
+        from model_hub.utils.workspace_scope import knowledge_base_id_for
+
+        connected = knowledge_base_id_for(
+            getattr(self.eval_config, "organization_id", None),
+            getattr(self.eval_config, "workspace", None),
+            self.eval_config.kb_id,
+        )
+        if connected is None:
+            return {"error": "No accessible knowledge base is connected", "chunks": []}
+        kb_id = str(connected)
         try:
+            top_k = max(1, min(int(top_k), 50))
             chunks = KBIndexer().search(kb_id=kb_id, query=query, top_k=top_k)
             if "kb" not in self._resources_used:
                 self._resources_used.append("kb")
@@ -768,37 +883,55 @@ class EvalOrchestrator:
             logger.error("_tool_search_kb failed", kb_id=kb_id, error=str(e))
             return {"error": str(e), "chunks": []}
 
-    def _resolve_organization_id(self) -> Optional[str]:
-        """
-        Derive organization_id from the source object rather than requiring
-        the caller to pass it in — mirrors how eval_runner derives it from
-        the dataset/row rather than expecting it as an explicit argument.
-        """
+    def _resolve_organization_id(self) -> str | None:
+        """Prefer the authenticated caller; resolve the source for older callers."""
+        if self.eval_config.organization_id:
+            return str(self.eval_config.organization_id)
         scope = self.eval_config.input_scope
         source_id = self.eval_config.source_id
         try:
             if scope == "dataset_row":
                 from model_hub.models.develop_dataset import Row
-                row = Row.objects.select_related("dataset__organization").get(id=source_id)
+
+                row = Row.objects.select_related("dataset__organization").get(
+                    id=source_id
+                )
                 return str(row.dataset.organization_id)
             elif scope == "span":
                 from tracer.models.observation_span import ObservationSpan
-                span = ObservationSpan.objects.select_related("project__organization").get(id=source_id)
+
+                span = ObservationSpan.objects.select_related(
+                    "project__organization"
+                ).get(id=source_id)
                 return str(span.project.organization_id)
             elif scope == "trace":
                 from tracer.models.trace import Trace
-                trace = Trace.objects.select_related("project__organization").get(id=source_id)
+
+                trace = Trace.objects.select_related("project__organization").get(
+                    id=source_id
+                )
                 return str(trace.project.organization_id)
             elif scope == "session":
                 from tracer.models.trace_session import TraceSession
-                session = TraceSession.objects.select_related("project__organization").get(id=source_id)
+
+                session = TraceSession.objects.select_related(
+                    "project__organization"
+                ).get(id=source_id)
                 return str(session.project.organization_id)
             elif scope == "cell":
                 from model_hub.models.develop_dataset import Cell
-                cell = Cell.objects.select_related("dataset__organization").get(id=source_id)
-                return str(cell.dataset.organization_id)
+
+                cell = Cell.objects.select_related("row__dataset__organization").get(
+                    id=source_id
+                )
+                return str(cell.row.dataset.organization_id)
         except Exception as e:
-            logger.warning("_resolve_organization_id failed", scope=scope, source_id=source_id, error=str(e))
+            logger.warning(
+                "_resolve_organization_id failed",
+                scope=scope,
+                source_id=source_id,
+                error=str(e),
+            )
         return None
 
     def _resolve_input_mapping(self) -> tuple[list, list]:
@@ -814,12 +947,14 @@ class EvalOrchestrator:
 
         if scope == "cell":
             from model_hub.models.develop_dataset import Cell
+
             cell = Cell.objects.select_related("column").get(id=source_id)
             return [cell.value or ""], [cell.column.name]
 
         if scope == "dataset_row":
-            from model_hub.models.develop_dataset import Row, Cell
+            from model_hub.models.develop_dataset import Cell, Row
             from model_hub.models.evals_metric import UserEvalMetric
+
             row = Row.objects.get(id=source_id)
 
             # Use UserEvalMetric mapping to get required_key → cell value pairs.
@@ -850,13 +985,16 @@ class EvalOrchestrator:
 
             # Fallback: raw cell data (column names won't match stored required_keys)
             cells = Cell.objects.filter(row=row).select_related("column")
-            return [cell.value or "" for cell in cells], [cell.column.name for cell in cells]
+            return [cell.value or "" for cell in cells], [
+                cell.column.name for cell in cells
+            ]
 
         # For span/trace/session: use the eval template's required_keys so that
         # input_cols match what was stored by data_formatter (e.g. ["output"] not
         # ["input", "output"]). Fall back to ["input", "output"] if unavailable.
         try:
             from model_hub.models.evals_metric import EvalTemplate
+
             tmpl = EvalTemplate.objects.get(id=self.eval_config.eval_template_id)
             required_keys = tmpl.config.get("required_keys") or []
         except Exception:
@@ -865,16 +1003,28 @@ class EvalOrchestrator:
         span_data = {}
         if scope == "span":
             from tracer.models.observation_span import ObservationSpan
+
             span = ObservationSpan.objects.get(id=source_id)
-            span_data = {"input": str(span.input or ""), "output": str(span.output or "")}
+            span_data = {
+                "input": str(span.input or ""),
+                "output": str(span.output or ""),
+            }
         elif scope == "trace":
             from tracer.models.trace import Trace
+
             trace = Trace.objects.get(id=source_id)
-            span_data = {"input": str(trace.input or ""), "output": str(trace.output or "")}
+            span_data = {
+                "input": str(trace.input or ""),
+                "output": str(trace.output or ""),
+            }
         elif scope == "session":
             from tracer.models.trace_session import TraceSession
+
             session = TraceSession.objects.get(id=source_id)
-            span_data = {"input": str(session.input or ""), "output": str(session.output or "")}
+            span_data = {
+                "input": str(session.input or ""),
+                "output": str(session.output or ""),
+            }
         else:
             return [], []
 
@@ -902,7 +1052,14 @@ class EvalOrchestrator:
         from agentic_eval.core.embeddings.embedding_manager import EmbeddingManager
 
         inputs, input_cols = self._resolve_input_mapping()
-        logger.info("_tool_get_feedback resolved", scope=self.eval_config.input_scope, source_id=self.eval_config.source_id, input_cols=input_cols, eval_template_id=self.eval_config.eval_template_id, inputs_preview=[str(v)[:60] for v in inputs])
+        logger.info(
+            "_tool_get_feedback resolved",
+            scope=self.eval_config.input_scope,
+            source_id=self.eval_config.source_id,
+            input_cols=input_cols,
+            eval_template_id=self.eval_config.eval_template_id,
+            inputs_preview=[str(v)[:60] for v in inputs],
+        )
         if not inputs:
             return {"fewshots": "", "count": 0}
 
@@ -931,7 +1088,10 @@ class EvalOrchestrator:
             self._resources_used.append("feedback")
 
         count = len(fewshots) if isinstance(fewshots, list) else (1 if fewshots else 0)
-        print(f"[FEEDBACK ORCHESTRATOR] _tool_get_feedback returned {count} fewshots for eval_template={self.eval_config.eval_template_id} scope={self.eval_config.input_scope}", flush=True)
+        print(
+            f"[FEEDBACK ORCHESTRATOR] _tool_get_feedback returned {count} fewshots for eval_template={self.eval_config.eval_template_id} scope={self.eval_config.input_scope}",
+            flush=True,
+        )
         return {"fewshots": fewshots, "count": count}
 
     def _tool_call_mcp(self, tool_name: str, params: dict) -> dict:
@@ -941,11 +1101,13 @@ class EvalOrchestrator:
         mcp_tools = available.get("mcp_tools", [])
         known_names = {t["name"] for t in mcp_tools if isinstance(t, dict)}
         if tool_name not in known_names:
-            return {"error": f"MCP tool '{tool_name}' is not available. Available: {sorted(known_names)}"}
+            return {
+                "error": f"MCP tool '{tool_name}' is not available. Available: {sorted(known_names)}"
+            }
 
         try:
-            from ee.falcon_ai.models import MCPConnector
             from ee.falcon_ai.mcp_proxy import MCPConnectorProxy
+            from ee.falcon_ai.models import MCPConnector
 
             org_id = self._resolve_organization_id()
             # Find the connector that has this tool
@@ -988,7 +1150,7 @@ class EvalOrchestrator:
         self,
         raw_criteria: str,
         data_summary: str,
-        choices: Optional[list] = None,
+        choices: list | None = None,
         response_format: str = "custom",
     ) -> dict:
         """
@@ -1001,7 +1163,7 @@ class EvalOrchestrator:
             or flash_config.provider == self.TURING_PROVIDER
         )
         if flash_is_turing:
-            formalization_client: Optional[TuringClient] = TuringClient()
+            formalization_client: TuringClient | None = TuringClient()
             formalization_llm = None
         else:
             formalization_client = None
@@ -1059,8 +1221,12 @@ Respond with ONLY the JSON object, no markdown fences."""
                 )
                 usage = formalization_llm.token_usage
             # Track formalization token usage
-            self._formalization_token_usage["prompt_tokens"] += usage.get("prompt_tokens", 0)
-            self._formalization_token_usage["completion_tokens"] += usage.get("completion_tokens", 0)
+            self._formalization_token_usage["prompt_tokens"] += usage.get(
+                "prompt_tokens", 0
+            )
+            self._formalization_token_usage["completion_tokens"] += usage.get(
+                "completion_tokens", 0
+            )
 
             return self._parse_json_response(response)
         except Exception as e:
@@ -1119,8 +1285,8 @@ Respond with ONLY the JSON object, no markdown fences."""
         choices: list,
         model: str = "small",
         supplementary_context: str = "",
-        fewshots: Optional[list] = None,
-        media: Optional[list] = None,
+        fewshots: list | None = None,
+        media: list | None = None,
     ) -> dict:
         """
         Execute a single LLM judge call.
@@ -1146,7 +1312,7 @@ Respond with ONLY the JSON object, no markdown fences."""
             or model_config.provider == self.TURING_PROVIDER
         )
         if eval_is_turing:
-            eval_turing_client: Optional[TuringClient] = TuringClient()
+            eval_turing_client: TuringClient | None = TuringClient()
             eval_llm = None
         else:
             eval_turing_client = None
@@ -1214,7 +1380,7 @@ Respond with ONLY the JSON object, no markdown fences."""
         data: str,
         choices: list,
         supplementary_context: str = "",
-        fewshots: Optional[list] = None,
+        fewshots: list | None = None,
     ) -> str:
         """Build the prompt for the single LLM judge call."""
         parts = [f"## Evaluation Criteria\n{criteria}"]
@@ -1258,23 +1424,32 @@ Respond with ONLY the JSON object, no markdown fences."""
                 continue
 
             if media_type == "image":
-                content.extend([
-                    {"type": "text", "text": f"<image_{i}>"},
-                    {"type": "image_url", "image_url": {"url": url}},
-                    {"type": "text", "text": f"</image_{i}>"},
-                ])
+                content.extend(
+                    [
+                        {"type": "text", "text": f"<image_{i}>"},
+                        {"type": "image_url", "image_url": {"url": url}},
+                        {"type": "text", "text": f"</image_{i}>"},
+                    ]
+                )
             elif media_type == "audio":
-                content.extend([
-                    {"type": "text", "text": f"<audio_{i}>"},
-                    {"type": "image_url", "image_url": {"url": url}},
-                    {"type": "text", "text": f"</audio_{i}>"},
-                ])
+                content.extend(
+                    [
+                        {"type": "text", "text": f"<audio_{i}>"},
+                        {"type": "image_url", "image_url": {"url": url}},
+                        {"type": "text", "text": f"</audio_{i}>"},
+                    ]
+                )
             elif media_type == "pdf":
-                content.extend([
-                    {"type": "text", "text": f"<pdf_{i}>"},
-                    {"type": "file", "file": {"file_id": url, "format": "application/pdf"}},
-                    {"type": "text", "text": f"</pdf_{i}>"},
-                ])
+                content.extend(
+                    [
+                        {"type": "text", "text": f"<pdf_{i}>"},
+                        {
+                            "type": "file",
+                            "file": {"file_id": url, "format": "application/pdf"},
+                        },
+                        {"type": "text", "text": f"</pdf_{i}>"},
+                    ]
+                )
 
         # Append the text prompt after all media blocks
         content.append({"type": "text", "text": text_prompt})
@@ -1349,8 +1524,10 @@ Respond with ONLY the JSON object, no markdown fences."""
         older ones are replaced with a brief summary.
         """
         tool_message_indices = [
-            i for i, m in enumerate(messages)
-            if m.get("role") == "user" and m.get("content", "").startswith("Tool result for")
+            i
+            for i, m in enumerate(messages)
+            if m.get("role") == "user"
+            and m.get("content", "").startswith("Tool result for")
         ]
 
         if len(tool_message_indices) <= keep_recent:
@@ -1371,10 +1548,13 @@ Respond with ONLY the JSON object, no markdown fences."""
             except (json.JSONDecodeError, TypeError):
                 pass
 
-            messages[idx]["content"] = json.dumps({
-                "_compacted": True,
-                "summary": content[:100] + f" [...{len(content) - 100} chars compacted]",
-            })
+            messages[idx]["content"] = json.dumps(
+                {
+                    "_compacted": True,
+                    "summary": content[:100]
+                    + f" [...{len(content) - 100} chars compacted]",
+                }
+            )
 
     # ------------------------------------------------------------------
     # Forced submission on max-turns exhaustion
@@ -1385,17 +1565,19 @@ Respond with ONLY the JSON object, no markdown fences."""
         When the agent loop exhausts MAX_TURNS without calling submit_result,
         make one extra LLM call instructing it to evaluate and submit immediately.
         """
-        messages.append({
-            "role": "user",
-            "content": (
-                "You have run out of turns. You MUST call submit_result RIGHT NOW "
-                "with your best evaluation based on everything you have gathered so far. "
-                "If you have not yet called run_eval, make your best judgment from "
-                "the data you inspected and submit directly. Pick the most appropriate "
-                "choice, assign a confidence score, and provide your explanation. "
-                "Do NOT call any other tool — only submit_result."
-            ),
-        })
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "You have run out of turns. You MUST call submit_result RIGHT NOW "
+                    "with your best evaluation based on everything you have gathered so far. "
+                    "If you have not yet called run_eval, make your best judgment from "
+                    "the data you inspected and submit directly. Pick the most appropriate "
+                    "choice, assign a confidence score, and provide your explanation. "
+                    "Do NOT call any other tool — only submit_result."
+                ),
+            }
+        )
         try:
             content = self._call_orchestrator_llm(messages)
             tool_call = self._parse_tool_call_from_response(content)
@@ -1403,14 +1585,18 @@ Respond with ONLY the JSON object, no markdown fences."""
                 self._execute_tool("submit_result", tool_call.get("params", {}))
             elif tool_call:
                 # Agent called something else — force submit with whatever we have
-                result = self._execute_tool(tool_call["tool"], tool_call.get("params", {}))
+                result = self._execute_tool(
+                    tool_call["tool"], tool_call.get("params", {})
+                )
                 # If it was run_eval, try one more time for submit
                 if tool_call["tool"] == "run_eval" and not self._investigation_complete:
                     messages.append({"role": "assistant", "content": content})
-                    messages.append({
-                        "role": "user",
-                        "content": f"Tool result for {tool_call['tool']}:\n{json.dumps(result, default=str)}\n\nNow call submit_result immediately.",
-                    })
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": f"Tool result for {tool_call['tool']}:\n{json.dumps(result, default=str)}\n\nNow call submit_result immediately.",
+                        }
+                    )
                     content2 = self._call_orchestrator_llm(messages)
                     tc2 = self._parse_tool_call_from_response(content2)
                     if tc2 and tc2.get("tool") == "submit_result":

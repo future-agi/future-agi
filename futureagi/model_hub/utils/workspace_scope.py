@@ -1,8 +1,10 @@
-from django.db.models import Q
+import uuid
+
+from django.db.models import F, Q
 
 from model_hub.models.ai_model import AIModel
 from model_hub.models.column_config import ColumnConfig
-from model_hub.models.develop_dataset import Column, Dataset
+from model_hub.models.develop_dataset import Cell, Column, Dataset, KnowledgeBaseFile
 from model_hub.models.develop_optimisation import OptimizationDataset
 from model_hub.models.evals_metric import UserEvalMetric
 from model_hub.models.optimize_dataset import OptimizeDataset
@@ -74,6 +76,67 @@ def scoped_column_queryset(request=None):
     if organization is not None:
         queryset = queryset.filter(dataset__organization=organization)
     return queryset
+
+
+def scoped_cell_queryset(request):
+    """Cells inherit tenancy from their row; nullable duplicate links grant nothing."""
+    organization = request_organization(request)
+    if organization is None:
+        return Cell.objects.none()
+    datasets = scoped_dataset_queryset(request).filter(organization=organization)
+    return Cell.objects.filter(
+        Q(dataset__isnull=True) | Q(dataset_id=F("row__dataset_id")),
+        row__dataset_id__in=datasets.values("id"),
+        column__dataset_id=F("row__dataset_id"),
+        row__deleted=False,
+        column__deleted=False,
+        deleted=False,
+    )
+
+
+def explicit_workspace_filter(workspace, field_name="workspace"):
+    """Workspace visibility without depending on ambient request state."""
+    if workspace is None:
+        return Q()
+    scope = Q(**{field_name: workspace})
+    if getattr(workspace, "is_default", False):
+        scope |= Q(**{f"{field_name}__isnull": True})
+        scope |= Q(**{
+            f"{field_name}__is_default": True,
+            f"{field_name}__organization_id": workspace.organization_id,
+        })
+    return scope
+
+
+def knowledge_base_queryset_for(organization, workspace=None):
+    """Only active knowledge bases of the explicitly supplied tenant."""
+    if organization is None:
+        return KnowledgeBaseFile.no_workspace_objects.none()
+    return KnowledgeBaseFile.no_workspace_objects.filter(
+        explicit_workspace_filter(workspace), organization=organization, deleted=False,
+    )
+
+
+def knowledge_base_id_for(organization, workspace, kb_id):
+    try:
+        kb_uuid = uuid.UUID(str(kb_id))
+    except (TypeError, ValueError, AttributeError):
+        return None
+    if knowledge_base_queryset_for(organization, workspace).filter(id=kb_uuid).exists():
+        return kb_uuid
+    return None
+
+
+def scoped_knowledge_base_queryset(request):
+    return knowledge_base_queryset_for(
+        request_organization(request), request_workspace(request),
+    )
+
+
+def knowledge_base_in_scope(request, kb_id):
+    return knowledge_base_id_for(
+        request_organization(request), request_workspace(request), kb_id,
+    ) is not None
 
 
 def scoped_user_eval_metric_queryset(request=None):

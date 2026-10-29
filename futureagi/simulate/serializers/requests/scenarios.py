@@ -164,6 +164,25 @@ class ScenarioCreateRequestSerializer(serializers.Serializer):
                 "Dataset not found or not accessible."
             ) from e
 
+    def validate_personas(self, value):
+        if not value:
+            return value
+        request = self.context.get("request")
+        if not request:
+            raise serializers.ValidationError("Request context is required.")
+        from simulate.views.persona import accessible_persona_queryset
+
+        wanted = {str(persona_id) for persona_id in value}
+        found = {
+            str(persona_id)
+            for persona_id in accessible_persona_queryset(request)
+            .filter(id__in=wanted, deleted=False)
+            .values_list("id", flat=True)
+        }
+        if found != wanted:
+            raise serializers.ValidationError("Persona not found or not accessible.")
+        return value
+
     def validate_agent_definition_id(self, value):
         if not value:
             return value
@@ -257,9 +276,8 @@ class ScenarioCreateRequestSerializer(serializers.Serializer):
                 {"script_url": "script_url is required for script kind."}
             )
 
-        if (
-            source_type == Scenarios.SourceTypes.AGENT_DEFINITION
-            and not data.get("agent_definition_id")
+        if source_type == Scenarios.SourceTypes.AGENT_DEFINITION and not data.get(
+            "agent_definition_id"
         ):
             raise serializers.ValidationError(
                 {
