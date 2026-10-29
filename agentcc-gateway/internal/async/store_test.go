@@ -49,6 +49,30 @@ func TestStore_GetForOrg(t *testing.T) {
 	if got != nil {
 		t.Error("expected nil for different org, got job")
 	}
+
+	// Empty caller scope must not read an owned job.
+	got = s.GetForOrg("job-1", "")
+	if got != nil {
+		t.Error("expected nil for empty caller scope, got job")
+	}
+}
+
+func TestStore_GetForOrgEmptyOwner(t *testing.T) {
+	s := NewStore()
+	s.Put(&Job{
+		ID:        "job-empty",
+		Status:    StatusQueued,
+		OrgID:     "",
+		CreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(time.Hour),
+	})
+
+	if got := s.GetForOrg("job-empty", "org-1"); got != nil {
+		t.Error("empty stored owner must not match a caller scope")
+	}
+	if got := s.GetForOrg("job-empty", ""); got != nil {
+		t.Error("empty stored owner must not match an empty caller scope")
+	}
 }
 
 func TestStore_Delete(t *testing.T) {
@@ -101,6 +125,38 @@ func TestStore_CleanExpired(t *testing.T) {
 	}
 	if s.Get("active") == nil {
 		t.Error("active job should still exist")
+	}
+}
+
+func TestStore_CancelForOrgDoesNotTouchOtherOrg(t *testing.T) {
+	s := NewStore()
+	called := false
+	s.Put(&Job{
+		ID:     "job-1",
+		Status: StatusProcessing,
+		OrgID:  "org-1",
+		CancelFn: func() {
+			called = true
+		},
+	})
+	if s.CancelForOrg("job-1", "org-2") {
+		t.Fatal("other org must not cancel")
+	}
+	if called {
+		t.Fatal("other org invoked CancelFn")
+	}
+	got := s.Get("job-1")
+	if got == nil || got.Status != StatusProcessing {
+		t.Fatalf("job changed: %+v", got)
+	}
+	if !s.CancelForOrg("job-1", "org-1") {
+		t.Fatal("owner cancel failed")
+	}
+	if !called {
+		t.Fatal("owner cancel did not invoke live CancelFn")
+	}
+	if s.Get("job-1") != nil {
+		t.Fatal("job still present")
 	}
 }
 
