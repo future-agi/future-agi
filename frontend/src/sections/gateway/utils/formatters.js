@@ -74,3 +74,9 @@ export function formatTokens(value) {
   if (Number.isNaN(num)) return "0";
   return num.toLocaleString();
 }
+
+export function isUnpricedRequest(log) {
+  if (log?.metadata?.cost_source !== "unpriced") return false;
+  const cost = Number(log?.cost);
+  return !(Number.isFinite(cost) && cost > 0);
+}
