@@ -181,6 +181,7 @@ class AgentFixRunViewSet(viewsets.ViewSet):
         fix_run = launch_fix_run(
             source_run,
             target_scenario_keys=data["target_scenario_keys"],
+            protected_scenario_keys=data["protected_scenario_keys"],
             surfaces=data["surfaces"],
             locked_paths=data["locked_paths"],
             budget_usd=data["budget_credits"] / 100,

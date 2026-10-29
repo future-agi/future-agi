@@ -670,7 +670,43 @@ class TestUserApi:
             str(source_run.test_execution_id),
         )
         assert body["request"]["failing_sub_goals"] == ["refunded"]
+        assert body["request"]["protected_scenario_keys"] == []
         temporal.start.assert_called_once_with(body["id"])
+
+    def test_protected_cases_reach_the_engine(
+        self, auth_client, api_client, source_run
+    ):
+        response = auth_client.post(
+            f"{BASE}/",
+            _launch_body(source_run, protected_scenario_keys=[KEYS[1]]),
+            format="json",
+        )
+
+        assert response.status_code == 201, response.content
+        assert response.json()["request"]["protected_scenario_keys"] == [KEYS[1]]
+        fix_run = AgentFixRun.no_workspace_objects.get(id=response.json()["id"])
+        brief = _engine(api_client, "get", _armed(fix_run), "brief/").json()
+        assert brief["request"]["protected_scenario_keys"] == [KEYS[1]]
+
+    @pytest.mark.parametrize(
+        ("protected", "code"),
+        [
+            (["not-in-the-run"], "fix_targets_unknown"),
+            ([KEYS[0]], "fix_protected_is_target"),
+        ],
+        ids=["not-in-the-run", "also-a-target"],
+    )
+    def test_a_protected_case_the_fix_cannot_keep_starts_nothing(
+        self, auth_client, source_run, protected, code
+    ):
+        response = auth_client.post(
+            f"{BASE}/",
+            _launch_body(source_run, protected_scenario_keys=protected),
+            format="json",
+        )
+
+        assert (response.status_code, response.json()["error"]) == (400, code)
+        assert not AgentFixRun.no_workspace_objects.exists()
 
     @pytest.mark.parametrize(
         "overrides",

@@ -47,6 +47,11 @@ class FixRequest(BaseModel):
     """What the user asked for. Stored on the run as it was asked."""
 
     target_scenario_keys: list[str] = Field(min_length=1, max_length=SCENARIOS_MAX)
+    # Cases that pass today and must still pass: every candidate shown is checked on them,
+    # on top of what the engine itself guards.
+    protected_scenario_keys: list[str] = Field(
+        default_factory=list, max_length=SCENARIOS_MAX
+    )
     # The failing cases among the targets that the worker never sees: the verdict proves the
     # fix holds on them. Chosen at launch; empty when there are too few to split.
     held_back_scenario_keys: list[str] = Field(default_factory=list)

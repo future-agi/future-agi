@@ -49398,6 +49398,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
           maxItems: 200,
           minItems: 1,
         },
+        protected_scenario_keys: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 255,
+            minLength: 1,
+          },
+          default: [],
+          maxItems: 200,
+        },
         surfaces: {
           type: "array",
           items: {
@@ -87902,6 +87912,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             type: "string",
             minLength: 1,
           },
+        },
+        protected_scenario_keys: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          default: [],
         },
         held_back_scenario_keys: {
           type: "array",
