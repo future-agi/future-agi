@@ -4,8 +4,9 @@
 Historical products are frozen from real registry descriptors and tag deployment
 DATA; missing update assets are generated locally, never assumed to exist. Chart
 DATA is packaged as a real local OCI artifact, not a fictitious GHCR release.
-PR components are built as OCI directories, served read-only over loopback,
-never pushed. Qualification/packaging belong to the shipping producer CLI.
+PR components are built as OCI directories and pushed only to a runner-local
+Docker Hub mirror, then pulled by their normal names to establish RepoDigests.
+Qualification/packaging belong to the shipping producer CLI.
 Current producer incompleteness is a HARD failure, never a passing acceptance.
 Private keys, API credentials, env files and DB evidence must not be uploaded.
 """
@@ -32,10 +33,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0,str(ROOT))
 
 from deploy.tests.update_e2e.real_automatic import CONTEXT, home_path, native_ci, redacted_tail
-from deploy.tests.update_e2e.oci_registry import OCIRegistry
+from deploy.tests.update_e2e.oci_registry import DockerHubMirror, MIRROR_HOST, OCIRegistry, REGISTRY_IMAGE
 from deploy.update.manifest import (COMPONENT_REPOSITORIES, COMPONENT_TAG_SUFFIX, PRODUCT,
                                     canonical_json, deployment_hashes, hash_path, parse_version,
-                                    read_deployment_file_list, read_upgrade_floor)
+                                    read_deployment_file_list, read_upgrade_floor, parse_image_ref, validate_manifest)
 from scripts.generate_update_manifest import apply_release_policy
 
 BUILDS = (
@@ -61,15 +62,19 @@ def plan(mode):
         historical_inputs='real image descriptors and tag deployment data; local test manifests/proofs, no historical update assets',
         chart='historical source chart packaged into private GET-only OCI transport; no GHCR publication',
         scheduler='setup-installed current-user cron; never test-driven ticks',
-        build_output='OCI directory; read-only loopback GET/HEAD, no registry writes',
+        build_output='OCI directory; push only to runner-local registry, pull normal Docker Hub names' if mode == 'upgrade' else 'no PR builds',
+        image_transport=dict(registry_image=REGISTRY_IMAGE,mirror='http://'+MIRROR_HOST,
+            scope='ephemeral native Actions runner only',proxy_mode=False,
+            writes='loopback only; unmodified OCI bytes, PR-specific and retained Compose version tags',
+            identity='normal docker.io names and genuine RepoDigests, checked against OCI export',
+            unchanged='Docker Hub digests retained; mirror misses fall back to Hub') if mode == 'upgrade' else None,
         builds=[] if mode == 'a-b-c' else [dict(component=n,context=c,dockerfile=d,args=list(a)) for n,c,d,a in BUILDS],
         qualification=['python -I scripts/rehearse_update_compatibility.py qualify',
                        '--reference-scale registered-100k','--boot-timeout 4200',
                        'python -I scripts/rehearse_update_compatibility.py package'],
         acceptance=['one-opt-in forward sequence','fresh A -> failing B -> automatically restored A'],
         fail_closed=True, product_qualification=False,
-        known_blockers=['shipping producer transaction/workloads/suites incomplete',
-                        'retained Docker Hub Compose does not support PR loopback registry images'])
+        known_blockers=['shipping_executor_unavailable: full shipping rehearsal suites are incomplete'])
 
 
 class NativeAcceptance:
@@ -170,12 +175,13 @@ class NativeAcceptance:
             raise ValueError('registry did not return an immutable descriptor')
         return digest
 
-    def historical_chart(self, version, sha, registry):
-        """Real tag chart data, packaged locally; never claim a missing GHCR release.
+    def historical_chart(self, version, sha, registry, *, candidate=False):
+        """Real source chart data, packaged locally; no claimed GHCR release.
 
         Standalone does not run Helm. Its required manifest field still names a
         real, hash-verified OCI artifact on our GET-only test transport, rather
         than a fabricated production digest. Historical chart code is never run.
+        PR packages override version/appVersion only, like helm package does.
         """
         if registry is None:
             raise ValueError('private read-only OCI transport required')
@@ -203,6 +209,14 @@ class NativeAcceptance:
                 data = source.extractfile(member).read()
                 if relative.as_posix() == 'Chart.yaml':
                     text = data.decode()
+                    if candidate:
+                        # Like helm package --version/--app-version: only the
+                        # private package metadata changes, never the PR tree.
+                        text, versions = re.subn(r'^version: [^\n]+$', 'version: '+version[1:], text, flags=re.M)
+                        text, apps = re.subn(r'^appVersion: [^\n]+$', 'appVersion: "'+version+'"', text, flags=re.M)
+                        if versions != 1 or apps != 1:
+                            raise ValueError('PR chart version metadata absent or ambiguous')
+                        data = text.encode()
                     if not re.search(r'^name: futureagi\s*$',text,re.M) or not re.search(
                             r'^version: '+re.escape(version[1:])+r'(?:\s|$)',text,re.M):
                         raise ValueError('historical chart version differs')
@@ -265,14 +279,54 @@ class NativeAcceptance:
         (self.out/('test-candidate-'+version+'.json')).write_bytes(canonical_json(manifest))
         return manifest,directory
 
+    def pull_pr_image(self, image, digest, pr_tag):
+        """Prove mirror resolution, tag agreement and Docker Hub RepoDigests."""
+        repository = parse_image_ref(image).repository
+        refs = ['docker.io/'+repository+':'+pr_tag, image, image+'@'+digest]
+        for ref in refs:
+            self.command(['docker','--context',CONTEXT,'pull','--platform','linux/amd64',ref], timeout=1800)
+        rows = json.loads(self.command(['docker','--context',CONTEXT,'image','inspect',*refs]))
+        if not isinstance(rows, list) or len(rows) != len(refs):
+            raise ValueError('PR mirror inspection incomplete')
+        for row in rows:
+            pins = [parse_image_ref(pin) for pin in row.get('RepoDigests',[])]
+            if (row.get('Os') != 'linux' or row.get('Architecture') != 'amd64'
+                    or not any(pin.registry == 'docker.io' and pin.repository == repository
+                               and pin.digest == digest for pin in pins)):
+                raise ValueError('PR mirror did not establish the expected native Docker Hub RepoDigest')
+        if not rows[0].get('Id') or len({row.get('Id') for row in rows}) != 1:
+            raise ValueError('PR mirror tag and immutable image identity differ')
+        return dict(image=image,digest=digest,pr_tag=pr_tag,image_id=rows[0]['Id'],
+                    repo_digests=rows[0]['RepoDigests'],platform='linux/amd64')
+
     def build_pr(self,previous,registry):
-        version='v%d.%d.%d'%(parse_version(previous['version'])[:2]+(parse_version(previous['version'])[2]+1,))
-        # parse_version returns (major,minor,patch,stage,number); do not use a
-        # prerelease tag as the source of a stable automatic test sequence.
+        previous = validate_manifest(previous)
+        parsed = parse_version(previous['version'])
+        if parsed[3] != 2:
+            raise ValueError('PR automatic acceptance requires a stable predecessor')
+        version='v%d.%d.%d'%(parsed[:2]+(parsed[2]+1,))
         sha=self.command(['git','rev-parse','HEAD']).decode().strip()
+        if not re.fullmatch('[0-9a-f]{40}', sha):
+            raise ValueError('invalid PR source commit')
+        run, attempt = os.environ.get('GITHUB_RUN_ID',''), os.environ.get('GITHUB_RUN_ATTEMPT','')
+        if not all(re.fullmatch('[0-9]+', value) for value in (run,attempt)):
+            raise ValueError('PR transport requires Actions run and attempt identity')
+        pr_tag='pr-'+sha+'-'+run+'-'+attempt
+        mirrors = json.loads(self.command(['docker','--context',CONTEXT,'info','--format','{{json .RegistryConfig.Mirrors}}']))
+        if not isinstance(mirrors,list) or not any(value in mirrors for value in
+                ('http://'+MIRROR_HOST+'/', 'http://'+MIRROR_HOST)):
+            raise ValueError('runner-local Docker Hub mirror is not configured')
+        mirror = DockerHubMirror()
         created=datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
         layouts={}
-        pins={}
+        # The schema requires version-shaped image tags. Inactive, unbuilt
+        # profile components retain the exact upstream digest; their immutable
+        # image@digest pulls ignore this descriptive tag and fall back to Hub.
+        # Standalone's actual runtime dependencies keep retained Compose refs.
+        pins={name:dict(image='docker.io/'+repo+':'+version+COMPONENT_TAG_SUFFIX.get(name,''),
+                        digest=previous['components'][name]['digest'],platforms=['linux/amd64'])
+              for name,repo in COMPONENT_REPOSITORIES.items()}
+        observations={}
         for component,context,dockerfile,extra in BUILDS:
             layout=self.out/('oci-'+component)
             args=['docker','--context',CONTEXT,'buildx','build','--platform','linux/amd64',
@@ -287,20 +341,27 @@ class NativeAcceptance:
                     args.extend(['--build-context',alias+'=oci-layout://'+str(layouts[name]),'--build-arg',arg+'='+alias])
             self.command([*args,ROOT/context],timeout=7200)
             layouts[component]=layout
-            repository=previous['components'][component]['image'].split(':')[0]
-            repository='/'.join(repository.split('/')[-2:])
-            digest=registry.add(repository,version,layout)
-            pins[component]=dict(image=registry.host+'/'+repository+':'+version,digest=digest,platforms=['linux/amd64'])
+            repository=COMPONENT_REPOSITORIES[component]
+            digest=mirror.publish(repository,version,pr_tag,layout)
+            pins[component]['digest']=digest
+            observations[component]=self.pull_pr_image(pins[component]['image'],digest,pr_tag)
+            (self.out/'pr-image-transport.json').write_bytes(canonical_json(dict(schema_version=1,
+                source_sha=sha,version=version,mirror='http://'+MIRROR_HOST,images=observations,
+                qualification_evidence=False)))
+        chart=self.historical_chart(version,sha,registry,candidate=True)
+        manifest=dict(schema_version=2,product=PRODUCT,channel='stable',version=version,source_sha=sha,
+            published_at=created,minimum_version=read_upgrade_floor(ROOT),
+            release_notes='https://github.com/future-agi/future-agi/commit/'+sha,
+            signature={'bundle':'future-agi-update-manifest.sigstore.json'},components=pins,helm=chart,
+            deployment={'files':deployment_hashes(ROOT,read_deployment_file_list(ROOT))},
+            migration={'requires_bootstrap':True,'rollback':'manual'})
+        manifest=apply_release_policy(manifest,SimpleNamespace(schema_version=2))
         (self.out/'pr-built-images.json').write_bytes(canonical_json(dict(source_sha=sha,version=version,
-            components=pins,product_qualified=False,transport='read-only-loopback-oci')))
-        # Do not invent the remaining component/chart digests or silently edit
-        # retained Compose to a new registry. The current updater requires the
-        # retained Docker Hub registry identity; OCI exports have no Docker Hub
-        # RepoDigest, and a locally retagged load does not establish one. A
-        # reviewed nonpublishing image transport/package interface is needed.
-        # Native CI must remain RED until that real path exists.
-        raise RuntimeError('PR acceptance blocked: unpublished OCI images cannot use the retained Docker Hub '
-                           'layout; a complete real component/chart candidate package and reviewed test transport are required')
+            components={name:pins[name] for name,*_ in BUILDS},pr_tag=pr_tag,product_qualified=False,
+            unchanged_components={name:previous['components'][name] for name in pins if name not in observations},
+            transport='runner-local-docker-hub-mirror')))
+        (self.out/('test-candidate-'+version+'.json')).write_bytes(canonical_json(manifest))
+        return manifest
 
     def run_tests(self,mode,registry):
         versions=['v1.53.0','v1.54.0','v1.55.0']
@@ -333,6 +394,22 @@ class NativeAcceptance:
             count=re.search(r'Ran ([0-9]+) tests? in ',log)
             if count is None or int(count[1]) < 1 or re.search(r'skipped=[1-9]',log):
                 raise RuntimeError('automatic acceptance did not execute its opted-in tests without skips')
+        else:
+            # Surface the producer's fixed refusal, not arbitrary stderr or
+            # secret command output. A nonzero test/qualification stays RED.
+            for path in self.out.glob('acceptance/fagi-upd-e2e-real-publisher-*/v*/qualification/diagnostics.json'):
+                if path.is_symlink() or path.stat().st_size > 1024*1024:
+                    continue
+                try:
+                    diagnostic=json.loads(path.read_bytes())
+                except (OSError,ValueError):
+                    continue
+                failure=diagnostic.get('failure') if isinstance(diagnostic,dict) else None
+                if isinstance(failure,dict) and failure.get('refusal_code') == 'shipping_executor_unavailable':
+                    (self.out/'failure.json').write_bytes(canonical_json(dict(status='failed',
+                        reason='shipping_executor_unavailable',qualification_evidence=False)))
+                    print('real automatic acceptance refused: shipping_executor_unavailable',file=sys.stderr)
+                    break
         return result.returncode
 
 

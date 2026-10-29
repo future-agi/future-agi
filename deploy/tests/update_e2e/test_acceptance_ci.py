@@ -1,11 +1,16 @@
 """Daemon-free acceptance plumbing; never product compatibility evidence."""
+import copy
 import hashlib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import io
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
+import tarfile
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError
@@ -15,7 +20,8 @@ ROOT=Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0,str(ROOT))
 from deploy.tests.update_e2e import acceptance, backup_ci, harness, real_automatic
-from deploy.tests.update_e2e.oci_registry import OCIRegistry
+from deploy.tests.update_e2e.oci_registry import DockerHubMirror, MIRROR_HOST, OCIRegistry, REGISTRY_IMAGE
+from deploy.update.manifest import COMPONENT_REPOSITORIES, COMPONENT_TAG_SUFFIX, parse_image_ref, validate_manifest
 
 
 class AcceptancePlanTests(unittest.TestCase):
@@ -34,28 +40,189 @@ class AcceptancePlanTests(unittest.TestCase):
         self.assertEqual(acceptance.plan('a-b-c')['versions'],['v1.53.0','v1.54.0','v1.55.0'])
         self.assertEqual(len(acceptance.plan('upgrade')['builds']),5)
 
-    def test_PR_builds_never_invent_missing_release_package_or_bypass_registry_guard(self):
-        from types import SimpleNamespace
-        previous={'version':'v1.55.0','components':{name:{'image':'futureagi/'+repo+':v1.55.0'}
-            for name,repo in (('backend','future-agi'),('frontend','frontend'),('fi_collector','fi-collector'),
-                              ('agentcc_gateway','agentcc-gateway'),('standalone','standalone'))}}
+    def test_PR_build_returns_complete_uncertified_candidate_with_real_identity_checks(self):
+        from deploy.tests.test_update_automatic_release import default_v2, versioned
+        previous=versioned(default_v2(),'v1.55.0')
+        original=copy.deepcopy(previous)
+        sha='a'*40
+        def digest(repo):
+            return 'sha256:'+hashlib.sha256(repo.encode()).hexdigest()
+        def execute(args,**kwargs):
+            args=list(map(str,args))
+            if args[:2] == ['git','rev-parse']:
+                return (sha+'\n').encode()
+            if 'info' in args:
+                return json.dumps(['http://'+MIRROR_HOST+'/']).encode()
+            if 'inspect' in args:
+                rows=[]
+                for ref in args[5:]:
+                    parsed=parse_image_ref(ref)
+                    rows.append(dict(Id='image-'+parsed.repository,Os='linux',Architecture='amd64',
+                        RepoDigests=[parsed.name+'@'+digest(parsed.repository)]))
+                return json.dumps(rows).encode()
+            return b''
         with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
             driver=acceptance.NativeAcceptance(Path(temp))
-            with patch.object(driver,'command',side_effect=[b'a'*40+b'\n']+[b'']*5) as command:
-                registry=SimpleNamespace(host='localhost:12345',add=lambda *args:'sha256:'+'b'*64)
-                with self.assertRaisesRegex(RuntimeError,'complete real component/chart candidate'):
-                    driver.build_pr(previous,registry)
+            transport=object()
+            chart=dict(chart='oci://localhost:12345/futureagi/acceptance-chart-v1-55-1',
+                       version='1.55.1',digest='sha256:'+'e'*64)
+            with patch.object(driver,'command',side_effect=execute) as command, \
+                 patch.object(DockerHubMirror,'publish',side_effect=lambda repo,*args:digest(repo)) as publish, \
+                 patch.object(driver,'historical_chart',return_value=chart) as package_chart, \
+                 patch.dict(os.environ,{'GITHUB_RUN_ID':'123','GITHUB_RUN_ATTEMPT':'2'}):
+                candidate=driver.build_pr(previous,transport)
+            self.assertEqual(validate_manifest(candidate),candidate)
+            self.assertEqual(previous,original)
+            self.assertEqual(candidate['version'],'v1.55.1')
+            self.assertEqual(candidate['source_sha'],sha)
+            self.assertFalse(candidate['compatibility']['automatic_apply'])
+            self.assertIsNone(candidate['compatibility']['validation'])
+            self.assertEqual(candidate['migration'],dict(requires_bootstrap=True,rollback='manual'))
+            self.assertEqual(set(candidate['components']),set(COMPONENT_REPOSITORIES))
+            built_names={name for name,*_ in acceptance.BUILDS}
+            for name,component in candidate['components'].items():
+                ref=parse_image_ref(component['image'])
+                self.assertEqual(ref.registry,'docker.io')
+                self.assertEqual(ref.tag,'v1.55.1'+COMPONENT_TAG_SUFFIX.get(name,''))
+                self.assertEqual(ref.repository,COMPONENT_REPOSITORIES[name])
+                self.assertEqual(component['platforms'],['linux/amd64'])
+                self.assertEqual(component['digest'],digest(ref.repository) if name in built_names
+                                 else previous['components'][name]['digest'])
+            package_chart.assert_called_once_with('v1.55.1',sha,transport,candidate=True)
+            self.assertEqual(publish.call_count,5)
+            for call in publish.call_args_list:
+                self.assertEqual(call.args[1:3],('v1.55.1','pr-'+sha+'-123-2'))
             calls=[list(map(str,call.args[0])) for call in command.call_args_list]
-            self.assertEqual(len(calls),6)
-            for argv in calls[1:]:
+            builds=[argv for argv in calls if 'buildx' in argv]
+            self.assertEqual(len(builds),5)
+            for argv in builds:
                 self.assertEqual(argv[:4],['docker','--context','colima-fagi-update','buildx'])
                 self.assertIn('--output',argv)
                 self.assertNotIn('--push',argv)
                 self.assertNotIn('--load',argv)
-            self.assertEqual(len(list(Path(temp).glob('*manifest*'))),0)
+                self.assertIn('REVISION='+sha,argv)
+            self.assertEqual(builds[-1].count('--build-context'),4)
+            self.assertEqual(sum('pull' in argv for argv in calls),15)
+            observations=json.loads((Path(temp)/'pr-image-transport.json').read_bytes())
+            self.assertEqual(set(observations['images']),built_names)
+            self.assertFalse(observations['qualification_evidence'])
+            self.assertEqual(json.loads((Path(temp)/'test-candidate-v1.55.1.json').read_bytes()),candidate)
             built=json.loads((Path(temp)/'pr-built-images.json').read_bytes())
             self.assertFalse(built['product_qualified'])
-            self.assertEqual(len(built['components']),5)
+            self.assertEqual(set(built['unchanged_components']),set(COMPONENT_REPOSITORIES)-built_names)
+
+    def test_PR_pull_refuses_retag_only_wrong_repository_digest_arch_or_tag_drift(self):
+        image='docker.io/futureagi/standalone:v1.55.1'
+        digest='sha256:'+'b'*64
+        good=dict(Id='image-id',Os='linux',Architecture='amd64',RepoDigests=['futureagi/standalone@'+digest])
+        bad_rows=[dict(good,RepoDigests=[]),dict(good,RepoDigests=['localhost:5000/futureagi/standalone@'+digest]),
+            dict(good,RepoDigests=['futureagi/frontend@'+digest]),
+            dict(good,RepoDigests=['futureagi/standalone@sha256:'+'c'*64]),dict(good,Architecture='arm64'),
+            dict(good,Os='windows'),dict(good,Id='different-tag-id')]
+        with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
+            driver=acceptance.NativeAcceptance(Path(temp))
+            for bad in bad_rows:
+                with self.subTest(bad=bad),patch.object(driver,'command',side_effect=
+                        [b'',b'',b'',json.dumps([good,good,bad]).encode()]):
+                    with self.assertRaisesRegex(ValueError,'RepoDigest|identity differ'):
+                        driver.pull_pr_image(image,digest,'pr-'+'a'*40+'-1-1')
+            with patch.object(driver,'command',side_effect=[b'',b'',b'',json.dumps([good]*3).encode()]):
+                result=driver.pull_pr_image(image,digest,'pr-'+'a'*40+'-1-1')
+                self.assertEqual(result['image_id'],'image-id')
+
+    def test_PR_build_refuses_unconfigured_mirror_before_build_or_upload(self):
+        from deploy.tests.test_update_automatic_release import default_v2
+        with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
+            driver=acceptance.NativeAcceptance(Path(temp))
+            with patch.object(driver,'command',side_effect=[b'a'*40,b'[]']) as command, \
+                 patch.object(DockerHubMirror,'publish') as publish, \
+                 patch.dict(os.environ,{'GITHUB_RUN_ID':'123','GITHUB_RUN_ATTEMPT':'2'}):
+                with self.assertRaisesRegex(ValueError,'mirror is not configured'):
+                    driver.build_pr(default_v2(),object())
+            self.assertEqual(command.call_count,2)
+            publish.assert_not_called()
+
+    def test_PR_build_requires_real_revision_and_run_identity_before_upload(self):
+        from deploy.tests.test_update_automatic_release import default_v2
+        with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
+            driver=acceptance.NativeAcceptance(Path(temp))
+            for revision,env,reason in ((b'not-a-commit',{'GITHUB_RUN_ID':'1','GITHUB_RUN_ATTEMPT':'1'},'source commit'),
+                    (b'a'*40,{'GITHUB_RUN_ID':'1','GITHUB_RUN_ATTEMPT':''},'run and attempt identity')):
+                with self.subTest(reason=reason),patch.object(driver,'command',return_value=revision) as command, \
+                     patch.object(DockerHubMirror,'publish') as publish,patch.dict(os.environ,env):
+                    with self.assertRaisesRegex(ValueError,reason):
+                        driver.build_pr(default_v2(),object())
+                    self.assertEqual(command.call_count,1)
+                    publish.assert_not_called()
+
+    def test_PR_build_refuses_prerelease_predecessor_before_any_command(self):
+        from deploy.tests.test_update_automatic_release import default_v2, versioned
+        previous=versioned(default_v2(),'v1.55.0-rc.1')
+        previous['channel']='beta'
+        with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
+            driver=acceptance.NativeAcceptance(Path(temp))
+            with patch.object(driver,'command') as command:
+                with self.assertRaisesRegex(ValueError,'stable predecessor'):
+                    driver.build_pr(previous,object())
+                command.assert_not_called()
+
+    def test_upgrade_candidate_reaches_test_inputs_instead_of_transport_refusal(self):
+        with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
+            driver=acceptance.NativeAcceptance(Path(temp))
+            old={'version':'v1.55.0'}
+            target={'version':'v1.55.1'}
+            with patch.object(acceptance,'get_json',return_value={'tag_name':old['version']}), \
+                 patch.object(driver,'published',return_value=(old,Path(temp))), \
+                 patch.object(driver,'build_pr',return_value=target), \
+                 patch.object(acceptance.subprocess,'run',return_value=subprocess.CompletedProcess([],1)), \
+                 patch.dict(os.environ,{'GITHUB_RUN_ID':'123'}):
+                self.assertEqual(driver.run_tests('upgrade',object()),1)
+            inputs=json.loads((Path(temp)/'inputs.json').read_bytes())
+            self.assertEqual(inputs['candidates'][target['version']],target)
+            self.assertEqual(inputs['versions'],[old['version'],target['version']])
+            self.assertEqual(inputs['deployment_dirs'][target['version']],str(ROOT))
+
+    def test_producer_refusal_is_clear_and_nonzero_without_echoing_private_diagnostics(self):
+        with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
+            driver=acceptance.NativeAcceptance(Path(temp))
+            path=Path(temp)/'acceptance/fagi-upd-e2e-real-publisher-unit/v1.55.1/qualification/diagnostics.json'
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(dict(failure=dict(refusal_code='shipping_executor_unavailable'),
+                                            private_fixture='NEVER-ECHO-THIS')))
+            with patch.object(driver,'published',return_value=({},Path(temp))), \
+                 patch.object(acceptance.subprocess,'run',return_value=subprocess.CompletedProcess([],1)), \
+                 patch.dict(os.environ,{'GITHUB_RUN_ID':'123'}),patch.object(acceptance.sys,'stderr',io.StringIO()) as stderr:
+                self.assertEqual(driver.run_tests('a-b-c',None),1)
+            self.assertIn('shipping_executor_unavailable',stderr.getvalue())
+            self.assertNotIn('NEVER-ECHO',stderr.getvalue())
+            failure=json.loads((Path(temp)/'failure.json').read_bytes())
+            self.assertEqual(failure['status'],'failed')
+            self.assertEqual(failure['reason'],'shipping_executor_unavailable')
+            self.assertFalse(failure['qualification_evidence'])
+
+    def test_PR_chart_packages_real_source_with_private_version_metadata(self):
+        with tempfile.TemporaryDirectory(dir=Path.home()) as temp, OCIRegistry() as registry:
+            driver=acceptance.NativeAcceptance(Path(temp))
+            sha=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT).decode().strip()
+            chart=driver.historical_chart('v1.55.1',sha,registry,candidate=True)
+            repo=chart['chart'].split('/',3)[-1]
+            _,root,blobs=registry.repositories[repo]
+            manifest=json.loads(blobs[root][0].read_bytes())
+            payload=blobs[manifest['layers'][0]['digest']][0].read_bytes()
+            with tarfile.open(fileobj=io.BytesIO(payload),mode='r:gz') as package:
+                metadata=package.extractfile('futureagi/Chart.yaml').read().decode()
+                self.assertIn('version: 1.55.1\n',metadata)
+                self.assertIn('appVersion: "v1.55.1"\n',metadata)
+                template=package.extractfile('futureagi/templates/_helpers.tpl').read()
+                expected=subprocess.check_output(['git','show',sha+':deploy/helm/futureagi/templates/_helpers.tpl'],cwd=ROOT)
+                self.assertEqual(template,expected)
+            self.assertEqual(chart['version'],'1.55.1')
+            self.assertEqual(chart['digest'],root)
+
+    def test_full_shipping_factory_still_explicitly_refuses_unimplemented_suites(self):
+        from scripts import rehearse_update_compatibility as rehearsal
+        with self.assertRaisesRegex(rehearsal.ManualRelease,'shipping_executor_unavailable'):
+            rehearsal.shipping_factory()
 
     def test_execution_is_refused_outside_native_CI_before_provisioning(self):
         with patch.object(acceptance,'native_ci',return_value=False),patch.object(acceptance,'NativeAcceptance') as driver:
@@ -166,6 +333,26 @@ class AcceptancePlanTests(unittest.TestCase):
         self.assertIn("'native_backup.py'",source)
         self.assertNotIn('FUTURE_AGI_UPDATE_E2E=',source)
 
+    def test_workflow_mirror_is_separate_runner_only_pinned_and_before_PR_builds(self):
+        workflow=(ROOT/'.github/workflows/update-ci.yml').read_text()
+        job=workflow.split('\n  automatic-upgrade:\n',1)[1].split('\n  automatic-a-b-c:\n',1)[0]
+        self.assertIn('ONLY this disposable GitHub-hosted runner',job)
+        self.assertIn('REGISTRY_IMAGE: '+REGISTRY_IMAGE,job)
+        self.assertIn("config['registry-mirrors'] = ['http://"+MIRROR_HOST+"']",job)
+        self.assertIn('sudo systemctl restart docker.service',job)
+        self.assertIn('-p 127.0.0.1:5000:5000',job)
+        self.assertIn('shipping_executor_unavailable',job)
+        self.assertIn('pr-image-transport.json',job)
+        self.assertLess(job.index('name: Ephemeral runner-only'),job.index('uses: docker/setup-buildx-action'))
+        self.assertLess(job.index('uses: docker/setup-buildx-action'),job.index('acceptance.py --mode upgrade'))
+        abc=workflow.split('\n  automatic-a-b-c:\n',1)[1].split('\n  backup:\n',1)[0]
+        self.assertNotIn('daemon.json',abc)
+        plan=acceptance.plan('upgrade')
+        self.assertFalse(plan['image_transport']['proxy_mode'])
+        self.assertEqual(plan['image_transport']['registry_image'],REGISTRY_IMAGE)
+        self.assertEqual(len(plan['known_blockers']),1)
+        self.assertIn('shipping_executor_unavailable',plan['known_blockers'][0])
+
     def test_workflow_native_jobs_have_read_only_permissions_and_no_publication(self):
         text=(ROOT/'.github/workflows/update-ci.yml').read_text()
         for name in ('automatic-upgrade','automatic-a-b-c'):
@@ -234,6 +421,90 @@ class OCIRegistryTests(unittest.TestCase):
             (Path(temp)/'index.json').write_text(json.dumps({'manifests':[root,root]}))
             with self.assertRaises(ValueError):
                 OCIRegistry().add('futureagi/standalone','v1.56.0',temp)
+
+
+class DockerHubMirrorTests(unittest.TestCase):
+    def test_registry_API_streams_verified_bytes_and_publishes_identical_PR_and_version_tags(self):
+        uploads, manifests, calls = {}, {}, []
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self,*_args):
+                pass
+            def do_POST(self):
+                calls.append(('POST',self.path))
+                self.send_response(202)
+                self.send_header('Location','http://'+self.headers['Host']+self.path+'fixture-id?_state=private-upload-state')
+                self.send_header('Content-Length','0')
+                self.end_headers()
+            def do_PUT(self):
+                calls.append(('PUT',self.path))
+                body=self.rfile.read(int(self.headers['Content-Length']))
+                digest='sha256:'+hashlib.sha256(body).hexdigest()
+                if '/blobs/uploads/' in self.path:
+                    self.assert_upload_digest(body,digest)
+                    uploads[digest]=body
+                else:
+                    manifests[self.path.rsplit('/',1)[1]]=body
+                self.send_response(201)
+                self.send_header('Docker-Content-Digest',digest)
+                self.send_header('Content-Length','0')
+                self.end_headers()
+            def assert_upload_digest(self,body,digest):
+                from urllib.parse import parse_qs, urlsplit
+                if parse_qs(urlsplit(self.path).query)['digest'] != [digest]:
+                    raise AssertionError('upload digest not bound to bytes')
+        server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+        thread=threading.Thread(target=server.serve_forever,daemon=True); thread.start()
+        try:
+            with tempfile.TemporaryDirectory() as temp:
+                root,raw,layer=OCIRegistryTests().layout(temp)
+                pr_tag='pr-'+'a'*40+'-123-2'
+                mirror=DockerHubMirror()
+                with patch.object(mirror,'host','localhost:'+str(server.server_port)):
+                    digest=mirror.publish('futureagi/standalone','v1.55.1',pr_tag,temp)
+                self.assertEqual(digest,root['digest'])
+                self.assertEqual(manifests,{root['digest']:raw,pr_tag:raw,'v1.55.1':raw})
+                self.assertIn(layer['digest'],uploads)
+                self.assertEqual(len(uploads),2)
+                self.assertEqual(len(calls),7)
+                self.assertTrue(all(path.startswith('/v2/futureagi/standalone/') for _,path in calls))
+        finally:
+            server.shutdown(); thread.join(timeout=5); server.server_close()
+
+    def test_upload_location_cannot_redirect_to_hub_other_hosts_or_repository(self):
+        mirror=DockerHubMirror()
+        repo='futureagi/standalone'
+        path='/v2/'+repo+'/blobs/uploads/owned-id'
+        pin='sha256:'+'a'*64
+        for unsafe in ('https://'+mirror.host+path,'http://docker.io'+path,
+                       '//attacker.invalid'+path,path+'?token=external',
+                       '/v2/futureagi/frontend/blobs/uploads/owned-id',path+'#fragment',
+                       path+'/../../other',''):
+            with self.subTest(location=unsafe):
+                with self.assertRaisesRegex(ValueError,'upload location|upload query'):
+                    mirror.upload_path(unsafe,repo,pin)
+        safe=mirror.upload_path('http://'+mirror.host+path+'?_state=opaque',repo,pin)
+        self.assertTrue(safe.startswith(path+'?_state=opaque&digest=sha256%3A'))
+
+    def test_bad_PR_tag_or_layout_fails_before_any_registry_write(self):
+        mirror=DockerHubMirror()
+        with patch.object(mirror,'request') as request:
+            with self.assertRaisesRegex(ValueError,'PR transport tag'):
+                mirror.publish('futureagi/standalone','v1.55.1','latest','/not-read')
+            with tempfile.TemporaryDirectory() as temp:
+                _,_,layer=OCIRegistryTests().layout(temp)
+                (Path(temp)/'blobs/sha256'/layer['digest'][7:]).write_bytes(b'bad')
+                with self.assertRaisesRegex(ValueError,'OCI blob|OCI digest'):
+                    mirror.publish('futureagi/standalone','v1.55.1','pr-'+'a'*40+'-1-1',temp)
+            request.assert_not_called()
+
+    def test_registry_digest_mismatch_cannot_become_a_candidate_pin(self):
+        with tempfile.TemporaryDirectory() as temp:
+            OCIRegistryTests().layout(temp)
+            mirror=DockerHubMirror()
+            response={'location':'/v2/futureagi/standalone/blobs/uploads/owned-id'}
+            with patch.object(mirror,'request',side_effect=[response,{'docker-content-digest':'sha256:'+'0'*64}]):
+                with self.assertRaisesRegex(ValueError,'blob digest differs'):
+                    mirror.publish('futureagi/standalone','v1.55.1','pr-'+'a'*40+'-1-1',temp)
 
 
 if __name__ == '__main__':

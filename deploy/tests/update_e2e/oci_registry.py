@@ -1,8 +1,9 @@
-"""Read-only loopback distribution of CI-built OCI layouts; no registry push.
+"""Verified OCI layouts and private loopback-only CI image transport.
 
-BuildKit exports OCI directories. Only verified, reachable blobs are served;
-there are no upload/token/delete endpoints, credentials or external listener.
-This is transport for real PR builds, not an image/qualification substitute.
+OCIRegistry is the GET-only chart server. DockerHubMirror streams verified PR
+image exports to registry:2 on the ephemeral runner, never to an external
+registry. The daemon pulls through its mirror under the normal Docker Hub
+names to establish genuine RepoDigests. Neither transport certifies a product.
 """
 from __future__ import annotations
 
@@ -13,7 +14,13 @@ from pathlib import Path
 import re
 import shutil
 import threading
-from urllib.parse import urlsplit
+from http.client import HTTPConnection
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+# This writer is only for the ephemeral Actions runner, never Docker Hub.
+MIRROR_HOST = 'localhost:5000'
+REGISTRY_IMAGE = ('registry:2@sha256:'
+                  'a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373')
 
 DIGEST = re.compile(r'sha256:[0-9a-f]{64}')
 
@@ -128,3 +135,70 @@ class OCIRegistry:
             self.server.shutdown()
             self.thread.join(timeout=10)
             self.server.server_close()
+
+
+class DockerHubMirror:
+    """Push unmodified OCI bytes to a fixed local registry; no login or redirect.
+
+    A plain registry is sufficient: Docker tries configured Hub mirrors first,
+    then Hub on a mirror miss. Proxy mode would reject uploads. PR tags and the
+    version tag required by retained Compose refer to exactly the same manifest.
+    """
+    host = MIRROR_HOST
+
+    def request(self, method, path, *, body=None, headers=None, statuses=(200,)):
+        connection = HTTPConnection(self.host, timeout=300)
+        try:
+            connection.request(method, path, body=body, headers=headers or {})
+            response = connection.getresponse()
+            metadata = dict(response.getheaders())
+            # Never retain third-party bodies (or follow a Location redirect).
+            response.read(65536)
+            if response.status not in statuses:
+                raise RuntimeError('runner-local registry %s failed (HTTP %d)' % (method, response.status))
+            return {key.lower(): value for key, value in metadata.items()}
+        finally:
+            connection.close()
+
+    def upload_path(self, location, repository, digest):
+        url = urlsplit(location)
+        # Distribution can return an absolute Location. Do not send image data
+        # anywhere but the configured local listener, even on a bad response.
+        if (url.scheme not in ('', 'http') or url.netloc not in ('', self.host)
+                or url.fragment or not re.fullmatch(
+                    r'/v2/'+re.escape(repository)+r'/blobs/uploads/[a-zA-Z0-9-]+', url.path)):
+            raise ValueError('unsafe local registry upload location')
+        query = parse_qsl(url.query, keep_blank_values=True)
+        if any(key != '_state' for key, _value in query):
+            raise ValueError('unexpected local registry upload query')
+        return urlunsplit(('', '', url.path, urlencode(query+[('digest', digest)]), ''))
+
+    def publish(self, repository, version, pr_tag, directory):
+        if not re.fullmatch(r'pr-[0-9a-f]{40}-[0-9]+-[0-9]+', pr_tag):
+            raise ValueError('PR transport tag must bind revision, run and attempt')
+        verified = OCIRegistry()
+        digest = verified.add(repository, version, directory)
+        _tag, _root, blobs = verified.repositories[repository]
+        base = '/v2/'+repository
+        manifests = []
+        for pin, (path, media) in blobs.items():
+            if media.endswith(('image.index.v1+json', 'manifest.list.v2+json',
+                               'image.manifest.v1+json', 'manifest.v2+json')):
+                manifests.append((pin, path, media))
+                continue
+            response = self.request('POST', base+'/blobs/uploads/', headers={'Content-Length': '0'}, statuses=(202,))
+            upload = self.upload_path(response.get('location', ''), repository, pin)
+            with path.open('rb') as source:
+                result = self.request('PUT', upload, body=source, headers={
+                    'Content-Type': 'application/octet-stream', 'Content-Length': str(path.stat().st_size)}, statuses=(201,))
+            if result.get('docker-content-digest') != pin:
+                raise ValueError('local registry blob digest differs from OCI export')
+        # OCIRegistry visits parents before children; upload manifests bottom-up.
+        for pin, path, media in reversed(manifests):
+            refs = (pin, pr_tag, version) if pin == digest else (pin,)
+            for ref in refs:
+                result = self.request('PUT', base+'/manifests/'+ref, body=path.read_bytes(),
+                    headers={'Content-Type': media}, statuses=(201,))
+                if result.get('docker-content-digest') != pin:
+                    raise ValueError('local registry manifest digest differs from OCI export')
+        return digest
