@@ -329,6 +329,12 @@ const WorkspaceExecutionDetail = lazyWithRetry(
       "src/sections/simulate/environments/workspace/runs/WorkspaceExecutionDetail"
     ),
 );
+const WorkspaceImprovementDetail = lazyWithRetry(
+  () =>
+    import(
+      "src/sections/simulate/environments/workspace/improvements/WorkspaceImprovementDetail"
+    ),
+);
 const RunTestDetail = lazyWithRetry(
   () => import("src/pages/dashboard/run-tests/RunTestDetail"),
 );
@@ -1435,6 +1441,10 @@ export const dashboardRoutes = (
           path: "environments/:envId",
           element: <SimulateEnvironmentWorkspace />,
           children: [
+            {
+              path: "improvements/:fixId",
+              element: <WorkspaceImprovementDetail />,
+            },
             {
               path: "runs/:testId/:executionId",
               element: <WorkspaceExecutionDetail />,
