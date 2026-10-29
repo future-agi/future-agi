@@ -200,3 +200,27 @@ export function heldToRows(fix) {
   rows.push({ label: "Model", value: "unchanged" });
   return rows;
 }
+
+// The list's Result cell: the held-back result first, as the design shows it.
+export function listResult(fix) {
+  const winner = winnerOf(fix);
+  if (fix.state !== "ready" || !winner || !fix.plan) return null;
+  const { verdict } = winner;
+  const broke = verdict.must_pass_regressions.length;
+  if (verdict.held_back_pass_rate) {
+    const n = fix.plan.held_back;
+    const k = Math.round(verdict.held_back_pass_rate[1] * n);
+    return {
+      text: `Fixed ${k} of ${n} held back`,
+      note: broke ? `broke ${broke} held back` : "broke none held back",
+      broke,
+    };
+  }
+  const n = fix.plan.target;
+  const k = Math.round(verdict.target_pass_rate[1] * n);
+  return {
+    text: `Fixed ${k} of ${n} targets`,
+    note: broke ? `broke ${broke}` : "broke none",
+    broke,
+  };
+}
