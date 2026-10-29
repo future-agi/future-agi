@@ -9,6 +9,7 @@
 */
 import { runPlan } from "./proofs";
 import { gapCoverage, setupGaps } from "./setupGaps";
+import { staleScenariosOf } from "./runCauses";
 
 /**
  * { plan, runnable, ids, count, sitOut, sitOutGaps }
@@ -28,4 +29,39 @@ export const runScopeOf = (env, envState, { plan = null, gaps = null } = {}) => 
   const sitOutGaps = all.filter((g) => (g.status === "optional" || g.status === "skipped")
     && (g.coverage || []).some((id) => sitOutIds.has(id))).length;
   return { plan: p, runnable: run.length, ids, count: ids.length, sitOut: sitOutIds.size, sitOutGaps };
+};
+
+const top = (list) => {
+  const n = {};
+  list.forEach((x) => { n[x] = (n[x] || 0) + 1; });
+  return Object.entries(n).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+};
+
+/**
+ * What the run plan counts before it resolves IDs (roadmap runs.md "Scenario
+ * scope"): eligible — what runs; stale — runs, counts toward no decision;
+ * blocked — can't stage on this version; excluded — archived, sitting out on
+ * an open question, or outside the selection. Each with its main reason.
+ */
+export const scopeBreakdownOf = (env, envState, { plan = null, gaps = null, only = null, agentLabel = null } = {}) => {
+  const s = runScopeOf(env, envState, { plan, gaps });
+  const wanted = only?.length ? new Set(only) : null;
+  const runRows = wanted ? s.plan.run.filter((sc) => wanted.has(sc.id)) : s.plan.run.filter((sc) => s.ids.includes(sc.id));
+  const blocked = (s.plan.skipped || []).filter((sc) => !wanted || wanted.has(sc.id));
+  const shelved = (envState?.scenarios || []).filter((sc) => (sc.archived || sc.retired) && !sc.proposed && (!wanted || wanted.has(sc.id))).length;
+  const unselected = wanted ? Math.max(0, s.plan.poolSize - runRows.length - blocked.length) : 0;
+  const sitOut = wanted ? 0 : s.sitOut;
+  const stale = Object.keys(staleScenariosOf(env, envState, runRows, agentLabel) || {}).length;
+  return {
+    eligible: runRows.length,
+    stale,
+    blocked: blocked.length,
+    blockedWhy: top(blocked.map((sc) => String(sc.skipReason || "").split(" — ")[0])),
+    excluded: shelved + sitOut + unselected,
+    excludedWhy: [
+      unselected && `${unselected} outside the selection`,
+      sitOut && `${sitOut} waiting on ${s.sitOutGaps === 1 ? "an open question" : `${s.sitOutGaps} open questions`}`,
+      shelved && `${shelved} archived`,
+    ].filter(Boolean).join(", "),
+  };
 };

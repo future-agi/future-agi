@@ -100,6 +100,8 @@ import ShareMenu from "./ShareMenu";
 import CopyIdButton from "../components/CopyIdButton";
 import CopyCommandButton from "../components/CopyCommandButton";
 import HandoffTimeline from "./HandoffTimeline";
+import { trialArtifactsOf } from "../_mock/trialEvidence";
+import { CheckSource, DisputeNotes, TrialArtifacts } from "./TrialEvidence";
 import ApprovalTimeline from "./ApprovalTimeline";
 import { approvalOf } from "../_mock/approvals";
 import ImprovementRunStrip from "./ImprovementRunStrip";
@@ -2907,6 +2909,51 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                         }) ? (
                           <ApprovalTimeline env={env} task={openTask} />
                         ) : null,
+                        /* Artifacts recorded or not, a failed check's source
+                           and dispute notes. */
+                        simEvidence: (
+                          <Stack spacing={1.5} sx={{ pb: 2 }}>
+                            <TrialArtifacts
+                              items={trialArtifactsOf({
+                                task: openTask,
+                                env,
+                                envState,
+                                stage: "voice",
+                                conversational: true,
+                                voice: true,
+                              })}
+                              onOpen={() => {}}
+                              hideOpen
+                            />
+                            {["failed", "flaky", "unmeasured"].includes(
+                              openTask.status,
+                            ) && (
+                              <Stack spacing={1} sx={{ px: 2 }}>
+                                <CheckSource
+                                  task={openTask}
+                                  env={env}
+                                  envState={envState}
+                                  run={
+                                    (envState.runs || []).find(
+                                      (r) => r.id === runId,
+                                    ) || null
+                                  }
+                                />
+                                <DisputeNotes
+                                  envState={envState}
+                                  patch={patch}
+                                  runId={runId}
+                                  task={openTask}
+                                  score={
+                                    openTask.repeats > 1
+                                      ? `${openTask.passes}/${openTask.repeats}`
+                                      : openTask.status
+                                  }
+                                />
+                              </Stack>
+                            )}
+                          </Stack>
+                        ),
                         simHandoffs:
                           membersOf(envState?.agent).length > 1 ? (
                             <HandoffTimeline

@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   Box,
   Stack,
@@ -61,6 +62,15 @@ export default function RlContractPanel({
 }) {
   const episode = episodeContract(env, envState);
   const rules = useMemo(() => rulesOf(env, envState), [env, envState]);
+  /* Opened from a failed check (?rule=R2): that rule, scrolled to and lit. */
+  const [params] = useSearchParams();
+  const litRule = params.get("rule");
+  useEffect(() => {
+    if (!litRule) return;
+    document
+      .getElementById(`rule-${litRule}`)
+      ?.scrollIntoView({ block: "center" });
+  }, [litRule]);
   const coverage = useMemo(
     () => ruleCoverageOf(rules, subGoalCatalogOf(env, envState)),
     [rules, env, envState],
@@ -143,35 +153,40 @@ export default function RlContractPanel({
             }
           >
             {shownRules.map((r) => (
-              <RuleRow
+              <Box
                 key={r.id}
-                rule={r}
-                changedIn={worldShown(r.changedIn)}
-                coverage={coverage.get(r.id)}
-                onGo={onGo}
-                onEdit={
-                  canEdit
-                    ? () =>
-                        setEditing({
-                          target: "rule",
-                          op: "edit",
-                          id: r.id,
-                          text: r.text,
-                        })
-                    : null
-                }
-                onRemove={
-                  canEdit
-                    ? () =>
-                        setEditing({
-                          target: "rule",
-                          op: "remove",
-                          id: r.id,
-                          text: r.text,
-                        })
-                    : null
-                }
-              />
+                id={`rule-${r.id}`}
+                sx={{ bgcolor: r.id === litRule ? "action.selected" : null }}
+              >
+                <RuleRow
+                  rule={r}
+                  changedIn={worldShown(r.changedIn)}
+                  coverage={coverage.get(r.id)}
+                  onGo={onGo}
+                  onEdit={
+                    canEdit
+                      ? () =>
+                          setEditing({
+                            target: "rule",
+                            op: "edit",
+                            id: r.id,
+                            text: r.text,
+                          })
+                      : null
+                  }
+                  onRemove={
+                    canEdit
+                      ? () =>
+                          setEditing({
+                            target: "rule",
+                            op: "remove",
+                            id: r.id,
+                            text: r.text,
+                          })
+                      : null
+                  }
+                />
+              </Box>
             ))}
           </Stack>
         </SectionCard>

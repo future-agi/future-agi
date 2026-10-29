@@ -32,6 +32,7 @@ const PIN_EFFECT = {
   eval: "re-graded to one set of evaluations",
   simulator: "changed until re-run",
   toolEnv: "rechecked on scenarios calling those tools",
+  limits: "a trial may end differently at its timeout or turn limit",
 };
 
 /* Each part in plain words. The internal labels underneath (world, set,
@@ -47,7 +48,7 @@ const PIN_LABEL = {
 };
 const pinLabel = (r) => PIN_LABEL[r.id] || r.label;
 const pinValue = (r) => {
-  if (r.id === "simulator")
+  if (r.id === "simulator" || r.id === "limits")
     return r.same
       ? `same${r.values[0] ? ` · ${r.values[0]}` : ""}`
       : r.values.join(" → ");

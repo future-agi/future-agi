@@ -15,6 +15,7 @@ const TABS = {
   GRAPH: "graph",
   HANDOFFS: "handoffs",
   APPROVALS: "approvals",
+  EVIDENCE: "evidence",
 };
 
 const PATH_VIEW_MODE = {
@@ -91,8 +92,22 @@ const VoiceLeftPanel = ({ data, scenarioId, embedded = false }) => {
         value: TABS.APPROVALS,
         icon: "solar:check-read-linear",
       });
+    /* What the call recorded and didn't, and a failed check's source and
+       dispute notes (simulate only). */
+    if (isSimulate && data?.simEvidence)
+      t.push({
+        label: "Evidence",
+        value: TABS.EVIDENCE,
+        icon: "solar:folder-with-files-linear",
+      });
     return t;
-  }, [showPathTabs, isSimulate, data?.simHandoffs, data?.simApprovals]);
+  }, [
+    showPathTabs,
+    isSimulate,
+    data?.simHandoffs,
+    data?.simApprovals,
+    data?.simEvidence,
+  ]);
 
   const isTranscriptTab = currentTab === TABS.TRANSCRIPT;
   const isPathTab = currentTab === TABS.CHECKLIST || currentTab === TABS.GRAPH;
@@ -198,6 +213,9 @@ const VoiceLeftPanel = ({ data, scenarioId, embedded = false }) => {
             </ShowComponent>
             <ShowComponent condition={currentTab === TABS.APPROVALS}>
               {data?.simApprovals}
+            </ShowComponent>
+            <ShowComponent condition={currentTab === TABS.EVIDENCE}>
+              {data?.simEvidence}
             </ShowComponent>
             <ShowComponent condition={isPathTab && showPathTabs}>
               <PathAnalysisView

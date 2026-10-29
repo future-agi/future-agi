@@ -80,7 +80,7 @@ import RunFromCodeDrawer from "./RunFromCodeDrawer";
 import { managedOf, managedRepoOf } from "../_mock/envManaged";
 import SetupGapsPanel from "./SetupGapsPanel";
 import { runPlan } from "../_mock/proofs";
-import { runScopeOf } from "../_mock/runScope";
+import { runScopeOf, scopeBreakdownOf } from "../_mock/runScope";
 import { resolveEval } from "../_mock/evals";
 import { runSizeOf, parallelOf } from "../_mock/runStream";
 import IssueReturnBanner from "../errorFeed/IssueReturnBanner";
@@ -710,7 +710,16 @@ export default function EnvironmentWorkspace() {
   const launchRun = (
     scenarioIds,
     trials,
-    { agent, cap, alertAt, continues, snapshot, envVersion, candidate } = {},
+    {
+      agent,
+      cap,
+      alertAt,
+      continues,
+      snapshot,
+      envVersion,
+      candidate,
+      limits,
+    } = {},
   ) => {
     const runId = protoRunId(envId, Date.now().toString(36));
     let url = paths.dashboard.simulate.simulationRun(envId, runId);
@@ -737,6 +746,11 @@ export default function EnvironmentWorkspace() {
     if (envVersion) params.set("env", envVersion);
     /* A code agent's commit or uploaded archive, picked in the run plan. */
     if (candidate) params.set("candidate", candidate);
+    /* The plan's limits — the seed is fixed by the run itself. */
+    if (limits?.trialTimeout)
+      params.set("timeout", String(limits.trialTimeout));
+    if (limits?.runDeadline) params.set("deadline", String(limits.runDeadline));
+    if (limits?.stepLimit) params.set("steps", String(limits.stepLimit));
     const qs = params.toString();
     if (qs) url += `?${qs}`;
     navigate(url);
@@ -761,7 +775,14 @@ export default function EnvironmentWorkspace() {
       return setDraftAsk({ scenarioIds, trials, also });
     return checkRunFit(() => setRunPlanReq({ scenarioIds, trials, also }));
   };
-  const startPlannedRun = ({ attempts, versions, candidate, cap, alertAt }) => {
+  const startPlannedRun = ({
+    attempts,
+    versions,
+    candidate,
+    cap,
+    alertAt,
+    limits,
+  }) => {
     const req = runPlanReq;
     setRunPlanReq(null);
     if (!req) return;
@@ -782,6 +803,7 @@ export default function EnvironmentWorkspace() {
       snapshot: req.snapshot,
       envVersion: req.envVersion,
       candidate,
+      limits,
     });
   };
   const startRun = (scenarioIds, trials, opts = {}) =>
@@ -2763,6 +2785,21 @@ export default function EnvironmentWorkspace() {
           alsoCount={runPlanReq?.also?.length || 0}
           initialVersion={runPlanReq?.agent}
           alsoScopes={alsoScopes}
+          breakdown={
+            runPlanReq && !runPlanReq.continues && !runPlanReq.snapshot
+              ? scopeBreakdownOf(worldEnv, envState, {
+                  plan,
+                  gaps: allGaps,
+                  only: runPlanReq.scenarioIds,
+                  agentLabel: runPlanReq.agent || null,
+                })
+              : null
+          }
+          seedFrom={
+            runPlanReq?.snapshot
+              ? `run ${(envState.runs || []).find((r) => r.id === runPlanReq.snapshot)?.ordinal ?? ""}`.trim()
+              : null
+          }
           scopeLead={
             runPlanReq?.continues
               ? `Continues run ${(envState.runs || []).find((r) => r.id === runPlanReq.continues)?.ordinal ?? ""} — only the scenarios its limit stopped from starting. The ones that finished aren't run or charged again.`

@@ -93,6 +93,8 @@ import { monthUsage } from "../_mock/usageLedger";
 import { clickable, focusRing } from "../components/clickable";
 import { scenarioTitle } from "../_mock/scenarios";
 import { approvalOf } from "../_mock/approvals";
+import { actorsInRun, matchesTrialFilters } from "../_mock/trialFilters";
+import TrialFilters from "./TrialFilters";
 
 // Flaky counts and results read as neutral words — amber never colours text.
 const FLAKY = "text.primary";
@@ -553,6 +555,8 @@ function LiveRun() {
   );
   const [secretAsk, setSecretAsk] = useState(false);
   const [secretsOk, setSecretsOk] = useState(false);
+  /* The scenario list's filters — scenario, status, failure domain, actor. */
+  const [trialFilter, setTrialFilter] = useState({});
 
   /*
     A scenario paused on a clarifying question (AC-15.13). Long runs are left
@@ -907,6 +911,13 @@ function LiveRun() {
         pendingMember?.ordinal ??
         Math.max(0, ...(envState.runs || []).map((r) => r.ordinal || 0)) + 1,
       seed: replaySeed || runId,
+      /* The run plan's limits, as it started. */
+      limits: {
+        trialTimeout: Number(params.get("timeout")) || 10,
+        runDeadline: Number(params.get("deadline")) || 0,
+        turnLimit: envTurnLimitOf(envState),
+        stepLimit: Number(params.get("steps")) || null,
+      },
       twinWrites: null,
       ...(pendingMember && { pending: false }),
     });
@@ -1426,6 +1437,15 @@ function LiveRun() {
   const staleLine = `${staleKinds.map(([k, n]) => `${n} ${k === "outdated" ? "outdated" : "re-check"}`).join(" and ")} ${staleCount === 1 ? "scenario" : "scenarios"}`;
   /* Pulled scenarios settle into their own group in the left column. */
   const pulledDone = tasks.filter((t) => t.pulled && t.status === "unmeasured");
+  const listed = tasks.filter((t) => !pulledDone.includes(t));
+  const shownTasks = listed.filter((t) =>
+    matchesTrialFilters(
+      t,
+      trialFilter,
+      t.status !== "notStarted" &&
+        !!approvalOf({ env, envState, task: t })?.pending,
+    ),
+  );
 
   /* Tools the agent calls that this world can't answer — the run was started
      anyway, and scenarios that reach for them come back not measured. */
@@ -1924,23 +1944,44 @@ function LiveRun() {
             display: { xs: "none", md: "block" },
           }}
         >
-          <ColumnLabel sticky>Scenarios ({stats.total})</ColumnLabel>
+          <Box
+            sx={{
+              position: "sticky",
+              top: 0,
+              zIndex: 1,
+              bgcolor: "background.default",
+            }}
+          >
+            <ColumnLabel>Scenarios ({stats.total})</ColumnLabel>
+            <TrialFilters
+              value={trialFilter}
+              onChange={setTrialFilter}
+              actors={actorsInRun(tasks)}
+              shown={shownTasks.length}
+              total={listed.length}
+            />
+          </Box>
+          {shownTasks.length === 0 && listed.length > 0 && (
+            <Typography
+              sx={{ px: 2, py: 1.5, typography: "s3", color: "text.tertiary" }}
+            >
+              No scenario matches these filters.
+            </Typography>
+          )}
           <Stack
             divider={
               <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
             }
           >
-            {tasks
-              .filter((t) => !pulledDone.includes(t))
-              .map((t) => (
-                <TaskRow
-                  key={t.id}
-                  task={t}
-                  active={t.id === focusId}
-                  stale={staleIds?.[t.id] || null}
-                  onClick={() => setFocusId(t.id)}
-                />
-              ))}
+            {shownTasks.map((t) => (
+              <TaskRow
+                key={t.id}
+                task={t}
+                active={t.id === focusId}
+                stale={staleIds?.[t.id] || null}
+                onClick={() => setFocusId(t.id)}
+              />
+            ))}
           </Stack>
           {pulledDone.length > 0 && (
             <>

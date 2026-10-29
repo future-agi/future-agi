@@ -221,6 +221,10 @@ export const runPinsOf = (run, env, envState) => ({
   surface: run?.surface || env?.surface || null,
   fidelity: run?.runFidelity || runFidelityOf(env, envState),
   trials: run?.trials || run?.repeats || 1,
+  /* The plan's timeouts and turn/step limits — runs from before they were recorded read none. */
+  limits: run?.limits
+    ? [`${run.limits.trialTimeout} min`, run.limits.runDeadline ? `${run.limits.runDeadline} min run` : null, `${run.limits.turnLimit} turns`, run.limits.stepLimit ? `${run.limits.stepLimit} steps` : null].filter(Boolean).join(" · ")
+    : null,
   /* Recorded, not compared: a new key isn't a new test. */
   secrets: run?.secrets ? Object.keys(run.secrets).length : null,
 });
@@ -289,6 +293,8 @@ export const heldFixed = (a, b, env, envState) => {
     { id: "eval", label: "Eval version", a: pa.eval, b: pb.eval, hard: true },
     { id: "simulator", label: "Simulated caller", a: pa.simulator, b: pb.simulator, hard: true },
     { id: "toolEnv", label: "Tool fidelity", a: pa.toolEnv, b: pb.toolEnv, hard: true },
+    /* Soft: a different timeout or turn limit can end a trial differently, but it's still the same test. */
+    ...(pa.limits && pb.limits ? [{ id: "limits", label: "Timeouts and limits", a: pa.limits, b: pb.limits, hard: false }] : []),
   ].map((r) => ({ ...r, same: r.a === r.b }));
   const broken = rows.filter((r) => !r.same && r.hard);
   return { rows, comparable: !broken.length, broken, agent: { a: pa.agent, b: pb.agent } };

@@ -33,6 +33,8 @@ import HandoffTimeline from "./HandoffTimeline";
 import ApprovalTimeline from "./ApprovalTimeline";
 import { approvalOf } from "../_mock/approvals";
 import { membersOf } from "../_mock/improvementPolicy";
+import { trialArtifactsOf } from "../_mock/trialEvidence";
+import { CheckSource, DisputeNotes, TrialArtifacts } from "./TrialEvidence";
 
 /**
  * One call, in full.
@@ -103,6 +105,8 @@ export default function CallDrawer({
   onPrev,
   onNext,
   verdict = null,
+  patch = null,
+  runId = null,
 }) {
   /* Opened from a diagnosis that named a step, so open on the trajectory with
      that step lit rather than on the transcript with the reader hunting.
@@ -295,9 +299,9 @@ export default function CallDrawer({
               {env && approvalOf({ env, envState, task }) && (
                 <Tab value="approvals" label="Approvals" />
               )}
-              {envState?.twinBacking && (
-                <Tab value="twin" label="World state" />
-              )}
+              <Tab value="twin" label="World state" />
+              <Tab value="artifacts" label="Artifacts" />
+              <Tab value="cost" label="Cost" />
               {envState?.twinBacking && (
                 <Tab value="requests" label="Raw requests" />
               )}
@@ -445,6 +449,32 @@ export default function CallDrawer({
                     supporting, and the verdict they roll up to — then the
                     reference path step by step. */}
                 <SubGoalRollup task={task} env={env} envState={envState} />
+                {/* A failed check: where it comes from, and a place to
+                    dispute it without rewriting the score. */}
+                {["failed", "flaky", "unmeasured"].includes(task.status) && (
+                  <>
+                    <CheckSource
+                      task={task}
+                      env={env}
+                      envState={envState}
+                      run={
+                        (envState?.runs || []).find((r) => r.id === runId) ||
+                        null
+                      }
+                    />
+                    <DisputeNotes
+                      envState={envState}
+                      patch={patch}
+                      runId={runId}
+                      task={task}
+                      score={
+                        task.repeats > 1
+                          ? `${task.passes}/${task.repeats}`
+                          : task.status
+                      }
+                    />
+                  </>
+                )}
                 <Typography
                   sx={{
                     typography: "s3",
@@ -576,6 +606,37 @@ export default function CallDrawer({
 
             {pane === "twin" && envState?.twinBacking && (
               <TwinStateTimeline envState={envState} task={task} />
+            )}
+            {/* Missing evidence is said, not hidden. */}
+            {pane === "twin" && !envState?.twinBacking && (
+              <Typography
+                sx={{ p: 2, typography: "s2", color: "text.tertiary" }}
+              >
+                Not recorded — this environment isn&apos;t backed by a cloned
+                service, so state changes aren&apos;t captured. Tool calls in
+                Trace show what the agent sent and what came back.
+              </Typography>
+            )}
+            {pane === "artifacts" && (
+              <TrialArtifacts
+                items={trialArtifactsOf({
+                  task,
+                  env,
+                  envState,
+                  stage,
+                  conversational,
+                  voice,
+                })}
+                onOpen={setPane}
+              />
+            )}
+            {pane === "cost" && (
+              <TraceWaterfall
+                task={task}
+                env={env}
+                envState={envState}
+                showCost
+              />
             )}
 
             {pane === "requests" && envState?.twinBacking && (
@@ -1001,6 +1062,9 @@ export default function CallDrawer({
 
 CallDrawer.propTypes = {
   showCost: PropTypes.bool,
+  /* Saves a dispute note on this trial's result. */
+  patch: PropTypes.func,
+  runId: PropTypes.string,
   task: PropTypes.object,
   env: PropTypes.object,
   envState: PropTypes.object,

@@ -35,6 +35,15 @@ import {
 } from "../_mock/pricing";
 import { membersOf } from "../_mock/improvementPolicy";
 import { catalogueOfEnv, envReleaseOf } from "../_mock/catalogue";
+import {
+  RUN_DEADLINES,
+  STEP_LIMITS,
+  TRIAL_TIMEOUTS,
+  limitsLine,
+  minutesLabel,
+  runLimitsOf,
+} from "../_mock/runLimits";
+import { currentEnvVersion } from "../_mock/versions";
 
 /*
   The run plan: what a run will do and what it can cost, confirmed before
@@ -130,6 +139,8 @@ export default function RunPlanDialog({
   initialVersion,
   scopeLead,
   alsoScopes = [],
+  breakdown = null,
+  seedFrom = null,
 }) {
   const voice = ["voice", "multi"].includes(env?.surface);
   const [attempts, setAttempts] = useState(initialAttempts || 3);
@@ -145,6 +156,8 @@ export default function RunPlanDialog({
   const [capTouched, setCapTouched] = useState(false);
   const [alertAt, setAlertAt] = useState(WORKSPACE_POLICY.alertAt);
   const [showBreakdown, setShowBreakdown] = useState(false);
+  const [limits, setLimits] = useState(() => runLimitsOf(env, envState));
+  const [showLimits, setShowLimits] = useState(false);
 
   /* Each opening starts from the header's attempts and the current version. */
   useEffect(() => {
@@ -160,6 +173,8 @@ export default function RunPlanDialog({
     setCapTouched(false);
     setAlertAt(WORKSPACE_POLICY.alertAt);
     setShowBreakdown(false);
+    setLimits(runLimitsOf(env, envState));
+    setShowLimits(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -300,6 +315,7 @@ export default function RunPlanDialog({
           {[
             env?.name || "Environment",
             voice ? "Voice" : "Text",
+            `environment ${currentEnvVersion(env, envState)?.label || "v1"}`,
             runLocation
               ? runLocation === "hosted"
                 ? "hosted"
@@ -448,6 +464,33 @@ export default function RunPlanDialog({
             </Box>
           </Stack>
 
+          {/* ── what's in and out, counted before any ID is resolved ── */}
+          {breakdown && (
+            <Typography
+              sx={{
+                typography: "s3",
+                color: "text.tertiary",
+                mt: -1,
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              {[
+                `${breakdown.eligible} eligible`,
+                breakdown.stale
+                  ? `${breakdown.stale} stale — they run but count toward no decision`
+                  : null,
+                breakdown.blocked
+                  ? `${breakdown.blocked} blocked${breakdown.blockedWhy ? ` (${breakdown.blockedWhy.replace(/\.$/, "")})` : ""}`
+                  : null,
+                breakdown.excluded
+                  ? `${breakdown.excluded} excluded (${breakdown.excludedWhy})`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </Typography>
+          )}
+
           {snapshotPick && (
             <CandidateSourcePicker
               agent={envState?.agent}
@@ -458,6 +501,153 @@ export default function RunPlanDialog({
               sx={{ px: 0, py: 0, borderTop: "none", mt: -1 }}
             />
           )}
+
+          {/* ── seed and limits: one line; each one on request ── */}
+          <Box>
+            <Stack
+              direction="row"
+              alignItems="baseline"
+              justifyContent="space-between"
+              gap={2}
+            >
+              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+                Seed and limits
+              </Typography>
+              <Typography
+                noWrap
+                sx={{
+                  typography: "s3",
+                  color: "text.tertiary",
+                  minWidth: 0,
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {limitsLine(limits, {
+                  voice,
+                  seed: seedFrom ? `seed of ${seedFrom}` : "new seed",
+                })}
+              </Typography>
+            </Stack>
+            <Button
+              size="small"
+              onClick={() => setShowLimits((v) => !v)}
+              aria-expanded={showLimits}
+              endIcon={
+                <Iconify
+                  icon={
+                    showLimits
+                      ? "solar:alt-arrow-up-linear"
+                      : "solar:alt-arrow-down-linear"
+                  }
+                  width={14}
+                />
+              }
+              sx={{ px: 0.5, ml: -0.5, mt: 0.25, color: "text.secondary" }}
+            >
+              {showLimits ? "Hide limits" : "Change limits"}
+            </Button>
+            <Collapse in={showLimits}>
+              <Box sx={{ mt: 0.5 }}>
+                <Row
+                  label="Seed"
+                  detail={
+                    seedFrom
+                      ? `The same draws as ${seedFrom}, so its scenarios meet the same callers and data`
+                      : "Fixed when the run starts and saved with it — a re-run can reuse it"
+                  }
+                  value={seedFrom ? `Same as ${seedFrom}` : "New"}
+                  muted
+                />
+                <Row
+                  label={voice ? "Longest call" : "Per-trial timeout"}
+                  detail={`A ${unit} still going then stops and fails as timed out`}
+                >
+                  <TextField
+                    select
+                    size="small"
+                    value={limits.trialTimeout}
+                    onChange={(e) =>
+                      setLimits((l) => ({
+                        ...l,
+                        trialTimeout: Number(e.target.value),
+                      }))
+                    }
+                    inputProps={{ "aria-label": "Per-trial timeout" }}
+                    sx={{ width: 120, ...fieldSx }}
+                  >
+                    {TRIAL_TIMEOUTS.map((m) => (
+                      <MenuItem key={m} value={m}>
+                        {minutesLabel(m)}
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                </Row>
+                <Row
+                  label="Whole-run deadline"
+                  detail={`No new ${unit}s start after it; evidence is kept`}
+                >
+                  <TextField
+                    select
+                    size="small"
+                    value={limits.runDeadline}
+                    onChange={(e) =>
+                      setLimits((l) => ({
+                        ...l,
+                        runDeadline: Number(e.target.value),
+                      }))
+                    }
+                    inputProps={{ "aria-label": "Whole-run deadline" }}
+                    sx={{ width: 120, ...fieldSx }}
+                  >
+                    {RUN_DEADLINES.map((m) => (
+                      <MenuItem key={m} value={m}>
+                        {minutesLabel(m)}
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                </Row>
+                <Row
+                  label="Turn limit"
+                  detail="The environment's limit — change it in Settings"
+                  value={`${limits.turnLimit} turns`}
+                  muted
+                />
+                {limits.stepLimit ? (
+                  <Row
+                    label="Tool-step limit"
+                    detail="Tool calls one trial may make before it stops"
+                  >
+                    <TextField
+                      select
+                      size="small"
+                      value={limits.stepLimit}
+                      onChange={(e) =>
+                        setLimits((l) => ({
+                          ...l,
+                          stepLimit: Number(e.target.value),
+                        }))
+                      }
+                      inputProps={{ "aria-label": "Tool-step limit" }}
+                      sx={{ width: 120, ...fieldSx }}
+                    >
+                      {STEP_LIMITS.map((m) => (
+                        <MenuItem key={m} value={m}>
+                          {`${m} steps`}
+                        </MenuItem>
+                      ))}
+                    </TextField>
+                  </Row>
+                ) : (
+                  <Row
+                    label="Tool-step limit"
+                    detail={`${envState?.agent?.name || "This agent"} runs its tools on its own platform, so steps can't be stopped from here`}
+                    value="Not enforced"
+                    muted
+                  />
+                )}
+              </Box>
+            </Collapse>
+          </Box>
 
           {/* ── what it costs: one number; the breakdown on request ── */}
           <Box>
@@ -749,6 +939,7 @@ export default function RunPlanDialog({
                   cap: effectiveCap,
                   alertAt,
                   estimate,
+                  limits,
                 })
               }
             >
@@ -789,4 +980,8 @@ RunPlanDialog.propTypes = {
   scopeLead: PropTypes.string,
   /* The other environments a run group starts: [{ env, envState, scenarios, evals }]. */
   alsoScopes: PropTypes.array,
+  /* { eligible, stale, blocked, blockedWhy, excluded, excludedWhy } — scopeBreakdownOf. */
+  breakdown: PropTypes.object,
+  /* "run 3" when the run reuses an earlier run's seed. */
+  seedFrom: PropTypes.string,
 };
