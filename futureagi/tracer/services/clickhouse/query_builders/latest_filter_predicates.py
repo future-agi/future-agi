@@ -451,12 +451,18 @@ def _normalize_value(
         str(config.get("filter_op") or config.get("filterOp") or "")
     )
     raw = config.get("filter_value", config.get("filterValue"))
+    empty_is_value = coerce is _strict_text and operation in {
+        "equals",
+        "not_equals",
+        "in",
+        "not_in",
+    }
     if operation in {"is_null", "is_not_null"}:
         return operation, None
     if operation in {"in", "not_in"}:
         if not isinstance(raw, list) or not raw:
             raise UnsupportedFilterShapeError(f"{operation} requires values")
-        if any(value is None or value == "" for value in raw):
+        if any(value is None or (value == "" and not empty_is_value) for value in raw):
             raise UnsupportedFilterShapeError(f"{operation} requires non-empty values")
         return operation, tuple(coerce(value) for value in raw)
     if operation in {"between", "not_between"}:
@@ -465,7 +471,7 @@ def _normalize_value(
         if any(value is None or value == "" for value in raw):
             raise UnsupportedFilterShapeError(f"{operation} requires non-empty values")
         return operation, tuple(coerce(value) for value in raw)
-    if raw is None or raw == "":
+    if raw is None or (raw == "" and not empty_is_value):
         raise UnsupportedFilterShapeError(f"{operation} requires a value")
     return operation, coerce(raw)
 
@@ -489,29 +495,24 @@ def _missing_typed_map_default_can_match(
 
     if operation == "is_not_null":
         return False
-    if map_column == "span_attr_str":
-        # Value normalization rejects empty operands for these operations, so
-        # the missing-key default (empty string) cannot satisfy them. Keep
-        # ordering/range operations conservative because their collation
-        # semantics are delegated to ClickHouse.
-        return operation not in {
-            "equals",
-            "in",
-            "contains",
-            "starts_with",
-            "ends_with",
-        }
-    if map_column not in {"span_attr_num", "span_attr_bool"}:
+    if map_column not in {"span_attr_str", "span_attr_num", "span_attr_bool"}:
         return True
 
     bound_value_param = value_param or f"latest_filter_param_{index}"
     value = params.get(bound_value_param)
-    default: object = 0.0 if map_column == "span_attr_num" else False
+    default = {"span_attr_str": "", "span_attr_num": 0.0, "span_attr_bool": False}[
+        map_column
+    ]
     try:
         if operation == "equals":
             return default == value
         if operation == "in":
             return default in value
+        if map_column == "span_attr_str":
+            # Empty equality/membership can match a missing lookup's default.
+            # Other accepted text needles are non-empty; keep text ordering
+            # conservative because ClickHouse decides its collation.
+            return operation not in {"contains", "starts_with", "ends_with"}
         if operation == "between":
             low = params[f"{bound_value_param}_low"]
             high = params[f"{bound_value_param}_high"]
@@ -924,7 +925,7 @@ def _mixed_typed_attribute_plan(
             raise UnsupportedFilterShapeError(
                 "attribute value type must be string, number, or boolean"
             )
-        if raw_value is None or raw_value == "":
+        if raw_value is None or (raw_value == "" and storage_type != "string"):
             raise UnsupportedFilterShapeError(f"{operation} requires non-empty values")
         grouped_values.setdefault(storage_type, []).append(raw_value)
 
@@ -1062,8 +1063,8 @@ def _mixed_typed_attribute_plan(
         # The picker adds storage provenance and suffixed parameters, but its
         # positive membership semantics are otherwise identical to scalar IN.
         # Narrow each storage branch by value unless a missing Map key's
-        # physical default (numeric zero or false) could satisfy it. Unsafe
-        # branches retain key presence, so a mixed picker stays exhaustive
+        # physical default (empty text, numeric zero or false) could satisfy it.
+        # Unsafe branches retain key presence, so a mixed picker stays exhaustive
         # without forcing every safe long-string branch back to key-only.
         raw_graph_value_witness_predicate = f"({' OR '.join(typed_graph_witnesses)})"
         raw_witness_rank = 0
