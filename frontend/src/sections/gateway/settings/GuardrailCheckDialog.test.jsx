@@ -75,3 +75,15 @@ describe("GuardrailConfigTab -> dialog (TH-3989 repro)", () => {
     expect(screen.queryByText("Configure: Presidio Pii")).toBeNull();
   });
 });
+
+describe("GuardrailCheckDialog action options (#3232)", () => {
+  it("defaults saved mask action to log and displays helper text", () => {
+    renderDialog({
+      initialData: { action: "mask" },
+    });
+
+    expect(
+      screen.getByText("Previously saved as 'mask', which runs as 'log'."),
+    ).toBeInTheDocument();
+  });
+});

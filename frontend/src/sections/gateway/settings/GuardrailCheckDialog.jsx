@@ -22,7 +22,7 @@ import {
 import axios, { endpoints } from "src/utils/axios";
 import { logger } from "src/utils/logger";
 
-const ACTION_OPTIONS = ["block", "warn", "mask", "log"];
+const ACTION_OPTIONS = ["block", "warn", "log"];
 const CREDENTIAL_MASK = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022";
 const CREDENTIAL_KEYS = new Set(["api_key", "secret_key", "access_key"]);
 
@@ -67,9 +67,13 @@ const GuardrailCheckDialog = ({
     if (!open) return;
 
     if (initialData) {
+      const rawAction = initialData.action;
+      const initialAction =
+        rawAction === "mask" ? "log" : rawAction || "block";
+
       setForm({
         enabled: initialData.enabled !== false,
-        action: initialData.action || "block",
+        action: initialAction,
         confidence_threshold:
           initialData.confidence_threshold ??
           initialData.confidenceThreshold ??
@@ -454,6 +458,11 @@ const GuardrailCheckDialog = ({
             value={form.action}
             onChange={(e) => setForm((p) => ({ ...p, action: e.target.value }))}
             fullWidth
+            helperText={
+              initialData?.action === "mask" && form.action === "log"
+                ? "Previously saved as 'mask', which runs as 'log'."
+                : undefined
+            }
           >
             {ACTION_OPTIONS.map((a) => (
               <MenuItem key={a} value={a}>
