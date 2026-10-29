@@ -106,6 +106,7 @@ import { clickable, focusRing } from "../components/clickable";
 import { EmptyState } from "../components/primitives";
 import SettingsSection from "./SettingsSection";
 import ConnectionCheckSection from "./ConnectionCheckSection";
+import PlatformTestCall from "./PlatformTestCall";
 import AgentCompatibilityTab from "../compat/AgentCompatibilityTab";
 import { checksConnection, connectionStateOf } from "../_mock/connectionCheck";
 import { IdentityCard, SourceCard } from "./AgentProfileCards";
@@ -1854,6 +1855,7 @@ function ConnectionTab({
       {checksConnection(agent) && (
         <ConnectionCheckSection agent={agent} onSaveValues={onSaveValues} />
       )}
+
       <SettingsSection
         title="How we reach it"
         sub={
@@ -2094,6 +2096,16 @@ function ConnectionTab({
           }}
         />
       </SettingsSection>
+
+      {/* A platform agent: one real test call, before a run. */}
+      {source.kind === "platform" && (
+        <SettingsSection
+          title="Test call"
+          sub="One real call through the platform — what it lets us measure, before a run."
+        >
+          <PlatformTestCall agent={agent} onSaveValues={onSaveValues} />
+        </SettingsSection>
+      )}
 
       <SettingsSection
         title="Live testing"

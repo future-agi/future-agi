@@ -689,3 +689,15 @@ export const estimateTrainingPlan = ({
     ],
   };
 };
+
+/** One test call's cost on the provider's account: { low, high, label, source } — or null when there's no public price. */
+export const testCallEstimateOf = (provider, minutes = [1, 2]) => {
+  const rate = PLATFORM_USD_PER_MIN[provider];
+  if (!rate) return null;
+  return {
+    low: rate[0] * minutes[0],
+    high: rate[1] * minutes[1],
+    label: PLATFORM_LABEL[provider],
+    source: `${PLATFORM_LABEL[provider]} list price · checked ${PRICE_CHECKED}`,
+  };
+};

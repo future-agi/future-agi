@@ -49,6 +49,9 @@ export const CAPABILITIES = [
   { id: "audio", label: "Audio and timing" },
   { id: "browser", label: "Browser interaction" },
   { id: "children", label: "Child agents and skills" },
+  { id: "pinning", label: "Version pinning" },
+  { id: "transfer", label: "Transfers" },
+  { id: "trace", label: "Trace visibility" },
   { id: "cancel", label: "Cancel" },
   { id: "reset", label: "World reset" },
   { id: "resume", label: "Resume" },
@@ -186,6 +189,20 @@ export const compatibilityOf = ({ env, envState, agent = envState?.agent, scenar
     add("children", "partial", `The coordinator and ${members.length - 1} workers report delegation and return. Skill activation is unknown without runtime evidence.`);
   else notNeeded.push("Child agents and skills");
 
+  /* Platform agents: what the provider lets us pin, transfer and see. */
+  if (kind === "platform") {
+    if (v.providerPinned) add("pinning", "supported", `Runs are pinned to ${provider} ${v.providerVersion}.`);
+    else if (v.providerVersion) add("pinning", "partial", `${provider} ${v.providerVersion} is a draft — it can change between runs, so results are marked unpinned.`);
+    else add("pinning", "unavailable", `${provider} doesn't version this agent. ${version?.label || "v1"} is our snapshot of its config — if it changes on ${provider}, runs are marked unpinned until you sync.`);
+    if (voice) {
+      const t = v.platformTest;
+      if (t?.transfer === "tested") add("transfer", "supported", `A phone test reached the transfer — it rang the test destination ${t.destination || ""} and connected.`.replace(/ +/g, " "));
+      else add("transfer", "untested", "A text or web test doesn't prove a phone transfer — it stays untested until a phone test reaches one.");
+    }
+    add("trace", "partial", `${provider}'s call logs give the transcript and every tool call; the model's internal steps aren't exposed.`);
+  } else if (code) {
+    add("pinning", "supported", "Runs are pinned to the commit they ran.");
+  }
   if (checked) fromCheck("cancel", "cancel", [], "");
   else add("cancel", kind === "platform" ? "supported" : "supported", kind === "platform" ? "Ending the call stops it, confirmed by the platform." : "Stopping ends the turn here.");
   if (connectOnly) add("reset", "unavailable", "A live system isn't assumed resettable — every attempt starts from whatever state it's in.", { affected: all });

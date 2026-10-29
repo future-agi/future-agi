@@ -2807,7 +2807,17 @@ export default function EnvironmentWorkspace() {
               ? scopeBreakdownOf(worldEnv, envState, {
                   plan,
                   gaps: allGaps,
-                  only: runPlanReq.scenarioIds,
+                  /* A full Run passes its own scope — that's no selection. */
+                  only:
+                    runPlanReq.scenarioIds?.length &&
+                    !(
+                      runPlanReq.scenarioIds.length === scope.ids.length &&
+                      scope.ids.every((id) =>
+                        runPlanReq.scenarioIds.includes(id),
+                      )
+                    )
+                      ? runPlanReq.scenarioIds
+                      : null,
                   agentLabel: runPlanReq.agent || null,
                 })
               : null

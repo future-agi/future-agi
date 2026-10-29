@@ -46,6 +46,12 @@ import { useConnectedAgents } from "../../store";
 import { agentIdOf } from "../../_mock/agentRegistry";
 import FoundAgentsList from "./FoundAgentsList";
 import LiveKitAgentFlow from "./LiveKitAgentFlow";
+import PlatformPreview, { PlatformVersionPicker } from "./PlatformPreview";
+import {
+  platformAddCli,
+  platformPreviewOf,
+  versionsOf,
+} from "../../_mock/platformPreview";
 
 const MONO = "ui-monospace, Menlo, monospace";
 /* One screen: the platform, the key, the assistant, how test calls reach a
@@ -167,6 +173,14 @@ export default function HostedAgentFlow({
           }
         : null),
   );
+  /* Its versions, where the platform has them — the run is pinned to one. */
+  const versions = useMemo(
+    () => versionsOf(platform?.id, picked),
+    [platform?.id, picked],
+  );
+  const [versionId, setVersionId] = useState(null);
+  const version =
+    versions.find((x) => x.id === versionId) || versions[0] || null;
   /* A typed ID's name, when the call logs that gave the ID carried it too. */
   const [name, setName] = useState(initial?.name || startAssistant?.name || "");
   /* How test calls reach a voice agent: a web call (no telephony), or a
@@ -212,6 +226,7 @@ export default function HostedAgentFlow({
   };
   const pickAssistant = (a) => {
     setPickedId(a.id);
+    setVersionId(null);
     setName(a.name);
     /* The number it answers on is the one a phone simulation dials. */
     const parts = phoneParts(a.phone);
@@ -239,7 +254,10 @@ export default function HostedAgentFlow({
     }),
     ...(linkedRepo.trim() && { linkedRepo: linkedRepo.trim() }),
     name: name.trim(),
-    versionNote: `Imported from ${platform?.name || "the platform"}.`,
+    versionNote: `Imported from ${platform?.name || "the platform"}${version ? ` ${version.label}` : ""}.`,
+    /* The provider version a run is pinned to — or none, recorded as unpinned. */
+    providerVersion: version?.label || null,
+    providerPinned: !!version?.published,
     ...(lacksScope &&
       scopeChoice === "mocked" && { replicationMode: "exported_mocked" }),
     ...(imported.retellKind && { retellKind: imported.retellKind }),
@@ -630,6 +648,29 @@ export default function HostedAgentFlow({
                     {`Read from ${platform?.name}: ${imported.structure}.`}
                   </HintLine>
                 </Typography>
+              )}
+              {/* Which version a run pins to, then what we'll read — tools marked redirected or live. */}
+              {agentId && picked && (
+                <PlatformVersionPicker
+                  provider={platform?.id}
+                  versions={versions}
+                  value={version?.id || ""}
+                  onChange={setVersionId}
+                />
+              )}
+              {agentId && picked && (
+                <PlatformPreview
+                  preview={platformPreviewOf(platform?.id, picked, {
+                    voice,
+                  })}
+                  cli={platformAddCli({
+                    provider: platform?.id,
+                    agentId,
+                    name: name.trim() || picked?.name,
+                    keyRef: refOk ? savedRef : "",
+                    voice,
+                  })}
+                />
               )}
               {/* How test calls reach it — a web call, or its number over PSTN. */}
               {voice && agentId && (

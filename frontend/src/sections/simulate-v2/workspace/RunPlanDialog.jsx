@@ -46,6 +46,8 @@ import {
 } from "../_mock/runLimits";
 import { currentEnvVersion } from "../_mock/versions";
 import { COMPAT_STATUS } from "../_mock/compatibility";
+import { platformPreviewOf } from "../_mock/platformPreview";
+import { assistantsFor } from "../_mock/connectAgent";
 import { StatusDot } from "../components/primitives";
 
 /*
@@ -499,6 +501,26 @@ export default function RunPlanDialog({
                 .join(" · ")}
             </Typography>
           )}
+
+          {/* ── a platform agent: what runs for real during this run, named ── */}
+          {(() => {
+            const v = envState?.agent?.values || {};
+            if (!v.provider || !v.agentId) return null;
+            const a = assistantsFor(v.provider).find(
+              (x) => x.id === v.agentId,
+            ) || { id: v.agentId, name: envState?.agent?.name };
+            const live = (
+              platformPreviewOf(v.provider, a, { voice })?.tools || []
+            ).filter((t) => t.handling === "live");
+            if (!live.length) return null;
+            return (
+              <Typography
+                sx={{ typography: "s3", color: "text.secondary", mt: -1 }}
+              >
+                {`Runs for real: ${live.map((t) => `${t.name} (${t.line.charAt(0).toLowerCase()}${t.line.slice(1)})`).join(" · ")}. Your own tools are redirected to the test world.`}
+              </Typography>
+            );
+          })()}
 
           {/* ── compatibility: what this agent can't run here, before spending ── */}
           {compat && blockedN > 0 && (
