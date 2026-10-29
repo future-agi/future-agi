@@ -348,3 +348,22 @@ export function updateFixtureFixRun(fixId, update) {
   store = store.map((f) => (f.id === fixId ? update(clone(f)) : f));
   return fixtureFixRun(fixId);
 }
+
+export const FIXTURE_PULL_REQUEST_URL =
+  "https://github.com/acme/dispatch-agent/pull/42";
+
+export function fixturePatch(candidateId) {
+  return [
+    "diff --git a/instructions.md b/instructions.md",
+    "--- a/instructions.md",
+    "+++ b/instructions.md",
+    "@@ -12,6 +12,8 @@ When the caller asks to cancel",
+    " Confirm the booking reference before changing anything.",
+    "-Cancel the booking and confirm the refund.",
+    "+If the pickup is less than 2 hours away, do not cancel it yourself.",
+    "+Escalate the cancellation to the front desk and say you have done so.",
+    " Read the refund policy back in one sentence.",
+    `+<!-- ${candidateId} -->`,
+    "",
+  ].join("\n");
+}
