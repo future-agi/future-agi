@@ -59,6 +59,13 @@ export default function WinnerChanges({ env, winner, members, record }) {
               sx={{ typography: "s2", color: "text.secondary", mt: 0.25 }}
             >{`Why: ${p.why}`}</Typography>
           )}
+          {p.editedByYou && (
+            <Typography
+              sx={{ typography: "s3", color: "text.tertiary", mt: 0.25 }}
+            >
+              Edited by you before it ran.
+            </Typography>
+          )}
           {/* A skill change: the version it makes, and whether its use was seen. */}
           {p.kind === "Skill" && (
             <Typography

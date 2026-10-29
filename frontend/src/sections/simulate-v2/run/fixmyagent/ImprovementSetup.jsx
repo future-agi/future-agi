@@ -57,6 +57,7 @@ import {
   envMustPassOf,
   envStateOnVersion,
   FIX_DEFAULTS,
+  MAX_CANDIDATES,
   fixReviewSentence,
   heldBackOf,
   improvementEstimate,
@@ -79,7 +80,9 @@ import CostPartsTable from "../../improvements/CostPartsTable";
 import CasePicker from "../../improvements/CasePicker";
 import { isCodeAgent } from "../../agents/foundFacts";
 import { TextLink } from "../../agents/connect/connectBits";
-import { limitsOf } from "../../agents/agentLimits";
+import { limitsOf, surfaceAvailability } from "../../agents/agentLimits";
+import { reviewableOf } from "../../_mock/candidateReview";
+import ReviewChangesFirstDrawer from "./ReviewChangesFirstDrawer";
 import { rereadFor, textSearchDefault } from "../../_mock/improvementPolicy";
 import { recordOutsideChange } from "../../_mock/nudgeEffects";
 import { creditsLabel } from "../../_mock/metering";
@@ -182,6 +185,9 @@ export default function ImprovementSetup({
   /* How far it goes (approval mode): search and prove, or suggest only —
      measure, diagnose and suggest a change, with no trials. */
   const [suggestOnly, setSuggestOnly] = useState(false);
+  /* Review the changes before any of them runs, then search with the kept ones. */
+  const [reviewFirst, setReviewFirst] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
   /* The cases chosen in place: { fix, protect } ids, or null for the suggestion. */
   const [pick, setPick] = useState(null);
   const [showCases, setShowCases] = useState(false);
@@ -215,6 +221,8 @@ export default function ImprovementSetup({
     setGoal("pass-rate");
     setBudget(null);
     setSuggestOnly(false);
+    setReviewFirst(false);
+    setReviewing(false);
     setPick(null);
     setShowCases(false);
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -512,7 +520,6 @@ export default function ImprovementSetup({
   /* What this kind of agent can have changed: code agents their code,
      platform agents their settings; every agent its instructions and tools. */
   const codeAgent = !!agent && isCodeAgent(agent);
-  const depthKind = fixDepthOf(es?.agent).depth;
   /* The skills the agent loads — a skill can change only where it has some. */
   const loadedSkills = agent
     ? skillSetOf(agent, state.workspaceSettings).skills.filter(
@@ -526,7 +533,9 @@ export default function ImprovementSetup({
     { id: "prompt", label: "Instructions" },
     { id: "tools", label: "Tools" },
     ...(loadedSkills.length ? [{ id: "skills", label: "Skills" }] : []),
-    ...(depthKind === "settings"
+    /* Settings where the agent has somewhere to change them (its platform,
+       our own config, or its connected code) — by agent kind. */
+    ...(agent && surfaceAvailability(agent).settings.ok
       ? [{ id: "settings", label: "Settings" }]
       : []),
     ...(codeAgent ? [{ id: "code", label: "Code" }] : []),
@@ -551,7 +560,7 @@ export default function ImprovementSetup({
     name.trim()
   );
 
-  const start = () => {
+  const start = (reviewed = null) => {
     if (!gates.canRun)
       return enqueueSnackbar(gates.runReason, { variant: "info" });
     /* Re-read the agent first; a change made outside Future AGI is saved as
@@ -596,6 +605,7 @@ export default function ImprovementSetup({
       base: from,
       today: first,
       ...(suggestOnly && { depth: "suggestion" }),
+      ...(reviewed && { candidates: { items: reviewed } }),
     });
   };
 
@@ -1096,17 +1106,26 @@ export default function ImprovementSetup({
                         size="small"
                         fullWidth
                         value={
-                          onlySuggests || suggestOnly ? "suggest" : "search"
+                          onlySuggests || suggestOnly
+                            ? "suggest"
+                            : reviewFirst
+                              ? "review"
+                              : "search"
                         }
                         disabled={onlySuggests}
-                        onChange={(e) =>
-                          setSuggestOnly(e.target.value === "suggest")
-                        }
+                        onChange={(e) => {
+                          setSuggestOnly(e.target.value === "suggest");
+                          setReviewFirst(e.target.value === "review");
+                        }}
                         sx={selectSx}
                       >
                         <MenuItem value="search">
                           Search and prove — tries changes, proves the best on
                           held-back scenarios
+                        </MenuItem>
+                        <MenuItem value="review">
+                          Review the changes first — see each change, edit or
+                          drop it, then search and prove
                         </MenuItem>
                         <MenuItem value="suggest">
                           Suggest only — diagnoses and suggests a change, no
@@ -1445,13 +1464,28 @@ export default function ImprovementSetup({
             variant="contained"
             color="primary"
             disabled={!ready}
-            onClick={start}
-            startIcon={<Iconify icon="solar:play-bold" width={16} />}
+            onClick={() => (reviewFirst ? setReviewing(true) : start())}
+            startIcon={
+              <Iconify
+                icon={reviewFirst ? "solar:eye-linear" : "solar:play-bold"}
+                width={16}
+              />
+            }
           >
-            Start improvement
+            {reviewFirst ? "Review the changes" : "Start improvement"}
           </Button>
         )}
       </Stack>
+      <ReviewChangesFirstDrawer
+        open={reviewing}
+        onClose={() => setReviewing(false)}
+        candidates={reviewableOf(preview?.pool || [])}
+        maxTrials={MAX_CANDIDATES}
+        onRun={(items) => {
+          setReviewing(false);
+          start(items);
+        }}
+      />
       {main && (
         <AddEvalsDrawer
           open={addingEval}

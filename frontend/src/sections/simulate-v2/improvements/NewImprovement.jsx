@@ -132,6 +132,7 @@ export default function NewImprovement({
     today,
     depth,
     pick,
+    candidates,
   }) => {
     const es = state.byEnv[env.id];
     /* Measuring today is a real run of the environment, recorded first. */
@@ -168,6 +169,7 @@ export default function NewImprovement({
       textSearch,
       optimizerId,
       pick,
+      candidates,
       fromRunId: from.id,
       baseAgentVersion: from.agentVersion || null,
       trigger: {

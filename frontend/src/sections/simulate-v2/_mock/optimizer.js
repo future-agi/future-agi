@@ -1007,6 +1007,8 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
       ? lineageProposals(cfg.lineage || [], failingTrain).map(tag).filter((p) => p.addresses.length)
       : []),
   ];
+  /* Reviewed before running: only the changes kept, as edited. */
+  if (cfg.candidates?.items?.length) pool.splice(0, pool.length, ...cfg.candidates.items);
   /* A fix searches from the issue outwards: changes that address its
      scenarios are tried first, then whatever else helps. A goal does the
      same from its targets. */

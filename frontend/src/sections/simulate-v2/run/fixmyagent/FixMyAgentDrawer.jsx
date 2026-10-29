@@ -227,6 +227,7 @@ export default function FixMyAgentDrawer({
     today,
     depth,
     pick,
+    candidates,
   }) => {
     /* An outside change re-read at Start is measured first, on that version
        — recorded as a run, and part of what the improvement spends. */
@@ -250,6 +251,8 @@ export default function FixMyAgentDrawer({
     const record = buildImprovement({
       /* Edit plan's cases to fix and to protect, when the person changed them. */
       pick,
+      /* The changes kept after reviewing them, when reviewed first. */
+      candidates,
       reread,
       textSearch,
       targetMember,
