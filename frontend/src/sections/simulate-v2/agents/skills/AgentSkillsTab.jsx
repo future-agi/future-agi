@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSnackbar } from "notistack";
 import {
   Box,
@@ -27,14 +27,18 @@ import {
   frontmatterOf,
   importSkill,
   latestOf,
+  loadedVOf,
   skillImportCli,
   skillRuntimeOf,
   skillSetOf,
+  startTestPatch,
+  testStatusOf,
 } from "../../_mock/skills";
 import { MONO } from "../agentViewUtils";
 import { FactBox, FactRow } from "./SkillFacts";
 import SkillDrawer from "./SkillDrawer";
 import SkillImportDrawer from "./SkillImportDrawer";
+import SkillTestDrawer from "./SkillTestDrawer";
 
 const STATE_TEXT = { on: "Loaded", off: "Off", library: "Not loaded" };
 const head = {
@@ -73,6 +77,27 @@ export default function AgentSkillsTab({ agent, agentTools, onRecordVersion }) {
   const [importing, setImporting] = useState(null);
   const [openId, setOpenId] = useState(null);
   const [menu, setMenu] = useState(null);
+  /* { skillId } to plan a test, { skillId, testId } to view one. */
+  const [testing, setTesting] = useState(null);
+  /* Re-read running tests' status while one is running. */
+  const [, tick] = useState(0);
+  const running = (set.tests || []).some((t) => testStatusOf(t) === "running");
+  useEffect(() => {
+    if (!running) return undefined;
+    const t = setInterval(() => tick((n) => n + 1), 2000);
+    return () => clearInterval(t);
+  }, [running]);
+  /* The environments testing this agent — where a skill test runs. */
+  const envs = useMemo(
+    () =>
+      (agent.usedIn || [])
+        .map((u) => ({
+          env: state.myEnvironments.find((e) => e.id === u.envId),
+          envState: state.byEnv?.[u.envId],
+        }))
+        .filter((e) => e.env && e.envState),
+    [agent, state.myEnvironments, state.byEnv],
+  );
 
   const save = (next) =>
     dispatch({
@@ -80,7 +105,11 @@ export default function AgentSkillsTab({ agent, agentTools, onRecordVersion }) {
       key: "agentSkills",
       value: {
         ...(state.workspaceSettings?.agentSkills || {}),
-        [agent.key]: { skills: next.skills, draft: next.draft || {} },
+        [agent.key]: {
+          skills: next.skills,
+          draft: next.draft || {},
+          tests: next.tests || set.tests || [],
+        },
       },
     });
   const toggle = (skill) => {
@@ -114,11 +143,16 @@ export default function AgentSkillsTab({ agent, agentTools, onRecordVersion }) {
             latestOf(c.skill).files.find((f) => f.path === "SKILL.md")?.text,
           )?.description || "",
       })),
-      skillSet: loaded.map((s) => ({ id: s.id, v: latestOf(s).v })),
+      skillSet: loaded.map((s) => ({
+        id: s.id,
+        v: set.draft[s.id] ? latestOf(s).v : loadedVOf(s),
+      })),
     });
     save({
-      skills: set.skills.map((s) => ({
+      skills: set.skills.map(({ loadedV, ...s }) => ({
         ...s,
+        /* Turned on now: it loads its latest version. */
+        ...(loadedV != null && !set.draft[s.id] && { loadedV }),
         state:
           draftStateOf(s, set.draft) === "on"
             ? "on"
@@ -208,6 +242,20 @@ export default function AgentSkillsTab({ agent, agentTools, onRecordVersion }) {
           >
             Discard
           </Button>
+          {changes.some((c) => c.to === "on") && (
+            <Button
+              size="small"
+              variant="outlined"
+              color="inherit"
+              onClick={() =>
+                setTesting({
+                  skillId: changes.find((c) => c.to === "on").skill.id,
+                })
+              }
+            >
+              Test the change
+            </Button>
+          )}
           <Button
             size="small"
             variant="contained"
@@ -223,7 +271,7 @@ export default function AgentSkillsTab({ agent, agentTools, onRecordVersion }) {
         <TableHead>
           <TableRow>
             <TableCell sx={head}>Skill</TableCell>
-            <TableCell sx={{ ...head, width: 72 }}>Version</TableCell>
+            <TableCell sx={{ ...head, width: 96 }}>Version</TableCell>
             <TableCell sx={{ ...head, width: 72, textAlign: "right" }}>
               Files
             </TableCell>
@@ -268,7 +316,16 @@ export default function AgentSkillsTab({ agent, agentTools, onRecordVersion }) {
                 </TableCell>
                 <TableCell
                   sx={{ ...cell, typography: "s3" }}
-                >{`v${v.v}`}</TableCell>
+                  title={
+                    s.state === "on" && loadedVOf(s) !== v.v
+                      ? `Loads v${loadedVOf(s)}. v${v.v} is imported, not loaded yet.`
+                      : undefined
+                  }
+                >
+                  {s.state === "on" && loadedVOf(s) !== v.v
+                    ? `v${loadedVOf(s)} · v${v.v} new`
+                    : `v${v.v}`}
+                </TableCell>
                 <TableCell
                   sx={{
                     ...cell,
@@ -323,6 +380,77 @@ export default function AgentSkillsTab({ agent, agentTools, onRecordVersion }) {
         </Typography>
       )}
 
+      {(set.tests || []).length > 0 && (
+        <Box>
+          <Typography sx={{ typography: "s1", fontWeight: 600, mb: 0.5 }}>
+            {`Skill tests · ${set.tests.length}`}
+          </Typography>
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell sx={{ ...head, width: 72 }}>Test</TableCell>
+                <TableCell sx={head}>Skill</TableCell>
+                <TableCell sx={head}>Environment</TableCell>
+                <TableCell sx={{ ...head, textAlign: "right" }}>Runs</TableCell>
+                <TableCell sx={head}>Status</TableCell>
+                <TableCell sx={head}>Started</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {[...set.tests].reverse().map((t) => {
+                const st = testStatusOf(t);
+                return (
+                  <TableRow
+                    key={t.id}
+                    hover
+                    onClick={() =>
+                      setTesting({ skillId: t.skillId, testId: t.id })
+                    }
+                    sx={{ cursor: "pointer", height: 36 }}
+                  >
+                    <TableCell sx={{ ...cell, typography: "s3" }}>
+                      {t.id}
+                    </TableCell>
+                    <TableCell sx={{ ...cell, fontFamily: MONO, fontSize: 12 }}>
+                      {`${t.skillId} v${t.v}`}
+                    </TableCell>
+                    <TableCell sx={{ ...cell, typography: "s3" }}>
+                      {t.envName}
+                    </TableCell>
+                    <TableCell
+                      sx={{
+                        ...cell,
+                        typography: "s3",
+                        textAlign: "right",
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
+                      {`${t.cases.length} × ${t.repeats} × ${t.configs.length} = ${t.runs}`}
+                    </TableCell>
+                    <TableCell sx={{ ...cell, typography: "s3" }}>
+                      {st === "running"
+                        ? "Running"
+                        : st === "cancelled"
+                          ? "Cancelled"
+                          : "Finished"}
+                    </TableCell>
+                    <TableCell
+                      sx={{
+                        ...cell,
+                        typography: "s3",
+                        color: "text.secondary",
+                      }}
+                    >
+                      {`${ago(t.startedAt)} · ${t.by}`}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </Box>
+      )}
+
       <Menu anchorEl={menu?.el} open={!!menu} onClose={() => setMenu(null)}>
         <MenuItem
           onClick={() => {
@@ -344,6 +472,14 @@ export default function AgentSkillsTab({ agent, agentTools, onRecordVersion }) {
           }}
         >
           Import a new revision
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            setTesting({ skillId: menu.skill.id });
+            setMenu(null);
+          }}
+        >
+          Test this skill
         </MenuItem>
         {menu?.skill.state === "library" && (
           <MenuItem
@@ -394,6 +530,29 @@ export default function AgentSkillsTab({ agent, agentTools, onRecordVersion }) {
           const src = latestOf(open).source;
           setOpenId(null);
           setImporting({ path: src?.kind === "repo" ? src.path : "" });
+        }}
+        onTest={() => {
+          setTesting({ skillId: open.id });
+          setOpenId(null);
+        }}
+      />
+      <SkillTestDrawer
+        open={!!testing}
+        onClose={() => setTesting(null)}
+        agent={agent}
+        skill={set.skills.find((s) => s.id === testing?.skillId)}
+        set={set}
+        runtime={runtime}
+        envs={envs}
+        test={(set.tests || []).find((t) => t.id === testing?.testId)}
+        onStart={(t) => {
+          const next = startTestPatch(set, t);
+          save(next);
+          const id = next.tests[next.tests.length - 1].id;
+          setTesting({ skillId: t.skillId, testId: id });
+          enqueueSnackbar(`${id} started · ${t.runs} runs on ${t.envName}.`, {
+            variant: "success",
+          });
         }}
       />
     </Stack>

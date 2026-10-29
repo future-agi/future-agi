@@ -189,13 +189,20 @@ const SEEDED = () => [
 /** The agent's skills and draft — saved, or what its code already has. */
 export const skillSetOf = (agent, settings) => {
   const saved = settings?.agentSkills?.[agent?.key];
-  if (saved) return { skills: saved.skills || [], draft: saved.draft || {} };
+  if (saved)
+    return {
+      skills: saved.skills || [],
+      draft: saved.draft || {},
+      tests: saved.tests || [],
+    };
   return skillRuntimeOf(agent).canAdd
-    ? { skills: SEEDED(), draft: {} }
-    : { skills: [], draft: {} };
+    ? { skills: SEEDED(), draft: {}, tests: [] }
+    : { skills: [], draft: {}, tests: [] };
 };
 
 export const latestOf = (skill) => skill.versions[skill.versions.length - 1];
+/** The version a loaded skill runs — older than the latest after an import. */
+export const loadedVOf = (skill) => skill.loadedV ?? latestOf(skill).v;
 
 /** A skill's state with the draft applied. */
 export const draftStateOf = (skill, draft) => draft?.[skill.id] || skill.state;
@@ -447,7 +454,10 @@ export const importSkill = (set, { meta, files, source }) => {
   };
   const skills = existing
     ? set.skills.map((s) =>
-        s.id === meta.name ? { ...s, versions: [...s.versions, version] } : s,
+        s.id === meta.name
+          ? /* A loaded skill keeps loading the version it had until a saved change. */
+            { ...s, loadedV: loadedVOf(s), versions: [...s.versions, version] }
+          : s,
       )
     : [...set.skills, { id: meta.name, state: "library", versions: [version] }];
   return {
@@ -479,3 +489,193 @@ const slug = (name) =>
     .replace(/^-|-$/g, "");
 export const skillImportCli = (agent, path) =>
   `agent-learn skill import ${path || "skills/<name>"} --agent ${slug(agent?.name)}`;
+
+/* ── Testing a skill (skills.md "Choose tests", "Run and compare") ────── */
+
+const STOP = new Set(
+  "use when the a an or and to of in for is it its not new with any be can can't cant that this on caller agent asks task".split(
+    " ",
+  ),
+);
+const wordsOf = (text) =>
+  new Set(
+    String(text || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9 ]+/g, " ")
+      .split(/\s+/)
+      .filter((w) => w.length > 3 && !STOP.has(w))
+      .map((w) => w.replace(/(ing|ed|es|s)$/, "")),
+  );
+export const skillWordsOf = (skill) => {
+  const md = latestOf(skill).files.find((f) => f.path === "SKILL.md")?.text;
+  const fm = frontmatterOf(md) || {};
+  return wordsOf(`${skill.id.replace(/-/g, " ")} ${fm.description || ""}`);
+};
+const hits = (words, sc) => {
+  const hay = wordsOf(
+    `${sc.title} ${sc.summary || ""} ${sc.task || ""} ${sc.situation || ""}`,
+  );
+  return [...words].filter((w) => hay.has(w));
+};
+
+export const CASE_GROUPS = [
+  {
+    id: "positive",
+    label: "Should use it",
+    line: "The skill should load and change what the agent does.",
+  },
+  {
+    id: "negative",
+    label: "Shouldn't use it",
+    line: "The skill should stay unused. Loading here is a wrong activation.",
+  },
+  {
+    id: "interaction",
+    label: "Next to other skills",
+    line: "Another loaded skill also fits — checks for overlap, conflicting steps and duplicate tool calls.",
+  },
+];
+
+/**
+ * Suggested cases from the environment's scenarios: ones that mention what
+ * the skill is for (positive), ones that also fit another loaded skill
+ * (interaction), and a few unrelated ones it must leave alone (negative).
+ * Each says why it was picked.
+ */
+export const suggestCasesOf = (skill, others, scenarios) => {
+  const mine = skillWordsOf(skill);
+  const theirs = others.map((o) => ({ id: o.id, words: skillWordsOf(o) }));
+  const out = [];
+  const negatives = [];
+  scenarios
+    .filter((sc) => !sc.archived && !sc.retired && !sc.proposed)
+    .forEach((sc) => {
+      const m = hits(mine, sc);
+      const other = theirs
+        .map((o) => ({ id: o.id, h: hits(o.words, sc) }))
+        .find((o) => o.h.length);
+      if (m.length && other)
+        out.push({
+          scenarioId: sc.id,
+          title: sc.title,
+          detail: [sc.summary, sc.persona?.name].filter(Boolean).join(" · "),
+          group: "interaction",
+          why: `Mentions ${m.slice(0, 2).join(", ")}, and ${other.id} also fits (${other.h[0]})`,
+        });
+      else if (m.length)
+        out.push({
+          scenarioId: sc.id,
+          title: sc.title,
+          detail: [sc.summary, sc.persona?.name].filter(Boolean).join(" · "),
+          group: "positive",
+          why: `Mentions ${m.slice(0, 3).join(", ")}`,
+        });
+      else
+        negatives.push({
+          scenarioId: sc.id,
+          title: sc.title,
+          detail: [sc.summary, sc.persona?.name].filter(Boolean).join(" · "),
+          group: "negative",
+          why: other
+            ? `Fits ${other.id}, not this skill`
+            : "Nothing in it matches the skill's description",
+        });
+    });
+  /* Unrelated cases that fit another skill first — the likeliest wrong loads. */
+  negatives.sort((a, b) => b.why.startsWith("Fits") - a.why.startsWith("Fits"));
+  return [...out, ...negatives.map((n, i) => ({ ...n, picked: i < 3 }))].map(
+    (c) => ({ picked: true, ...c }),
+  );
+};
+
+/**
+ * What runs side by side. Without the skill, the agent's current version,
+ * and the candidate with the skill version under test. When the current
+ * version doesn't load the skill, it is the no-skill baseline.
+ */
+export const testConfigsOf = (skill, set, agent) => {
+  const loaded = set.skills.filter((s) => s.state === "on");
+  const cur = loaded.find((s) => s.id === skill.id);
+  const ver = (s) => `${s.id} v${loadedVOf(s)}`;
+  const base = loaded.filter((s) => s.id !== skill.id);
+  const at = (s) => ({ id: s.id, v: loadedVOf(s) });
+  const candidate = [...base.map(at), { id: skill.id, v: latestOf(skill).v }];
+  const configs = [];
+  if (cur) {
+    const curV = loadedVOf(cur);
+    configs.push({
+      id: "none",
+      label: `Without ${skill.id}`,
+      detail: base.map(ver).join(", ") || "No skills",
+      skills: base.map(at),
+    });
+    if (curV !== latestOf(skill).v)
+      configs.push({
+        id: "current",
+        label: `${agent.production || agent.latest} as it is`,
+        detail: `${skill.id} v${curV}`,
+        skills: [...base.map(at), { id: skill.id, v: curV }],
+      });
+  } else {
+    configs.push({
+      id: "current",
+      label: `${agent.production || agent.latest} as it is`,
+      detail: `Doesn't load ${skill.id}, so it's the no-skill baseline · ${base.map(ver).join(", ") || "no skills"}`,
+      skills: base.map(at),
+    });
+  }
+  /* Already loaded at its latest: what's tested is the version as it is. */
+  const same = cur && loadedVOf(cur) === latestOf(skill).v;
+  configs.push({
+    id: "candidate",
+    label: same
+      ? `${agent.production || agent.latest} as it is`
+      : `With ${skill.id} v${latestOf(skill).v}`,
+    detail: same
+      ? `Loads ${skill.id} v${latestOf(skill).v}`
+      : "Draft skill set, not a saved version",
+    skills: candidate,
+    candidate: true,
+    asIs: same,
+  });
+  return configs;
+};
+
+export const TEST_SECONDS = 14;
+export const testStatusOf = (test, now = Date.now()) => {
+  if (test.cancelledAt) return "cancelled";
+  return now - new Date(test.startedAt) >= TEST_SECONDS * 1000
+    ? "done"
+    : "running";
+};
+
+export const startTestPatch = (set, test) => ({
+  ...set,
+  tests: [
+    ...(set.tests || []),
+    {
+      ...test,
+      id: `ST-${101 + (set.tests || []).length}`,
+      startedAt: new Date().toISOString(),
+      by: currentUser().name,
+    },
+  ],
+});
+
+export const skillTestCli = ({ skill, agent, env, cases, repeats }) => {
+  const ids = (g) =>
+    cases
+      .filter((c) => c.picked && c.group === g)
+      .map((c) => c.scenarioId)
+      .join(",");
+  return [
+    `agent-learn skill test ${skill?.id || "<skill>"} --agent ${slug(agent?.name)}`,
+    `--environment ${slug(env?.name)}`,
+    ids("positive") && `--positive ${ids("positive")}`,
+    ids("negative") && `--negative ${ids("negative")}`,
+    ids("interaction") && `--interaction ${ids("interaction")}`,
+    `--repeats ${repeats} --compare no-skill,current,candidate`,
+  ]
+    .filter(Boolean)
+    .join(" ");
+};

@@ -46,6 +46,7 @@ const sourceText = (s) =>
  * text. Tested runtimes, coverage and failure modes come from its tests.
  */
 export default function SkillDrawer({
+  onTest,
   open,
   onClose,
   skill,
@@ -267,6 +268,16 @@ export default function SkillDrawer({
           >
             Import a new revision
           </Button>
+          {onTest && (
+            <Button
+              size="small"
+              variant="contained"
+              color="primary"
+              onClick={onTest}
+            >
+              Test this skill
+            </Button>
+          )}
         </Stack>
       </Stack>
     </SideDrawer>
@@ -281,4 +292,5 @@ SkillDrawer.propTypes = {
   runtime: PropTypes.object,
   agentTools: PropTypes.array,
   onImportRevision: PropTypes.func,
+  onTest: PropTypes.func,
 };
