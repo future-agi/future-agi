@@ -28,6 +28,7 @@ import {
 import { resetTraceGridStore } from "./LLMTracing/states";
 import { resetTabStore } from "./LLMTracing/tabStore";
 import { withLiveGridApi } from "src/utils/gridApi";
+import { startObserveTabTimer } from "./LLMTracing/observeActionTimers";
 
 // Loading component for tab content
 const TabContentLoader = () => (
@@ -292,10 +293,17 @@ const ObservePage = React.memo(() => {
 
       // Set config + navigate together so React batches them into one render — a
       // deferred config set left the URL naming a view while config was null.
+      if (navTo && tabKey !== activeTab) {
+        if (tabKey.startsWith("view-")) {
+          startObserveTabTimer("saved_view", viewTabType);
+        } else {
+          startObserveTabTimer(tabKey);
+        }
+      }
       setActiveViewConfig(activeConfig);
       if (navTo) navigate(navTo, { replace: true });
     },
-    [observeId, navigate, queryClient, setActiveViewConfig],
+    [observeId, navigate, queryClient, setActiveViewConfig, activeTab],
   );
 
   // Memoized styles

@@ -11,6 +11,7 @@ import PropTypes from "prop-types";
 import { AgGridReact } from "ag-grid-react";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { useErrorFeedTraces } from "src/api/errorFeed/error-feed";
+import { useEndErrorFeedTabTimer } from "../errorFeedActionTimers";
 import { useSharedIssue } from "../sharedIssueContext";
 import { useGetProjectDetails } from "src/api/project/project-detail";
 import { useVoiceCallDetail } from "src/sections/agents/helper";
@@ -264,6 +265,7 @@ export default function TracesTab({ error }) {
   const fetched = useErrorFeedTraces(shared ? null : clusterId, { limit: 200 });
   const data = shared ? shared.traces : fetched.data;
   const isLoading = shared ? false : fetched.isLoading;
+  useEndErrorFeedTabTimer(isLoading, fetched.isError);
   const [drawerTraceId, setDrawerTraceId] = useState(null);
 
   // Sim/voice projects need the VAPI call drawer, not the generic trace drawer.

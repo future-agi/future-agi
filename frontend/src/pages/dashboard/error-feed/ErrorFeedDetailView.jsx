@@ -38,6 +38,11 @@ import { useSharedIssue } from "./sharedIssueContext";
 import { useErrorFeedStore } from "./store";
 import { useAnalyzeRunner } from "./useAnalyzeRunner";
 import { downloadCsv, tracesToCsv } from "./exportTracesCsv";
+import {
+  ERROR_FEED_DETAIL_TIMER,
+  ERROR_FEED_TAB_TIMER,
+} from "./errorFeedActionTimers";
+import { endActionTimer, startActionTimer } from "src/utils/actionTimer";
 
 // ── Detail page skeleton ─────────────────────────────────────────────────────
 function DetailSkeleton() {
@@ -177,6 +182,16 @@ export default function ErrorFeedDetailView() {
   useAnalyzeRunner(currentError?.cluster_id, currentError, {
     enabled: !shared,
   });
+
+  const detailSettled =
+    shared ||
+    redirectError ||
+    (!redirectLoading && resolvedId === id && !isLoading);
+  useEffect(() => {
+    if (detailSettled) {
+      endActionTimer(ERROR_FEED_DETAIL_TIMER, redirectError ? "error" : "ok");
+    }
+  }, [detailSettled, redirectError]);
 
   if (!shared && (redirectLoading || (resolvedId === id && isLoading))) {
     return <DetailSkeleton />;
@@ -515,7 +530,12 @@ export default function ErrorFeedDetailView() {
         >
           <Tabs
             value={safeTabIndex}
-            onChange={(_, v) => setActiveTab(TABS[v].key)}
+            onChange={(_, v) => {
+              if (TABS[v].key !== activeTabKey) {
+                startActionTimer(ERROR_FEED_TAB_TIMER, { tab: TABS[v].key });
+              }
+              setActiveTab(TABS[v].key);
+            }}
             sx={{
               minHeight: 34,
               "& .MuiTab-root": {

@@ -13,6 +13,7 @@ import {
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
 import { useErrorFeedTrends } from "src/api/errorFeed/error-feed";
+import { useEndErrorFeedTabTimer } from "../errorFeedActionTimers";
 import { useSharedIssue } from "../sharedIssueContext";
 
 // ── Events over time — dual-axis area + bars ────────────────────────────────
@@ -568,6 +569,7 @@ export default function TrendsTab({ error }) {
   const fetched = useErrorFeedTrends(shared ? null : clusterId);
   const data = shared ? shared.trends : fetched.data;
   const isLoading = shared ? false : fetched.isLoading;
+  useEndErrorFeedTabTimer(isLoading, fetched.isError);
 
   if (shared && !data) {
     return (

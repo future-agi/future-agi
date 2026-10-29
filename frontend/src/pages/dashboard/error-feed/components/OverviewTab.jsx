@@ -25,6 +25,7 @@ import EvalIOPanel from "./EvalIOPanel";
 import VoiceEvalPanel from "./VoiceEvalPanel";
 import { buildGraphDiff, comparisonGraphForMode } from "./buildGraphDiff";
 import { useErrorFeedStore } from "../store";
+import { useEndErrorFeedTabTimer } from "../errorFeedActionTimers";
 import { TOKEN_PRICE_USD, TRACE_STATUS } from "../constants";
 
 const estimateTraceCost = (inputTokens = 0, outputTokens = 0) =>
@@ -2559,6 +2560,7 @@ export default function OverviewTab({ _error: currentError }) {
     useErrorFeedOverview(shared ? null : clusterId);
   const overview = shared ? shared.overview : fetchedOverview;
   const isOverviewLoading = shared ? false : isFetchingOverview;
+  useEndErrorFeedTabTimer(isOverviewLoading);
   const traces = useMemo(
     () => overview?.representative_traces ?? [],
     [overview],

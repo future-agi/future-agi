@@ -12,6 +12,7 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useGetTraceDetail } from "src/api/project/trace-detail";
+import { endActionTimer, startActionTimer } from "src/utils/actionTimer";
 import { useSharedIssueTrace } from "src/api/shared-links";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
@@ -60,6 +61,7 @@ import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import useImagineStore from "src/components/imagine/useImagineStore";
 
 const PANEL_WIDTH = "60vw";
+const TRACE_DETAIL_OPEN_TIMER = "trace.detail.open";
 
 const CREATE_PROMPT_ERROR = "Failed to create prompt. Please try again.";
 
@@ -527,7 +529,18 @@ const TraceDetailDrawerV2 = ({
     sharedToken,
     open && sharedToken ? traceId : null,
   );
-  const { data, isLoading } = sharedToken ? sharedTrace : ownTrace;
+  const { data, isLoading, isError } = sharedToken ? sharedTrace : ownTrace;
+
+  // Times opening a trace (or stepping to another one) until its spans are
+  // on screen. The name carries no trace id so every open groups together.
+  useEffect(() => {
+    if (open && traceId) startActionTimer(TRACE_DETAIL_OPEN_TIMER);
+  }, [open, traceId]);
+  useEffect(() => {
+    if (open && traceId && !isLoading) {
+      endActionTimer(TRACE_DETAIL_OPEN_TIMER, isError ? "error" : "ok");
+    }
+  }, [open, traceId, isLoading, isError]);
 
   const handleRefresh = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["trace-detail", traceId] });

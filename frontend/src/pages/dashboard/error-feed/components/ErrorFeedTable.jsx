@@ -28,6 +28,12 @@ import ErrorSeverityBadge from "./ErrorSeverityBadge";
 import ErrorTrendSparkline from "./ErrorTrendSparkline";
 import { useErrorFeedList } from "src/api/errorFeed/error-feed";
 import { useErrorFeedApiParams, useErrorFeedStore } from "../store";
+import {
+  ERROR_FEED_DETAIL_TIMER,
+  ERROR_FEED_TAB_TIMER,
+  useErrorFeedListTimer,
+} from "../errorFeedActionTimers";
+import { startActionTimer } from "src/utils/actionTimer";
 import PropTypes from "prop-types";
 
 // ── helpers ────────────────────────────────────────────────────────────────
@@ -305,7 +311,8 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
     useErrorFeedStore();
 
   const apiParams = useErrorFeedApiParams();
-  const { data, isLoading } = useErrorFeedList(apiParams);
+  const { data, isLoading, isFetching, isError } = useErrorFeedList(apiParams);
+  useErrorFeedListTimer(apiParams, isFetching, isError);
 
   const isFiltered = useErrorFeedStore(
     (s) =>
@@ -324,6 +331,10 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
 
   const handleRowClick = useCallback(
     (clusterId) => {
+      startActionTimer(ERROR_FEED_DETAIL_TIMER);
+      startActionTimer(ERROR_FEED_TAB_TIMER, {
+        tab: useErrorFeedStore.getState().activeTab,
+      });
       navigate(`/dashboard/error-feed/${clusterId}`);
     },
     [navigate],
