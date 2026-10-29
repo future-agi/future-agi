@@ -32121,7 +32121,7 @@ export const SimulateAgentDefinitionsRunsListResponse = zod.object({
         outcome_passed: zod.number(),
         outcome_failed: zod.number(),
         outcome_skipped: zod.number(),
-        outcome_scored: zod.number(),
+        outcome_no_score: zod.number(),
         started_at: zod.string().datetime({ offset: true }),
         completed_at: zod.string().datetime({ offset: true }),
       }),
@@ -35471,7 +35471,7 @@ export const SimulateApiHarnessEnvironmentsListResponse = zod.object({
         outcome_passed: zod.number(),
         outcome_failed: zod.number(),
         outcome_skipped: zod.number(),
-        outcome_scored: zod.number(),
+        outcome_no_score: zod.number(),
         started_at: zod.string().datetime({ offset: true }),
         completed_at: zod.string().datetime({ offset: true }),
       }),
@@ -47616,7 +47616,7 @@ export const SimulateRunTestsExecutionsListResponse = zod.object({
         outcome_passed: zod.number().optional(),
         outcome_failed: zod.number().optional(),
         outcome_skipped: zod.number().optional(),
-        outcome_scored: zod.number().optional(),
+        outcome_no_score: zod.number().optional(),
         environment_version: zod
           .object({
             id: zod.string().uuid().optional(),
@@ -49944,6 +49944,8 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
     zod.object({
       name: zod.string().min(1),
       passed: zod.boolean().nullable(),
+      result: zod.enum(["not_applicable", "inconclusive"]).optional(),
+      reason: zod.string().optional(),
     }),
   ),
   outcome: zod.enum([
@@ -49953,7 +49955,6 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
     "failed",
     "inconclusive",
     "no_score",
-    "skipped",
     "error",
   ]),
   cost_breakdown_cents: zod.object({
@@ -50955,6 +50956,8 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         zod.object({
           name: zod.string().min(1),
           passed: zod.boolean().nullable(),
+          result: zod.enum(["not_applicable", "inconclusive"]).optional(),
+          reason: zod.string().optional(),
         }),
       ),
       harness_outcome_status: zod.string().min(1),
@@ -50967,9 +50970,9 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         "failed",
         "inconclusive",
         "no_score",
-        "skipped",
         "error",
       ]),
+      outcome_reason: zod.string().min(1).optional(),
       execution_status: zod.string().min(1),
       modality: zod.string().min(1),
       provider: zod.string().min(1),

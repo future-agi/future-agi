@@ -54229,7 +54229,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "failed",
             "inconclusive",
             "no_score",
-            "skipped",
             "error",
           ],
         },
@@ -87116,7 +87115,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "outcome_passed",
         "outcome_failed",
         "outcome_skipped",
-        "outcome_scored",
+        "outcome_no_score",
         "started_at",
         "completed_at",
       ],
@@ -87172,8 +87171,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "integer",
           "x-nullable": true,
         },
-        outcome_scored: {
-          title: "Outcome scored",
+        outcome_no_score: {
+          title: "Outcome no score",
           type: "integer",
           "x-nullable": true,
         },
@@ -88642,6 +88641,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Passed",
           type: "boolean",
           "x-nullable": true,
+        },
+        result: {
+          title: "Result",
+          type: "string",
+          enum: ["not_applicable", "inconclusive"],
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
         },
       },
     },
@@ -103216,9 +103224,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "failed",
             "inconclusive",
             "no_score",
-            "skipped",
             "error",
           ],
+        },
+        outcome_reason: {
+          title: "Outcome reason",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
         },
         execution_status: {
           title: "Execution status",
@@ -103858,8 +103871,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           readOnly: true,
           "x-nullable": true,
         },
-        outcome_scored: {
-          title: "Outcome scored",
+        outcome_no_score: {
+          title: "Outcome no score",
           type: "integer",
           readOnly: true,
           "x-nullable": true,

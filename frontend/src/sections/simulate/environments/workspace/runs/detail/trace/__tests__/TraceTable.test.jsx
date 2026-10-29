@@ -835,13 +835,13 @@ describe("TraceTable — persona cell", () => {
 });
 
 describe("TraceTable skipped scenarios", () => {
-  it("reads Skipped with the reason in view, never Error", () => {
+  it("shows why a scenario was skipped beside its outcome", () => {
     render(
       table({
         rows: [
           {
             ...row("off"),
-            status: "skipped",
+            status: "error",
             durationMs: null,
             outcomeReason: "sub-actors are switched off",
             subGoalResults: [{ name: "noticed", passed: null }],
@@ -850,12 +850,8 @@ describe("TraceTable skipped scenarios", () => {
         columns: new Set(["callDetails"]),
       }),
     );
-    expect(screen.getByText("Skipped")).toBeInTheDocument();
     expect(screen.getByText("sub-actors are switched off")).toBeInTheDocument();
-    expect(screen.queryByText("Error")).not.toBeInTheDocument();
-    // Nothing was run, so the sub-goal has no verdict at all.
     expect(screen.getByText("noticed")).toBeInTheDocument();
-    expect(screen.queryByText("Inconclusive")).not.toBeInTheDocument();
   });
 });
 
@@ -881,26 +877,6 @@ describe("TraceTable calls with no pass or fail", () => {
     expect(
       screen.getByText("2 not applicable, 1 inconclusive"),
     ).toBeInTheDocument();
-  });
-
-  it("marks sub-goals of an errored call as not graded, not inconclusive", () => {
-    render(
-      table({
-        rows: [
-          {
-            ...row("err"),
-            status: "error",
-            subGoalResults: [
-              { name: "booked", passed: null },
-              { name: "asked", passed: null, result: "inconclusive" },
-            ],
-          },
-        ],
-        columns: new Set(["callDetails"]),
-      }),
-    );
-    expect(screen.getAllByText("Not graded")).toHaveLength(1);
-    expect(screen.getAllByText("Inconclusive")).toHaveLength(1);
   });
 
   it("reads Inconclusive with why the call was not scored", () => {

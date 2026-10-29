@@ -278,7 +278,7 @@ def test_runs_list_environment_and_simulate_runs_newest_first(
         "outcome_passed": None,
         "outcome_failed": None,
         "outcome_skipped": None,
-        "outcome_scored": None,
+        "outcome_no_score": None,
         "started_at": None,
         "completed_at": None,
     }

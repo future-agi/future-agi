@@ -220,11 +220,9 @@ def run_summaries(executions: list[TestExecution]) -> dict[Any, dict[str, Any]]:
             "outcome_skipped": (
                 outcomes.get("skipped", 0) if outcomes is not None else None
             ),
-            # Calls with a pass or fail, the only ones a pass rate counts; none means no score.
-            "outcome_scored": (
-                outcomes.get("passed", 0) + outcomes.get("failed", 0)
-                if outcomes is not None
-                else None
+            # Calls that ran with no pass or fail; a pass rate leaves them out.
+            "outcome_no_score": (
+                outcomes.get("no_score", 0) if outcomes is not None else None
             ),
             "started_at": _isoformat(execution.started_at),
             "completed_at": _isoformat(execution.completed_at),

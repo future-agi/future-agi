@@ -104,7 +104,7 @@ class HarnessRunSummarySerializer(serializers.Serializer):
     outcome_passed = serializers.IntegerField(allow_null=True)
     outcome_failed = serializers.IntegerField(allow_null=True)
     outcome_skipped = serializers.IntegerField(allow_null=True)
-    outcome_scored = serializers.IntegerField(allow_null=True)
+    outcome_no_score = serializers.IntegerField(allow_null=True)
     started_at = serializers.DateTimeField(allow_null=True)
     completed_at = serializers.DateTimeField(allow_null=True)
 

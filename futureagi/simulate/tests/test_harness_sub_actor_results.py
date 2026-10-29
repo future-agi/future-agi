@@ -123,6 +123,8 @@ def test_a_pass_rate_leaves_out_what_was_neither_a_pass_nor_a_fail():
         ("failed", [{**_GOALS[0], "held": False, "verdict": "fail"}], "failed"),
         # An execution error stays an error, never no score.
         ("errored", [_GOALS[1]], "errored"),
+        # A receipt from before verdicts whose only sub-goal was undecided keeps its status.
+        ("passed", [{"name": "x", "held": None, "judged": True}], "passed"),
     ],
 )
 def test_a_call_with_no_pass_or_fail_has_no_score_and_an_error_stays_an_error(

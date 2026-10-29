@@ -46,7 +46,6 @@ GOAL_OUTCOMES = (
     "escalated",
     "inconclusive",
     "no_score",
-    "skipped",
 )
 # Provider-agnostic end reasons (metric list v1 §5.1), first match wins. The hosted ALK
 # reasons are listed explicitly: none of them appear in any provider's vocabulary.
@@ -169,6 +168,7 @@ def _breakdown(
         segments = [
             by_label.get(value, {"label": value, "count": 0, "share": 0})
             for value in order
+            if value != "no_score" or value in by_label
         ]
     if key == "goal_outcome":
         for segment in segments:
@@ -489,16 +489,6 @@ def build_run_dashboard(
 
     is_voice = noun == "call"
     outcomes = summary["outcomes"]
-    # Calls with no pass or fail are never in the pass rate; their counts are always shown with it.
-    left_out = ", ".join(
-        f"{count} {label}"
-        for count, label in (
-            (outcomes["no_score"], "no score"),
-            (outcomes["inconclusive"], "inconclusive"),
-            (outcomes["error"], "errored"),
-        )
-        if count
-    )
     metric(
         "pass_rate",
         f"{noun.capitalize()}s passed",
@@ -507,8 +497,12 @@ def build_run_dashboard(
         summary["measured"],
         # pass^1's range belongs to the run header: this rate pools trials, so
         # the range need not bracket it.
-        f"Passed every eval, out of evaluated {noun}s."
-        + (f" Not counted: {left_out}." if left_out else ""),
+        f"Passed every eval, out of evaluated {noun}s. Errored {noun}s are excluded."
+        + (
+            f" {outcomes['no_score']} with no score are excluded too."
+            if outcomes["no_score"]
+            else ""
+        ),
     )
     metric("total", f"Total {noun}s", total, measured=total)
     metric(
@@ -668,19 +662,18 @@ def build_run_dashboard(
     )
     component_total = sum(value or 0 for value in costs.values())
     eval_errored = sum(row["errored"] for row in evaluations)
-    attempted = total - outcomes["skipped"]
-    ran_cleanly = attempted - outcomes["error"]
+    ran_cleanly = total - outcomes["error"]
     run_health = {
         "show_banner": bool(
-            attempted
+            total
             and (
-                ran_cleanly * 100 < attempted * 99
-                or values["connected"] * 100 < attempted * 99
+                ran_cleanly * 100 < total * 99
+                or values["connected"] * 100 < total * 99
                 or outcomes["inconclusive"]
                 or eval_errored
             )
         ),
-        "attempted": attempted,
+        "attempted": total,
         "ran_cleanly": ran_cleanly,
         "connected": values["connected"],
         "errored": outcomes["error"],

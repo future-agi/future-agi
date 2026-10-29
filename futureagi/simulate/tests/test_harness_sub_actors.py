@@ -376,3 +376,11 @@ def test_run_results_filter_and_count_calls_by_the_sub_actor_that_entered_them(
         )
         == []
     )
+
+
+def test_a_pinned_suite_version_keeps_each_scenario_s_sub_actors():
+    from simulate.services.harness_versioning.versions import _member_content
+
+    included = [{"id": "near", "instruction": "x", "trigger": {"kind": "always"}}]
+    assert _member_content({"name": "a", "sub_actors": included})["sub_actors"] == included
+    assert "sub_actors" not in _member_content({"name": "a"})

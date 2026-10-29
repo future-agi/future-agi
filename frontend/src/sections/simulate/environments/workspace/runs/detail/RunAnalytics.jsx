@@ -139,7 +139,6 @@ const OUTCOMES = [
   { key: "error", label: "Error", color: COLORS[3] },
   { key: "inconclusive", label: "Inconclusive", color: COLORS[5] },
   { key: "no_score", label: "No score", color: COLORS[5] },
-  { key: "skipped", label: "Skipped", color: COLORS[5] },
 ];
 const DISTRIBUTIONS = {
   latency_ms: ["Agent response time", "ms"],
@@ -327,12 +326,12 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
     {
       key: "pass_rate",
       label: "Calls passed",
-      // Calls ran but none had a pass or fail: nothing to score, which is not missing data.
+      // Calls ran with no pass or fail: nothing to score, which is not missing data.
       value:
-        passRate?.value == null && passRate?.total
+        passRate?.value == null && summary.outcomes?.no_score
           ? "No score"
           : format(passRate?.value, "percent"),
-      reported: passRate?.value != null || !!passRate?.total,
+      reported: passRate?.value != null || !!summary.outcomes?.no_score,
       // No range here: pass^1's range brackets the scenario average, which this
       // pooled rate need not sit inside.
       detail: null,
@@ -661,7 +660,9 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
         <Bars
           rows={dashboard.use_case_risk}
           xKey="scenario"
-          series={OUTCOMES}
+          series={OUTCOMES.filter(
+            (outcome) => outcome.key !== "no_score" || summary.outcomes?.no_score,
+          )}
           horizontal
           height={330}
           legend

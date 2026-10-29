@@ -353,19 +353,16 @@ export default function TraceTable({
               {t.subGoalResults?.length > 0 && (
                 <Stack spacing={0.5} sx={{ mt: 1 }}>
                   {t.subGoalResults.map((goal, goalIndex) => {
-                    // On a call that errored, an undecided sub-goal was never graded at all;
-                    // elsewhere it is one the grader looked at and could not decide.
                     const verdict =
                       goal.result === "not_applicable"
                         ? { label: "Not applicable", color: "text.disabled" }
-                        : goal.passed === true
-                          ? runOutcome("passed")
-                          : goal.passed === false
-                            ? runOutcome("failed")
-                            : t.status === "error" &&
-                                goal.result !== "inconclusive"
-                              ? { label: "Not graded", color: "text.disabled" }
-                              : runOutcome("inconclusive");
+                        : runOutcome(
+                            goal.passed === true
+                              ? "passed"
+                              : goal.passed === false
+                                ? "failed"
+                                : "inconclusive",
+                          );
                     return (
                       <Stack
                         key={`${goal.name}-${goalIndex}`}
@@ -378,7 +375,7 @@ export default function TraceTable({
                         >
                           {goal.name}
                         </Typography>
-                        {t.status === "skipped" ? null : goal.passed == null ? (
+                        {goal.passed == null ? (
                           <Typography
                             title={goal.reason || undefined}
                             sx={{ typography: "s3", color: verdict.color }}

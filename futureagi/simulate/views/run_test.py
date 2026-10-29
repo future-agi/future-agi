@@ -5965,13 +5965,9 @@ class RunTestExecutionsView(APIView):
                             if test_execution.id in hosted_jobs
                             else None
                         ),
-                        # Calls with a pass or fail, the only ones a pass rate counts.
-                        "outcome_scored": (
-                            sum(
-                                outcome_counts.get(
-                                    hosted_jobs[test_execution.id], {}
-                                ).get(status, 0)
-                                for status in ("passed", "failed")
+                        "outcome_no_score": (
+                            outcome_counts.get(hosted_jobs[test_execution.id], {}).get(
+                                "no_score", 0
                             )
                             if test_execution.id in hosted_jobs
                             else None

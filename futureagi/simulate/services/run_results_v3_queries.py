@@ -90,7 +90,6 @@ from simulate.services.run_results_v3_scoring import (
     HARNESS_INCONCLUSIVE,
     HARNESS_NO_SCORE,
     HARNESS_PASSED,
-    HARNESS_SKIPPED,
     IN_PROGRESS_CALL_STATUSES,
     NATIVE_FAILED,
     NATIVE_PASSED,
@@ -912,24 +911,20 @@ def run_calls_queryset(
             When(status__in=list(QUEUED_CALL_STATUSES), then=Value("queued")),
             When(status__in=list(IN_PROGRESS_CALL_STATUSES), then=Value("in_progress")),
             When(
-                call_metadata__harness_outcome_status__in=list(HARNESS_SKIPPED),
-                then=Value("skipped"),
-            ),
-            When(
                 call_metadata__harness_outcome_status__in=list(HARNESS_ERROR),
                 then=Value("error"),
             ),
             When(status__in=list(ERRORED_CALL_STATUSES), then=Value("error")),
             When(~Q(status="completed"), then=Value("inconclusive")),
             When(
-                call_metadata__harness_outcome_status__in=list(HARNESS_NO_SCORE),
-                then=Value("no_score"),
-            ),
-            When(
                 call_metadata__harness_outcome_status__in=list(HARNESS_FAILED),
                 then=Value("failed"),
             ),
             When(failed_eval, then=Value("failed")),
+            When(
+                call_metadata__harness_outcome_status__in=list(HARNESS_NO_SCORE),
+                then=Value("no_score"),
+            ),
             When(errored_eval, then=Value("inconclusive")),
             When(
                 call_metadata__harness_outcome_status__in=list(HARNESS_INCONCLUSIVE),

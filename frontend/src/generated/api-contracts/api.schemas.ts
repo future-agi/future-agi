@@ -16059,7 +16059,7 @@ export interface HarnessRunSummaryApi {
   outcome_passed: number;
   outcome_failed: number;
   outcome_skipped: number;
-  outcome_scored: number;
+  outcome_no_score: number;
   started_at: string;
   completed_at: string;
 }
@@ -22403,7 +22403,7 @@ export interface TestExecutionItemResponseApi {
   readonly outcome_passed?: number;
   readonly outcome_failed?: number;
   readonly outcome_skipped?: number;
-  readonly outcome_scored?: number;
+  readonly outcome_no_score?: number;
   environment_version?: RunVersionLabelApi | null;
   suite_version?: RunVersionLabelApi | null;
   pinned_agent_version?: RunVersionLabelApi | null;
@@ -23557,7 +23557,6 @@ export const CallExecutionV3DetailResponseApiOutcome = {
   failed: "failed",
   inconclusive: "inconclusive",
   no_score: "no_score",
-  skipped: "skipped",
   error: "error",
 } as const;
 
@@ -23594,10 +23593,20 @@ export interface PersonaDetailsApi {
   traits: string[];
 }
 
+export type SubGoalResultApiResult =
+  (typeof SubGoalResultApiResult)[keyof typeof SubGoalResultApiResult];
+
+export const SubGoalResultApiResult = {
+  not_applicable: "not_applicable",
+  inconclusive: "inconclusive",
+} as const;
+
 export interface SubGoalResultApi {
   /** @minLength 1 */
   name: string;
   passed: boolean | null;
+  result?: SubGoalResultApiResult;
+  reason?: string;
 }
 
 export interface CostBreakdownApi {
@@ -24351,7 +24360,6 @@ export const RunCallApiOutcome = {
   failed: "failed",
   inconclusive: "inconclusive",
   no_score: "no_score",
-  skipped: "skipped",
   error: "error",
 } as const;
 
@@ -24401,6 +24409,8 @@ export interface RunCallApi {
   source_scenario_key: string;
   trial_index: number;
   outcome: RunCallApiOutcome;
+  /** @minLength 1 */
+  outcome_reason?: string;
   /** @minLength 1 */
   execution_status: string;
   /** @minLength 1 */

@@ -417,6 +417,22 @@ describe("RunAnalytics", () => {
     ).toBeInTheDocument();
   });
 
+  it("reads No score only when calls ran with no pass or fail, never for a run in progress", () => {
+    const pending = structuredClone(analytics);
+    pending.dashboard.metrics[0] = { ...pending.dashboard.metrics[0], value: null, measured: 0 };
+    pending.summary.outcomes = { ...pending.summary.outcomes, no_score: 0 };
+    useRunAnalytics.mockReturnValue({ data: pending, isPending: false, isError: false });
+    const { unmount } = render(<RunAnalytics executionId="execution-1" />);
+    expect(screen.queryByText("No score")).not.toBeInTheDocument();
+    unmount();
+
+    const unscored = structuredClone(pending);
+    unscored.summary.outcomes.no_score = 2;
+    useRunAnalytics.mockReturnValue({ data: unscored, isPending: false, isError: false });
+    render(<RunAnalytics executionId="execution-1" />);
+    expect(screen.getAllByText("No score").length).toBeGreaterThan(0);
+  });
+
   it("renders when the response has no reliability block", () => {
     const data = structuredClone(analytics);
     delete data.reliability;

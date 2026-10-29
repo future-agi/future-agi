@@ -37,7 +37,6 @@ from simulate.services.run_results_v3_scoring import (
     HARNESS_FAILED,
     HARNESS_INCONCLUSIVE,
     HARNESS_NO_SCORE,
-    HARNESS_SKIPPED,
     HARNESS_PASSED,
     NATIVE_FAILED,
     NATIVE_PASSED,
@@ -62,7 +61,6 @@ OUTCOME_LABELS = {
     "failed": "Failed",
     "inconclusive": "Inconclusive",
     "no_score": "No score",
-    "skipped": "Skipped",
     "error": "Error",
 }
 
@@ -194,8 +192,6 @@ def call_outcome(
         CallExecution.CallStatus.ANALYZING,
     }:
         return "in_progress"
-    if harness_outcome in HARNESS_SKIPPED:
-        return "skipped"
     if harness_outcome in HARNESS_ERROR:
         return "error"
     if call.status in {
@@ -214,10 +210,10 @@ def call_outcome(
         if (verdict := _eval_outcome(data, live_eval_configs.get(str(eval_id)), specs))
         is not None
     ]
-    if harness_outcome in HARNESS_NO_SCORE:
-        return "no_score"
     if harness_outcome in HARNESS_FAILED or "failed" in verdicts:
         return "failed"
+    if harness_outcome in HARNESS_NO_SCORE:
+        return "no_score"
     if "error" in verdicts:
         return "inconclusive"
     if harness_outcome in HARNESS_INCONCLUSIVE:

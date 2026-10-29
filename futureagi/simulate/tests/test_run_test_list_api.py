@@ -1874,7 +1874,7 @@ class TestRunTestExecutionsView:
         assert row["outcome_passed"] == 1
         assert row["outcome_failed"] == 1
         assert row["outcome_skipped"] == 1
-        assert row["outcome_scored"] == 2
+        assert row["outcome_no_score"] == 1
 
     def test_get_run_test_executions_times_a_prompt_run_without_deleted_calls(
         self, auth_client, organization, workspace, scenario_with_prompt_version

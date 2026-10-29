@@ -1285,7 +1285,7 @@ class TestRunResultsV3Views:
         assert row["harness_outcome_status"] == "error"
         assert row["execution_status"] == "completed"
 
-    def test_a_scenario_skipped_with_sub_actors_switched_off_reads_skipped_never_error(
+    def test_a_scenario_skipped_with_sub_actors_switched_off_keeps_dev_s_outcome_and_shows_why(
         self, auth_client, test_execution, analytics_call_executions
     ):
         call = analytics_call_executions[0]
@@ -1310,14 +1310,12 @@ class TestRunResultsV3Views:
             item for item in calls.json()["results"] if item["id"] == str(call.id)
         )
         assert (row["outcome"], row["outcome_reason"]) == (
-            "skipped",
+            "error",
             "sub-actors are switched off",
         )
         body = analytics.json()
-        assert body["summary"]["outcomes"]["skipped"] == 1
-        assert (
-            body["dashboard"]["run_health"]["attempted"] == body["summary"]["total"] - 1
-        )
+        assert "skipped" not in body["summary"]["outcomes"]
+        assert body["dashboard"]["run_health"]["attempted"] == body["summary"]["total"]
 
     def test_a_call_where_nothing_it_tests_happened_reads_no_score(
         self, auth_client, test_execution, analytics_call_executions
@@ -1359,6 +1357,36 @@ class TestRunResultsV3Views:
                 "reason": "Not applicable: Rowan's trigger never fired in this call.",
             }
         ]
+
+    def test_a_failed_eval_on_a_call_with_no_scored_sub_goal_still_reads_failed(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        call = analytics_call_executions[0]
+        call.status = CallExecution.CallStatus.COMPLETED
+        call.call_metadata = {
+            "harness_outcome_status": "no_score",
+            "hosted_harness_receipt": {"status": "passed", "sub_goals": []},
+        }
+        call.eval_outputs = {
+            "native": {
+                "source": "harness",
+                "name": "Native evaluation",
+                "output": "Failed",
+                "output_type": "Pass/Fail",
+                "status": "completed",
+            }
+        }
+        call.save(update_fields=["status", "call_metadata", "eval_outputs"])
+
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        row = next(
+            item for item in response.json()["results"] if item["id"] == str(call.id)
+        )
+        assert row["outcome"] == "failed"
 
     def test_calls_rows_expose_scoring_states(
         self, auth_client, test_execution, scenario
@@ -2524,7 +2552,6 @@ class TestRunResultsV3Views:
             "error": 1,
             "inconclusive": 2,
             "no_score": 0,
-            "skipped": 0,
         }
         # An infrastructure error says nothing about the agent, so it is not in the rate.
         assert body["summary"]["measured"] == 1

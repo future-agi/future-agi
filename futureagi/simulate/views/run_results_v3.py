@@ -286,6 +286,10 @@ class CostBreakdownSerializer(serializers.Serializer):
 class SubGoalResultSerializer(serializers.Serializer):
     name = serializers.CharField()
     passed = serializers.BooleanField(allow_null=True)
+    result = serializers.ChoiceField(
+        choices=["not_applicable", "inconclusive"], required=False
+    )
+    reason = serializers.CharField(required=False, allow_blank=True)
 
 
 class RunCallSerializer(serializers.Serializer):
@@ -303,6 +307,7 @@ class RunCallSerializer(serializers.Serializer):
     source_scenario_key = serializers.CharField(allow_null=True)
     trial_index = serializers.IntegerField(allow_null=True)
     outcome = serializers.ChoiceField(choices=list(OUTCOME_LABELS))
+    outcome_reason = serializers.CharField(required=False, allow_null=True)
     execution_status = serializers.CharField()
     modality = serializers.CharField()
     provider = serializers.CharField(allow_null=True)
@@ -755,7 +760,7 @@ class RunCallsV3View(APIView):
             version = execution.completed_at or execution.updated_at
             # A deleted call moves the run's total and nothing else in this key.
             facets_cache_key = (
-                f"simulate:v3:facets:outcomes-v2:{execution.id}:{version.timestamp()}"
+                f"simulate:v3:facets:outcomes-v3:{execution.id}:{version.timestamp()}"
                 f":{calls_page['execution_summary']['total']}"
             )
         response = {
