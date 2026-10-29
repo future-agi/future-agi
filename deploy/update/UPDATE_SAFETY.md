@@ -119,6 +119,15 @@ integer column adds a backend CHECK that validates existing rows**: it needs
 `constraint` even with `null=True` or constant `db_default=0`. Backend-generated
 CHECK additions/changes, `AddConstraintNotValid` and `ValidateConstraint` are
 classified. Unchanged existing CHECKs on help-text-only edits are not new risks.
+An existing constrained **ForeignKey becoming nullable also needs `constraint`**:
+Django drops and recreates the FK, validating existing rows even though relaxing
+NOT NULL alone looks harmless. The gate uses the backend schema editor's field
+comparison on real historical model state to catch FK recreation for nullability,
+default, index and other column-definition changes, not just type/target changes.
+It constructs the editor without entering it or executing database operations.
+Help text, form/relation metadata and a database comment alone do not recreate the
+FK and remain declaration-free. Tests pin this behavior to the locked Django
+version and collect PostgreSQL DDL without a live database.
 A Python `default=0` is not `db_default=0`. Unmanaged/proxy aliases of a physical
 registered table do not certify it as empty. Prefer **add a nullable column,
 backfill in batches, add the index in its own migration**.
@@ -128,10 +137,17 @@ backfill in batches, add the index in its own migration**.
 `clickhouse-sources.json` defines production scan roots, not blanket review
 requirements. A keyword scan of Python, Go, SQL, shell and extensionless
 entrypoints finds ALTER, CREATE, DROP, RENAME, TRUNCATE, OPTIMIZE, ATTACH/DETACH,
-ALTER TABLE UPDATE/DELETE mutations and lightweight DELETE FROM. Whole-line
-source/SQL comments are ignored; literal statement-looking text is otherwise a
-conservative alarm, not a SQL parser. Both base and candidate blobs are scanned,
-so additions, removals and deletions of statements cannot disappear silently.
+ALTER TABLE UPDATE/DELETE mutations and lightweight DELETE FROM. TRUNCATE also
+matches without the optional TABLE keyword, including `SYNC` and `ON CLUSTER`.
+Shell sources include `.sh`, `.bash` and plainly identified shell shebangs
+regardless of filename (including extensionless or hidden scripts and
+`#!/usr/bin/env bash` / `#!/usr/bin/env -S bash -eu`). Both old and new shebangs
+are considered, so deleting a script or removing its shebang cannot hide its old
+statements. Non-source text and binary assets without a source suffix or shebang
+are not shell sources. Whole-line source/SQL comments are ignored; literal
+statement-looking text is otherwise a conservative alarm, not a SQL parser.
+Both base and candidate blobs are scanned, so additions, removals and deletions
+of statements cannot disappear silently.
 
 **Client calls/imports, MergeTree mentions, SELECT-only builders and path
 registration alone require no declaration.** A changed file with a real schema

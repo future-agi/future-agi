@@ -596,6 +596,10 @@ def operation_risks(operation, app, state, registry, fresh=None):
         after = state.clone()
         operation.state_forwards(app, after)
         try:
+            # Construct only; entering a schema-editor context or executing DDL
+            # would require a database. Use Django's own comparison of rendered
+            # fields, including its non-database attribute exclusions.
+            editor = connection.schema_editor(atomic=False)
             for before_model in state.apps.get_models(include_auto_created=True):
                 hot_table = before_model._meta.db_table
                 if hot_table not in pg or hot_table in fresh:
@@ -610,6 +614,14 @@ def operation_risks(operation, app, state, registry, fresh=None):
                     # Django's backend-generated field CHECKs (e.g. positive
                     # integers) validate existing rows even on nullable columns.
                     if after_db.get("check") and before_db.get("check") != after_db.get("check"):
+                        add(hot_table, "constraint")
+                    # Django drops/recreates an existing FK for schema-relevant
+                    # AlterField changes, even relaxing NOT NULL or changing a
+                    # default. Re-adding the FK validates the existing rows.
+                    # Checking only target/type/constraint additions misses it.
+                    if (before_field.remote_field and getattr(before_field, "db_constraint", False) and
+                            getattr(after_field, "db_constraint", False) and
+                            editor._field_should_be_altered(before_field, after_field, ignore={"db_comment"})):
                         add(hot_table, "constraint")
         except Exception as exc:
             raise GateError(f"{app}.{model}.{operation.name}: cannot resolve historical backend column type; "
@@ -712,18 +724,28 @@ DDL_DISCOVERY = re.compile(
     r"|TRUNCATE\s+TABLE|OPTIMIZE\s+TABLE|DELETE\s+FROM|"
     r"ATTACH\s+(?:TABLE|DATABASE)|DETACH\s+(?:TABLE|DATABASE))\b|"
     r"(?:^|[;\"'`])[ \t]*TRUNCATE\s+(?:IF\s+EXISTS\s+)?[A-Za-z_`\"][A-Za-z_0-9.`\"]*"
-    r"[ \t]*(?=[;\"'`\n]|$)", re.I | re.M)
+    r"[ \t]*(?=[;\"'`\n]|$|(?:SYNC|ON\s+CLUSTER)\b)", re.I | re.M)
+
+SOURCE_SUFFIXES = {".py", ".go", ".sql", ".sh", ".bash"}
+SHELL_SHEBANG = re.compile(
+    rb"\A#![ \t]*(?:/\S*/(?:bash|sh|dash|ksh|zsh)|"
+    rb"/\S*/env[ \t]+(?:-S[ \t]+)?(?:bash|sh|dash|ksh|zsh))(?=[ \t\r\n]|$)")
 
 
 def source_candidate(path):
     p = Path(path)
-    # Extensionless shipped shell entrypoints are included too.
-    return p.suffix in (".py", ".go", ".sql", ".sh") or (not p.suffix and not p.name.startswith("."))
+    return p.suffix in SOURCE_SUFFIXES or (not p.suffix and not p.name.startswith("."))
 
 
 def source_blob(path, content):
-    """Extensionless binaries/cache/config data are not shell entrypoints."""
-    return content is not None and (bool(Path(path).suffix) or content.startswith(b"#!"))
+    """Recognize source suffixes and plain shell shebangs, regardless of name.
+
+    Extensionless binary/cache data is not source; existing extensionless
+    shebang entrypoints remain supported. No source is executed or reconstructed.
+    """
+    suffix = Path(path).suffix
+    return content is not None and (suffix in SOURCE_SUFFIXES or
+        (not suffix and content.startswith(b"#!")) or bool(SHELL_SHEBANG.match(content)))
 
 
 def schema_statements(content):
@@ -787,12 +809,16 @@ def check_source_coverage(root, registry, paths=None):
     missing, covered = [], []
     for path in paths if paths is not None else repository_paths(root):
         target = root / path
-        if not source_candidate(path):
-            continue
-        require(not target.is_symlink() or not matches(path, registry["sources"]),
-                f"{path}: indirect source path is unsupported", DATA / "clickhouse-sources.json")
+        if source_candidate(path):
+            require(not target.is_symlink() or not matches(path, registry["sources"]),
+                    f"{path}: indirect source path is unsupported", DATA / "clickhouse-sources.json")
         if not target.is_file():
             continue
+        # A suffix cannot rule out a shell script. Inspect only a short prefix
+        # before reading any full blob, so binary/media assets remain cheap.
+        with target.open("rb") as stream:
+            if not source_blob(path, stream.read(256)):
+                continue
         require(target.resolve() == root.resolve() / path, f"{path}: indirect source path is unsupported", DATA / "clickhouse-sources.json")
         # Django migration SQL is covered by the immutable-history check and
         # mandatory real-loader RunSQL/RunPython declarations, not two reviews.
@@ -836,7 +862,7 @@ def clickhouse_review_candidates(root, changes, baseline, sources, head=None):
     source_registry(sources)
     result = []
     for status, relative in changes:
-        if migration_path(relative) or not source_candidate(relative):
+        if migration_path(relative):
             continue
         before = base_bytes(root, baseline, relative)
         current = root / relative

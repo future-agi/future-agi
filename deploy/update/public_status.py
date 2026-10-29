@@ -84,17 +84,29 @@ RESTORE_SAFETY_DEFAULTS = dict(
 SUCCESS_PHASES = ('success_decided', 'success_metadata_committed', 'succeeded')
 
 
-def _recovery_report(operation):
+def _accepted_forward(run):
+    return (run is not None and run.get('kind') == 'apply' and run.get('automatic') is True
+        and run.get('outcome') == 'succeeded' and run.get('forward_result') == 'succeeded'
+        and run.get('restore_result') == 'not_needed')
+
+
+def _recovery_report(operation, last_run):
     """Explicit recovery progress/completion, not a refused manual transaction.
 
     These are presentation markers from the runner, never recovery authority.
-    A phase-less recovery error is meaningful too; ordinary apply/rollback or
-    check results cannot establish that an automatic transaction finished.
+    _finish drops the phase of an ordinary automatic apply, so its fresh explicit
+    terminal result also supersedes missed recovery reports. An observed receipt
+    or an unrelated manual/check result cannot establish that recovery finished.
     """
     return operation is not None and (
         operation['state'] in ('restoring', 'recovery_required', 'restored')
         or operation['kind'] in ('apply', 'restore')
-        and operation.get('phase') in SUCCESS_PHASES + ('failed_available',))
+        and operation.get('phase') in SUCCESS_PHASES + ('failed_available',)
+        or operation['state'] == 'succeeded' and operation['kind'] == 'apply'
+        and _accepted_forward(last_run)
+        and operation['started_at'] is not None and operation['finished_at'] is not None
+        and last_run.get('finished_at') is not None
+        and operation['started_at'] <= last_run['finished_at'] <= operation['finished_at'])
 
 
 def _last_run(value):
@@ -184,7 +196,7 @@ def build_status(binding, policy, control, state, *, now, previous=None, observa
         and previous['safety'].get('fallback_strategy') == 'restore_backup'
         and (previous['operation']['state'] in ('restoring', 'recovery_required')
              or previous['safety'].get('restore_state') in ('running', 'failed', 'recovery_required')))
-    recovery_report = _recovery_report(operation)
+    recovery_report = _recovery_report(operation, last_run)
     preserve_recovery = unresolved_recovery and not recovery_report
     versions = ({'observed_at': None, 'runtime_state': 'unknown', 'selected_release': None,
                  'running_release': None, 'components': []} if previous is None else _versions(previous['versions']))
@@ -369,16 +381,29 @@ def build_status(binding, policy, control, state, *, now, previous=None, observa
         # Runtime uncertainty is meaningful even before a phase can be read.
         # Accepted success needs metadata/availability reconciliation, never a
         # restore, so retain that explicit exception to recovery-state inference.
+        # _recover_pending can fail metadata replay before producing a new run
+        # or safety projection. Retain an already-reported accepted result only
+        # for that phase-less apply reconciliation, not a new restore/check or
+        # evidence obtained from an unrelated receipt inspection.
+        retained_acceptance = (last_run is None and previous is not None
+            and operation is not None and operation['kind'] == 'apply' and operation.get('phase') is None
+            and 'automatic_recovery_pending' in operation['reason_codes']
+            and previous['operation']['kind'] == 'apply'
+            and previous['operation'].get('phase') in (None,) + SUCCESS_PHASES
+            and _accepted_forward(previous['last_run']))
         accepted_success = (op.get('phase') in SUCCESS_PHASES
-            or op['state'] == 'recovery_required' and recovery_report and last_run is not None
-            and last_run.get('automatic') is True and last_run.get('forward_result') == 'succeeded'
-            and last_run.get('restore_result') == 'not_needed')
-        if accepted_success:
-            snapshot['safety']['restore_state'] = 'not_needed'
-        elif op['state'] == 'recovery_required':
-            snapshot['safety']['restore_state'] = 'recovery_required'
-        elif op['state'] == 'restoring':
-            snapshot['safety']['restore_state'] = 'running'
+            or op['state'] == 'recovery_required' and recovery_report
+            and (_accepted_forward(last_run) or retained_acceptance))
+        # An unrelated report preserves the prior safety as well as its banner.
+        # In particular, a phase-less accepted success needs reconciliation, not
+        # restoration; a refused manual command cannot reinterpret that result.
+        if not preserve_recovery:
+            if accepted_success:
+                snapshot['safety']['restore_state'] = 'not_needed'
+            elif op['state'] == 'recovery_required':
+                snapshot['safety']['restore_state'] = 'recovery_required'
+            elif op['state'] == 'restoring':
+                snapshot['safety']['restore_state'] = 'running'
     if snapshot['safety'].get('restore_state') in ('running', 'recovery_required', 'failed') or op['state'] in ('restoring', 'recovery_required'):
         # Old healthy A (or failed B) is not a live version observation while
         # stores are cold/unverified. Do not advertise availability from history.
@@ -389,7 +414,7 @@ def build_status(binding, policy, control, state, *, now, previous=None, observa
     if 'restore_state' in snapshot['safety']:
         if recovery:
             snapshot['safety'].update(guidance_id='review_recovery', operator_action='review_recovery')
-        elif blocked and snapshot['safety']['guidance_id'] == 'none':
+        elif blocked and not preserve_recovery and snapshot['safety']['guidance_id'] == 'none':
             snapshot['safety']['guidance_id'] = 'inspect_host'
     validate_public_status(snapshot, expected_installation=identity, now=now, previous=previous)
     restoration_semantics(snapshot)

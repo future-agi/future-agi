@@ -311,6 +311,64 @@ class ClickHouseRegistryTests(unittest.TestCase):
                 self.review()
                 self.assertEqual(self.check()[0]['tables'], ['clickhouse:spans'])
 
+    def test_truncate_without_table_with_modifiers_requires_review(self):
+        statements = ('TRUNCATE spans SYNC', 'TRUNCATE spans ON CLUSTER analytics',
+                      'TRUNCATE IF EXISTS default.spans ON CLUSTER analytics SYNC',
+                      'TRUNCATE `default`.`spans` SYNC')
+        for suffix in ('py', 'go', 'sql', 'sh', 'bash'):
+            self.path = 'product/schema.' + suffix
+            for statement in statements:
+                text = statement + ';\n' if suffix == 'sql' else 'query="' + statement + '"\n'
+                self.write(text)
+                self.reviews['changes'] = []
+                with self.subTest(path=self.path, statement=statement):
+                    self.assertEqual(gate.check_source_coverage(self.root, self.sources, [self.path]), [self.path])
+                    with self.assertRaisesRegex(gate.GateError, 'human-reviewed declarations'):
+                        self.check()
+                    self.review()
+                    self.assertEqual(self.check()[0]['tables'], ['clickhouse:spans'])
+
+    def test_bash_suffix_and_shebang_sources_require_registration_and_review(self):
+        variants = (('schema.sh', ''), ('schema.bash', ''), ('start', '#!/bin/bash\n'),
+                    ('.bootstrap', '#!/usr/bin/env bash\n'), ('schema.command', '#!/bin/bash -eu\n'),
+                    ('schema.run', '#!/usr/bin/env -S bash -eu\n'))
+        for name, shebang in variants:
+            self.path = 'product/' + name
+            self.write(shebang + 'clickhouse-client --query "DROP TABLE spans"\n')
+            self.reviews['changes'] = []
+            with self.subTest(path=self.path):
+                self.assertEqual(gate.check_source_coverage(self.root, self.sources, [self.path]), [self.path])
+                unregistered = {**self.sources, 'sources': []}
+                with self.assertRaisesRegex(gate.GateError, 'unregistered schema/mutation'):
+                    gate.check_source_coverage(self.root, unregistered, [self.path])
+                with self.assertRaisesRegex(gate.GateError, 'human-reviewed declarations'):
+                    self.check()
+                self.review()
+                self.assertEqual(len(self.check()), 1)
+
+    def test_removing_bash_shebang_or_file_still_reviews_the_old_statement(self):
+        self.path = 'product/schema.command'
+        self.before = b'#!/usr/bin/env bash\nclickhouse-client --query "DROP TABLE spans"\n'
+        target = self.write('Documentation only, no shell entrypoint now.\n')
+        for status in ('M', 'D'):
+            if status == 'D':
+                target.unlink()
+            self.reviews['changes'] = []
+            with self.subTest(status=status):
+                with self.assertRaisesRegex(gate.GateError, 'human-reviewed declarations'):
+                    self.check(status)
+                self.review()
+                self.assertEqual(len(self.check(status)), 1)
+
+    def test_readonly_bash_sources_do_not_require_review(self):
+        for name, shebang in (('schema.bash', ''), ('start', '#!/bin/bash\n'),
+                              ('schema.command', '#!/usr/bin/env bash\n')):
+            self.path = 'product/' + name
+            self.write(shebang + 'clickhouse-client --query "SELECT count() FROM spans"\n')
+            with self.subTest(path=self.path):
+                self.assertEqual(gate.check_source_coverage(self.root, self.sources, [self.path]), [])
+                self.assertEqual(self.check(), [])
+
     def test_client_calls_readonly_builders_and_registration_alone_do_not_trigger_review(self):
         for text in ('# comment only\n', 'client.command(query)', 'conn.Exec(ctx, query)',
                      'ClickHouseClientSingleton().client.execute("SELECT * FROM spans")',
@@ -531,6 +589,16 @@ class StaticEntryPointTests(unittest.TestCase):
                 code, _, err = self.run_changed_source(path, text, 'A')
                 self.assertEqual(code, 1, err)
                 self.assertIn('unregistered schema/mutation', err)
+
+    def test_truncate_modifiers_and_bash_sources_reach_static_review_gate(self):
+        for path, text in (('scripts/schema.sql', 'TRUNCATE spans SYNC;'),
+                           ('scripts/schema.py', 'query="TRUNCATE spans ON CLUSTER analytics"'),
+                           ('scripts/schema.bash', 'clickhouse-client --query "DROP TABLE spans"'),
+                           ('scripts/schema.command', '#!/usr/bin/env bash\nclickhouse-client --query "DROP TABLE spans"')):
+            with self.subTest(path=path):
+                code, _, err = self.run_changed_source(path, text, 'A')
+                self.assertEqual(code, 1, err)
+                self.assertIn('human-reviewed declarations', err)
 
     def test_commented_required_row_reaches_real_static_gate(self):
         reference = (ROOT / 'deploy/env-reference.toml').read_text()

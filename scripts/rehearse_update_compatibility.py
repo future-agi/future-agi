@@ -14,6 +14,22 @@ qualification. Full runs belong on native amd64 Actions, not the local Mac.
 
 CI/local-test interface (no publication or production-key signing)
 ----------------------------------------------------------------
+Milestone 1 is a SEPARATE bounded, nonqualifying mode. On the isolated native
+Actions runner it assembles v1.53.0's retained deployment with the current host
+updater, boots its fixed published digest, enumerates A4 witnesses/gaps and
+calls StandaloneBackup.run_quiesced, leaving A cold until disposable teardown.
+It never creates proof-row.json, policy.json, a release proof or passing suites.
+Full qualification still refuses shipping_executor_unavailable.
+
+  python3 -I scripts/rehearse_update_compatibility.py qualify \\
+    --through source_snapshot --boot-timeout 4200 \\
+    --docker-context colima-fagi-update --out <new-home-directory>
+
+Add --dry-run to write only the labeled job plan without Git/Docker/trust work.
+The live milestone requires a private runner Docker config whose dedicated
+colima-fagi-update context points at that runner's native daemon, NOT Colima or
+a shared host. Its BackupProof binds a snapshot-only intent, not a target release.
+
   python3 -I scripts/rehearse_update_compatibility.py qualify \\
     --source-ref <image@digest> --target-ref <image@digest> \\
     --platform linux/amd64 --deployment-dir <retained-A-files> \\
@@ -1202,8 +1218,11 @@ def failure_diagnostics(exc, executor=None, *, completed_rows=0):
     reason = str(exc) if isinstance(exc, ManualRelease) else 'suite_failed'
     if reason not in MANUAL_REASONS:
         reason = 'suite_failed'
+    from deploy.update.apply import Interrupted
     code = getattr(exc, 'reason_code', getattr(exc, 'refusal_code', None))
     code = getattr(code, 'value', code)
+    if isinstance(exc, (Interrupted, KeyboardInterrupt)):
+        code = 'operation_interrupted'
     if not isinstance(code, str) or re.fullmatch(r'[a-z_]{1,80}', code) is None:
         code = reason
     result = dict(schema_version=1, producer=PRODUCER, eligible=False, reason=reason,
@@ -1438,17 +1457,35 @@ def select_retained_layout(source, proof_raw, directory, platform):
 def qualify(argv):
     """Single native pair, with a nonzero failure exit even for notify-only rows."""
     parser = argparse.ArgumentParser(prog='rehearse_update_compatibility.py qualify')
-    parser.add_argument('--source-ref', required=True)
-    parser.add_argument('--target-ref', required=True)
-    parser.add_argument('--platform', choices=SUPPORTED_PLATFORMS, required=True)
-    parser.add_argument('--deployment-dir', type=Path, required=True)
-    parser.add_argument('--reference-scale', choices=('registered-100k',), required=True)
+    parser.add_argument('--through', choices=('source_snapshot',),
+                        help='Milestone 1 only; never writes a qualification/proof row')
+    parser.add_argument('--dry-run', action='store_true', help='Write the milestone job plan without Docker')
+    parser.add_argument('--source-ref')
+    parser.add_argument('--target-ref')
+    parser.add_argument('--platform', choices=SUPPORTED_PLATFORMS)
+    parser.add_argument('--deployment-dir', type=Path)
+    parser.add_argument('--reference-scale', choices=('registered-100k',))
     parser.add_argument('--boot-timeout', type=int, default=4200)
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--public-key', type=Path)
-    parser.add_argument('--docker-context', default='default' if sys.platform != 'darwin' else 'colima-fagi-update')
+    parser.add_argument('--docker-context')
     parser.add_argument('--run-id', type=int, default=int(os.environ.get('GITHUB_RUN_ID', '1')))
     args = parser.parse_args(argv)
+    args.docker_context = args.docker_context or ('colima-fagi-update' if args.through or sys.platform=='darwin' else 'default')
+    if args.through:
+        if any((args.source_ref, args.target_ref, args.deployment_dir, args.reference_scale, args.public_key)):
+            parser.error('source_snapshot uses the fixed v1.53.0 tag/pin, not qualification or trust inputs')
+        if args.platform not in (None, SUPPORTED_PLATFORM):
+            parser.error('Milestone 1 runs only on native linux/amd64 Actions')
+        if not 1 <= args.boot_timeout <= 4200:
+            parser.error('source boot ceiling must be between 1 and 4200 seconds')
+        from scripts.update_rehearsal_milestone import run
+        return run(args)
+    if args.dry_run:
+        parser.error('--dry-run requires --through source_snapshot')
+    for name in ('source_ref', 'target_ref', 'platform', 'deployment_dir', 'reference_scale'):
+        if getattr(args, name) is None:
+            parser.error('--'+name.replace('_', '-')+' is required for full qualification')
     target = None
     need(not args.out.exists() and not args.out.is_symlink(), 'qualification output must be new')
     args.out.mkdir(mode=0o700, parents=True)

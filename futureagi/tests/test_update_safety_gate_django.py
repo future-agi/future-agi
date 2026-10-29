@@ -222,6 +222,108 @@ class Migration(migrations.Migration):
         with self.assertRaisesRegex(gate.GateError, "type_change.*hot_events"):
             gate.validate_declaration(None, risks, REGISTRY, "0003_fk_type.py")
 
+    def test_loader_requires_review_when_existing_foreign_key_becomes_nullable(self):
+        from django.db.backends.postgresql.base import DatabaseWrapper
+        from unittest.mock import patch
+        historical = '''from django.db import migrations, models
+class Migration(migrations.Migration):
+    dependencies = [("fixed_label", "0002_backfill")]
+    operations = [migrations.AddField("event", "parent", models.ForeignKey(
+        "fixed_label.ColdEvent", db_index=False, on_delete=models.CASCADE))]
+'''
+        # This is an already-applied parent migration, not part of the new plan:
+        # its AddField risk must not mask the new AlterField regression.
+        self.load_candidate('0003_existing_fk', historical)
+        source = '''from django.db import migrations, models
+class Migration(migrations.Migration):
+    dependencies = [("fixed_label", "0003_existing_fk")]
+    operations = [migrations.AlterField("event", "parent", models.ForeignKey(
+        "fixed_label.ColdEvent", null=True, db_index=False, on_delete=models.CASCADE))]
+'''
+        loader, relative = self.load_candidate('0004_nullable_fk', source)
+        # Exercise the production classifier with an unconnected PostgreSQL
+        # backend: no cached server version or SQL-composition stub is needed.
+        backend = DatabaseWrapper({'ENGINE': 'django.db.backends.postgresql', 'NAME': 'fixture'})
+        with patch('django.db.connection', backend), patch.object(backend, 'cursor',
+                side_effect=AssertionError('risk classification must not query PostgreSQL')), patch.object(
+                backend, 'ensure_connection', side_effect=AssertionError('risk classification must not connect')):
+            with self.assertRaisesRegex(gate.GateError, 'constraint.*hot_events'):
+                gate.lint_migrations(loader, [relative], self.root, REGISTRY)
+            value = reviewed([{'table': 'postgres:hot_events', 'risk_class': 'constraint'}])
+            (self.root / relative).write_text(source + '\nUPDATE_SAFETY = ' + repr(value) + '\n')
+            self.assertEqual(gate.lint_migrations(loader, [relative], self.root, REGISTRY), [
+                {'path': relative, 'tables': ['postgres:hot_events'], 'risk_classes': ['constraint'],
+                 'large_volume_rehearsal': True}])
+
+    def test_postgresql_nullable_fk_alter_recreates_validating_constraint(self):
+        from django.db.backends.postgresql.base import DatabaseWrapper
+        from unittest.mock import patch
+        backend = DatabaseWrapper({'ENGINE': 'django.db.backends.postgresql', 'NAME': 'fixture'})
+        backend.pg_version = 160000
+        state = self.state.clone()
+        migrations.AddField('event', 'parent', models.ForeignKey('fixed_label.ColdEvent',
+            db_index=False, on_delete=models.CASCADE)).state_forwards('fixed_label', state)
+        operation = migrations.AlterField('event', 'parent', models.ForeignKey('fixed_label.ColdEvent',
+            null=True, db_index=False, on_delete=models.CASCADE))
+        after = state.clone()
+        operation.state_forwards('fixed_label', after)
+        old = state.apps.get_model('fixed_label', 'Event')._meta.get_field('parent')
+        model = after.apps.get_model('fixed_label', 'Event')
+        new = model._meta.get_field('parent')
+
+        def compose_parameter_free_sql(sql, params):
+            # psycopg 3's mogrify opens a cursor even for empty params. This
+            # DDL has no interpolation: retain Django's SQL and stub only that
+            # driver boundary, failing if the fixture ever needs adaptation.
+            self.assertIn(params, ((), []))
+            self.assertNotIn('%', sql)
+            return sql
+
+        with patch.object(backend, 'cursor', side_effect=AssertionError('SQL collection must not contact PostgreSQL')):
+            with patch.object(backend.ops, 'compose_sql', side_effect=compose_parameter_free_sql) as compose:
+                with backend.schema_editor(collect_sql=True, atomic=False) as editor:
+                    # Catalog names are a fixture; Django still emits all DDL.
+                    with patch.object(editor, '_constraint_names', return_value=['hot_events_parent_fk']) as names:
+                        editor.alter_field(model, old, new)
+                    names.assert_called_once_with(model, ['parent_id'], foreign_key=True)
+                compose.assert_called()
+            sql = '\n'.join(editor.collected_sql)
+            self.assertIn('DROP CONSTRAINT', sql)
+            self.assertIn('DROP NOT NULL', sql)
+            self.assertIn('FOREIGN KEY', sql)
+            self.assertIn('REFERENCES "cold_events"', sql)
+            self.assertNotIn('NOT VALID', sql)
+            # The production classifier must work without the composition stub.
+            with patch('django.db.connection', backend):
+                risks = gate.operation_risks(operation, 'fixed_label', state, REGISTRY)
+                self.assertEqual({r['risk_class'] for r in risks}, {'constraint'})
+                with self.assertRaisesRegex(gate.GateError, 'constraint.*hot_events'):
+                    gate.validate_declaration(None, risks, REGISTRY, '0004_nullable_fk.py')
+
+    def test_existing_constrained_fk_schema_changes_require_review_but_metadata_does_not(self):
+        from django.db import connection
+        from unittest.mock import patch
+        state = self.state.clone()
+        original = {'null': False, 'db_index': False, 'on_delete': models.CASCADE}
+        migrations.AddField('event', 'parent', models.ForeignKey('fixed_label.ColdEvent',
+            **original)).state_forwards('fixed_label', state)
+        for change in ({'null': True}, {'default': 1}, {'db_default': 1}, {'db_index': True},
+                       {'unique': True}, {'db_column': 'owner_id'}):
+            operation = migrations.AlterField('event', 'parent', models.ForeignKey(
+                'fixed_label.ColdEvent', **{**original, **change}))
+            with self.subTest(change=change), patch.object(connection, 'cursor',
+                    side_effect=AssertionError('risk classification must not query the database')):
+                risks = gate.operation_risks(operation, 'fixed_label', state, REGISTRY)
+                self.assertIn('constraint', {r['risk_class'] for r in risks})
+                with self.assertRaisesRegex(gate.GateError, 'hot_events'):
+                    gate.validate_declaration(None, risks, REGISTRY, '0004_fk_change.py')
+        for change in ({'help_text': 'Documentation only'}, {'blank': True}, {'related_name': 'events'},
+                       {'on_delete': models.PROTECT}, {'db_comment': 'Column documentation'}):
+            operation = migrations.AlterField('event', 'parent', models.ForeignKey(
+                'fixed_label.ColdEvent', **{**original, **change}))
+            with self.subTest(metadata=change):
+                self.assertEqual(gate.operation_risks(operation, 'fixed_label', state, REGISTRY), [])
+
     def test_small_target_pk_type_change_flags_high_volume_inbound_fk(self):
         state = self.foreign_key_state()
         operation = migrations.AlterField("parent", "id", models.BigIntegerField(primary_key=True))

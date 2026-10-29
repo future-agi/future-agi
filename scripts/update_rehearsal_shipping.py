@@ -168,6 +168,9 @@ for root in (Path('/data/collector'),Path('/data/telemetry')):
         with os.fdopen(fd,'rb') as f: raw=f.read(4*1024*1024+1)
         after=path.lstat()
         assert (info.st_ino,info.st_size,info.st_mtime_ns)==(after.st_ino,after.st_size,after.st_mtime_ns)
+        # A background spool changing during seeding is not attribution. Only
+        # claim files containing this controlled namespace/trace, when supplied.
+        if a.get('contains') and not any(value.encode() in raw for value in a['contains']): continue
         rows.append({'identity':str(path),'payload_sha256':hashlib.sha256(raw).hexdigest()})
         assert len(rows)<=4096
 print(json.dumps(rows))
@@ -238,17 +241,27 @@ class ProductWitnesses:
         raw = None if payload is None else p.canonical_json(payload)
         url = 'http://127.0.0.1:' + str(self.d.ports[port]) + path
         request = Request(url, data=raw, headers=dict({'Content-Type':'application/json'}, **(headers or {})))
-        with build_opener(ProxyHandler({})).open(request, timeout=30) as response:
-            result = response.read(p.MAX_EVIDENCE_BYTES + 1)
-            p.need(len(result) <= p.MAX_EVIDENCE_BYTES, 'witness API response bound')
-            return p.decode_document(result) if result else {}
+        from urllib.error import HTTPError
+        try:
+            with build_opener(ProxyHandler({})).open(request, timeout=30) as response:
+                result = response.read(p.MAX_EVIDENCE_BYTES + 1)
+                p.need(len(result) <= p.MAX_EVIDENCE_BYTES, 'witness API response bound')
+                document = p.decode_document(result) if result else {}
+                # GeneralMethods.success_response wraps signup/login in `result`;
+                # user-info and keys use their own documented response shapes.
+                return document['result'] if 'result' in document else document
+        except HTTPError as error:
+            # These paths are fixed product operations. Keep the HTTP reason,
+            # never credentials, request payloads or arbitrary server errors.
+            raise p.RehearsalError('product witness HTTP '+str(error.code)+' on '+path) from None
 
     def create(self, label):
         p = producer()
         p.need(label not in self.namespaces, 'duplicate witness namespace')
         namespace = PREFIX + label + '-' + uuid.uuid4().hex
         initial_spool = {r['identity']:r['payload_sha256'] for r in self.d.app_python(SPOOL_OPERATION,{'paths':None})}
-        account = dict(email=namespace+'@example.test',full_name=namespace,password=secrets.token_urlsafe(32))
+        account = dict(email=namespace+'@example.test',full_name=namespace,company_name=namespace,
+                       password=secrets.token_urlsafe(32))
         self.d._secret_values.add(account['password'])
         # The supported local OSS API creates the relational user/org/workspace;
         # collector ingestion creates the project through the product path.
@@ -273,24 +286,39 @@ class ProductWitnesses:
         obj = dict(action='create',bucket='qualification-'+uuid.uuid4().hex,key=namespace,
                    body=base64.b64encode(secrets.token_bytes(4096)).decode())
         s3 = self.d.app_python(S3_OPERATION,obj)
+        p.equal(s3,dict(identity=obj['bucket']+'/'+obj['key'],
+                       payload_sha256=p.sha(base64.b64decode(obj['body'],validate=True))),
+                'S3 witness differs from seeded payload')
         workflow = self.d.app_python(TEMPORAL_OPERATION,dict(action='create',id=namespace))
-        final_spool = self.d.app_python(SPOOL_OPERATION,{'paths':None})
+        final_spool = self.d.app_python(SPOOL_OPERATION,{'paths':None,'contains':[namespace,trace.hex,str(trace)]})
         produced = [r['identity'] for r in final_spool if initial_spool.get(r['identity'])!=r['payload_sha256']]
         self.namespaces[label] = dict(namespace=namespace,account=account,headers=headers,trace_id=str(trace),
             span_id=span,object=obj,workflow=workflow,spool_paths=produced)
+        for family in ('collector','telemetry'):
+            if not any(path.startswith('/data/'+family+'/') for path in produced):
+                self.d.corpus.setdefault('witness_gaps',[]).append({'domain':'shared_files','family':family,
+                    'reason':'no_attributable_naturally_produced_spool'})
         if not produced:
-            self.d.corpus.setdefault('witness_gaps',[]).append({'domain':'shared_files','reason':'no_naturally_produced_spool'})
             raise p.ManualRelease('witness_operation_unavailable')
         return self.read(label)
 
     def read(self, label):
         p, n = producer(), self.namespaces[label]
         info = self._http('/accounts/user-info/',headers=n['headers'])
-        relational = {k:info.get(k) for k in ('id','email','organization','default_workspace_id')}
-        result = [dict(domain='postgres_app',identity=n['account']['email'],origin='product_api',payload_sha256=p.sha(p.canonical_json(relational)))]
+        p.equal(info.get('email'),n['account']['email'],'witness API returned another user')
+        relational = {
+            'user/'+str(info['id']): {k:info.get(k) for k in ('id','email','name')},
+            'organization/'+str(info['organization']['id']): info['organization'],
+            'workspace/'+str(info['default_workspace_id']): {k:info.get(k) for k in
+                ('default_workspace_id','default_workspace_name','default_workspace_display_name')},
+        }
+        result = [dict(domain='postgres_app',identity=identity,origin='product_api',
+                       payload_sha256=p.sha(p.canonical_json(payload))) for identity,payload in relational.items()]
         # Read only the exact collector-created span. timestamps/usage counters
         # from unrelated background traffic never enter this namespace.
-        sql = "SELECT id, trace_id, name FROM spans FINAL WHERE trace_id = {trace:String} AND id = {span:String} FORMAT JSONEachRow"
+        sql = ("SELECT id, trace_id, name, project_id, service_name, start_time, end_time, "
+               "status, attrs_string FROM spans FINAL WHERE trace_id = {trace:String} "
+               "AND id = {span:String} FORMAT JSONEachRow")
         deadline = time.monotonic()+120
         while True:
             rows = self.d.clickhouse(sql,params={'trace':n['trace_id'],'span':n['span_id']})
@@ -586,8 +614,9 @@ class ShippingRehearsal:
     def app_python(self,source,argument):
         p=producer()
         app=next(r['id'] for r in self.installation.containers() if r['service']=='app')
-        # The shell is fixed code; all data is passed to the interpreter stdin.
-        result=self.runner([*self.installation.docker,'exec','-i',app,'python','-I','-B','-c',source],
+        # Attach Python's command like the shipping helpers: a standalone -c
+        # is a Docker routing flag to the supervisor. JSON stays on stdin.
+        result=self.runner([*self.installation.docker,'exec','-i',app,'python','-I','-B','-c'+source],
             input=p.canonical_json(argument),cwd=str(self.root),env=self.installation.subprocess_env(),
             capture_output=True,timeout=180)
         if result.returncode != 0:

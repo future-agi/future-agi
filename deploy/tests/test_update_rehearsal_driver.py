@@ -497,16 +497,28 @@ class Wave4cDriverRegressionTests(unittest.TestCase):
             with self.subTest(raw=raw), self.assertRaises((ValueError, rehearsal.RehearsalError)):
                 shipping.decode_product_output(raw)
 
-    def test_shipping_app_operation_decodes_real_spool_list_and_sends_json_stdin(self):
-        driver = object.__new__(shipping.ShippingRehearsal)
-        driver.root = Path('/not-a-bind')
-        driver.installation = SimpleNamespace(containers=lambda: [dict(id='app-id', service='app')],
-            docker=['docker', '--context', 'colima-fagi-update'], subprocess_env=lambda: {})
-        driver.runner = mock.Mock(return_value=subprocess.CompletedProcess([], 0, stdout=b'[]\n', stderr=b''))
-        self.assertEqual(driver.app_python(shipping.SPOOL_OPERATION, {'paths': None}), [])
-        args, kwargs = driver.runner.call_args
-        self.assertEqual(args[0][-5:], ['python', '-I', '-B', '-c', shipping.SPOOL_OPERATION])
-        self.assertEqual(kwargs['input'], b'{"paths":null}')
+    def test_shipping_app_operation_crosses_real_supervisor_and_sends_json_stdin(self):
+        from deploy.update.contracts import AutomationPolicy
+        from deploy.update.processes import ProcessSupervisor
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            # Only Docker is a fixture executable. The real supervisor must
+            # accept the driver argv, forward stdin and execute isolated Python.
+            docker = root/'docker'
+            docker.write_text('#!'+sys.executable+'\nimport os,sys\na=sys.argv[1:]\n'
+                'assert a[:8]==["--context","colima-fagi-update","exec","-i","app-id","python","-I","-B"]\n'
+                'os.execv(sys.executable,[sys.executable,*a[6:]])\n')
+            docker.chmod(0o700)
+            driver = object.__new__(shipping.ShippingRehearsal)
+            driver.root = root
+            driver.installation = SimpleNamespace(containers=lambda: [dict(id='app-id', service='app')],
+                docker=[str(docker), '--context', 'colima-fagi-update'], subprocess_env=lambda: {})
+            driver.runner = ProcessSupervisor(AutomationPolicy(), docker_context='colima-fagi-update',
+                environment={}, grace_seconds=.1)
+            source = ('import json,sys\nassert sys.flags.isolated and sys.dont_write_bytecode\n'
+                      'assert json.load(sys.stdin)=={"paths":None}\nprint("[]")\n')
+            self.assertEqual(driver.app_python(source, {'paths': None}), [])
+            self.assertFalse(driver.runner.uncertain)
 
     def test_redis_reset_requires_a_positive_source_seed_and_live_absence(self):
         driver = object.__new__(shipping.ShippingRehearsal)
@@ -551,6 +563,465 @@ class Wave4cDriverRegressionTests(unittest.TestCase):
         self.assertEqual(driver._docker.call_args.args,
             ('exec', 'ch-id', 'clickhouse-client', '--user', 'fixture-user', '--password',
              'not-a-real-secret', '--query', 'SELECT 1', '--param_trace=controlled-id'))
+
+
+class SourceSnapshotMilestoneTests(unittest.TestCase):
+    """Milestone plumbing/refusals only; these tests are NOT product evidence."""
+    def test_cli_exposes_bounded_mode_without_loosening_full_qualification(self):
+        result = subprocess.run([sys.executable, '-I', str(rehearsal.ROOT/'scripts/rehearse_update_compatibility.py'),
+            'qualify', '--help'], capture_output=True, text=True, timeout=30, cwd=str(rehearsal.ROOT))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('--through {source_snapshot}', result.stdout)
+        self.assertIn('--dry-run', result.stdout)
+        with tempfile.TemporaryDirectory() as temporary:
+            out = Path(temporary)/'absent'
+            for flags in ([], ['--dry-run'], ['--through','migration_forward'],
+                          ['--through','source_snapshot','--source-ref','untrusted'],
+                          ['--through','source_snapshot','--public-key','/not-a-key'],
+                          ['--through','source_snapshot','--platform','linux/arm64'],
+                          ['--through','source_snapshot','--boot-timeout','4201']):
+                with self.subTest(flags=flags), self.assertRaises(SystemExit) as error:
+                    rehearsal.qualify([*flags,'--out',str(out)])
+                self.assertEqual(error.exception.code, 2)
+                self.assertFalse(out.exists())
+        with self.assertRaisesRegex(rehearsal.ManualRelease, 'shipping_executor_unavailable'):
+            rehearsal.shipping_factory()
+
+    def test_dry_run_runs_without_daemon_trust_or_product_inputs_and_cannot_package(self):
+        from scripts import update_rehearsal_milestone as milestone
+        with tempfile.TemporaryDirectory() as temporary:
+            out = Path(temporary)/'plan'
+            with mock.patch.object(milestone,'SnapshotMilestone') as driver, \
+                 mock.patch.object(rehearsal,'command') as command, \
+                 mock.patch.object(rehearsal,'_local_verifier') as verifier:
+                code = rehearsal.main(['qualify','--through','source_snapshot','--dry-run',
+                                       '--out',str(out)])
+            self.assertEqual(code, 0)
+            driver.assert_not_called(); command.assert_not_called(); verifier.assert_not_called()
+            result = json.loads((out/'milestone.json').read_bytes())
+            plan = json.loads((out/'job-plan.json').read_bytes())
+            for doc in (result, plan):
+                self.assertFalse(doc['eligible']); self.assertFalse(doc['qualification_evidence'])
+                self.assertEqual(doc['completed_rows'], 0)
+                self.assertEqual(doc['milestone'], 'source_snapshot')
+            self.assertEqual(result['executed_stages'], [])
+            self.assertEqual(plan['source_image'], 'futureagi/standalone:v1.53.0@'+milestone.DIGEST)
+            self.assertEqual(plan['boot_ceiling_seconds'], 4200)
+            self.assertEqual(plan['backup_api'], 'StandaloneBackup.run_quiesced')
+            self.assertEqual(set(plan['qualification_suites'].values()), {'unrun'})
+            for name in ('proof-row.json','evidence.json','policy.json'):
+                self.assertFalse((out/name).exists())
+            self.assertEqual(rehearsal.package(['--rows',str(out),'--target','absent','--key','absent',
+                '--public-key','absent','--out',str(out/'package'),'--run-id','1']), 2)
+            self.assertFalse((out/'package').exists())
+
+    def test_dry_run_entrypoint_isolated_subprocess(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            out = Path(temporary)/'plan'
+            result = subprocess.run([sys.executable,'-I',str(rehearsal.ROOT/'scripts/rehearse_update_compatibility.py'),
+                'qualify','--through','source_snapshot','--dry-run','--out',str(out)],
+                capture_output=True,text=True,timeout=30,cwd=str(rehearsal.ROOT))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads((out/'milestone.json').read_bytes())['status'], 'planned')
+
+    def test_local_execution_refuses_before_git_or_docker_with_stage_reason(self):
+        from scripts import update_rehearsal_milestone as milestone
+        with tempfile.TemporaryDirectory() as temporary:
+            out = Path(temporary)/'evidence'
+            with mock.patch.dict(os.environ, {'GITHUB_ACTIONS':'false'}), \
+                 mock.patch.object(milestone,'SnapshotMilestone') as driver:
+                code = rehearsal.main(['qualify','--through','source_snapshot','--out',str(out)])
+            self.assertEqual(code, 2); driver.assert_not_called()
+            failure = json.loads((out/'failure.json').read_bytes())
+            self.assertEqual(failure['failure']['stage'], 'context_validation')
+            self.assertIn('native amd64 Actions', failure['failure']['detail'])
+            self.assertFalse(failure['eligible'])
+            self.assertEqual(set(failure['qualification_suites'].values()), {'unrun'})
+            self.assertFalse((out/'proof-row.json').exists())
+
+    def test_outputs_are_create_only_including_dangling_links(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            out = Path(temporary)/'existing'; out.mkdir(); keep = out/'keep'; keep.write_text('unchanged')
+            link = Path(temporary)/'link'; link.symlink_to(Path(temporary)/'absent')
+            for path in (out, link):
+                self.assertEqual(rehearsal.main(['qualify','--through','source_snapshot','--dry-run','--out',str(path)]),2)
+            self.assertEqual(keep.read_text(),'unchanged')
+            self.assertEqual(list(out.iterdir()),[keep])
+
+    def test_real_tag_archive_plus_current_updater_preserves_retained_A_bytes(self):
+        from scripts import update_rehearsal_milestone as milestone
+        from deploy.update.standalone_backup import CONFIG_FILES
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            driver = milestone.SnapshotMilestone(root, context='default', boot_timeout=4200)
+            driver.assemble()  # git archive and local copies only; no Docker.
+            self.assertEqual(set(driver.execution['files']),set(CONFIG_FILES[1:]))
+            for name,digest in driver.execution['files'].items():
+                self.assertEqual(hash_path(driver.root,name),digest)
+            self.assertEqual((driver.root/'deploy/update/standalone_backup.py').read_bytes(),
+                             (rehearsal.ROOT/'deploy/update/standalone_backup.py').read_bytes())
+            self.assertEqual((driver.root/'bin/update').read_bytes(),(rehearsal.ROOT/'bin/update').read_bytes())
+            self.assertFalse((driver.root/'.env').exists())
+            self.assertFalse((driver.root/'futureagi/manage.py').exists())
+            self.assertIn('not-release-manifest',driver.descriptor['kind'])
+            self.assertFalse(driver.descriptor['eligible'])
+            self.assertTrue(driver.project.startswith('fagi-upd-e2e-driver-m1-'))
+
+    def test_archive_refuses_links_traversal_extra_files_and_duplicates(self):
+        import io
+        import tarfile
+        from scripts import update_rehearsal_milestone as milestone
+        for names, link in ((['../outside'],False),(['/outside'],False),(['unexpected.py'],False),
+                            (['docker-compose.yml'],True),(['docker-compose.yml']*2,False)):
+            buffer = io.BytesIO()
+            with tarfile.open(fileobj=buffer,mode='w') as archive:
+                for name in names:
+                    member=tarfile.TarInfo(name)
+                    if link: member.type=tarfile.SYMTYPE; member.linkname='/etc/passwd'
+                    archive.addfile(member)
+            with tempfile.TemporaryDirectory() as temporary, \
+                 mock.patch.object(rehearsal,'command',side_effect=[b'a'*40,buffer.getvalue()]):
+                with self.subTest(names=names,link=link),self.assertRaises(rehearsal.RehearsalError):
+                    milestone.archive_deployment(Path(temporary)/'retained')
+
+    def test_milestone_stage_failure_is_nonzero_labeled_and_cleanup_is_required(self):
+        from scripts import update_rehearsal_milestone as milestone
+        for failed_stage in milestone.STAGES:
+            with self.subTest(stage=failed_stage), tempfile.TemporaryDirectory(dir=str(Path.home())) as temporary:
+                out=Path(temporary)/'evidence'
+                driver=SimpleNamespace(deadline=time_limit(),cleanup_verified=False,
+                    _collect_diagnostics=mock.Mock(),diagnostics=lambda:{'qualification_evidence':False})
+                for method in ('assemble','install_and_boot','seed','observe_source','take_snapshot','verify_snapshot'):
+                    setattr(driver,method,mock.Mock())
+                def phase(name,operation):
+                    if name==failed_stage: raise rehearsal.ManualRelease('suite_timed_out')
+                    operation()
+                driver._phase=phase
+                def cleanup(): driver.cleanup_verified=True
+                driver.cleanup=cleanup
+                args=SimpleNamespace(out=out,boot_timeout=4200,docker_context='colima-fagi-update',dry_run=False)
+                with mock.patch.object(milestone.sys,'platform','linux'), \
+                     mock.patch.dict(os.environ,{'GITHUB_ACTIONS':'true','RUNNER_ARCH':'X64'}), \
+                     mock.patch.object(milestone,'SnapshotMilestone',return_value=driver):
+                    self.assertEqual(milestone.run(args),2)
+                result=json.loads((out/'milestone.json').read_bytes())
+                self.assertEqual(result['failure']['stage'],failed_stage)
+                self.assertEqual(result['failure']['reason'],'suite_timed_out')
+                self.assertTrue(result['cleanup_verified'])
+                self.assertEqual(result['executed_stages'],list(milestone.STAGES[:milestone.STAGES.index(failed_stage)]))
+                self.assertFalse((out/'proof-row.json').exists())
+
+    def test_sigterm_finalizes_failed_stage_and_reaps_real_supervised_child(self):
+        import signal
+        from deploy.update.processes import ProcessSupervisor
+        from scripts import update_rehearsal_milestone as milestone
+        for supervised in (True, False):
+            with self.subTest(supervised=supervised), tempfile.TemporaryDirectory(dir=str(Path.home())) as temporary:
+                root = Path(temporary).resolve()
+                out = root/'evidence'
+                driver = milestone.SnapshotMilestone(root, context='colima-fagi-update', boot_timeout=4200)
+                driver.runner = ProcessSupervisor(driver.policy, docker_context=driver.context,
+                    environment={}, grace_seconds=.1)
+                pidfile = root/'child.pid'
+                def interrupted_stage():
+                    if not supervised:
+                        signal.raise_signal(signal.SIGTERM)
+                        return
+                    # The child signals only after the real supervisor installs
+                    # its handler; no timer race and no daemon/product process.
+                    driver.runner([sys.executable, '-I', '-B', '-c',
+                        'import os,signal,sys,time\nfrom pathlib import Path\n'
+                        'Path(sys.argv[1]).write_text(str(os.getpid()))\n'
+                        'os.kill(os.getppid(),signal.SIGTERM)\ntime.sleep(30)\n', str(pidfile)], timeout=5)
+                for method in ('assemble','seed','observe_source','take_snapshot','verify_snapshot'):
+                    setattr(driver, method, mock.Mock())
+                driver.install_and_boot = interrupted_stage
+                def cleanup(): driver.cleanup_verified = True
+                driver.cleanup = mock.Mock(side_effect=cleanup)
+                args = SimpleNamespace(out=out, boot_timeout=4200, docker_context=driver.context, dry_run=False)
+                previous = signal.getsignal(signal.SIGTERM)
+                try:
+                    with mock.patch.object(milestone.sys, 'platform', 'linux'), \
+                         mock.patch.dict(os.environ, {'GITHUB_ACTIONS':'true','RUNNER_ARCH':'X64'}), \
+                         mock.patch.object(milestone, 'SnapshotMilestone', return_value=driver):
+                        code = milestone.run(args)
+                finally:
+                    self.assertEqual(signal.getsignal(signal.SIGTERM), previous)
+                self.assertEqual(code, 2)
+                driver.cleanup.assert_called_once()
+                result = json.loads((out/'milestone.json').read_bytes())
+                self.assertEqual(result, json.loads((out/'failure.json').read_bytes()))
+                self.assertEqual(result['status'], 'failed')
+                self.assertEqual(result['failure'], dict(stage='install_and_boot_a',
+                    reason='operation_interrupted', exception_type='Interrupted'))
+                self.assertEqual(result['executed_stages'], ['assemble_retained_a'])
+                self.assertTrue(result['cleanup_verified'])
+                self.assertFalse(result['eligible'])
+                self.assertEqual(set(result['qualification_suites'].values()), {'unrun'})
+                self.assertEqual(driver.diagnostics()['phase_timings'][-1]['refusal'], 'operation_interrupted')
+                if supervised:
+                    self.assertTrue(driver.runner.uncertain)
+                    with self.assertRaises(ProcessLookupError): os.kill(int(pidfile.read_text()), 0)
+                for name in ('proof-row.json','evidence.json','policy.json'):
+                    self.assertFalse((out/name).exists())
+
+    def test_actual_milestone_policy_constructs_real_cold_backup(self):
+        from deploy.update.install import Installation
+        from deploy.update.processes import ProcessSupervisor
+        from deploy.update.standalone_backup import BackupBinding, StandaloneBackup
+        from scripts import update_rehearsal_milestone as milestone
+        with tempfile.TemporaryDirectory() as temporary:
+            driver = milestone.SnapshotMilestone(Path(temporary).resolve(),
+                context='colima-fagi-update', boot_timeout=4200)
+            driver.root.mkdir()
+            (driver.root/'.env').write_text('COMPOSE_PROJECT_NAME='+driver.project+'\n')
+            runner = ProcessSupervisor(driver.policy, docker_context=driver.context, environment={})
+            installation = Installation(driver.root, runner=runner, environ={},
+                docker=['docker','--context',driver.context], compose=['docker','compose'])
+            # Constructor contract only: this is not a captured runtime binding
+            # and does not claim that a backup or a product operation ran.
+            binding = BackupBinding(canonical_json(dict(schema_version=1,
+                root=str(driver.root), context=driver.context)))
+            backup = StandaloneBackup(installation, binding, driver.directory/'backups')
+            self.assertIs(backup.installation.runner.policy, driver.policy)
+            self.assertEqual(driver.policy.probe_timeout_seconds, 90)
+
+    def test_stubbed_milestone_success_is_not_qualification_and_cleanup_failure_is_red(self):
+        from scripts import update_rehearsal_milestone as milestone
+        for cleanup_ok in (True,False):
+            with self.subTest(cleanup=cleanup_ok),tempfile.TemporaryDirectory(dir=str(Path.home())) as temporary:
+                out=Path(temporary)/'evidence'
+                driver=SimpleNamespace(deadline=time_limit(),cleanup_verified=False,
+                    _collect_diagnostics=mock.Mock(),diagnostics=lambda:{'qualification_evidence':False})
+                for method in ('assemble','install_and_boot','seed','observe_source','take_snapshot','verify_snapshot'):
+                    setattr(driver,method,mock.Mock())
+                driver._phase=lambda name,operation:operation()
+                def cleanup():
+                    if not cleanup_ok: raise RuntimeError('PRIVATE synthetic failure')
+                    driver.cleanup_verified=True
+                driver.cleanup=cleanup
+                args=SimpleNamespace(out=out,boot_timeout=4200,docker_context='colima-fagi-update',dry_run=False)
+                with mock.patch.object(milestone.sys,'platform','linux'), \
+                     mock.patch.dict(os.environ,{'GITHUB_ACTIONS':'true','RUNNER_ARCH':'X64'}), \
+                     mock.patch.object(milestone,'SnapshotMilestone',return_value=driver):
+                    self.assertEqual(milestone.run(args),0 if cleanup_ok else 2)
+                result=json.loads((out/'milestone.json').read_bytes())
+                self.assertFalse(result['eligible']); self.assertEqual(result['completed_rows'],0)
+                self.assertEqual(set(result['qualification_suites'].values()),{'unrun'})
+                self.assertEqual(result['executed_stages'],list(milestone.STAGES))
+                self.assertNotIn('PRIVATE',json.dumps(result))
+                for name in ('proof-row.json','evidence.json','policy.json'):
+                    self.assertFalse((out/name).exists())
+
+    def test_workflow_job_is_native_bounded_read_only_and_always_uploads(self):
+        from deploy.tests.test_update_release_static import load
+        path=rehearsal.ROOT/'.github/workflows/update-rehearsal-milestones.yml'
+        workflow=load(path)
+        self.assertIn('workflow_dispatch',workflow['on'])
+        self.assertIn('deploy/update/**',workflow['on']['pull_request']['paths'])
+        self.assertEqual(workflow['permissions'],{'contents':'read'})
+        job=workflow['jobs']['source-snapshot']
+        self.assertEqual(job['runs-on'],'ubuntu-24.04'); self.assertEqual(int(job['timeout-minutes']),150)
+        self.assertEqual(job['permissions'],{'contents':'read'})
+        checkout=next(s for s in job['steps'] if s.get('uses','').startswith('actions/checkout@'))
+        self.assertEqual(int(checkout['with']['fetch-depth']),0)
+        upload=next(s for s in job['steps'] if s.get('uses','').startswith('actions/upload-artifact@'))
+        self.assertEqual(upload['if'],'always()')
+        self.assertNotIn('workspace',upload['with']['path'])
+        text=path.read_text()
+        for unsafe in ('secrets.', 'id-token:', 'packages:', 'pull_request_target:', 'sign-blob', '--docker-context default'):
+            self.assertNotIn(unsafe,text)
+        self.assertIn('--through source_snapshot',text)
+        self.assertIn('--boot-timeout 4200',text)
+        self.assertIn('--docker-context colima-fagi-update',text)
+        self.assertIn('docker --config "$dir" context create colima-fagi-update',text)
+
+    def test_supported_signup_body_and_enveloped_tokens_are_not_guessed(self):
+        from urllib.request import OpenerDirector
+        driver=SimpleNamespace(ports={'BACKEND_PORT':1234},_secret_values=set())
+        witnesses=shipping.ProductWitnesses(driver)
+        response=mock.MagicMock()
+        response.__enter__.return_value=response
+        response.read.return_value=b'{"status":1,"result":{"access":"not-a-real-token"}}'
+        opener=SimpleNamespace(open=mock.Mock(return_value=response))
+        with mock.patch('urllib.request.build_opener',return_value=opener):
+            self.assertEqual(witnesses._http('/accounts/token/',payload={'email':'test@example.test'}),
+                             {'access':'not-a-real-token'})
+        request=opener.open.call_args.args[0]
+        self.assertEqual(json.loads(request.data),{'email':'test@example.test'})
+
+
+class SourceSnapshotOperationTests(unittest.TestCase):
+    """No daemon: execute driver control flow with explicitly stubbed I/O."""
+    def test_boot_records_real_endpoint_samples_and_never_extends_its_ceiling(self):
+        from scripts import update_rehearsal_milestone as milestone
+        for ready in (True,False):
+            with self.subTest(ready=ready),tempfile.TemporaryDirectory() as temporary:
+                driver=milestone.SnapshotMilestone(Path(temporary).resolve(),context='colima-fagi-update',boot_timeout=10)
+                clock=[0.0]
+                driver.deadline=100
+                driver.installation=SimpleNamespace(compose_run=mock.Mock(),
+                    containers=lambda:[{'id':str(i)} for i in range(3)])
+                def inspection(*args):
+                    healthy=ready and clock[0]>=5
+                    return [dict(State={'Running':True,'Status':'running','OOMKilled':False,
+                        'Health':{'Status':'healthy' if healthy else 'starting'}},RestartCount=0)]
+                driver._json=inspection
+                driver._collect_diagnostics=mock.Mock()
+                driver.ports={'FRONTEND_PORT':3000,'BACKEND_PORT':8000}
+                driver._secret_values={'generated-fixture-secret'}
+                def request(self,port,path,**kwargs):
+                    if path=='/health/': return 200,{}
+                    return 200,dict(phase='migrating' if clock[0]>=5 else 'waiting',message='generated-fixture-secret')
+                with mock.patch.object(milestone.time,'monotonic',side_effect=lambda:clock[0]), \
+                     mock.patch.object(milestone.time,'sleep',side_effect=lambda seconds:clock.__setitem__(0,clock[0]+seconds)), \
+                     mock.patch.object(milestone.ProductHarness,'request',request):
+                    if ready:
+                        driver._wait_healthy()
+                    else:
+                        with self.assertRaisesRegex(rehearsal.ManualRelease,'suite_timed_out'):
+                            driver._wait_healthy()
+                timing=json.loads((Path(temporary)/'phase-timings.json').read_bytes())
+                self.assertEqual(timing['measurement'],'sampled-product-starting-status-endpoint')
+                self.assertEqual([r['progress']['phase'] for r in timing['events']],['waiting','migrating'])
+                self.assertLessEqual(timing['elapsed_seconds'],10)
+                self.assertTrue(timing['intervals'])
+                self.assertNotIn('generated-fixture-secret',json.dumps(timing))
+                self.assertFalse(timing['eligible'])
+                driver.installation.compose_run.assert_called_once()
+                driver._collect_diagnostics.assert_called()
+
+    def test_boot_restart_is_a_failed_source_not_a_silent_retry(self):
+        from scripts import update_rehearsal_milestone as milestone
+        with tempfile.TemporaryDirectory() as temporary:
+            driver=milestone.SnapshotMilestone(Path(temporary).resolve(),context='colima-fagi-update',boot_timeout=4200)
+            driver.ports={'FRONTEND_PORT':3000,'BACKEND_PORT':8000}
+            driver.installation=SimpleNamespace(compose_run=mock.Mock(),containers=lambda:[{'id':'source'}])
+            driver._json=lambda *args:[dict(State={'Running':True,'Status':'running'},RestartCount=1)]
+            driver._collect_diagnostics=mock.Mock()
+            with mock.patch.object(milestone.ProductHarness,'request',return_value=(200,{'phase':'retrying'})):
+                with self.assertRaisesRegex(rehearsal.RehearsalError,'source boot failed'):
+                    driver._wait_healthy()
+            driver.installation.compose_run.assert_called_once()
+
+    def test_cold_snapshot_calls_shipping_quiesced_path_under_locks_without_legacy_restart(self):
+        from scripts import update_rehearsal_milestone as milestone
+        from deploy.update.contracts import AutomationPolicy
+        from deploy.update.standalone_backup import BackupError
+        with tempfile.TemporaryDirectory() as temporary:
+            driver=milestone.SnapshotMilestone(Path(temporary).resolve(),context='colima-fagi-update',boot_timeout=4200)
+            driver.root.mkdir()
+            driver.registration=SimpleNamespace(binding=SimpleNamespace(installation_fingerprint='a'*64))
+            driver.daemon='fixture-daemon'; driver.descriptor={'eligible':False,'fixture':'not-product'}
+            driver.source_observation=SimpleNamespace(binding_sha256='b'*64)
+            driver.binding=SimpleNamespace(raw=b'not-used')
+            driver.execution={'files':{'docker-compose.yml':'c'*64}}
+            driver.image_inspections={'app':{'Id':'app-id'},'postgres':{'Id':'pg-id'},'clickhouse':{'Id':'ch-id'}}
+            driver.installation=SimpleNamespace(root=driver.root,runner=SimpleNamespace(policy=AutomationPolicy()))
+            backup=mock.Mock()
+            def quiesced(expected,ledger,observation,*,proof_directory_fd):
+                self.assertEqual(expected.target_manifest_hash,rehearsal.manifest_hash(driver.intent))
+                self.assertEqual(ledger.snapshot['direction'],'forward_pending')
+                self.assertEqual(ledger.snapshot['phase'],'attempt_reserved')
+                self.assertTrue((driver.directory/'runner.lock').is_file())
+                self.assertTrue(os.fstat(proof_directory_fd).st_mode)
+                self.assertIs(observation,driver.source_observation)
+                raise BackupError('synthetic_test_failure')
+            backup.run_quiesced.side_effect=quiesced
+            with mock.patch('deploy.update.standalone_backup.capture_binding',return_value=driver.binding), \
+                 mock.patch('deploy.update.standalone_backup.StandaloneBackup',return_value=backup):
+                with self.assertRaisesRegex(BackupError,'synthetic_test_failure'):
+                    driver.take_snapshot()
+            backup.run_quiesced.assert_called_once(); backup.run.assert_not_called()
+            self.assertFalse((Path(temporary)/'proof-row.json').exists())
+            intent=json.loads((Path(temporary)/'snapshot-intent.json').read_bytes())
+            self.assertFalse(intent['eligible'])
+            self.assertEqual(intent['kind'],'snapshot-only-intent-not-target-manifest')
+
+    def test_disposable_cleanup_never_removes_an_unidentified_helper(self):
+        from scripts import update_rehearsal_milestone as milestone
+        from deploy.update.contracts import AutomationPolicy
+        with tempfile.TemporaryDirectory() as temporary:
+            driver=milestone.SnapshotMilestone(Path(temporary).resolve(),context='colima-fagi-update',boot_timeout=4200)
+            driver.policy=AutomationPolicy()
+            driver.runner=SimpleNamespace(environment={})
+            driver.installation=SimpleNamespace(runner=driver.runner)
+            driver.ledger=SimpleNamespace(snapshot={'helpers':{},'attempt_id':'a'*32})
+            driver._docker=mock.Mock(return_value='foreign-id')
+            driver._json=mock.Mock(return_value=[{}])
+            with self.assertRaisesRegex(rehearsal.RehearsalError,'cleanup helper identity unconfirmed'):
+                driver.cleanup()
+            self.assertFalse(any(call.args[:1]==('rm',) for call in driver._docker.call_args_list))
+            self.assertFalse(driver.cleanup_verified)
+
+    def test_real_operation_adapter_enumerates_core_domains_and_only_honest_spool_gaps(self):
+        import base64
+        driver=SimpleNamespace(ports={},_secret_values=set(),corpus={})
+        witnesses=shipping.ProductWitnesses(driver)
+        calls=[]
+        # v1.53.0 UserSerializer returns `name`; `full_name` is signup-only.
+        info={'id':'user-id','email':'fixture@example.test','name':'Fixture',
+              'organization':{'id':'org-id','name':'Fixture'},'default_workspace_id':'ws-id',
+              'default_workspace_name':'default','default_workspace_display_name':'Default'}
+        def http(path,**kwargs):
+            calls.append((path,kwargs))
+            if path=='/accounts/signup/': info['email']=kwargs['payload']['email']
+            if path=='/accounts/token/': return {'access':'synthetic-token'}
+            if path=='/accounts/user-info/': return info
+            if path=='/accounts/keys/': return {'data':{'api_key':'fixture-api','secret_key':'fixture-secret'}}
+            return {}
+        witnesses._http=http
+        def operation(source,arg):
+            if source==shipping.SPOOL_OPERATION: return []
+            if source==shipping.S3_OPERATION:
+                return {'identity':arg['bucket']+'/'+arg['key'],
+                        'payload_sha256':rehearsal.sha(base64.b64decode(arg['body']))}
+            self.assertEqual(source,shipping.TEMPORAL_OPERATION)
+            return {'identity':arg['id']+'/completed-run','run_id':'completed-run','payload_sha256':'e'*64}
+        driver.app_python=operation
+        driver.clickhouse=lambda sql,params:[{'id':params['span'],'trace_id':params['trace'],'name':'Fixture'}]
+        with self.assertRaisesRegex(rehearsal.ManualRelease,'witness_operation_unavailable'):
+            witnesses.create('source')
+        signup=next(kwargs['payload'] for path,kwargs in calls if path=='/accounts/signup/')
+        self.assertTrue(signup['company_name'])
+        rows=witnesses.read('source')
+        self.assertEqual({r['domain'] for r in rows},{'postgres_app','clickhouse','object_store','temporal'})
+        self.assertEqual(len([r for r in rows if r['domain']=='postgres_app']),3)
+        self.assertEqual({r['identity'] for r in rows if r['domain']=='postgres_app'},
+                         {'user/user-id','organization/org-id','workspace/ws-id'})
+        self.assertEqual({g['family'] for g in driver.corpus['witness_gaps']},{'collector','telemetry'})
+        self.assertTrue(all(g['reason']=='no_attributable_naturally_produced_spool' for g in driver.corpus['witness_gaps']))
+        self.assertTrue(all(len(r['payload_sha256'])==64 for r in rows))
+        user = next(r for r in rows if r['identity']=='user/user-id')
+        self.assertEqual(user['payload_sha256'], rehearsal.manifest_hash(
+            {k:info[k] for k in ('id','email','name')}))
+        info['name'] = 'Changed seeded name'
+        changed = witnesses.read('source')
+        self.assertNotEqual(user['payload_sha256'], next(
+            r['payload_sha256'] for r in changed if r['identity']=='user/user-id'))
+        self.assertEqual([r for r in rows if r['identity']!='user/user-id'],
+                         [r for r in changed if r['identity']!='user/user-id'])
+
+    def test_product_api_failures_keep_http_reason_without_credentials_or_error_body(self):
+        from urllib.error import HTTPError
+        driver=SimpleNamespace(ports={'BACKEND_PORT':1234})
+        witnesses=shipping.ProductWitnesses(driver)
+        opener=SimpleNamespace(open=mock.Mock(side_effect=HTTPError('private-url',400,'PRIVATE',{},None)))
+        with mock.patch('urllib.request.build_opener',return_value=opener):
+            with self.assertRaisesRegex(rehearsal.RehearsalError,'product witness HTTP 400 on /accounts/signup/') as error:
+                witnesses._http('/accounts/signup/',payload={'password':'PRIVATE'})
+        self.assertNotIn('PRIVATE',str(error.exception))
+
+    def test_workflow_shell_steps_parse_without_execution(self):
+        from deploy.tests.test_update_release_static import load
+        workflow=load(rehearsal.ROOT/'.github/workflows/update-rehearsal-milestones.yml')
+        count=0
+        for step in workflow['jobs']['source-snapshot']['steps']:
+            if 'run' not in step: continue
+            result=subprocess.run(['bash','-n'],input=step['run'],capture_output=True,text=True,timeout=10)
+            self.assertEqual(result.returncode,0,result.stderr)
+            count+=1
+        self.assertEqual(count,4)
 
 
 def time_limit():
