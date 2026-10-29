@@ -3,13 +3,18 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { toRun } from "src/api/agents/agentDetail";
 import { ENVIRONMENT_RUN } from "src/api/agents/_fixtures/agentDetail";
-import AgentEnvironmentsTab, { productionAhead } from "../AgentEnvironmentsTab";
+import AgentEnvironmentsTab, {
+  policyLabel,
+  productionAhead,
+} from "../AgentEnvironmentsTab";
 
 const envState = { current: {} };
 const envCalls = [];
 const agentState = {
   current: { environmentCount: 2, activeVersionNumber: 3 },
 };
+const policyMutate = vi.fn();
+const auth = { role: "Owner" };
 
 vi.mock("src/api/agents/agentDetail", async () => {
   const actual = await vi.importActual("src/api/agents/agentDetail");
@@ -19,8 +24,15 @@ vi.mock("src/api/agents/agentDetail", async () => {
       envCalls.push(args);
       return envState.current;
     },
+    useSetEnvironmentPolicy: () => ({ mutate: policyMutate, isPending: false }),
   };
 });
+
+vi.mock("src/auth/hooks", () => ({ useAuthContext: () => auth }));
+vi.mock("notistack", async (importOriginal) => ({
+  ...(await importOriginal()),
+  useSnackbar: () => ({ enqueueSnackbar: vi.fn() }),
+}));
 
 vi.mock("../useAgentRoute", () => ({
   default: () => ({ agentId: "a1", agent: agentState.current }),
@@ -72,6 +84,8 @@ const UNTESTED = {
 
 beforeEach(() => {
   envCalls.length = 0;
+  policyMutate.mockReset();
+  auth.role = "Owner";
   agentState.current = { environmentCount: 2, activeVersionNumber: 3 };
   envState.current = {
     isLoading: false,
@@ -131,18 +145,32 @@ describe("AgentEnvironmentsTab", () => {
     );
   });
 
-  it("says when production has moved past an environment's pin", () => {
+  it("says when production has moved past a pinned environment's version", () => {
     agentState.current = { environmentCount: 2, activeVersionNumber: 5 };
+    envState.current = {
+      isLoading: false,
+      isError: false,
+      data: [{ ...TESTED, policy: "pinned" }, UNTESTED],
+    };
     renderTab();
-    expect(screen.getByTestId("production-ahead-e5391b8a")).toHaveTextContent(
-      "v5 in production",
+    expect(screen.getByTestId("policy-e5391b8a")).toHaveTextContent(
+      "pinned v3 · v5 in production",
     );
-    expect(screen.queryByTestId("production-ahead-e9999999")).toBeNull();
+    expect(screen.getByTestId("policy-e9999999")).toHaveTextContent(
+      "follows production",
+    );
   });
 
-  it("says nothing extra while the pin is the version in production", () => {
+  it("says only that a pinned environment is pinned while it is on production", () => {
+    envState.current = {
+      isLoading: false,
+      isError: false,
+      data: [{ ...TESTED, policy: "pinned" }, UNTESTED],
+    };
     renderTab();
-    expect(screen.queryByTestId("production-ahead-e5391b8a")).toBeNull();
+    expect(screen.getByTestId("policy-e5391b8a")).toHaveTextContent(
+      /^pinned v3$/,
+    );
   });
 
   it("shows no pass rate while the last run is still going", () => {
@@ -193,11 +221,86 @@ describe("AgentEnvironmentsTab", () => {
     );
   });
 
-  it("offers Build environment as a disabled Coming soon action", () => {
+  it("offers Build environment only for a code agent a member can edit", () => {
     renderTab();
-    const button = screen.getByRole("button", { name: "Build environment" });
-    expect(button).toBeDisabled();
-    expect(screen.getAllByLabelText("Coming soon").length).toBeGreaterThan(0);
+    expect(
+      screen.getByRole("button", { name: "Build environment" }),
+    ).toBeDisabled();
+  });
+
+  it("enables Build environment for a code agent", () => {
+    agentState.current = { ...agentState.current, agentKind: "source" };
+    renderTab();
+    expect(
+      screen.getByRole("button", { name: "Build environment" }),
+    ).toBeEnabled();
+  });
+
+  it("says whether each environment follows production or stays pinned", () => {
+    envState.current = {
+      isLoading: false,
+      isError: false,
+      data: [
+        { ...TESTED, policy: "follow" },
+        {
+          ...UNTESTED,
+          id: "e7777777",
+          agentVersion: { id: "v1", number: 1 },
+          policy: "pinned",
+        },
+      ],
+    };
+    renderTab();
+    expect(screen.getByTestId("policy-e5391b8a")).toHaveTextContent(
+      "follows production",
+    );
+    expect(screen.getByTestId("policy-e7777777")).toHaveTextContent(
+      "pinned v1 · v3 in production",
+    );
+    expect(
+      policyLabel(
+        { policy: "pinned", agentVersion: { number: 3 } },
+        { activeVersionNumber: 3 },
+      ),
+    ).toBe("pinned v3");
+  });
+
+  it("pins a following environment and moves a pinned one back to production", () => {
+    envState.current = {
+      isLoading: false,
+      isError: false,
+      data: [
+        { ...TESTED, policy: "follow" },
+        {
+          ...UNTESTED,
+          id: "e7777777",
+          agentVersion: { id: "v1", number: 1 },
+          policy: "pinned",
+        },
+      ],
+    };
+    renderTab();
+    fireEvent.click(screen.getByRole("button", { name: "Pin" }));
+    expect(policyMutate).toHaveBeenCalledWith(
+      { environmentId: "e5391b8a", policy: "pinned", versionId: "93956ae6" },
+      expect.any(Object),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Default to production" }),
+    );
+    expect(policyMutate).toHaveBeenCalledWith(
+      { environmentId: "e7777777", policy: "follow", versionId: undefined },
+      expect.any(Object),
+    );
+    expect(currentLocation.pathname).toBe(
+      "/dashboard/agents/connected/a1/environments",
+    );
+  });
+
+  it("hides the policy actions from a viewer", () => {
+    auth.role = "workspace_viewer";
+    renderTab();
+    expect(screen.queryByRole("button", { name: "Pin" })).toBeNull();
   });
 
   it("holds the table's shape with skeleton rows while it loads", () => {

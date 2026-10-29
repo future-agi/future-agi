@@ -116,6 +116,8 @@ def annotate_for_list(
 
 def environment_row(job: HostedHarnessJob) -> dict[str, Any]:
     """One list row. Safe to call on a job that has never finished building."""
+    from simulate.services.harness_agent_versions import environment_policy
+
     contract = _contract_data(job)
     runs_count = getattr(job, "simulation_run_count", None)
     if runs_count is None:
@@ -134,6 +136,7 @@ def environment_row(job: HostedHarnessJob) -> dict[str, Any]:
         "tools_count": _tools_count(contract),
         "runs_count": runs_count,
         "agent_version": version_ref(job.agent_version),
+        "agent_policy": environment_policy(job),
         "last_updated": _isoformat(job.content_updated_at or job.created_at),
         "created_at": _isoformat(job.created_at),
     }

@@ -73,6 +73,7 @@ import type {
   AdminPricingListResponseApi,
   AdminPricingMutationRequestApi,
   AdminPricingMutationResponseApi,
+  AgentBuildPreflightResponseApi,
   AgentDefinitionApi,
   AgentDefinitionBulkDeleteRequestApi,
   AgentDefinitionBulkDeleteResponseApi,
@@ -104,11 +105,15 @@ import type {
   AgentPromptOptimiserTrialPromptResponseApi,
   AgentPromptOptimiserTrialScenariosResponseApi,
   AgentRunsResponseApi,
+  AgentVersionActionResponseApi,
   AgentVersionActivateResponseApi,
+  AgentVersionChangeRequestApi,
+  AgentVersionChangeResponseApi,
+  AgentVersionCompatibilityResponseApi,
   AgentVersionCreateRequestApi,
   AgentVersionCreateResponseApi,
-  AgentVersionDeleteResponseApi,
   AgentVersionListResponseApi,
+  AgentVersionProductionResponseApi,
   AgentVersionResponseApi,
   AgentVersionRestoreResponseApi,
   AgentccAPIKeyApi,
@@ -586,6 +591,8 @@ import type {
   GroupingOutboxResponseApi,
   HarnessAcceptedResponseApi,
   HarnessAgentCredentialsResponseApi,
+  HarnessAgentPolicyApi,
+  HarnessAgentPolicyResponseApi,
   HarnessAgentVersionCreateApi,
   HarnessArtifactUploadResponseApi,
   HarnessCompareApi,
@@ -56511,6 +56518,58 @@ export const simulateAgentDefinitionsRead = async (
   );
 };
 
+export type simulateAgentDefinitionsBuildPreflightListResponse200 = {
+  data: AgentBuildPreflightResponseApi;
+  status: 200;
+};
+
+export type simulateAgentDefinitionsBuildPreflightListResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateAgentDefinitionsBuildPreflightListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 404>;
+};
+
+export type simulateAgentDefinitionsBuildPreflightListResponseSuccess =
+  simulateAgentDefinitionsBuildPreflightListResponse200 & {
+    headers: Headers;
+  };
+export type simulateAgentDefinitionsBuildPreflightListResponseError = (
+  | simulateAgentDefinitionsBuildPreflightListResponse404
+  | simulateAgentDefinitionsBuildPreflightListResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateAgentDefinitionsBuildPreflightListResponse =
+  | simulateAgentDefinitionsBuildPreflightListResponseSuccess
+  | simulateAgentDefinitionsBuildPreflightListResponseError;
+
+export const getSimulateAgentDefinitionsBuildPreflightListUrl = (
+  agentId: string,
+) => {
+  return `/simulate/agent-definitions/${agentId}/build-preflight/`;
+};
+
+/**
+ * GET /agent-definitions/{id}/build-preflight/?version_id=.
+ */
+export const simulateAgentDefinitionsBuildPreflightList = async (
+  agentId: string,
+  options?: RequestInit,
+): Promise<simulateAgentDefinitionsBuildPreflightListResponse> => {
+  return apiMutator<simulateAgentDefinitionsBuildPreflightListResponse>(
+    getSimulateAgentDefinitionsBuildPreflightListUrl(agentId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type simulateAgentDefinitionsDeleteDeleteResponse200 = {
   data: AgentDefinitionDeleteResponseApi;
   status: 200;
@@ -56757,6 +56816,86 @@ export const simulateAgentDefinitionsVersionsList = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type simulateAgentDefinitionsVersionsChangeCreateResponse200 = {
+  data: AgentVersionChangeResponseApi;
+  status: 200;
+};
+
+export type simulateAgentDefinitionsVersionsChangeCreateResponse202 = {
+  data: AgentVersionChangeResponseApi;
+  status: 202;
+};
+
+export type simulateAgentDefinitionsVersionsChangeCreateResponse400 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 400;
+};
+
+export type simulateAgentDefinitionsVersionsChangeCreateResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateAgentDefinitionsVersionsChangeCreateResponse409 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 409;
+};
+
+export type simulateAgentDefinitionsVersionsChangeCreateResponse422 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 422;
+};
+
+export type simulateAgentDefinitionsVersionsChangeCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 202 | 400 | 404 | 409 | 422>;
+};
+
+export type simulateAgentDefinitionsVersionsChangeCreateResponseSuccess = (
+  | simulateAgentDefinitionsVersionsChangeCreateResponse200
+  | simulateAgentDefinitionsVersionsChangeCreateResponse202
+) & {
+  headers: Headers;
+};
+export type simulateAgentDefinitionsVersionsChangeCreateResponseError = (
+  | simulateAgentDefinitionsVersionsChangeCreateResponse400
+  | simulateAgentDefinitionsVersionsChangeCreateResponse404
+  | simulateAgentDefinitionsVersionsChangeCreateResponse409
+  | simulateAgentDefinitionsVersionsChangeCreateResponse422
+  | simulateAgentDefinitionsVersionsChangeCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateAgentDefinitionsVersionsChangeCreateResponse =
+  | simulateAgentDefinitionsVersionsChangeCreateResponseSuccess
+  | simulateAgentDefinitionsVersionsChangeCreateResponseError;
+
+export const getSimulateAgentDefinitionsVersionsChangeCreateUrl = (
+  agentId: string,
+) => {
+  return `/simulate/agent-definitions/${agentId}/versions/change/`;
+};
+
+/**
+ * POST /agent-definitions/{id}/versions/change/: a new version by kind.
+ */
+export const simulateAgentDefinitionsVersionsChangeCreate = async (
+  agentId: string,
+  agentVersionChangeRequestApi: AgentVersionChangeRequestApi,
+  options?: RequestInit,
+): Promise<simulateAgentDefinitionsVersionsChangeCreateResponse> => {
+  return apiMutator<simulateAgentDefinitionsVersionsChangeCreateResponse>(
+    getSimulateAgentDefinitionsVersionsChangeCreateUrl(agentId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(agentVersionChangeRequestApi),
     },
   );
 };
@@ -57072,68 +57211,125 @@ export const simulateAgentDefinitionsVersionsCallExecutionsList = async (
   );
 };
 
-export type simulateAgentDefinitionsVersionsDeleteDeleteResponse200 = {
-  data: AgentVersionDeleteResponseApi;
+export type simulateAgentDefinitionsVersionsCompatibilityListResponse200 = {
+  data: AgentVersionCompatibilityResponseApi;
   status: 200;
 };
 
-export type simulateAgentDefinitionsVersionsDeleteDeleteResponse400 = {
+export type simulateAgentDefinitionsVersionsCompatibilityListResponse400 = {
   data: ApiErrorWithDetailsResponseApi;
   status: 400;
 };
 
-export type simulateAgentDefinitionsVersionsDeleteDeleteResponse404 = {
+export type simulateAgentDefinitionsVersionsCompatibilityListResponse404 = {
   data: ApiErrorWithDetailsResponseApi;
   status: 404;
 };
 
-export type simulateAgentDefinitionsVersionsDeleteDeleteResponse500 = {
-  data: ApiErrorWithDetailsResponseApi;
-  status: 500;
-};
-
-export type simulateAgentDefinitionsVersionsDeleteDeleteResponseDefault = {
+export type simulateAgentDefinitionsVersionsCompatibilityListResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404>;
 };
 
-export type simulateAgentDefinitionsVersionsDeleteDeleteResponseSuccess =
-  simulateAgentDefinitionsVersionsDeleteDeleteResponse200 & {
+export type simulateAgentDefinitionsVersionsCompatibilityListResponseSuccess =
+  simulateAgentDefinitionsVersionsCompatibilityListResponse200 & {
     headers: Headers;
   };
-export type simulateAgentDefinitionsVersionsDeleteDeleteResponseError = (
-  | simulateAgentDefinitionsVersionsDeleteDeleteResponse400
-  | simulateAgentDefinitionsVersionsDeleteDeleteResponse404
-  | simulateAgentDefinitionsVersionsDeleteDeleteResponse500
-  | simulateAgentDefinitionsVersionsDeleteDeleteResponseDefault
+export type simulateAgentDefinitionsVersionsCompatibilityListResponseError = (
+  | simulateAgentDefinitionsVersionsCompatibilityListResponse400
+  | simulateAgentDefinitionsVersionsCompatibilityListResponse404
+  | simulateAgentDefinitionsVersionsCompatibilityListResponseDefault
 ) & {
   headers: Headers;
 };
 
-export type simulateAgentDefinitionsVersionsDeleteDeleteResponse =
-  | simulateAgentDefinitionsVersionsDeleteDeleteResponseSuccess
-  | simulateAgentDefinitionsVersionsDeleteDeleteResponseError;
+export type simulateAgentDefinitionsVersionsCompatibilityListResponse =
+  | simulateAgentDefinitionsVersionsCompatibilityListResponseSuccess
+  | simulateAgentDefinitionsVersionsCompatibilityListResponseError;
 
-export const getSimulateAgentDefinitionsVersionsDeleteDeleteUrl = (
+export const getSimulateAgentDefinitionsVersionsCompatibilityListUrl = (
   agentId: string,
   versionId: string,
 ) => {
-  return `/simulate/agent-definitions/${agentId}/versions/${versionId}/delete/`;
+  return `/simulate/agent-definitions/${agentId}/versions/${versionId}/compatibility/`;
 };
 
 /**
- * Soft delete an agent version.
+ * GET /agent-definitions/{id}/versions/{vid}/compatibility/?environment_id=.
  */
-export const simulateAgentDefinitionsVersionsDeleteDelete = async (
+export const simulateAgentDefinitionsVersionsCompatibilityList = async (
   agentId: string,
   versionId: string,
   options?: RequestInit,
-): Promise<simulateAgentDefinitionsVersionsDeleteDeleteResponse> => {
-  return apiMutator<simulateAgentDefinitionsVersionsDeleteDeleteResponse>(
-    getSimulateAgentDefinitionsVersionsDeleteDeleteUrl(agentId, versionId),
+): Promise<simulateAgentDefinitionsVersionsCompatibilityListResponse> => {
+  return apiMutator<simulateAgentDefinitionsVersionsCompatibilityListResponse>(
+    getSimulateAgentDefinitionsVersionsCompatibilityListUrl(agentId, versionId),
     {
       ...options,
-      method: "DELETE",
+      method: "GET",
+    },
+  );
+};
+
+export type simulateAgentDefinitionsVersionsDiscardCreateResponse200 = {
+  data: AgentVersionActionResponseApi;
+  status: 200;
+};
+
+export type simulateAgentDefinitionsVersionsDiscardCreateResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateAgentDefinitionsVersionsDiscardCreateResponse409 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 409;
+};
+
+export type simulateAgentDefinitionsVersionsDiscardCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 404 | 409>;
+};
+
+export type simulateAgentDefinitionsVersionsDiscardCreateResponseSuccess =
+  simulateAgentDefinitionsVersionsDiscardCreateResponse200 & {
+    headers: Headers;
+  };
+export type simulateAgentDefinitionsVersionsDiscardCreateResponseError = (
+  | simulateAgentDefinitionsVersionsDiscardCreateResponse404
+  | simulateAgentDefinitionsVersionsDiscardCreateResponse409
+  | simulateAgentDefinitionsVersionsDiscardCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateAgentDefinitionsVersionsDiscardCreateResponse =
+  | simulateAgentDefinitionsVersionsDiscardCreateResponseSuccess
+  | simulateAgentDefinitionsVersionsDiscardCreateResponseError;
+
+export const getSimulateAgentDefinitionsVersionsDiscardCreateUrl = (
+  agentId: string,
+  versionId: string,
+) => {
+  return `/simulate/agent-definitions/${agentId}/versions/${versionId}/discard/`;
+};
+
+/**
+ * POST /agent-definitions/{id}/versions/{vid}/discard/.
+ */
+export const simulateAgentDefinitionsVersionsDiscardCreate = async (
+  agentId: string,
+  versionId: string,
+  emptyRequestApi: EmptyRequestApi,
+  options?: RequestInit,
+): Promise<simulateAgentDefinitionsVersionsDiscardCreateResponse> => {
+  return apiMutator<simulateAgentDefinitionsVersionsDiscardCreateResponse>(
+    getSimulateAgentDefinitionsVersionsDiscardCreateUrl(agentId, versionId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emptyRequestApi),
     },
   );
 };
@@ -57198,6 +57394,69 @@ export const simulateAgentDefinitionsVersionsEvalSummaryList = async (
   );
 };
 
+export type simulateAgentDefinitionsVersionsProductionCreateResponse200 = {
+  data: AgentVersionProductionResponseApi;
+  status: 200;
+};
+
+export type simulateAgentDefinitionsVersionsProductionCreateResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateAgentDefinitionsVersionsProductionCreateResponse409 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 409;
+};
+
+export type simulateAgentDefinitionsVersionsProductionCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 404 | 409>;
+};
+
+export type simulateAgentDefinitionsVersionsProductionCreateResponseSuccess =
+  simulateAgentDefinitionsVersionsProductionCreateResponse200 & {
+    headers: Headers;
+  };
+export type simulateAgentDefinitionsVersionsProductionCreateResponseError = (
+  | simulateAgentDefinitionsVersionsProductionCreateResponse404
+  | simulateAgentDefinitionsVersionsProductionCreateResponse409
+  | simulateAgentDefinitionsVersionsProductionCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateAgentDefinitionsVersionsProductionCreateResponse =
+  | simulateAgentDefinitionsVersionsProductionCreateResponseSuccess
+  | simulateAgentDefinitionsVersionsProductionCreateResponseError;
+
+export const getSimulateAgentDefinitionsVersionsProductionCreateUrl = (
+  agentId: string,
+  versionId: string,
+) => {
+  return `/simulate/agent-definitions/${agentId}/versions/${versionId}/production/`;
+};
+
+/**
+ * POST /agent-definitions/{id}/versions/{vid}/production/.
+ */
+export const simulateAgentDefinitionsVersionsProductionCreate = async (
+  agentId: string,
+  versionId: string,
+  emptyRequestApi: EmptyRequestApi,
+  options?: RequestInit,
+): Promise<simulateAgentDefinitionsVersionsProductionCreateResponse> => {
+  return apiMutator<simulateAgentDefinitionsVersionsProductionCreateResponse>(
+    getSimulateAgentDefinitionsVersionsProductionCreateUrl(agentId, versionId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emptyRequestApi),
+    },
+  );
+};
+
 export type simulateAgentDefinitionsVersionsRestoreCreateResponse200 = {
   data: AgentVersionRestoreResponseApi;
   status: 200;
@@ -57258,6 +57517,69 @@ export const simulateAgentDefinitionsVersionsRestoreCreate = async (
 ): Promise<simulateAgentDefinitionsVersionsRestoreCreateResponse> => {
   return apiMutator<simulateAgentDefinitionsVersionsRestoreCreateResponse>(
     getSimulateAgentDefinitionsVersionsRestoreCreateUrl(agentId, versionId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emptyRequestApi),
+    },
+  );
+};
+
+export type simulateAgentDefinitionsVersionsRetryCreateResponse202 = {
+  data: AgentVersionActionResponseApi;
+  status: 202;
+};
+
+export type simulateAgentDefinitionsVersionsRetryCreateResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateAgentDefinitionsVersionsRetryCreateResponse409 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 409;
+};
+
+export type simulateAgentDefinitionsVersionsRetryCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202 | 404 | 409>;
+};
+
+export type simulateAgentDefinitionsVersionsRetryCreateResponseSuccess =
+  simulateAgentDefinitionsVersionsRetryCreateResponse202 & {
+    headers: Headers;
+  };
+export type simulateAgentDefinitionsVersionsRetryCreateResponseError = (
+  | simulateAgentDefinitionsVersionsRetryCreateResponse404
+  | simulateAgentDefinitionsVersionsRetryCreateResponse409
+  | simulateAgentDefinitionsVersionsRetryCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateAgentDefinitionsVersionsRetryCreateResponse =
+  | simulateAgentDefinitionsVersionsRetryCreateResponseSuccess
+  | simulateAgentDefinitionsVersionsRetryCreateResponseError;
+
+export const getSimulateAgentDefinitionsVersionsRetryCreateUrl = (
+  agentId: string,
+  versionId: string,
+) => {
+  return `/simulate/agent-definitions/${agentId}/versions/${versionId}/retry/`;
+};
+
+/**
+ * POST /agent-definitions/{id}/versions/{vid}/retry/.
+ */
+export const simulateAgentDefinitionsVersionsRetryCreate = async (
+  agentId: string,
+  versionId: string,
+  emptyRequestApi: EmptyRequestApi,
+  options?: RequestInit,
+): Promise<simulateAgentDefinitionsVersionsRetryCreateResponse> => {
+  return apiMutator<simulateAgentDefinitionsVersionsRetryCreateResponse>(
+    getSimulateAgentDefinitionsVersionsRetryCreateUrl(agentId, versionId),
     {
       ...options,
       method: "POST",
@@ -59157,6 +59479,52 @@ export const simulateApiHarnessEnvironmentsDelete = async (
     {
       ...options,
       method: "DELETE",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsAgentPolicyResponse200 = {
+  data: HarnessAgentPolicyResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsAgentPolicyResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsAgentPolicyResponseSuccess =
+  simulateApiHarnessEnvironmentsAgentPolicyResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsAgentPolicyResponseError =
+  simulateApiHarnessEnvironmentsAgentPolicyResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsAgentPolicyResponse =
+  | simulateApiHarnessEnvironmentsAgentPolicyResponseSuccess
+  | simulateApiHarnessEnvironmentsAgentPolicyResponseError;
+
+export const getSimulateApiHarnessEnvironmentsAgentPolicyUrl = (id: string) => {
+  return `/simulate/api/harness-environments/${id}/agent-policy/`;
+};
+
+/**
+ * Follow the agent's production version, or pin this environment to one.
+ */
+export const simulateApiHarnessEnvironmentsAgentPolicy = async (
+  id: string,
+  harnessAgentPolicyApi: HarnessAgentPolicyApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsAgentPolicyResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsAgentPolicyResponse>(
+    getSimulateApiHarnessEnvironmentsAgentPolicyUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessAgentPolicyApi),
     },
   );
 };

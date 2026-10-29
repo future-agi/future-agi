@@ -15945,6 +15945,29 @@ export interface AgentDefinitionDetailResponseApi {
   observe_project?: ObserveProjectRefApi;
 }
 
+export type AgentBuildPreflightCheckApiStatus =
+  (typeof AgentBuildPreflightCheckApiStatus)[keyof typeof AgentBuildPreflightCheckApiStatus];
+
+export const AgentBuildPreflightCheckApiStatus = {
+  ok: "ok",
+  blocked: "blocked",
+} as const;
+
+export interface AgentBuildPreflightCheckApi {
+  /** @minLength 1 */
+  readonly name?: string;
+  readonly status?: AgentBuildPreflightCheckApiStatus;
+  /** @minLength 1 */
+  readonly message?: string;
+}
+
+export interface AgentBuildPreflightResponseApi {
+  readonly ok?: boolean;
+  /** @minLength 1 */
+  readonly version_id?: string;
+  readonly checks?: readonly AgentBuildPreflightCheckApi[];
+}
+
 export interface AgentDefinitionDeleteResponseApi {
   /** @minLength 1 */
   readonly message?: string;
@@ -16074,6 +16097,19 @@ export const AgentVersionListResponseApiStatus = {
   deprecated: "deprecated",
 } as const;
 
+export interface AgentVersionSourceApi {
+  /** @minLength 1 */
+  kind: string;
+  /** @minLength 1 */
+  repository?: string;
+  /** @minLength 1 */
+  ref?: string;
+  /** @minLength 1 */
+  commit_sha?: string;
+  /** @minLength 1 */
+  subfolder?: string;
+}
+
 export interface AgentVersionListResponseApi {
   readonly id?: string;
   /** Version number of the agent */
@@ -16106,7 +16142,112 @@ export interface AgentVersionListResponseApi {
   readonly commit_message?: string;
   readonly is_active?: string;
   readonly is_latest?: string;
+  readonly in_production?: string;
+  readonly origin?: string;
+  readonly preflight_status?: string;
+  readonly environments_count?: number;
+  source?: AgentVersionSourceApi;
   readonly created_at?: string;
+}
+
+export type AgentVersionChangeRequestApiKind =
+  (typeof AgentVersionChangeRequestApiKind)[keyof typeof AgentVersionChangeRequestApiKind];
+
+export const AgentVersionChangeRequestApiKind = {
+  sync: "sync",
+  upload: "upload",
+  credentials: "credentials",
+  manual: "manual",
+} as const;
+
+export type AgentVersionChangeRequestApiSecretValues = {
+  [key: string]: string;
+};
+
+export interface AgentVersionChangeRequestApi {
+  kind: AgentVersionChangeRequestApiKind;
+  archive_artifact_id?: string;
+  /** @maxLength 65536 */
+  prompt?: string;
+  secret_values?: AgentVersionChangeRequestApiSecretValues;
+}
+
+/**
+ * Current status of this version
+ */
+export type AgentVersionResponseApiStatus =
+  (typeof AgentVersionResponseApiStatus)[keyof typeof AgentVersionResponseApiStatus];
+
+export const AgentVersionResponseApiStatus = {
+  draft: "draft",
+  active: "active",
+  archived: "archived",
+  deprecated: "deprecated",
+} as const;
+
+/**
+ * Snapshot of agent configuration at this version
+ */
+export type AgentVersionResponseApiConfigurationSnapshot = {
+  [key: string]: unknown;
+};
+
+export interface AgentVersionResponseApi {
+  readonly id?: string;
+  /** Version number of the agent */
+  readonly version_number?: number;
+  /**
+   * Human-readable version name (e.g., 'v1.2.3')
+   * @minLength 1
+   */
+  readonly version_name?: string;
+  readonly version_name_display?: string;
+  /** Current status of this version */
+  readonly status?: AgentVersionResponseApiStatus;
+  /** @minLength 1 */
+  readonly status_display?: string;
+  /** Performance score (0.0 to 10.0) */
+  readonly score?: string;
+  /** Number of tests run for this version */
+  readonly test_count?: number;
+  /** Test pass rate percentage */
+  readonly pass_rate?: string;
+  /**
+   * Description of changes in this version
+   * @minLength 1
+   */
+  readonly description?: string;
+  /**
+   * Commit message for the agent version
+   * @minLength 1
+   */
+  readonly commit_message?: string;
+  /**
+   * Detailed release notes for this version
+   * @minLength 1
+   */
+  readonly release_notes?: string;
+  /** Parent agent definition */
+  readonly agent_definition?: string;
+  /** Organization this version belongs to */
+  readonly organization?: string;
+  /** Snapshot of agent configuration at this version */
+  readonly configuration_snapshot?: AgentVersionResponseApiConfigurationSnapshot;
+  readonly is_active?: string;
+  readonly is_latest?: string;
+  /** @minLength 1 */
+  readonly agent_kind?: string;
+  /** @minLength 1 */
+  readonly api_key?: string;
+  source?: AgentVersionSourceApi;
+  readonly created_at?: string;
+  readonly updated_at?: string;
+}
+
+export interface AgentVersionChangeResponseApi {
+  version?: AgentVersionResponseApi;
+  readonly created?: boolean;
+  readonly up_to_date?: boolean;
 }
 
 export type AgentVersionCreateRequestApiAgentType =
@@ -16168,94 +16309,6 @@ export interface AgentVersionCreateRequestApi {
   livekit_max_concurrency?: number;
   commit_message?: string;
   observability_enabled?: boolean;
-}
-
-/**
- * Current status of this version
- */
-export type AgentVersionResponseApiStatus =
-  (typeof AgentVersionResponseApiStatus)[keyof typeof AgentVersionResponseApiStatus];
-
-export const AgentVersionResponseApiStatus = {
-  draft: "draft",
-  active: "active",
-  archived: "archived",
-  deprecated: "deprecated",
-} as const;
-
-/**
- * Where a versioned agent was read from; null for a version without a runtime.
- */
-export interface AgentVersionSourceApi {
-  /** @minLength 1 */
-  kind: string;
-  /** @minLength 1 */
-  repository?: string;
-  /** @minLength 1 */
-  ref?: string;
-  /** @minLength 1 */
-  commit_sha?: string;
-  /** @minLength 1 */
-  subfolder?: string;
-}
-
-/**
- * Snapshot of agent configuration at this version
- */
-export type AgentVersionResponseApiConfigurationSnapshot = {
-  [key: string]: unknown;
-};
-
-export interface AgentVersionResponseApi {
-  readonly id?: string;
-  /** Version number of the agent */
-  readonly version_number?: number;
-  /**
-   * Human-readable version name (e.g., 'v1.2.3')
-   * @minLength 1
-   */
-  readonly version_name?: string;
-  readonly version_name_display?: string;
-  /** Current status of this version */
-  readonly status?: AgentVersionResponseApiStatus;
-  /** @minLength 1 */
-  readonly status_display?: string;
-  /** Performance score (0.0 to 10.0) */
-  readonly score?: string;
-  /** Number of tests run for this version */
-  readonly test_count?: number;
-  /** Test pass rate percentage */
-  readonly pass_rate?: string;
-  /**
-   * Description of changes in this version
-   * @minLength 1
-   */
-  readonly description?: string;
-  /**
-   * Commit message for the agent version
-   * @minLength 1
-   */
-  readonly commit_message?: string;
-  /**
-   * Detailed release notes for this version
-   * @minLength 1
-   */
-  readonly release_notes?: string;
-  /** Parent agent definition */
-  readonly agent_definition?: string;
-  /** Organization this version belongs to */
-  readonly organization?: string;
-  /** Snapshot of agent configuration at this version */
-  readonly configuration_snapshot?: AgentVersionResponseApiConfigurationSnapshot;
-  readonly is_active?: string;
-  readonly is_latest?: string;
-  /** @minLength 1 */
-  readonly agent_kind?: string;
-  /** @minLength 1 */
-  readonly api_key?: string;
-  source?: AgentVersionSourceApi;
-  readonly created_at?: string;
-  readonly updated_at?: string;
 }
 
 export interface AgentVersionCreateResponseApi {
@@ -16591,7 +16644,49 @@ export interface CallExecutionApi {
   readonly processing_skip_reason?: string;
 }
 
-export interface AgentVersionDeleteResponseApi {
+export type AgentVersionCompatibilityResponseApiStatus =
+  (typeof AgentVersionCompatibilityResponseApiStatus)[keyof typeof AgentVersionCompatibilityResponseApiStatus];
+
+export const AgentVersionCompatibilityResponseApiStatus = {
+  clean: "clean",
+  new_tool: "new_tool",
+  tool_removed_or_changed: "tool_removed_or_changed",
+  new_rule: "new_rule",
+  unmeasured: "unmeasured",
+} as const;
+
+export type AgentVersionToolChangeApiBefore = { [key: string]: string };
+
+export type AgentVersionToolChangeApiAfter = { [key: string]: string };
+
+export interface AgentVersionToolChangeApi {
+  /** @minLength 1 */
+  readonly name?: string;
+  readonly before?: AgentVersionToolChangeApiBefore;
+  readonly after?: AgentVersionToolChangeApiAfter;
+}
+
+export interface AgentVersionCompatibilityResponseApi {
+  /** @minLength 1 */
+  readonly environment_id?: string;
+  /** @minLength 1 */
+  readonly version_id?: string;
+  readonly status?: AgentVersionCompatibilityResponseApiStatus;
+  /** @minLength 1 */
+  readonly base?: string;
+  /** @minLength 1 */
+  readonly reason?: string;
+  readonly same_version?: boolean;
+  readonly tools_added?: readonly string[];
+  readonly tools_removed?: readonly string[];
+  readonly tools_changed?: readonly AgentVersionToolChangeApi[];
+  readonly services_added?: readonly string[];
+  readonly rules_added?: readonly string[];
+  readonly prompt_changed?: boolean;
+  readonly model_changed?: boolean;
+}
+
+export interface AgentVersionActionResponseApi {
   /** @minLength 1 */
   readonly message?: string;
 }
@@ -16645,6 +16740,11 @@ export interface EvalErrorResponseApi {
   error?: string;
   attr?: string;
   details?: EvalErrorResponseApiDetails;
+}
+
+export interface AgentVersionProductionResponseApi {
+  version?: AgentVersionResponseApi;
+  readonly moved_environment_ids?: readonly string[];
 }
 
 export type AgentVersionRestoreResponseApiAgent = { [key: string]: string };
@@ -17978,6 +18078,29 @@ export interface HarnessEnvironmentRenameApi {
   name: string;
 }
 
+export type HarnessAgentPolicyApiPolicy =
+  (typeof HarnessAgentPolicyApiPolicy)[keyof typeof HarnessAgentPolicyApiPolicy];
+
+export const HarnessAgentPolicyApiPolicy = {
+  follow: "follow",
+  pinned: "pinned",
+} as const;
+
+export interface HarnessAgentPolicyApi {
+  policy: HarnessAgentPolicyApiPolicy;
+  version_id?: string;
+}
+
+export type HarnessAgentPolicyResponseApiAgentVersion = {
+  [key: string]: string;
+};
+
+export interface HarnessAgentPolicyResponseApi {
+  /** @minLength 1 */
+  readonly policy?: string;
+  readonly agent_version?: HarnessAgentPolicyResponseApiAgentVersion;
+}
+
 export type HarnessComparePairApiBand =
   (typeof HarnessComparePairApiBand)[keyof typeof HarnessComparePairApiBand];
 
@@ -19064,6 +19187,11 @@ export interface HarnessSourceApi {
    * @maxLength 255
    */
   installation_id?: string;
+  /**
+   * @maxLength 512
+   * @pattern ^(?!/)(?!.*(^|/)\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$
+   */
+  subfolder?: string;
   archive_artifact_id?: string;
   /** @minLength 1 */
   endpoint?: string;

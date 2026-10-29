@@ -30,6 +30,12 @@ vi.mock("src/utils/axios", () => ({
         `/simulate/agent-definitions/${id}/versions/${v}/`,
       activateVersion: (id, v) =>
         `/simulate/agent-definitions/${id}/versions/${v}/activate/`,
+      productionVersion: (id, v) =>
+        `/simulate/agent-definitions/${id}/versions/${v}/production/`,
+      retryVersion: (id, v) =>
+        `/simulate/agent-definitions/${id}/versions/${v}/retry/`,
+      discardVersion: (id, v) =>
+        `/simulate/agent-definitions/${id}/versions/${v}/discard/`,
     },
   },
 }));
@@ -389,12 +395,12 @@ describe("AgentVersionsTab", () => {
     );
     await waitFor(() =>
       expect(axios.post).toHaveBeenCalledWith(
-        `/simulate/agent-definitions/${HOSTED_AGENT_DETAIL.id}/versions/v1-id/activate/`,
+        `/simulate/agent-definitions/${HOSTED_AGENT_DETAIL.id}/versions/v1-id/production/`,
       ),
     );
     await waitFor(() =>
       expect(enqueueSnackbar).toHaveBeenCalledWith(
-        "v1 is now in production. Environments keep the version each is pinned to.",
+        "v1 is now in production. Pinned environments keep the version each is pinned to.",
         { variant: "success" },
       ),
     );

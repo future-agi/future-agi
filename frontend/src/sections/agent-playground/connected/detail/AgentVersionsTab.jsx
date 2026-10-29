@@ -7,7 +7,11 @@ import { Box, Button, Skeleton, Stack, Typography } from "@mui/material";
 import { useScrollEnd } from "src/hooks/use-scroll-end";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import EmptyState from "src/sections/simulate/environments/components/EmptyState";
-import { useActivateVersion } from "src/api/agents/agentDetail";
+import {
+  useDiscardVersion,
+  useRetryVersion,
+  useSetProduction,
+} from "src/api/agents/agentDetail";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
@@ -55,6 +59,31 @@ function Chip({ label }) {
 
 Chip.propTypes = { label: PropTypes.string };
 
+// How a version came to be, from its side row's trigger.
+export const ORIGIN_LABEL = {
+  connect: "Connected",
+  creation: "Built with an environment",
+  sync: "Synced",
+  push: "Pushed",
+  upload: "Uploaded",
+  prompt: "Prompt edited",
+  agent_payload: "Settings changed",
+  credentials: "Credentials changed",
+  provider_sync: "Provider synced",
+  backfill: "Recorded",
+};
+
+// The check a new version goes through before it can run; a version from
+// before versioning has none and reads as checked.
+export const CHECK_LABEL = {
+  pending: "Checking",
+  failed: "Check failed",
+  discarded: "Discarded",
+};
+
+export const environmentsLabel = (count) =>
+  count ? `Running in ${count} environment${count === 1 ? "" : "s"}` : null;
+
 // A timeline row while it loads, laid out like a real one: the dot and its
 // line, then label, message and date at the same sizes and spacing.
 function VersionSkeleton() {
@@ -101,10 +130,13 @@ export default function AgentVersionsTab() {
   const navigate = useNavigate();
   const { search } = useLocation();
   const { enqueueSnackbar } = useSnackbar();
-  const activate = useActivateVersion(agentId);
+  const activate = useSetProduction(agentId);
+  const retry = useRetryVersion(agentId);
+  const discard = useDiscardVersion(agentId);
   const { role } = useAuthContext();
   const canEdit = !!RolePermission.SIMULATION_AGENT[PERMISSIONS.UPDATE][role];
   const [toActivate, setToActivate] = useState(null);
+  const [toDiscard, setToDiscard] = useState(null);
   const {
     versions,
     loaded,
@@ -154,15 +186,50 @@ export default function AgentVersionsTab() {
     );
   };
 
+  const retryCheck = (v) =>
+    retry.mutate(
+      { versionId: v.id },
+      {
+        onSuccess: () =>
+          enqueueSnackbar(`${v.label} is being checked again`, {
+            variant: "info",
+          }),
+        onError: (e) =>
+          enqueueSnackbar(errorMessage(e) || `Couldn't retry ${v.label}`, {
+            variant: "error",
+          }),
+      },
+    );
+
+  const discardVersion = () => {
+    const v = toDiscard;
+    discard.mutate(
+      { versionId: v.id },
+      {
+        onSuccess: () => {
+          setToDiscard(null);
+          enqueueSnackbar(`${v.label} discarded`, { variant: "success" });
+        },
+        onError: (e) =>
+          enqueueSnackbar(errorMessage(e) || `Couldn't discard ${v.label}`, {
+            variant: "error",
+          }),
+      },
+    );
+  };
+
   const makeActive = () => {
     const v = toActivate;
     activate.mutate(
       { versionId: v.id },
       {
-        onSuccess: () => {
+        onSuccess: (data) => {
           setToActivate(null);
+          const moved = data?.moved_environment_ids?.length || 0;
           enqueueSnackbar(
-            `${v.label} is now in production. Environments keep the version each is pinned to.`,
+            moved
+              ? `${v.label} is now in production; ${moved} environment${moved === 1 ? "" : "s"} following production moved to it.`
+              : `${v.label} is now in production. Pinned environments keep the version each is pinned to.`,
             { variant: "success" },
           );
         },
@@ -307,7 +374,18 @@ export default function AgentVersionsTab() {
                     </Typography>
                     {v.isLatest && <Chip label="Latest" />}
                     {v.isActive && <Chip label="In production" />}
-                    {v.isDraft && !v.isActive && <Chip label="Draft" />}
+                    {v.isDraft && !v.isActive && !CHECK_LABEL[v.check] && (
+                      <Chip label="Draft" />
+                    )}
+                    {CHECK_LABEL[v.check] && (
+                      <Chip label={CHECK_LABEL[v.check]} />
+                    )}
+                    {ORIGIN_LABEL[v.origin] && (
+                      <Chip label={ORIGIN_LABEL[v.origin]} />
+                    )}
+                    {environmentsLabel(v.environmentsCount) && (
+                      <Chip label={environmentsLabel(v.environmentsCount)} />
+                    )}
                   </Stack>
                   {v.commitMessage && (
                     <Typography
@@ -341,11 +419,25 @@ export default function AgentVersionsTab() {
                     <Button {...actionProps(() => viewDefinition(v))}>
                       View definition
                     </Button>
-                    {!v.isActive && canEdit && (
-                      <Button {...actionProps(() => setToActivate(v))}>
-                        Set as production
+                    {!v.isActive &&
+                      canEdit &&
+                      !["pending", "failed", "discarded"].includes(v.check) && (
+                        <Button {...actionProps(() => setToActivate(v))}>
+                          Set as production
+                        </Button>
+                      )}
+                    {canEdit && v.check === "failed" && (
+                      <Button {...actionProps(() => retryCheck(v))}>
+                        Retry
                       </Button>
                     )}
+                    {!v.isActive &&
+                      canEdit &&
+                      ["pending", "failed"].includes(v.check) && (
+                        <Button {...actionProps(() => setToDiscard(v))}>
+                          Discard
+                        </Button>
+                      )}
                   </Stack>
                 </Box>
               </Stack>
@@ -365,8 +457,9 @@ export default function AgentVersionsTab() {
         title={toActivate ? `Set ${toActivate.label} as production?` : ""}
         content={
           <Typography sx={{ typography: "s2_1", color: "text.secondary" }}>
-            It becomes the version in production. Environments keep the version
-            each is pinned to; switch them from their own page.
+            It becomes the version in production. Environments that follow
+            production move to it; pinned ones keep their version and are
+            offered this one.
           </Typography>
         }
         action={
@@ -378,6 +471,29 @@ export default function AgentVersionsTab() {
             onClick={makeActive}
           >
             Set as production
+          </Button>
+        }
+      />
+      <ConfirmDialog
+        open={!!toDiscard}
+        onClose={() => (discard.isPending ? null : setToDiscard(null))}
+        closeDisabled={discard.isPending}
+        title={toDiscard ? `Discard ${toDiscard.label}?` : ""}
+        content={
+          <Typography sx={{ typography: "s2_1", color: "text.secondary" }}>
+            It stays in the list, set aside; nothing runs it and it is never the
+            one in production.
+          </Typography>
+        }
+        action={
+          <Button
+            size="small"
+            variant="contained"
+            color="error"
+            disabled={discard.isPending}
+            onClick={discardVersion}
+          >
+            Discard
           </Button>
         }
       />

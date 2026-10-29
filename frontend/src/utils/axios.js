@@ -1563,6 +1563,38 @@ export const endpoints = {
         "/simulate/agent-definitions/{agent_id}/versions/{version_id}/activate/",
         { agent_id: id, version_id: version },
       ),
+    changeVersion: (id) =>
+      apiPath("/simulate/agent-definitions/{agent_id}/versions/change/", {
+        agent_id: id,
+      }),
+    productionVersion: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/production/",
+        { agent_id: id, version_id: version },
+      ),
+    retryVersion: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/retry/",
+        { agent_id: id, version_id: version },
+      ),
+    discardVersion: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/discard/",
+        { agent_id: id, version_id: version },
+      ),
+    versionCompatibility: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/compatibility/",
+        { agent_id: id, version_id: version },
+      ),
+    buildPreflight: (id) =>
+      apiPath("/simulate/agent-definitions/{agent_id}/build-preflight/", {
+        agent_id: id,
+      }),
+    environmentAgentPolicy: (environmentId) =>
+      apiPath("/simulate/api/harness-environments/{id}/agent-policy/", {
+        id: environmentId,
+      }),
     delete: apiPath("/simulate/agent-definitions/"),
     deleteOne: (id) =>
       apiPath("/simulate/agent-definitions/{agent_id}/delete/", {

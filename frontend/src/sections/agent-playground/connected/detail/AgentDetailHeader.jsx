@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
-import React from "react";
+import React, { useState } from "react";
+import { useSnackbar } from "notistack";
 import {
   Box,
   Button,
@@ -10,7 +11,12 @@ import {
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { useChangeVersion } from "src/api/agents/agentDetail";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { sourceLabel } from "../connectedAgentLabels";
+import AddVersionDialog from "./AddVersionDialog";
 import AgentMoreMenu from "./AgentMoreMenu";
 import { LineSkeleton, Pill } from "./bits";
 import { MONO, ago } from "./format";
@@ -20,17 +26,90 @@ const environmentsText = (count) => {
   return `${count} environment${count === 1 ? "" : "s"}`;
 };
 
-// How a new version would arrive from each source. None of them is wired
-// yet, so the button says what it will do and stays disabled.
+// How a new version arrives from each source. Sync reads the branch head (or
+// the provider) and Add version takes an edited prompt; an upload's flow is
+// not wired yet, so that button says what it will do and stays disabled.
 export const newVersionAction = (source) => {
   if (source === "archive") {
-    return { label: "Upload new version", icon: "solar:cloud-upload-linear" };
+    return {
+      label: "Upload new version",
+      icon: "solar:cloud-upload-linear",
+      kind: null,
+    };
   }
   if (source === "github" || source === "vapi" || source === "retell") {
-    return { label: "Sync", icon: "solar:refresh-linear" };
+    return { label: "Sync", icon: "solar:refresh-linear", kind: "sync" };
   }
-  return { label: "Add version", icon: "solar:add-circle-linear" };
+  return {
+    label: "Add version",
+    icon: "solar:add-circle-linear",
+    kind: "manual",
+  };
 };
+
+function NewVersionButton({ agent }) {
+  const { enqueueSnackbar } = useSnackbar();
+  const { role } = useAuthContext();
+  const canEdit = !!RolePermission.SIMULATION_AGENT[PERMISSIONS.UPDATE][role];
+  const change = useChangeVersion(agent.id);
+  const [adding, setAdding] = useState(false);
+  const next = newVersionAction(agent.source);
+
+  const sync = () =>
+    change.mutate(
+      { kind: "sync" },
+      {
+        onSuccess: (data) => {
+          const label = data?.version?.version_name_display || "The version";
+          enqueueSnackbar(
+            data?.up_to_date
+              ? `${label} is already at the branch's head`
+              : `${label} created from the branch's head; it is being checked`,
+            { variant: data?.up_to_date ? "info" : "success" },
+          );
+        },
+        onError: (e) =>
+          enqueueSnackbar(errorMessage(e) || "Couldn't sync", {
+            variant: "error",
+          }),
+      },
+    );
+
+  const disabled = !next.kind || !canEdit || change.isPending;
+  const reason = !next.kind
+    ? "Coming soon"
+    : !canEdit
+      ? "You need the Member role to add versions"
+      : "";
+  const button = (
+    <Button
+      variant="outlined"
+      size="small"
+      color="inherit"
+      disabled={disabled}
+      startIcon={<Iconify icon={next.icon} width={16} />}
+      onClick={() => (next.kind === "sync" ? sync() : setAdding(true))}
+    >
+      {next.label}
+    </Button>
+  );
+  return (
+    <>
+      {reason ? (
+        <Tooltip arrow title={reason}>
+          <span>{button}</span>
+        </Tooltip>
+      ) : (
+        button
+      )}
+      {adding && (
+        <AddVersionDialog agent={agent} open onClose={() => setAdding(false)} />
+      )}
+    </>
+  );
+}
+
+NewVersionButton.propTypes = { agent: PropTypes.object.isRequired };
 
 /**
  * Back, name and source pill; then where the agent lives · when it was
@@ -51,7 +130,6 @@ export default function AgentDetailHeader({
       : null
     : agent.assistantId;
   const envs = environmentsText(agent.environmentCount);
-  const next = newVersionAction(source);
   const pieces = [
     where && (
       <Box
@@ -115,19 +193,7 @@ export default function AgentDetailHeader({
         </Typography>
       </Box>
       {action}
-      <Tooltip arrow title="Coming soon">
-        <span>
-          <Button
-            variant="outlined"
-            size="small"
-            color="inherit"
-            disabled
-            startIcon={<Iconify icon={next.icon} width={16} />}
-          >
-            {next.label}
-          </Button>
-        </span>
-      </Tooltip>
+      <NewVersionButton agent={agent} />
       <AgentMoreMenu agent={agent} />
     </Stack>
   );

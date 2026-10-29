@@ -11,6 +11,7 @@ from simulate.models import (
     HarnessAgentVersionRuntime,
     HostedHarnessJob,
 )
+from simulate.services.agent_setup import store_agent
 from simulate.services.harness_agent_versions import (
     CONNECTED_OWNER,
     POLICY_KEY,
@@ -19,7 +20,9 @@ from simulate.services.harness_agent_versions import (
     create_agent_version,
     environment_policy,
 )
+from simulate.services.hosted_harness import BUILD_PIN_KEY
 from simulate.tests.test_agent_overview_api import _environment
+from simulate.tests.test_agent_setup_service import source_agent
 from simulate.tests.test_harness_agent_versions import _preflight
 from simulate.tests.test_harness_versioning_backfill import (
     storage as storage,  # noqa: F401 - fixture
@@ -198,3 +201,60 @@ def test_activating_a_connected_version_again_moves_nothing_twice(agent):
     environment.refresh_from_db()
     assert environment.agent_version_id == first.id
     assert nudge.call_count == 0
+
+
+def _built_from(environment, version, document):
+    assert store_agent(agent_version_id=version.id, agent=document, sdk_version="0.2.3")
+    HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+        payload={
+            **environment.payload,
+            "metadata": {
+                **environment.payload.get("metadata", {}),
+                BUILD_PIN_KEY: str(version.id),
+            },
+        }
+    )
+    environment.refresh_from_db()
+    return environment
+
+
+def test_a_major_change_is_offered_to_a_following_environment_not_applied(agent):
+    first = _connect(agent)
+    with patch(
+        "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
+    ):
+        _preflight(first)
+    following = _built_from(
+        _completed(_environment(agent, 1), first), first, source_agent()
+    )
+    second = _connect(agent, parent=first, commit="b", trigger=Trigger.SYNC)
+    document = source_agent()
+    document["tools"].append(
+        {
+            "name": "issue_refund",
+            "description": "Refund an order.",
+            "kind": "builtin",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+            "endpoint": None,
+        }
+    )
+    assert store_agent(agent_version_id=second.id, agent=document, sdk_version="0.2.3")
+
+    with patch(
+        "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
+    ) as nudge:
+        _preflight(second)
+
+    second.refresh_from_db()
+    following.refresh_from_db()
+    assert second.status == "active"
+    assert following.agent_version_id == first.id
+    offered = {
+        (str(call.args[0]), call.kwargs.get("default_moved"))
+        for call in nudge.call_args_list
+    }
+    assert (str(following.id), False) in offered
+    report = _runtime(second).preflight_report["activation"]
+    assert {entry["environment_id"]: entry["outcome"] for entry in report} == {
+        str(following.id): "major_change",
+    }

@@ -49,7 +49,14 @@ export const toVersion = (v) => ({
   isDraft: v.status === "draft",
   commitMessage: v.commit_message ?? null,
   createdAt: v.created_at ?? null,
+  // From the version's side row; null for a version made before versioning.
+  origin: v.origin ?? null,
+  check: v.preflight_status ?? null,
+  environmentsCount: v.environments_count ?? 0,
+  source: v.source ?? null,
 });
+
+export const toPolicy = (value) => (value === "pinned" ? "pinned" : "follow");
 
 export const mapAgentDetail = (raw) => ({
   id: raw.id,
@@ -187,6 +194,8 @@ export function useAgentEnvironments(agentId) {
         // The version this environment tests by default: its own pin, not
         // whatever its last run happened to use.
         agentVersion: toVersionRef(e.agent_version),
+        // Whether it follows the agent's production version or is pinned.
+        policy: toPolicy(e.agent_policy),
         lastRun: e.last_run ? toRun(e.last_run) : null,
       })),
     enabled: !!agentId,
@@ -265,5 +274,110 @@ export function useObserveSetupCode() {
         ).data,
       ),
     staleTime: Infinity,
+  });
+}
+
+// One change to the agent by kind: `sync` reads the branch head, `upload` a
+// new archive, `manual` a prompt edit, `credentials` new values. Answers
+// 202 with the new version, or 200 with `up_to_date` and the version that
+// already stands for that content.
+export function useChangeVersion(agentId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (body) =>
+      (
+        await axios.post(
+          endpoints.agentDefinitions.changeVersion(agentId),
+          body,
+        )
+      ).data,
+    onSuccess: () => invalidateVersions(queryClient, agentId),
+  });
+}
+
+// Makes a checked version the one in production; environments that follow
+// production move to it, pinned ones are offered it.
+export function useSetProduction(agentId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ versionId }) =>
+      (
+        await axios.post(
+          endpoints.agentDefinitions.productionVersion(agentId, versionId),
+        )
+      ).data,
+    onSuccess: () =>
+      Promise.all([
+        invalidateVersions(queryClient, agentId),
+        queryClient.invalidateQueries({
+          queryKey: ["agents", "environments", agentId],
+        }),
+      ]),
+  });
+}
+
+export function useRetryVersion(agentId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ versionId }) =>
+      axios.post(endpoints.agentDefinitions.retryVersion(agentId, versionId)),
+    onSuccess: () => invalidateVersions(queryClient, agentId),
+  });
+}
+
+export function useDiscardVersion(agentId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ versionId }) =>
+      axios.post(endpoints.agentDefinitions.discardVersion(agentId, versionId)),
+    onSuccess: () => invalidateVersions(queryClient, agentId),
+  });
+}
+
+// Follow the agent's production version, or pin the environment to one.
+export function useSetEnvironmentPolicy(agentId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ environmentId, policy, versionId }) =>
+      axios.post(
+        endpoints.agentDefinitions.environmentAgentPolicy(environmentId),
+        {
+          policy,
+          ...(versionId ? { version_id: versionId } : {}),
+        },
+      ),
+    onSuccess: () =>
+      queryClient.invalidateQueries({
+        queryKey: ["agents", "environments", agentId],
+      }),
+  });
+}
+
+// How a version fits the world an environment was built from.
+export function useVersionCompatibility(agentId, versionId, environmentId) {
+  return useQuery({
+    queryKey: ["agents", "compatibility", agentId, versionId, environmentId],
+    queryFn: async () =>
+      (
+        await axios.get(
+          endpoints.agentDefinitions.versionCompatibility(agentId, versionId),
+          { params: { environment_id: environmentId } },
+        )
+      ).data,
+    enabled: !!agentId && !!versionId && !!environmentId,
+  });
+}
+
+// What a build from the agent would find: the version, its check, its code.
+export function useBuildPreflight(agentId, versionId, { enabled = true } = {}) {
+  return useQuery({
+    queryKey: ["agents", "build-preflight", agentId, versionId ?? null],
+    queryFn: async () =>
+      (
+        await axios.get(endpoints.agentDefinitions.buildPreflight(agentId), {
+          params: versionId ? { version_id: versionId } : {},
+        })
+      ).data,
+    enabled: !!agentId && enabled,
   });
 }

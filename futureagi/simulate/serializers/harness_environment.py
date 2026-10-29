@@ -90,6 +90,9 @@ class HarnessEnvironmentFieldsSerializer(serializers.Serializer):
     # The agent version this environment tests by default; null before
     # versioning recorded one.
     agent_version = AgentVersionRefSerializer(allow_null=True)
+    # Whether the environment follows its agent's production version or stays
+    # pinned to the one above.
+    agent_policy = serializers.ChoiceField(choices=("follow", "pinned"))
     last_updated = serializers.DateTimeField(allow_null=True)
     created_at = serializers.DateTimeField()
 

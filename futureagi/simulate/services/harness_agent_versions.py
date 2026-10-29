@@ -863,7 +863,9 @@ def create_agent_version(
         # A version checked by its caller (a rerun's) is never made a default by it.
         payload["requested_by_environments"] = [str(env.id)] if asking else []
         # Each asking environment's default then: a later move of it is not undone.
-        payload["requested_defaults"] = {str(env.id): _default_id(env)} if asking else {}
+        payload["requested_defaults"] = (
+            {str(env.id): _default_id(env)} if asking else {}
+        )
         requested_at = timezone.now()
         payload["requested_at"] = (
             {str(env.id): requested_at.isoformat()} if asking else {}
@@ -2189,15 +2191,26 @@ def _activate_production(
 ) -> list[Any]:
     """A connected agent's passed version becomes production; environments following
     production are moved to it as if they had asked, pinned ones are offered it."""
+    from simulate.services.agent_compatibility import (
+        NEW_RULE,
+        NEW_TOOL,
+        TOOL_REMOVED_OR_CHANGED,
+        environment_compatibility,
+    )
     from simulate.services.harness_versioning.nudges import schedule_environment_nudge
 
     make_production(version)
-    following, pinned = [], []
+    following, pinned, major = [], [], []
     for environment in bound_environments(version.agent_definition_id):
-        if environment_policy(environment) == POLICY_FOLLOW:
-            following.append(str(environment.id))
-        else:
+        if environment_policy(environment) != POLICY_FOLLOW:
             pinned.append(str(environment.id))
+            continue
+        fit = environment_compatibility(environment, version)
+        if fit["status"] in (NEW_TOOL, TOOL_REMOVED_OR_CHANGED, NEW_RULE):
+            # Its world would not answer the new tools: offered, never applied.
+            major.append(str(environment.id))
+        else:
+            following.append(str(environment.id))
     if following:
         asked_at = timezone.now().isoformat()
         stored = runtime.agent_payload or {}
@@ -2212,8 +2225,11 @@ def _activate_production(
             },
             updated_at=timezone.now(),
         )
-    _record_activation(version.id, dict.fromkeys(pinned, "pinned"))
-    for environment_id in pinned:
+    _record_activation(
+        version.id,
+        {**dict.fromkeys(pinned, "pinned"), **dict.fromkeys(major, "major_change")},
+    )
+    for environment_id in [*pinned, *major]:
         schedule_environment_nudge(environment_id, version.id, default_moved=False)
     return _activate(version, following)
 

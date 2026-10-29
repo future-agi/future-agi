@@ -21,10 +21,12 @@ import AgentDetailIndexRedirect from "../AgentDetailIndexRedirect";
 import { agentDetailPath, resolveVersionId } from "../agentDetailTabs";
 
 vi.mock("src/utils/axios", () => ({
-  default: { get: vi.fn(), put: vi.fn(), delete: vi.fn() },
+  default: { get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() },
   endpoints: {
     agentDefinitions: {
       detail: (id) => `/simulate/agent-definitions/${id}/`,
+      changeVersion: (id) =>
+        `/simulate/agent-definitions/${id}/versions/change/`,
       versionDetail: (id, v) =>
         `/simulate/agent-definitions/${id}/versions/${v}/`,
       edit: (id) => `/simulate/agent-definitions/${id}/edit/`,
@@ -162,7 +164,31 @@ describe("AgentDetailLayout", () => {
     expect(subline).toHaveTextContent("No environment yet");
   });
 
-  it("says how a new version arrives, and that it's coming soon", async () => {
+  it("syncs a new version from the header", async () => {
+    serve(HOSTED);
+    axios.post.mockResolvedValue({
+      data: { up_to_date: true, version: { version_name_display: "v2" } },
+    });
+    renderAt(`${base(HOSTED)}/overview`);
+    const sync = await screen.findByRole("button", { name: "Sync" });
+    expect(sync).toBeEnabled();
+    fireEvent.click(sync);
+    await waitFor(() =>
+      expect(axios.post).toHaveBeenCalledWith(
+        `/simulate/agent-definitions/${HOSTED.id}/versions/change/`,
+        { kind: "sync" },
+      ),
+    );
+    await waitFor(() =>
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        "v2 is already at the branch's head",
+        { variant: "info" },
+      ),
+    );
+  });
+
+  it("keeps Sync from a viewer", async () => {
+    auth.role = "workspace_viewer";
     serve(HOSTED);
     renderAt(`${base(HOSTED)}/overview`);
     expect(await screen.findByRole("button", { name: "Sync" })).toBeDisabled();
