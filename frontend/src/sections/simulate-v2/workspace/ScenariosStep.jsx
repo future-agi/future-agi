@@ -156,6 +156,7 @@ import {
 } from "./scenarios/ScenarioOrgDialogs";
 import GroupsBar from "./scenarios/GroupsBar";
 import { clickable, focusRing } from "../components/clickable";
+import TraceReviewDrawer from "./scenarios/TraceReviewDrawer";
 
 /**
  * Scenarios.
@@ -297,6 +298,7 @@ export default function ScenariosStep({
   const [gateOpen, setGateOpen] = useState(false);
   /* The review of scenarios improvements wrote (opened from Needs review). */
   const [improvOpen, setImprovOpen] = useState(false);
+  const [traceReview, setTraceReview] = useState(null);
   /* Row-level facet filter — same shape the rest of the product uses
      (Runs list, Improvements list). Four dimensions, each a multi-select. */
   const [filters, setFilters] = useState({});
@@ -434,7 +436,10 @@ export default function ScenariosStep({
   const live = liveScenarios(selected);
   const archivedCount = selected.length - live.length;
   const staleCount = live.filter((r) => stateOf(r).id === "stale").length;
-  const proposed = live.filter((r) => r.proposed);
+  /* Drafts from production traces are reviewed in their own drawer, never added in bulk. */
+  const proposed = live.filter((r) => r.proposed && !r.traceImport);
+  const traceDrafts = live.filter((r) => r.proposed && r.traceImport);
+  const traceImportIds = [...new Set(traceDrafts.map((r) => r.traceImport.id))];
   /* The scenario quality review. Read on the version being viewed. */
   const qualityReview = useMemo(
     () => (buildMode ? null : suiteGateOf(env, viewState)),
@@ -1216,6 +1221,11 @@ export default function ScenariosStep({
     } else if (kind === "archive") archive(row, arg);
     else if (kind === "restore") restore(row);
     else if (kind === "update") replaceRows([row]);
+    /* A draft from production traces is added only through its review. */ else if (
+      kind === "approve" &&
+      row.traceImport
+    )
+      setTraceReview(row.traceImport.id);
     else if (kind === "approve") approve([row]);
     else if (kind === "blocker") setMustPass([row], arg ?? !row.critical);
     else if (kind === "subgoal") {
@@ -1385,6 +1395,25 @@ export default function ScenariosStep({
             },
         ].filter(Boolean),
       },
+    ...traceImportIds.map((importId) => {
+      const n = traceDrafts.filter((r) => r.traceImport.id === importId).length;
+      const ids = traceDrafts.find((r) => r.traceImport.id === importId)
+        ?.traceImport?.ids;
+      return {
+        id: `trace-${importId}`,
+        icon: "solar:server-linear",
+        attention: true,
+        title: `${n} draft${n === 1 ? "" : "s"} from production traces waiting for review`,
+        sub: `From ${(ids || []).join(", ")}. Review the starting state, mapping, personal data and what should happen — only ready drafts are added.`,
+        actions: [
+          {
+            label: "Review",
+            primary: true,
+            onClick: () => setTraceReview(importId),
+          },
+        ],
+      };
+    }),
     proposed.length > 0 && {
       id: "proposed",
       icon: "solar:inbox-linear",
@@ -2247,6 +2276,19 @@ export default function ScenariosStep({
           default) so users see the three summary numbers on landing
           instead of having to scroll past the whole list. */}
 
+      {/* Drafts from production traces — reviewed before they join. */}
+      <TraceReviewDrawer
+        open={!!traceReview}
+        onClose={() => setTraceReview(null)}
+        env={env}
+        envState={envState}
+        patch={patch}
+        importId={traceReview}
+        onApprove={(rows) => {
+          approve(rows);
+          setTraceReview(null);
+        }}
+      />
       {/* Scenarios improvements wrote — reviewed from the Needs review list. */}
       {!buildMode && (
         <ImprovementScenariosDialog

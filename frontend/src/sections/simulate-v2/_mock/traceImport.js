@@ -105,7 +105,7 @@ export const traceDraftsOf = (traces, goal, env, importInfo) => {
       stamp(base, traces.map((t) => t.traceId), {
         id: `pattern::${traces.map((t) => t.id).join("+")}`,
         title: `${traces[0].topic} — pattern across ${traces.length} traces`,
-        summary: `One situation standing for ${traces.length} production traces with the same symptom`,
+        summary: `One situation standing for production traces ${traces.map((t) => t.traceId).join(", ")}`,
         productionReplay: undefined,
       }),
     ];
@@ -117,6 +117,7 @@ export const traceDraftsOf = (traces, goal, env, importInfo) => {
         stamp(base, [t.traceId], {
           id: `${base.id}::variant-${i + 1}`,
           title: `${t.topic} — variation: ${what}`,
+          summary: `Generated variation of production trace ${t.traceId} — not something that happened`,
           generatedVariant: { parentTrace: t.traceId, what },
           productionReplay: undefined,
         }),
@@ -126,11 +127,18 @@ export const traceDraftsOf = (traces, goal, env, importInfo) => {
       preserve: `${t.topic} — keeps what worked in ${t.traceId}`,
       replay: base.title,
     };
+    const summaries = {
+      reproduce: `Reproduces production trace ${t.traceId} — the situation and the failure, judged against the policy`,
+      preserve: `Keeps what worked in production trace ${t.traceId} as a regression`,
+    };
     return [
       stamp(base, [t.traceId], {
         id: goal === "replay" ? base.id : `${goal}::${t.id}`,
         title: titles[goal],
-        ...(goal !== "replay" && { productionReplay: undefined }),
+        ...(goal !== "replay" && {
+          productionReplay: undefined,
+          summary: summaries[goal],
+        }),
       }),
     ];
   });
