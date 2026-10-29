@@ -381,3 +381,63 @@ export function useBuildPreflight(agentId, versionId, { enabled = true } = {}) {
     enabled: !!agentId && enabled,
   });
 }
+
+// The code of a version, read from its stored archive: the tree, one file,
+// and what changed against another version (the previous one by default).
+// A version with no code answers 404, which reads as null here.
+const nullOn404 = async (request) => {
+  try {
+    return (await request()).data;
+  } catch (e) {
+    if (e?.statusCode === 404 || e?.response?.status === 404) return null;
+    throw e;
+  }
+};
+
+export function useCodeTree(agentId, versionId, { enabled = true } = {}) {
+  return useQuery({
+    queryKey: ["agents", "code", "tree", agentId, versionId],
+    queryFn: () =>
+      nullOn404(() =>
+        axios.get(endpoints.agentDefinitions.codeTree(agentId, versionId)),
+      ),
+    enabled: !!agentId && !!versionId && enabled,
+  });
+}
+
+export function useCodeFile(agentId, versionId, path) {
+  return useQuery({
+    queryKey: ["agents", "code", "file", agentId, versionId, path],
+    queryFn: () =>
+      nullOn404(() =>
+        axios.get(endpoints.agentDefinitions.codeFile(agentId, versionId), {
+          params: { path },
+        }),
+      ),
+    enabled: !!agentId && !!versionId && !!path,
+  });
+}
+
+export function useCodeChanges(
+  agentId,
+  versionId,
+  { against, enabled = true } = {},
+) {
+  return useQuery({
+    queryKey: [
+      "agents",
+      "code",
+      "changes",
+      agentId,
+      versionId,
+      against ?? null,
+    ],
+    queryFn: () =>
+      nullOn404(() =>
+        axios.get(endpoints.agentDefinitions.codeChanges(agentId, versionId), {
+          params: against ? { against } : {},
+        }),
+      ),
+    enabled: !!agentId && !!versionId && enabled,
+  });
+}

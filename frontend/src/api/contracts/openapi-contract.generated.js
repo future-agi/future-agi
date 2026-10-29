@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1101,
+  endpointCount: 1104,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -27502,6 +27502,93 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+    "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/changes/":
+      {
+        get: {
+          operationId: "simulate_agent-definitions_versions_code_changes_list",
+          runtimeRequestValidation: false,
+          runtimeResponseValidation: false,
+          requestBody: null,
+          queryParameters: {
+            against: {
+              required: false,
+              schema: {
+                type: "string",
+              },
+            },
+          },
+          responses: {
+            200: {
+              $ref: "#/definitions/AgentCodeChangesResponse",
+            },
+            404: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            503: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/file/": {
+      get: {
+        operationId: "simulate_agent-definitions_versions_code_file_list",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {
+          path: {
+            required: true,
+            schema: {
+              type: "string",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentCodeFileResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/tree/": {
+      get: {
+        operationId: "simulate_agent-definitions_versions_code_tree_list",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentCodeTreeResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/agent-definitions/{agent_id}/versions/{version_id}/compatibility/":
       {
         get: {
@@ -47783,6 +47870,86 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/AgentBuildPreflightCheck",
           },
+          readOnly: true,
+        },
+      },
+    },
+    AgentCodeChangesResponse: {
+      type: "object",
+      properties: {
+        against: {
+          title: "Against",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        files: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentCodeChange",
+          },
+          readOnly: true,
+        },
+        unavailable: {
+          title: "Unavailable",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+      },
+    },
+    AgentCodeFileResponse: {
+      type: "object",
+      properties: {
+        path: {
+          title: "Path",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        size: {
+          title: "Size",
+          type: "integer",
+          readOnly: true,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["text", "binary", "too_large"],
+          readOnly: true,
+        },
+        language: {
+          title: "Language",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        content: {
+          title: "Content",
+          type: "string",
+          readOnly: true,
+        },
+      },
+    },
+    AgentCodeTreeResponse: {
+      type: "object",
+      properties: {
+        subfolder: {
+          title: "Subfolder",
+          type: "string",
+          readOnly: true,
+        },
+        files: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentCodeEntry",
+          },
+          readOnly: true,
+        },
+        truncated: {
+          title: "Truncated",
+          type: "boolean",
           readOnly: true,
         },
       },
@@ -87255,6 +87422,45 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           readOnly: true,
           minLength: 1,
+        },
+      },
+    },
+    AgentCodeChange: {
+      type: "object",
+      properties: {
+        path: {
+          title: "Path",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["added", "removed", "modified"],
+          readOnly: true,
+        },
+      },
+    },
+    AgentCodeEntry: {
+      type: "object",
+      properties: {
+        path: {
+          title: "Path",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        size: {
+          title: "Size",
+          type: "integer",
+          readOnly: true,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["text", "binary", "too_large"],
+          readOnly: true,
         },
       },
     },

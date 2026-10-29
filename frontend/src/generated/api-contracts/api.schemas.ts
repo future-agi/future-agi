@@ -16713,6 +16713,70 @@ export interface CallExecutionApi {
   readonly processing_skip_reason?: string;
 }
 
+export type AgentCodeChangeApiStatus =
+  (typeof AgentCodeChangeApiStatus)[keyof typeof AgentCodeChangeApiStatus];
+
+export const AgentCodeChangeApiStatus = {
+  added: "added",
+  removed: "removed",
+  modified: "modified",
+} as const;
+
+export interface AgentCodeChangeApi {
+  /** @minLength 1 */
+  readonly path?: string;
+  readonly status?: AgentCodeChangeApiStatus;
+}
+
+export interface AgentCodeChangesResponseApi {
+  /** @minLength 1 */
+  readonly against?: string;
+  readonly files?: readonly AgentCodeChangeApi[];
+  /** @minLength 1 */
+  readonly unavailable?: string;
+}
+
+export type AgentCodeFileResponseApiKind =
+  (typeof AgentCodeFileResponseApiKind)[keyof typeof AgentCodeFileResponseApiKind];
+
+export const AgentCodeFileResponseApiKind = {
+  text: "text",
+  binary: "binary",
+  too_large: "too_large",
+} as const;
+
+export interface AgentCodeFileResponseApi {
+  /** @minLength 1 */
+  readonly path?: string;
+  readonly size?: number;
+  readonly kind?: AgentCodeFileResponseApiKind;
+  /** @minLength 1 */
+  readonly language?: string;
+  readonly content?: string;
+}
+
+export type AgentCodeEntryApiKind =
+  (typeof AgentCodeEntryApiKind)[keyof typeof AgentCodeEntryApiKind];
+
+export const AgentCodeEntryApiKind = {
+  text: "text",
+  binary: "binary",
+  too_large: "too_large",
+} as const;
+
+export interface AgentCodeEntryApi {
+  /** @minLength 1 */
+  readonly path?: string;
+  readonly size?: number;
+  readonly kind?: AgentCodeEntryApiKind;
+}
+
+export interface AgentCodeTreeResponseApi {
+  readonly subfolder?: string;
+  readonly files?: readonly AgentCodeEntryApi[];
+  readonly truncated?: boolean;
+}
+
 export type AgentVersionCompatibilityResponseApiStatus =
   (typeof AgentVersionCompatibilityResponseApiStatus)[keyof typeof AgentVersionCompatibilityResponseApiStatus];
 
@@ -36427,6 +36491,14 @@ export type SimulateAgentDefinitionsRunsListParams = {
    * @maximum 20
    */
   limit?: number;
+};
+
+export type SimulateAgentDefinitionsVersionsCodeChangesListParams = {
+  against?: string;
+};
+
+export type SimulateAgentDefinitionsVersionsCodeFileListParams = {
+  path: string;
 };
 
 export type SimulateApiAgentDefinitionOperationsListParams = {

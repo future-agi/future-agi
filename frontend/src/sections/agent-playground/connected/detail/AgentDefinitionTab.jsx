@@ -22,7 +22,7 @@ import {
   sourceRows,
   storedAgentRows,
 } from "./definitionRows";
-import ComingSoonCard from "./ComingSoonCard";
+import CodeCard from "./code/CodeCard";
 import { ConnectTracesDrawer, observeProjectPath } from "./AgentNextSteps";
 import ObservabilityToggle, {
   ObservabilityToggleSkeleton,
@@ -401,10 +401,13 @@ export default function AgentDefinitionTab() {
         <ObservabilityToggleSkeleton />
       )}
       <Section title="Links" loading={!agent} rows={links} />
-      <ComingSoonCard
-        title="File structure"
-        description="Browse the files we read from your agent, version by version."
-      />
+      {isCode && versionId && (
+        <CodeCard
+          agentId={agentId}
+          versionId={versionId}
+          versionLabel={version?.label || "this version"}
+        />
+      )}
       {agent && isCode && (
         <ConnectTracesDrawer
           agent={agent}

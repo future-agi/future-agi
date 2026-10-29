@@ -21,6 +21,10 @@ import {
 import AgentDefinitionTab from "../AgentDefinitionTab";
 
 const auth = { role: "Owner" };
+vi.mock("../code/CodeCard", () => ({
+  default: ({ versionId }) => <div data-testid="code-card">{versionId}</div>,
+}));
+
 vi.mock("src/auth/hooks", () => ({ useAuthContext: () => auth }));
 
 const environments = { current: AGENT_ENVIRONMENTS };
@@ -147,6 +151,18 @@ describe("AgentDefinitionTab", () => {
       screen.getByText("Phone call · inbound · caller speaks first"),
     ).toBeInTheDocument();
     expect(screen.getByText("+14155550100")).toBeInTheDocument();
+  });
+
+  it("shows the Files card for a code agent, on the version the page shows", async () => {
+    serve(
+      CODE_AGENT_DETAIL,
+      { [CODE_VERSION_DETAIL.id]: CODE_VERSION_DETAIL },
+      { [CODE_VERSION_DETAIL.id]: STORED_AGENT },
+    );
+    renderAt(CODE_AGENT_DETAIL);
+    expect(await screen.findByTestId("code-card")).toHaveTextContent(
+      CODE_VERSION_DETAIL.id,
+    );
   });
 
   it("names a code agent's linked Observe project under Links", async () => {
@@ -322,19 +338,11 @@ describe("AgentDefinitionTab", () => {
     ).toBe(true);
   });
 
-  it("shows File structure as a plain Coming soon card", async () => {
+  it("shows no Files card for a hosted agent", async () => {
     serve(HOSTED_AGENT_DETAIL, { "v2-id": HOSTED_VERSION_DETAIL });
     renderAt(HOSTED_AGENT_DETAIL);
-    const region = await screen.findByRole("region", {
-      name: "File structure",
-    });
-    expect(
-      within(region).getByText(/Browse the files we read from your agent/),
-    ).toBeInTheDocument();
-    expect(within(region).getByLabelText("Coming soon")).toBeInTheDocument();
-    // No sample files dressed up with the real version.
-    expect(within(region).queryByText("agent.yaml")).toBeNull();
-    expect(within(region).queryByText(/files · v/)).toBeNull();
+    await screen.findByText("Configuration");
+    expect(screen.queryByTestId("code-card")).toBeNull();
   });
 
   it("shows label and value rows while the version loads", async () => {

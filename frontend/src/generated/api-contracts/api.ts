@@ -74,6 +74,9 @@ import type {
   AdminPricingMutationRequestApi,
   AdminPricingMutationResponseApi,
   AgentBuildPreflightResponseApi,
+  AgentCodeChangesResponseApi,
+  AgentCodeFileResponseApi,
+  AgentCodeTreeResponseApi,
   AgentDefinitionApi,
   AgentDefinitionBulkDeleteRequestApi,
   AgentDefinitionBulkDeleteResponseApi,
@@ -1166,6 +1169,8 @@ import type {
   SignupResponseApi,
   SimulateAgentDefinitionsListParams,
   SimulateAgentDefinitionsRunsListParams,
+  SimulateAgentDefinitionsVersionsCodeChangesListParams,
+  SimulateAgentDefinitionsVersionsCodeFileListParams,
   SimulateApiAgentDefinitionOperationsList200,
   SimulateApiAgentDefinitionOperationsListParams,
   SimulateApiAgentPromptOptimiserList200,
@@ -57207,6 +57212,236 @@ export const simulateAgentDefinitionsVersionsCallExecutionsList = async (
       agentId,
       versionId,
     ),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateAgentDefinitionsVersionsCodeChangesListResponse200 = {
+  data: AgentCodeChangesResponseApi;
+  status: 200;
+};
+
+export type simulateAgentDefinitionsVersionsCodeChangesListResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateAgentDefinitionsVersionsCodeChangesListResponse503 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 503;
+};
+
+export type simulateAgentDefinitionsVersionsCodeChangesListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 404 | 503>;
+};
+
+export type simulateAgentDefinitionsVersionsCodeChangesListResponseSuccess =
+  simulateAgentDefinitionsVersionsCodeChangesListResponse200 & {
+    headers: Headers;
+  };
+export type simulateAgentDefinitionsVersionsCodeChangesListResponseError = (
+  | simulateAgentDefinitionsVersionsCodeChangesListResponse404
+  | simulateAgentDefinitionsVersionsCodeChangesListResponse503
+  | simulateAgentDefinitionsVersionsCodeChangesListResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateAgentDefinitionsVersionsCodeChangesListResponse =
+  | simulateAgentDefinitionsVersionsCodeChangesListResponseSuccess
+  | simulateAgentDefinitionsVersionsCodeChangesListResponseError;
+
+export const getSimulateAgentDefinitionsVersionsCodeChangesListUrl = (
+  agentId: string,
+  versionId: string,
+  params?: SimulateAgentDefinitionsVersionsCodeChangesListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/agent-definitions/${agentId}/versions/${versionId}/code/changes/?${stringifiedParams}`
+    : `/simulate/agent-definitions/${agentId}/versions/${versionId}/code/changes/`;
+};
+
+/**
+ * GET /agent-definitions/{id}/versions/{vid}/code/changes/?against=.
+ */
+export const simulateAgentDefinitionsVersionsCodeChangesList = async (
+  agentId: string,
+  versionId: string,
+  params?: SimulateAgentDefinitionsVersionsCodeChangesListParams,
+  options?: RequestInit,
+): Promise<simulateAgentDefinitionsVersionsCodeChangesListResponse> => {
+  return apiMutator<simulateAgentDefinitionsVersionsCodeChangesListResponse>(
+    getSimulateAgentDefinitionsVersionsCodeChangesListUrl(
+      agentId,
+      versionId,
+      params,
+    ),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateAgentDefinitionsVersionsCodeFileListResponse200 = {
+  data: AgentCodeFileResponseApi;
+  status: 200;
+};
+
+export type simulateAgentDefinitionsVersionsCodeFileListResponse400 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 400;
+};
+
+export type simulateAgentDefinitionsVersionsCodeFileListResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateAgentDefinitionsVersionsCodeFileListResponse503 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 503;
+};
+
+export type simulateAgentDefinitionsVersionsCodeFileListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 503>;
+};
+
+export type simulateAgentDefinitionsVersionsCodeFileListResponseSuccess =
+  simulateAgentDefinitionsVersionsCodeFileListResponse200 & {
+    headers: Headers;
+  };
+export type simulateAgentDefinitionsVersionsCodeFileListResponseError = (
+  | simulateAgentDefinitionsVersionsCodeFileListResponse400
+  | simulateAgentDefinitionsVersionsCodeFileListResponse404
+  | simulateAgentDefinitionsVersionsCodeFileListResponse503
+  | simulateAgentDefinitionsVersionsCodeFileListResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateAgentDefinitionsVersionsCodeFileListResponse =
+  | simulateAgentDefinitionsVersionsCodeFileListResponseSuccess
+  | simulateAgentDefinitionsVersionsCodeFileListResponseError;
+
+export const getSimulateAgentDefinitionsVersionsCodeFileListUrl = (
+  agentId: string,
+  versionId: string,
+  params: SimulateAgentDefinitionsVersionsCodeFileListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/agent-definitions/${agentId}/versions/${versionId}/code/file/?${stringifiedParams}`
+    : `/simulate/agent-definitions/${agentId}/versions/${versionId}/code/file/`;
+};
+
+/**
+ * GET /agent-definitions/{id}/versions/{vid}/code/file/?path=.
+ */
+export const simulateAgentDefinitionsVersionsCodeFileList = async (
+  agentId: string,
+  versionId: string,
+  params: SimulateAgentDefinitionsVersionsCodeFileListParams,
+  options?: RequestInit,
+): Promise<simulateAgentDefinitionsVersionsCodeFileListResponse> => {
+  return apiMutator<simulateAgentDefinitionsVersionsCodeFileListResponse>(
+    getSimulateAgentDefinitionsVersionsCodeFileListUrl(
+      agentId,
+      versionId,
+      params,
+    ),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateAgentDefinitionsVersionsCodeTreeListResponse200 = {
+  data: AgentCodeTreeResponseApi;
+  status: 200;
+};
+
+export type simulateAgentDefinitionsVersionsCodeTreeListResponse404 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 404;
+};
+
+export type simulateAgentDefinitionsVersionsCodeTreeListResponse503 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 503;
+};
+
+export type simulateAgentDefinitionsVersionsCodeTreeListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 404 | 503>;
+};
+
+export type simulateAgentDefinitionsVersionsCodeTreeListResponseSuccess =
+  simulateAgentDefinitionsVersionsCodeTreeListResponse200 & {
+    headers: Headers;
+  };
+export type simulateAgentDefinitionsVersionsCodeTreeListResponseError = (
+  | simulateAgentDefinitionsVersionsCodeTreeListResponse404
+  | simulateAgentDefinitionsVersionsCodeTreeListResponse503
+  | simulateAgentDefinitionsVersionsCodeTreeListResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateAgentDefinitionsVersionsCodeTreeListResponse =
+  | simulateAgentDefinitionsVersionsCodeTreeListResponseSuccess
+  | simulateAgentDefinitionsVersionsCodeTreeListResponseError;
+
+export const getSimulateAgentDefinitionsVersionsCodeTreeListUrl = (
+  agentId: string,
+  versionId: string,
+) => {
+  return `/simulate/agent-definitions/${agentId}/versions/${versionId}/code/tree/`;
+};
+
+/**
+ * GET /agent-definitions/{id}/versions/{vid}/code/tree/.
+ */
+export const simulateAgentDefinitionsVersionsCodeTreeList = async (
+  agentId: string,
+  versionId: string,
+  options?: RequestInit,
+): Promise<simulateAgentDefinitionsVersionsCodeTreeListResponse> => {
+  return apiMutator<simulateAgentDefinitionsVersionsCodeTreeListResponse>(
+    getSimulateAgentDefinitionsVersionsCodeTreeListUrl(agentId, versionId),
     {
       ...options,
       method: "GET",

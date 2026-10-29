@@ -315,3 +315,46 @@ class AgentBuildPreflightResponseSerializer(serializers.Serializer):
     ok = serializers.BooleanField(read_only=True)
     version_id = serializers.CharField(read_only=True, allow_null=True)
     checks = AgentBuildPreflightCheckSerializer(many=True, read_only=True)
+
+
+class AgentCodeEntrySerializer(serializers.Serializer):
+    path = serializers.CharField(read_only=True)
+    size = serializers.IntegerField(read_only=True)
+    kind = serializers.ChoiceField(
+        choices=("text", "binary", "too_large"), read_only=True
+    )
+
+
+class AgentCodeTreeResponseSerializer(serializers.Serializer):
+    """Every file of a version's code, relative to the archive root."""
+
+    subfolder = serializers.CharField(read_only=True, allow_blank=True)
+    files = AgentCodeEntrySerializer(many=True, read_only=True)
+    truncated = serializers.BooleanField(read_only=True)
+
+
+class AgentCodeFileResponseSerializer(serializers.Serializer):
+    """One file of a version's code; content only for text under the cap."""
+
+    path = serializers.CharField(read_only=True)
+    size = serializers.IntegerField(read_only=True)
+    kind = serializers.ChoiceField(
+        choices=("text", "binary", "too_large"), read_only=True
+    )
+    language = serializers.CharField(read_only=True)
+    content = serializers.CharField(read_only=True, required=False, allow_blank=True)
+
+
+class AgentCodeChangeSerializer(serializers.Serializer):
+    path = serializers.CharField(read_only=True)
+    status = serializers.ChoiceField(
+        choices=("added", "removed", "modified"), read_only=True
+    )
+
+
+class AgentCodeChangesResponseSerializer(serializers.Serializer):
+    """The files that changed between two versions, by content."""
+
+    against = serializers.CharField(read_only=True, allow_null=True)
+    files = AgentCodeChangeSerializer(many=True, read_only=True)
+    unavailable = serializers.CharField(read_only=True, required=False)

@@ -33050,6 +33050,78 @@ export const SimulateAgentDefinitionsVersionsCallExecutionsListResponse =
   zod.array(SimulateAgentDefinitionsVersionsCallExecutionsListResponseItem);
 
 /**
+ * GET /agent-definitions/{id}/versions/{vid}/code/changes/?against=.
+ */
+export const SimulateAgentDefinitionsVersionsCodeChangesListParams = zod.object(
+  {
+    agent_id: zod.string(),
+    version_id: zod.string(),
+  },
+);
+
+export const SimulateAgentDefinitionsVersionsCodeChangesListQueryParams =
+  zod.object({
+    against: zod.string().optional(),
+  });
+
+export const SimulateAgentDefinitionsVersionsCodeChangesListResponse =
+  zod.object({
+    against: zod.string().min(1).optional(),
+    files: zod
+      .array(
+        zod.object({
+          path: zod.string().min(1).optional(),
+          status: zod.enum(["added", "removed", "modified"]).optional(),
+        }),
+      )
+      .optional(),
+    unavailable: zod.string().min(1).optional(),
+  });
+
+/**
+ * GET /agent-definitions/{id}/versions/{vid}/code/file/?path=.
+ */
+export const SimulateAgentDefinitionsVersionsCodeFileListParams = zod.object({
+  agent_id: zod.string(),
+  version_id: zod.string(),
+});
+
+export const SimulateAgentDefinitionsVersionsCodeFileListQueryParams =
+  zod.object({
+    path: zod.string(),
+  });
+
+export const SimulateAgentDefinitionsVersionsCodeFileListResponse = zod.object({
+  path: zod.string().min(1).optional(),
+  size: zod.number().optional(),
+  kind: zod.enum(["text", "binary", "too_large"]).optional(),
+  language: zod.string().min(1).optional(),
+  content: zod.string().optional(),
+});
+
+/**
+ * GET /agent-definitions/{id}/versions/{vid}/code/tree/.
+ */
+export const SimulateAgentDefinitionsVersionsCodeTreeListParams = zod.object({
+  agent_id: zod.string(),
+  version_id: zod.string(),
+});
+
+export const SimulateAgentDefinitionsVersionsCodeTreeListResponse = zod.object({
+  subfolder: zod.string().optional(),
+  files: zod
+    .array(
+      zod.object({
+        path: zod.string().min(1).optional(),
+        size: zod.number().optional(),
+        kind: zod.enum(["text", "binary", "too_large"]).optional(),
+      }),
+    )
+    .optional(),
+  truncated: zod.boolean().optional(),
+});
+
+/**
  * GET /agent-definitions/{id}/versions/{vid}/compatibility/?environment_id=.
  */
 export const SimulateAgentDefinitionsVersionsCompatibilityListParams =

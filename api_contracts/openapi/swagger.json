@@ -49467,6 +49467,176 @@
                 }
             ]
         },
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/changes/": {
+            "get": {
+                "operationId": "simulate_agent-definitions_versions_code_changes_list",
+                "description": "GET /agent-definitions/{id}/versions/{vid}/code/changes/?against=.",
+                "parameters": [
+                    {
+                        "name": "against",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentCodeChangesResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "parameters": [
+                {
+                    "name": "agent_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "version_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/file/": {
+            "get": {
+                "operationId": "simulate_agent-definitions_versions_code_file_list",
+                "description": "GET /agent-definitions/{id}/versions/{vid}/code/file/?path=.",
+                "parameters": [
+                    {
+                        "name": "path",
+                        "in": "query",
+                        "required": true,
+                        "type": "string"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentCodeFileResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "parameters": [
+                {
+                    "name": "agent_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "version_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/tree/": {
+            "get": {
+                "operationId": "simulate_agent-definitions_versions_code_tree_list",
+                "description": "GET /agent-definitions/{id}/versions/{vid}/code/tree/.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentCodeTreeResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "parameters": [
+                {
+                    "name": "agent_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "version_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/agent-definitions/{agent_id}/versions/{version_id}/compatibility/": {
             "get": {
                 "operationId": "simulate_agent-definitions_versions_compatibility_list",
@@ -124078,6 +124248,137 @@
                 "processing_skip_reason": {
                     "title": "Processing skip reason",
                     "type": "string",
+                    "readOnly": true
+                }
+            }
+        },
+        "AgentCodeChange": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "title": "Path",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "added",
+                        "removed",
+                        "modified"
+                    ],
+                    "readOnly": true
+                }
+            }
+        },
+        "AgentCodeChangesResponse": {
+            "type": "object",
+            "properties": {
+                "against": {
+                    "title": "Against",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AgentCodeChange"
+                    },
+                    "readOnly": true
+                },
+                "unavailable": {
+                    "title": "Unavailable",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                }
+            }
+        },
+        "AgentCodeFileResponse": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "title": "Path",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "size": {
+                    "title": "Size",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "text",
+                        "binary",
+                        "too_large"
+                    ],
+                    "readOnly": true
+                },
+                "language": {
+                    "title": "Language",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "content": {
+                    "title": "Content",
+                    "type": "string",
+                    "readOnly": true
+                }
+            }
+        },
+        "AgentCodeEntry": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "title": "Path",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "size": {
+                    "title": "Size",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "text",
+                        "binary",
+                        "too_large"
+                    ],
+                    "readOnly": true
+                }
+            }
+        },
+        "AgentCodeTreeResponse": {
+            "type": "object",
+            "properties": {
+                "subfolder": {
+                    "title": "Subfolder",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AgentCodeEntry"
+                    },
+                    "readOnly": true
+                },
+                "truncated": {
+                    "title": "Truncated",
+                    "type": "boolean",
                     "readOnly": true
                 }
             }

@@ -91,6 +91,11 @@ from .views import (
     SimulatorAgentDetailView,
     SimulatorAgentListView,
 )
+from .views.agent_code import (
+    AgentCodeChangesView,
+    AgentCodeFileView,
+    AgentCodeTreeView,
+)
 from .views.agent_setup import StoredAgentView
 from .views.agent_version import (
     ActivateAgentVersionView,
@@ -348,6 +353,21 @@ urlpatterns = [
         "agent-definitions/<uuid:agent_id>/build-preflight/",
         AgentBuildPreflightView.as_view(),
         name="agent-build-preflight",
+    ),
+    path(
+        "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/code/tree/",
+        AgentCodeTreeView.as_view(),
+        name="agent-code-tree",
+    ),
+    path(
+        "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/code/file/",
+        AgentCodeFileView.as_view(),
+        name="agent-code-file",
+    ),
+    path(
+        "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/code/changes/",
+        AgentCodeChangesView.as_view(),
+        name="agent-code-changes",
     ),
     path(
         "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/restore/",

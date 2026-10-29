@@ -1618,6 +1618,21 @@ export const endpoints = {
       apiPath("/simulate/agent-definitions/{agent_id}/build-preflight/", {
         agent_id: id,
       }),
+    codeTree: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/tree/",
+        { agent_id: id, version_id: version },
+      ),
+    codeFile: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/file/",
+        { agent_id: id, version_id: version },
+      ),
+    codeChanges: (id, version) =>
+      apiPath(
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/changes/",
+        { agent_id: id, version_id: version },
+      ),
     environmentAgentPolicy: (environmentId) =>
       apiPath("/simulate/api/harness-environments/{id}/agent-policy/", {
         id: environmentId,
