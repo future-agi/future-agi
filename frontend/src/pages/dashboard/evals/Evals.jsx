@@ -3,7 +3,6 @@ import { Box, Tooltip, Typography } from "@mui/material";
 import { Helmet } from "react-helmet-async";
 import EvalsListView from "src/sections/evals/components/EvalsListView";
 import Iconify from "src/components/iconify";
-import EvalsSectionTabs from "src/sections/evals/components/evals_section_tabs";
 
 const Evals = () => {
   return (
@@ -40,10 +39,6 @@ const Evals = () => {
             </Box>
           </Tooltip>
         </Box>
-        <Typography variant="body2" color="text.secondary">
-          Create and manage your evaluations
-        </Typography>
-        <EvalsSectionTabs />
         <EvalsListView />
       </Box>
     </>

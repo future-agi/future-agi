@@ -25,7 +25,7 @@ describe("Simulate menu", () => {
     authState.user = { organization_role: "Owner" };
   });
 
-  it("keeps Evals discoverable and removes only the standalone Observe metric entry", () => {
+  it("keeps Evals in Build and places Metrics directly above Dashboards in Observe", () => {
     const { result } = renderHook(() => useNavData(), {
       wrapper: MemoryRouter,
     });
@@ -48,8 +48,17 @@ describe("Simulate menu", () => {
       "Users",
       "Annotations",
       "Alerts",
+      "Metrics",
       "Dashboards",
     ]);
+    const metrics = observe.items.find((item) => item.title === "Metrics");
+    expect(metrics.path).toBe("/dashboard/metrics");
+    expect(metrics.icon.props.icon).toBe("mdi:chart-line");
+    expect(
+      result.current
+        .flatMap((section) => section.items)
+        .filter((item) => item.title === "Metrics"),
+    ).toHaveLength(1);
   });
 
   it("shows only Environment to an org restricted to Environments", () => {

@@ -1,5 +1,15 @@
-import { Navigate, matchRoutes } from "react-router-dom";
-import { describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
+import process from "node:process";
+import { Suspense } from "react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  Navigate,
+  RouterProvider,
+  createMemoryRouter,
+  matchRoutes,
+} from "react-router-dom";
+import { afterEach, describe, expect, it } from "vitest";
+import { paths } from "../../paths";
 
 import HarnessToEnvironment from "../../components/harness-to-environment";
 import LegacyMetricsRedirect from "../../components/legacy_metrics_redirect";
@@ -10,6 +20,38 @@ function findChildRoute(route, path) {
 }
 
 describe("dashboard route registry", () => {
+  it("keeps the retained dashboard and metric list imports resolvable", () => {
+    // Bundle in Node, not jsdom, so esbuild uses one typed-array realm. Keep
+    // packages external: this checks local removal ordering, not vendor code.
+    const output = execFileSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `import { build } from "esbuild";
+        for (const entryPoint of [
+          "src/sections/dashboards/DerivedMetricCardContext.jsx",
+          "src/sections/derived-metrics/MetricList.jsx",
+        ]) {
+          await build({
+            entryPoints: [entryPoint],
+            bundle: true,
+            write: false,
+            packages: "external",
+            logLevel: "silent",
+          });
+        }
+        process.stdout.write("2 local dependency graphs resolved");`,
+      ],
+      {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        timeout: 10000,
+      },
+    );
+    expect(output).toBe("2 local dependency graphs resolved");
+  });
+
   it("keeps the model list/detail route family reachable", () => {
     const [dashboardRoute] = dashboardRoutes(null, null, { isCloud: true });
     const modelsRoute = findChildRoute(dashboardRoute, "models");
@@ -155,13 +197,8 @@ describe.each([
   });
 });
 
-describe("metrics are Evals siblings, not evaluator types", () => {
+describe("existing Evals and Tasks routes", () => {
   it.each([
-    ["/dashboard/evaluations/metrics", "metrics"],
-    [
-      "/dashboard/evaluations/metrics/44444444-4444-4444-8444-444444444444?run=55555555-5555-4555-8555-555555555555",
-      "metrics/:metricId",
-    ],
     ["/dashboard/evaluations/create", "create"],
     ["/dashboard/evaluations/create/draft-id", "create/:draftId"],
     ["/dashboard/evaluations/existing-evaluator", ":evalId"],
@@ -176,14 +213,147 @@ describe("metrics are Evals siblings, not evaluator types", () => {
   ])("%s retains its static/detail destination", (url, path) => {
     expect(leafRoute(WITHOUT_FLAG, url).path).toBe(path);
   });
-  it("keeps the legacy route as the search/hash-preserving redirect", () => {
+  it("no longer mounts Metrics under Evals", () => {
+    const [dashboardRoute] = dashboardRoutes(WITHOUT_FLAG, null, {
+      isCloud: true,
+    });
+    const evals = findChildRoute(dashboardRoute, "evaluations");
     expect(
-      leafRoute(
-        WITHOUT_FLAG,
-        "/dashboard/derived-metrics?metric=x#saved-run-results",
-      ).element.type,
-    ).toBe(LegacyMetricsRedirect);
+      evals.children.some((route) => route.path?.startsWith("metrics")),
+    ).toBe(false);
   });
+});
+
+// Exercise the production route entries and lazy page imports without mounting
+// the unrelated authenticated dashboard shell and its network providers.
+let metricsRouter;
+afterEach(() => {
+  cleanup();
+  metricsRouter?.dispose();
+  metricsRouter = undefined;
+});
+function renderMetricsRoute(url) {
+  const [{ path, children }] = dashboardRoutes(WITHOUT_FLAG, null, {
+    isCloud: true,
+  });
+  metricsRouter = createMemoryRouter(
+    [
+      { path: "/before-metrics", element: <div>Previous page</div> },
+      { path, children },
+    ],
+    { initialEntries: ["/before-metrics", url], initialIndex: 1 },
+  );
+  render(
+    <Suspense fallback={<div>Loading page</div>}>
+      <RouterProvider router={metricsRouter} />
+    </Suspense>,
+  );
+  return metricsRouter;
+}
+
+const METRIC_ID = "44444444-4444-4444-8444-444444444444";
+
+describe("Metrics routes in Observe", () => {
+  it("defines canonical list, create, detail and edit path helpers", () => {
+    expect(paths.dashboard.metrics.root).toBe("/dashboard/metrics");
+    expect(paths.dashboard.metrics.new).toBe("/dashboard/metrics/new");
+    expect(paths.dashboard.metrics.detail(METRIC_ID)).toBe(
+      `/dashboard/metrics/${METRIC_ID}`,
+    );
+    expect(paths.dashboard.metrics.edit(METRIC_ID)).toBe(
+      `/dashboard/metrics/${METRIC_ID}/edit`,
+    );
+    expect(paths.dashboard).not.toHaveProperty("evalMetrics");
+  });
+
+  it.each([
+    ["/dashboard/metrics", undefined, "Metrics", undefined],
+    ["/dashboard/metrics/new", "new", "New metric", undefined],
+    [`/dashboard/metrics/${METRIC_ID}`, ":metricId", "Metric", METRIC_ID],
+    [
+      `/dashboard/metrics/${METRIC_ID}?tab=overview`,
+      ":metricId",
+      "Metric",
+      METRIC_ID,
+    ],
+    [
+      `/dashboard/metrics/${METRIC_ID}?tab=history`,
+      ":metricId",
+      "Metric",
+      METRIC_ID,
+    ],
+    [
+      `/dashboard/metrics/${METRIC_ID}?tab=definition`,
+      ":metricId",
+      "Metric",
+      METRIC_ID,
+    ],
+    [
+      `/dashboard/metrics/${METRIC_ID}/edit`,
+      ":metricId/edit",
+      "Edit metric",
+      METRIC_ID,
+    ],
+  ])("%s renders its own page", async (url, path, heading, metricId) => {
+    const route = leafRoute(WITHOUT_FLAG, url);
+    expect(route.path).toBe(path);
+    if (!path) expect(route.index).toBe(true);
+    const router = renderMetricsRoute(url);
+    expect(
+      await screen.findByRole("heading", { name: heading }),
+    ).toBeInTheDocument();
+    expect(router.state.matches.at(-1).params.metricId).toBe(metricId);
+    expect(router.state.location.pathname + router.state.location.search).toBe(
+      url,
+    );
+  });
+
+  it("redirects the case-insensitive legacy route accepted by the router", async () => {
+    const url = `/DASHBOARD/Derived-Metrics/${METRIC_ID}?metric=kept#x`;
+    expect(leafRoute(WITHOUT_FLAG, url).element.type).toBe(
+      LegacyMetricsRedirect,
+    );
+    const router = renderMetricsRoute(url);
+    await waitFor(() =>
+      expect(router.state.location).toMatchObject({
+        pathname: `/dashboard/metrics/${METRIC_ID}`,
+        search: "?metric=kept",
+        hash: "#x",
+      }),
+    );
+    expect(router.state.historyAction).toBe("REPLACE");
+  });
+
+  it.each([
+    "",
+    "/",
+    "/new",
+    `/${METRIC_ID}`,
+    `/${METRIC_ID}/edit`,
+    "/metric%20id/edit",
+  ])(
+    "legacy suffix '%s' replace-redirects, preserving search and hash",
+    async (suffix) => {
+      const search = `?metric=${METRIC_ID}&project=a%2Fb&project=second&tab=history&empty=`;
+      const hash = "#x";
+      const legacyUrl = `/dashboard/derived-metrics${suffix}${search}${hash}`;
+      expect(leafRoute(WITHOUT_FLAG, legacyUrl).element.type).toBe(
+        LegacyMetricsRedirect,
+      );
+      const router = renderMetricsRoute(legacyUrl);
+      await waitFor(() =>
+        expect(router.state.location).toMatchObject({
+          pathname: `/dashboard/metrics${suffix}`,
+          search,
+          hash,
+        }),
+      );
+      expect(router.state.historyAction).toBe("REPLACE");
+      await act(async () => router.navigate(-1));
+      expect(await screen.findByText("Previous page")).toBeInTheDocument();
+      expect(router.state.location.pathname).toBe("/before-metrics");
+    },
+  );
 });
 
 describe("old Agent Definition link", () => {

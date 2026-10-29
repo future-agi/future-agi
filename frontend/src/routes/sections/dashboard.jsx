@@ -439,8 +439,14 @@ const AnnotateWorkspacePage = lazyWithRetry(
   () => import("src/pages/dashboard/annotations/annotate-workspace"),
 );
 
-const DerivedMetricsView = lazyWithRetry(
-  () => import("src/sections/derived-metrics/DerivedMetricsView"),
+const MetricsListPage = lazyWithRetry(
+  () => import("src/sections/derived-metrics/MetricsListPage"),
+);
+const MetricDetailPage = lazyWithRetry(
+  () => import("src/sections/derived-metrics/MetricDetailPage"),
+);
+const MetricBuilderPage = lazyWithRetry(
+  () => import("src/sections/derived-metrics/MetricBuilderPage"),
 );
 
 const DashboardsListView = lazyWithRetry(
@@ -1013,14 +1019,6 @@ export const dashboardRoutes = (
         {
           index: true,
           element: <Evals />,
-        },
-        {
-          path: "metrics",
-          element: <DerivedMetricsView />,
-        },
-        {
-          path: "metrics/:metricId",
-          element: <DerivedMetricsView />,
         },
         {
           path: "usage",
@@ -1679,7 +1677,16 @@ export const dashboardRoutes = (
       ],
     },
     {
-      path: "derived-metrics",
+      path: "metrics",
+      children: [
+        { index: true, element: <MetricsListPage /> },
+        { path: "new", element: <MetricBuilderPage /> },
+        { path: ":metricId", element: <MetricDetailPage /> },
+        { path: ":metricId/edit", element: <MetricBuilderPage /> },
+      ],
+    },
+    {
+      path: "derived-metrics/*",
       element: <LegacyMetricsRedirect />,
     },
     {

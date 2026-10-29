@@ -193,6 +193,11 @@ export function useNavData() {
             },
           },
           {
+            title: "Metrics",
+            path: paths.dashboard.metrics.root,
+            icon: <Iconify icon="mdi:chart-line" />,
+          },
+          {
             title: "Dashboards",
             path: paths.dashboard.dashboards.root,
             icon: ICONS.data,
