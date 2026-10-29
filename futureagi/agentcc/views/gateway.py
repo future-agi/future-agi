@@ -950,10 +950,14 @@ class AgentccGatewayViewSet(ViewSet):
 
             # Extract guardrail info from response
             guardrail_info = {}
+            triggered = False
             for key, val in headers.items():
                 lk = key.lower()
                 if "guardrail" in lk or "x-agentcc" in lk:
                     guardrail_info[key] = val
+                if lk == "x-agentcc-guardrail-triggered":
+                    triggered = str(val).lower() == "true"
+            blocked = status_code in (403, 446)
 
             return self._gm.success_response(
                 {
@@ -961,8 +965,11 @@ class AgentccGatewayViewSet(ViewSet):
                     "body": body,
                     "guardrail_headers": guardrail_info,
                     "model": model,
-                    "blocked": status_code in (403, 446),
-                    "warned": status_code == 246,
+                    "blocked": blocked,
+                    # A warn or log hit goes through and is marked by the
+                    # guardrail-triggered header; 246 is the legacy warn code.
+                    "warned": status_code == 246
+                    or (triggered and not blocked and status_code < 400),
                 }
             )
         except GatewayClientError as e:
