@@ -455,12 +455,16 @@ export default function TrendCard({
   const current = rows.find((row) => row.runId === runId);
   const chart = rows.length >= 2;
   const breaks = rows.filter((row, i) => i > 0 && row.fresh).length;
-  // The pager below counts every run: beside it, say that the others
-  // stopped, failed or still run, rather than that there is only one.
+  // The pager below counts every run: beside it, say why only one shows,
+  // rather than that there is only one. A completed run can show none: one
+  // whose lens left every unit out has no categories.
+  const completed = runs.filter((run) => run.status === "completed").length;
   const soFar =
-    runs.length > 1
-      ? `Only one of ${formatCount(runs.length)} runs completed so far.`
-      : "One run so far.";
+    completed > 1
+      ? "Only one run has categories so far."
+      : runs.length > 1
+        ? `Only one of ${formatCount(runs.length)} runs completed so far.`
+        : "One run so far.";
 
   if (!chart && !currentSegments?.length) return null;
 

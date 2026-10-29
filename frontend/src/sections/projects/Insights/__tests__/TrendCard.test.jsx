@@ -195,4 +195,23 @@ describe("TrendCard with one completed run", () => {
     expect(screen.queryByText(/One run so far/)).toBeNull();
     expect(screen.getByText(/Run 1 of 2/)).toBeInTheDocument();
   });
+
+  it("doesn't call a run with no categories one that didn't complete", () => {
+    // Completed, but its lens left every unit out: no failures found.
+    const empty = {
+      id: "run-2",
+      status: "completed",
+      taxonomy_mode: "classify",
+      created_at: "2026-10-28T06:08:00Z",
+      finished_at: "2026-10-28T06:09:00Z",
+      analysed_count: 0,
+      distribution: [],
+    };
+    single([empty, runs[2]]);
+    expect(
+      screen.getByText(/^Only one run has categories so far\./),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/completed so far/)).toBeNull();
+    expect(screen.getByText(/Run 1 of 2/)).toBeInTheDocument();
+  });
 });
