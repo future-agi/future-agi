@@ -16,7 +16,7 @@ import Iconify from "src/components/iconify";
 import CodeBlock from "src/components/code-block";
 import SettingsSection from "./SettingsSection";
 import { foundValuesOf } from "./foundFacts";
-import { TESTED_VERSIONS } from "../_mock/testedVersions";
+import TestedVersionsMatrix from "../compat/TestedVersionsMatrix";
 import {
   checksFor,
   connectionSpecOf,
@@ -573,78 +573,7 @@ export default function ConnectionCheckSection({ agent, onSaveValues }) {
             Untested, may still connect — its results just aren&apos;t
             certified.
           </Typography>
-          <Box
-            sx={{
-              border: "1px solid",
-              borderColor: "divider",
-              borderRadius: 1,
-              "& > * + *": { borderTop: "1px solid", borderColor: "divider" },
-            }}
-          >
-            <Box
-              sx={{
-                display: "grid",
-                gridTemplateColumns: "1.3fr 1.3fr 0.7fr 1.5fr 1.5fr",
-                columnGap: 1.5,
-                px: 1.5,
-                py: 0.75,
-              }}
-            >
-              {[
-                "Family",
-                "Tested versions",
-                "Status",
-                "Evidence",
-                "Not covered",
-              ].map((h) => (
-                <Typography
-                  key={h}
-                  sx={{
-                    typography: "s3",
-                    fontWeight: 600,
-                    color: "text.subtitle",
-                  }}
-                >
-                  {h}
-                </Typography>
-              ))}
-            </Box>
-            {TESTED_VERSIONS.map((r) => (
-              <Box
-                key={r.family}
-                sx={{
-                  display: "grid",
-                  gridTemplateColumns: "1.3fr 1.3fr 0.7fr 1.5fr 1.5fr",
-                  columnGap: 1.5,
-                  px: 1.5,
-                  py: 0.875,
-                }}
-              >
-                <Box>
-                  <Typography sx={{ typography: "s2", fontWeight: 500 }}>
-                    {r.family}
-                  </Typography>
-                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                    {r.how}
-                  </Typography>
-                </Box>
-                <Typography sx={{ typography: "s3", fontFamily: MONO }}>
-                  {r.versions}
-                </Typography>
-                <Typography
-                  sx={{ typography: "s3", color: STATUS_TONE[r.status] }}
-                >
-                  {r.status}
-                </Typography>
-                <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-                  {r.evidence}
-                </Typography>
-                <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-                  {r.limits}
-                </Typography>
-              </Box>
-            ))}
-          </Box>
+          <TestedVersionsMatrix />
         </DialogContent>
       </Dialog>
     </>

@@ -20,6 +20,7 @@ import { isConnectOnly } from "./envModel";
 import { knownToolsFor, requiredToolsOf } from "./toolFit";
 import { currentAgentVersion, currentEnvVersion } from "./versions";
 import { hashSeed } from "./runStream";
+import { familyOf } from "./testedVersions";
 
 export const COMPAT_STATUS = {
   supported: { label: "Supported", dot: "passed", rank: 0 },
@@ -78,6 +79,8 @@ export const compatibilityOf = ({ env, envState, agent = envState?.agent, scenar
   const live = proofKindOf(agent).kind === "live";
   const provider = v.provider ? v.provider.charAt(0).toUpperCase() + v.provider.slice(1) : "the platform";
   const version = currentAgentVersion(envState);
+  /* The tested family it belongs to — context, never proof for this connection. */
+  const family = familyOf(agent, kind);
   const requested = requestedOf(envState, scenarioIds);
   const all = requested.map((s) => s.id);
   const known = knownToolsFor(env, envState);
@@ -131,7 +134,7 @@ export const compatibilityOf = ({ env, envState, agent = envState?.agent, scenar
     add("toolRouting", "blocked", `${prod.join(", ")} still reaches production — its URL is hard-coded. Cases that need it can't run against the test world.`, { affected: [...new Set(prod.flatMap(needs))], repair: "connection", blocks: true });
   else if (checked) fromCheck("toolRouting", "tools", writeCases, "");
   else if (live)
-    add("toolRouting", "partial", `Tools run in your ${provider} account. Reads are checked against the world; writes are observed, not controlled.`, { affected: writeCases });
+    add("toolRouting", "partial", `Tools run in your ${provider} account. Reads are checked against the world; writes are observed, not controlled.${family?.limits && family.limits !== "—" ? ` ${family.limits}.` : ""}`, { affected: writeCases });
   else add("toolRouting", "supported", "Every tool call is answered by the test world.");
 
   if (connectOnly) add("state", "unavailable", "Your agent calls its own systems, so before-and-after state can't be read here. Graded on the conversation and tool calls.", { affected: writeCases });
@@ -181,6 +184,8 @@ export const compatibilityOf = ({ env, envState, agent = envState?.agent, scenar
       worldVersion: currentEnvVersion(env, envState)?.label || "v1",
       release: env?.release || null,
       mode: [envState?.agent?.values?.runLocation === "local" ? "On your machine" : "Hosted", live ? "Live" : "Sealed"].join(" · "),
+      family: family ? `${family.family} ${family.versions}` : null,
+      familyStatus: family?.status || null,
     },
     rows,
     notNeeded,

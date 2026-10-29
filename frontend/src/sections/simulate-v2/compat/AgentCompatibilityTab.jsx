@@ -4,7 +4,12 @@ import { MenuItem, Select, Stack, Typography } from "@mui/material";
 import { EmptyState } from "../components/primitives";
 import { envOf } from "../_mock/runGroup";
 import { compatibilityOf } from "../_mock/compatibility";
+import { familyOf } from "../_mock/testedVersions";
+import { sourceKindOf } from "../_mock/agentRegistry";
+import { SectionCard } from "../components/primitives";
 import CompatibilityReport from "./CompatibilityReport";
+import TestedVersionsMatrix from "./TestedVersionsMatrix";
+import SandboxCertification from "./SandboxCertification";
 
 /**
  * Agent → Compatibility (roadmap release.md): the report for this agent on
@@ -91,6 +96,26 @@ export default function AgentCompatibilityTab({
         onRepair={onRepair}
         onRetest={onRepair}
       />
+      <SectionCard
+        title="Tested versions"
+        subtitle={
+          familyOf(agent, sourceKindOf(agent))
+            ? "Exact versions per agent family, each linked to the diagnostic behind it. This agent's family is open — its own report above is what counts for this world."
+            : "Exact versions per agent family, each linked to the diagnostic behind it. This agent's family isn't listed — it may connect, but nothing about it is certified."
+        }
+        bare
+      >
+        <TestedVersionsMatrix
+          highlight={familyOf(agent, sourceKindOf(agent))?.family || null}
+        />
+      </SectionCard>
+      <SectionCard
+        title="Sandbox"
+        subtitle="How the test sandbox holds up — concurrency, cleanup, isolation — and whether our benchmark runs match the published ones."
+        bare
+      >
+        <SandboxCertification />
+      </SectionCard>
     </Stack>
   );
 }

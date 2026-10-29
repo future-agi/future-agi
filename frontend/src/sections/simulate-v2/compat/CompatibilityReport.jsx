@@ -150,6 +150,9 @@ export default function CompatibilityReport({
             id.connection,
             `× ${id.world} ${id.worldVersion}${id.release ? ` · release ${id.release}` : ""}`,
             id.mode,
+            id.family
+              ? `family ${id.family} (${id.familyStatus.toLowerCase()} — context, not proof)`
+              : "family not in the tested list",
             report.testedAt
               ? `checked ${when(report.testedAt)}`
               : "not checked yet",
