@@ -228,23 +228,35 @@ def failing_sub_goals(
     return failing
 
 
-def with_committed_usd(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
-    """Each fix's ``committed_usd``: the engine's own spend plus a worst-case figure for
-    every check run so far, which is what its budget is held against."""
-    executions = Coalesce(
-        Sum("check_runs__scenario_count", filter=Q(check_runs__deleted=False)), 0
+def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
+    """Each fix's spend in billed US dollars. ``fix_spent_usd`` is the engine's model calls
+    plus every check run whose usage is sealed. ``committed_usd`` also holds a worst case for
+    each check run still unsealed; it is what the fix's limit is held against."""
+    live = Q(check_runs__deleted=False)
+    money = DecimalField(max_digits=12, decimal_places=4)
+    sealed = Coalesce(
+        Sum("check_runs__fix_cost_usd", filter=live),
+        Value(Decimal(0)),
+        output_field=money,
+    )
+    unsealed = Coalesce(
+        Sum(
+            "check_runs__scenario_count",
+            filter=live & Q(check_runs__fix_cost_usd__isnull=True),
+        ),
+        0,
     )
     worst_case = Value(Decimal(settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION))
     return runs.annotate(
+        fix_spent_usd=ExpressionWrapper(F("spent_usd") + sealed, output_field=money),
         committed_usd=ExpressionWrapper(
-            F("spent_usd") + executions * worst_case,
-            output_field=DecimalField(max_digits=12, decimal_places=4),
-        )
+            F("spent_usd") + sealed + unsealed * worst_case, output_field=money
+        ),
     )
 
 
 def fix_runs_for_read(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
-    """Fixes with everything their read shows: committed spend, candidates, check runs."""
+    """Fixes with everything their read shows: spend, candidates, check runs."""
     check_runs = HostedHarnessJob.no_workspace_objects.only(
         "id",
         "fix_run_id",
@@ -254,7 +266,7 @@ def fix_runs_for_read(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
         "agent_version_id",
         "created_at",
     ).order_by("created_at")
-    return with_committed_usd(runs).prefetch_related(
+    return with_spend(runs).prefetch_related(
         "candidates__agent_version",
         Prefetch("check_runs", queryset=check_runs, to_attr="check_run_list"),
     )

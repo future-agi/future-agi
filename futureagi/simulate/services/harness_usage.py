@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from decimal import Decimal
 from uuid import UUID, uuid5
 
 from django.core.serializers.json import DjangoJSONEncoder
@@ -460,6 +461,53 @@ def replay_harness_usage(attempt: HostedHarnessAttempt) -> None:
                         "Authoring usage could not be finalized for attempt %s",
                         current.id,
                     )
+    price_fix_check_run(current.job_id)
+
+
+def billed_ai_usd(usd: Decimal) -> Decimal:
+    """What a model call bills the organization, in US dollars: its cost at the AI markup."""
+    if is_oss():
+        return usd
+    from ee.usage.services.config import BillingConfig
+
+    return usd * BillingConfig.get().get_ai_cost_markup()
+
+
+def _paid_unit_usd(config, dimension: str) -> Decimal:
+    """The first price a dimension charges past its free tiers."""
+    return next(
+        (
+            tier.price_per_unit
+            for tier in config.get_pricing_tiers(dimension)
+            if tier.price_per_unit > 0
+        ),
+        Decimal(0),
+    )
+
+
+def price_fix_check_run(job_id) -> None:
+    """Set what a fix's check run billed, once its usage is sealed: its conversations and
+    calls at their price per unit, plus any AI credits. A fix holds a worst case for a check
+    run until this replaces it."""
+    if is_oss():
+        return
+    job = HostedHarnessJob.all_objects.filter(id=job_id, fix_run__isnull=False).first()
+    if job is None:
+        return
+    from ee.usage.services.config import BillingConfig
+
+    config = BillingConfig.get()
+    used = harness_consumption(job) or {}
+    usd = sum(
+        (
+            Decimal(str(used.get(dimension) or 0)) * _paid_unit_usd(config, dimension)
+            for dimension in ("text_sim_tokens", "voice_sim_minutes")
+        ),
+        Decimal(str(used.get("ai_credits") or 0)) * Decimal("0.01"),
+    )
+    HostedHarnessJob.all_objects.filter(id=job.id).update(
+        fix_cost_usd=usd.quantize(Decimal("0.0001"))
+    )
 
 
 def harness_consumption(job: HostedHarnessJob) -> dict | None:

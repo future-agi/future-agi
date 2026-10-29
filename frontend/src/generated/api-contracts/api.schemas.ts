@@ -16954,7 +16954,7 @@ export interface AgentFixRequestApi {
   failing_sub_goals: string[];
   surfaces: string[];
   locked_paths: string[];
-  budget_usd: number;
+  budget_credits: number;
   max_minutes: number;
 }
 
@@ -17017,8 +17017,8 @@ export interface AgentFixRunApi {
   /** @maxLength 32 */
   stage?: string;
   request: AgentFixRequestApi;
-  spent_usd: string;
-  committed_usd: string;
+  spent_credits: number;
+  committed_credits: number;
   report: AgentFixReportApi;
   failure: AgentFixFailureApi;
   /** The base version's runs; each candidate lists its own. */
@@ -17050,10 +17050,10 @@ export interface AgentFixLaunchApi {
   surfaces: AgentFixLaunchApiSurfacesItem[];
   locked_paths?: string[];
   /**
-   * @minimum 0.01
-   * @maximum 500
+   * @minimum 1
+   * @maximum 50000
    */
-  budget_usd: number;
+  budget_credits: number;
   /**
    * @minimum 1
    * @maximum 1440

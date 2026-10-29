@@ -586,15 +586,62 @@ class TestCheckRuns:
                 fix_run=fix_run
             ).exists()
 
-    def test_committed_spend_counts_every_check_runs_worst_case(
+    def test_a_check_run_is_held_at_its_worst_case_until_its_usage_is_sealed(
         self, source_run, settings
     ):
         settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = "0.5"
         fix_run = _fix_run(source_run, spent_usd=Decimal("0.25"))
-        _check(fix_run, trials=2)
+        first = _check(fix_run, trials=2)
         _check(fix_run, label="both", keys=KEYS)
 
         assert engine.committed_usd(fix_run) == Decimal("2.25")
+
+        HostedHarnessJob.no_workspace_objects.filter(id=first.id).update(
+            fix_cost_usd=Decimal("0.09")
+        )
+        # The sealed run at what it billed; the other still at 2 x $0.50.
+        assert engine.committed_usd(fix_run) == Decimal("1.34")
+
+    def test_a_sealed_check_run_is_priced_from_its_billed_usage(
+        self, source_run, monkeypatch
+    ):
+        from ee.usage.schemas.billing_config import PricingTier
+        from ee.usage.services.config import BillingConfig
+        from simulate.services import harness_usage
+
+        tiers = {
+            "text_sim_tokens": [
+                PricingTier(up_to=1_000_000, price_per_unit=Decimal(0)),
+                PricingTier(up_to=None, price_per_unit=Decimal("0.000002")),
+            ],
+            "voice_sim_minutes": [
+                PricingTier(up_to=None, price_per_unit=Decimal("0.08"))
+            ],
+        }
+        monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
+        monkeypatch.setattr(
+            BillingConfig, "get_pricing_tiers", lambda self, key: tiers.get(key, [])
+        )
+        monkeypatch.setattr(
+            harness_usage,
+            "harness_consumption",
+            lambda job: {
+                "text_sim_tokens": 46_000,
+                "voice_sim_minutes": 0,
+                "ai_credits": 0,
+            },
+        )
+        run = _check(_fix_run(source_run))
+        not_a_check = source_run
+
+        harness_usage.price_fix_check_run(run.id)
+        harness_usage.price_fix_check_run(not_a_check.id)
+
+        run.refresh_from_db()
+        not_a_check.refresh_from_db()
+        # 46,000 tokens at the first paid price, $2 per million.
+        assert run.fix_cost_usd == Decimal("0.0920")
+        assert not_a_check.fix_cost_usd is None
 
     def test_a_check_run_racing_the_close_is_refused(self, source_run):
         fix_run = _fix_run(source_run)  # as the engine's request loaded it

@@ -2,9 +2,9 @@
 
 The engine in its sandbox calls an OpenAI-compatible endpoint on its fix's own API with its
 fix token. The platform forwards the call to the model gateway with its own key, which never
-enters the sandbox, and adds what the gateway says the call cost to the fix's spend. Future
-AGI pays for these calls and bills them to the organization as AI credits; the fix's budget
-stops them.
+enters the sandbox, and adds what the call bills the organization (the gateway's cost at the
+AI markup) to the fix's spend. Future AGI pays for these calls and bills them as AI credits;
+the fix's limit stops them.
 """
 
 import json
@@ -21,6 +21,7 @@ from django.utils import timezone
 from agentcc.services.gateway_client import resolve_gateway_internal_url
 from simulate.models import AgentFixRun
 from simulate.services.agent_fix_engine import committed_usd
+from simulate.services.harness_usage import billed_ai_usd
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.services.hosted_harness_gateway import platform_model_gateway
 from tfc.ee_gating import is_oss
@@ -107,7 +108,7 @@ def _meter(fix_run: AgentFixRun, model: str, headers: httpx.Headers) -> None:
     if usd <= 0:
         return
     AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
-        spent_usd=F("spent_usd") + usd, updated_at=timezone.now()
+        spent_usd=F("spent_usd") + billed_ai_usd(usd), updated_at=timezone.now()
     )
     _bill(fix_run, model, usd, headers.get("x-agentcc-request-id"))
 

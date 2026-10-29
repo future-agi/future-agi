@@ -91,6 +91,13 @@ def _engine(client, method, fix_run, path, *, token=TOKEN, **kwargs):
     return getattr(client, method)(f"{ENGINE}/{fix_run.id}/{path}", **headers, **kwargs)
 
 
+def _billed(usd):
+    """A model call's cost as the organization is billed for it: at the AI markup."""
+    from ee.usage.services.config import BillingConfig
+
+    return usd * BillingConfig.get().get_ai_cost_markup()
+
+
 def _out_of_credits():
     """The usage check's refusal when the organization's AI credits are paused."""
     from ee.usage.exceptions import UsageLimitExceeded
@@ -113,7 +120,7 @@ def _launch_body(source_run, **overrides):
         "source_run_id": str(source_run.id),
         "target_scenario_keys": [KEYS[0]],
         "surfaces": ["prompt"],
-        "budget_usd": 5,
+        "budget_credits": 500,
         "max_minutes": 30,
         **overrides,
     }
@@ -410,7 +417,23 @@ class TestEngineModelCalls:
         assert call.kwargs["headers"]["Authorization"] == f"Bearer {PLATFORM_KEY}"
         assert json.loads(call.kwargs["content"])["model"] == ENGINE_MODEL
         fix_run.refresh_from_db()
-        assert fix_run.spent_usd == Decimal("0.0123")
+        assert fix_run.spent_usd == _billed(Decimal("0.0123"))
+
+    def test_the_fix_spends_what_the_call_bills(
+        self, api_client, source_run, monkeypatch
+    ):
+        from ee.usage.services.config import BillingConfig
+
+        monkeypatch.setattr(
+            BillingConfig, "get_ai_cost_markup", lambda self: Decimal("1.2")
+        )
+        fix_run = _armed(_fix_run(source_run))
+
+        assert self._complete(api_client, fix_run).status_code == 200
+
+        fix_run.refresh_from_db()
+        # $0.0123 at the gateway, $0.01476 billed.
+        assert fix_run.spent_usd == Decimal("0.0148")
 
     def test_a_metered_call_is_billed_to_the_organization_as_ai_credits(
         self, api_client, source_run, billed
@@ -449,7 +472,7 @@ class TestEngineModelCalls:
 
         assert response.status_code == 200, response.content
         fix_run.refresh_from_db()
-        assert fix_run.spent_usd == Decimal("0.0123")
+        assert fix_run.spent_usd == _billed(Decimal("0.0123"))
 
     def test_the_gateway_s_refusal_reaches_the_engine_and_costs_nothing(
         self, api_client, source_run, gateway, billed
@@ -583,7 +606,7 @@ class TestUserApi:
     @pytest.mark.parametrize(
         "overrides",
         [
-            {"budget_usd": 0},
+            {"budget_credits": 0},
             {"surfaces": ["everything"]},
             {"target_scenario_keys": []},
             {"unexpected": True},
@@ -613,19 +636,30 @@ class TestUserApi:
         assert [one["id"] for one in listed.json()] == [str(newer.id), str(older.id)]
         assert by_run.status_code == 404
 
-    def test_a_fix_shows_what_its_budget_has_committed(
+    def test_a_fix_shows_its_limit_and_spend_in_credits(
         self, auth_client, environment, source_run, settings
     ):
         settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = "0.5"
         fix_run = _fix_run(source_run, spent_usd=Decimal("0.25"))
-        _check(fix_run, trials=2)
+        check = _check(fix_run, trials=2)
 
-        listed = auth_client.get(f"{BASE}/", {"environment_id": str(environment.id)})
-        read = auth_client.get(f"{BASE}/{fix_run.id}/")
+        def shown():
+            listed = auth_client.get(
+                f"{BASE}/", {"environment_id": str(environment.id)}
+            ).json()
+            read = auth_client.get(f"{BASE}/{fix_run.id}/").json()
+            assert listed == [read]
+            return read["spent_credits"], read["committed_credits"]
 
-        # The engine's $0.25 and two check conversations at their worst case.
-        assert [one["committed_usd"] for one in listed.json()] == ["1.2500"]
-        assert read.json()["committed_usd"] == "1.2500"
+        # The engine's $0.25, and two unsealed check conversations held at $0.50 each.
+        assert shown() == (25.0, 125.0)
+        # Sealed, the check run counts at what it billed and its hold goes.
+        HostedHarnessJob.no_workspace_objects.filter(id=check.id).update(
+            fix_cost_usd=Decimal("0.094")
+        )
+        assert shown() == (34.4, 34.4)
+        read = auth_client.get(f"{BASE}/{fix_run.id}/").json()
+        assert read["request"]["budget_credits"] == 500.0
 
     def test_listing_more_fixes_and_candidates_costs_no_more_queries(
         self, auth_client, environment, source_run

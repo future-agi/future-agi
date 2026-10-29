@@ -34330,11 +34330,11 @@ export const SimulateApiAgentFixRunsListResponseItem = zod.object({
     failing_sub_goals: zod.array(zod.string().min(1)),
     surfaces: zod.array(zod.string().min(1)),
     locked_paths: zod.array(zod.string().min(1)),
-    budget_usd: zod.number(),
+    budget_credits: zod.number(),
     max_minutes: zod.number(),
   }),
-  spent_usd: zod.string(),
-  committed_usd: zod.string(),
+  spent_credits: zod.number(),
+  committed_credits: zod.number(),
   report: zod.object({
     ending: zod.string().min(1),
     summary: zod.string(),
@@ -34412,8 +34412,7 @@ export const simulateApiAgentFixRunsCreateBodyTargetScenarioKeysMax = 200;
 export const simulateApiAgentFixRunsCreateBodyLockedPathsItemMax = 512;
 
 export const simulateApiAgentFixRunsCreateBodyLockedPathsDefault = [];
-export const simulateApiAgentFixRunsCreateBodyBudgetUsdMin = 0.01;
-export const simulateApiAgentFixRunsCreateBodyBudgetUsdMax = 500;
+export const simulateApiAgentFixRunsCreateBodyBudgetCreditsMax = 50000;
 
 export const simulateApiAgentFixRunsCreateBodyMaxMinutesMax = 1440;
 
@@ -34437,10 +34436,10 @@ export const SimulateApiAgentFixRunsCreateBody = zod.object({
         .max(simulateApiAgentFixRunsCreateBodyLockedPathsItemMax),
     )
     .default(simulateApiAgentFixRunsCreateBodyLockedPathsDefault),
-  budget_usd: zod
+  budget_credits: zod
     .number()
-    .min(simulateApiAgentFixRunsCreateBodyBudgetUsdMin)
-    .max(simulateApiAgentFixRunsCreateBodyBudgetUsdMax),
+    .min(1)
+    .max(simulateApiAgentFixRunsCreateBodyBudgetCreditsMax),
   max_minutes: zod
     .number()
     .min(1)
@@ -34490,11 +34489,11 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
     failing_sub_goals: zod.array(zod.string().min(1)),
     surfaces: zod.array(zod.string().min(1)),
     locked_paths: zod.array(zod.string().min(1)),
-    budget_usd: zod.number(),
+    budget_credits: zod.number(),
     max_minutes: zod.number(),
   }),
-  spent_usd: zod.string(),
-  committed_usd: zod.string(),
+  spent_credits: zod.number(),
+  committed_credits: zod.number(),
   report: zod.object({
     ending: zod.string().min(1),
     summary: zod.string(),
@@ -34628,11 +34627,11 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
     failing_sub_goals: zod.array(zod.string().min(1)),
     surfaces: zod.array(zod.string().min(1)),
     locked_paths: zod.array(zod.string().min(1)),
-    budget_usd: zod.number(),
+    budget_credits: zod.number(),
     max_minutes: zod.number(),
   }),
-  spent_usd: zod.string(),
-  committed_usd: zod.string(),
+  spent_credits: zod.number(),
+  committed_credits: zod.number(),
   report: zod.object({
     ending: zod.string().min(1),
     summary: zod.string(),

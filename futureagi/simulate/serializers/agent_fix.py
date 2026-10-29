@@ -5,6 +5,13 @@ from simulate.models import AgentFixCandidate, AgentFixRun
 from simulate.pydantic_schemas.agent_fix import CandidateOutcome, Ending, Surface
 
 
+class CreditsField(serializers.FloatField):
+    """US dollars billed, read as credits: 1 credit is $0.01."""
+
+    def to_representation(self, value):
+        return round(float(value) * 100, 2)
+
+
 class AgentFixLaunchSerializer(serializers.Serializer):
     source_run_id = serializers.UUIDField()
     target_scenario_keys = serializers.ListField(
@@ -17,7 +24,8 @@ class AgentFixLaunchSerializer(serializers.Serializer):
     locked_paths = serializers.ListField(
         child=serializers.CharField(max_length=512), required=False, default=list
     )
-    budget_usd = serializers.FloatField(min_value=0.01, max_value=500)
+    # The fix's limit in credits; it covers the engine's model calls and the check runs.
+    budget_credits = serializers.IntegerField(min_value=1, max_value=50_000)
     max_minutes = serializers.IntegerField(min_value=1, max_value=24 * 60)
 
 
@@ -30,7 +38,7 @@ class AgentFixRequestSerializer(serializers.Serializer):
     failing_sub_goals = serializers.ListField(child=serializers.CharField())
     surfaces = serializers.ListField(child=serializers.CharField())
     locked_paths = serializers.ListField(child=serializers.CharField())
-    budget_usd = serializers.FloatField()
+    budget_credits = CreditsField(source="budget_usd")
     max_minutes = serializers.IntegerField()
 
 
@@ -109,8 +117,10 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
     request = AgentFixRequestSerializer()
     report = AgentFixReportSerializer(allow_null=True)
     failure = AgentFixFailureSerializer(allow_null=True)
-    spent_usd = serializers.DecimalField(max_digits=10, decimal_places=4)
-    committed_usd = serializers.DecimalField(max_digits=12, decimal_places=4)
+    # The engine's model calls and the sealed check runs, as billed.
+    spent_credits = CreditsField(source="fix_spent_usd")
+    # What the limit is held against: the spend plus a worst case for each unsealed check run.
+    committed_credits = CreditsField(source="committed_usd")
     candidates = AgentFixCandidateSerializer(many=True)
     check_runs = serializers.SerializerMethodField()
 
@@ -135,8 +145,8 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
             "state",
             "stage",
             "request",
-            "spent_usd",
-            "committed_usd",
+            "spent_credits",
+            "committed_credits",
             "report",
             "failure",
             "check_runs",

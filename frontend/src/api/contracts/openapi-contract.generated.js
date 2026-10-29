@@ -49309,7 +49309,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "source_run_id",
         "target_scenario_keys",
         "surfaces",
-        "budget_usd",
+        "budget_credits",
         "max_minutes",
       ],
       type: "object",
@@ -49346,11 +49346,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           default: [],
         },
-        budget_usd: {
-          title: "Budget usd",
-          type: "number",
-          maximum: 500,
-          minimum: 0.01,
+        budget_credits: {
+          title: "Budget credits",
+          type: "integer",
+          maximum: 50000,
+          minimum: 1,
         },
         max_minutes: {
           title: "Max minutes",
@@ -49377,8 +49377,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "source_run_id",
         "base_agent_version_id",
         "request",
-        "spent_usd",
-        "committed_usd",
+        "spent_credits",
+        "committed_credits",
         "report",
         "failure",
         "candidates",
@@ -49430,15 +49430,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         request: {
           $ref: "#/definitions/AgentFixRequest",
         },
-        spent_usd: {
-          title: "Spent usd",
-          type: "string",
-          format: "decimal",
+        spent_credits: {
+          title: "Spent credits",
+          type: "number",
         },
-        committed_usd: {
-          title: "Committed usd",
-          type: "string",
-          format: "decimal",
+        committed_credits: {
+          title: "Committed credits",
+          type: "number",
         },
         report: {
           $ref: "#/definitions/AgentFixReport",
@@ -87401,7 +87399,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "failing_sub_goals",
         "surfaces",
         "locked_paths",
-        "budget_usd",
+        "budget_credits",
         "max_minutes",
       ],
       type: "object",
@@ -87434,8 +87432,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
             minLength: 1,
           },
         },
-        budget_usd: {
-          title: "Budget usd",
+        budget_credits: {
+          title: "Budget credits",
           type: "number",
         },
         max_minutes: {

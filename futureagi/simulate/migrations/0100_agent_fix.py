@@ -219,6 +219,13 @@ class Migration(migrations.Migration):
             name="fix_label",
             field=models.CharField(blank=True, default="", max_length=64),
         ),
+        migrations.AddField(
+            model_name="hostedharnessjob",
+            name="fix_cost_usd",
+            field=models.DecimalField(
+                blank=True, decimal_places=4, max_digits=10, null=True
+            ),
+        ),
         migrations.AddIndex(
             model_name="agentfixrun",
             index=models.Index(

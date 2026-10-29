@@ -144,7 +144,7 @@ class AgentFixRunViewSet(viewsets.ViewSet):
             target_scenario_keys=data["target_scenario_keys"],
             surfaces=data["surfaces"],
             locked_paths=data["locked_paths"],
-            budget_usd=data["budget_usd"],
+            budget_usd=data["budget_credits"] / 100,
             max_minutes=data["max_minutes"],
             user=request.user,
         )
