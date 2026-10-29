@@ -46,8 +46,14 @@ import { getEnvironment } from "../_mock/environments";
 import { getSurface } from "../_mock/surfaces";
 import { BOOT_STEPS } from "../_mock/runStream";
 import { useSimStore, useEnvState, useConnectedAgents } from "../store";
-import { envAgentKey, needsFoundCheck } from "../_mock/agentRegistry";
+import {
+  envAgentKey,
+  needsFoundCheck,
+  needsToolSafety,
+} from "../_mock/agentRegistry";
 import AgentFoundReview from "../agents/AgentFoundReview";
+import ToolSafetyDialog from "../agents/ToolSafetyDialog";
+import { foundValuesOf } from "../agents/foundFacts";
 import NextStepBanner from "./NextStepBanner";
 import DeleteEnvironmentDialog from "../environments/DeleteEnvironmentDialog";
 import TrialsPicker from "./scenarios/TrialsPicker";
@@ -118,6 +124,7 @@ import { RUN_PLAN_PARAMS, runPlanRequestOf } from "../_mock/runPlanLink";
 import { withPinnedWorld, worldToolsFor } from "../_mock/toolFit";
 import {
   proofKindOf,
+  runModeSwitchOf,
   isComingSoon,
   COMING_SOON_NOTE,
   runDefaultsOf,
@@ -455,6 +462,8 @@ export default function EnvironmentWorkspace() {
   const [inbox, setInbox] = useState({ open: false, focus: null });
   /* "Check what we found" for a newly connected code agent, opened here. */
   const [foundOpen, setFoundOpen] = useState(false);
+  /* Before a live run: only which tools must never run for real. */
+  const [safetyOpen, setSafetyOpen] = useState(false);
   const { agents: connectedAgents, setAgentValues } = useConnectedAgents();
   const { enqueueSnackbar } = useSnackbar();
   const { viewAs: viewingOlder } = useEnvViewAs(env, envState);
@@ -851,19 +860,33 @@ export default function EnvironmentWorkspace() {
         ? {
             tone: "info",
             title: "Runs use what we read from the agent's code.",
-            line: `Review ${agentName}'s tools, prompts and credentials to correct anything.`,
+            line: `Optional — review ${agentName}'s tools, prompts and credentials to correct anything.`,
             actionLabel: "Review what we found",
             onAction: () => setFoundOpen(true),
           }
         : null;
     if (!readiness.ready) {
-      if (readiness.foundCheck)
+      /* Live needs one answer; the rest of the review is optional. Sealed
+         needs none, so it's offered as the way out. */
+      if (readiness.foundCheck) {
+        const toSealed = runModeSwitchOf(connectedAgent)?.to === "sealed";
         return {
-          title: "Confirm which tools must never run for real to run live.",
-          line: `Check what we found in ${agentName}'s code.`,
-          actionLabel: "Review what we found",
-          onAction: () => setFoundOpen(true),
+          title: "Mark the tools that must never run for real to run live.",
+          line: "Everything else we read is optional to check.",
+          actionLabel: "Mark the tools",
+          onAction: () => setSafetyOpen(true),
+          ...(toSealed && {
+            secondaryLabel: "Run sealed instead",
+            onSecondary: () => {
+              setAgentValues(agentKey, { runMode: "sealed" });
+              enqueueSnackbar(
+                `${agentName} runs sealed — its tool calls are answered by this environment's world.`,
+                { variant: "success" },
+              );
+            },
+          }),
         };
+      }
       /* Consent is given right here (the same form as the agent's
          Connections tab, saved to the agent) — nobody leaves to agree. */
       const consentGap =
@@ -1516,8 +1539,30 @@ export default function EnvironmentWorkspace() {
                 /* Sealed is the normal case (and the Overview's agent line says so);
                    only Live or Prompt only earns a header chip — they change what a run
                    does or proves, right where Run is pressed. */
-                if (pk.kind !== "sealed")
+                /* An agent that can run either way shows its mode here and
+                   switches on click — Live asks for the never-for-real tools first. */
+                const modeSwitch = sandboxed
+                  ? null
+                  : runModeSwitchOf(connectedAgent);
+                const switchMode = modeSwitch
+                  ? () => {
+                      if (
+                        modeSwitch.to === "live" &&
+                        needsToolSafety(connectedAgent)
+                      )
+                        return setSafetyOpen(true);
+                      setAgentValues(agentKey, { runMode: modeSwitch.to });
+                      enqueueSnackbar(
+                        modeSwitch.to === "live"
+                          ? `${agentName} runs live — its real tools are called, except the ones marked never for real.`
+                          : `${agentName} runs sealed — its tool calls are answered by this environment's world.`,
+                        { variant: "success" },
+                      );
+                    }
+                  : null;
+                if (pk.kind !== "sealed" || modeSwitch)
                   chips.push({
+                    ...(switchMode && { onClick: switchMode }),
                     key: "proof",
                     /* "Runs:" says what the chip describes, so it doesn't read as a second status beside Ready. */
                     prefix: "Runs:",
@@ -1535,10 +1580,16 @@ export default function EnvironmentWorkspace() {
                           ? "Live — the agent runs in your account and its tools reach your real systems. Only the starting state is checked, and a model judges sub-goals from the conversation."
                           : sandboxed
                             ? "Sealed — the agent's calls to these apps land in sandboxed copies, reset between runs; sub-goals are checked against what landed there."
-                            : env?.runsOn === "local" ||
-                                env?.builtFrom?.worldSource?.runsOn === "local"
-                              ? "Sealed — the agent's tool calls are answered by this environment's world, running on your machine through the CLI, and sub-goals are checked against the world's end state and the tool calls."
-                              : "Sealed — the agent's tool calls are answered by this environment's world inside our sandbox, and sub-goals are checked against the world's end state and the tool calls.",
+                            : modeSwitch
+                              ? "Sealed — your agent runs where serve() runs, and its tool calls are routed to this environment's world; sub-goals are checked against the world's end state."
+                              : env?.runsOn === "local" ||
+                                  env?.builtFrom?.worldSource?.runsOn ===
+                                    "local"
+                                ? "Sealed — the agent's tool calls are answered by this environment's world, running on your machine through the CLI, and sub-goals are checked against the world's end state and the tool calls."
+                                : "Sealed — the agent's tool calls are answered by this environment's world inside our sandbox, and sub-goals are checked against the world's end state and the tool calls.",
+                    ...(modeSwitch && {
+                      tipAction: `Click to ${modeSwitch.to === "live" ? "run live — its real tools are called" : "run sealed — tools answered by the world"}.`,
+                    }),
                   });
               }
               /* "Managed in code" lives in the Code drawer — the header's Code button opens it. */
@@ -1550,7 +1601,11 @@ export default function EnvironmentWorkspace() {
                   tip: COMING_SOON_NOTE,
                 });
               return chips.map((c) => (
-                <Tooltip key={c.key} arrow title={c.tip}>
+                <Tooltip
+                  key={c.key}
+                  arrow
+                  title={c.tipAction ? `${c.tip} ${c.tipAction}` : c.tip}
+                >
                   <Stack
                     direction="row"
                     alignItems="center"
@@ -2572,6 +2627,25 @@ export default function EnvironmentWorkspace() {
           managedIn={managedOf(env, envState)}
           repo={managedRepoOf(env, envState)}
           onPulled={() => patch?.({ managedIn: "code" })}
+        />
+        <ToolSafetyDialog
+          open={safetyOpen && !!connectedAgent}
+          agentName={agentName}
+          tools={connectedAgent ? foundValuesOf(connectedAgent).tools : []}
+          marked={connectedAgent?.values?.neverRunForReal || null}
+          onClose={() => setSafetyOpen(false)}
+          onSave={(never) => {
+            setAgentValues(agentKey, {
+              neverRunForReal: never,
+              toolSafetyAt: new Date().toISOString(),
+              runMode: "live",
+            });
+            setSafetyOpen(false);
+            enqueueSnackbar(
+              `${agentName} runs live — ${never.length} ${never.length === 1 ? "tool is" : "tools are"} never called for real.`,
+              { variant: "success" },
+            );
+          }}
         />
         <SideDrawer
           open={foundOpen}

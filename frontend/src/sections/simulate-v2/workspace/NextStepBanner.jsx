@@ -13,6 +13,8 @@ export default function NextStepBanner({
   line,
   actionLabel,
   onAction,
+  secondaryLabel,
+  onSecondary,
   tone = "warning",
 }) {
   if (!title) return null;
@@ -56,6 +58,16 @@ export default function NextStepBanner({
           </Typography>
         )}
       </Box>
+      {/* A way out that isn't the fix itself, e.g. Run sealed instead. */}
+      {secondaryLabel && onSecondary && (
+        <Button
+          size="small"
+          onClick={onSecondary}
+          sx={{ flexShrink: 0, color: "text.secondary", whiteSpace: "nowrap" }}
+        >
+          {secondaryLabel}
+        </Button>
+      )}
       {actionLabel && onAction && (
         <Button
           size="small"
@@ -80,6 +92,8 @@ NextStepBanner.propTypes = {
   line: PropTypes.string,
   actionLabel: PropTypes.string,
   onAction: PropTypes.func,
+  secondaryLabel: PropTypes.string,
+  onSecondary: PropTypes.func,
   /* warning: blocks the run · info: worth doing, doesn't block. */
   tone: PropTypes.oneOf(["warning", "info"]),
 };

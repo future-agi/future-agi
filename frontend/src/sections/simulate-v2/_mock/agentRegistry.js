@@ -258,6 +258,9 @@ export const needsFoundCheck = (agent) => !!agent
   && ["repo", "upload", "framework"].includes(sourceKindOf(agent))
   && !!agent.values?.setupStartedAt
   && !agent.values?.foundCheckedAt;
+/* The one part of "Check what we found" a live run can't go without: which
+   tools must never run for real. The rest is optional to check. */
+export const needsToolSafety = (agent) => needsFoundCheck(agent) && !agent.values?.toolSafetyAt;
 
 /** { kind, label, icon, syncable, where, runtime } — where we read it, whether we can re-read it, and how we reach it. */
 export const agentSourceOf = (agent) => {

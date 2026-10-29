@@ -29,6 +29,7 @@ import {
   connectedAgentsFrom,
   envAgentKey,
   needsFoundCheck,
+  needsToolSafety,
 } from "../_mock/agentRegistry";
 import { errorFeedScenarios } from "../_mock/scenarioSources";
 import { runsSealed } from "../_mock/setupGaps";
@@ -422,13 +423,13 @@ export const fixGateOf = (agent, env, es = null) => {
   }
   /* A newly connected code agent is fixed, like it's run, once what we read
      from its code is confirmed (RSI PRD Flow 1) — the same rule runs follow. */
-  if (needsFoundCheck(agent) && es && !runsSealed(es)) {
+  if (needsToolSafety(agent) && es && !runsSealed(es)) {
     /* Live, like a live run: the review is where tools that must never run
        for real are marked, so it comes first. */
     return {
       key: "found-live",
-      title: "Confirm what we found in its code first",
-      body: `${agent.name} runs live. Mark the tools that must never run for real on its Overview — Check what we found — then fix.`,
+      title: "Mark the tools that must never run for real first",
+      body: `${agent.name} runs live, so its real tools would be called. Mark the ones that must never run for real, or switch it to sealed runs, then fix.`,
       action: "overview",
     };
   }
@@ -436,7 +437,7 @@ export const fixGateOf = (agent, env, es = null) => {
     return {
       key: "found",
       title: "Confirm what we found in its code first",
-      body: `Confirm what we read from ${agent.name}'s code on its Overview. Fix works now; runs start once it's confirmed.`,
+      body: `Optional — check what we read from ${agent.name}'s code on its Overview. Fix works now.`,
       action: "overview",
     };
   }

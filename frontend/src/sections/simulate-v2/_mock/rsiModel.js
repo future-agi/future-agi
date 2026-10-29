@@ -126,9 +126,22 @@ export const proofKindOf = (agent) => {
   if (isLocalSdkAgent(agent)) {
     return { kind: "live", tier: "local", ...PROOF_KINDS.live, note: "Ran on your machine through our SDK, with our scenarios and scoring — the code identity is reported by your agent.", tierLabel: TRUST_TIERS.local.label };
   }
-  /* serve() at a URL we don't control, with its real tools behind it. */
-  if (adapterOnly(agent)) return { kind: "live", tier: "deployed", ...PROOF_KINDS.live, tierLabel: TRUST_TIERS.deployed.label };
+  /* serve() at a URL we don't control. A newly connected one runs Sealed by
+     default — the adapter routes its tool calls to the environment's world —
+     and Live (its real tools) once someone switches it. One connected before
+     the choice existed keeps running live. */
+  if (adapterOnly(agent)) {
+    const live = v.runMode === "live" || (!v.runMode && !v.setupStartedAt);
+    if (!live) return { kind: "sealed", tier: "deployed", ...PROOF_KINDS.sealed, note: "Your agent ran where serve() runs; its tool calls were routed to the environment's world, and sub-goals were checked against the world's end state.", tierLabel: TRUST_TIERS.deployed.label };
+    return { kind: "live", tier: "deployed", ...PROOF_KINDS.live, tierLabel: TRUST_TIERS.deployed.label };
+  }
   return { kind: "sealed", tier: "ours", ...PROOF_KINDS.sealed, tierLabel: TRUST_TIERS.ours.label };
+};
+
+/** Whether this agent's runs can switch between Sealed and Live, and to which. */
+export const runModeSwitchOf = (agent) => {
+  if (!adapterOnly(agent)) return null;
+  return proofKindOf(agent).kind === "live" ? { to: "sealed", label: "Run sealed instead" } : { to: "live", label: "Run live" };
 };
 
 /** Live runs need the user's consent first: test copies/drafts in their account, tools safe to call. */

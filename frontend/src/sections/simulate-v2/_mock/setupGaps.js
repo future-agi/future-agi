@@ -15,7 +15,7 @@ import {
   agentIdOf,
   agentNeedsRuntime,
   envAgentKey,
-  needsFoundCheck,
+  needsToolSafety,
   PROVIDER_LABELS,
 } from "./agentRegistry";
 import { replicationOf } from "./replication";
@@ -793,14 +793,14 @@ export const runReadiness = (envState, env = null) => {
      "Check what we found" (RSI PRD Flow 1). A sealed run answers every tool
      from the world, so it runs on what we read; a live run waits — the
      review is where tools that must never run for real are marked. */
-  if (needsFoundCheck(envState.agent) && !runsSealed(envState))
+  if (needsToolSafety(envState.agent) && !runsSealed(envState))
     return {
       ready: false,
       step: "overview",
       href: agentHref?.replace("tab=connections", "tab=overview"),
       foundCheck: true,
       reason:
-        "Confirm which tools must never run for real before a live run — Check what we found",
+        "Mark the tools that must never run for real before a live run",
     };
   /* A disconnected or archived agent can't be run — the agent page says why. */
   const status =
