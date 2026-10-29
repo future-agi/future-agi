@@ -238,7 +238,7 @@ class TestHelperFunctions:
         """Invalid JSON strings should return False"""
         assert _all_valid_json_strings(["{'key': 'value'}"]) is False  # Single quotes
 
-    def test_empty_list_returns_false(self):
+    def test_all_valid_json_empty_list_returns_false(self):
         """Empty list should return False"""
         assert _all_valid_json_strings([]) is False
 
@@ -300,7 +300,7 @@ class TestHelperFunctions:
         """Random text should return False"""
         assert _is_strict_datetime_column(["hello", "world"]) is False
 
-    def test_empty_list_returns_false(self):
+    def test_strict_datetime_empty_list_returns_false(self):
         """Empty list should return False"""
         assert _is_strict_datetime_column([]) is False
 
@@ -326,7 +326,7 @@ class TestHelperFunctions:
         """Arrays containing objects should NOT be detected as ARRAY (should be JSON)"""
         assert _is_array_column(['[{"key": "value"}]', '[{"name": "test"}]']) is False
 
-    def test_empty_list_returns_false(self):
+    def test_array_empty_list_returns_false(self):
         """Empty list should return False"""
         assert _is_array_column([]) is False
 
