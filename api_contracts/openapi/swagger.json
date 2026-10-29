@@ -49728,7 +49728,8 @@
         "/simulate/api/agent-fix-engine/{id}/brief/": {
             "get": {
                 "operationId": "simulate_api_agent-fix-engine_brief",
-                "description": "The calls the improvement engine makes from its sandbox, for its one fix run.",
+                "summary": "The calls the improvement engine makes from its sandbox, for its one fix run.",
+                "description": "Fields these routes do not know are ignored, not refused: the engine template and the\nplatform ship apart, and a newer template must still be heard by an older platform.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -49757,7 +49758,8 @@
         "/simulate/api/agent-fix-engine/{id}/candidates/": {
             "post": {
                 "operationId": "simulate_api_agent-fix-engine_candidates",
-                "description": "The calls the improvement engine makes from its sandbox, for its one fix run.",
+                "summary": "The calls the improvement engine makes from its sandbox, for its one fix run.",
+                "description": "Fields these routes do not know are ignored, not refused: the engine template and the\nplatform ship apart, and a newer template must still be heard by an older platform.",
                 "parameters": [
                     {
                         "name": "attempt",
@@ -49824,7 +49826,8 @@
         "/simulate/api/agent-fix-engine/{id}/check-runs/": {
             "post": {
                 "operationId": "simulate_api_agent-fix-engine_check_runs",
-                "description": "The calls the improvement engine makes from its sandbox, for its one fix run.",
+                "summary": "The calls the improvement engine makes from its sandbox, for its one fix run.",
+                "description": "Fields these routes do not know are ignored, not refused: the engine template and the\nplatform ship apart, and a newer template must still be heard by an older platform.",
                 "parameters": [
                     {
                         "name": "data",
@@ -49867,7 +49870,8 @@
         "/simulate/api/agent-fix-engine/{id}/check-runs/{run_id}/": {
             "get": {
                 "operationId": "simulate_api_agent-fix-engine_check_run",
-                "description": "The calls the improvement engine makes from its sandbox, for its one fix run.",
+                "summary": "The calls the improvement engine makes from its sandbox, for its one fix run.",
+                "description": "Fields these routes do not know are ignored, not refused: the engine template and the\nplatform ship apart, and a newer template must still be heard by an older platform.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -49902,7 +49906,8 @@
         "/simulate/api/agent-fix-engine/{id}/checkpoint/": {
             "get": {
                 "operationId": "simulate_api_agent-fix-engine_checkpoint_read",
-                "description": "The calls the improvement engine makes from its sandbox, for its one fix run.",
+                "summary": "The calls the improvement engine makes from its sandbox, for its one fix run.",
+                "description": "Fields these routes do not know are ignored, not refused: the engine template and the\nplatform ship apart, and a newer template must still be heard by an older platform.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -49921,7 +49926,8 @@
             },
             "put": {
                 "operationId": "simulate_api_agent-fix-engine_checkpoint_update",
-                "description": "The calls the improvement engine makes from its sandbox, for its one fix run.",
+                "summary": "The calls the improvement engine makes from its sandbox, for its one fix run.",
+                "description": "Fields these routes do not know are ignored, not refused: the engine template and the\nplatform ship apart, and a newer template must still be heard by an older platform.",
                 "parameters": [
                     {
                         "name": "data",
@@ -49961,7 +49967,8 @@
         "/simulate/api/agent-fix-engine/{id}/report/": {
             "post": {
                 "operationId": "simulate_api_agent-fix-engine_report",
-                "description": "The calls the improvement engine makes from its sandbox, for its one fix run.",
+                "summary": "The calls the improvement engine makes from its sandbox, for its one fix run.",
+                "description": "Fields these routes do not know are ignored, not refused: the engine template and the\nplatform ship apart, and a newer template must still be heard by an older platform.",
                 "parameters": [
                     {
                         "name": "data",
@@ -50004,7 +50011,8 @@
         "/simulate/api/agent-fix-engine/{id}/source/": {
             "get": {
                 "operationId": "simulate_api_agent-fix-engine_source",
-                "description": "The calls the improvement engine makes from its sandbox, for its one fix run.",
+                "summary": "The calls the improvement engine makes from its sandbox, for its one fix run.",
+                "description": "Fields these routes do not know are ignored, not refused: the engine template and the\nplatform ship apart, and a newer template must still be heard by an older platform.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -124578,7 +124586,6 @@
                 "run_id",
                 "test_execution_id",
                 "label",
-                "purpose",
                 "state"
             ],
             "type": "object",
@@ -124598,19 +124605,6 @@
                     "title": "Label",
                     "type": "string",
                     "minLength": 1
-                },
-                "purpose": {
-                    "title": "Purpose",
-                    "type": "string",
-                    "enum": [
-                        "baseline",
-                        "target",
-                        "held-back",
-                        "finalist",
-                        "confirm",
-                        "check"
-                    ],
-                    "x-nullable": true
                 },
                 "state": {
                     "title": "State",
@@ -124757,7 +124751,7 @@
                     "$ref": "#/definitions/AgentFixFailure"
                 },
                 "check_runs": {
-                    "description": "The runs of no candidate: the base version's.",
+                    "description": "The base version's runs; each candidate lists its own.",
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/AgentFixCheckRun"

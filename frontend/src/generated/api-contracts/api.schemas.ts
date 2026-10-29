@@ -16973,24 +16973,11 @@ export interface AgentFixFailureApi {
   message: string;
 }
 
-export type AgentFixCheckRunApiPurpose =
-  (typeof AgentFixCheckRunApiPurpose)[keyof typeof AgentFixCheckRunApiPurpose];
-
-export const AgentFixCheckRunApiPurpose = {
-  baseline: "baseline",
-  target: "target",
-  "held-back": "held-back",
-  finalist: "finalist",
-  confirm: "confirm",
-  check: "check",
-} as const;
-
 export interface AgentFixCheckRunApi {
   run_id: string;
   test_execution_id: string;
   /** @minLength 1 */
   label: string;
-  purpose: AgentFixCheckRunApiPurpose;
   /** @minLength 1 */
   state: string;
 }
@@ -17034,7 +17021,7 @@ export interface AgentFixRunApi {
   committed_usd: string;
   report: AgentFixReportApi;
   failure: AgentFixFailureApi;
-  /** The runs of no candidate: the base version's. */
+  /** The base version's runs; each candidate lists its own. */
   readonly check_runs?: readonly AgentFixCheckRunApi[];
   candidates: AgentFixCandidateApi[];
   started_at?: string;

@@ -10,6 +10,7 @@ stops them.
 import json
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+from uuid import uuid5
 
 import httpx
 import structlog
@@ -125,8 +126,13 @@ def _bill(
         from ee.usage.services.config import BillingConfig
         from ee.usage.services.emitter import emit
 
+        # One event per gateway call, however often it is emitted.
+        identity = (
+            {"event_id": str(uuid5(fix_run.id, request_id))} if request_id else {}
+        )
         emit(
             UsageEvent(
+                **identity,
                 org_id=str(fix_run.organization_id),
                 event_type=BillingEventType.AGENT_FIX,
                 amount=BillingConfig.get().calculate_ai_credits(usd),

@@ -57587,7 +57587,9 @@ export const getSimulateApiAgentFixEngineBriefUrl = (id: string) => {
 };
 
 /**
- * The calls the improvement engine makes from its sandbox, for its one fix run.
+ * Fields these routes do not know are ignored, not refused: the engine template and the
+platform ship apart, and a newer template must still be heard by an older platform.
+ * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
  */
 export const simulateApiAgentFixEngineBrief = async (
   id: string,
@@ -57630,7 +57632,9 @@ export const getSimulateApiAgentFixEngineCandidatesUrl = (id: string) => {
 };
 
 /**
- * The calls the improvement engine makes from its sandbox, for its one fix run.
+ * Fields these routes do not know are ignored, not refused: the engine template and the
+platform ship apart, and a newer template must still be heard by an older platform.
+ * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
  */
 export const simulateApiAgentFixEngineCandidates = async (
   id: string,
@@ -57677,7 +57681,9 @@ export const getSimulateApiAgentFixEngineCheckRunsUrl = (id: string) => {
 };
 
 /**
- * The calls the improvement engine makes from its sandbox, for its one fix run.
+ * Fields these routes do not know are ignored, not refused: the engine template and the
+platform ship apart, and a newer template must still be heard by an older platform.
+ * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
  */
 export const simulateApiAgentFixEngineCheckRuns = async (
   id: string,
@@ -57726,7 +57732,9 @@ export const getSimulateApiAgentFixEngineCheckRunUrl = (
 };
 
 /**
- * The calls the improvement engine makes from its sandbox, for its one fix run.
+ * Fields these routes do not know are ignored, not refused: the engine template and the
+platform ship apart, and a newer template must still be heard by an older platform.
+ * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
  */
 export const simulateApiAgentFixEngineCheckRun = async (
   id: string,
@@ -57770,7 +57778,9 @@ export const getSimulateApiAgentFixEngineCheckpointReadUrl = (id: string) => {
 };
 
 /**
- * The calls the improvement engine makes from its sandbox, for its one fix run.
+ * Fields these routes do not know are ignored, not refused: the engine template and the
+platform ship apart, and a newer template must still be heard by an older platform.
+ * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
  */
 export const simulateApiAgentFixEngineCheckpointRead = async (
   id: string,
@@ -57813,7 +57823,9 @@ export const getSimulateApiAgentFixEngineCheckpointUpdateUrl = (id: string) => {
 };
 
 /**
- * The calls the improvement engine makes from its sandbox, for its one fix run.
+ * Fields these routes do not know are ignored, not refused: the engine template and the
+platform ship apart, and a newer template must still be heard by an older platform.
+ * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
  */
 export const simulateApiAgentFixEngineCheckpointUpdate = async (
   id: string,
@@ -57859,7 +57871,9 @@ export const getSimulateApiAgentFixEngineReportUrl = (id: string) => {
 };
 
 /**
- * The calls the improvement engine makes from its sandbox, for its one fix run.
+ * Fields these routes do not know are ignored, not refused: the engine template and the
+platform ship apart, and a newer template must still be heard by an older platform.
+ * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
  */
 export const simulateApiAgentFixEngineReport = async (
   id: string,
@@ -57905,7 +57919,9 @@ export const getSimulateApiAgentFixEngineSourceUrl = (id: string) => {
 };
 
 /**
- * The calls the improvement engine makes from its sandbox, for its one fix run.
+ * Fields these routes do not know are ignored, not refused: the engine template and the
+platform ship apart, and a newer template must still be heard by an older platform.
+ * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
  */
 export const simulateApiAgentFixEngineSource = async (
   id: string,

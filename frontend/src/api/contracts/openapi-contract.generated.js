@@ -49447,7 +49447,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           $ref: "#/definitions/AgentFixFailure",
         },
         check_runs: {
-          description: "The runs of no candidate: the base version's.",
+          description: "The base version's runs; each candidate lists its own.",
           type: "array",
           items: {
             $ref: "#/definitions/AgentFixCheckRun",
@@ -87329,7 +87329,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     AgentFixCheckRun: {
-      required: ["run_id", "test_execution_id", "label", "purpose", "state"],
+      required: ["run_id", "test_execution_id", "label", "state"],
       type: "object",
       properties: {
         run_id: {
@@ -87347,19 +87347,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Label",
           type: "string",
           minLength: 1,
-        },
-        purpose: {
-          title: "Purpose",
-          type: "string",
-          enum: [
-            "baseline",
-            "target",
-            "held-back",
-            "finalist",
-            "confirm",
-            "check",
-          ],
-          "x-nullable": true,
         },
         state: {
           title: "State",

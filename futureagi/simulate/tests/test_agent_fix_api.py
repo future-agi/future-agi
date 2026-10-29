@@ -7,7 +7,7 @@ from datetime import timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
-from uuid import uuid4
+from uuid import uuid4, uuid5
 
 import httpx
 import pytest
@@ -17,7 +17,12 @@ from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from accounts.models import Organization, Workspace
-from simulate.models import AgentFixCandidate, AgentFixRun, HostedHarnessJob
+from simulate.models import (
+    AgentFixCandidate,
+    AgentFixRun,
+    HarnessAgentVersionRuntime,
+    HostedHarnessJob,
+)
 from simulate.models import TestExecution as Execution
 from simulate.services.agent_fix_runs import close_fix_run
 from simulate.services.harness_environment import (
@@ -297,6 +302,24 @@ class TestEngineCalls:
 
         assert response.status_code == 400
 
+    def test_a_newer_engine_s_unknown_report_field_is_ignored(
+        self, api_client, source_run
+    ):
+        fix_run = _armed(_fix_run(source_run))
+
+        response = _engine(
+            api_client,
+            "post",
+            fix_run,
+            "report/",
+            data={"stage": "Diagnose", "plan": {"held_back": 2}},
+            format="json",
+        )
+
+        assert response.status_code == 200, response.content
+        fix_run.refresh_from_db()
+        assert fix_run.stage == "Diagnose"
+
     def test_a_check_run_past_the_organizations_limit_is_refused_with_its_reason(
         self, api_client, source_run, temporal
     ):
@@ -409,6 +432,7 @@ class TestEngineModelCalls:
         assert event.properties["fix_run_id"] == str(fix_run.id)
         assert event.properties["raw_cost_usd"] == "0.0123"
         assert event.properties["gateway_request_id"] == "req-1"
+        assert event.event_id == str(uuid5(fix_run.id, "req-1"))
 
     def test_a_billing_failure_leaves_the_call_answered_and_metered(
         self, api_client, source_run, monkeypatch
@@ -708,14 +732,13 @@ class TestUserApi:
                 "run_id": str(baseline.id),
                 "test_execution_id": str(baseline.test_execution_id),
                 "label": "baseline",
-                "purpose": "baseline",
                 "state": baseline.state,
             }
         ]
         [shown] = body["candidates"]
-        assert [
-            (run["run_id"], run["label"], run["purpose"]) for run in shown["check_runs"]
-        ] == [(str(screen.id), "c1-target", "target")]
+        assert [(run["run_id"], run["label"]) for run in shown["check_runs"]] == [
+            (str(screen.id), "c1-target")
+        ]
 
     def test_http_patch_is_not_an_action_of_a_fix(self, auth_client, source_run):
         fix_run = _fix_run(source_run)
@@ -724,15 +747,23 @@ class TestUserApi:
 
         assert response.status_code == 405
 
-    def test_a_proven_candidate_is_made_the_default(
-        self, auth_client, environment, source_run
-    ):
+    def _proven(self, source_run, kind):
+        """A finished fix with a proven candidate, on an agent of this source kind."""
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_version_id=source_run.agent_version_id
+        ).update(source_kind=kind)
         fix_run = _fix_run(source_run)
         candidate = _candidate(fix_run)
         AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
             outcome=AgentFixCandidate.Outcome.FINALIST
         )
         close_fix_run(fix_run.id, AgentFixRun.State.READY)
+        return fix_run, candidate
+
+    def test_a_proven_candidate_is_made_the_default(
+        self, auth_client, environment, source_run
+    ):
+        fix_run, candidate = self._proven(source_run, "archive")
 
         response = auth_client.post(
             f"{BASE}/{fix_run.id}/candidates/{candidate.id}/make-default/",
@@ -746,6 +777,25 @@ class TestUserApi:
         )
         environment.refresh_from_db()
         assert environment.agent_version_id == candidate.agent_version_id
+
+    def test_a_github_agent_is_not_moved_off_its_repository(
+        self, auth_client, environment, source_run
+    ):
+        fix_run, candidate = self._proven(source_run, "github")
+        before = environment.agent_version_id
+
+        response = auth_client.post(
+            f"{BASE}/{fix_run.id}/candidates/{candidate.id}/make-default/",
+            {},
+            format="json",
+        )
+
+        assert (response.status_code, response.json()["error"]) == (
+            422,
+            "fix_github_use_pull_request",
+        )
+        environment.refresh_from_db()
+        assert environment.agent_version_id == before
 
 
 class TestCheckRunsStayOutOfTheUsersRuns:

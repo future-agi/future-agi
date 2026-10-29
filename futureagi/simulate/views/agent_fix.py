@@ -220,7 +220,10 @@ class AgentFixRunViewSet(viewsets.ViewSet):
 
 
 class AgentFixEngineViewSet(viewsets.ViewSet):
-    """The calls the improvement engine makes from its sandbox, for its one fix run."""
+    """The calls the improvement engine makes from its sandbox, for its one fix run.
+
+    Fields these routes do not know are ignored, not refused: the engine template and the
+    platform ship apart, and a newer template must still be heard by an older platform."""
 
     authentication_classes = [AgentFixEngineAuthentication]
     permission_classes = [IsAuthenticated]
@@ -244,7 +247,6 @@ class AgentFixEngineViewSet(viewsets.ViewSet):
     @validated_request(
         request_serializer=AgentFixCandidateUploadSerializer,
         responses={201: AgentFixCandidateCreatedSerializer},
-        reject_unknown_fields=True,
     )
     @action(detail=True, methods=["post"], parser_classes=[MultiPartParser, FormParser])
     def candidates(self, request, pk=None):
@@ -266,7 +268,6 @@ class AgentFixEngineViewSet(viewsets.ViewSet):
     @validated_request(
         request_serializer=AgentFixCheckRunRequestSerializer,
         responses={202: AgentFixCheckRunCreatedSerializer},
-        reject_unknown_fields=True,
     )
     @action(detail=True, methods=["post"], url_path="check-runs")
     def check_runs(self, request, pk=None):
@@ -291,7 +292,6 @@ class AgentFixEngineViewSet(viewsets.ViewSet):
     @validated_request(
         request_serializer=AgentFixEngineReportSerializer,
         responses={200: AgentFixEngineStateSerializer},
-        reject_unknown_fields=True,
     )
     @action(detail=True, methods=["post"])
     def report(self, request, pk=None):

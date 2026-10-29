@@ -1,12 +1,9 @@
 """Reads for "Fix my agent": the engine's brief, a check run's results, the run list."""
 
-import re
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
-from uuid import UUID
 
 from django.conf import settings
 from django.db.models import (
@@ -129,8 +126,11 @@ def check_run_status(run: HostedHarnessJob) -> CheckRunStatus:
         .select_related("source_scenario", "call_execution")
         .order_by("execution_key")
     )
+    finished = run.state in FINISHED_RUN_STATES
+    # The engine counts records while the run goes and reads them once it ends: the
+    # transcripts, the heavy part, come only then.
     calls = [execution.call_execution for execution in executions]
-    transcripts = _transcripts(call.id for call in calls)
+    transcripts = _transcripts(call.id for call in calls) if finished else {}
     records = []
     for execution in executions:
         receipt = (execution.call_execution.call_metadata or {}).get(
@@ -149,7 +149,7 @@ def check_run_status(run: HostedHarnessJob) -> CheckRunStatus:
     return CheckRunStatus(
         run_id=str(run.id),
         state=run.state,
-        finished=run.state in FINISHED_RUN_STATES,
+        finished=finished,
         total=len(executions),
         records=records,
     )
@@ -243,49 +243,16 @@ def with_committed_usd(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
     )
 
 
-# What the engine names its check runs: "baseline", or "c<attempt>-<purpose>", where the
-# worker's own target checks are "c<attempt>-check<k>".
-CHECK_RUN_PURPOSES = ("baseline", "target", "held-back", "finalist", "confirm", "check")
-_CANDIDATE_CHECK = re.compile(
-    r"c(?P<attempt>\d+)-(?P<purpose>target|held-back|finalist|confirm|check)\d*"
-)
-
-
-@dataclass(frozen=True)
-class CheckRunRow:
-    run_id: UUID
-    test_execution_id: UUID | None
-    label: str
-    # Null for a label the engine did not write this way.
-    purpose: str | None
-    attempt: int | None
-    state: str
-
-
-def check_run_rows(fix_run: AgentFixRun) -> list[CheckRunRow]:
-    """The fix's check runs, oldest first, with the attempt and purpose each label names.
-    Reads the prefetch that ``fix_runs_for_read`` makes."""
-    rows = []
-    for run in fix_run.check_run_list:
-        found = _CANDIDATE_CHECK.fullmatch(run.fix_label)
-        purpose = found["purpose"] if found else None
-        rows.append(
-            CheckRunRow(
-                run_id=run.id,
-                test_execution_id=run.test_execution_id,
-                label=run.fix_label,
-                purpose="baseline" if run.fix_label == "baseline" else purpose,
-                attempt=int(found["attempt"]) if found else None,
-                state=run.state,
-            )
-        )
-    return rows
-
-
 def fix_runs_for_read(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
     """Fixes with everything their read shows: committed spend, candidates, check runs."""
     check_runs = HostedHarnessJob.no_workspace_objects.only(
-        "id", "fix_run_id", "fix_label", "state", "test_execution_id", "created_at"
+        "id",
+        "fix_run_id",
+        "fix_label",
+        "state",
+        "test_execution_id",
+        "agent_version_id",
+        "created_at",
     ).order_by("created_at")
     return with_committed_usd(runs).prefetch_related(
         "candidates__agent_version",

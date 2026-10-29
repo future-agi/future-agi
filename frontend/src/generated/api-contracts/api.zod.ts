@@ -34115,14 +34115,18 @@ export const SimulateApiAgentDefinitionOperationsDeleteParams = zod.object({
 });
 
 /**
- * The calls the improvement engine makes from its sandbox, for its one fix run.
+ * Fields these routes do not know are ignored, not refused: the engine template and the
+platform ship apart, and a newer template must still be heard by an older platform.
+ * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
  */
 export const SimulateApiAgentFixEngineBriefParams = zod.object({
   id: zod.string(),
 });
 
 /**
- * The calls the improvement engine makes from its sandbox, for its one fix run.
+ * Fields these routes do not know are ignored, not refused: the engine template and the
+platform ship apart, and a newer template must still be heard by an older platform.
+ * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
  */
 export const SimulateApiAgentFixEngineCandidatesParams = zod.object({
   id: zod.string(),
@@ -34136,7 +34140,9 @@ export const SimulateApiAgentFixEngineCandidatesBody = zod.object({
 });
 
 /**
- * The calls the improvement engine makes from its sandbox, for its one fix run.
+ * Fields these routes do not know are ignored, not refused: the engine template and the
+platform ship apart, and a newer template must still be heard by an older platform.
+ * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
  */
 export const SimulateApiAgentFixEngineCheckRunsParams = zod.object({
   id: zod.string(),
@@ -34169,7 +34175,9 @@ export const SimulateApiAgentFixEngineCheckRunsBody = zod.object({
 });
 
 /**
- * The calls the improvement engine makes from its sandbox, for its one fix run.
+ * Fields these routes do not know are ignored, not refused: the engine template and the
+platform ship apart, and a newer template must still be heard by an older platform.
+ * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
  */
 export const SimulateApiAgentFixEngineCheckRunParams = zod.object({
   id: zod.string(),
@@ -34177,14 +34185,18 @@ export const SimulateApiAgentFixEngineCheckRunParams = zod.object({
 });
 
 /**
- * The calls the improvement engine makes from its sandbox, for its one fix run.
+ * Fields these routes do not know are ignored, not refused: the engine template and the
+platform ship apart, and a newer template must still be heard by an older platform.
+ * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
  */
 export const SimulateApiAgentFixEngineCheckpointReadParams = zod.object({
   id: zod.string(),
 });
 
 /**
- * The calls the improvement engine makes from its sandbox, for its one fix run.
+ * Fields these routes do not know are ignored, not refused: the engine template and the
+platform ship apart, and a newer template must still be heard by an older platform.
+ * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
  */
 export const SimulateApiAgentFixEngineCheckpointUpdateParams = zod.object({
   id: zod.string(),
@@ -34194,7 +34206,9 @@ export const SimulateApiAgentFixEngineCheckpointUpdateBody =
   zod.instanceof(File);
 
 /**
- * The calls the improvement engine makes from its sandbox, for its one fix run.
+ * Fields these routes do not know are ignored, not refused: the engine template and the
+platform ship apart, and a newer template must still be heard by an older platform.
+ * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
  */
 export const SimulateApiAgentFixEngineReportParams = zod.object({
   id: zod.string(),
@@ -34251,7 +34265,9 @@ export const SimulateApiAgentFixEngineReportResponse = zod.object({
 });
 
 /**
- * The calls the improvement engine makes from its sandbox, for its one fix run.
+ * Fields these routes do not know are ignored, not refused: the engine template and the
+platform ship apart, and a newer template must still be heard by an older platform.
+ * @summary The calls the improvement engine makes from its sandbox, for its one fix run.
  */
 export const SimulateApiAgentFixEngineSourceParams = zod.object({
   id: zod.string(),
@@ -34334,19 +34350,11 @@ export const SimulateApiAgentFixRunsListResponseItem = zod.object({
         run_id: zod.string().uuid(),
         test_execution_id: zod.string().uuid(),
         label: zod.string().min(1),
-        purpose: zod.enum([
-          "baseline",
-          "target",
-          "held-back",
-          "finalist",
-          "confirm",
-          "check",
-        ]),
         state: zod.string().min(1),
       }),
     )
     .optional()
-    .describe("The runs of no candidate: the base version's."),
+    .describe("The base version's runs; each candidate lists its own."),
   candidates: zod.array(
     zod.object({
       id: zod.string().uuid().optional(),
@@ -34378,14 +34386,6 @@ export const SimulateApiAgentFixRunsListResponseItem = zod.object({
             run_id: zod.string().uuid(),
             test_execution_id: zod.string().uuid(),
             label: zod.string().min(1),
-            purpose: zod.enum([
-              "baseline",
-              "target",
-              "held-back",
-              "finalist",
-              "confirm",
-              "check",
-            ]),
             state: zod.string().min(1),
           }),
         )
@@ -34510,19 +34510,11 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
         run_id: zod.string().uuid(),
         test_execution_id: zod.string().uuid(),
         label: zod.string().min(1),
-        purpose: zod.enum([
-          "baseline",
-          "target",
-          "held-back",
-          "finalist",
-          "confirm",
-          "check",
-        ]),
         state: zod.string().min(1),
       }),
     )
     .optional()
-    .describe("The runs of no candidate: the base version's."),
+    .describe("The base version's runs; each candidate lists its own."),
   candidates: zod.array(
     zod.object({
       id: zod.string().uuid().optional(),
@@ -34554,14 +34546,6 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
             run_id: zod.string().uuid(),
             test_execution_id: zod.string().uuid(),
             label: zod.string().min(1),
-            purpose: zod.enum([
-              "baseline",
-              "target",
-              "held-back",
-              "finalist",
-              "confirm",
-              "check",
-            ]),
             state: zod.string().min(1),
           }),
         )
@@ -34664,19 +34648,11 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
         run_id: zod.string().uuid(),
         test_execution_id: zod.string().uuid(),
         label: zod.string().min(1),
-        purpose: zod.enum([
-          "baseline",
-          "target",
-          "held-back",
-          "finalist",
-          "confirm",
-          "check",
-        ]),
         state: zod.string().min(1),
       }),
     )
     .optional()
-    .describe("The runs of no candidate: the base version's."),
+    .describe("The base version's runs; each candidate lists its own."),
   candidates: zod.array(
     zod.object({
       id: zod.string().uuid().optional(),
@@ -34708,14 +34684,6 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
             run_id: zod.string().uuid(),
             test_execution_id: zod.string().uuid(),
             label: zod.string().min(1),
-            purpose: zod.enum([
-              "baseline",
-              "target",
-              "held-back",
-              "finalist",
-              "confirm",
-              "check",
-            ]),
             state: zod.string().min(1),
           }),
         )

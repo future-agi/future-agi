@@ -3,7 +3,6 @@ from rest_framework import serializers
 
 from simulate.models import AgentFixCandidate, AgentFixRun
 from simulate.pydantic_schemas.agent_fix import CandidateOutcome, Ending, Surface
-from simulate.selectors.agent_fix import CHECK_RUN_PURPOSES, check_run_rows
 
 
 class AgentFixLaunchSerializer(serializers.Serializer):
@@ -65,10 +64,10 @@ class AgentFixCheckRunSerializer(serializers.Serializer):
     """A Run the fix started to check a candidate or the base version. It stays out of
     the environment's run list; its results open by ``test_execution_id``."""
 
-    run_id = serializers.UUIDField()
+    run_id = serializers.UUIDField(source="id")
     test_execution_id = serializers.UUIDField(allow_null=True)
-    label = serializers.CharField()
-    purpose = serializers.ChoiceField(choices=CHECK_RUN_PURPOSES, allow_null=True)
+    # The engine's name for the run ("baseline", "c2-target"), for display.
+    label = serializers.CharField(source="fix_label")
     state = serializers.CharField()
 
 
@@ -82,8 +81,10 @@ class AgentFixCandidateSerializer(serializers.ModelSerializer):
         serializer_or_field=AgentFixCheckRunSerializer(many=True)
     )
     def get_check_runs(self, candidate: AgentFixCandidate) -> list[dict]:
-        rows = check_run_rows(candidate.fix_run)
-        mine = [row for row in rows if row.attempt == candidate.attempt]
+        runs = candidate.fix_run.check_run_list
+        mine = [
+            run for run in runs if run.agent_version_id == candidate.agent_version_id
+        ]
         return AgentFixCheckRunSerializer(mine, many=True).data
 
     class Meta:
@@ -117,9 +118,12 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
         serializer_or_field=AgentFixCheckRunSerializer(many=True)
     )
     def get_check_runs(self, fix_run: AgentFixRun) -> list[dict]:
-        """The runs of no candidate: the base version's."""
-        rows = [row for row in check_run_rows(fix_run) if row.attempt is None]
-        return AgentFixCheckRunSerializer(rows, many=True).data
+        """The base version's runs; each candidate lists its own."""
+        runs = fix_run.check_run_list
+        base = [
+            run for run in runs if run.agent_version_id == fix_run.base_agent_version_id
+        ]
+        return AgentFixCheckRunSerializer(base, many=True).data
 
     class Meta:
         model = AgentFixRun

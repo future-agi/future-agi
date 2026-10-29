@@ -7,7 +7,6 @@ from datetime import timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
-from uuid import uuid4
 
 import pytest
 from django.test import TestCase
@@ -34,7 +33,6 @@ from simulate.pydantic_schemas.agent_fix import (
 from simulate.selectors.agent_fix import (
     TRANSCRIPT_CHARS,
     _record,
-    check_run_rows,
     check_run_status,
     engine_brief,
 )
@@ -736,14 +734,17 @@ class TestCheckRunStatus:
             "ok",
             {"refunded": "refunded?"},
         )
-        assert record.transcript.startswith("user: hi\nassistant: aaa")
-        assert len(record.transcript) == TRANSCRIPT_CHARS
+        # While the run goes the engine only counts records: no transcripts yet.
+        assert record.transcript == ""
 
         HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(
             state="completed"
         )
         run.refresh_from_db()
-        assert check_run_status(run).finished is True
+        ended = check_run_status(run)
+        assert ended.finished is True
+        assert ended.records[0].transcript.startswith("user: hi\nassistant: aaa")
+        assert len(ended.records[0].transcript) == TRANSCRIPT_CHARS
 
     def test_many_trials_cost_no_more_queries_than_one(
         self, source_run, django_assert_num_queries
@@ -757,6 +758,11 @@ class TestCheckRunStatus:
                 speaker_role="user",
                 content=key,
             )
+        # A finished run, so the transcripts are read too.
+        HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(
+            state="completed"
+        )
+        run.refresh_from_db()
 
         with django_assert_num_queries(2):
             status = check_run_status(run)
@@ -1032,6 +1038,10 @@ class TestMakeDefault:
     def test_a_proven_candidate_becomes_the_default_once_the_fix_ended(
         self, environment, source_run, user
     ):
+        # An uploaded agent: a GitHub agent changes through its repository instead.
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_version_id=source_run.agent_version_id
+        ).update(source_kind="archive")
         fix_run = _fix_run(source_run)
         candidate = _candidate(fix_run)
         engine.apply_report(
@@ -1097,25 +1107,3 @@ def test_the_base_source_is_fetched_once_per_fix(source_run):
 
     assert first == again == body
     assert acquirer.return_value.acquire.call_count == 1
-
-
-@pytest.mark.parametrize(
-    ("label", "attempt", "purpose"),
-    [
-        ("baseline", None, "baseline"),
-        ("c3-target", 3, "target"),
-        ("c3-held-back", 3, "held-back"),
-        ("c12-finalist", 12, "finalist"),
-        ("c2-confirm", 2, "confirm"),
-        ("c2-check1", 2, "check"),
-        ("something-else", None, None),
-    ],
-)
-def test_a_check_runs_label_names_its_attempt_and_purpose(label, attempt, purpose):
-    run = SimpleNamespace(
-        id=uuid4(), test_execution_id=None, fix_label=label, state="completed"
-    )
-
-    [row] = check_run_rows(SimpleNamespace(check_run_list=[run]))
-
-    assert (row.attempt, row.purpose) == (attempt, purpose)

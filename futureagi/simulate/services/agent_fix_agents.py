@@ -139,6 +139,18 @@ class VersionedSourceAgent:
         }
 
     def make_default(self, candidate: AgentFixCandidate, *, user: Any) -> str:
+        # A GitHub agent's source is its repository: an archive version made the default
+        # there drifts from the branch, and the next sync from the repository replaces it.
+        if HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_version_id=candidate.fix_run.base_agent_version_id,
+            source_kind=HarnessAgentVersionRuntime.SourceKind.GITHUB,
+        ).exists():
+            raise HostedHarnessError(
+                "fix_github_use_pull_request",
+                "A GitHub agent changes through its repository: apply the candidate's patch"
+                " there",
+                status_code=422,
+            )
         return make_default(
             candidate.agent_version, candidate.fix_run.environment, user=user
         )
