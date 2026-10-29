@@ -8,7 +8,14 @@ import { SnackbarProvider } from "notistack";
 import {
   resetFixRunFixtures,
   updateFixtureFixRun,
-} from "src/api/simulate-environments/_fixtures/fixRuns";
+} from "src/api/simulate-environments/__tests__/fixtures/fixRuns";
+
+vi.mock("src/utils/axios", async (importOriginal) => {
+  const { withFakeFixRunsApi } = await import(
+    "src/api/simulate-environments/__tests__/fixtures/fixRunsApi"
+  );
+  return withFakeFixRunsApi(await importOriginal());
+});
 
 let shipOverride = null;
 vi.mock("src/api/simulate-environments/fixRuns", async (importOriginal) => {

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { FIX_RUN_FIXTURES } from "src/api/simulate-environments/_fixtures/fixRuns";
+import { FIX_RUN_FIXTURES } from "src/api/simulate-environments/__tests__/fixtures/fixRuns";
 
 import {
   STATE_LABEL,

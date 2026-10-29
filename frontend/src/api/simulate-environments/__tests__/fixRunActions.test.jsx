@@ -4,12 +4,14 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 vi.mock("src/utils/axios", async (importOriginal) => {
-  const actual = await importOriginal();
-  return { ...actual, default: { get: vi.fn(), post: vi.fn() } };
+  const { withFakeFixRunsApi } = await import(
+    "src/api/simulate-environments/__tests__/fixtures/fixRunsApi"
+  );
+  return withFakeFixRunsApi(await importOriginal());
 });
 
 const { resetFixRunFixtures, fixtureFixRun } = await import(
-  "../_fixtures/fixRuns"
+  "./fixtures/fixRuns"
 );
 const {
   getFixRun,
@@ -33,7 +35,7 @@ const makeWrapper = () => {
 
 const winner = (fix) => fix.candidates.find((c) => c.outcome === "winner");
 
-describe("stop, ship and patch on fixtures", () => {
+describe("stop, ship and patch", () => {
   beforeEach(() => resetFixRunFixtures());
 
   it("stops a running fix: stopping first, then stopped", async () => {

@@ -568,3 +568,20 @@ export function fixtureLaunch(envId, body) {
   store = [created, ...store];
   return clone(created);
 }
+
+// One check run's calls as the run-results calls endpoint returns them: raw
+// rows, paged.
+export function fixtureRunCalls(testExecutionId, { page = 1, page_size = 200 } = {}) {
+  const rows = fixtureRunTasks(testExecutionId).map((t) => ({
+    id: t.id,
+    source_scenario_key: t.sourceScenarioKey,
+    // The real row's scenario field is the suite name, not the scenario's.
+    scenario: "Pickup dispatch agent",
+    trial_index: t.trialIndex,
+    outcome: t.status,
+  }));
+  return {
+    count: rows.length,
+    results: rows.slice((page - 1) * page_size, page * page_size),
+  };
+}

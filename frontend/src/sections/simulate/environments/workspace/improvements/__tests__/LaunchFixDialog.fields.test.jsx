@@ -5,7 +5,14 @@ import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SnackbarProvider } from "notistack";
 
-import { resetFixRunFixtures } from "src/api/simulate-environments/_fixtures/fixRuns";
+import { resetFixRunFixtures } from "src/api/simulate-environments/__tests__/fixtures/fixRuns";
+
+vi.mock("src/utils/axios", async (importOriginal) => {
+  const { withFakeFixRunsApi } = await import(
+    "src/api/simulate-environments/__tests__/fixtures/fixRunsApi"
+  );
+  return withFakeFixRunsApi(await importOriginal());
+});
 
 vi.mock("react-router-dom", async (importOriginal) => ({
   ...(await importOriginal()),

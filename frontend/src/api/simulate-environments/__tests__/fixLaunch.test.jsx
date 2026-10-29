@@ -4,13 +4,15 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 vi.mock("src/utils/axios", async (importOriginal) => {
-  const actual = await importOriginal();
-  return { ...actual, default: { get: vi.fn(), post: vi.fn() } };
+  const { withFakeFixRunsApi } = await import(
+    "src/api/simulate-environments/__tests__/fixtures/fixRunsApi"
+  );
+  return withFakeFixRunsApi(await importOriginal());
 });
 
 const axios = (await import("src/utils/axios")).default;
 const { resetFixRunFixtures, fixtureFixRuns } = await import(
-  "../_fixtures/fixRuns"
+  "./fixtures/fixRuns"
 );
 const { useFixLaunchOptions, useLaunchFix } = await import("../fixRuns");
 
@@ -25,9 +27,9 @@ const makeWrapper = () => {
   return Wrapper;
 };
 
-describe("launch options on fixtures", () => {
+describe("launch options", () => {
   beforeEach(() => {
-    axios.get.mockReset();
+    axios.get.mockClear();
     resetFixRunFixtures();
   });
 
@@ -62,7 +64,10 @@ describe("launch options on fixtures", () => {
       max_minutes: 150,
     });
     expect(o.blocked).toBeNull();
-    expect(axios.get).not.toHaveBeenCalled();
+    expect(axios.get).toHaveBeenCalledWith(
+      "/simulate/api/agent-fix-runs/launch-options/",
+      { params: { source_run_id: "te-run-6" } },
+    );
   });
 
   it("suggests every failing scenario to fix and every passing one to protect", async () => {
@@ -84,7 +89,7 @@ describe("launch options on fixtures", () => {
   });
 });
 
-describe("launching a fix on fixtures", () => {
+describe("launching a fix", () => {
   beforeEach(() => resetFixRunFixtures());
 
   it("creates a queued fix in the environment's list", async () => {
@@ -114,6 +119,20 @@ describe("launching a fix on fixtures", () => {
       max_minutes: 60,
     });
     expect(fix.request.held_back_scenario_keys).toHaveLength(4);
+    // The backend refuses unknown fields, so the body is the contract's only.
+    const [url, body] = axios.post.mock.calls.at(-1);
+    expect(url).toBe("/simulate/api/agent-fix-runs/");
+    expect(Object.keys(body).sort()).toEqual(
+      [
+        "budget_credits",
+        "locked_paths",
+        "max_minutes",
+        "protected_scenario_keys",
+        "source_run_id",
+        "surfaces",
+        "target_scenario_keys",
+      ].sort(),
+    );
     expect(fixtureFixRuns("env-1")[0].id).toBe(fix.id);
   });
 

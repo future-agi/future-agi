@@ -8,7 +8,14 @@ import { SnackbarProvider } from "notistack";
 import {
   fixtureLaunchOptions,
   resetFixRunFixtures,
-} from "src/api/simulate-environments/_fixtures/fixRuns";
+} from "src/api/simulate-environments/__tests__/fixtures/fixRuns";
+
+vi.mock("src/utils/axios", async (importOriginal) => {
+  const { withFakeFixRunsApi } = await import(
+    "src/api/simulate-environments/__tests__/fixtures/fixRunsApi"
+  );
+  return withFakeFixRunsApi(await importOriginal());
+});
 
 const navigate = vi.fn();
 vi.mock("react-router-dom", async (importOriginal) => ({

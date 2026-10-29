@@ -1,13 +1,20 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SnackbarProvider } from "notistack";
 
-import { resetFixRunFixtures } from "src/api/simulate-environments/_fixtures/fixRuns";
+import { resetFixRunFixtures } from "src/api/simulate-environments/__tests__/fixtures/fixRuns";
 
 import FixRunPage from "../FixRunPage";
+
+vi.mock("src/utils/axios", async (importOriginal) => {
+  const { withFakeFixRunsApi } = await import(
+    "src/api/simulate-environments/__tests__/fixtures/fixRunsApi"
+  );
+  return withFakeFixRunsApi(await importOriginal());
+});
 
 function renderPage(fixId) {
   const client = new QueryClient({

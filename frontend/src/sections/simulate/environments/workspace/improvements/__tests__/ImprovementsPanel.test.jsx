@@ -2,7 +2,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import PropTypes from "prop-types";
 import { render, screen, fireEvent, within } from "src/utils/test-utils";
 
-import { FIX_RUN_FIXTURES } from "src/api/simulate-environments/_fixtures/fixRuns";
+import { FIX_RUN_FIXTURES } from "src/api/simulate-environments/__tests__/fixtures/fixRuns";
+
+vi.mock("src/utils/axios", async (importOriginal) => {
+  const { withFakeFixRunsApi } = await import(
+    "src/api/simulate-environments/__tests__/fixtures/fixRunsApi"
+  );
+  return withFakeFixRunsApi(await importOriginal());
+});
 
 const navigate = vi.fn();
 vi.mock("react-router-dom", async (importOriginal) => ({

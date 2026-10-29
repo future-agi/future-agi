@@ -4,13 +4,15 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 vi.mock("src/utils/axios", async (importOriginal) => {
-  const actual = await importOriginal();
-  return { ...actual, default: { get: vi.fn(), post: vi.fn() } };
+  const { withFakeFixRunsApi } = await import(
+    "src/api/simulate-environments/__tests__/fixtures/fixRunsApi"
+  );
+  return withFakeFixRunsApi(await importOriginal());
 });
 
 const axios = (await import("src/utils/axios")).default;
 const { FIX_RUN_FIXTURES, resetFixRunFixtures } = await import(
-  "../_fixtures/fixRuns"
+  "./fixtures/fixRuns"
 );
 const { useEnvironmentFixRuns, useFixRun, fixPollInterval, FIX_POLL_MS } =
   await import("../fixRuns");
@@ -26,13 +28,13 @@ const makeWrapper = () => {
   return Wrapper;
 };
 
-describe("fix-run reads on fixtures", () => {
+describe("fix-run reads", () => {
   beforeEach(() => {
-    axios.get.mockReset();
+    axios.get.mockClear();
     resetFixRunFixtures();
   });
 
-  it("lists the environment's fixes newest first from fixtures", async () => {
+  it("lists the environment's fixes newest first", async () => {
     const { result } = renderHook(() => useEnvironmentFixRuns("env-1"), {
       wrapper: makeWrapper(),
     });
@@ -41,7 +43,9 @@ describe("fix-run reads on fixtures", () => {
     expect(created.length).toBe(FIX_RUN_FIXTURES.length);
     expect(created).toEqual([...created].sort().reverse());
     expect(result.current.count).toBe(result.current.fixes.length);
-    expect(axios.get).not.toHaveBeenCalled();
+    expect(axios.get).toHaveBeenCalledWith("/simulate/api/agent-fix-runs/", {
+      params: { environment_id: "env-1" },
+    });
   });
 
   it("stamps the asked environment on every fixture fix", async () => {

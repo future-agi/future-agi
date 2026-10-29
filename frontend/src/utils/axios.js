@@ -1772,8 +1772,7 @@ export const endpoints = {
       ),
   },
   // Fix my agent v0. Functions only: apiPath throws until the backend's
-  // paths are in the generated contract, and nothing calls these while
-  // fixRuns.js answers from fixtures.
+  // paths are in the generated contract (yarn contracts:generate).
   agentFixRuns: {
     list: () => apiPath("/simulate/api/agent-fix-runs/"),
     launchOptions: () =>

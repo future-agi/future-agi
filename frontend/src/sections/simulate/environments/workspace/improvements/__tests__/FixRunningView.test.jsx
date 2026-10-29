@@ -1,11 +1,18 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
-import { FIX_RUN_FIXTURES } from "src/api/simulate-environments/_fixtures/fixRuns";
+import { FIX_RUN_FIXTURES } from "src/api/simulate-environments/__tests__/fixtures/fixRuns";
 
 import FixRunningView from "../FixRunningView";
 import TrialChart from "../TrialChart";
+
+vi.mock("src/utils/axios", async (importOriginal) => {
+  const { withFakeFixRunsApi } = await import(
+    "src/api/simulate-environments/__tests__/fixtures/fixRunsApi"
+  );
+  return withFakeFixRunsApi(await importOriginal());
+});
 
 const byId = (id) => ({
   ...FIX_RUN_FIXTURES.find((f) => f.id === id),

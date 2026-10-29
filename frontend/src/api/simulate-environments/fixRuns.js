@@ -9,21 +9,7 @@ import axios, { endpoints } from "src/utils/axios";
 
 import { fetchRunCalls, mapCallRow } from "./runCalls";
 
-import {
-  FIXTURE_PULL_REQUEST_URL,
-  fixtureFixRun,
-  fixtureFixRuns,
-  fixtureLaunch,
-  fixtureLaunchOptions,
-  fixturePatch,
-  fixtureRunTasks,
-  updateFixtureFixRun,
-} from "./_fixtures/fixRuns";
-
-// Fix my agent v0 (agent-fix-runs). Until the backend lands every read and
-// write answers from contract-shaped fixtures; flip this to "api" to go live.
-export const FIX_RUNS_SOURCE = "fixtures";
-
+// Fix my agent v0 (agent-fix-runs).
 export const FIX_LIVE_STATES = new Set(["queued", "running", "stopping"]);
 export const FIX_POLL_MS = 5000;
 
@@ -33,10 +19,7 @@ export const fixRunKey = (fixId) => ["agent-fix-run", fixId];
 export const fixPollInterval = (fix) =>
   fix && FIX_LIVE_STATES.has(fix.state) ? FIX_POLL_MS : false;
 
-const fromFixtures = () => FIX_RUNS_SOURCE === "fixtures";
-
 export async function listFixRuns(envId) {
-  if (fromFixtures()) return fixtureFixRuns(envId);
   const res = await axios.get(endpoints.agentFixRuns.list(), {
     params: { environment_id: envId },
   });
@@ -44,20 +27,6 @@ export async function listFixRuns(envId) {
 }
 
 export async function getFixRun(fixId) {
-  if (fromFixtures()) {
-    const fix = fixtureFixRun(fixId);
-    if (!fix) throw new Error("not_found");
-    // A stop settles within ~10 s on the real engine: the read after the one
-    // that showed "stopping" shows "stopped".
-    if (fix.state === "stopping" && fix.stop_requested) {
-      updateFixtureFixRun(fixId, (f) => ({
-        ...f,
-        state: "stopped",
-        finished_at: new Date().toISOString(),
-      }));
-    }
-    return fix;
-  }
   const res = await axios.get(endpoints.agentFixRuns.detail(fixId));
   return res.data;
 }
@@ -120,52 +89,17 @@ export const patchFileName = (fixId, attempt) =>
   `fix-${fixId}-attempt-${attempt}.patch`;
 
 export async function stopFixRun(fixId) {
-  if (fromFixtures()) {
-    return updateFixtureFixRun(fixId, (f) => ({
-      ...f,
-      state: "stopping",
-      stop_requested: true,
-    }));
-  }
   const res = await axios.post(endpoints.agentFixRuns.stop(fixId), {});
   return res.data;
 }
 
 export async function shipCandidate(fix, candidateId) {
-  const candidate = fix.candidates.find((c) => c.id === candidateId);
   if (fix.agent?.kind === "github") {
-    if (fromFixtures()) {
-      updateFixtureFixRun(fix.id, (f) => ({
-        ...f,
-        candidates: f.candidates.map((c) =>
-          c.id === candidateId
-            ? { ...c, pull_request_url: FIXTURE_PULL_REQUEST_URL }
-            : c,
-        ),
-      }));
-      return { kind: "pull_request", url: FIXTURE_PULL_REQUEST_URL };
-    }
     const res = await axios.post(
       endpoints.agentFixRuns.pullRequest(fix.id, candidateId),
       {},
     );
     return { kind: "pull_request", url: res.data?.pull_request_url };
-  }
-  if (fromFixtures()) {
-    const before = fixtureFixRun(fix.id);
-    if (
-      before.environment.default_agent_version_id === candidate.agent_version_id
-    ) {
-      return { kind: "already_default" };
-    }
-    updateFixtureFixRun(fix.id, (f) => ({
-      ...f,
-      environment: {
-        ...f.environment,
-        default_agent_version_id: candidate.agent_version_id,
-      },
-    }));
-    return { kind: "activated" };
   }
   const res = await axios.post(
     endpoints.agentFixRuns.makeDefault(fix.id, candidateId),
@@ -178,7 +112,6 @@ export async function shipCandidate(fix, candidateId) {
 }
 
 export async function fetchCandidatePatch(fixId, candidateId) {
-  if (fromFixtures()) return fixturePatch(candidateId);
   const res = await axios.get(
     endpoints.agentFixRuns.patch(fixId, candidateId),
     { responseType: "text" },
@@ -228,7 +161,6 @@ export async function collectAllCalls(fetchPage, pageSize = CALLS_PAGE_SIZE) {
 
 // One check run's per-call results, mapped the way the run page maps them.
 export async function fetchCheckRunTasks(testExecutionId) {
-  if (fromFixtures()) return fixtureRunTasks(testExecutionId);
   const rows = await collectAllCalls((page, pageSize) =>
     fetchRunCalls(testExecutionId, { page, page_size: pageSize }),
   );
@@ -276,7 +208,6 @@ export const fixLaunchOptionsKey = (sourceRunId) => [
 ];
 
 export async function getLaunchOptions(sourceRunId) {
-  if (fromFixtures()) return fixtureLaunchOptions(sourceRunId);
   const res = await axios.get(endpoints.agentFixRuns.launchOptions(), {
     params: { source_run_id: sourceRunId },
   });
@@ -293,8 +224,7 @@ export function useFixLaunchOptions(sourceRunId, { enabled = true } = {}) {
   return { options: data, isLoading, error };
 }
 
-export async function launchFix(envId, body) {
-  if (fromFixtures()) return fixtureLaunch(envId, body);
+export async function launchFix(body) {
   const res = await axios.post(endpoints.agentFixRuns.list(), body);
   return res.data;
 }
@@ -303,7 +233,7 @@ export function useLaunchFix(envId) {
   const queryClient = useQueryClient();
   return useMutation({
     meta: { errorHandled: true },
-    mutationFn: (body) => launchFix(envId, body),
+    mutationFn: (body) => launchFix(body),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: fixRunsKey(envId) }),
   });
