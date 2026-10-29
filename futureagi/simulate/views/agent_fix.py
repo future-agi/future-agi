@@ -23,6 +23,7 @@ from simulate.selectors.agent_fix import (
     check_run_status,
     engine_brief,
     fix_runs_for_environment,
+    with_committed_usd,
 )
 from simulate.serializers.agent_fix import (
     AgentFixCandidateCreatedSerializer,
@@ -92,8 +93,10 @@ class AgentFixRunViewSet(viewsets.ViewSet):
 
     def _fix_run(self, request, pk):
         return (
-            AgentFixRun.no_workspace_objects.filter(
-                id=pk, environment__in=self._jobs(request)
+            with_committed_usd(
+                AgentFixRun.no_workspace_objects.filter(
+                    id=pk, environment__in=self._jobs(request)
+                )
             )
             .select_related("environment")
             .prefetch_related("candidates__agent_version")
@@ -143,7 +146,8 @@ class AgentFixRunViewSet(viewsets.ViewSet):
             user=request.user,
         )
         return Response(
-            AgentFixRunSerializer(fix_run).data, status=status.HTTP_201_CREATED
+            AgentFixRunSerializer(self._fix_run(request, fix_run.id)).data,
+            status=status.HTTP_201_CREATED,
         )
 
     @validated_request(responses={200: AgentFixRunSerializer})

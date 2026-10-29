@@ -29,6 +29,7 @@ from simulate.pydantic_schemas.agent_fix import (
     Ending,
     EngineReport,
 )
+from simulate.selectors.agent_fix import with_committed_usd
 from simulate.services.agent_fix_agents import agent_kind
 from simulate.services.agent_fix_runs import close_fix_run
 from simulate.services.harness_usage import require_harness_call_usage
@@ -276,12 +277,11 @@ def _fail_unscheduled(run: HostedHarnessJob) -> None:
 
 def committed_usd(fix_run: AgentFixRun) -> Decimal:
     """The engine's own spend plus a worst-case figure for every check run so far."""
-    executions = sum(
-        HostedHarnessJob.no_workspace_objects.filter(fix_run=fix_run).values_list(
-            "scenario_count", flat=True
-        )
+    return (
+        with_committed_usd(AgentFixRun.no_workspace_objects.filter(id=fix_run.id))
+        .values_list("committed_usd", flat=True)
+        .get()
     )
-    return fix_run.spent_usd + executions * _worst_case_per_execution()
 
 
 def _worst_case_per_execution() -> Decimal:

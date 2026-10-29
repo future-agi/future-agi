@@ -124635,6 +124635,7 @@
                 "base_agent_version_id",
                 "request",
                 "spent_usd",
+                "committed_usd",
                 "report",
                 "failure",
                 "candidates"
@@ -124688,6 +124689,11 @@
                 },
                 "spent_usd": {
                     "title": "Spent usd",
+                    "type": "string",
+                    "format": "decimal"
+                },
+                "committed_usd": {
+                    "title": "Committed usd",
                     "type": "string",
                     "format": "decimal"
                 },

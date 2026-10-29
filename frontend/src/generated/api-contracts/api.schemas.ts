@@ -17008,6 +17008,7 @@ export interface AgentFixRunApi {
   stage?: string;
   request: AgentFixRequestApi;
   spent_usd: string;
+  committed_usd: string;
   report: AgentFixReportApi;
   failure: AgentFixFailureApi;
   candidates: AgentFixCandidateApi[];

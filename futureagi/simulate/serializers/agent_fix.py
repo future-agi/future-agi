@@ -86,6 +86,7 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
     report = AgentFixReportSerializer(allow_null=True)
     failure = AgentFixFailureSerializer(allow_null=True)
     spent_usd = serializers.DecimalField(max_digits=10, decimal_places=4)
+    committed_usd = serializers.DecimalField(max_digits=12, decimal_places=4)
     candidates = AgentFixCandidateSerializer(many=True)
 
     class Meta:
@@ -99,6 +100,7 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
             "stage",
             "request",
             "spent_usd",
+            "committed_usd",
             "report",
             "failure",
             "candidates",

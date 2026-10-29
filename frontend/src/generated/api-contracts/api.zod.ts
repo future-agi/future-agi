@@ -34318,6 +34318,7 @@ export const SimulateApiAgentFixRunsListResponseItem = zod.object({
     max_minutes: zod.number(),
   }),
   spent_usd: zod.string(),
+  committed_usd: zod.string(),
   report: zod.object({
     ending: zod.string().min(1),
     summary: zod.string(),
@@ -34456,6 +34457,7 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
     max_minutes: zod.number(),
   }),
   spent_usd: zod.string(),
+  committed_usd: zod.string(),
   report: zod.object({
     ending: zod.string().min(1),
     summary: zod.string(),
@@ -34570,6 +34572,7 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
     max_minutes: zod.number(),
   }),
   spent_usd: zod.string(),
+  committed_usd: zod.string(),
   report: zod.object({
     ending: zod.string().min(1),
     summary: zod.string(),

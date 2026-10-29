@@ -2,9 +2,20 @@
 
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
-from django.db.models import QuerySet
+from django.conf import settings
+from django.db.models import (
+    DecimalField,
+    ExpressionWrapper,
+    F,
+    Q,
+    QuerySet,
+    Sum,
+    Value,
+)
+from django.db.models.functions import Coalesce
 
 from simulate.models import (
     AgentFixRun,
@@ -213,8 +224,23 @@ def failing_sub_goals(
     return failing
 
 
+def with_committed_usd(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
+    """Each fix's ``committed_usd``: the engine's own spend plus a worst-case figure for
+    every check run so far, which is what its budget is held against."""
+    executions = Coalesce(
+        Sum("check_runs__scenario_count", filter=Q(check_runs__deleted=False)), 0
+    )
+    worst_case = Value(Decimal(settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION))
+    return runs.annotate(
+        committed_usd=ExpressionWrapper(
+            F("spent_usd") + executions * worst_case,
+            output_field=DecimalField(max_digits=12, decimal_places=4),
+        )
+    )
+
+
 def fix_runs_for_environment(environment: HostedHarnessJob) -> QuerySet[AgentFixRun]:
-    return (
+    return with_committed_usd(
         AgentFixRun.no_workspace_objects.filter(environment=environment)
         .select_related("base_agent_version", "source_run")
         .prefetch_related("candidates__agent_version")

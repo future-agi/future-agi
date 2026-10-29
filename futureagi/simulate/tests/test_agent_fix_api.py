@@ -35,6 +35,7 @@ from simulate.tests.test_agent_fix_services import (
     KEYS,
     PATCH,
     _candidate,
+    _check,
     _fix_run,
     _run,
     _tree,
@@ -479,6 +480,20 @@ class TestUserApi:
         assert listed.status_code == 200, listed.content
         assert [one["id"] for one in listed.json()] == [str(newer.id), str(older.id)]
         assert by_run.status_code == 404
+
+    def test_a_fix_shows_what_its_budget_has_committed(
+        self, auth_client, environment, source_run, settings
+    ):
+        settings.AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = "0.5"
+        fix_run = _fix_run(source_run, spent_usd=Decimal("0.25"))
+        _check(fix_run, trials=2)
+
+        listed = auth_client.get(f"{BASE}/", {"environment_id": str(environment.id)})
+        read = auth_client.get(f"{BASE}/{fix_run.id}/")
+
+        # The engine's $0.25 and two check conversations at their worst case.
+        assert [one["committed_usd"] for one in listed.json()] == ["1.2500"]
+        assert read.json()["committed_usd"] == "1.2500"
 
     def test_listing_more_fixes_and_candidates_costs_no_more_queries(
         self, auth_client, environment, source_run

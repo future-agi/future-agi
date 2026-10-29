@@ -49378,6 +49378,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "base_agent_version_id",
         "request",
         "spent_usd",
+        "committed_usd",
         "report",
         "failure",
         "candidates",
@@ -49431,6 +49432,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         spent_usd: {
           title: "Spent usd",
+          type: "string",
+          format: "decimal",
+        },
+        committed_usd: {
+          title: "Committed usd",
           type: "string",
           format: "decimal",
         },
