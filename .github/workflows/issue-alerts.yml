@@ -1,0 +1,44 @@
+name: Issue & PR Alerts to Slack
+
+# Real-time triage alerts: a new issue is filed, an open issue is picked up
+# (assigned), or a PR is opened that closes an open issue. Posts to the same
+# Slack channel as the PR digest via the SLACK_WEBHOOK_URL secret.
+on:
+  issues:
+    types: [opened, assigned]
+  pull_request:
+    types: [opened, reopened]
+
+jobs:
+  alert:
+    # Skip on forks and on fork-originated PRs: SLACK_WEBHOOK_URL isn't exposed
+    # to those runs, so the job would only ever fail and redden external PRs.
+    # (Issue events always run in the base repo, so they keep working.)
+    if: >-
+      github.repository == 'future-agi/future-agi' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    permissions:
+      issues: read
+      pull-requests: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Post issue/PR alert to Slack
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          # Map the event to the script's three modes. opened/reopened PRs both
+          # mean "a PR was just submitted", so both fall through to pr_opened.
+          EVENT_KIND: >-
+            ${{ (github.event_name == 'issues' && github.event.action == 'opened' && 'issue_opened')
+              || (github.event_name == 'issues' && github.event.action == 'assigned' && 'issue_assigned')
+              || 'pr_opened' }}
+        run: node .github/scripts/issue-alerts.mjs
