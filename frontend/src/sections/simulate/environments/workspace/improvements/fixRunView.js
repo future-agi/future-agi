@@ -128,8 +128,18 @@ export function checksLine(tiers = []) {
   return `Checks · ${passed} of ${counted.length} passed`;
 }
 
-const bestTargetPct = (candidates) =>
-  Math.max(...candidates.map((c) => pct(c.verdict.target_pass_rate[1])));
+// A trial still being scored has no target rate yet.
+export const hasTargetRate = (c) => Array.isArray(c.verdict?.target_pass_rate);
+
+const bestTargetPct = (rated) =>
+  Math.max(...rated.map((c) => pct(c.verdict.target_pass_rate[1])));
+
+function searchCount(plan, candidates) {
+  const tried = `${candidates.length} of up to ${plan.max_candidates} trials`;
+  const rated = candidates.filter(hasTargetRate);
+  if (!rated.length) return tried;
+  return `${tried} · best so far ${bestTargetPct(rated)}% on ${plan.target} target scenarios`;
+}
 
 function stepLines(id, fix) {
   const { plan, diagnosis } = fix;
@@ -145,11 +155,7 @@ function stepLines(id, fix) {
     ].filter(Boolean);
   }
   if (id === "search") {
-    const count = plan
-      ? candidates.length
-        ? `${candidates.length} of up to ${plan.max_candidates} trials · best so far ${bestTargetPct(candidates)}% on ${plan.target} target scenarios`
-        : `0 of up to ${plan.max_candidates} trials`
-      : null;
+    const count = plan ? searchCount(plan, candidates) : null;
     const cause = diagnosis?.causes?.[0]
       ? `Starts from its diagnosis: ${diagnosis.causes[0]}`
       : null;

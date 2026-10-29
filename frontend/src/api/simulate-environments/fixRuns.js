@@ -209,22 +209,50 @@ export function useShipCandidate(fix) {
   });
 }
 
+const CALLS_PAGE_SIZE = 200;
+
+// Reads pages until the run's count is reached; a check run can hold more
+// calls than one page.
+export async function collectAllCalls(fetchPage, pageSize = CALLS_PAGE_SIZE) {
+  const rows = [];
+  for (let page = 1; ; page += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    const data = await fetchPage(page, pageSize);
+    const results = data?.results ?? [];
+    rows.push(...results);
+    if (results.length < pageSize || rows.length >= (data?.count ?? 0)) {
+      return rows;
+    }
+  }
+}
+
 // One check run's per-call results, mapped the way the run page maps them.
 export async function fetchCheckRunTasks(testExecutionId) {
   if (fromFixtures()) return fixtureRunTasks(testExecutionId);
-  const data = await fetchRunCalls(testExecutionId, {
-    page: 1,
-    page_size: 200,
-  });
-  return (data.results ?? []).map((row) => mapCallRow(row));
+  const rows = await collectAllCalls((page, pageSize) =>
+    fetchRunCalls(testExecutionId, { page, page_size: pageSize }),
+  );
+  return rows.map((row) => mapCallRow(row));
+}
+
+// The fix's own check runs are the agent before the change; labels are for
+// display only, so every one of them counts as the baseline.
+export function checkRunsForScenarios(fix, candidateId) {
+  const candidate = (fix.candidates || []).find((c) => c.id === candidateId);
+  return {
+    before: fix.check_runs || [],
+    after: candidate?.check_runs || [],
+  };
 }
 
 // The baseline's and one candidate's check-run results, for the Per scenario
 // tab: what the scenario did before the change and after it.
 export function useFixScenarioRows(fix, candidateId) {
-  const baseline = (fix.check_runs || []).find((r) => r.label === "baseline");
-  const candidate = (fix.candidates || []).find((c) => c.id === candidateId);
-  const runs = [baseline, ...(candidate?.check_runs || [])].filter(Boolean);
+  const { before: baseline, after: candidateRuns } = checkRunsForScenarios(
+    fix,
+    candidateId,
+  );
+  const runs = [...baseline, ...candidateRuns];
   const results = useQueries({
     queries: runs.map((run) => ({
       queryKey: ["agent-fix-run-check-tasks", run.test_execution_id],
@@ -233,11 +261,11 @@ export function useFixScenarioRows(fix, candidateId) {
       staleTime: 1000 * 60 * 5,
     })),
   });
-  const [before, ...after] = results;
+  const rowsOf = (list) => list.flatMap((r) => r.data ?? []);
   return {
-    before: baseline ? before?.data ?? [] : [],
-    after: after.flatMap((r) => r.data ?? []),
-    run: candidate?.check_runs?.[0],
+    before: rowsOf(results.slice(0, baseline.length)),
+    after: rowsOf(results.slice(baseline.length)),
+    run: candidateRuns[0],
     isLoading: results.some((r) => r.isLoading),
   };
 }

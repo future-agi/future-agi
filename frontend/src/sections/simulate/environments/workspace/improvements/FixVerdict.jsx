@@ -252,7 +252,9 @@ export default function FixVerdict({ fix }) {
           <Card key={card.id} card={card} />
         ))}
       </Box>
-      <Checks tiers={winner.verdict.tiers} />
+      {winner.verdict.tiers?.length > 0 && (
+        <Checks tiers={winner.verdict.tiers} />
+      )}
       <MustPassBreaks verdict={winner.verdict} />
     </Box>
   );

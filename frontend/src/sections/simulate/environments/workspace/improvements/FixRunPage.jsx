@@ -21,11 +21,12 @@ import FixScenariosTab from "./FixScenariosTab";
 // place to decide on it. The read polls while the fix is live, so the finished
 // view replaces the running one without a reload.
 export default function FixRunPage({ envId, fixId, runTestId }) {
-  const { fix, isLoading, error } = useFixRun(fixId);
+  const { fix, isLoading } = useFixRun(fixId);
   const [tab, setTab] = useState("trials");
   const [reviewing, setReviewing] = useState(null);
   if (isLoading) return <LoadingScreen />;
-  if (error || !fix) {
+  // A failed poll keeps the last read; only a fix never read is missing.
+  if (!fix) {
     return (
       <EmptyState
         icon="solar:magic-stick-3-linear"

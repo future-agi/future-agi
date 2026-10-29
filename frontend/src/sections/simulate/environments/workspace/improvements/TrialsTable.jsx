@@ -17,6 +17,13 @@ const num = { fontVariantNumeric: "tabular-nums" };
 const head = { typography: "s3", fontWeight: 600, color: "text.subtitle" };
 
 function PassCell({ rate }) {
+  if (!rate) {
+    return (
+      <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+        Pending
+      </Typography>
+    );
+  }
   const delta = pts(rate);
   return (
     <Stack direction="row" spacing={1} alignItems="baseline">
@@ -37,7 +44,7 @@ function PassCell({ rate }) {
     </Stack>
   );
 }
-PassCell.propTypes = { rate: PropTypes.arrayOf(PropTypes.number).isRequired };
+PassCell.propTypes = { rate: PropTypes.arrayOf(PropTypes.number) };
 
 // The design's trials table, contract columns only: what each trial tried,
 // how it ended, and its pass rate on the target scenarios.

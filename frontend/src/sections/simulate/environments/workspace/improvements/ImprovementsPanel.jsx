@@ -139,7 +139,9 @@ export default function ImprovementsPanel({ env }) {
   const navigate = useNavigate();
   const { fixes } = useEnvironmentFixRuns(env.id);
   return (
-    <Box sx={{ flex: 1, minHeight: 0, display: "flex" }}>
+    // The tab body scrolls as a block; a full-height panel makes the grid
+    // scroll inside itself, so the column header stays put.
+    <Box sx={{ height: "100%", minHeight: 0, display: "flex" }}>
       <DataTable
         columns={columns}
         data={fixes}

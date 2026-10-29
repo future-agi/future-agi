@@ -1,12 +1,16 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
 import { Box, Button, IconButton, Stack, Typography } from "@mui/material";
+import { enqueueSnackbar } from "notistack";
 
 import Iconify from "src/components/iconify";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { RouterLink } from "src/routes/components";
 import { paths } from "src/routes/paths";
-import { useStopFixRun } from "src/api/simulate-environments/fixRuns";
+import {
+  fixErrorOf,
+  useStopFixRun,
+} from "src/api/simulate-environments/fixRuns";
 
 import FixStatusChip from "./FixStatusChip";
 import { fixName, formatCredits, identityLine } from "./fixRunView";
@@ -64,7 +68,13 @@ function StopControl({ fix }) {
             color="primary"
             onClick={() => {
               setAsking(false);
-              stop.mutate();
+              stop.mutate(undefined, {
+                onError: (e) =>
+                  enqueueSnackbar(
+                    fixErrorOf(e).message || "Could not stop the improvement",
+                    { variant: "error" },
+                  ),
+              });
             }}
           >
             Stop

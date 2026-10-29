@@ -3,7 +3,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { alpha, useTheme } from "@mui/material/styles";
 import { Box, Stack, Typography } from "@mui/material";
 
-import { pct, pts } from "./fixRunView";
+import { hasTargetRate, pct, pts } from "./fixRunView";
 
 const DEFAULT_W = 720;
 const H = 190;
@@ -30,7 +30,9 @@ function useWidth() {
 export default function TrialChart({ candidates }) {
   const theme = useTheme();
   const [ref, W] = useWidth();
-  const trials = [...candidates].sort((a, b) => a.attempt - b.attempt);
+  const trials = candidates
+    .filter(hasTargetRate)
+    .sort((a, b) => a.attempt - b.attempt);
   if (!trials.length) return null;
   const rates = trials.map((c) => pct(c.verdict.target_pass_rate[1]));
   const before = pct(trials[0].verdict.target_pass_rate[0]);

@@ -157,7 +157,11 @@ export default function FixDecisionDrawer({ fix, open, onClose }) {
                   >{`Trial ${c.attempt}`}</Typography>
                   <Typography
                     sx={{ typography: "s3", ...num }}
-                  >{`${pct(c.verdict.target_pass_rate[1])}%`}</Typography>
+                  >
+                    {c.verdict.target_pass_rate
+                      ? `${pct(c.verdict.target_pass_rate[1])}%`
+                      : "Pending"}
+                  </Typography>
                   <Typography sx={{ typography: "s3", ...num }}>
                     {c.verdict.held_back_pass_rate
                       ? `${pct(c.verdict.held_back_pass_rate[1])}%`
@@ -176,7 +180,7 @@ export default function FixDecisionDrawer({ fix, open, onClose }) {
             </Box>
           </Box>
         )}
-        {v && (
+        {v?.tiers?.length > 0 && (
           <Box>
             <Typography sx={sectionTitle}>Checks</Typography>
             <Box sx={table}>

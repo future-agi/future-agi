@@ -139,7 +139,9 @@ LockedFiles.propTypes = {
 // parts that may change and the limit; everything else is shown, not asked.
 export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
   const navigate = useNavigate();
-  const { options } = useFixLaunchOptions(sourceRunId, { enabled: open });
+  const { options, error: optionsError } = useFixLaunchOptions(sourceRunId, {
+    enabled: open,
+  });
   const launch = useLaunchFix(envId);
   const [targets, setTargets] = useState([]);
   const [protectedKeys, setProtectedKeys] = useState([]);
@@ -168,9 +170,21 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
         fullWidth
         PaperProps={{ sx: { maxWidth: 720 } }}
       >
-        <Typography sx={{ p: 3, typography: "s2", color: "text.subtitle" }}>
-          Loading the run…
-        </Typography>
+        {optionsError ? (
+          <Stack direction="row" alignItems="center" spacing={2} sx={{ p: 3 }}>
+            <Typography sx={{ typography: "s2", flex: 1 }}>
+              {fixErrorOf(optionsError).message ||
+                "Could not load this run to improve it."}
+            </Typography>
+            <Button size="small" variant="outlined" onClick={onClose}>
+              Close
+            </Button>
+          </Stack>
+        ) : (
+          <Typography sx={{ p: 3, typography: "s2", color: "text.subtitle" }}>
+            Loading the run…
+          </Typography>
+        )}
       </Dialog>
     );
   }
