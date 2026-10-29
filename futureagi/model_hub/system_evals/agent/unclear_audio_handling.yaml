@@ -24,6 +24,7 @@ criteria: "You are evaluating the agent's behaviour whenever the user's audio wa
   <conversation>{{conversation}}</conversation>"
 eval_tags:
 - Audio
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

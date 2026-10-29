@@ -1010,6 +1010,11 @@ def publish_grouping(
         }
         if set(states) != set(attempt.offered_issue_ids):
             raise GroupingConflict("offered issue changed")
+        from tracer.services.feed_alerts.events import issue_snapshot
+
+        alert_before = {
+            key: issue_snapshot(state.cluster) for key, state in states.items()
+        }
         sampled = scope.policy_version == SAMPLED_GROUPING_POLICY_VERSION
         membership = {}
         evidence_members = {}
@@ -1659,6 +1664,14 @@ def publish_grouping(
             from tracer.services.grouping.severity import enqueue_severity
 
             enqueue_severity(issue=state, attempt=attempt)
+            if not state.retired:
+                from tracer.services.feed_alerts.events import record_issue_event
+
+                record_issue_event(
+                    cluster=state.cluster,
+                    before=alert_before.get(key),
+                    source_key=f"grouping:{attempt.id}:{key}",
+                )
         now = timezone.now()
         for source_id, target_id in redirects.items():
             TraceErrorGroup.no_workspace_objects.filter(pk=source_id).update(

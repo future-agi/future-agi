@@ -24,7 +24,7 @@ interface ConfigRow { id: string; name: string; prompt_template_id: string; eval
   mapping: { output: string }; config: { run_config: { model: string } }; deleted: boolean;
   organization_id: string; workspace_id: string; email: string }
 interface ConfigPage { result: { template_id: string; evaluation_configs: {
-  id: string; name: string; mapping: { output: string }; run_config: { check_internet: boolean } }[] } }
+  id: string; name: string; mapping: { output: string }; run_config: { model: string; check_internet: boolean } }[] } }
 interface UpdateBody { id: string; name: string; user_eval_id?: string;
   mapping: { output: string }; model: string; is_run: boolean; version_to_run: string[];
   error_localizer: boolean; config: { params: object; run_config: {
@@ -303,9 +303,7 @@ test('PROMPT-E2E-001: a mock-run prompt exposes its current evaluation configura
       const config = await actor.api.get<ConfigPage>(`${PROMPTS}${ids.promptId}/evaluation-configs/`);
       expect(config.result.evaluation_configs).toHaveLength(1);
       expect(config.result.evaluation_configs[0]).toMatchObject({ id: ids.bindingId, name: bindingName,
-        // eval_list.build_run_config_view projects its allowlist, excluding model.
-        // The model is asserted in the actual wire and stored binding above.
-        mapping: { output: 'input_prompt' }, run_config: { check_internet: false } });
+        mapping: { output: 'input_prompt' }, run_config: { model: MODEL, check_internet: false } });
       const values = await actor.api.post<{ result: { values: { value: string; label: string }[] } }>(VALUES,
         { property_id: ids.propertyId, source: 'prompts', page_size: 25 });
       expect(values.result.values).toEqual([alpha, beta].map(value => ({ value, label: value })));
@@ -318,9 +316,14 @@ test('PROMPT-E2E-001: a mock-run prompt exposes its current evaluation configura
         .getByText(evaluatorName, { exact: true }).locator('..').getByRole('button').first().click();
       await page.getByLabel('Delete', { exact: true }).click();
       await expect(page.getByText('Delete this evaluation and its results?', { exact: true })).toBeVisible({ timeout: UI_READY });
+      // Single-row deletion renders inline; only bulk deletion uses a dialog.
+      const deleteConfirmation = page.getByText('Delete this evaluation and its results?', { exact: true })
+        .locator('..');
       const removed = page.waitForResponse(r => new URL(r.url()).pathname === `${PROMPTS}${ids.promptId}/delete-evaluation-config/` &&
         r.request().method() === 'DELETE', { timeout: UI_READY });
-      await page.getByRole('button', { name: 'Delete', exact: true }).click();
+      // Scope to the confirmation: a saved eval is auto-selected, and the
+      // selected-rows footer carries its own exact "Delete" button.
+      await deleteConfirmation.getByRole('button', { name: 'Delete', exact: true }).click();
       const responseDelete = await removed;
       expect(responseDelete.status()).toBe(200);
       expect(new URL(responseDelete.url()).searchParams.get('id')).toBe(ids.bindingId);

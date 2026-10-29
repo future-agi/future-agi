@@ -9,6 +9,12 @@ These tests ensure the snapshot is correctly populated.
 import pytest
 
 from simulate.models import AgentDefinition, AgentVersion
+from tracer.tests.test_observability_switch import (
+    _agent_with_row,
+    _delete_project,
+    _delete_row,
+    _stored_agent,
+)
 
 
 @pytest.fixture
@@ -158,3 +164,29 @@ class TestAgentVersionSnapshot:
         # observability_enabled is False by default, may be excluded by exclude_none
         obs_value = snapshot.get("observability_enabled", False)
         assert obs_value is False
+
+    def test_snapshot_observability_flag_of_a_live_link(
+        self, organization, workspace
+    ):
+        agent = _agent_with_row(organization, workspace, enabled=True)
+        version = agent.create_version(
+            description="Test",
+            commit_message="Live",
+            status=AgentVersion.StatusChoices.ACTIVE,
+        )
+        assert version.configuration_snapshot["observability_enabled"] is True
+
+    @pytest.mark.parametrize("delete", [_delete_project, _delete_row])
+    def test_snapshot_observability_flag_of_a_dead_link_is_off(
+        self, organization, workspace, delete
+    ):
+        # The row's own flag still says on; the link is dead, so the snapshot
+        # the agent page starts from must say off.
+        agent = _agent_with_row(organization, workspace, enabled=True)
+        delete(agent)
+        version = _stored_agent(agent).create_version(
+            description="Test",
+            commit_message="Dead",
+            status=AgentVersion.StatusChoices.ACTIVE,
+        )
+        assert version.configuration_snapshot["observability_enabled"] is False

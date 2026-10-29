@@ -73,13 +73,21 @@ def test_previous_fixed_utc_window(
     )
 
 
-
 def test_schedule_disables_temporal_retries():
     schedule = DEPLOYMENT_TELEMETRY_SCHEDULES[0]
     assert schedule.schedule_id == "deployment-telemetry-heartbeat"
     assert schedule.activity_name == "send_deployment_telemetry_heartbeat"
     assert schedule.jitter_seconds == 1800
 
+    from tfc.temporal.drop_in.decorator import _ACTIVITY_REGISTRY
+
+    assert _ACTIVITY_REGISTRY[schedule.activity_name]["max_retries"] == 0
+
+
+def test_event_schedule_flushes_without_temporal_retries():
+    schedule = DEPLOYMENT_TELEMETRY_SCHEDULES[1]
+    assert schedule.schedule_id == "deployment-telemetry-events"
+    assert schedule.interval_seconds == 60
     from tfc.temporal.drop_in.decorator import _ACTIVITY_REGISTRY
 
     assert _ACTIVITY_REGISTRY[schedule.activity_name]["max_retries"] == 0
@@ -146,7 +154,9 @@ def test_enabled_registration_sends_users_and_persists_full_state(monkeypatch):
         ),
         patch(
             "tfc.deployment_telemetry.sender.TelemetryClient.post",
-            return_value=TelemetryResponse(ok=True, data={"instance_secret": "test-secret"}),
+            return_value=TelemetryResponse(
+                ok=True, data={"instance_secret": "test-secret"}
+            ),
         ) as post,
     ):
         assert ensure_registration()[0] is True
@@ -170,7 +180,9 @@ def test_disabled_registration_is_minimal_and_sends_no_heartbeat(monkeypatch):
         ),
         patch(
             "tfc.deployment_telemetry.sender.TelemetryClient.post",
-            return_value=TelemetryResponse(ok=True, data={"instance_secret": "test-secret"}),
+            return_value=TelemetryResponse(
+                ok=True, data={"instance_secret": "test-secret"}
+            ),
         ) as post,
     ):
         result = run_telemetry_cycle()
@@ -216,7 +228,12 @@ def test_registration_transitions_from_full_to_disabled(monkeypatch):
             "tfc.deployment_telemetry.sender.is_self_hosted_deployment",
             return_value=True,
         ),
-        patch("tfc.deployment_telemetry.sender.TelemetryClient.post", return_value=TelemetryResponse(ok=True, data={"instance_secret": "test-secret"})),
+        patch(
+            "tfc.deployment_telemetry.sender.TelemetryClient.post",
+            return_value=TelemetryResponse(
+                ok=True, data={"instance_secret": "test-secret"}
+            ),
+        ),
     ):
         assert ensure_registration()[0] is True
 
@@ -226,7 +243,12 @@ def test_registration_transitions_from_full_to_disabled(monkeypatch):
             "tfc.deployment_telemetry.sender.is_self_hosted_deployment",
             return_value=True,
         ),
-        patch("tfc.deployment_telemetry.sender.TelemetryClient.post", return_value=TelemetryResponse(ok=True, data={"instance_secret": "test-secret"})),
+        patch(
+            "tfc.deployment_telemetry.sender.TelemetryClient.post",
+            return_value=TelemetryResponse(
+                ok=True, data={"instance_secret": "test-secret"}
+            ),
+        ),
     ):
         assert ensure_registration()[0] is False
 
@@ -246,7 +268,12 @@ def test_registration_transitions_from_disabled_to_full(monkeypatch):
             "tfc.deployment_telemetry.sender.is_self_hosted_deployment",
             return_value=True,
         ),
-        patch("tfc.deployment_telemetry.sender.TelemetryClient.post", return_value=TelemetryResponse(ok=True, data={"instance_secret": "test-secret"})),
+        patch(
+            "tfc.deployment_telemetry.sender.TelemetryClient.post",
+            return_value=TelemetryResponse(
+                ok=True, data={"instance_secret": "test-secret"}
+            ),
+        ),
     ):
         assert ensure_registration()[0] is False
 
@@ -261,7 +288,12 @@ def test_registration_transitions_from_disabled_to_full(monkeypatch):
             "tfc.deployment_telemetry.sender.is_self_hosted_deployment",
             return_value=True,
         ),
-        patch("tfc.deployment_telemetry.sender.TelemetryClient.post", return_value=TelemetryResponse(ok=True, data={"instance_secret": "test-secret"})),
+        patch(
+            "tfc.deployment_telemetry.sender.TelemetryClient.post",
+            return_value=TelemetryResponse(
+                ok=True, data={"instance_secret": "test-secret"}
+            ),
+        ),
     ):
         assert ensure_registration()[0] is True
 
@@ -306,7 +338,9 @@ def test_stale_registration_claim_is_recovered(monkeypatch):
         ),
         patch(
             "tfc.deployment_telemetry.sender.TelemetryClient.post",
-            return_value=TelemetryResponse(ok=True, data={"instance_secret": "test-secret"}),
+            return_value=TelemetryResponse(
+                ok=True, data={"instance_secret": "test-secret"}
+            ),
         ) as post,
     ):
         assert ensure_registration()[0] is False
@@ -360,7 +394,9 @@ def test_successful_heartbeat_updates_window_state(monkeypatch):
         ),
         patch(
             "tfc.deployment_telemetry.sender.TelemetryClient.post",
-            return_value=TelemetryResponse(ok=True, data={"instance_secret": "test-secret"}),
+            return_value=TelemetryResponse(
+                ok=True, data={"instance_secret": "test-secret"}
+            ),
         ) as post,
     ):
         result = run_telemetry_cycle()
@@ -370,6 +406,46 @@ def test_successful_heartbeat_updates_window_state(monkeypatch):
     state.refresh_from_db()
     assert state.last_heartbeat_window_start == window_start
     assert state.last_heartbeat_window_end == window_end
+
+
+@pytest.mark.django_db
+def test_shared_local_heartbeat_buffer_flushes_only_current_instance(
+    telemetry_buffer_dir,
+):
+    """A shared default temp directory cannot mix two install heartbeats."""
+    state = get_or_create_telemetry_state()
+    state.instance_secret = "test-secret"
+    state.save(update_fields=["instance_secret"])
+    other_instance_id = "00000000-0000-0000-0000-000000000002"
+    window_start = datetime(2026, 6, 7, 0, tzinfo=UTC)
+    window_end = datetime(2026, 6, 7, 6, tzinfo=UTC)
+    current_payload = build_heartbeat_payload(
+        state.instance_id,
+        window_start,
+        window_end,
+        {"active_users_count": 1},
+    )
+    other_payload = build_heartbeat_payload(
+        other_instance_id,
+        window_start,
+        window_end,
+        {"active_users_count": 99},
+    )
+    current_path = store_window(window_start, window_end, current_payload)
+    other_path = store_window(window_start, window_end, other_payload)
+    assert current_path != other_path
+
+    with patch(
+        "tfc.deployment_telemetry.sender.TelemetryClient.post",
+        return_value=TelemetryResponse(ok=True),
+    ) as post:
+        sent_count, flush_complete = _flush_buffer()
+
+    assert (sent_count, flush_complete) == (1, True)
+    post.assert_called_once()
+    assert post.call_args.args[1]["instance_id"] == str(state.instance_id)
+    assert not current_path.exists()
+    assert other_path.exists()
 
 
 @pytest.mark.django_db
@@ -442,7 +518,9 @@ def test_failed_heartbeat_is_buffered_and_flushed_later(
         ),
         patch(
             "tfc.deployment_telemetry.sender.TelemetryClient.post",
-            return_value=TelemetryResponse(ok=True, data={"instance_secret": "test-secret"}),
+            return_value=TelemetryResponse(
+                ok=True, data={"instance_secret": "test-secret"}
+            ),
         ) as post,
     ):
         second = run_telemetry_cycle()
@@ -494,7 +572,9 @@ def test_flushes_three_buffered_windows_oldest_first(telemetry_buffer_dir):
 
     with patch(
         "tfc.deployment_telemetry.sender.TelemetryClient.post",
-        return_value=TelemetryResponse(ok=True, data={"instance_secret": "test-secret"}),
+        return_value=TelemetryResponse(
+            ok=True, data={"instance_secret": "test-secret"}
+        ),
     ) as post:
         sent_count, flush_complete = _flush_buffer()
 
@@ -508,8 +588,12 @@ def test_flushes_three_buffered_windows_oldest_first(telemetry_buffer_dir):
 
 @pytest.mark.django_db
 def test_disabling_telemetry_clears_buffer(monkeypatch, telemetry_buffer_dir):
-    telemetry_buffer_dir.mkdir()
-    (telemetry_buffer_dir / "window.json").write_text("{}", encoding="utf-8")
+    state = get_or_create_telemetry_state()
+    store_window(
+        datetime(2026, 6, 7, 0, tzinfo=UTC),
+        datetime(2026, 6, 7, 6, tzinfo=UTC),
+        {"instance_id": str(state.instance_id)},
+    )
     monkeypatch.setenv("FUTURE_AGI_TELEMETRY_DISABLED", "true")
 
     with (
@@ -519,7 +603,9 @@ def test_disabling_telemetry_clears_buffer(monkeypatch, telemetry_buffer_dir):
         ),
         patch(
             "tfc.deployment_telemetry.sender.TelemetryClient.post",
-            return_value=TelemetryResponse(ok=True, data={"instance_secret": "test-secret"}),
+            return_value=TelemetryResponse(
+                ok=True, data={"instance_secret": "test-secret"}
+            ),
         ),
     ):
         result = run_telemetry_cycle()
@@ -728,7 +814,7 @@ def test_corrupt_buffer_window_logs_before_delete(telemetry_buffer_dir):
     state.save(update_fields=["instance_secret"])
 
     telemetry_buffer_dir.mkdir(parents=True, exist_ok=True)
-    corrupt_window = telemetry_buffer_dir / "corrupt.json"
+    corrupt_window = telemetry_buffer_dir / f"{state.instance_id}_corrupt.json"
     corrupt_window.write_text('{"instance_id": "not-a-uuid"}', encoding="utf-8")
 
     with patch("tfc.deployment_telemetry.sender.logger.warning") as warning:

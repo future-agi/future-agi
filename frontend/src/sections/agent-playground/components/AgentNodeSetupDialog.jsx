@@ -12,7 +12,7 @@ import {
 import LoadingButton from "@mui/lab/LoadingButton";
 import PropTypes from "prop-types";
 import React from "react";
-import { paths } from "src/routes/paths";
+import { PLAYGROUND_AGENTS_PATH } from "../agentsTabs";
 import { AGENT_NODE_AVAILABILITY } from "../hooks/useAgentNodeAvailability";
 
 // Copy per availability state (PRD r1.1 layout sketch + AC-05). Never names
@@ -96,7 +96,7 @@ export default function AgentNodeSetupDialog({
           </Stack>
           {isEmpty && (
             <Link
-              href={paths.dashboard.agents}
+              href={PLAYGROUND_AGENTS_PATH}
               target="_blank"
               rel="noopener noreferrer"
               underline="hover"

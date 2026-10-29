@@ -1,7 +1,6 @@
 """Bounded, version-bound F6 candidate window for one claimed cohort."""
 
 import json
-import math
 from collections import defaultdict
 
 from django.db import transaction
@@ -21,10 +20,7 @@ from tracer.queries.grouping import (
     export_grouping_snapshot,
 )
 from tracer.services.grouping.control import GroupingConflict
-from tracer.services.grouping.feature_store import (
-    GroupingFeatureStore,
-    probe_bucket_keys,
-)
+from tracer.services.grouping.feature_store import GroupingFeatureStore
 from tracer.services.grouping.sampling import (
     MAX_ISSUE_EVIDENCE_MEMBERS,
     membership_binding,
@@ -34,7 +30,6 @@ MAX_CANDIDATE_ISSUES = 20
 MAX_MEMBERS_PER_ISSUE = 16
 MAX_CANDIDATE_MEMBERS = 64
 MAX_CONTEXT_BYTES = 8 * 1024 * 1024
-MAX_INDEX_HITS = 512
 MAX_CONSTRAINTS = 1000
 NEIGHBOURS_PER_VIEW = 20
 RRF_K = 60
@@ -63,76 +58,44 @@ def _receipt(row: TraceGroupingFeature) -> dict:
     }
 
 
-def _checked_vector(row: dict) -> tuple[float, ...]:
-    vector = row["vector"]
-    if (
-        row["dimension"] != 384
-        or not isinstance(vector, (list, tuple))
-        or len(vector) != 384
-        or any(
-            type(value) not in (int, float) or not math.isfinite(value)
-            for value in vector
-        )
-        or math.hypot(*vector) <= 0
-    ):
-        raise GroupingConflict("candidate vector is invalid")
-    return tuple(vector)
+def _usable(
+    pending_id: str,
+    candidate_id: str,
+    eligible_ids: set[str],
+    blocked_pairs: set[tuple[str, str]],
+) -> bool:
+    return (
+        candidate_id != pending_id
+        and candidate_id in eligible_ids
+        and (pending_id, candidate_id) not in blocked_pairs
+    )
 
 
 def rank_f6_occurrences(
     *,
-    pending_features: list[dict],
-    candidate_features: list[dict],
+    nearest: dict[tuple[str, str], list[str]],
+    eligible_ids: set[str],
     blocked_pairs: set[tuple[str, str]],
 ) -> list[tuple[str, float]]:
-    """F6 cosine top-20/view and RRF(60), before the issue window cap.
+    """F6 top-20/view and RRF(60), before the issue window cap.
 
-    The caller supplies only live, same-scope, source-bound ready features. A
-    pair block is directional here because an issue exclusion may apply to one
-    pending occurrence but not another; cannot-links are expanded both ways.
+    ``nearest`` holds each pending view's candidates in exact cosine order, ties
+    broken by id. Only eligible, unblocked candidates take a rank. A pair block
+    is directional because an issue exclusion may apply to one pending
+    occurrence but not another; cannot-links are expanded both ways.
     """
-    candidate_views = defaultdict(dict)
-    for row in candidate_features:
-        if row["view"] in VIEWS:
-            candidate_views[row["view"]][row["occurrence_id"]] = _checked_vector(row)
     scores = defaultdict(float)
-    for pending in sorted(
-        pending_features, key=lambda row: (row["occurrence_id"], row["view"])
-    ):
-        view = pending["view"]
+    for (pending_id, view), candidates in sorted(nearest.items()):
         if view not in VIEWS:
             continue
-        source_id = pending["occurrence_id"]
-        vector = _checked_vector(pending)
-        norm = math.hypot(*vector)
-        ranked = []
-        for candidate_id, other in candidate_views[view].items():
-            if candidate_id == source_id or (source_id, candidate_id) in blocked_pairs:
-                continue
-            similarity = math.fsum(
-                a * b for a, b in zip(vector, other, strict=True)
-            ) / (norm * math.hypot(*other))
-            ranked.append((candidate_id, max(-1.0, min(1.0, similarity))))
-        ranked.sort(key=lambda item: (-item[1], item[0]))
-        for rank, (candidate_id, _) in enumerate(ranked[:NEIGHBOURS_PER_VIEW], start=1):
+        ranked = [
+            candidate_id
+            for candidate_id in candidates
+            if _usable(pending_id, candidate_id, eligible_ids, blocked_pairs)
+        ]
+        for rank, candidate_id in enumerate(ranked[:NEIGHBOURS_PER_VIEW], start=1):
             scores[candidate_id] += 1 / (RRF_K + rank)
     return sorted(scores.items(), key=lambda item: (-item[1], item[0]))
-
-
-def _read_vectors_bounded(store, *, scope, receipts: list[dict]) -> list[dict]:
-    # The store bounds each exact ClickHouse read to 800 receipts. Rank input
-    # may contain 512 index hits with two views, so preserve that bound in
-    # chunks rather than truncate candidates before cosine ranking.
-    output = []
-    for offset in range(0, len(receipts), 800):
-        output.extend(
-            store.read_vectors(
-                organization_id=scope.organization_id,
-                project_id=scope.project_id,
-                receipts=receipts[offset : offset + 800],
-            )
-        )
-    return output
 
 
 def build_claim_context(
@@ -170,107 +133,6 @@ def build_claim_context(
             raise GroupingConflict("claimed feature source is stale")
     if any("semantics" not in by_occurrence[item] for item in pending_ids):
         raise GroupingConflict("claimed cohort lacks semantic F6 views")
-    store = GroupingFeatureStore()
-    neighbor_ids = set()
-    for finding_id in sorted(pending_ids):
-        probes = probe_bucket_keys(
-            [_receipt(item) for item in by_occurrence[finding_id].values()]
-        )
-        neighbor_ids.update(
-            store.candidate_occurrences(
-                organization_id=scope.organization_id,
-                project_id=scope.project_id,
-                bucket_keys=probes,
-            )
-        )
-        if len(neighbor_ids) > MAX_INDEX_HITS:
-            raise GroupingConflict("candidate index exceeds bounded window")
-    hit_findings = list(
-        _live_findings(
-            TraceInvestigationFinding.no_workspace_objects.filter(
-                id__in=neighbor_ids,
-                report__project_id=scope.project_id,
-                cluster_id__isnull=False,
-            )
-        ).select_related("report")
-    )
-    hit_by_id = {str(item.id): item for item in hit_findings}
-    candidate_states = list(
-        TraceGroupingIssueState.no_workspace_objects.select_related("cluster")
-        .filter(
-            scope=scope,
-            retired=False,
-            dirty=False,
-            cluster__deleted=False,
-            cluster_id__in={item.cluster_id for item in hit_findings},
-        )
-        .order_by("cluster_id")
-    )
-    state_by_issue = {str(item.cluster_id): item for item in candidate_states}
-    hit_by_issue = defaultdict(list)
-    for finding in hit_findings:
-        issue_id = str(finding.cluster_id)
-        if issue_id in state_by_issue:
-            hit_by_issue[issue_id].append(finding)
-    hit_ids = {str(item.id) for members in hit_by_issue.values() for item in members}
-    hard_constraints = list(
-        TraceGroupingConstraint.no_workspace_objects.filter(scope=scope)
-        .filter(
-            Q(
-                kind="exclude_issue",
-                first_finding_id__in=pending_ids,
-                issue_id__in=state_by_issue,
-            )
-            | Q(
-                kind="cannot_link",
-                first_finding_id__in=pending_ids,
-                second_finding__cluster_id__in=state_by_issue,
-            )
-            | Q(
-                kind="cannot_link",
-                second_finding_id__in=pending_ids,
-                first_finding__cluster_id__in=state_by_issue,
-            )
-        )
-        .select_related("first_finding", "second_finding")
-        .order_by("id")[: MAX_CONSTRAINTS + 1]
-    )
-    if len(hard_constraints) > MAX_CONSTRAINTS:
-        raise GroupingConflict("candidate hard-constraint window exceeds bound")
-    blocked_issue_pairs = set()
-    for rule in hard_constraints:
-        if rule.kind == "exclude_issue":
-            blocked_issue_pairs.add((str(rule.first_finding_id), str(rule.issue_id)))
-        elif str(rule.first_finding_id) in pending_ids and rule.second_finding_id:
-            blocked_issue_pairs.add(
-                (str(rule.first_finding_id), str(rule.second_finding.cluster_id))
-            )
-        elif rule.second_finding_id and str(rule.second_finding_id) in pending_ids:
-            blocked_issue_pairs.add(
-                (str(rule.second_finding_id), str(rule.first_finding.cluster_id))
-            )
-    blocked_pairs = {
-        (pending_id, str(finding.id))
-        for issue_id, members in hit_by_issue.items()
-        for finding in members
-        for pending_id in pending_ids
-        if (pending_id, issue_id) in blocked_issue_pairs
-    }
-    hit_reports = {}
-    for members in hit_by_issue.values():
-        for finding in members:
-            report_id = str(finding.report_id)
-            if report_id not in hit_reports:
-                hit_reports[report_id] = pending_reports.get(
-                    report_id
-                ) or export_grouping_snapshot(report=finding.report)
-    hit_receipts = list(
-        TraceGroupingFeature.no_workspace_objects.filter(
-            finding_id__in=hit_ids, job__state="ready"
-        )
-        .select_related("finding")
-        .order_by("finding_id", "view", "id")
-    )
     pending_identity = {
         (row.model, row.model_revision, row.serving_release, row.dimension)
         for row in receipts
@@ -278,47 +140,210 @@ def build_claim_context(
     if len(pending_identity) != 1:
         raise GroupingConflict("claimed feature model identity is ambiguous")
     identity = next(iter(pending_identity))
-    hit_feature_map = defaultdict(dict)
-    ineligible_issues = set()
-    for row in hit_receipts:
-        issue_id = str(hit_by_id[str(row.finding_id)].cluster_id)
-        report = hit_reports[str(row.finding.report_id)]
-        if (
-            row.view not in VIEWS
-            or row.view in hit_feature_map[str(row.finding_id)]
-            or row.source_digest != canonical_grouping_source_digest(report)
-            or row.evidence_revision != report["report"]["evidence_digest"]
-            or (row.model, row.model_revision, row.serving_release, row.dimension)
-            != identity
-        ):
-            ineligible_issues.add(issue_id)
-        else:
-            hit_feature_map[str(row.finding_id)][row.view] = row
-    for issue_id, members in hit_by_issue.items():
-        if any("semantics" not in hit_feature_map[str(item.id)] for item in members):
-            ineligible_issues.add(issue_id)
-    eligible_hit_receipts = [
-        _receipt(row)
-        for row in hit_receipts
-        if str(hit_by_id[str(row.finding_id)].cluster_id) not in ineligible_issues
-    ]
-    pending_vectors = _read_vectors_bounded(
-        store, scope=scope, receipts=[_receipt(row) for row in receipts]
+    store = GroupingFeatureStore()
+    # Exact nearest neighbours over the scope's groupable features. Only
+    # features comparable with the cohort's are candidates, so another model
+    # or a stale evidence revision cannot fill the top-K. Each pending view
+    # fetches twice the ranked window. Hard constraints and ineligible issues
+    # are known only once the hits are read, so a full list left with fewer
+    # than 20 usable candidates is fetched again without those issues, until
+    # 20 remain or the candidates run out.
+    model, model_revision, serving_release, dimension = identity
+    eligible_receipts = list(
+        TraceGroupingFeature.no_workspace_objects.filter(
+            job__state="ready",
+            model=model,
+            model_revision=model_revision,
+            serving_release=serving_release,
+            dimension=dimension,
+            evidence_revision=F("finding__report__evidence_digest"),
+            finding__in=_live_findings(
+                TraceInvestigationFinding.no_workspace_objects.filter(
+                    report__project_id=scope.project_id,
+                    cluster__deleted=False,
+                    cluster__issue_state__scope=scope,
+                    cluster__issue_state__retired=False,
+                    cluster__issue_state__dirty=False,
+                )
+            ),
+        ).values("view", "feature_digest", "finding_id", "finding__cluster_id")
     )
-    hit_vectors = _read_vectors_bounded(
-        store, scope=scope, receipts=eligible_hit_receipts
-    )
-    if any(
-        (row["model"], row["model_revision"], row["serving_release"], row["dimension"])
-        != identity
-        for row in [*pending_vectors, *hit_vectors]
-    ):
-        raise GroupingConflict(
-            "ClickHouse vector model identity differs from ready receipt"
+    limit = 2 * NEIGHBOURS_PER_VIEW
+    excluded = defaultdict(set)
+    issue_of = None
+    nearest = {}
+    seen = set()
+    retry = [_receipt(row) for row in receipts]
+    while retry:
+        groups = defaultdict(list)
+        for row in retry:
+            key = (row["occurrence_id"], row["view"])
+            # A view whose candidates run out returns no list; drop the old one.
+            nearest[key] = []
+            groups[frozenset(excluded[key])].append(row)
+        for skip, rows in groups.items():
+            candidates = eligible_receipts
+            if skip:
+                candidates = [
+                    item
+                    for item in eligible_receipts
+                    if str(item["finding__cluster_id"]) not in skip
+                ]
+            nearest.update(
+                store.candidate_occurrences(
+                    organization_id=scope.organization_id,
+                    project_id=scope.project_id,
+                    pending=rows,
+                    candidates=candidates,
+                    limit=limit,
+                )
+            )
+        seen.update(item for ranked in nearest.values() for item in ranked)
+        hit_findings = list(
+            _live_findings(
+                TraceInvestigationFinding.no_workspace_objects.filter(
+                    id__in=seen,
+                    report__project_id=scope.project_id,
+                    cluster_id__isnull=False,
+                )
+            ).select_related("report")
         )
+        hit_by_id = {str(item.id): item for item in hit_findings}
+        candidate_states = list(
+            TraceGroupingIssueState.no_workspace_objects.select_related("cluster")
+            .filter(
+                scope=scope,
+                retired=False,
+                dirty=False,
+                cluster__deleted=False,
+                cluster_id__in={item.cluster_id for item in hit_findings},
+            )
+            .order_by("cluster_id")
+        )
+        state_by_issue = {str(item.cluster_id): item for item in candidate_states}
+        hit_by_issue = defaultdict(list)
+        for finding in hit_findings:
+            issue_id = str(finding.cluster_id)
+            if issue_id in state_by_issue:
+                hit_by_issue[issue_id].append(finding)
+        hit_ids = {
+            str(item.id) for members in hit_by_issue.values() for item in members
+        }
+        hard_constraints = list(
+            TraceGroupingConstraint.no_workspace_objects.filter(scope=scope)
+            .filter(
+                Q(
+                    kind="exclude_issue",
+                    first_finding_id__in=pending_ids,
+                    issue_id__in=state_by_issue,
+                )
+                | Q(
+                    kind="cannot_link",
+                    first_finding_id__in=pending_ids,
+                    second_finding__cluster_id__in=state_by_issue,
+                )
+                | Q(
+                    kind="cannot_link",
+                    second_finding_id__in=pending_ids,
+                    first_finding__cluster_id__in=state_by_issue,
+                )
+            )
+            .select_related("first_finding", "second_finding")
+            .order_by("id")[: MAX_CONSTRAINTS + 1]
+        )
+        if len(hard_constraints) > MAX_CONSTRAINTS:
+            raise GroupingConflict("candidate hard-constraint window exceeds bound")
+        blocked_issue_pairs = set()
+        for rule in hard_constraints:
+            if rule.kind == "exclude_issue":
+                blocked_issue_pairs.add(
+                    (str(rule.first_finding_id), str(rule.issue_id))
+                )
+            elif str(rule.first_finding_id) in pending_ids and rule.second_finding_id:
+                blocked_issue_pairs.add(
+                    (str(rule.first_finding_id), str(rule.second_finding.cluster_id))
+                )
+            elif rule.second_finding_id and str(rule.second_finding_id) in pending_ids:
+                blocked_issue_pairs.add(
+                    (str(rule.second_finding_id), str(rule.first_finding.cluster_id))
+                )
+        blocked_pairs = {
+            (pending_id, str(finding.id))
+            for issue_id, members in hit_by_issue.items()
+            for finding in members
+            for pending_id in pending_ids
+            if (pending_id, issue_id) in blocked_issue_pairs
+        }
+        hit_receipts = list(
+            TraceGroupingFeature.no_workspace_objects.filter(
+                finding_id__in=hit_ids, job__state="ready"
+            )
+            .select_related("finding")
+            .order_by("finding_id", "view", "id")
+        )
+        hit_feature_map = defaultdict(dict)
+        ineligible_issues = set()
+        for row in hit_receipts:
+            hit = hit_by_id[str(row.finding_id)]
+            issue_id = str(hit.cluster_id)
+            # A receipt's source digest was checked against its report's snapshot
+            # when it was written, and a re-read replaces the report and supersedes
+            # its feature job. So no snapshot export per hit: window members are
+            # exported and checked below.
+            if (
+                row.view not in VIEWS
+                or row.view in hit_feature_map[str(row.finding_id)]
+                or row.evidence_revision != hit.report.evidence_digest
+                or (row.model, row.model_revision, row.serving_release, row.dimension)
+                != identity
+            ):
+                ineligible_issues.add(issue_id)
+            else:
+                hit_feature_map[str(row.finding_id)][row.view] = row
+        for issue_id, members in hit_by_issue.items():
+            if any(
+                "semantics" not in hit_feature_map[str(item.id)] for item in members
+            ):
+                ineligible_issues.add(issue_id)
+        eligible_ids = {
+            str(item.id)
+            for issue_id, members in hit_by_issue.items()
+            if issue_id not in ineligible_issues
+            for item in members
+        }
+        retry = []
+        for row in receipts:
+            pending_id = str(row.finding_id)
+            key = (pending_id, row.view)
+            ranked = nearest.get(key, [])
+            unusable = [
+                item
+                for item in ranked
+                if not _usable(pending_id, item, eligible_ids, blocked_pairs)
+            ]
+            if (
+                len(ranked) < limit
+                or len(ranked) - len(unusable) >= NEIGHBOURS_PER_VIEW
+            ):
+                continue
+            if issue_of is None:
+                issue_of = {
+                    str(item["finding_id"]): str(item["finding__cluster_id"])
+                    for item in eligible_receipts
+                }
+            # Self is never a candidate; every other unusable hit names an
+            # issue this list was fetched with.
+            new = {
+                issue_of[item]
+                for item in unusable
+                if item != pending_id and item in issue_of
+            }
+            if new - excluded[key]:
+                excluded[key] |= new
+                retry.append(_receipt(row))
     ranked_hits = rank_f6_occurrences(
-        pending_features=pending_vectors,
-        candidate_features=hit_vectors,
+        nearest=nearest,
+        eligible_ids=eligible_ids,
         blocked_pairs=blocked_pairs,
     )
     issue_scores = {}
@@ -489,6 +514,15 @@ def build_claim_context(
         project_id=scope.project_id,
         receipts=list(receipt_map.values()),
     )
+    # One read covers the pending vectors and every offered member.
+    if any(
+        (row["model"], row["model_revision"], row["serving_release"], row["dimension"])
+        != identity
+        for row in features
+    ):
+        raise GroupingConflict(
+            "ClickHouse vector model identity differs from ready receipt"
+        )
     feature_by_id = {row["occurrence_id"]: row for row in features}
     for issue in issues:
         for member in issue["members"]:

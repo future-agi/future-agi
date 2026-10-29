@@ -267,11 +267,11 @@ func TestParseCSV(t *testing.T) {
 	}
 	for _, tt := range tests {
 		got := parseCSV(tt.input)
-		if tt.want == 0 && got != nil {
-			t.Errorf("parseCSV(%q): expected nil, got %v", tt.input, got)
+		if tt.want == 0 && !got.empty() {
+			t.Errorf("parseCSV(%q): expected an empty list, got %v", tt.input, got.exact)
 		}
-		if tt.want > 0 && len(got) != tt.want {
-			t.Errorf("parseCSV(%q): expected %d entries, got %d", tt.input, tt.want, len(got))
+		if tt.want > 0 && len(got.exact) != tt.want {
+			t.Errorf("parseCSV(%q): expected %d entries, got %d", tt.input, tt.want, len(got.exact))
 		}
 	}
 }

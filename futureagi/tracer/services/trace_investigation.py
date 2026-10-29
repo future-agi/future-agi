@@ -14,6 +14,7 @@ from django.db import transaction
 from django.db.models import Count, Exists, F, Max, OuterRef, Q
 from django.utils import timezone
 
+from tracer.constants.grouping_versions import GROUPING_GATE_VERSION
 from tracer.models.observability_provider import ObservabilityProvider
 from tracer.models.project import Project
 from tracer.models.trace_investigation import (
@@ -1241,6 +1242,7 @@ def publish_investigation(
             recorded_at=now,
             is_current=current,
             has_issues=has_issues,
+            grouping_gate=GROUPING_GATE_VERSION,
             job=job,
             attempt=attempt,
             idempotency_key=idempotency_key,
@@ -1269,9 +1271,12 @@ def publish_investigation(
             grouping_status=grouping_status,
         )
         _persist_investigation_details(report, result)
-        if current and groupable_findings(report).exists():
-            report.grouping_status = TraceInvestigationGroupingStatus.PENDING
-            report.save(update_fields=["grouping_status", "updated_at"])
+        if groupable_findings(report).exists():
+            # An unrecovered finding is an issue even when every requirement was met.
+            report.has_issues = True
+            if current:
+                report.grouping_status = TraceInvestigationGroupingStatus.PENDING
+            report.save(update_fields=["has_issues", "grouping_status", "updated_at"])
         enqueue_grouping_features(report=report)
         transaction.on_commit(lambda report=report: charge_trace_investigation(report))
         if current:

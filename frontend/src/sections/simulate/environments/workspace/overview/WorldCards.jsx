@@ -3,15 +3,18 @@ import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import SectionCard from "../../components/SectionCard";
 import MockBadge from "../../components/MockBadge";
-import { ENV_SHAPE, OVERVIEW_COPY } from "./overview.constants";
+import { ENV_SHAPE, OVERVIEW_COPY, worldTables } from "./overview.constants";
 
 const MONO = "ui-monospace, Menlo, monospace";
 
 // The seeded rows that fill the world before the agent arrives — rebuilt every
 // task, so nothing carries over.
+
 export function SeededDataCard({ env }) {
-  const tables = env.seed?.tables || [];
-  const totalRows = tables.reduce((a, t) => a + t.rows, 0);
+  const tables = worldTables(env);
+  // A table the API sent without a row count adds nothing and shows no count.
+  const hasRows = (t) => Number.isFinite(t.rows);
+  const totalRows = tables.filter(hasRows).reduce((a, t) => a + t.rows, 0);
   return (
     <SectionCard
       title={OVERVIEW_COPY.seededTitle}
@@ -26,9 +29,11 @@ export function SeededDataCard({ env }) {
               <Typography sx={{ typography: "s2", fontWeight: "fontWeightSemiBold", fontFamily: MONO }}>{t.name}</Typography>
               {t.note && <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{t.note}</Typography>}
             </Box>
-            <Typography sx={{ typography: "s2", fontWeight: "fontWeightBold", fontVariantNumeric: "tabular-nums" }}>
-              {t.rows.toLocaleString()}
-            </Typography>
+            {hasRows(t) && (
+              <Typography sx={{ typography: "s2", fontWeight: "fontWeightBold", fontVariantNumeric: "tabular-nums" }}>
+                {t.rows.toLocaleString()}
+              </Typography>
+            )}
           </Stack>
         ))}
       </Stack>

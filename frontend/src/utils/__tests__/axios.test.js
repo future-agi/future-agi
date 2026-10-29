@@ -163,8 +163,72 @@ describe("axios response shape", () => {
       rejected({
         name: "ApiContractValidationError",
         message: "source: Required",
-        config: { url: "/simulate/api/harness-jobs/preflight/", method: "post" },
+        config: {
+          url: "/simulate/api/harness-jobs/preflight/",
+          method: "post",
+        },
       }),
     ).rejects.toMatchObject({ message: "source: Required" });
+  });
+
+  it("keeps a signed-out viewer on a shared link when it needs sign-in", async () => {
+    const rejected = axiosInstance.interceptors.response.handlers.find(
+      (handler) => handler.rejected,
+    )?.rejected;
+    window.history.pushState({}, "", "/shared/share-token");
+    localStorage.removeItem("refreshToken");
+    localStorage.removeItem("rememberMe");
+    const config = { url: "/tracer/shared/share-token/", method: "get" };
+    const error = {
+      config,
+      response: {
+        status: 401,
+        config,
+        data: { status: false, message: "Authentication required" },
+      },
+    };
+
+    await expect(rejected(error)).rejects.toMatchObject({ statusCode: 401 });
+    expect(window.location.pathname).toBe("/shared/share-token");
+    window.history.pushState({}, "", "/");
+  });
+
+  it("drops a dead session and retries a public shared link without it", async () => {
+    const rejected = axiosInstance.interceptors.response.handlers.find(
+      (handler) => handler.rejected,
+    )?.rejected;
+    window.history.pushState({}, "", "/shared/share-token");
+    localStorage.setItem("accessToken", "stale");
+    localStorage.removeItem("refreshToken");
+    localStorage.removeItem("rememberMe");
+    const sent = [];
+    const config = {
+      url: "/tracer/shared/share-token/",
+      method: "get",
+      headers: { Authorization: "Bearer stale" },
+      adapter: async (retried) => {
+        sent.push(retried.headers?.Authorization ?? null);
+        return {
+          data: { resource_type: "error_feed_issue" },
+          status: 200,
+          statusText: "OK",
+          headers: {},
+          config: retried,
+        };
+      },
+    };
+    const error = {
+      config,
+      response: { status: 401, config, data: { status: false } },
+    };
+
+    try {
+      const response = await rejected(error);
+      expect(response.data).toEqual({ resource_type: "error_feed_issue" });
+      expect(sent).toEqual([null]);
+      expect(localStorage.getItem("accessToken")).toBeNull();
+    } finally {
+      window.history.pushState({}, "", "/");
+    }
   });
 });

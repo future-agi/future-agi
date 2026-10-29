@@ -23,7 +23,7 @@ import { containerEnvironment, gatewayFile, mockFile, requiredMockValues, requir
 
 // docker-compose.yml app: the gateway, the API it syncs from and Temporal share the container.
 const STANDALONE: MockTopology = { gateway: 'http://127.0.0.1:8080', controlPlane: 'http://127.0.0.1:8000',
-  temporal: '127.0.0.1:7233' };
+  temporal: '127.0.0.1:7233', settingsModule: 'tfc.settings.settings' };
 
 export function validateStandaloneAppEnvironment(env: Record<string, string>, evalBackground: boolean): void {
   // One container runs the gateway and the workers, so the strict checks always apply.

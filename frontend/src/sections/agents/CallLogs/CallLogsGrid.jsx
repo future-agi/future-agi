@@ -48,6 +48,7 @@ import {
   pagerMetadataEquals,
 } from "src/sections/projects/LLMTracing/listPagerState";
 import CursorGridPagination from "src/sections/projects/LLMTracing/CursorGridPagination";
+import { useUrlState } from "src/routes/hooks/use-url-state";
 
 const CELL_HEIGHT_MAP = { Short: 40, Medium: 52, Large: 68, "Extra Large": 88 };
 
@@ -136,6 +137,7 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
   );
   const agTheme = useAgThemeWith(gridThemeParams);
   const queryClient = useQueryClient();
+  const [, setEvalFocus, removeEvalFocus] = useUrlState("evalFocus", false);
   const [page, setPage] = useState(1);
   const [pageLimit, setPageLimit] = useState(OBSERVE_LIST_DEFAULT_PAGE_SIZE);
   const [pagerState, setPagerState] = useState({
@@ -844,6 +846,18 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
                   )
             }
             getRowStyle={getRowStyle}
+            onCellClicked={(params) => {
+              const colDef = params?.column?.getColDef?.();
+              const sourceColumn = colDef?.context?.sourceColumn;
+              const isEvalCell =
+                sourceColumn?.groupBy === "Evaluation Metrics" ||
+                String(colDef?.field || "").startsWith("eval_outputs.");
+              if (isEvalCell) {
+                setEvalFocus(true);
+              } else {
+                removeEvalFocus();
+              }
+            }}
             onRowClicked={(params) => {
               onRowClicked(params, page, pageLimit);
             }}

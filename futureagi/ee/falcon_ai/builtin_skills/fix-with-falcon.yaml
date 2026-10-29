@@ -18,23 +18,15 @@ tool_names:
 - get_trace
 - get_span
 - read_trace_span
-- get_span_tree
 - get_trace_error_analysis
-- get_trace_timeline
 - list_spans
-- list_trace_scores
-- get_eval_log_detail
-- get_evaluation
 - get_eval_template
-- trigger_error_localization
-- get_error_localization_status
-- get_error_localization_results
+- list_eval_templates
 - list_error_clusters
-- get_error_cluster_detail
+- get_error_cluster
 - get_session
-- get_session_analytics
 - get_prompt_template
-- get_prompt_version
+- list_prompt_versions
 instructions: |
   You are Falcon in fix mode. The user's AI agent produced a trace that got low eval scores
   (or a specific eval failed). Your ONLY job is to figure out what the agent did wrong and
@@ -53,8 +45,8 @@ instructions: |
   - For eval-level context (has `eval_log_id` or `cell_id`): the user already pointed at a
     failing eval. Skip the gate — trust the context.
   - For span-level or trace-level context without a listed failure: call
-    `list_trace_scores(trace_id=...)` first. If EVERY eval has score >= the passing
-    threshold, STOP. Respond:
+    `get_trace(id=...)` first and read its eval results. If EVERY eval has score >= the
+    passing threshold, STOP. Respond:
       "This trace is passing all evals (score summary: [list them]). I don't see a concrete
       failure to fix. Is there a specific output or sub-flow you want me to investigate?"
     Do NOT invent problems. Do NOT propose "guardrails" or "improvements" when nothing failed.
@@ -69,13 +61,13 @@ instructions: |
 
   ### Step 2 — Pull eval-specific detail
   For each failing eval:
-  - `get_eval_log_detail(log_id=...)` — gets the exact input shown to the eval, the exact
-    output scored, the score, and the eval explanation. This is your primary evidence.
-  - If the eval operates on text and has no error_analysis yet, call
-    `trigger_error_localization(eval_log_id=...)` then `get_error_localization_results` once
-    done. The sentence-level weights tell you EXACTLY which part of the agent's output drove
-    the failure.
-  - `get_evaluation` or `get_eval_template` to confirm what the eval is actually checking.
+  - The context block carries the eval name, score, and explanation; `get_trace` / `get_span`
+    carry the eval results attached to the trace and span. Together these are your primary
+    evidence for what was scored and why.
+  - `get_trace_error_analysis(trace_id=...)` returns the stored error analysis for the trace,
+    if the error feed has already processed it. Use it; don't re-derive.
+  - `get_eval_template` (find it via `list_eval_templates`) to confirm what the eval is
+    actually checking.
 
   ### Step 3 — Read the agent's actual work (MANDATORY before proposing any fix)
   You MUST call `read_trace_span(trace_id, span_id, exact=True)` on the span that produced
@@ -90,7 +82,7 @@ instructions: |
 
   ### Step 4 — Look for patterns (optional)
   If the same failure mode is recurring, `list_error_clusters(project_id=...)` and
-  `get_error_cluster_detail` may already have a root-cause write-up. Use it; don't re-derive.
+  `get_error_cluster` may already have a root-cause write-up. Use it; don't re-derive.
 
   ## THE FIX — WHAT TO RECOMMEND
 
@@ -171,15 +163,12 @@ example_trajectories:
 
     Investigate and propose a concrete fix.
   steps:
-  - tool: get_eval_log_detail
+  - tool: explore_trace_legacy
     params:
-      log_id: log-abc-1
-  - tool: trigger_error_localization
+      trace_id: trace-xyz-1
+  - tool: get_trace_error_analysis
     params:
-      eval_log_id: log-abc-1
-  - tool: get_error_localization_results
-    params:
-      task_id: <task_id>
+      trace_id: trace-xyz-1
   - tool: read_trace_span
     params:
       trace_id: trace-xyz-1
@@ -194,9 +183,9 @@ example_trajectories:
 
     Investigate and propose a concrete fix.
   steps:
-  - tool: list_trace_scores
+  - tool: get_trace
     params:
-      trace_id: trace-xyz-3
+      id: trace-xyz-3
   - tool: explore_trace_legacy
     params:
       trace_id: trace-xyz-3

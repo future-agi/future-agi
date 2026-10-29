@@ -475,6 +475,51 @@ def _preprocess_dead_air_detection(inputs):
     return inputs
 
 
+@register_preprocessor("audio_signal_metrics")
+def _preprocess_audio_signal_metrics(inputs):
+    audio_value = inputs.get("input_audio")
+    if audio_value is None or audio_value == "":
+        inputs["_audio_metrics_error"] = "Missing input_audio"
+        return inputs
+
+    try:
+        from tfc.utils.storage import audio_bytes_from_url_or_base64
+    except ImportError as exc:
+        logger.warning(
+            "audio_metrics_preprocess_import_failed", error=str(exc), exc_info=True
+        )
+        inputs["_audio_metrics_error"] = f"Audio loader unavailable: {exc}"
+        return inputs
+
+    try:
+        audio_bytes = audio_bytes_from_url_or_base64(
+            audio_value,
+            min_duration_seconds=None,
+            pad_silence=False,
+        )
+    except Exception as exc:
+        logger.warning(
+            "audio_metrics_preprocess_load_failed", error=str(exc), exc_info=True
+        )
+        inputs["_audio_metrics_error"] = f"Could not load audio: {exc}"
+        return inputs
+
+    try:
+        from evaluations.engine.audio_metrics import analyze_audio
+
+        metrics = analyze_audio(audio_bytes)
+    except (ValueError, RuntimeError, EOFError, OSError) as exc:
+        logger.warning(
+            "audio_metrics_preprocess_analysis_failed", error=str(exc), exc_info=True
+        )
+        inputs["_audio_metrics_error"] = f"Could not analyse audio: {exc}"
+        return inputs
+
+    inputs["_audio_average_pitch_hz"] = metrics.average_pitch_hz
+    inputs["_audio_estimated_snr_db"] = metrics.estimated_snr_db
+    return inputs
+
+
 @register_preprocessor("meteor_score")
 def _preprocess_meteor(inputs):
     """Compute METEOR via NLTK on the backend, inject the score as a kwarg.

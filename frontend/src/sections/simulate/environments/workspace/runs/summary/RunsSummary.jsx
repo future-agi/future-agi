@@ -13,9 +13,14 @@ import SummaryGraph from "./SummaryGraph";
 import SummaryLegend from "./SummaryLegend";
 import SummaryTable from "./SummaryTable";
 import { countCoveredScenarios } from "./summaryData";
+import RunCompare from "./RunCompare";
+import { COMPARE_COPY } from "../../workspace.constants";
+
+const RUN_COMPARE_ENABLED = false;
 
 // The Runs tab: every run of the environment as one summary — the eval-score
-// trend graph over the runs table. Choosing a winner is a later phase,
+// trend graph over the runs table. With versioning on, two finished runs can
+// be ticked and compared. Choosing a winner is a later phase,
 // surfaced as "coming soon" so the shell matches the design without faking the
 // behaviour.
 // Title, legend, graph and the runs bar (~440px) plus ~320px of table rows.
@@ -25,10 +30,30 @@ const DEFAULT_SHOWN_EVALS = 5;
 const GRAPH_RUN_OPTIONS = [1, 2, 3, 4, 5];
 const DEFAULT_GRAPH_RUNS = 1;
 
-export default function RunsSummary({ env, envState, onOpenRun, onGo }) {
+export default function RunsSummary({
+  env,
+  envState,
+  scenarioCount: scenarioCountProp,
+  onOpenRun,
+  onGo,
+}) {
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(RUNS_PAGE_SIZE);
   const [graphRuns, setGraphRuns] = useState(DEFAULT_GRAPH_RUNS);
+  // The selected rows themselves, so a selection survives paging.
+  const [selected, setSelected] = useState([]);
+  const [comparing, setComparing] = useState(false);
+  // TODO: compare is hidden until its place in the product is decided.
+  const canCompare = RUN_COMPARE_ENABLED && !!env?.versioning?.enabled;
+  const selectedIds = selected.map((r) => r.executionId);
+  const canSelect = (row) =>
+    selected.length < 2 && !!row.executionId && row.runState === "finished";
+  const toggleSelect = (row) =>
+    setSelected((prev) =>
+      prev.some((r) => r.executionId === row.executionId)
+        ? prev.filter((r) => r.executionId !== row.executionId)
+        : [...prev, row],
+    );
   const {
     rows,
     rowsChrono,
@@ -38,11 +63,20 @@ export default function RunsSummary({ env, envState, onOpenRun, onGo }) {
     coveredScenarioCount,
     isLoading,
   } = useRunsSummary(env, envState, { page, pageSize }, graphRuns);
+  // A ticked run on this page reads its latest state: one no longer finished
+  // (re-graded, say) can't be compared.
+  const live = selected.map(
+    (s) => rows.find((r) => r.executionId === s.executionId) ?? s,
+  );
+  const comparable =
+    live.length === 2 && live.every((r) => r.runState === "finished");
+  // The newer run is the one compared; the older is what it is compared with.
+  const [current, against] = [...live].sort((a, b) => b.ordinal - a.ordinal);
   // The server counts over every run of the environment; the page-local
   // fallback only serves mock runs and environments with no run-test.
   const scenarioCount =
     coveredScenarioCount ??
-    countCoveredScenarios(rows, envState.scenarios?.length ?? 0);
+    countCoveredScenarios(rows, scenarioCountProp ?? envState.scenarios?.length ?? 0);
 
   // Which eval lines to draw. Until the user picks, the first five; the last
   // one cannot be unticked (an empty chart reads as a bug, not a choice).
@@ -85,38 +119,6 @@ export default function RunsSummary({ env, envState, onOpenRun, onGo }) {
         flexDirection: "column",
       }}
     >
-      <Stack direction="row" alignItems="flex-start" spacing={2} sx={{ mb: 3, flexShrink: 0 }}>
-        <Box flex={1} minWidth={0}>
-          <Typography sx={{ typography: "m2", fontWeight: "fontWeightSemiBold" }}>
-            Simulations summary
-          </Typography>
-          <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-            {count} {count === 1 ? "run" : "runs"} · {scenarioCount}{" "}
-            {scenarioCount === 1 ? "scenario" : "scenarios"}
-          </Typography>
-        </Box>
-        <Stack direction="row" spacing={1} sx={{ flexShrink: 0 }}>
-          <Button
-            variant="outlined" size="small" onClick={() => onGo?.("evals")}
-            startIcon={<Iconify icon="solar:add-circle-linear" width={15} />}
-            sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
-          >
-            Add Evals
-          </Button>
-          <CustomTooltip show arrow size="small" title="Choosing a winner is coming soon">
-            <span>
-              <Button
-                variant="outlined" size="small" disabled
-                startIcon={<Iconify icon="solar:cup-star-linear" width={15} />}
-                sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
-              >
-                Choose winner
-              </Button>
-            </span>
-          </CustomTooltip>
-        </Stack>
-      </Stack>
-
       {/* The graph's tooltip grows down past the chart; a clipping card
           would cut it off. */}
       <SectionCard
@@ -168,13 +170,59 @@ export default function RunsSummary({ env, envState, onOpenRun, onGo }) {
 
         <SummaryGraph categories={categories} series={shownSeries} highlightedId={highlightedId} />
 
-        <Box sx={{ px: 2.5, py: 1.25, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}>
+        <Stack
+          direction="row" alignItems="center" spacing={1}
+          sx={{ px: 2.5, py: 1, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}
+        >
           <Typography sx={{ typography: "s1", fontWeight: "fontWeightSemiBold" }}>
             Runs ({count})
           </Typography>
-        </Box>
+          <Typography sx={{ typography: "s2", color: "text.secondary", flex: 1, minWidth: 0 }}>
+            across {scenarioCount} {scenarioCount === 1 ? "scenario" : "scenarios"}
+          </Typography>
+          {canCompare && (
+            <>
+              <Typography sx={{ typography: "s2", color: "text.secondary", flexShrink: 0 }}>
+                {selected.length ? COMPARE_COPY.picked(selected.length) : COMPARE_COPY.pick}
+              </Typography>
+              {selected.length > 0 && (
+                <Button size="small" onClick={() => setSelected([])} sx={{ typography: "s2", flexShrink: 0 }}>
+                  {COMPARE_COPY.clear}
+                </Button>
+              )}
+              <Button
+                variant="outlined" size="small" disabled={!comparable}
+                onClick={() => setComparing(true)}
+                sx={{ typography: "s2", fontWeight: "fontWeightBold", flexShrink: 0 }}
+              >
+                {COMPARE_COPY.compare}
+              </Button>
+            </>
+          )}
+          <Button
+            variant="outlined" size="small" onClick={() => onGo?.("evals")}
+            startIcon={<Iconify icon="solar:add-circle-linear" width={15} />}
+            sx={{ typography: "s2", fontWeight: "fontWeightBold", flexShrink: 0 }}
+          >
+            Add Evals
+          </Button>
+          <CustomTooltip show arrow size="small" title="Choosing a winner is coming soon">
+            <span>
+              <Button
+                variant="outlined" size="small" disabled
+                startIcon={<Iconify icon="solar:cup-star-linear" width={15} />}
+                sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
+              >
+                Choose winner
+              </Button>
+            </span>
+          </CustomTooltip>
+        </Stack>
 
-        <SummaryTable rows={rows} evals={evals} onOpenRun={onOpenRun} />
+        <SummaryTable
+          rows={rows} evals={evals} onOpenRun={onOpenRun}
+          {...(canCompare && { selectedIds, canSelect, onToggleSelect: toggleSelect })}
+        />
         {count > RUNS_PAGE_SIZE && (
           <Box sx={{ flexShrink: 0, borderTop: "1px solid", borderColor: "divider" }}>
             <DataTablePagination
@@ -190,13 +238,20 @@ export default function RunsSummary({ env, envState, onOpenRun, onGo }) {
           </Box>
         )}
       </SectionCard>
+      {selected.length === 2 && (
+        <RunCompare
+          open={comparing} onClose={() => setComparing(false)}
+          env={env} current={current} against={against}
+        />
+      )}
     </Box>
   );
 }
 
 RunsSummary.propTypes = {
-  env: PropTypes.shape({ id: PropTypes.string, name: PropTypes.string }).isRequired,
+  env: PropTypes.shape({ id: PropTypes.string, name: PropTypes.string, versioning: PropTypes.object }).isRequired,
   envState: PropTypes.shape({ scenarios: PropTypes.array }).isRequired,
+  scenarioCount: PropTypes.number,
   onOpenRun: PropTypes.func,
   onGo: PropTypes.func,
 };

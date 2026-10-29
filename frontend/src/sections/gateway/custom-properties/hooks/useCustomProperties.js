@@ -8,7 +8,7 @@ import axios, { endpoints } from "src/utils/axios";
 
 const CP_KEY = "agentcc-custom-properties";
 
-export function useCustomProperties(params = {}) {
+export function useCustomProperties(params = {}, options = {}) {
   return useQuery({
     queryKey: [CP_KEY, params],
     queryFn: async () => {
@@ -20,6 +20,7 @@ export function useCustomProperties(params = {}) {
     },
     staleTime: 30000,
     placeholderData: keepPreviousData,
+    ...options,
   });
 }
 

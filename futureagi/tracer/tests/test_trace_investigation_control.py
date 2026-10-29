@@ -6,6 +6,7 @@ import pytest
 from django.test import override_settings
 from django.utils import timezone
 
+from tracer.constants.grouping_versions import GROUPING_GATE_VERSION
 from tracer.models.project import Project
 from tracer.models.trace_investigation import (
     TraceInvestigationAttempt,
@@ -15,7 +16,7 @@ from tracer.models.trace_investigation import (
     TraceInvestigationReport,
 )
 from tracer.models.trace_scan import TraceScanConfig, TraceScanResult
-from tracer.queries.grouping import export_grouping_snapshot
+from tracer.queries.grouping import GroupingSnapshotError, export_grouping_snapshot
 from tracer.services.trace_investigation import (
     InvestigationConflict,
     InvestigationNotFound,
@@ -452,6 +453,156 @@ def test_recovered_finding_is_retained_but_not_grouped(observe_project):
     report = TraceInvestigationReport.no_workspace_objects.get(id=receipt["report_id"])
     assert receipt["grouping_status"] == "not_required"
     assert report.findings.count() == 1
+    assert export_grouping_snapshot(report=report)["occurrences"] == []
+    # The violated requirement still makes the trace a failing one.
+    assert report.has_issues is True
+
+
+def _passing_result_with_finding(claim, *, recovery):
+    """Every requirement met, and one finding that no requirement covers."""
+    result = _result(claim)
+    result["outcome"] = "success"
+    result["requirement_checks"][0]["status"] = "satisfied"
+    result["findings"][0].update(requirement_id=None, recovery=recovery)
+    result["result_digest"] = canonical_wire_result_digest(result)
+    return result
+
+
+@override_settings(ERROR_FEED_OMEGA_DELAY_SECONDS=0)
+def test_unrecovered_finding_reaches_the_feed_without_a_violated_requirement(
+    observe_project,
+):
+    _configure(observe_project)
+    record_trace_notifications(deliveries=[_delivery(observe_project)])
+    claim = claim_due_investigations(
+        worker_id="node-1", engine_version="omega-v1", limit=1
+    )["claims"][0]
+
+    receipt = _publish(
+        idempotency_key="finding-only-publication",
+        lease_token=claim["lease_token"],
+        result=_passing_result_with_finding(claim, recovery="unrecovered"),
+    )
+
+    report = TraceInvestigationReport.no_workspace_objects.get(id=receipt["report_id"])
+    snapshot = export_grouping_snapshot(report=report)
+    assert receipt["grouping_status"] == "pending"
+    assert report.outcome == "success"
+    assert report.has_issues is True
+    assert [
+        finding["requirement_id"] for finding in snapshot["report"]["findings"]
+    ] == [None]
+    assert len(snapshot["occurrences"]) == 1
+
+
+@override_settings(ERROR_FEED_OMEGA_DELAY_SECONDS=0)
+def test_unrecovered_finding_with_an_unknown_outcome_reaches_the_feed(
+    observe_project,
+):
+    # An unhandled provider error (a rate limit, for example): no requirement
+    # could be judged, but the trace ended on an unrecovered failure.
+    _configure(observe_project)
+    record_trace_notifications(deliveries=[_delivery(observe_project)])
+    claim = claim_due_investigations(
+        worker_id="node-1", engine_version="omega-v1", limit=1
+    )["claims"][0]
+    result = _result(claim)
+    result["outcome"] = "unknown"
+    result["requirement_checks"] = []
+    result["findings"][0].update(requirement_id=None, recovery="unrecovered")
+    result["result_digest"] = canonical_wire_result_digest(result)
+
+    receipt = _publish(
+        idempotency_key="unknown-outcome-publication",
+        lease_token=claim["lease_token"],
+        result=result,
+    )
+
+    report = TraceInvestigationReport.no_workspace_objects.get(id=receipt["report_id"])
+    assert receipt["grouping_status"] == "pending"
+    assert report.grouping_gate == GROUPING_GATE_VERSION
+    assert report.has_issues is True
+    assert len(export_grouping_snapshot(report=report)["occurrences"]) == 1
+
+
+@override_settings(ERROR_FEED_OMEGA_DELAY_SECONDS=0)
+def test_report_published_before_the_gate_keeps_its_occurrences(observe_project):
+    _configure(observe_project)
+    record_trace_notifications(deliveries=[_delivery(observe_project)])
+    claim = claim_due_investigations(
+        worker_id="node-1", engine_version="omega-v1", limit=1
+    )["claims"][0]
+    result = _result(claim)
+    unjudged = deepcopy(result["findings"][0])
+    unjudged.update(
+        finding_id="finding-2",
+        statement="The agent stopped on an unhandled provider error.",
+        requirement_id=None,
+        recovery="unrecovered",
+    )
+    result["findings"].append(unjudged)
+    result["result_digest"] = canonical_wire_result_digest(result)
+    receipt = _publish(
+        idempotency_key="legacy-gate-publication",
+        lease_token=claim["lease_token"],
+        result=result,
+    )
+    report = TraceInvestigationReport.no_workspace_objects.get(id=receipt["report_id"])
+    assert len(export_grouping_snapshot(report=report)["occurrences"]) == 2
+
+    # An older report has no gate stamp: its occurrence list, and so its
+    # source digest, stay what they were when it was grouped.
+    TraceInvestigationReport.no_workspace_objects.filter(pk=report.pk).update(
+        grouping_gate=None
+    )
+    report.refresh_from_db()
+    violated = report.findings.get(finding_id="finding-1")
+    assert [
+        item["occurrence_id"]
+        for item in export_grouping_snapshot(report=report)["occurrences"]
+    ] == [str(violated.id)]
+
+
+@override_settings(ERROR_FEED_OMEGA_DELAY_SECONDS=0)
+def test_unknown_grouping_gate_fails_closed(observe_project):
+    _configure(observe_project)
+    record_trace_notifications(deliveries=[_delivery(observe_project)])
+    claim = claim_due_investigations(
+        worker_id="node-1", engine_version="omega-v1", limit=1
+    )["claims"][0]
+    receipt = _publish(
+        idempotency_key="unknown-gate-publication",
+        lease_token=claim["lease_token"],
+        result=_result(claim),
+    )
+    report = TraceInvestigationReport.no_workspace_objects.get(id=receipt["report_id"])
+    TraceInvestigationReport.no_workspace_objects.filter(pk=report.pk).update(
+        grouping_gate="unknown/v9"
+    )
+    report.refresh_from_db()
+
+    # A gate this code does not know must not be read as the legacy gate.
+    with pytest.raises(GroupingSnapshotError, match="unknown grouping gate"):
+        export_grouping_snapshot(report=report)
+
+
+@override_settings(ERROR_FEED_OMEGA_DELAY_SECONDS=0)
+def test_recovered_finding_on_a_passing_trace_is_not_an_issue(observe_project):
+    _configure(observe_project)
+    record_trace_notifications(deliveries=[_delivery(observe_project)])
+    claim = claim_due_investigations(
+        worker_id="node-1", engine_version="omega-v1", limit=1
+    )["claims"][0]
+
+    receipt = _publish(
+        idempotency_key="recovered-finding-publication",
+        lease_token=claim["lease_token"],
+        result=_passing_result_with_finding(claim, recovery="recovered"),
+    )
+
+    report = TraceInvestigationReport.no_workspace_objects.get(id=receipt["report_id"])
+    assert receipt["grouping_status"] == "not_required"
+    assert report.has_issues is None
     assert export_grouping_snapshot(report=report)["occurrences"] == []
 
 

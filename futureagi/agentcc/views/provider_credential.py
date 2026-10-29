@@ -5,7 +5,6 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
-from integrations.services.credentials import CredentialManager
 from agentcc.models.org_config import AgentccOrgConfig
 from agentcc.models.provider_credential import AgentccProviderCredential
 from agentcc.serializers.provider_credential import (
@@ -22,6 +21,7 @@ from agentcc.services.url_safety import (
     ensure_public_http_url,
     private_provider_urls_allowed,
 )
+from integrations.services.credentials import CredentialManager
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
 
@@ -285,10 +285,10 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
 
         # The saved key only ever goes where it was saved for: a caller who can
         # use the credential but not read it must not be able to redirect it.
+        uses_saved_key = saved_base_url is not None and not request.data.get("api_key")
         requested_base_url = (request.data.get("base_url") or "").rstrip("/")
         if (
-            saved_base_url is not None
-            and not request.data.get("api_key")
+            uses_saved_key
             and requested_base_url
             and requested_base_url != saved_base_url
         ):
@@ -300,7 +300,12 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
         # Raw values from request body override or fill gaps.
         base_url = (requested_base_url or base_url or "").rstrip("/")
         api_key = request.data.get("api_key") or api_key or ""
-        api_format = request.data.get("api_format") or api_format or "openai"
+        # The format decides the discovery URL and how the key is sent (the
+        # google branch puts it in the query string), so a saved key keeps the
+        # format it was saved with.
+        if not uses_saved_key:
+            api_format = request.data.get("api_format") or api_format
+        api_format = api_format or "openai"
         # Presence, not truthiness: "" is an explicit "no version segment", and
         # an `or` chain would silently swap it for the stored value.
         if "api_path_prefix" in request.data:
@@ -391,8 +396,23 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
             data = resp.json()
             return sorted(m["id"] for m in data.get("data", []))
 
-        if name in ("google", "gemini", "google_gemini") or api_format in ("gemini", "google"):
-            url = "https://generativelanguage.googleapis.com/v1beta/models"
+        if name in ("google", "gemini", "google_gemini") or api_format in (
+            "gemini",
+            "google",
+        ):
+            # base_url is a Gemini-protocol host only in the google/gemini
+            # formats. The Google preset can also be saved in the openai format
+            # against Google's OpenAI-compatible base (".../v1beta/openai"); its
+            # key is still a Google key, so it is listed at Google's own host.
+            gemini_base_url = base_url if api_format in ("gemini", "google") else ""
+            # No prefix to de-duplicate: the gateway's Gemini provider always
+            # appends "/v1beta" to the base URL (gemini/translate.go buildURL),
+            # so a base already ending in it fails there and must fail here.
+            url = _join_api_endpoint(
+                gemini_base_url or "https://generativelanguage.googleapis.com",
+                "",
+                "/v1beta/models",
+            )
             resp = http.get(
                 url,
                 params={"key": api_key},

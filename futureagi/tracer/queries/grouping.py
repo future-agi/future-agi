@@ -10,6 +10,7 @@ from typing import TypeVar
 
 from django.db.models import QuerySet
 
+from tracer.constants.grouping_versions import GROUPING_GATE_VERSION
 from tracer.models.trace_investigation import (
     InvestigationWorkload,
     TraceInvestigationAttribution,
@@ -67,9 +68,20 @@ class GroupingSnapshotError(ValueError):
 def groupable_findings(
     report: TraceInvestigationReport,
 ) -> QuerySet[TraceInvestigationFinding]:
-    """Only unresolved, evidenced task failures become Feed occurrences."""
+    """Only unresolved findings become Feed occurrences.
+
+    A report stamped with the current gate groups every unresolved finding,
+    whatever its outcome. Older reports keep the legacy gate, so the occurrence
+    list and source digest of a report never change after it is published.
+    """
     findings = TraceInvestigationFinding.no_workspace_objects.filter(report=report)
-    if report.execution_status != "completed" or report.outcome != "failure":
+    if report.grouping_gate not in (None, GROUPING_GATE_VERSION):
+        raise GroupingSnapshotError(f"unknown grouping gate {report.grouping_gate!r}")
+    if report.execution_status != "completed":
+        return findings.none()
+    if report.grouping_gate == GROUPING_GATE_VERSION:
+        return findings.filter(recovery__in=GROUPABLE_RECOVERY)
+    if report.outcome != "failure":
         return findings.none()
     return findings.filter(
         recovery__in=GROUPABLE_RECOVERY, requirement__status="violated"

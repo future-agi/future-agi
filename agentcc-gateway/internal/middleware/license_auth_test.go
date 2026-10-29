@@ -424,3 +424,19 @@ func signTestLicenseToken(t *testing.T, privateKey *rsa.PrivateKey, claims licen
 	}
 	return header + "." + payload + "." + base64.RawURLEncoding.EncodeToString(sig)
 }
+
+// The usage meter wraps the ResponseWriter, so it has to stay transparent to
+// http.ResponseController: the timeout middleware runs inside it and sets the
+// response write deadline through it.
+func TestUsageMeterResponseWriter_CarriesTheWriteDeadline(t *testing.T) {
+	inner := &deadlineRecorder{ResponseWriter: httptest.NewRecorder()}
+	w := &usageMeterResponseWriter{ResponseWriter: inner}
+
+	want := time.Now().Add(90 * time.Second)
+	if err := http.NewResponseController(w).SetWriteDeadline(want); err != nil {
+		t.Fatalf("SetWriteDeadline through the usage meter: %v", err)
+	}
+	if !inner.deadline.Equal(want) {
+		t.Errorf("deadline = %v, want %v", inner.deadline, want)
+	}
+}

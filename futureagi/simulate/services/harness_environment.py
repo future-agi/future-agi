@@ -15,14 +15,17 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from collections.abc import Iterable
 from typing import Any
 
-from django.db.models import Count, Prefetch, Q, QuerySet
+from django.db.models import Count, OuterRef, Prefetch, Q, QuerySet, Subquery
 
 from simulate.models import (
+    AgentVersion,
     HostedHarnessJob,
     HostedHarnessReceipt,
     HostedHarnessStageOutput,
+    TestExecution,
 )
 from simulate.utils.ended_reason import canonical_ended_reasons
 
@@ -56,6 +59,9 @@ _VOICE_CONNECTORS = frozenset({"livekit", "vapi", "retell", "phone"})
 AGENT_TYPE_VOICE = "voice"
 AGENT_TYPE_CHAT = "chat"
 
+RUN_KIND_ENVIRONMENT = "environment"
+RUN_KIND_SIMULATE = "simulate"
+
 # The authoring snapshots a list row counts from. Prefetched together so a page
 # of rows costs one extra query rather than one per row per kind.
 _ROW_STAGE_KINDS = ("contract", "sub_goals")
@@ -83,6 +89,13 @@ def annotate_for_list(
                 "simulation_runs",
                 filter=Q(simulation_runs__deleted=False),
                 distinct=True,
+            ),
+            last_execution_id=Subquery(
+                TestExecution.no_workspace_objects.filter(
+                    run_test=OuterRef("run_test"), deleted=False
+                )
+                .order_by("-created_at")
+                .values("id")[:1]
             ),
         )
         .prefetch_related(
@@ -120,6 +133,109 @@ def environment_row(job: HostedHarnessJob) -> dict[str, Any]:
         "last_updated": _isoformat(job.content_updated_at or job.created_at),
         "created_at": _isoformat(job.created_at),
     }
+
+
+def environment_rows(jobs: list[HostedHarnessJob]) -> list[dict[str, Any]]:
+    executions = TestExecution.no_workspace_objects.filter(
+        id__in=[job.last_execution_id for job in jobs if job.last_execution_id]
+    ).select_related("agent_version", "run_test")
+    last_runs = run_summaries(list(executions))
+    return [
+        {**environment_row(job), "last_run": last_runs.get(job.last_execution_id)}
+        for job in jobs
+    ]
+
+
+def version_ref(version: AgentVersion | None) -> dict[str, Any] | None:
+    if version is None:
+        return None
+    return {"id": str(version.id), "version_number": version.version_number}
+
+
+def run_summaries(executions: list[TestExecution]) -> dict[Any, dict[str, Any]]:
+    if not executions:
+        return {}
+    ids = [execution.id for execution in executions]
+    jobs = {
+        job.test_execution_id: job
+        for job in HostedHarnessJob.no_workspace_objects.filter(
+            test_execution_id__in=ids, deleted=False
+        ).select_related("environment")
+    }
+    counts = receipt_outcome_counts(job.id for job in jobs.values())
+    run_numbers = dict(
+        TestExecution.no_workspace_objects.filter(id__in=ids)
+        .annotate(
+            run_number=Subquery(
+                TestExecution.no_workspace_objects.filter(
+                    run_test=OuterRef("run_test"),
+                    deleted=False,
+                    created_at__lte=OuterRef("created_at"),
+                )
+                .values("run_test")
+                .annotate(total=Count("id"))
+                .values("total")
+            )
+        )
+        .values_list("id", "run_number")
+    )
+    summaries = {}
+    for execution in executions:
+        job = jobs.get(execution.id)
+        environment = (job.environment or job) if job else None
+        outcomes = counts.get(job.id, {}) if job else None
+        summaries[execution.id] = {
+            "kind": RUN_KIND_ENVIRONMENT if job else RUN_KIND_SIMULATE,
+            "test_execution_id": str(execution.id),
+            "run_test_id": str(execution.run_test_id),
+            "run_test_name": execution.run_test.name,
+            "run_number": run_numbers.get(execution.id),
+            "status": execution.status,
+            "environment": (
+                {"id": str(environment.id), "name": environment_name(environment)}
+                if environment
+                else None
+            ),
+            "agent_version": version_ref(execution.agent_version),
+            "outcome_passed": (
+                outcomes.get("passed", 0) if outcomes is not None else None
+            ),
+            "outcome_failed": (
+                outcomes.get("failed", 0) + outcomes.get("errored", 0)
+                if outcomes is not None
+                else None
+            ),
+            "outcome_skipped": (
+                outcomes.get("skipped", 0) if outcomes is not None else None
+            ),
+            "started_at": _isoformat(execution.started_at),
+            "completed_at": _isoformat(execution.completed_at),
+        }
+    return summaries
+
+
+def receipt_outcome_counts(job_ids: Iterable[uuid.UUID]) -> dict[Any, dict[str, int]]:
+    """Receipt statuses counted per job, the pass and fail a run reports.
+
+    A receipt belongs to a call through its execution, or, for a scenario-level
+    receipt, through the scenario registration. Receipts of soft-deleted calls
+    stay in the table and must not be counted.
+    """
+    job_ids = list(job_ids)
+    counts: dict[Any, dict[str, int]] = {}
+    if not job_ids:
+        return counts
+    receipt_of_deleted_call = Q(execution__call_execution__deleted=True) | Q(
+        execution__isnull=True, scenario__call_execution__deleted=True
+    )
+    for row in (
+        HostedHarnessReceipt.no_workspace_objects.filter(job_id__in=job_ids)
+        .exclude(receipt_of_deleted_call)
+        .values("job_id", "status")
+        .annotate(count=Count("id"))
+    ):
+        counts.setdefault(row["job_id"], {})[row["status"]] = row["count"]
+    return counts
 
 
 def environment_name(job: HostedHarnessJob) -> str:

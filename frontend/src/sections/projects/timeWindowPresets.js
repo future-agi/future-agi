@@ -118,6 +118,26 @@ export function observePresetDateFilter(key, now = new Date()) {
   ].map(formatDate);
 }
 
+// A stored or linked date keeps a preset's name next to the window it
+// resolved to back then. Re-resolve presets against now so "Today" means
+// today; Custom, and options the Observe dropdown does not offer, keep their
+// bounds. Returns the input itself when nothing changes, so callers can
+// compare by reference.
+export function resolvePresetDateFilter(value, now = new Date()) {
+  const fresh = observePresetDateFilter(value?.dateOption, now);
+  if (!fresh) return value;
+  const current = value.dateFilter;
+  if (
+    Array.isArray(current) &&
+    current.length === 2 &&
+    current[0] === fresh[0] &&
+    current[1] === fresh[1]
+  ) {
+    return value;
+  }
+  return { ...value, dateFilter: fresh };
+}
+
 // Presets end at startOfTomorrow so the query covers all of today; showing that
 // boundary would read as "extends into tomorrow".
 const lastCoveredInstant = (end) =>

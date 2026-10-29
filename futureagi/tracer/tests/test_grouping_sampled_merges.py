@@ -45,7 +45,11 @@ from tracer.services.grouping.sampling import (
     membership_binding,
     sample_issue_members,
 )
-from tracer.tests.test_grouping_runtime import FakeFeatureStore, _prepare_runtime
+from tracer.tests.test_grouping_runtime import (
+    FakeFeatureStore,
+    _prepare_runtime,
+    nearest_to,
+)
 
 
 def test_merge_command_shape_accepts_old_and_new_workers():
@@ -128,10 +132,9 @@ def sampled_claim(observe_project, monkeypatch):
         )
 
         class CandidateStore(FakeFeatureStore):
-            def candidate_occurrences(self, **kwargs):
-                return [
-                    key for source in sources for key in source.prototype_occurrence_ids
-                ]
+            candidate_occurrences = nearest_to(
+                [key for source in sources for key in source.prototype_occurrence_ids]
+            )
 
         monkeypatch.setattr(context, "GroupingFeatureStore", CandidateStore)
         claim = claim_grouping_work(worker_id="sample-test", limit=1)["claims"][0]
@@ -882,8 +885,7 @@ def test_reviewed_attachment_preserves_identity_and_reopens_resolved_issue(
     second = new.findings.get()
 
     class Candidates(FakeFeatureStore):
-        def candidate_occurrences(self, **kwargs):
-            return [str(first.id)]
+        candidate_occurrences = nearest_to([str(first.id)])
 
     monkeypatch.setattr(context, "GroupingFeatureStore", Candidates)
     claim = claim_grouping_work(worker_id="reviewed-attachment", limit=1)["claims"][0]

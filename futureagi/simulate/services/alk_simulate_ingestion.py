@@ -25,6 +25,7 @@ from django.utils import timezone
 from model_hub.models.evals_metric import EvalTemplate
 from simulate.models import (
     AgentDefinition,
+    AgentVersion,
     CallExecution,
     RunTest,
     Scenarios,
@@ -36,6 +37,13 @@ from simulate.models.chat_message import ChatMessageModel
 from simulate.models.test_execution import CallTranscript
 from simulate.pydantic_schemas.chat import ChatRole
 from simulate.semantics import SupportedProviders
+from simulate.services.harness_run_evals import stamp_eval_queued
+from simulate.services.scoring_status import (
+    CSAT_STAMP_KEY,
+    TRANSPORT_RUN_STATUSES,
+    locked_call_metadata_update,
+    settle_run_after_commit,
+)
 from simulate.services.test_executor import (
     TestExecutor,
     _run_simulate_evaluations_task,
@@ -67,6 +75,12 @@ _RESERVED_CALL_METADATA_KEYS = frozenset(
         "csat_dispatch_failed",
         "csat_status",
         "csat_error",
+        # The scoring clocks and the run gate read these; a caller setting them
+        # could hold a call open, time it out early, or close it unscored.
+        "eval_completed",
+        "eval_queued",
+        "eval_progress_at",
+        "csat_stamped_at",
         "alk_result_digest",
         "alk_artifact_manifest_digest",
         "alk_recording_artifacts",
@@ -264,7 +278,7 @@ def _provision_agent_definition(
     )
     if agent_definition_id:
         try:
-            agent_definition = AgentDefinition.objects.get(
+            agent_definition = AgentDefinition.no_workspace_objects.get(
                 id=agent_definition_id,
                 organization=organization,
                 workspace=workspace,
@@ -653,6 +667,13 @@ def _create_persona_scenarios_legacy(
     return created
 
 
+def resolved_agent_version(run_test: RunTest) -> AgentVersion | None:
+    # Same ladder the runner uses, so a run is filed under the version it ran.
+    from simulate.services.hosted_runner import resolve_run_agent_version
+
+    return resolve_run_agent_version(run_test)
+
+
 def create_alk_sim_test_execution(
     run_test: RunTest,
     *,
@@ -660,6 +681,7 @@ def create_alk_sim_test_execution(
     scenario_selectors: list[dict[str, str]] | None = None,
     simulator_agent: SimulatorAgent | None = None,
     harness_job_id: str | None = None,
+    agent_version: AgentVersion | None = None,
 ) -> TestExecution:
     """Create a TestExecution shell for an ALK-owned run.
 
@@ -724,7 +746,7 @@ def create_alk_sim_test_execution(
         picked_up_by_executor=True,
         simulator_agent=simulator_agent or run_test.simulator_agent,
         agent_definition=run_test.agent_definition,
-        agent_version=run_test.agent_version,
+        agent_version=agent_version or resolved_agent_version(run_test),
         execution_metadata=(
             {"harness_job_id": str(harness_job_id)} if harness_job_id else {}
         ),
@@ -811,10 +833,25 @@ def create_alk_sim_call_execution_batch(
 
         if adopted:
             CallExecution.objects.bulk_update(adopted, ["call_metadata"])
+        update_fields = []
         if new_calls:
             CallExecution.objects.bulk_create(new_calls)
             locked_execution.total_calls = len(existing_calls) + len(new_calls)
-            locked_execution.save(update_fields=["total_calls"])
+            update_fields.append("total_calls")
+        # An SDK pages its calls, so an earlier page may already have settled
+        # the run, or failed it because every call on that page failed. That
+        # verdict did not see this page: back in transport, the roll-up and
+        # the settle count it too, and completed_at is stamped again once
+        # these calls finish scoring. A stopped run stays stopped.
+        if locked_execution.status in (
+            TestExecution.ExecutionStatus.EVALUATING,
+            TestExecution.ExecutionStatus.COMPLETED,
+            TestExecution.ExecutionStatus.FAILED,
+        ):
+            locked_execution.status = TestExecution.ExecutionStatus.RUNNING
+            update_fields.append("status")
+        if update_fields:
+            locked_execution.save(update_fields=update_fields)
 
         return BatchCreateResult(
             call_execution_ids=[str(call.id) for call, _ in selected],
@@ -1026,11 +1063,6 @@ def _roll_up_external_execution(test_execution_id) -> None:
     if calls.exclude(status__in=terminal).exists():
         return
 
-    status = (
-        TestExecution.ExecutionStatus.COMPLETED
-        if calls.filter(status=CallExecution.CallStatus.COMPLETED).exists()
-        else TestExecution.ExecutionStatus.FAILED
-    )
     # Transport, not verdicts; scenario outcomes are counted on the job.
     completed_calls = calls.filter(status=CallExecution.CallStatus.COMPLETED).count()
     failed_calls = calls.filter(
@@ -1039,13 +1071,26 @@ def _roll_up_external_execution(test_execution_id) -> None:
             CallExecution.CallStatus.CANCELLED,
         )
     ).count()
-    TestExecution.objects.filter(id=test_execution_id).update(
-        status=status,
-        completed_at=timezone.now(),
-        total_calls=calls.count(),
-        completed_calls=completed_calls,
-        failed_calls=failed_calls,
+    counts = {
+        "total_calls": calls.count(),
+        "completed_calls": completed_calls,
+        "failed_calls": failed_calls,
+    }
+    # Only a run still in transport is moved, so a replayed ingest neither
+    # re-stamps nor bounces a finished run, nor overrides a cancel.
+    in_transport = TestExecution.objects.filter(
+        id=test_execution_id, status__in=TRANSPORT_RUN_STATUSES
     )
+    if completed_calls:
+        # Its calls may still be scoring: the settle decides when it is done.
+        in_transport.update(status=TestExecution.ExecutionStatus.EVALUATING, **counts)
+        settle_run_after_commit(test_execution_id)
+    else:
+        in_transport.update(
+            status=TestExecution.ExecutionStatus.FAILED,
+            completed_at=timezone.now(),
+            **counts,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1122,6 +1167,47 @@ def _build_expected_call_executions(
     return expected_calls
 
 
+def _pinned_agent_prompt(test_execution: TestExecution) -> str:
+    """The prompt the agent version a run is pinned to stands for.
+
+    A version with a credential set of its own records its prompt. A legacy one is
+    shared by every environment on its definition and runs the run's own payload, as
+    its other facts do, so the prompt that payload configures is its prompt. Without
+    one, as for an unpinned run, the definition's is read.
+    """
+    from simulate.models import HarnessAgentVersionRuntime, HostedHarnessJob
+    from simulate.services.harness_agent_versions import (
+        configured_prompt,
+        own_credential_set,
+    )
+
+    version = test_execution.agent_version
+    job_id = (test_execution.execution_metadata or {}).get("harness_job_id")
+    payload = (
+        HostedHarnessJob._base_manager.filter(id=job_id)
+        .values_list("payload", flat=True)
+        .first()
+        if job_id
+        else None
+    ) or {}
+    pins = (payload.get("metadata") or {}).get("version_pins") or {}
+    if version is None or not pins.get("agent_version_id"):
+        # Not pinned by its run, as with versioning off: the definition's, as before.
+        return ""
+    runtime = (
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_version_id=version.id
+        )
+        .only("id", "preflight_status", "credential_blob")
+        .first()
+    )
+    if runtime is not None and own_credential_set(runtime):
+        return version.description or ""
+    # TODO: a legacy version's own recorded prompt, once legacy versions record
+    # their payload.
+    return configured_prompt(payload)
+
+
 def _build_manifest_call_executions(
     test_execution: TestExecution,
     execution_manifest: list[dict[str, Any]],
@@ -1131,6 +1217,9 @@ def _build_manifest_call_executions(
     run_test = test_execution.run_test
     agent_definition = run_test.agent_definition
     selected_version = test_execution.agent_version or agent_definition.latest_version
+    agent_description = (
+        _pinned_agent_prompt(test_execution) or agent_definition.description
+    )
     call_type = (
         getattr(agent_definition, "agent_type", None)
         or CallExecution.SimulationCallType.VOICE
@@ -1177,6 +1266,7 @@ def _build_manifest_call_executions(
             row_id=row_id,
             row_data_info=row_data_info,
             call_type=call_type,
+            agent_description=agent_description,
         )
         call.call_metadata.update(
             {
@@ -1232,6 +1322,33 @@ def _resolve_simulator_agent(scenario, run_test, selected_version) -> SimulatorA
     return simulator_agent
 
 
+# What a harness call carries from preallocation (`_build_call_execution` plus the
+# manifest identity added in `_build_manifest_call_executions`). Grading and the results
+# grid read these, so a call re-run in place keeps them while its result is cleared.
+PREALLOCATED_CALL_METADATA_KEYS = (
+    "call_channel",
+    "external_runner",
+    "row_data",
+    "dataset_id",
+    "base_prompt",
+    "agent_description",
+    "agent_prompt",
+    "dynamic_prompt",
+    "language",
+    "initial_message",
+    "voice_name",
+    "conversation_speed",
+    "interrupt_sensitivity",
+    "finished_speaking_sensitivity",
+    "max_call_duration_in_minutes",
+    "initial_message_delay",
+    "system_prompt",
+    "harness_execution_key",
+    "harness_scenario_key",
+    "harness_trial_index",
+)
+
+
 def _build_call_execution(
     *,
     test_execution: TestExecution,
@@ -1243,8 +1360,11 @@ def _build_call_execution(
     row_id: str | None,
     row_data_info: dict | None,
     call_type: str = CallExecution.SimulationCallType.VOICE,
+    agent_description: str | None = None,
 ) -> CallExecution:
     row_data_info = row_data_info or {}
+    if agent_description is None:
+        agent_description = agent_definition.description
     system_prompt = row_data_info.get("dynamic_prompt", base_prompt)
     is_text = call_type == CallExecution.SimulationCallType.TEXT
     return CallExecution(
@@ -1262,8 +1382,8 @@ def _build_call_execution(
             "row_data": row_data_info.get("row_data", {}),
             "dataset_id": row_data_info.get("dataset_id"),
             "base_prompt": base_prompt,
-            "agent_description": agent_definition.description,
-            "agent_prompt": agent_definition.description,
+            "agent_description": agent_description,
+            "agent_prompt": agent_description,
             "dynamic_prompt": row_data_info.get("dynamic_prompt"),
             "language": "en",
             "initial_message": simulator_agent.initial_message,
@@ -1463,6 +1583,8 @@ def _store_alk_chat_messages(
             speaker = (seg.get("speaker_role") or "").lower()
             if speaker in {"tool_calls", "tool_call_result"}:
                 item["kind"] = speaker
+            if isinstance(seg.get("start_time_ms"), int):
+                item["start_time_ms"] = seg["start_time_ms"]
             content_items.append(item)
         joined = "\n".join(t for t in texts if t)
         return ChatMessageModel(
@@ -1891,15 +2013,26 @@ def _dispatch_csat_once(call_execution: CallExecution) -> None:
             call_execution.call_metadata = call_metadata
             call_execution.save(update_fields=["call_metadata"])
         return
-    if call_metadata.get("csat_dispatched") and call_metadata.get(
-        "csat_status"
-    ) not in {"failed"}:
+    now = timezone.now()
+
+    def _mark_pending(metadata: dict) -> bool:
+        if metadata.get("csat_dispatched") and metadata.get("csat_status") not in {
+            "failed"
+        }:
+            return False
+        metadata["csat_dispatched"] = True
+        metadata["csat_status"] = "pending"
+        metadata[CSAT_STAMP_KEY] = now.isoformat()
+        metadata.pop("csat_error", None)
+        return True
+
+    # One locked write, so a re-ingest holding an older copy cannot dispatch
+    # twice; the caller's copy is rebound so its own later save keeps it.
+    written = locked_call_metadata_update(call_execution.id, _mark_pending)
+    if written is None:
         return
-    call_metadata["csat_dispatched"] = True
-    call_metadata["csat_status"] = "pending"
-    call_metadata.pop("csat_error", None)
+    call_metadata = written
     call_execution.call_metadata = call_metadata
-    call_execution.save(update_fields=["call_metadata"])
     try:
         from simulate.tasks.alk_sim import calculate_alk_voice_csat_score
 
@@ -1930,12 +2063,23 @@ def _selected_eval_config_ids(call_execution: CallExecution) -> list[str]:
 def _dispatch_evaluations_once(
     call_execution: CallExecution, eval_config_ids: list[str] | None = None
 ) -> bool:
-    call_metadata = call_execution.call_metadata or {}
-    if call_metadata.get("eval_started"):
+    now = timezone.now()
+
+    def _claim(metadata: dict) -> bool:
+        if metadata.get("eval_started"):
+            return False
+        metadata["eval_started"] = True
+        if eval_config_ids is not None:
+            stamp_eval_queued(metadata, eval_config_ids, now=now)
+        return True
+
+    # The latch and the dispatch stamps are one locked write, so a redelivered
+    # result holding an older copy of the row cannot dispatch a second job,
+    # and the scoring clock starts from this dispatch.
+    call_metadata = locked_call_metadata_update(call_execution.id, _claim)
+    if call_metadata is None:
         return False
-    call_metadata["eval_started"] = True
     call_execution.call_metadata = call_metadata
-    call_execution.save(update_fields=["call_metadata"])
     try:
         _run_simulate_evaluations_task.apply_async(
             args=(str(call_execution.id), eval_config_ids)
@@ -1946,8 +2090,15 @@ def _dispatch_evaluations_once(
             "livekit_eval_dispatch_failed",
             call_execution_id=str(call_execution.id),
         )
-        call_metadata["eval_started"] = False
-        call_metadata["eval_dispatch_failed"] = str(dispatch_error)
-        call_execution.call_metadata = call_metadata
-        call_execution.save(update_fields=["call_metadata"])
+        error_text = str(dispatch_error)
+
+        def _release(metadata: dict) -> None:
+            metadata["eval_started"] = False
+            metadata["eval_dispatch_failed"] = error_text
+
+        # Locked too: a CSAT state or stamp written while the broker timed out
+        # must survive this write.
+        call_execution.call_metadata = locked_call_metadata_update(
+            call_execution.id, _release
+        )
         return False

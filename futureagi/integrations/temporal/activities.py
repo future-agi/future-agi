@@ -18,14 +18,14 @@ EXPORT_PLATFORMS = {"datadog", "posthog", "mixpanel", "cloud_storage", "message_
 @temporal_activity(time_limit=120, queue="tasks_s")
 def poll_active_integrations():
     """Find integration connections due for sync and dispatch sync activities."""
-    from integrations.models import ConnectionStatus, IntegrationConnection
+    from integrations.models import ConnectionStatus, IntegrationConnection, IntegrationPlatform
 
     now = datetime.now(timezone.utc)
 
     connections = IntegrationConnection.no_workspace_objects.filter(
         status=ConnectionStatus.ACTIVE,
         deleted=False,
-    ).filter(
+    ).exclude(platform=IntegrationPlatform.SLACK).filter(
         Q(last_synced_at__isnull=True)
         | Q(last_synced_at__lte=now - timedelta(seconds=60))
     )
@@ -60,6 +60,7 @@ def sync_integration_connection(connection_id: str):
     from integrations.models import (
         ConnectionStatus,
         IntegrationConnection,
+        IntegrationPlatform,
         SyncLog,
         SyncStatus,
     )
@@ -86,6 +87,11 @@ def sync_integration_connection(connection_id: str):
             connection_id=connection_id,
             status=connection.status,
         )
+        return
+
+    # Slack is an action-only destination. It has no project to import into and
+    # must remain active for alert delivery instead of entering the sync path.
+    if connection.platform == IntegrationPlatform.SLACK:
         return
 
     # Route push-based export platforms to their own handler.

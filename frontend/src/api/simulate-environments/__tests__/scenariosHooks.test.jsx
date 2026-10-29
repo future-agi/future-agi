@@ -140,6 +140,25 @@ describe("useAmendScenarios", () => {
     // Invalidating the list prefix hits both the list pages and the coverage key
     // (coverage is nested under it).
     expect(spy).toHaveBeenCalledWith({ queryKey: ["harness-scenarios", "job-1"] });
+    // The workspace reads the scenario count from the environment detail.
+    expect(spy).toHaveBeenCalledWith({ queryKey: ["harness-environment", "job-1"] });
+    // An edit records a new scenario version, so the version list refreshes too;
+    // only the list, since a saved version's own diff and scenarios never change.
+    expect(spy).toHaveBeenCalledWith({
+      queryKey: ["harness-env-versions", "job-1"],
+      exact: true,
+    });
+    // With versioning on the edit lands in the unsaved changes.
+    expect(spy).toHaveBeenCalledWith({
+      queryKey: ["harness-env-versions", "job-1", "drafts"],
+    });
+    // The draft keeps its id, so its diff and members are asked again.
+    expect(spy).toHaveBeenCalledWith({
+      queryKey: ["harness-env-versions", "job-1", "diff"],
+    });
+    expect(spy).toHaveBeenCalledWith({
+      queryKey: ["harness-env-versions", "job-1", "members"],
+    });
   });
 });
 

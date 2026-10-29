@@ -12,6 +12,7 @@ from simulate.services.agent_definition import is_masked, sync_provider_credenti
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 from simulate.temporal.constants import DEFAULT_ORG_LIMIT
 from tracer.models.observability_provider import ProviderChoices
+from tracer.services.observability_switch import observability_is_on
 
 # LiveKit URLs are valid in either WebSocket form (wss://, ws://) or HTTP
 # form (https://, http://). The frontend stores whatever the user typed
@@ -264,9 +265,9 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
         if observability_enabled_raw is not None:
             observability_enabled_effective = bool(observability_enabled_raw)
         else:
-            obs_provider = getattr(self.instance, "observability_provider", None)
-            observability_enabled_effective = bool(
-                getattr(obs_provider, "enabled", False)
+            # A deleted row or project counts as off.
+            observability_enabled_effective = (
+                self.instance is not None and observability_is_on(self.instance)
             )
 
         # Voice agents: match UI requirements for creation

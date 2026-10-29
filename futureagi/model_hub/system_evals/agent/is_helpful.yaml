@@ -14,8 +14,8 @@ criteria: "You are evaluating whether the output effectively addresses the user'
   \ detailed, and is clear. Return 'Failed' if it misses the question, is incomplete, or is too vague to act on.\n\n## Inputs\n\
   \n<input>{{input}}</input>\n\n<output>{{output}}</output>"
 eval_tags:
-- NLP Metrics
-- Chatbot behaviors
+- Quality
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false
