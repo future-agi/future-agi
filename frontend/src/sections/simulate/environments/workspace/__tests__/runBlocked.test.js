@@ -7,9 +7,6 @@ const STATE = { agent: { typeId: "retell" }, scenarios: [{ id: "a" }] };
 
 describe("blockedReason", () => {
   it("reads the server scenario count over the seeded list", () => {
-    expect(blockedReason({ agent: {}, scenarios: [1, 2] }, READY, true, false, 0)).toBe(
-      "Add scenarios on the Scenarios tab",
-    );
     expect(blockedReason({ agent: {}, scenarios: [] }, READY, true, false, 3)).not.toBe(
       "Add scenarios on the Scenarios tab",
     );

@@ -404,7 +404,7 @@ export default function EnvironmentWorkspace() {
   };
 
   // A backed env's run gate reads the server scenario count, not the seeded
-  // client list, so deleting the last scenario blocks Run and adding one frees it.
+  // client list, which keeps the count from first load.
   const runnable = canRunHeader(
     source,
     env,
