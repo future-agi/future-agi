@@ -860,7 +860,8 @@ class SourceSnapshotOperationTests(unittest.TestCase):
                 driver=milestone.SnapshotMilestone(Path(temporary).resolve(),context='colima-fagi-update',boot_timeout=10)
                 clock=[0.0]
                 driver.deadline=100
-                driver.installation=SimpleNamespace(compose_run=mock.Mock(),
+                driver.installation=SimpleNamespace(compose_run=mock.Mock(),run=mock.Mock(),
+                    compose_args=lambda *args:['compose',*args],
                     containers=lambda:[{'id':str(i)} for i in range(3)])
                 def inspection(*args):
                     healthy=ready and clock[0]>=5
@@ -888,7 +889,11 @@ class SourceSnapshotOperationTests(unittest.TestCase):
                 self.assertTrue(timing['intervals'])
                 self.assertNotIn('generated-fixture-secret',json.dumps(timing))
                 self.assertFalse(timing['eligible'])
-                driver.installation.compose_run.assert_called_once()
+                # The first start is the installer's: no updater ownership claim
+                # exists yet, so the ownership-checked compose_run is not used.
+                driver.installation.run.assert_called_once()
+                self.assertEqual(driver.installation.run.call_args.args[0][:2], ['compose','up'])
+                driver.installation.compose_run.assert_not_called()
                 driver._collect_diagnostics.assert_called()
 
     def test_boot_restart_is_a_failed_source_not_a_silent_retry(self):
@@ -896,13 +901,15 @@ class SourceSnapshotOperationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             driver=milestone.SnapshotMilestone(Path(temporary).resolve(),context='colima-fagi-update',boot_timeout=4200)
             driver.ports={'FRONTEND_PORT':3000,'BACKEND_PORT':8000}
-            driver.installation=SimpleNamespace(compose_run=mock.Mock(),containers=lambda:[{'id':'source'}])
+            driver.installation=SimpleNamespace(compose_run=mock.Mock(),run=mock.Mock(),
+                compose_args=lambda *args:['compose',*args],containers=lambda:[{'id':'source'}])
             driver._json=lambda *args:[dict(State={'Running':True,'Status':'running'},RestartCount=1)]
             driver._collect_diagnostics=mock.Mock()
             with mock.patch.object(milestone.ProductHarness,'request',return_value=(200,{'phase':'retrying'})):
                 with self.assertRaisesRegex(rehearsal.RehearsalError,'source boot failed'):
                     driver._wait_healthy()
-            driver.installation.compose_run.assert_called_once()
+            driver.installation.run.assert_called_once()
+            driver.installation.compose_run.assert_not_called()
 
     def test_cold_snapshot_calls_shipping_quiesced_path_under_locks_without_legacy_restart(self):
         from scripts import update_rehearsal_milestone as milestone

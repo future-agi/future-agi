@@ -222,7 +222,11 @@ class SnapshotMilestone(ShippingRehearsal):
         p = producer()
         started = time.monotonic()
         deadline = min(self.deadline, started+self.boot_timeout)
-        self.installation.compose_run('up','-d','--no-build','--pull','never',timeout=min(180,self.boot_timeout))
+        # This first start is the installer's job, as on a real host: the
+        # updater's compose_run proves ownership from existing containers and
+        # rightly refuses an empty project, so it only manages A afterwards.
+        self.installation.run(self.installation.compose_args('up','-d','--no-build','--pull','never'),
+                              timeout=min(180,self.boot_timeout))
         last, next_sample = None, 0
         try:
             while time.monotonic()<deadline:
