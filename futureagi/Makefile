@@ -20,7 +20,7 @@ help:
 	@echo "  check-all       Run lint + mypy + tests (pre-PR gate)"
 	@echo ""
 	@echo "Pre-commit hooks (uses .pre-commit-config.yaml):"
-	@echo "  pre-commit-install  Install git hooks (one-time)"
+	@echo "  pre-commit-install  Bootstrap pre-commit + hook environments (one-time)"
 	@echo "  pre-commit          Run hooks on staged files"
 	@echo "  pre-commit-all      Run hooks on all files"
 	@echo ""

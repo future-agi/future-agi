@@ -10,6 +10,10 @@ npx --no-install lint-staged
 if command -v pre-commit >/dev/null 2>&1; then
   # Only run if there are staged Python files
   if git diff --cached --name-only --diff-filter=ACM | grep -q '\.py$'; then
-    pre-commit run --color=always 2>/dev/null || true
+    # No `|| true` and no output redirection: a failing hook must block the
+    # commit and say why. That is the whole point of wiring these up. Hooks
+    # that modify files (black, isort) leave them unstaged, so a failing run
+    # also prompts a re-add instead of silently committing unformatted code.
+    pre-commit run --color=always
   fi
 fi

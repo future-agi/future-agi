@@ -9,7 +9,8 @@
 #
 # What it does:
 #   1. Installs pre-commit if missing
-#   2. Verifies the hooks defined in .pre-commit-config.yaml run correctly
+#   2. Builds the hook environments up front, so the first commit does not have
+#      to download them mid-hook (and does not touch any tracked file)
 #
 # Note: we intentionally do NOT run `pre-commit install`. The repo uses husky
 # v9 (package.json "prepare": "husky"), which sets core.hooksPath=.husky/.
@@ -23,16 +24,20 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
 echo "==> Checking pre-commit..."
-if ! command -v pre-commit &> /dev/null; then
+if ! command -v pre-commit >/dev/null 2>&1; then
     echo "    pre-commit not found. Installing with pip..."
     pip install pre-commit
 fi
 
-echo "==> Running hooks on all files (dry-run to verify)..."
-pre-commit run --all-files || true
+# Install the environments only. Deliberately NOT `pre-commit run --all-files`:
+# that reformats every tracked file in the working tree, which is not something
+# a one-time setup step should do.
+echo "==> Building hook environments..."
+pre-commit install-hooks
 
 echo ""
-echo "Python pre-commit hooks are now installed."
-echo "They will run automatically via .husky/pre-commit on every git commit."
+echo "Python pre-commit hooks are wired up."
+echo "They run automatically via .husky/pre-commit on every git commit."
+echo "To run them over the whole repo once: pre-commit run --all-files"
 echo "To bypass: git commit --no-verify"
 echo "To update: pre-commit autoupdate"
