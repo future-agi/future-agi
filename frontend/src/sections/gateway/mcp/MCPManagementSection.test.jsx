@@ -120,10 +120,6 @@ describe("MCP guardrails drafts across tabs", () => {
       "test-server{Enter}",
     );
     await user.type(
-      screen.getByPlaceholderText("Type a regex pattern and press Enter..."),
-      "blocked.*{Enter}",
-    );
-    await user.type(
       screen.getByRole("textbox", { name: "Tool Name" }),
       "unfinished_tool",
     );
@@ -155,7 +151,6 @@ describe("MCP guardrails drafts across tabs", () => {
       ).toBeChecked();
       expect(screen.getByText("test_delete")).toBeVisible();
       expect(screen.getByText("test-server")).toBeVisible();
-      expect(screen.getByText("blocked.*")).toBeVisible();
       expect(screen.getByRole("textbox", { name: "Tool Name" })).toHaveValue(
         "unfinished_tool",
       );
@@ -189,7 +184,6 @@ describe("MCP guardrails drafts across tabs", () => {
           allowed_servers: [],
           validate_inputs: false,
           validate_outputs: false,
-          custom_patterns: [],
           tool_rate_limits: {},
         },
       },
