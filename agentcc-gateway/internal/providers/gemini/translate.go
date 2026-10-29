@@ -985,11 +985,6 @@ func mapRoleToGemini(role string) string {
 	}
 }
 
-func mapGeminiFinishReason(reason string) string {
-	finish, _ := lookupGeminiFinishReason(reason)
-	return finish
-}
-
 func mapGeminiFinishReasonWithToolCalls(reason string, hasToolCalls bool) string {
 	return finishReason(nil, reason, hasToolCalls)
 }

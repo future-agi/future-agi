@@ -1413,7 +1413,7 @@ func TestTranslateResponse_FinishReasonMapping(t *testing.T) {
 			}
 			result := translateResponse(resp, "test-model", nil)
 			if result.Choices[0].FinishReason != tt.openai {
-				t.Errorf("mapGeminiFinishReason(%q) = %q, want %q",
+				t.Errorf("finish reason for %q = %q, want %q",
 					tt.gemini, result.Choices[0].FinishReason, tt.openai)
 			}
 		})
