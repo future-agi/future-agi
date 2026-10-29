@@ -65,6 +65,14 @@ def _sample_value(filter_type, filter_op):
 
 
 class TestFilterContract:
+    def test_metric_family_is_additive_and_uses_canonical_operator_names(self):
+        from tracer.utils.filter_operators import normalize_col_type
+
+        assert "METRIC_FIELD" in FILTER_COLUMN_TYPES
+        assert normalize_col_type("metric") == "METRIC_FIELD"
+        assert "gt" not in FILTER_TYPE_ALLOWED_OPS["number"]
+        assert "greater_than" in FILTER_TYPE_ALLOWED_OPS["number"]
+
     def test_contract_exports_canonical_span_attribute_ops(self):
         assert "not_between" in SPAN_ATTR_ALLOWED_OPS["number"]
         assert "not_in_between" not in SPAN_ATTR_ALLOWED_OPS["number"]
