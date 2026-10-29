@@ -241,7 +241,15 @@ export const CATALOGUE = [
     requests: ["What's our parental leave policy for contractors?", "Which expense limit applies to client dinners now?"],
     actors: ["Page owner who updates policies", "Contractor with limited access"],
     recipe: { model: "gpt-4.1", limitations: ["Quotes superseded versions when the newest is restricted", "Occasionally answers from memory without a citation"] } },
-  { id: "V12", domain: "Appointment scheduling", task: "Book, reschedule or cancel a service appointment", templateId: "env-task-appointments", launch: true, release: R("2026.10.2"),
+  { id: "V12", domain: "Appointment scheduling", task: "Book, reschedule or cancel a service appointment", templateId: "env-task-appointments", launch: true,
+    release: R("2026.10.2", "ready", 5, { update: {
+      from: "2026.10.1",
+      notes: "Late-cancellation fee now applies per location, and a waived fee needs a reason.",
+      changes: [
+        { area: "rules", text: "Cancellations inside 24 hours carry the location's late fee unless a manager waives it with a reason", replaces: "Cancellations inside 24 hours carry the late fee unless a manager waives it" },
+        { area: "scenarios", text: "1 starter case added: a waiver asked for without a reason" },
+      ],
+    } }),
     requests: ["I need to cancel tomorrow's 9am — something came up.", "Book me a haircut Saturday morning at the Main Street location."],
     actors: ["Location manager who can waive the late fee", "A partner calling on the customer's behalf"],
     recipe: { model: "gpt-4.1-mini", limitations: ["Waives the late-cancellation fee without a manager", "Confirms before reading back the location"] } },
@@ -249,7 +257,16 @@ export const CATALOGUE = [
     requests: ["How many days of leave do I have left?"], actors: ["Line manager who approves"], recipe: { model: "gpt-4.1-mini", limitations: ["Quotes the old policy"] } },
   { id: "V14", domain: "Logistics and delivery", task: "Resolve a failed delivery and arrange redelivery", templateId: "env-task-delivery", release: R("2026.10.1", "withdrawn", 5, { note: "Withdrawn — a fixture held real-looking customer addresses. New copies are blocked; existing copies keep their runs.", replacement: "V15" }),
     requests: ["My parcel says delivery failed but I was home."], actors: ["Depot dispatcher"], recipe: { model: "gpt-4.1-mini", limitations: ["Changes addresses without verifying"] } },
-  { id: "V15", domain: "Retail and e-commerce", task: "Resolve an order issue and create an eligible return", templateId: "env-voice-support", launch: true, release: R("2026.10.2"),
+  { id: "V15", domain: "Retail and e-commerce", task: "Resolve an order issue and create an eligible return", templateId: "env-voice-support", launch: true,
+    release: R("2026.10.2", "ready", 5, { update: {
+      from: "2026.10.1",
+      notes: "Loyalty members get a longer return window, and the label tool now names the carrier.",
+      changes: [
+        { area: "rules", text: "Return window is 30 days from delivery — 45 for loyalty members", replaces: "Return window is 30 days from delivery" },
+        { area: "tools", text: "generate_return_label takes a carrier and emails the label from that carrier" },
+        { area: "scenarios", text: "2 starter cases added for loyalty-tier returns" },
+      ],
+    } }),
     requests: ["My order never arrived — I want a refund.", "Can I return these shoes? I've worn them once."],
     actors: ["Supervisor who approves refunds over $200", "Carrier support line"],
     recipe: { model: "gpt-4.1-mini", limitations: ["Approves refunds over $200 without a supervisor", "Confirms identity from the phone number alone"] } },
@@ -306,6 +323,34 @@ export const adoptBlockOf = (entry) => {
   if (r.status === "withdrawn") return r.note;
   return null;
 };
+
+/** The catalogue task an environment came from: stamped at Try it now or a build, else read off its id. */
+export const catalogueOfEnv = (env) =>
+  (env?.catalogueId && catalogueById(env.catalogueId)) ||
+  (env?.templateId && catalogueOf(env.templateId)) ||
+  CATALOGUE.find((c) => env?.id === c.templateId || String(env?.id || "").startsWith(`${c.templateId}-`)) ||
+  null;
+
+/** The release an environment is on: stamped, else the one before the latest update (made before releases were stamped). */
+export const envReleaseOf = (env, entry = catalogueOfEnv(env)) =>
+  env?.release || entry?.release?.update?.from || entry?.release?.version || null;
+
+/**
+ * A newer release this environment hasn't taken or skipped — with its notes
+ * and changes — or null.
+ */
+export const releaseUpdateOf = (env, envState, { includeSkipped = false } = {}) => {
+  const entry = catalogueOfEnv(env);
+  const up = entry?.release?.update;
+  if (!up) return null;
+  const on = envReleaseOf(env, entry);
+  if (on !== up.from) return null;
+  if (!includeSkipped && (envState?.skippedReleases || []).includes(entry.release.version)) return null;
+  return { entry, from: on, to: entry.release.version, ...up };
+};
+
+/** The command that takes an update from the CLI. */
+export const envUpdateCli = (env, to) => `agent-learn env update ${env.id} --release ${to} --keep-edits`;
 
 /** The command that lists the catalogue from the CLI. */
 export const CATALOGUE_CLI = "agent-learn env list --catalogue";

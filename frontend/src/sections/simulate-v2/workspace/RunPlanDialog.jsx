@@ -34,6 +34,7 @@ import {
   usdRange,
 } from "../_mock/pricing";
 import { membersOf } from "../_mock/improvementPolicy";
+import { catalogueOfEnv, envReleaseOf } from "../_mock/catalogue";
 
 /*
   The run plan: what a run will do and what it can cost, confirmed before
@@ -311,6 +312,30 @@ export default function RunPlanDialog({
             .filter(Boolean)
             .join(" · ")}
         </Typography>
+        {/* From a ready world: the exact release and pack this run uses. */}
+        {(() => {
+          const entry = catalogueOfEnv(env);
+          if (!entry) return null;
+          const pack =
+            {
+              starter: "Starter pack",
+              full: "Full world",
+            }[env?.pack] || (env?.pack ? "A named pack" : null);
+          return (
+            <Typography
+              noWrap
+              sx={{ typography: "s3", color: "text.tertiary" }}
+            >
+              {[
+                `${entry.id} · ${entry.task}`,
+                `release ${envReleaseOf(env, entry)}`,
+                pack,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </Typography>
+          );
+        })()}
       </DialogTitle>
 
       <DialogContent>

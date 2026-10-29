@@ -53,6 +53,15 @@ import {
 } from "../_mock/agentRegistry";
 import AgentFoundReview from "../agents/AgentFoundReview";
 import ToolSafetyDialog from "../agents/ToolSafetyDialog";
+import MakeCopyDialog from "./MakeCopyDialog";
+import ReviewUpdateDialog from "./ReviewUpdateDialog";
+import { catalogueOfEnv, releaseUpdateOf } from "../_mock/catalogue";
+import {
+  applyReleasePatch,
+  releaseReviewOf,
+  skipReleasePatch,
+} from "../_mock/releaseUpdate";
+import { agentRecordOf } from "../_mock/envCopy";
 import { foundValuesOf } from "../agents/foundFacts";
 import NextStepBanner from "./NextStepBanner";
 import DeleteEnvironmentDialog from "../environments/DeleteEnvironmentDialog";
@@ -462,6 +471,22 @@ export default function EnvironmentWorkspace() {
   const [inbox, setInbox] = useState({ open: false, focus: null });
   /* "Check what we found" for a newly connected code agent, opened here. */
   const [foundOpen, setFoundOpen] = useState(false);
+  /* Make a copy: null, or { version } when a History entry preselects one. */
+  const [copyOpen, setCopyOpen] = useState(null);
+  /* A newer release of the world this environment came from. */
+  const [reviewOpen, setReviewOpen] = useState(false);
+  /* ?copy=1 (the environment list's row menu) opens Make a copy. */
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    if (p.get("copy") !== "1") return;
+    setCopyOpen({});
+    p.delete("copy");
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${window.location.pathname}${p.toString() ? `?${p}` : ""}`,
+    );
+  }, []);
   /* Before a live run: only which tools must never run for real. */
   const [safetyOpen, setSafetyOpen] = useState(false);
   const { agents: connectedAgents, setAgentValues } = useConnectedAgents();
@@ -991,18 +1016,37 @@ export default function EnvironmentWorkspace() {
      the agent it tests) but none of its runs or history, then lands on it.
      Versions restart at v1 so the fork's lineage is its own; a clone-backed
      fork gets its own sandbox rather than sharing this one's. */
-  const forkEnvironment = () => {
+  /* Make a copy (catalogue.md): `opts` from the dialog — a name, the
+     source version, duplicate or fork, the scenarios it keeps, and for a
+     fork the agent it tests. Called bare (a save clash's "save a copy"),
+     it's the whole environment as a fork, as before. */
+  const forkEnvironment = (opts = {}) => {
     const suffix = Math.random().toString(36).slice(2, 8);
     const forkedId = `${env.id}-fork-${suffix}`;
     const now = new Date().toISOString();
+    const keep = opts.scope?.ids ? new Set(opts.scope.ids) : null;
     const forked = {
       ...env,
       id: forkedId,
-      name: `${env.name} · fork`,
+      name: opts.name || `${env.name} · fork`,
       custom: true,
       adoptedAt: undefined,
       buildProgress: undefined,
       forkedFrom: env.id,
+      /* What it was copied from, and how — the source stays as it was. */
+      copyOf: {
+        envId: env.id,
+        envName: env.name,
+        version: opts.version || envState.activeEnvVersion || null,
+        kind: opts.kind || "fork",
+        scope: opts.scope
+          ? {
+              id: opts.scope.id,
+              label: opts.scope.label,
+              count: opts.scope.ids.length,
+            }
+          : null,
+      },
     };
     dispatch({ type: "adoptEnvironment", env: forked, now });
     /* History stays behind; everything else comes along. */
@@ -1051,7 +1095,7 @@ export default function EnvironmentWorkspace() {
             id: `${forkedId}-v1`,
             label: "v1",
             createdAt: now,
-            note: `Forked from ${env.name} at environment ${currentEnvSnapshot(env, envState)?.label || currentEnvVersion(env, envState).label}.`,
+            note: `${opts.kind === "duplicate" ? "Duplicated" : "Forked"} from ${env.name} at environment ${opts.version || currentEnvSnapshot(env, envState)?.label || currentEnvVersion(env, envState).label}${keep ? ` — ${keep.size} of ${(envState.scenarios || []).length} scenarios` : ""}.`,
             scenarios: (envState.scenarios || []).length,
             changed: [],
             tools: worldToolsFor(env, envState),
@@ -1062,13 +1106,31 @@ export default function EnvironmentWorkspace() {
         activeAgentVersion: agentLabel || null,
         /* A fork tests what its source tested — pinned only if that was. */
         agentVersionPinned: !!envState.agentVersionPinned,
-        /* Scenarios a rebuild added are part of this world now. */
-        scenarios: (envState.scenarios || []).map((sc) =>
-          sc.addedInEnv ? { ...sc, addedInEnv: "v1", provedAgainst: "v1" } : sc,
-        ),
+        /* Scenarios a rebuild added are part of this world now; a scoped
+           copy keeps only the ones picked. */
+        scenarios: (envState.scenarios || [])
+          .filter((sc) => !keep || keep.has(sc.id))
+          .map((sc) =>
+            sc.addedInEnv
+              ? { ...sc, addedInEnv: "v1", provedAgainst: "v1" }
+              : sc,
+          ),
         seededFromTemplate: false,
+        /* A fork to another agent starts with none, so taking the new one
+           doesn't re-register the source's agent under the fork's name. */
+        ...(opts.agent && { agent: null, agentVersions: [] }),
       },
     });
+    /* A fork tests another agent: it takes that agent from the start. */
+    if (opts.agent)
+      dispatch({
+        type: "changeEnvAgent",
+        envId: forkedId,
+        agent: agentRecordOf(opts.agent),
+        versions: opts.agent.versions,
+        activeLabel: opts.agent.production || opts.agent.latest,
+      });
+    setCopyOpen(null);
     navigate(paths.dashboard.simulate.environmentDetail(forkedId));
   };
 
@@ -2342,6 +2404,64 @@ export default function EnvironmentWorkspace() {
               transformOrigin={{ vertical: "top", horizontal: "right" }}
               slotProps={{ paper: { sx: { width: 300, mt: 0.5 } } }}
             >
+              <MenuItem
+                onClick={() => {
+                  setActionsAnchor(null);
+                  setCopyOpen({});
+                }}
+                sx={{
+                  gap: 1,
+                  py: 1,
+                  alignItems: "flex-start",
+                  whiteSpace: "normal",
+                }}
+              >
+                <Iconify
+                  icon="solar:copy-linear"
+                  width={16}
+                  sx={{ flexShrink: 0, mt: "2px", color: "text.secondary" }}
+                />
+                <Box>
+                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                    Make a copy
+                  </Typography>
+                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                    Same agent makes a duplicate; another agent a fork.
+                  </Typography>
+                </Box>
+              </MenuItem>
+              {!releaseUpdateOf(env, envState) &&
+                releaseUpdateOf(env, envState, { includeSkipped: true }) && (
+                  <MenuItem
+                    onClick={() => {
+                      setActionsAnchor(null);
+                      setReviewOpen(true);
+                    }}
+                    sx={{
+                      gap: 1,
+                      py: 1,
+                      alignItems: "flex-start",
+                      whiteSpace: "normal",
+                    }}
+                  >
+                    <Iconify
+                      icon="solar:refresh-linear"
+                      width={16}
+                      sx={{ flexShrink: 0, mt: "2px", color: "text.secondary" }}
+                    />
+                    <Box>
+                      <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                        {`Review release ${releaseUpdateOf(env, envState, { includeSkipped: true }).to}`}
+                      </Typography>
+                      <Typography
+                        sx={{ typography: "s3", color: "text.tertiary" }}
+                      >
+                        You skipped it — it&apos;s still here to take.
+                      </Typography>
+                    </Box>
+                  </MenuItem>
+                )}
+              <Divider sx={{ my: 0.5 }} />
               {[
                 {
                   id: "package",
@@ -2409,6 +2529,53 @@ export default function EnvironmentWorkspace() {
             </Menu>
           </>
         )}
+        {reviewOpen &&
+          (() => {
+            const update = releaseUpdateOf(env, envState, {
+              includeSkipped: true,
+            });
+            if (!update) return null;
+            const review = releaseReviewOf(env, envState, update);
+            return (
+              <ReviewUpdateDialog
+                env={env}
+                update={update}
+                review={review}
+                onClose={() => setReviewOpen(false)}
+                onSkip={() => {
+                  patch(skipReleasePatch(envState, update));
+                  setReviewOpen(false);
+                  enqueueSnackbar(
+                    `Release ${update.to} skipped — review it any time from the ⋯ menu.`,
+                    { variant: "info" },
+                  );
+                }}
+                onApply={() => {
+                  const done = applyReleasePatch(env, envState, update, review);
+                  dispatch({
+                    type: "patchEnvironment",
+                    envId: env.id,
+                    patch: done.envPatch,
+                  });
+                  patch(done.statePatch);
+                  setReviewOpen(false);
+                  enqueueSnackbar(
+                    `Release ${update.to} applied as environment ${done.label}${review.recheck.length ? ` — ${review.recheck.length} scenario${review.recheck.length === 1 ? "" : "s"} to re-check` : ""}. Earlier runs stay on their version.`,
+                    { variant: "success" },
+                  );
+                }}
+              />
+            );
+          })()}
+        <MakeCopyDialog
+          open={!!copyOpen}
+          env={env}
+          envState={envState}
+          version={copyOpen?.version || null}
+          selectedIds={scenarioSelection?.ids || []}
+          onClose={() => setCopyOpen(null)}
+          onCreate={(o) => forkEnvironment(o)}
+        />
         <DeleteEnvironmentDialog
           env={confirmDelete}
           onCancel={() => setConfirmDelete(null)}
@@ -2767,7 +2934,7 @@ export default function EnvironmentWorkspace() {
             <Button
               variant="outlined"
               size="small"
-              onClick={forkEnvironment}
+              onClick={() => setCopyOpen({})}
               startIcon={<Iconify icon="solar:copy-linear" width={14} />}
               sx={{
                 color: "text.primary",
@@ -2810,6 +2977,37 @@ export default function EnvironmentWorkspace() {
           <NextStepBanner {...nextStep} />
         </Box>
       )}
+      {/* The world's release: a newer one to review, or a withdrawn/retired notice. */}
+      {(() => {
+        if (isSeededTemplate || viewingOlder) return null;
+        const entry = catalogueOfEnv(env);
+        const update = releaseUpdateOf(env, envState);
+        const banner = update
+          ? {
+              tone: "info",
+              title: `${entry.task} — release ${update.to} is out.`,
+              line: `${update.notes} Nothing changes until you review it.`,
+              actionLabel: "Review update",
+              onAction: () => setReviewOpen(true),
+            }
+          : entry?.release?.status === "withdrawn"
+            ? {
+                title: `This world's release ${entry.release.version} was withdrawn.`,
+                line: `${entry.release.note.replace(/^Withdrawn — /, "")} This environment keeps running and its runs are kept.`,
+              }
+            : entry?.release?.status === "retired"
+              ? {
+                  tone: "info",
+                  title: `Release ${entry.release.version} is retired.`,
+                  line: "It still runs and can be copied, but won't be updated.",
+                }
+              : null;
+        return banner ? (
+          <Box sx={{ px: 3, pt: 1.5 }}>
+            <NextStepBanner {...banner} />
+          </Box>
+        ) : null;
+      })()}
 
       {/* ── body: builder console (left) + tabbed panels (right) — one
             surface split by a single rule, the same as the build screen ── */}
@@ -2950,7 +3148,7 @@ export default function EnvironmentWorkspace() {
                 onStartRun={startRun}
                 groupCandidates={runGroup.candidates}
                 locked={isSeededTemplate}
-                onFork={forkEnvironment}
+                onFork={() => setCopyOpen({})}
                 selectionRun={{
                   repeats: headerTrials,
                   onRepeats: setHeaderTrials,
@@ -2967,7 +3165,7 @@ export default function EnvironmentWorkspace() {
                 patch={patch}
                 onGo={go}
                 locked={isSeededTemplate}
-                onFork={forkEnvironment}
+                onFork={() => setCopyOpen({})}
                 repeats={Number(headerTrials) || 3}
               />
             ) : panel === "runs" ? (
@@ -2987,7 +3185,7 @@ export default function EnvironmentWorkspace() {
                 patch={patch}
                 onGo={go}
                 locked={isSeededTemplate || !!viewingOlder}
-                onFork={forkEnvironment}
+                onFork={() => setCopyOpen({})}
               />
             ) : panel === "actors" ? (
               <ActorsPanel
@@ -3005,6 +3203,7 @@ export default function EnvironmentWorkspace() {
                 envState={envState}
                 patch={patch}
                 readOnly={isSeededTemplate}
+                onCopy={(label) => setCopyOpen({ version: label })}
               />
             ) : panel === "settings" ? (
               <SettingsPanel
@@ -3012,7 +3211,7 @@ export default function EnvironmentWorkspace() {
                 envState={envState}
                 patch={patch}
                 locked={isSeededTemplate}
-                onFork={forkEnvironment}
+                onFork={() => setCopyOpen({})}
                 onDelete={
                   isSeededTemplate ? undefined : () => setConfirmDelete(env)
                 }
@@ -3031,7 +3230,7 @@ export default function EnvironmentWorkspace() {
                 onGo={go}
                 agentConnected={!!envState.agent}
                 locked={isSeededTemplate}
-                onFork={forkEnvironment}
+                onFork={() => setCopyOpen({})}
               />
             )}
           </Box>

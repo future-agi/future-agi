@@ -40,6 +40,20 @@ import {
   envAgentKey,
 } from "../_mock/agentRegistry";
 import { mainEnvOf, proofKindOf } from "../_mock/rsiModel";
+import { catalogueOfEnv } from "../_mock/catalogue";
+
+/* An environment's origin, for the list's filter. */
+const ORIGINS = {
+  world: "From a ready world",
+  copy: "A copy or fork",
+  agent: "Built from an agent",
+};
+const originOf = (env) =>
+  env?.copyOf || env?.forkedFrom
+    ? "copy"
+    : catalogueOfEnv(env) || env?.templateId
+      ? "world"
+      : "agent";
 import { identityOf } from "../agents/agentProfile";
 
 /*
@@ -604,6 +618,8 @@ export default function MyEnvironmentsTable({
   const [statusFilter, setStatusFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const [agentFilter, setAgentFilter] = useState("all");
+  /* Where it came from: a ready world, a copy of another, or built from an agent. */
+  const [originFilter, setOriginFilter] = useState("all");
   const statusCounts = useMemo(
     () =>
       rows.reduce((m, r) => ({ ...m, [r.status]: (m[r.status] || 0) + 1 }), {}),
@@ -630,14 +646,16 @@ export default function MyEnvironmentsTable({
             .includes(q)) &&
         (statusFilter === "all" || r.status === statusFilter) &&
         (typeFilter === "all" || r.agentType === typeFilter) &&
-        (agentFilter === "all" || r.agentName === agentFilter),
+        (agentFilter === "all" || r.agentName === agentFilter) &&
+        (originFilter === "all" || originOf(r.env) === originFilter),
     );
-  }, [rows, query, statusFilter, typeFilter, agentFilter]);
+  }, [rows, query, statusFilter, typeFilter, agentFilter, originFilter]);
   const filtering =
     !!query.trim() ||
     statusFilter !== "all" ||
     typeFilter !== "all" ||
-    agentFilter !== "all";
+    agentFilter !== "all" ||
+    originFilter !== "all";
 
   const [pageSize, setPageSize] = useState(25);
   const [page, setPage] = useState(0);
@@ -772,6 +790,26 @@ export default function MyEnvironmentsTable({
               </MenuItem>
             ))}
           </TextField>
+          <TextField
+            select
+            size="small"
+            value={originFilter}
+            onChange={(e) => {
+              setOriginFilter(e.target.value);
+              setPage(0);
+            }}
+            inputProps={{ "aria-label": "Origin" }}
+            sx={selectSx}
+          >
+            <MenuItem value="all" sx={{ typography: "s2" }}>
+              All origins
+            </MenuItem>
+            {Object.entries(ORIGINS).map(([id, l]) => (
+              <MenuItem key={id} value={id} sx={{ typography: "s2" }}>
+                {l}
+              </MenuItem>
+            ))}
+          </TextField>
           {filtering && (
             <Button
               size="small"
@@ -780,6 +818,7 @@ export default function MyEnvironmentsTable({
                 setStatusFilter("all");
                 setTypeFilter("all");
                 setAgentFilter("all");
+                setOriginFilter("all");
                 setPage(0);
               }}
               sx={{ color: "text.secondary" }}
@@ -841,6 +880,23 @@ export default function MyEnvironmentsTable({
           </ListItemIcon>
           <ListItemText
             primary="Open"
+            primaryTypographyProps={{ sx: { typography: "s2" } }}
+          />
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            navigate(
+              `${paths.dashboard.simulate.environmentDetail(active.id)}?copy=1`,
+            );
+            setMenuFor(null);
+          }}
+          sx={{ typography: "s2" }}
+        >
+          <ListItemIcon sx={{ minWidth: 28 }}>
+            <Iconify icon="solar:copy-linear" width={16} />
+          </ListItemIcon>
+          <ListItemText
+            primary="Make a copy"
             primaryTypographyProps={{ sx: { typography: "s2" } }}
           />
         </MenuItem>

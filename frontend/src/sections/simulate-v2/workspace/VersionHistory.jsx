@@ -70,6 +70,8 @@ export default function VersionHistoryMenu({
   readOnly = false,
   /* The environment's History tab: the same history as a page, not a menu. */
   page = false,
+  /* Make a copy from this version (the dialog opens with it preselected). */
+  onCopy = null,
 }) {
   const snapshots = snapshotHistoryOf(env, envState);
   /* A released improvement's note drops its "not live until released" tail —
@@ -261,6 +263,19 @@ export default function VersionHistoryMenu({
                         </Button>
                       </Tooltip>
                     )}
+                    {onCopy && (
+                      <Button
+                        size="small"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onCopy(v.label);
+                          onClose();
+                        }}
+                        sx={{ color: "text.secondary", minWidth: 0 }}
+                      >
+                        Make a copy
+                      </Button>
+                    )}
                     {offer && !isViewed && (
                       <Button
                         size="small"
@@ -435,6 +450,7 @@ export default function VersionHistoryMenu({
 }
 
 VersionHistoryMenu.propTypes = {
+  onCopy: PropTypes.func,
   anchor: PropTypes.object,
   onClose: PropTypes.func,
   env: PropTypes.object.isRequired,
