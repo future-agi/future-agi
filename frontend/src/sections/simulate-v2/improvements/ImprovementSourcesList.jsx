@@ -185,7 +185,10 @@ export default function ImprovementSourcesList({ agent, run }) {
 
   /* Level 2 comes back here — this page, or the agent's Improvements tab. */
   const back = {
-    to: `${location.pathname}${location.search}`,
+    /* From a run's tab: back to that tab, whatever the URL said. */
+    to: runId
+      ? `${location.pathname}?tab=improvements`
+      : `${location.pathname}${location.search}`,
     label: run ? run.label : agent ? agent.name : "Improvements",
   };
   const openRow = (r) => navigate(r.href, { state: { back } });

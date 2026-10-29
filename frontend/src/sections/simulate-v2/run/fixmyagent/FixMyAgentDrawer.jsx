@@ -300,7 +300,8 @@ export default function FixMyAgentDrawer({
     navigate(improvementPath(env.id, record.id), {
       state: {
         back: {
-          to: paths.dashboard.simulate.simulationRun(env.id, sourceRunId),
+          /* Back lands where it's listed: the run's Improvements tab. */
+          to: `${paths.dashboard.simulate.simulationRun(env.id, sourceRunId)}?tab=improvements`,
           label: from?.ordinal ? `Run ${from.ordinal}` : "the run",
         },
       },
@@ -382,7 +383,8 @@ export default function FixMyAgentDrawer({
       href: improvementPath(env.id, record.id),
       state: {
         back: {
-          to: paths.dashboard.simulate.simulationRun(env.id, sourceRunId),
+          /* Back lands where it's listed: the run's Improvements tab. */
+          to: `${paths.dashboard.simulate.simulationRun(env.id, sourceRunId)}?tab=improvements`,
           label: from?.ordinal ? `Run ${from.ordinal}` : "the run",
         },
       },

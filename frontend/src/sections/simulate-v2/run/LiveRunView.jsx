@@ -1701,7 +1701,16 @@ function LiveRun() {
                 type="button"
                 underline="hover"
                 onClick={() =>
-                  navigate(improvementPath(envId, watchTrial.opt.id))
+                  navigate(improvementPath(envId, watchTrial.opt.id), {
+                    state: {
+                      back: {
+                        to: `${paths.dashboard.simulate.simulationRun(envId, runId)}?tab=improvements`,
+                        label: recorded?.ordinal
+                          ? `Run ${recorded.ordinal}`
+                          : "the run",
+                      },
+                    },
+                  })
                 }
                 sx={{
                   typography: "s3",

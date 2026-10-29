@@ -1653,7 +1653,17 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                 disabled={!fixOfRun}
                 startIcon={<Iconify icon="fagi:fix" width={16} />}
                 onClick={() =>
-                  fixOfRun && navigate(improvementPath(env.id, fixOfRun.id))
+                  fixOfRun &&
+                  navigate(improvementPath(env.id, fixOfRun.id), {
+                    state: {
+                      back: {
+                        to: `${paths.dashboard.simulate.simulationRun(env.id, runId)}?tab=improvements`,
+                        label: identity?.ordinal
+                          ? `Run ${identity.ordinal}`
+                          : "the run",
+                      },
+                    },
+                  })
                 }
               >
                 View fix progress
@@ -1876,7 +1886,14 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
           {/* ── tabs ── */}
           <CustomTabs
             value={tab}
-            onChange={(_, v) => setTab(v)}
+            onChange={(_, v) => {
+              setTab(v);
+              /* The tab lives in the URL, so Back from an improvement (or a
+                 reload) lands on the same tab. */
+              const next = new URLSearchParams(params);
+              next.set("tab", v);
+              setParams(next, { replace: true, state: location.state });
+            }}
             sx={{ borderBottom: "1px solid", borderColor: "divider", mb: 2 }}
           >
             {SHOW_INSIGHTS && <Tab value="insights" label="Insights" />}
