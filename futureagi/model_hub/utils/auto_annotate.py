@@ -83,7 +83,7 @@ def replace_dynamic_ids(value: str, row):
 def _get_input_values(inputs: list, dataset_id, row_id):
     outputs = []
     for col_id in inputs:
-        cell = Cell.objects.get(dataset_id=dataset_id, col_id=col_id, row_id=row_id)
+        cell = Cell.objects.get(dataset_id=dataset_id, column_id=col_id, row_id=row_id)
         if cell:
             outputs.append(str(cell.value))
         else:
