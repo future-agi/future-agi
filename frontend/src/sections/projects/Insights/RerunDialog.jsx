@@ -254,7 +254,8 @@ function RerunForm({
               )}
             </Typography>
           </Stack>
-          {((sameRows ? sameCost.isError : count.isError) || credits?.unavailable) && (
+          {((sameRows ? sameCost.isError : count.isError) ||
+            credits?.unavailable) && (
             <Alert
               severity="error"
               action={
