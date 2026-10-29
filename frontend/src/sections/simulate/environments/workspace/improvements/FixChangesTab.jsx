@@ -1,15 +1,7 @@
 import { alpha } from "@mui/material/styles";
 import PropTypes from "prop-types";
 import { useQuery } from "@tanstack/react-query";
-import {
-  Box,
-  Button,
-  MenuItem,
-  Select,
-  Stack,
-  Typography,
-} from "@mui/material";
-import { useState } from "react";
+import { Box, Button, Stack, Typography } from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import {
@@ -79,9 +71,8 @@ export default function FixChangesTab({ fix, candidateId }) {
   const trials = [...(fix.candidates || [])].sort(
     (a, b) => a.attempt - b.attempt,
   );
-  const [picked, setPicked] = useState(
-    candidateId || winnerOf(fix)?.id || trials[0]?.id,
-  );
+  // The trial "Review Trial N" asked for, else the winner.
+  const picked = candidateId || winnerOf(fix)?.id || trials[0]?.id;
   const candidate = trials.find((c) => c.id === picked);
   const { data: patch, isLoading } = useQuery({
     queryKey: ["agent-fix-run-patch", fix.id, picked],
@@ -94,18 +85,9 @@ export default function FixChangesTab({ fix, candidateId }) {
   return (
     <Box>
       <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1.5 }}>
-        <Select
-          size="small"
-          value={picked}
-          onChange={(e) => setPicked(e.target.value)}
-          renderValue={() => label(candidate)}
-        >
-          {trials.map((c) => (
-            <MenuItem key={c.id} value={c.id}>
-              {label(c)}
-            </MenuItem>
-          ))}
-        </Select>
+        <Typography sx={{ typography: "s2", fontWeight: 600, flexShrink: 0 }}>
+          {label(candidate)}
+        </Typography>
         <Typography
           sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}
           noWrap

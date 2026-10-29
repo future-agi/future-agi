@@ -49,6 +49,9 @@ describe("Per scenario tab", () => {
     await user.click(await screen.findByRole("button", { name: "Broke 1" }));
     expect(screen.getAllByTestId(/^scenario-/)).toHaveLength(1);
     expect(screen.getByTestId("scenario-on-time-cancel")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Broke 1" })).toHaveAttribute("aria-pressed", "true");
+    await user.click(screen.getByRole("button", { name: "Broke 1" }));
+    expect(screen.getAllByTestId(/^scenario-/)).toHaveLength(5);
   });
 
   it("opens the trial's check run for a scenario", async () => {

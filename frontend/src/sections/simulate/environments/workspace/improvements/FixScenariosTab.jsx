@@ -1,7 +1,7 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
 import { useLocation } from "react-router-dom";
-import { Box, Chip, Link, Stack, Typography } from "@mui/material";
+import { Box, Link, Stack, Typography } from "@mui/material";
 
 import { RouterLink } from "src/routes/components";
 import { paths } from "src/routes/paths";
@@ -56,12 +56,7 @@ export default function FixScenariosTab({ fix, candidateId }) {
     <Box
       sx={{ border: "1px solid", borderColor: "divider", borderRadius: "8px" }}
     >
-      <Stack
-        direction="row"
-        alignItems="center"
-        spacing={0.75}
-        flexWrap="wrap"
-        rowGap={0.75}
+      <Box
         sx={{
           px: 2,
           py: 1.25,
@@ -69,22 +64,52 @@ export default function FixScenariosTab({ fix, candidateId }) {
           borderColor: "divider",
         }}
       >
-        {OUTCOME_ORDER.map((k) => (
-          <Chip
-            key={k}
-            size="small"
-            clickable
-            onClick={() => setOnly(only === k ? null : k)}
-            label={`${OUTCOME[k]} ${counts[k]}`}
-            sx={{
-              border: "1px solid",
-              color: "text.primary",
-              borderColor: only === k ? "text.primary" : "divider",
-              bgcolor: only === k ? "action.selected" : "transparent",
-            }}
-          />
-        ))}
-      </Stack>
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={0.75}
+          flexWrap="wrap"
+          rowGap={0.75}
+        >
+          {OUTCOME_ORDER.map((k) => {
+            const on = only === k;
+            return (
+              <Box
+                key={k}
+                role="button"
+                tabIndex={0}
+                aria-pressed={on}
+                onClick={() => setOnly(on ? null : k)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ")
+                    setOnly(on ? null : k);
+                }}
+                sx={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  height: 22,
+                  px: 0.75,
+                  borderRadius: 0.5,
+                  border: "1px solid",
+                  borderColor: on ? "text.primary" : "divider",
+                  bgcolor: on ? "action.selected" : "transparent",
+                  color: "text.primary",
+                  typography: "s3",
+                  fontWeight: 500,
+                  cursor: "pointer",
+                  userSelect: "none",
+                  transition: "background-color 120ms, border-color 120ms",
+                  "&:hover": {
+                    bgcolor: on ? "action.selected" : "action.hover",
+                  },
+                }}
+              >
+                {`${OUTCOME[k]} ${counts[k]}`}
+              </Box>
+            );
+          })}
+        </Stack>
+      </Box>
       <Stack
         divider={
           <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />

@@ -32,6 +32,7 @@ describe("Changes tab", () => {
       screen.getByText("Cancel the booking and confirm the refund."),
     ).toBeInTheDocument();
     expect(screen.getByText("Trial 3 · Winner")).toBeInTheDocument();
+    expect(screen.queryByRole("combobox")).toBeNull();
   });
 
   it("shows the trial it was asked to review", async () => {
