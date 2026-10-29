@@ -2171,3 +2171,68 @@ class TestResponseFormatterOutputFormat:
         """The common string path is unchanged — raw content is returned."""
         formatted = self._format("This is a plain answer.", "string")
         assert formatted == "This is a plain answer."
+
+
+@pytest.mark.unit
+class TestCustomModelHandler:
+    """Custom HTTP-endpoint models (provider="custom") saved from AI Providers."""
+
+    def _context(self, org, messages):
+        from agentic_eval.core_evals.run_prompt.runprompt_handlers import (
+            ModelHandlerContext,
+        )
+
+        return ModelHandlerContext(
+            model="my-model", messages=messages, organization_id=org, provider="custom"
+        )
+
+    def test_endpoint_saved_as_api_base_is_used(
+        self, mock_organization_id, simple_messages
+    ):
+        from agentic_eval.core_evals.run_prompt.runprompt_handlers.handlers.custom_model_handler import (
+            CustomModelHandler,
+        )
+
+        url = "https://llm.example.com/v1/chat/completions"
+        with patch("model_hub.models.custom_models.CustomAIModel.objects") as objects:
+            objects.get.return_value = Mock(
+                actual_json={"api_base": url, "headers": {}}
+            )
+            handler = CustomModelHandler(
+                self._context(mock_organization_id, simple_messages)
+            )
+        assert handler._custom_model_config["endpoint_url"] == url
+
+    @pytest.mark.asyncio
+    async def test_streaming_async_builds_handler_off_the_event_loop(
+        self, mock_organization_id, simple_messages
+    ):
+        import asyncio
+
+        from agentic_eval.core_evals.run_prompt.runprompt_handlers.handlers import (
+            LLMHandler,
+        )
+
+        on_loop = []
+
+        class FakeHandler:  # the real __init__ reads the DB, which Django refuses on the loop
+            def __init__(self, context):
+                try:
+                    on_loop.append(bool(asyncio.get_running_loop()))
+                except RuntimeError:
+                    on_loop.append(False)
+
+            async def execute_async(self, streaming=False):
+                return Mock(response="ok", metadata={})
+
+        handler = LLMHandler(self._context(mock_organization_id, simple_messages))
+        with (
+            patch(
+                "agentic_eval.core_evals.run_prompt.runprompt_handlers.handlers.custom_model_handler.CustomModelHandler",
+                FakeHandler,
+            ),
+            patch.object(handler, "_ws_send_running_async", AsyncMock()),
+            patch.object(handler, "_ws_send_completed_async", AsyncMock()),
+        ):
+            await handler._handle_custom_model_streaming_async(Mock(), {}, time.time())
+        assert on_loop == [False]

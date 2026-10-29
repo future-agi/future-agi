@@ -891,7 +891,9 @@ class LLMHandler(BaseModelHandler):
 
         from .custom_model_handler import CustomModelHandler
 
-        custom_handler = CustomModelHandler(self.context)
+        # The constructor loads the model config from the database, which
+        # Django refuses to do on the event loop.
+        custom_handler = await sync_to_async(CustomModelHandler)(self.context)
         response = await custom_handler.execute_async(streaming=False)
 
         # Send the full response as a single chunk since custom models
