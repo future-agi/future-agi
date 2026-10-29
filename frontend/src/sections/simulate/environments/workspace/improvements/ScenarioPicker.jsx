@@ -13,19 +13,32 @@ const link = {
   "&:hover": { color: "text.primary" },
 };
 
-function TextLink({ onClick, children }) {
+function TextLink({ onClick, active, dim = false, children }) {
   return (
     <Typography
       component="button"
       type="button"
       onClick={onClick}
-      sx={{ ...link, border: 0, p: 0, bgcolor: "transparent" }}
+      aria-pressed={active === undefined ? undefined : active}
+      sx={{
+        ...link,
+        border: 0,
+        p: 0,
+        bgcolor: "transparent",
+        ...(active && { color: "text.primary", fontWeight: 600 }),
+        ...(dim && { color: "text.disabled" }),
+      }}
     >
       {children}
     </Typography>
   );
 }
-TextLink.propTypes = { onClick: PropTypes.func, children: PropTypes.node };
+TextLink.propTypes = {
+  onClick: PropTypes.func,
+  active: PropTypes.bool,
+  dim: PropTypes.bool,
+  children: PropTypes.node,
+};
 
 // One list of scenarios to tick: search, All / None / Back to suggested, then
 // a row per scenario with how it did in the run.
@@ -47,6 +60,8 @@ function ScenarioList({
   );
   const isSuggested =
     suggested.length === chosen.length && suggested.every((k) => set.has(k));
+  const allOn = items.length > 0 && chosen.length === items.length;
+  const noneOn = chosen.length === 0;
   const toggle = (key) =>
     onChange(set.has(key) ? chosen.filter((k) => k !== key) : [...chosen, key]);
   return (
@@ -70,10 +85,16 @@ function ScenarioList({
             Back to suggested
           </TextLink>
         )}
-        <TextLink onClick={() => onChange(items.map((s) => s.key))}>
+        <TextLink
+          active={allOn}
+          dim={noneOn}
+          onClick={() => onChange(items.map((s) => s.key))}
+        >
           All
         </TextLink>
-        <TextLink onClick={() => onChange([])}>None</TextLink>
+        <TextLink active={noneOn} dim={allOn} onClick={() => onChange([])}>
+          None
+        </TextLink>
       </Stack>
       <Typography sx={{ typography: "s3", color: "text.tertiary", mb: 0.75 }}>
         {note}

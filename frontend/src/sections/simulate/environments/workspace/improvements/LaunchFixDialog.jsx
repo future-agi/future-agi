@@ -52,13 +52,15 @@ const linkSx = {
   "&:hover": { color: "text.primary" },
 };
 
-function Row({ k, children }) {
+function Row({ k, center = false, children }) {
   return (
     <Stack
       direction="row"
       spacing={1.5}
+      alignItems={center ? "center" : "flex-start"}
       sx={{
         py: 1,
+        minHeight: 38,
         borderTop: "1px solid",
         borderColor: "divider",
         "&:first-of-type": { borderTop: 0, pt: 0 },
@@ -78,9 +80,19 @@ function Row({ k, children }) {
     </Stack>
   );
 }
-Row.propTypes = { k: PropTypes.string.isRequired, children: PropTypes.node };
+Row.propTypes = {
+  k: PropTypes.string.isRequired,
+  center: PropTypes.bool,
+  children: PropTypes.node,
+};
 
 function LockedFiles({ paths: locked, onChange }) {
+  const add = (input) => {
+    const v = input.value.trim().replace(/,$/, "").trim();
+    if (!v) return;
+    onChange([...new Set([...locked, v])]);
+    input.value = "";
+  };
   return (
     <Stack direction="row" flexWrap="wrap" alignItems="center" gap={0.75}>
       {locked.map((p) => (
@@ -93,16 +105,26 @@ function LockedFiles({ paths: locked, onChange }) {
       ))}
       <InputBase
         placeholder={
-          locked.length ? "Add a path" : "None. Add a path it must never edit"
+          locked.length
+            ? "Add another, then press Enter"
+            : "Files or globs it must never edit, like prompts/*.md. Press Enter to add each."
         }
         inputProps={{ "aria-label": "Add a locked file" }}
         onKeyDown={(e) => {
-          const v = e.target.value.trim();
-          if (e.key !== "Enter" || !v) return;
-          onChange([...new Set([...locked, v])]);
-          e.target.value = "";
+          if (e.key === "Enter") {
+            e.preventDefault();
+            add(e.target);
+          }
         }}
-        sx={{ typography: "s2", flex: 1, minWidth: 180 }}
+        onChange={(e) => {
+          if (e.target.value.endsWith(",")) add(e.target);
+        }}
+        onBlur={(e) => add(e.target)}
+        sx={{
+          flex: 1,
+          minWidth: 180,
+          "& .MuiInputBase-input": { typography: "s2", p: 0, height: 22 },
+        }}
       />
     </Stack>
   );
@@ -271,7 +293,7 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
               />
             )}
           </Row>
-          <Row k="May change">
+          <Row k="May change" center>
             <Stack direction="row" flexWrap="wrap" columnGap={2}>
               {options.surfaces.map((s) => (
                 <CustomTooltip
@@ -308,10 +330,10 @@ export default function LaunchFixDialog({ open, onClose, envId, sourceRunId }) {
               ))}
             </Stack>
           </Row>
-          <Row k="Locked files">
+          <Row k="Locked files" center>
             <LockedFiles paths={locked} onChange={setLocked} />
           </Row>
-          <Row k="Budget">
+          <Row k="Budget" center>
             <Stack direction="row" spacing={1.5}>
               <Select
                 size="small"

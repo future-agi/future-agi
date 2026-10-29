@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -31,10 +31,12 @@ vi.mock("src/api/simulate-environments/fixRuns", async (importOriginal) => {
 const { default: LaunchFixDialog } = await import("../LaunchFixDialog");
 
 const onClose = vi.fn();
+let lastClient;
 function renderDialog() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
+  lastClient = client;
   return render(
     <QueryClientProvider client={client}>
       <SnackbarProvider>
@@ -123,6 +125,93 @@ describe("LaunchFixDialog", () => {
     ).toBeInTheDocument();
     const protect = within(screen.getByTestId("cases-protect"));
     expect(protect.getAllByText("Not measured")).toHaveLength(2);
+  });
+
+  it("shows whether All or None is in effect", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    await user.click(await screen.findByText("Choose cases"));
+    const fix = within(screen.getByTestId("cases-fix"));
+    expect(fix.getByRole("button", { name: "All" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(fix.getByRole("button", { name: "None" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    await user.click(fix.getByRole("button", { name: "None" }));
+    expect(fix.getByRole("button", { name: "None" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(fix.getByRole("button", { name: "All" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    await user.click(fix.getByRole("checkbox", { name: "Authority claim" }));
+    expect(fix.getByRole("button", { name: "All" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(fix.getByRole("button", { name: "None" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  });
+
+  it("adds a locked file without touching the picked cases", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    await user.click(await screen.findByText("Choose cases"));
+    await user.type(
+      screen.getByLabelText("Add a locked file"),
+      "spec.json{Enter}",
+    );
+    expect(screen.getByText("spec.json")).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("cases-fix")).getByText("12 of 12"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Start improvement" }),
+    ).toBeEnabled();
+  });
+
+  it("keeps the user's choices when launch options refetch", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    await user.click(await screen.findByText("Choose cases"));
+    await user.click(
+      within(screen.getByTestId("cases-fix")).getByRole("checkbox", {
+        name: "Authority claim",
+      }),
+    );
+    await user.type(
+      screen.getByLabelText("Add a locked file"),
+      "spec.json{Enter}",
+    );
+    await act(() => lastClient.refetchQueries());
+    expect(
+      within(screen.getByTestId("cases-fix")).getByText("11 of 12"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("spec.json")).toBeInTheDocument();
+  });
+
+  it("explains locked files and adds several paths, by Enter or comma", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    const input = await screen.findByLabelText("Add a locked file");
+    expect(input).toHaveAttribute(
+      "placeholder",
+      "Files or globs it must never edit, like prompts/*.md. Press Enter to add each.",
+    );
+    await user.type(input, "spec.json{Enter}tools/*.json,");
+    expect(screen.getByText("spec.json")).toBeInTheDocument();
+    expect(screen.getByText("tools/*.json")).toBeInTheDocument();
+    expect(input).toHaveAttribute(
+      "placeholder",
+      "Add another, then press Enter",
+    );
   });
 
   it("disables Start with the reason when nothing may change", async () => {
