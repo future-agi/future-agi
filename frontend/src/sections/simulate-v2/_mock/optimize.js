@@ -118,7 +118,8 @@ export const proposalsFor = (env, failing = [], measured = []) => {
       id: "unsupported-claims",
       kind: "System prompt",
       title: "Gate the closing statement on the tool result",
-      why: `${claimed.length} ${claimed.length === 1 ? "task" : "tasks"} told the caller something the call log does not support — every word-reading grader passed them.`,
+      /* After a tool-call re-grade the checks catch these; say so rather than "passed". */
+      why: `${claimed.length} ${claimed.length === 1 ? "task" : "tasks"} told the caller something the call log does not support — ${claimed.every((t) => t.regraded?.toolCalls) ? "tool call evaluation now fails them" : "every word-reading grader passed them"}.`,
       diff: [
         { type: "remove", text: "Confirm the outcome to the caller once you have handled it." },
         { type: "add", text: "Only state that something is done after the tool that does it has returned successfully. If it has not, say what you attempted and what is outstanding." },
