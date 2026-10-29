@@ -271,3 +271,9 @@ export const compatStampOf = (report, evaluatedIds) => ({
 });
 
 export const doctorCli = (agent, env) => `agent-learn doctor --agent "${agent?.name || "agent"}" --world ${env?.id}`;
+
+/** A voice world run as text: the agent has no audio path here (code or endpoint, not LiveKit/Pipecat). */
+export const isTextRehearsal = (env, agent) => {
+  const kind = sourceKindOf(agent);
+  return VOICE.includes(env?.surface) && ["repo", "upload", "framework", "endpoint"].includes(kind) && !/livekit|pipecat/i.test(agent?.values?.framework || "");
+};

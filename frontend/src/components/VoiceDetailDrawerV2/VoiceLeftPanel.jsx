@@ -16,6 +16,7 @@ const TABS = {
   HANDOFFS: "handoffs",
   APPROVALS: "approvals",
   EVIDENCE: "evidence",
+  EVENTS: "events",
 };
 
 const PATH_VIEW_MODE = {
@@ -94,6 +95,13 @@ const VoiceLeftPanel = ({ data, scenarioId, embedded = false }) => {
       });
     /* What the call recorded and didn't, and a failed check's source and
        dispute notes (simulate only). */
+    /* A platform agent's own events for this call (simulate only). */
+    if (isSimulate && data?.simEvents)
+      t.push({
+        label: "Provider events",
+        value: TABS.EVENTS,
+        icon: "solar:list-check-linear",
+      });
     if (isSimulate && data?.simEvidence)
       t.push({
         label: "Evidence",
@@ -107,6 +115,7 @@ const VoiceLeftPanel = ({ data, scenarioId, embedded = false }) => {
     data?.simHandoffs,
     data?.simApprovals,
     data?.simEvidence,
+    data?.simEvents,
   ]);
 
   const isTranscriptTab = currentTab === TABS.TRANSCRIPT;
@@ -213,6 +222,9 @@ const VoiceLeftPanel = ({ data, scenarioId, embedded = false }) => {
             </ShowComponent>
             <ShowComponent condition={currentTab === TABS.APPROVALS}>
               {data?.simApprovals}
+            </ShowComponent>
+            <ShowComponent condition={currentTab === TABS.EVENTS}>
+              {data?.simEvents}
             </ShowComponent>
             <ShowComponent condition={currentTab === TABS.EVIDENCE}>
               {data?.simEvidence}

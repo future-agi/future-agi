@@ -41,6 +41,7 @@ import {
   agentSourceOf,
   connectedAgentsFrom,
   pushedVersion,
+  syncCheck,
 } from "../_mock/agentRegistry";
 import { cloneNameFor, replicationOf } from "../_mock/replication";
 import {
@@ -1842,6 +1843,22 @@ function ConnectionTab({
       ...(uploaded &&
         onSync && { action: { label: "Upload new version", onClick: onSync } }),
     },
+    /* A platform agent edited on its platform since we read it: flagged, not silently followed. */
+    ...(() => {
+      if (source.kind !== "platform" || !source.syncable) return [];
+      const chk = syncCheck({ agent, versions: agent.versions, env });
+      if (!chk.ok || chk.upToDate) return [];
+      const n = (chk.changes || []).length;
+      return [
+        {
+          label: `Changed on ${source.label}`,
+          value: `${n ? `${n} change${n === 1 ? "" : "s"}` : "Its settings changed"} on ${source.label} since we last read it — new runs use ${agent.production || agent.latest} as recorded and are marked unpinned until you sync`,
+          ...(onSync && {
+            action: { label: "Sync and retest", onClick: onSync },
+          }),
+        },
+      ];
+    })(),
   ];
   const lastReadAt = agent.lastSyncedAt || syncs[0]?.createdAt || null;
   const syncWhat =
@@ -2292,6 +2309,7 @@ function ConnectionTab({
           onSaveValues={onSaveValues}
           onArchive={onArchive}
           onDelete={onDelete}
+          onMove={() => setMoving(true)}
         />
       </SettingsSection>
 

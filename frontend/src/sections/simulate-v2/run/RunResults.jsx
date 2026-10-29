@@ -104,6 +104,8 @@ import CopyCommandButton from "../components/CopyCommandButton";
 import HandoffTimeline from "./HandoffTimeline";
 import { trialArtifactsOf } from "../_mock/trialEvidence";
 import { CheckSource, DisputeNotes, TrialArtifacts } from "./TrialEvidence";
+import ProviderEvents from "./ProviderEvents";
+import { isTextRehearsal } from "../_mock/compatibility";
 import ApprovalTimeline from "./ApprovalTimeline";
 import { approvalOf } from "../_mock/approvals";
 import ImprovementRunStrip from "./ImprovementRunStrip";
@@ -1369,6 +1371,15 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
               )?.compat;
               return c && c.requested > c.evaluated
                 ? ` · ${c.evaluated} evaluated / ${c.requested} requested`
+                : "";
+            })()}
+            {(() => {
+              /* A platform config that can change between runs. */
+              const u = (envState.runs || []).find(
+                (r) => r.id === runId,
+              )?.unpinned;
+              return u
+                ? ` · unpinned on ${u.charAt(0).toUpperCase() + u.slice(1)}`
                 : "";
             })()}
             {(() => {
@@ -3018,6 +3029,13 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                         ) : null,
                         /* Artifacts recorded or not, a failed check's source
                            and dispute notes. */
+                        /* A platform agent: the events its platform sent for this call. */
+                        simEvents: envState?.agent?.values?.provider ? (
+                          <ProviderEvents
+                            task={openTask}
+                            provider={envState.agent.values.provider}
+                          />
+                        ) : null,
                         simEvidence: (
                           <Stack spacing={1.5} sx={{ pb: 2 }}>
                             <TrialArtifacts
@@ -3071,6 +3089,8 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                         ...taskToVoiceData(openTask, {
                           env,
                           voice: true,
+                          provider: envState?.agent?.values?.provider || null,
+                          textRehearsal: isTextRehearsal(env, envState?.agent),
                           /* The Graph tab draws the scenario's path and where the call left it. */
                           scenario:
                             (envState.scenarios || []).find(

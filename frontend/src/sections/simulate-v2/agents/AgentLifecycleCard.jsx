@@ -33,7 +33,13 @@ import { useDemoMode } from "./demoMode";
  * Its status sits in the page header; fix depth on Constraints; proof under
  * How we test it. On the Connections tab.
  */
-export function LifecycleCard({ agent, onSaveValues, onArchive, onDelete }) {
+export function LifecycleCard({
+  agent,
+  onSaveValues,
+  onArchive,
+  onDelete,
+  onMove,
+}) {
   const status = agentStatusOf(agent);
   /* Deleted only once it has no environments left. */
   const blocked = deleteBlockOf(agent);
@@ -108,6 +114,24 @@ export function LifecycleCard({ agent, onSaveValues, onArchive, onDelete }) {
             )}
           </ActionRow>
         )}
+        {/* Gone for good on its platform: the environments testing it follow a Move. */}
+        {disconnected && onMove && (agent.usedIn || []).length > 0 && (
+          <ActionRow
+            title="Replace it"
+            body={`${agent.usedIn.length} environment${agent.usedIn.length === 1 ? " tests" : "s test"} this agent — no new runs until it's back`}
+            hint={`Point this agent at its replacement (a new ${status.cause === "app" ? "repository" : "assistant or account"}) and ${
+              (agent.usedIn || [])
+                .map((u) => u.envName)
+                .filter(Boolean)
+                .slice(0, 3)
+                .join(", ") || "its environments"
+            } follow it. Past runs and results stay as they were.`}
+          >
+            <Button size="small" variant="outlined" onClick={onMove} sx={btnSx}>
+              Move…
+            </Button>
+          </ActionRow>
+        )}
         <ActionRow
           title={archived ? "Restore" : "Archive"}
           body={
@@ -169,6 +193,8 @@ LifecycleCard.propTypes = {
   onSaveValues: PropTypes.func.isRequired,
   onArchive: PropTypes.func.isRequired,
   onDelete: PropTypes.func.isRequired,
+  /* Opens Move… — the replacement path, which its environments follow. */
+  onMove: PropTypes.func,
 };
 
 /**

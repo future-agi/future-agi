@@ -558,6 +558,8 @@ function LiveRun() {
   const [secretsOk, setSecretsOk] = useState(false);
   /* The scenario list's filters — scenario, status, failure domain, actor. */
   const [trialFilter, setTrialFilter] = useState({});
+  /* A platform agent's Stop: "cancelling" until the platform confirms the calls ended. */
+  const [cancelState, setCancelState] = useState(null);
 
   /*
     A scenario paused on a clarifying question (AC-15.13). Long runs are left
@@ -924,6 +926,12 @@ function LiveRun() {
           blocked: (params.get("blocked") || "").split(",").filter(Boolean),
         }),
       },
+      /* A platform agent whose config isn't pinned to a version (Vapi has none). */
+      ...(envState?.agent?.values?.provider &&
+        !envState.agent.values.providerPinned &&
+        !envState.agent.values.retellNumbersPinned?.pinned && {
+          unpinned: envState.agent.values.provider,
+        }),
       /* Recorded-tool replay: which run's tool responses it played back. */
       ...(params.get("tools") && { toolReplayOf: params.get("tools") }),
       /* The run plan's limits, as it started. */
@@ -1682,11 +1690,16 @@ function LiveRun() {
             <IconButton
               size="small"
               aria-label="Stop run"
-              onClick={
-                spend?.cap && spend.reached !== "stopped"
-                  ? stopAtLimit
-                  : finishNow
-              }
+              onClick={() => {
+                /* A platform's calls end on its side: say so until it confirms. */
+                if (envState?.agent?.values?.provider) {
+                  setCancelState("cancelling");
+                  setTimeout(() => setCancelState("confirmed"), 2500);
+                }
+                return spend?.cap && spend.reached !== "stopped"
+                  ? stopAtLimit()
+                  : finishNow();
+              }}
             >
               <Iconify
                 icon="solar:stop-circle-linear"
@@ -1943,6 +1956,46 @@ function LiveRun() {
               Open
             </Button>
           </Stack>
+        );
+      })()}
+
+      {/* A platform agent: its call limit, a rate-limit pause, and cancelling until confirmed. */}
+      {(() => {
+        const provider = envState?.agent?.values?.provider;
+        if (!provider) return null;
+        const P = provider.charAt(0).toUpperCase() + provider.slice(1);
+        const limit = { vapi: 10, retell: 20 }[provider] || null;
+        const share = stats.total ? stats.done / stats.total : 0;
+        const line =
+          cancelState === "cancelling"
+            ? `Cancelling — waiting for ${P} to confirm the calls in progress ended. No new calls start.`
+            : cancelState === "confirmed"
+              ? `Cancelled — ${P} confirmed every call ended. Finished calls are kept.`
+              : phase === "running" &&
+                  stats.total >= 20 &&
+                  share >= 0.4 &&
+                  share < 0.55
+                ? `Paused — ${P} returned 429 (rate limited). Retrying in 15 s; queued calls hold. Not counted against the agent.`
+                : phase === "running" && limit && parallel > limit
+                  ? `${P} allows ${limit} calls at once on this account — ${parallel - limit} wait their turn and start as calls finish. Waiting isn't counted against the agent.`
+                  : null;
+        if (!line) return null;
+        return (
+          <Typography
+            sx={{
+              mx: 2,
+              mb: 1,
+              px: 1.5,
+              py: 1,
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: "8px",
+              typography: "s2",
+              color: "text.secondary",
+            }}
+          >
+            {line}
+          </Typography>
         );
       })()}
 

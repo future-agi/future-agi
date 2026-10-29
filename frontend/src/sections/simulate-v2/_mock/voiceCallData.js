@@ -304,7 +304,16 @@ function speakerRecordings(transcript, key) {
 
 export function taskToVoiceData(
   task,
-  { env, voice = true, scenario = null, failedGoal = null } = {},
+  {
+    env,
+    voice = true,
+    scenario = null,
+    failedGoal = null,
+    /* A voice world run as text (no audio): timing metrics are unavailable, not zero. */
+    textRehearsal = false,
+    /* The platform that placed the call — a sandbox call says so. */
+    provider = null,
+  } = {},
 ) {
   const steps = task?.steps || [];
   const durationSec = (task?.durationMs || 0) / 1000;
@@ -394,7 +403,7 @@ export function taskToVoiceData(
     provider: "future-agi-sandbox",
     call_type: direction,
     call_metadata: {
-      provider: "future-agi-sandbox",
+      provider: provider || "future-agi-sandbox",
       call_direction: direction,
     },
     duration_seconds: durationSec,
@@ -423,12 +432,12 @@ export function taskToVoiceData(
     call_summary: summary,
     agent_talk_percentage: talkAgent,
     talk_ratio: `${talkAgent}/${100 - talkAgent}`,
-    avg_agent_latency_ms: voice ? 500 : undefined,
-    user_wpm: voice ? 168 : undefined,
-    bot_wpm: voice ? 214 : undefined,
-    user_interruption_count: 0,
-    ai_interruption_count: 0,
-    customer_latency_metrics: voice
+    avg_agent_latency_ms: voice && !textRehearsal ? 500 : undefined,
+    user_wpm: voice && !textRehearsal ? 168 : undefined,
+    bot_wpm: voice && !textRehearsal ? 214 : undefined,
+    user_interruption_count: textRehearsal ? undefined : 0,
+    ai_interruption_count: textRehearsal ? undefined : 0,
+    customer_latency_metrics: voice && !textRehearsal
       ? {
           system_metrics: {
             endpointing: 120,
@@ -447,6 +456,10 @@ export function taskToVoiceData(
       expected: task?.expected,
       critical: String(!!task?.critical),
       ended_reason_raw: ended.raw,
+      ...(textRehearsal && {
+        channel:
+          "Text rehearsal — latency, interruptions and barge-in are unavailable, not zero",
+      }),
     },
 
     scenario: summary,
