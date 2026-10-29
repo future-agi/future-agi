@@ -164,6 +164,7 @@ const TestRunHeader = () => {
           <Button
             variant="outlined"
             size="small"
+            disabled={!testData}
             onClick={() => {
               setScenarioPopoverOpen(true);
             }}

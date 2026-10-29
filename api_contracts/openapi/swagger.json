@@ -57439,6 +57439,14 @@
                         "required": false,
                         "type": "integer",
                         "minimum": 1
+                    },
+                    {
+                        "name": "selected_scenarios",
+                        "in": "query",
+                        "description": "JSON array of up to 100 scenario UUIDs to surface at the top of the list.",
+                        "required": false,
+                        "type": "string",
+                        "default": ""
                     }
                 ],
                 "responses": {
@@ -57567,6 +57575,14 @@
                         "required": false,
                         "type": "integer",
                         "minimum": 1
+                    },
+                    {
+                        "name": "selected_scenarios",
+                        "in": "query",
+                        "description": "JSON array of up to 100 scenario UUIDs to surface at the top of the list.",
+                        "required": false,
+                        "type": "string",
+                        "default": ""
                     }
                 ],
                 "responses": {
