@@ -1,7 +1,7 @@
 import PropTypes from "prop-types";
 import { useEffect, useRef, useState } from "react";
 import { enqueueSnackbar } from "notistack";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography, Button, IconButton, Tab } from "@mui/material";
@@ -62,6 +62,7 @@ export default function RunDetail({
   creditBanner = null,
 }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const [tab, setTab] = useState("tasks");
   // Filters handed to the calls table from elsewhere on the page (an analytics
   // tile, a diagnosis issue). `seq` remounts the table so a repeat hand-off
@@ -170,9 +171,12 @@ export default function RunDetail({
     },
   };
 
+  // A check run opened from a fix carries the fix page as its way back; it is
+  // not in the Runs list, so Back would otherwise land somewhere without it.
   const back = () =>
     navigate(
-      paths.dashboard.simulate.environments.workspaceTab(env.id, "runs"),
+      location.state?.backTo ??
+        paths.dashboard.simulate.environments.workspaceTab(env.id, "runs"),
     );
 
   const exportResults = async () => {
@@ -210,7 +214,7 @@ export default function RunDetail({
           flexShrink: 0,
         }}
       >
-        <IconButton size="small" onClick={back}>
+        <IconButton size="small" onClick={back} aria-label="Back">
           <Iconify
             icon="solar:alt-arrow-left-linear"
             width={18}

@@ -424,6 +424,7 @@ function LocationProbe() {
   return (
     <>
       <div data-testid="location">{`${location.search}|${navigationType}`}</div>
+      <div data-testid="pathname">{location.pathname}</div>
       <button type="button" onClick={() => navigate("/?rowId=nope")}>
         follow link
       </button>
@@ -472,6 +473,19 @@ beforeEach(() => {
 });
 
 describe("RunDetail", () => {
+  it("goes back to where it was opened from when the opener says so", async () => {
+    const user = userEvent.setup();
+    renderDetail({
+      initialEntries: [
+        { pathname: "/run", state: { backTo: "/dashboard/simulate/environments/env-1/improvements/fix-1" } },
+      ],
+    });
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    expect(screen.getByTestId("pathname").textContent).toBe(
+      "/dashboard/simulate/environments/env-1/improvements/fix-1",
+    );
+  });
+
   it("renders the identity header with the real ordinal, agent, status and task count", () => {
     useRunDetail.mockReturnValue({
       identity: IDENTITY,
