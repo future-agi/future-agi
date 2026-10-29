@@ -1,5 +1,5 @@
 import React, { memo } from "react";
-import { Box, Stack, Typography, useTheme } from "@mui/material";
+import { Box, Stack, Tooltip, Typography, useTheme } from "@mui/material";
 import PropTypes from "prop-types";
 import SvgColor from "src/components/svg-color";
 import { NODE_TYPE_CONFIG } from "src/sections/agent-playground/utils/constants";
@@ -7,6 +7,7 @@ import { EXECUTION_STATUS } from "src/sections/agent-playground/utils/workflowEx
 import {
   getStatusBorderColor,
   getStatusBackgroundColor,
+  isSkippedExecutionStatus,
   PortHandles,
 } from "./nodeUtils";
 import "./agent-graph-animations.css";
@@ -22,6 +23,8 @@ const ExecutionNode = ({ data }) => {
   const { label, frontendNodeType, selected, nodeExecution, ports = [] } = data;
   const nodeStatus = nodeExecution?.status;
   const isPending = !nodeExecution;
+  const isSkipped = isSkippedExecutionStatus(nodeStatus);
+  const isDimmed = isPending || isSkipped;
   const isRunning = nodeStatus?.toLowerCase() === EXECUTION_STATUS.RUNNING;
 
   const config =
@@ -41,8 +44,11 @@ const ExecutionNode = ({ data }) => {
   const inputPorts = ports.filter((p) => p.direction === "input");
   const outputPorts = ports.filter((p) => p.direction === "output");
 
-  return (
-    <Box sx={{ position: "relative", opacity: isPending ? 0.4 : 1 }}>
+  const node = (
+    <Box
+      sx={{ position: "relative", opacity: isDimmed ? 0.4 : 1 }}
+      aria-label={isSkipped ? "Skipped" : undefined}
+    >
       <PortHandles ports={inputPorts} type="input" borderColor={borderColor} />
 
       {/* Node body */}
@@ -50,7 +56,7 @@ const ExecutionNode = ({ data }) => {
         sx={{
           minWidth: 200,
           borderRadius: 0.5,
-          borderStyle: isRunning ? "none" : "solid",
+          borderStyle: isRunning ? "none" : isSkipped ? "dashed" : "solid",
           borderWidth: isRunning ? 0 : "1px",
           borderColor,
           backgroundColor,
@@ -59,7 +65,7 @@ const ExecutionNode = ({ data }) => {
           px: isRunning ? "13px" : 1.5,
           display: "flex",
           alignItems: "center",
-          cursor: isPending ? "default" : "pointer",
+          cursor: isDimmed ? "default" : "pointer",
           overflow: "visible",
           ...(selected && {
             borderColor: "primary.main",
@@ -132,6 +138,26 @@ const ExecutionNode = ({ data }) => {
           >
             {label}
           </Typography>
+          {isSkipped && (
+            <Box
+              component="span"
+              sx={{
+                ml: "auto",
+                px: 0.5,
+                py: 0.15,
+                borderRadius: 0.5,
+                bgcolor: "error.main",
+                color: "#fff",
+                fontSize: 9,
+                fontWeight: 700,
+                letterSpacing: "0.04em",
+                lineHeight: 1.4,
+                flexShrink: 0,
+              }}
+            >
+              SKIPPED
+            </Box>
+          )}
         </Stack>
       </Box>
 
@@ -141,6 +167,14 @@ const ExecutionNode = ({ data }) => {
         borderColor={borderColor}
       />
     </Box>
+  );
+
+  if (!isSkipped) return node;
+
+  return (
+    <Tooltip title="Skipped" placement="top">
+      {node}
+    </Tooltip>
   );
 };
 

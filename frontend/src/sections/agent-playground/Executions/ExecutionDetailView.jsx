@@ -3,7 +3,10 @@ import { Box, CircularProgress, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import { useQueryClient } from "@tanstack/react-query";
 import { AgentGraph } from "src/components/AgentGraph";
-import { START_ID, END_ID } from "src/components/AgentGraph/layoutUtils";
+import {
+  isSelectableExecutionNode,
+  isSkippedExecutionStatus,
+} from "src/components/AgentGraph/nodeUtils";
 import NodeOutputDetail from "../AgentBuilder/RunAgentPanel/NodeOutputDetail";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
 import { useGetExecutionDetail } from "src/api/agent-playground/agent-playground";
@@ -83,7 +86,10 @@ export default function ExecutionDetailView({ graphId, executionId }) {
       return;
     }
     // Find last node that has a node_execution (skip pending nodes)
-    const executedNodes = executionData.nodes.filter((n) => n.node_execution);
+    const executedNodes = executionData.nodes.filter(
+      (n) =>
+        n.node_execution && !isSkippedExecutionStatus(n.node_execution.status),
+    );
     if (executedNodes.length === 0) {
       setSelectedNodeId(null);
       return;
@@ -92,7 +98,9 @@ export default function ExecutionDetailView({ graphId, executionId }) {
     const lastNodeSubGraph = lastNode.sub_graph;
     if (lastNodeSubGraph?.nodes?.length) {
       const executedInner = lastNodeSubGraph.nodes.filter(
-        (n) => n.node_execution,
+        (n) =>
+          n.node_execution &&
+          !isSkippedExecutionStatus(n.node_execution.status),
       );
       if (executedInner.length > 0) {
         const lastInner = executedInner[executedInner.length - 1];
@@ -107,7 +115,7 @@ export default function ExecutionDetailView({ graphId, executionId }) {
     useResolvedExecution({ selectedNodeId, executionData, executionId });
 
   const handleGraphNodeClick = useCallback((_event, node) => {
-    if (node.id === START_ID || node.id === END_ID) return;
+    if (!isSelectableExecutionNode(node)) return;
     setSelectedNodeId(node.id);
   }, []);
 
