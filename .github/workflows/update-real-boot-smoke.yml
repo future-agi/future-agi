@@ -36,7 +36,9 @@ jobs:
 
       - name: Runner facts before install
         run: |
-          set -uo pipefail
+          # Facts only: a probe that fails (no user manager, no crontab) is
+          # itself the fact, so this step never fails the job.
+          set -u
           mkdir -p "$RUNNER_TEMP/smoke"
           {
             echo "## runner"; uname -a; nproc; free -m; df -h / "$RUNNER_TEMP" /var/lib/docker 2>/dev/null
@@ -48,7 +50,7 @@ jobs:
             crontab -l 2>&1 | head -5
             echo "user manager: $(systemctl --user is-system-running 2>&1)"
             echo "linger: $(loginctl show-user "$(id -u)" -p Linger 2>&1)"
-          } 2>&1 | tee "$RUNNER_TEMP/smoke/runner-before.txt"
+          } 2>&1 | tee "$RUNNER_TEMP/smoke/runner-before.txt" || true
 
       - name: Install the published release from its own tag (no start)
         run: |
@@ -105,15 +107,15 @@ jobs:
 
       - name: Runner facts after boot
         if: always()
-        working-directory: ${{ runner.temp }}/a
         run: |
-          set -uo pipefail
+          set -u
+          cd "$RUNNER_TEMP/a" 2>/dev/null || exit 0
           {
             echo "## after boot"; free -m; df -h / /var/lib/docker 2>/dev/null
             docker system df
             docker system df -v 2>/dev/null | sed -n '/VOLUME NAME/,/^$/p'
             docker stats --no-stream --format '{{.Name}} cpu={{.CPUPerc}} mem={{.MemUsage}}'
-          } 2>&1 | tee "$RUNNER_TEMP/smoke/runner-after.txt"
+          } 2>&1 | tee "$RUNNER_TEMP/smoke/runner-after.txt" || true
 
       - name: Pull B and C and record disk
         if: always()
@@ -137,5 +139,7 @@ jobs:
 
       - name: Tear down
         if: always()
-        working-directory: ${{ runner.temp }}/a
-        run: docker compose down -v --remove-orphans || true
+        run: |
+          if [ -d "$RUNNER_TEMP/a" ]; then
+            cd "$RUNNER_TEMP/a" && docker compose down -v --remove-orphans || true
+          fi

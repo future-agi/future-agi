@@ -544,6 +544,12 @@ def run(args):
         failure = dict(stage=phase,reason=code,exception_type=type(exc).__name__)
         # Only fixed producer assertions, never raw product/subprocess errors.
         if isinstance(exc,p.RehearsalError): failure['detail'] = str(exc)[:512]
+        # Updater-side install/process refusals name the failing step; a CI run
+        # cannot be inspected afterwards, so keep them, with generated secrets
+        # and credential shapes redacted.
+        from deploy.update.install import InstallError
+        if isinstance(exc,InstallError) and driver is not None:
+            failure['detail'] = driver._redact(str(exc),1024)
     finally:
         signal.signal(signal.SIGTERM,previous_term)
         if driver is not None:
