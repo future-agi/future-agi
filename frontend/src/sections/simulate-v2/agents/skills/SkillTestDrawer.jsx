@@ -8,6 +8,7 @@ import {
   MenuItem,
   Select,
   Stack,
+  TextField,
   ToggleButton,
   ToggleButtonGroup,
   Typography,
@@ -19,14 +20,20 @@ import { neutralCheckboxSx } from "../../components/primitives";
 import { estimateRunPlan, rangeLabel } from "../../_mock/pricing";
 import {
   CASE_GROUPS,
+  latestOf,
   skillTestCli,
   suggestCasesOf,
   testConfigsOf,
   testStatusOf,
+  testSummaryOf,
 } from "../../_mock/skills";
 import { MONO } from "../agentViewUtils";
 import { segmentedToggleSx } from "../segmentedToggleSx";
 import { FactBox, FactRow } from "./SkillFacts";
+import SkillTestResults from "./SkillTestResults";
+
+const skillMdOf = (skill) =>
+  latestOf(skill).files.find((f) => f.path === "SKILL.md")?.text || "";
 
 const REPEATS = [1, 3, 5];
 const label = { typography: "s3", color: "text.tertiary", mb: 0.5 };
@@ -54,8 +61,13 @@ export default function SkillTestDrawer({
   envs,
   test,
   onStart,
+  prefill,
+  onDecide,
 }) {
   const [envId, setEnvId] = useState(null);
+  /* Keep needs a second click when the candidate came with a regression. */
+  const [confirmKeep, setConfirmKeep] = useState(false);
+  const [revising, setRevising] = useState(null);
   const [cases, setCases] = useState([]);
   const [repeats, setRepeats] = useState(3);
   const [, tick] = useState(0);
@@ -67,17 +79,24 @@ export default function SkillTestDrawer({
   );
 
   useEffect(() => {
+    setConfirmKeep(false);
+    setRevising(null);
     if (!open || test || !skill) return;
-    setEnvId(envs[0]?.env.id || null);
-    setRepeats(3);
-  }, [open, test, skill, envs]);
+    setEnvId(prefill?.envId || envs[0]?.env.id || null);
+    setRepeats(prefill?.repeats || 3);
+  }, [open, test, skill, envs, prefill]);
   useEffect(() => {
     if (!open || test || !skill || !env) return;
+    /* A revision is tested on exactly the cases the last version was. */
+    if (prefill) {
+      setCases(prefill.cases.map((c) => ({ ...c, picked: true })));
+      return;
+    }
     const others = set.skills.filter(
       (s) => s.id !== skill.id && s.state === "on",
     );
     setCases(suggestCasesOf(skill, others, env.envState?.scenarios || []));
-  }, [open, test, skill, env, set]);
+  }, [open, test, skill, env, set, prefill]);
   /* A running test finishes on its own; re-read its status. */
   useEffect(() => {
     if (!open || !test || testStatusOf(test) !== "running") return undefined;
@@ -100,9 +119,19 @@ export default function SkillTestDrawer({
       })
     : null;
   const total = picked.length * reps * configs.length;
-  const positives = picked.filter((c) => c.group === "positive").length;
+  /* Shared cases count: the skill should be used there too. */
+  const positives = picked.filter((c) => c.group !== "negative").length;
   const negatives = picked.filter((c) => c.group === "negative").length;
   const status = test ? testStatusOf(test) : null;
+  const locked = !!test || !!prefill;
+  const summary =
+    test && status === "done"
+      ? testSummaryOf(test, skill, env?.envState?.scenarios || [])
+      : null;
+  const decided = test?.decision;
+  const canKeep = summary && summary.verdict !== "rejected";
+  /* The editor belongs to a finished test; a new plan starts without it. */
+  const editing = !!test && revising != null;
   const edit = (id, p) =>
     setCases((cs) => cs.map((c) => (c.scenarioId === id ? { ...c, ...p } : c)));
   const blockers = [
@@ -147,6 +176,75 @@ export default function SkillTestDrawer({
 
         <Box sx={{ flex: 1, minHeight: 0, overflow: "auto", px: 2, py: 2 }}>
           <Stack spacing={2.5}>
+            {summary && <SkillTestResults test={test} summary={summary} />}
+            {decided && (
+              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+                {decided.line}
+              </Typography>
+            )}
+            {editing && (
+              <Box
+                sx={{
+                  border: "1px solid",
+                  borderColor: "divider",
+                  borderRadius: "8px",
+                  p: 1.5,
+                }}
+              >
+                <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                  {`Revise ${skill.id} as v${latestOf(skill).v + 1}`}
+                </Typography>
+                <Typography
+                  sx={{ typography: "s3", color: "text.tertiary", mb: 1 }}
+                >
+                  {`Change when it's used (the description) or its instructions. It's tested next on the same ${test.cases.length} cases and evaluations as ${test.id}, so the results compare.`}
+                </Typography>
+                <TextField
+                  multiline
+                  fullWidth
+                  minRows={6}
+                  value={revising}
+                  onChange={(e) => setRevising(e.target.value)}
+                  inputProps={{ style: { fontFamily: MONO, fontSize: 12 } }}
+                />
+                <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+                  <Button
+                    size="small"
+                    variant="contained"
+                    color="primary"
+                    disabled={revising === skillMdOf(skill)}
+                    onClick={() => onDecide("revise", { test, text: revising })}
+                  >
+                    {`Save v${latestOf(skill).v + 1} and test it`}
+                  </Button>
+                  <Button
+                    size="small"
+                    color="inherit"
+                    onClick={() => setRevising(null)}
+                  >
+                    Cancel
+                  </Button>
+                </Stack>
+              </Box>
+            )}
+            {summary && (
+              <Typography
+                sx={{
+                  typography: "s2",
+                  fontWeight: 600,
+                  pt: 1,
+                  borderTop: "1px solid",
+                  borderColor: "divider",
+                }}
+              >
+                What ran
+              </Typography>
+            )}
+            {prefill && (
+              <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+                {`Same cases, repeats and evaluations as ${prefill.id}. They stay fixed so the versions compare.`}
+              </Typography>
+            )}
             {/* What runs side by side. */}
             <Box>
               <Typography sx={{ typography: "s2", fontWeight: 600, mb: 0.75 }}>
@@ -199,7 +297,7 @@ export default function SkillTestDrawer({
                   <Select
                     size="small"
                     fullWidth
-                    disabled={!!test}
+                    disabled={locked}
                     value={env?.env.id || ""}
                     onChange={(e) => setEnvId(e.target.value)}
                   >
@@ -223,7 +321,7 @@ export default function SkillTestDrawer({
                   exclusive
                   size="small"
                   value={reps}
-                  disabled={!!test}
+                  disabled={locked}
                   onChange={(_, v) => v && setRepeats(v)}
                   sx={segmentedToggleSx}
                 >
@@ -273,7 +371,7 @@ export default function SkillTestDrawer({
                               spacing={1}
                               sx={rowSx}
                             >
-                              {!test && (
+                              {!locked && (
                                 <Checkbox
                                   size="small"
                                   checked={!!c.picked}
@@ -304,7 +402,7 @@ export default function SkillTestDrawer({
                                     .join(" · ")}
                                 </Typography>
                               </Box>
-                              {!test && (
+                              {!locked && (
                                 <Select
                                   size="small"
                                   value={c.group}
@@ -407,6 +505,11 @@ export default function SkillTestDrawer({
                 {blockers[0]}
               </Typography>
             )}
+            {confirmKeep && (
+              <Typography sx={{ typography: "s3", color: "warning.dark" }}>
+                {`The regression on ${summary.regressions.map((r) => `“${r.case.title}”`).join(", ")} stays recorded with the version.`}
+              </Typography>
+            )}
             {test && status === "running" && (
               <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
                 Running. Results appear here when every configuration has
@@ -414,9 +517,60 @@ export default function SkillTestDrawer({
               </Typography>
             )}
           </Box>
-          <Button size="small" color="inherit" onClick={onClose}>
-            {test ? "Close" : "Cancel"}
-          </Button>
+          {summary && !decided && !editing && (
+            <>
+              {summary.regressions.length > 0 ||
+              summary.verdict === "no_gain" ? (
+                <Button
+                  size="small"
+                  color="inherit"
+                  onClick={() => onDecide("improve", { test })}
+                >
+                  Improve with a budget
+                </Button>
+              ) : null}
+              <Button
+                size="small"
+                color="inherit"
+                onClick={() => onDecide("remove", { test })}
+              >
+                {skill.state === "on"
+                  ? "Keep the current version"
+                  : "Don't add it"}
+              </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                color="inherit"
+                onClick={() => setRevising(skillMdOf(skill))}
+              >
+                Revise
+              </Button>
+              {canKeep && (
+                <Button
+                  size="small"
+                  variant="contained"
+                  color="primary"
+                  onClick={() => {
+                    if (summary.verdict === "tradeoff" && !confirmKeep) {
+                      setConfirmKeep(true);
+                      return;
+                    }
+                    onDecide("keep", { test, summary });
+                  }}
+                >
+                  {confirmKeep
+                    ? "Keep it with the regression"
+                    : `Keep ${skill.id} v${test.v}`}
+                </Button>
+              )}
+            </>
+          )}
+          {(!summary || decided || editing) && (
+            <Button size="small" color="inherit" onClick={onClose}>
+              {test ? "Close" : "Cancel"}
+            </Button>
+          )}
           {!test && (
             <Button
               size="small"
@@ -459,4 +613,6 @@ SkillTestDrawer.propTypes = {
   envs: PropTypes.array.isRequired,
   test: PropTypes.object,
   onStart: PropTypes.func,
+  prefill: PropTypes.object,
+  onDecide: PropTypes.func,
 };

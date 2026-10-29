@@ -46,6 +46,7 @@ const sourceText = (s) =>
  * text. Tested runtimes, coverage and failure modes come from its tests.
  */
 export default function SkillDrawer({
+  evidence,
   onTest,
   open,
   onClose,
@@ -144,20 +145,36 @@ export default function SkillDrawer({
               <FactBox>
                 <FactRow k="Tested on">
                   <Box component="span" sx={{ color: "text.secondary" }}>
-                    Not tested on this agent yet. A runtime counts as compatible
-                    only after a test on it.
+                    {evidence?.runtime ||
+                      "Not tested on this agent yet. A runtime counts as compatible only after a test on it."}
                   </Box>
                 </FactRow>
                 <FactRow k="Test coverage">
                   <Box component="span" sx={{ color: "text.secondary" }}>
-                    No cases yet: when it should be used, when it
-                    shouldn&apos;t, and next to the other skills.
+                    {evidence?.tests.length
+                      ? `${evidence.coverage.positive} where it should be used · ${evidence.coverage.negative} where it shouldn't · ${evidence.coverage.interaction} next to other skills`
+                      : "No cases yet: when it should be used, when it shouldn't, and next to the other skills."}
                   </Box>
                 </FactRow>
                 <FactRow k="Known failure modes">
-                  <Box component="span" sx={{ color: "text.secondary" }}>
-                    None recorded. They come from test runs.
-                  </Box>
+                  {evidence?.failures.length ? (
+                    <Stack spacing={0.25}>
+                      {evidence.failures.map((f) => (
+                        <span key={`${f.test}-${f.title}`}>
+                          {`v${f.v} · “${f.title}”`}
+                          <Box component="span" sx={{ color: "text.tertiary" }}>
+                            {` · ${f.note || "got worse"} · ${f.test}`}
+                          </Box>
+                        </span>
+                      ))}
+                    </Stack>
+                  ) : (
+                    <Box component="span" sx={{ color: "text.secondary" }}>
+                      {evidence?.tests.length
+                        ? "None found in its tests."
+                        : "None recorded. They come from test runs."}
+                    </Box>
+                  )}
                 </FactRow>
               </FactBox>
             </Stack>
@@ -293,4 +310,5 @@ SkillDrawer.propTypes = {
   agentTools: PropTypes.array,
   onImportRevision: PropTypes.func,
   onTest: PropTypes.func,
+  evidence: PropTypes.object,
 };

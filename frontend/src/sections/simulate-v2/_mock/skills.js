@@ -296,6 +296,17 @@ const REPO_FOLDERS = {
       text: "---\nname: Lounge Access\n---\n\nCheck the ticket class and status before offering a lounge pass.\n",
     },
   ],
+  "skills/refund-cheatsheet": [
+    {
+      path: "SKILL.md",
+      text: md(
+        "refund-cheatsheet",
+        "Use for any refund question.",
+        "## Cases and what to answer\n- Never issue a refund outside the return window without a supervisor. Refuse, then offer a supervisor.\n- Never read back more than the last four digits of a card. Read only the last four.",
+        "allowed-tools: issue_refund\n",
+      ),
+    },
+  ],
   "skills/fare-calculator": [
     {
       path: "SKILL.md",
@@ -678,4 +689,229 @@ export const skillTestCli = ({ skill, agent, env, cases, repeats }) => {
   ]
     .filter(Boolean)
     .join(" ");
+};
+
+/* ── Results (skills.md "What results reveal") ──────────────────────── */
+
+const rand = (str) => {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i += 1)
+    h = Math.imul(h ^ str.charCodeAt(i), 16777619);
+  return (h >>> 0) / 2 ** 32;
+};
+
+/**
+ * A skill that carries the test's answers isn't an improvement: any tested
+ * case whose title or expected outcome appears in the skill's files.
+ */
+export const contaminationOf = (skill, v, cases, scenarios = []) => {
+  const files = skill?.versions.find((x) => x.v === v)?.files || [];
+  const out = [];
+  cases.forEach((c) => {
+    const sc = scenarios.find((x) => x.id === c.scenarioId) || {};
+    const needles = [c.title, sc.expected && sc.expected.slice(0, 60)].filter(
+      (n) => n && n.length > 24,
+    );
+    const file = files.find((f) =>
+      needles.some((n) =>
+        (f.text || "").toLowerCase().includes(n.toLowerCase()),
+      ),
+    );
+    if (file) out.push({ title: c.title, file: file.path });
+  });
+  return out.filter((x, i, a) => a.findIndex((y) => y.title === x.title) === i);
+};
+
+/** The config results are measured against: no skill, else the current version. */
+export const baselineOf = (test) =>
+  test.configs.find((c) => c.id === "none") ||
+  test.configs.find((c) => !c.candidate);
+
+/**
+ * Per case, per configuration: passes out of the repeats, whether the skill
+ * loaded (only when the runtime reports it), and what went wrong. Seeded by
+ * the test so it reads the same every time.
+ */
+export const testResultsOf = (test, skill) => {
+  const reps = test.repeats;
+  const fm =
+    frontmatterOf(
+      (
+        skill?.versions.find((x) => x.v === test.v) ||
+        (skill && latestOf(skill))
+      )?.files.find((f) => f.path === "SKILL.md")?.text,
+    ) || {};
+  const tool = (fm["allowed-tools"] || "").split(",")[0].trim();
+  /* A description that says what it's not for ("Not for card questions")
+     keeps the skill off those cases. */
+  const excluded = wordsOf(
+    (fm.description || "").toLowerCase().split("not for")[1] || "",
+  );
+  /* The likeliest wrong load: an unrelated case another skill fits. */
+  const wrongCase =
+    test.cases.find(
+      (c) => c.group === "negative" && /^Fits /.test(c.why || ""),
+    ) || test.cases.find((c) => c.group === "negative");
+  const clashCase = test.cases.find((c) => c.group === "interaction");
+  const perRun =
+    test.estimate?.high && test.runs ? test.estimate.high / test.runs : 3.6;
+  const configs = test.configs.map((cfg) => {
+    const loads = cfg.skills.find((x) => x.id === test.skillId);
+    const fresh = loads && loads.v === test.v;
+    const rows = test.cases.map((c) => {
+      const r = rand(`${test.id}|${cfg.id}|${c.scenarioId}`);
+      let p;
+      let loaded = 0;
+      let note = null;
+      if (c.group === "positive") {
+        p = !loads ? 0.25 + r * 0.3 : fresh ? 0.86 + r * 0.14 : 0.55 + r * 0.2;
+        loaded = loads ? (r < 0.2 ? reps - 1 : reps) : 0;
+        if (!loads && p < 0.5) note = "Gave up after the first processor error";
+      } else if (c.group === "negative") {
+        p = 0.9 + r * 0.1;
+        const ruledOut = [...wordsOf(`${c.title} ${c.detail || ""}`)].some(
+          (w) => excluded.has(w),
+        );
+        if (
+          loads &&
+          fresh &&
+          c.scenarioId === wrongCase?.scenarioId &&
+          !ruledOut
+        ) {
+          loaded = Math.max(1, Math.round(reps * 0.67));
+          p = (reps - loaded) / reps;
+          note = test.observed
+            ? `Loaded here${tool ? ` and called ${tool}` : ""}, which this task doesn't need`
+            : `Called ${tool || "a refund tool"}, which this task doesn't need`;
+        }
+      } else {
+        p = loads ? 0.7 + r * 0.2 : 0.65 + r * 0.2;
+        loaded = loads ? reps : 0;
+        if (loads && fresh && c.scenarioId === clashCase?.scenarioId) {
+          p = Math.max(0, (reps - 1) / reps);
+          note = "Both skills gave steps; one tool call ran twice";
+        }
+      }
+      const passes = Math.min(reps, Math.max(0, Math.round(p * reps)));
+      return {
+        case: c,
+        passes,
+        loaded: test.observed && loads ? loaded : null,
+        note: passes < reps ? note : null,
+      };
+    });
+    const cost = perRun * (loads ? (fresh ? 1.12 : 1.08) : 1);
+    const latency = 2.1 + (loads ? (fresh ? 0.4 : 0.3) : 0);
+    return { cfg, rows, cost, latency };
+  });
+  return configs;
+};
+
+/** Totals per group for one configuration's rows. */
+const tally = (rows, group) => {
+  const g = rows.filter((x) => x.case.group === group);
+  return {
+    passes: g.reduce((a, x) => a + x.passes, 0),
+    n: g.length,
+    loaded: g.some((x) => x.loaded != null)
+      ? g.reduce((a, x) => a + (x.loaded || 0), 0)
+      : null,
+  };
+};
+
+/**
+ * The test read as a decision: success where it should help, wrong loads
+ * and regressions where it shouldn't, cost and latency — kept apart, so a
+ * gain with a regression reads as a tradeoff, not a win.
+ */
+export const testSummaryOf = (test, skill, scenarios) => {
+  const results = testResultsOf(test, skill);
+  const base =
+    results.find((r) => r.cfg.id === baselineOf(test)?.id) || results[0];
+  const cand =
+    results.find((r) => r.cfg.candidate) || results[results.length - 1];
+  const reps = test.repeats;
+  const groups = ["positive", "negative", "interaction"].map((g) => {
+    const b = tally(base.rows, g);
+    const c = tally(cand.rows, g);
+    return {
+      id: g,
+      n: b.n,
+      runs: b.n * reps,
+      base: b.passes,
+      cand: c.passes,
+      loaded: c.loaded,
+    };
+  });
+  const [pos, neg, inter] = groups;
+  const regressions = cand.rows.filter((r) => {
+    const b = base.rows.find((x) => x.case.scenarioId === r.case.scenarioId);
+    return r.passes < b.passes && r.case.group !== "positive";
+  });
+  const contaminated = contaminationOf(skill, test.v, test.cases, scenarios);
+  /* Where it should help: its own cases, or the shared ones when it has none. */
+  const help = pos.n ? pos : inter;
+  const gain = help.cand - help.base;
+  const verdict = contaminated.length
+    ? "rejected"
+    : gain > 0 && regressions.length
+      ? "tradeoff"
+      : gain > 0
+        ? "helps"
+        : "no_gain";
+  return {
+    results,
+    base,
+    cand,
+    groups,
+    help,
+    pos,
+    neg,
+    inter,
+    regressions,
+    contaminated,
+    verdict,
+    reps,
+  };
+};
+
+export const VERDICTS = {
+  helps: { label: "Helps, no side effects found", tone: "passed" },
+  tradeoff: { label: "Helps, with a regression", tone: "needs_input" },
+  no_gain: { label: "No improvement", tone: "cancelled" },
+  rejected: { label: "Rejected: carries the test's answers", tone: "failed" },
+};
+
+/** What the skill's finished tests showed — for its detail page. */
+export const skillEvidenceOf = (skill, tests, runtime, scenariosOf) => {
+  const mine = (tests || []).filter(
+    (t) => t.skillId === skill.id && testStatusOf(t) === "done",
+  );
+  const cases = {
+    positive: new Set(),
+    negative: new Set(),
+    interaction: new Set(),
+  };
+  const failures = [];
+  mine.forEach((t) => {
+    t.cases.forEach((c) => cases[c.group]?.add(c.scenarioId));
+    const sum = testSummaryOf(
+      t,
+      skill,
+      scenariosOf ? scenariosOf(t.envId) : [],
+    );
+    sum.regressions.forEach((r) =>
+      failures.push({ test: t.id, v: t.v, title: r.case.title, note: r.note }),
+    );
+  });
+  return {
+    tests: mine,
+    runtime: mine.length
+      ? `${runtime.mechanism} · activation ${mine.some((t) => t.observed) ? "observed" : "unknown"} · ${mine.map((t) => t.id).join(", ")}`
+      : null,
+    coverage: Object.fromEntries(
+      Object.entries(cases).map(([k, v]) => [k, v.size]),
+    ),
+    failures,
+  };
 };

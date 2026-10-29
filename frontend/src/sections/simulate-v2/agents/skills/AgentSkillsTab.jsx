@@ -1,6 +1,8 @@
 import PropTypes from "prop-types";
 import { useEffect, useMemo, useState } from "react";
 import { useSnackbar } from "notistack";
+import { useNavigate } from "react-router-dom";
+import { paths } from "src/routes/paths";
 import {
   Box,
   Button,
@@ -31,9 +33,14 @@ import {
   skillImportCli,
   skillRuntimeOf,
   skillSetOf,
+  skillEvidenceOf,
   startTestPatch,
   testStatusOf,
+  testSummaryOf,
+  VERDICTS,
 } from "../../_mock/skills";
+import { currentUser } from "../../_mock/scenarioProvenance";
+import { agentIdOf } from "../../_mock/agentRegistry";
 import { MONO } from "../agentViewUtils";
 import { FactBox, FactRow } from "./SkillFacts";
 import SkillDrawer from "./SkillDrawer";
@@ -69,6 +76,7 @@ const ago = (iso) => {
 export default function AgentSkillsTab({ agent, agentTools, onRecordVersion }) {
   const { state, dispatch } = useSimStore();
   const { enqueueSnackbar } = useSnackbar();
+  const navigate = useNavigate();
   const runtime = useMemo(() => skillRuntimeOf(agent), [agent]);
   const set = useMemo(
     () => skillSetOf(agent, state.workspaceSettings),
@@ -121,6 +129,126 @@ export default function AgentSkillsTab({ agent, agentTools, onRecordVersion }) {
     save({ ...set, draft });
   };
   const changes = draftChangesOf(set);
+  const scenariosOf = (envId) => state.byEnv?.[envId]?.scenarios || [];
+  /* What to do with a finished test: keep, revise, leave it, or improve. */
+  const decide = (kind, { test, text, summary }) => {
+    const skill = set.skills.find((s) => s.id === test.skillId);
+    const at = new Date().toISOString();
+    const mark = (decision, base) => ({
+      ...base,
+      tests: base.tests.map((t) =>
+        t.id === test.id
+          ? { ...t, decision: { ...decision, at, by: currentUser().name } }
+          : t,
+      ),
+    });
+    const draft = { ...set.draft };
+    delete draft[skill.id];
+    if (kind === "improve") {
+      navigate(
+        `${paths.dashboard.simulate.improvements}?new=1&agent=${agentIdOf(agent.key)}`,
+      );
+      return;
+    }
+    if (kind === "remove") {
+      const line =
+        skill.state === "on"
+          ? `Kept ${agent.latest} as it was. ${skill.id} v${test.v} wasn't adopted; every version stays here.`
+          : `${skill.id} wasn't added. It stays imported, not loaded.`;
+      save(mark({ kind, line }, { ...set, draft }));
+      setTesting(null);
+      enqueueSnackbar(line);
+      return;
+    }
+    if (kind === "revise") {
+      const v = latestOf(skill).v + 1;
+      const version = {
+        v,
+        at,
+        by: currentUser().name,
+        source: { kind: "edit", from: test.id },
+        files: latestOf(skill).files.map((f) =>
+          f.path === "SKILL.md" ? { ...f, text } : f,
+        ),
+        note: `Revised after ${test.id}`,
+      };
+      const skills = set.skills.map((s) =>
+        s.id === skill.id
+          ? {
+              ...s,
+              ...(s.state === "on" && { loadedV: loadedVOf(s) }),
+              versions: [...s.versions, version],
+            }
+          : s,
+      );
+      save(
+        mark(
+          {
+            kind,
+            v,
+            line: `Revised as v${v} and tested again on the same cases.`,
+          },
+          { ...set, skills },
+        ),
+      );
+      setTesting({ skillId: skill.id, prefill: test });
+      return;
+    }
+    /* Keep: the candidate's skill set becomes a new agent version. Runs
+       already made keep the skill set they ran with. */
+    const cand = test.configs.find((c) => c.candidate);
+    if (cand.asIs) {
+      save(
+        mark(
+          {
+            kind,
+            line: `Kept as it is. ${agent.latest} already loads ${skill.id} v${test.v}.`,
+          },
+          set,
+        ),
+      );
+      setTesting(null);
+      return;
+    }
+    const label = nextMajorLabel(agent.versions.map((v) => v.label));
+    onRecordVersion({
+      id: `agent-${label}`,
+      label,
+      note: `Skills: ${skill.id} v${test.v}, tested in ${test.id}.`,
+      createdAt: at,
+      connectedAt: at,
+      origin: "manual",
+      basedOnVersion: agent.latest,
+      changes: [
+        {
+          kind: "skills",
+          title: `Skill ${skill.id} v${test.v} ${skill.state === "on" ? "updated" : "added"} · tested in ${test.id}`,
+          detail: VERDICTS[summary.verdict].label,
+        },
+      ],
+      skillSet: cand.skills,
+    });
+    const skills = set.skills.map((s) => {
+      if (s.id !== skill.id) return s;
+      const { loadedV, ...rest } = s;
+      return {
+        ...rest,
+        state: "on",
+        ...(test.v !== latestOf(s).v && { loadedV: test.v }),
+      };
+    });
+    save(
+      mark(
+        {
+          kind,
+          label,
+          line: `Kept as ${label}: it loads ${skill.id} v${test.v}. Earlier runs keep the skill set they ran with.`,
+        },
+        { ...set, skills, draft },
+      ),
+    );
+    setTesting(null);
+  };
   const saveDraft = () => {
     const label = nextMajorLabel(agent.versions.map((v) => v.label));
     const now = new Date().toISOString();
@@ -432,7 +560,21 @@ export default function AgentSkillsTab({ agent, agentTools, onRecordVersion }) {
                         ? "Running"
                         : st === "cancelled"
                           ? "Cancelled"
-                          : "Finished"}
+                          : t.decision
+                            ? {
+                                keep: t.decision.label
+                                  ? `Kept · ${t.decision.label}`
+                                  : "Kept as it is",
+                                remove: "Not adopted",
+                                revise: `Revised → v${t.decision.v}`,
+                              }[t.decision.kind]
+                            : VERDICTS[
+                                testSummaryOf(
+                                  t,
+                                  set.skills.find((x) => x.id === t.skillId),
+                                  scenariosOf(t.envId),
+                                ).verdict
+                              ].label}
                     </TableCell>
                     <TableCell
                       sx={{
@@ -526,6 +668,9 @@ export default function AgentSkillsTab({ agent, agentTools, onRecordVersion }) {
         draft={set.draft}
         runtime={runtime}
         agentTools={agentTools}
+        evidence={
+          open ? skillEvidenceOf(open, set.tests, runtime, scenariosOf) : null
+        }
         onImportRevision={() => {
           const src = latestOf(open).source;
           setOpenId(null);
@@ -545,6 +690,8 @@ export default function AgentSkillsTab({ agent, agentTools, onRecordVersion }) {
         runtime={runtime}
         envs={envs}
         test={(set.tests || []).find((t) => t.id === testing?.testId)}
+        prefill={testing?.prefill}
+        onDecide={decide}
         onStart={(t) => {
           const next = startTestPatch(set, t);
           save(next);
