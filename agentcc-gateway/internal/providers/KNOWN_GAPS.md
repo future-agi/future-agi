@@ -13,7 +13,7 @@ Coverage by provider and endpoint is in [CONTRACT_COVERAGE.md](CONTRACT_COVERAGE
 
 ## Totals
 
-186 gap IDs, defined 903 times.
+187 gap IDs, defined 904 times.
 
 | prefix | provider | topic | IDs |
 |---|---|---|--:|
@@ -25,7 +25,7 @@ Coverage by provider and endpoint is in [CONTRACT_COVERAGE.md](CONTRACT_COVERAGE
 | `R` | Anthropic | request side | 1 |
 | `O` | OpenAI | all | 29 |
 | `A` | Azure OpenAI | all | 9 |
-| `G` | Gemini | all | 28 |
+| `G` | Gemini | all | 29 |
 | `GR` | Gemini | request side | 1 |
 | `V` | Vertex AI | all | 3 |
 | `B` | Amazon Bedrock | all | 23 |
@@ -158,6 +158,7 @@ Coverage by provider and endpoint is in [CONTRACT_COVERAGE.md](CONTRACT_COVERAGE
 | G31 | audioTranscription (the text of generated audio) is dropped; the canonical audio content part has no transcript, though OpenAI's message audio carries one | gemini: spec gemini/generate_content, spec vertex/generate_content |
 | G32 | the upstream functionCall.id is dropped; the gateway numbers calls call_N itself and never sends functionResponse.id back, so parallel calls to the same function are matched by order alone | gemini: spec gemini/generate_content, spec vertex/generate_content |
 | G33 | modelStatus (model stage and retirement time) is dropped, so a client is never told its model is deprecated or about to be retired | gemini: spec gemini/generate_content |
+| G34 | on the Gemini API, /v1/images/generations has nothing it can call: CreateImage sends every model to Imagen's :predict, which the Gemini API no longer serves, and never to generateContent with IMAGE output, where the Gemini API's own image models (such as gemini-2.5-flash-image) generate images | gemini: contract_images_test.go |
 | GR2 | request side: a client's thinking_budget always becomes thinkingConfig.thinkingBudget, whatever the model, so on a model that takes thinkingLevel only (Gemini 4 Argon) every request with a thinking budget fails with this 400 | gemini: gemini-4-argon/error_thinking_budget |
 
 ## Vertex AI

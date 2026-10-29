@@ -29,7 +29,7 @@ shapes per model release, not per API version.
 - **Losses**: [`internal/providers/KNOWN_GAPS.md`](../KNOWN_GAPS.md) lists
   every `known gap <ID>` the suites, the spec checks and the preset-health
   table (`TestPresetHealth`) allowlist, one line per ID, with where each is
-  pinned: 186 IDs as of this writing. A gap is allowlisted, not fixed.
+  pinned: 187 IDs as of this writing. A gap is allowlisted, not fixed.
 - **Drift between pull requests**: three scheduled workflows. None runs on
   pull requests; every secret is optional, and a provider without its secret
   is skipped.
