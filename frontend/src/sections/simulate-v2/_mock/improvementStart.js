@@ -35,7 +35,11 @@ import {
 import { observabilityOf } from "./observability";
 import { pinsForNewRun } from "./envModel";
 import { runSummaries } from "./comparison";
-import { frozenSnapshotOf, currentEnvSnapshot, snapshotLabelOf } from "./envSnapshot";
+import {
+  frozenSnapshotOf,
+  currentEnvSnapshot,
+  snapshotLabelOf,
+} from "./envSnapshot";
 import { mustPassOf } from "./mustPass";
 import {
   optimizationId,
@@ -149,7 +153,55 @@ export const compatFor = (env, es) => {
 export const RSI_ENGINE = 1;
 
 /* Voice calls run in real time, so a voice improvement starts smaller. */
-export const VOICE_DEFAULTS = { scenarios: 12, repeats: 2, trials: 8 };
+export const VOICE_DEFAULTS = { scenarios: 12, repeats: 2, trials: 4 };
+
+/*
+  Fix my agent: the engine tries at most four candidates; budget and time
+  default to 1,500 credits and 2 h 30 min; held-back scenarios want at least
+  four to tell a real fix from noise, eight recommended. Below the minimum it
+  still starts — the fix is proven on the targets only.
+*/
+export const MAX_CANDIDATES = 4;
+export const FIX_DEFAULTS = { dollars: 15, minutes: 150 };
+export const HELD_BACK = { minimum: 4, recommended: 8 };
+
+/** "2 h 30 min" — a time limit in the review sentence. */
+export const hoursLabel = (n) =>
+  n < 60
+    ? `${n} min`
+    : `${Math.floor(n / 60)} h${n % 60 ? ` ${n % 60} min` : ""}`;
+
+const PART_WORDS = {
+  prompt: "instructions",
+  tools: "tool descriptions",
+  settings: "settings",
+  skills: "skills",
+  memory: "memory",
+  code: "code",
+  structure: "structure",
+};
+const listWords = (xs) =>
+  xs.length < 2
+    ? xs[0] || ""
+    : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`;
+
+/** The one sentence a fix is reviewed by before it starts. */
+export const fixReviewSentence = ({
+  targets,
+  protectedN,
+  allowed,
+  credits,
+  minutes,
+}) =>
+  `Fix ${targets} failing ${targets === 1 ? "case" : "cases"}${protectedN ? ` without breaking ${protectedN} protected ${protectedN === 1 ? "case" : "cases"}` : ""}, changing ${listWords((allowed || []).map((a) => PART_WORDS[a] || a))} only, up to ${credits} or ${hoursLabel(minutes)}.`;
+
+/** Where a fix's held-back set stands against the minimum and recommendation. */
+export const heldBackOf = (n) => ({
+  n,
+  ...HELD_BACK,
+  tooFew: n < HELD_BACK.minimum,
+  belowRecommended: n < HELD_BACK.recommended,
+});
 export const voiceDefaultsLine = () =>
   `Voice: ${VOICE_DEFAULTS.scenarios} scenarios × ${VOICE_DEFAULTS.repeats} tries each, up to ${VOICE_DEFAULTS.trials} runs by default — calls run in real time.`;
 
@@ -226,12 +278,24 @@ const todayRunsOf = (env, es, agentVersion) => {
   if (!env || !agentVersion) return [];
   const now = currentEnvSnapshot(env, es)?.label;
   return (es?.runs || [])
-    .filter((r) => r.finishedAt && !r.pending && r.status !== "running"
-      && r.kind !== "trial" && !r.partial && r.agentVersion === agentVersion
-      && (r.scenarioIds || []).length && snapshotLabelOf(r, env, es) === now)
+    .filter(
+      (r) =>
+        r.finishedAt &&
+        !r.pending &&
+        r.status !== "running" &&
+        r.kind !== "trial" &&
+        !r.partial &&
+        r.agentVersion === agentVersion &&
+        (r.scenarioIds || []).length &&
+        snapshotLabelOf(r, env, es) === now,
+    )
     .sort((a, b) => Date.parse(b.finishedAt) - Date.parse(a.finishedAt))
     .slice(0, 2)
-    .map((r) => ({ id: r.id, label: `Run ${r.ordinal || 1}`, scenarioIds: r.scenarioIds }));
+    .map((r) => ({
+      id: r.id,
+      label: `Run ${r.ordinal || 1}`,
+      scenarioIds: r.scenarioIds,
+    }));
 };
 
 /* What the newer engine reads off the agent and its environment. */
@@ -334,7 +398,8 @@ export const planSearch = ({
   const list = eng?.voiceCap
     ? voiceSlice(tasks || [], seed, VOICE_DEFAULTS.scenarios)
     : tasks || [];
-  const trialCap = eng?.voiceCap ? VOICE_DEFAULTS.trials : null;
+  /* New improvements try at most four candidates, voice included. */
+  const trialCap = eng ? MAX_CANDIDATES : null;
   return runSearch({
     env,
     tasks: list,
@@ -389,8 +454,10 @@ export const planSearch = ({
   What the search can stop early on, said once for every estimate: the
   planned run count is a maximum.
 */
-export const stopEarlyNote = () =>
-  `After at least ${MIN_RUNS_BEFORE_STOP} trials, stops early if ${NO_GAIN_RUNS} in a row don't beat the best on the target scenarios by more than trial-to-trial noise, and verifies the best — so it often spends less.`;
+export const stopEarlyNote = (max = MAX_CANDIDATES) =>
+  max > MIN_RUNS_BEFORE_STOP
+    ? `After at least ${MIN_RUNS_BEFORE_STOP} trials, stops early if ${NO_GAIN_RUNS} in a row don't beat the best on the target scenarios by more than trial-to-trial noise, and verifies the best — so it often spends less.`
+    : "Stops at the limit with the best it found, and verifies the best.";
 
 /**
  * What an improvement will spend, as a range: the search on the main
@@ -483,7 +550,7 @@ export const improvementEstimate = ({
   return out;
 };
 
-export const BUDGETS = [25, 50, 100, 250, 500];
+export const BUDGETS = [15, 25, 50, 100, 250, 500];
 
 /** The budgets an agent's run budget allows — never more than it. */
 export const budgetsWithin = (ceiling) => {

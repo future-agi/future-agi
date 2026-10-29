@@ -240,7 +240,7 @@ export default function ImprovementConstraints({
                 lineHeight: "28px",
               }}
             >
-              Time cap
+              Time limit
             </Typography>
             <ConstraintPicker
               agent={agent}

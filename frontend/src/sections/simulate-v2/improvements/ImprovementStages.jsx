@@ -145,7 +145,7 @@ export default function ImprovementStages({
           ? `${plural(rep.inconclusive, "scenario")} failed only once, so ${rep.inconclusive === 1 ? "it isn't a target" : "they aren't targets"}.`
           : null,
         stateOf("reproduce") === "done" && cal && r.noise != null
-          ? `Run twice to tell real changes from noise: ±${r.noise} pts.`
+          ? `The current version varied by ${r.noise} pts between repeats.`
           : null,
       ]
         .filter(Boolean)
@@ -177,7 +177,9 @@ export default function ImprovementStages({
               ? `Aimed at ${goalWords(goal)}: ${plural(r.goalTargets || 0, "scenario")} short of it today.`
               : `Aimed at ${goalWords(goal)}.`
             : cause
-              ? `Starts from the cause${feed ? ` in ${issueId}` : diag?.source === "Debug failures" ? " Debug failures found" : ""}: ${cause}.`
+              ? feed
+                ? `Starts from the cause in ${issueId}: ${cause}.`
+                : `Starts from its diagnosis: ${cause}.`
               : null,
           /* Voice runs in real time, so the search keeps a slice — said, not hidden. */
           r.voiceCap
@@ -229,8 +231,8 @@ export default function ImprovementStages({
     },
     {
       key: "review",
-      label: "Ready for review",
-      text: "You choose the trial to keep and ship it. Nothing ships without you.",
+      label: "Done",
+      text: "A winner comes back as a new version. You decide whether to make it the default.",
       sub: null,
       state: "todo",
     },

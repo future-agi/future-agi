@@ -7,12 +7,16 @@
 import { BUDGETS } from "../_mock/improvementStart";
 
 export const BUDGET_STEPS = BUDGETS;
-export const MINUTE_STEPS = [15, 30, 60, 120];
+export const MINUTE_STEPS = [15, 30, 60, 120, 150];
 export const COST_STEPS = [0, 2, 5, 10, 20];
 export const LATENCY_STEPS = [0, 5, 10, 20];
 
 export const minutesLabel = (n) =>
-  n < 60 ? `${n} minutes` : `${n / 60} hour${n === 60 ? "" : "s"}`;
+  n < 60
+    ? `${n} minutes`
+    : n % 60
+      ? `${Math.floor(n / 60)} h ${n % 60} min`
+      : `${n / 60} hour${n === 60 ? "" : "s"}`;
 
 /* The agent's own value for an editable constraint. */
 export const agentValueOf = (limits, key) => {

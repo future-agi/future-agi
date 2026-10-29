@@ -62,8 +62,8 @@ import { creditsLabel } from "../_mock/metering";
 const MODELS = ["gpt-4o", "gpt-4.1", "claude-sonnet-4", "gemini-2.5-pro"];
 const COST_STEPS = [0, 2, 5, 10, 20];
 const LATENCY_STEPS = [0, 5, 10, 20];
-const BUDGET_STEPS = [25, 50, 100, 250, 500];
-const MINUTE_STEPS = [15, 30, 60, 120];
+const BUDGET_STEPS = [15, 25, 50, 100, 250, 500];
+const MINUTE_STEPS = [15, 30, 60, 120, 150];
 const HOURS = Array.from(
   { length: 24 },
   (_, h) => `${String(h).padStart(2, "0")}:00`,

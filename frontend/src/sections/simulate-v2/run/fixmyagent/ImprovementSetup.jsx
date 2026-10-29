@@ -45,6 +45,7 @@ import {
 } from "../../_mock/versions";
 import {
   allowFlagOf,
+  improvementOutcome,
   limitRows,
   optimizationId,
   OPTIMIZER_MODELS,
@@ -57,6 +58,9 @@ import {
   budgetsWithin,
   envMustPassOf,
   envStateOnVersion,
+  FIX_DEFAULTS,
+  fixReviewSentence,
+  heldBackOf,
   improvementEstimate,
   outcomeMetricsOf,
   planSearch,
@@ -222,9 +226,14 @@ export default function ImprovementSetup({
     () => limitsOf(state, preset?.agentKey),
     [state, preset?.agentKey],
   );
-  /* Up to the agent's run budget by default; more is this improvement's own. */
+  /* 1,500 credits by default, within the agent's run budget; more is this
+     improvement's own. */
   const budgets = budgetsWithin(agentLimits.budget.dollars);
-  const spend = budget ?? budgets[budgets.length - 1];
+  const spend =
+    budget ??
+    (budgets.includes(FIX_DEFAULTS.dollars)
+      ? FIX_DEFAULTS.dollars
+      : budgets[budgets.length - 1]);
   /* What the search is held to: the agent's constraints with this
      improvement's own edits, the budget picked beside the goal included. */
   const limits = useMemo(
@@ -396,13 +405,21 @@ export default function ImprovementSetup({
   );
   const nothing = !!preview?.goal && preview.goalTargets === 0;
   const status = agent ? agentStatusOf(agent) : null;
-  const blocked = swapped
-    ? `This run tested ${agent?.name || "an agent"}, which is no longer ${main?.name || "this environment"}'s agent — improve it from Improvements instead.`
-    : preset?.agentKey && !agent
-      ? "This agent can't be found — it may have been deleted."
-      : status && status.status !== "connected"
-        ? status.reason
-        : null;
+  /* One fix in flight per agent, and never from a run still going. */
+  const fixRunning = (es?.optimizations || []).some(
+    (r) => improvementOutcome(r)?.ending?.key === "running",
+  );
+  const blocked = fixRunning
+    ? `A fix is already running for ${agent?.name || "this agent"} — wait for it to finish or stop it first.`
+    : fromRun && base?.status === "running"
+      ? "This run hasn't finished — start a fix once its results are in."
+      : swapped
+        ? `This run tested ${agent?.name || "an agent"}, which is no longer ${main?.name || "this environment"}'s agent — improve it from Improvements instead.`
+        : preset?.agentKey && !agent
+          ? "This agent can't be found — it may have been deleted."
+          : status && status.status !== "connected"
+            ? status.reason
+            : null;
   const identity =
     main && es
       ? runIdentityOf(
@@ -482,6 +499,15 @@ export default function ImprovementSetup({
     .join(" · ");
   /* The most runs it can use — it stops early once runs stop gaining. */
   const trials = estimate.runs || 0;
+  /* The plan in one sentence, and whether held-back can tell a fix from noise. */
+  const review = fixReviewSentence({
+    targets: train,
+    protectedN: mustPassAll,
+    allowed: limits.allowed,
+    credits: creditsLabel(spend),
+    minutes: limits.budget.minutes,
+  });
+  const heldBack = heldBackOf(held);
   const ready = !!(
     agent &&
     main &&
@@ -590,6 +616,7 @@ export default function ImprovementSetup({
       >
         {compact && main ? (
           <Box>
+            <Typography sx={{ typography: "s2", mb: 1.5 }}>{review}</Typography>
             <ConfirmRow k="Agent">
               <Typography sx={{ typography: "s2" }}>
                 {`${agent?.name || "Agent"}${identity ? ` · ${identity}` : ""}`}
@@ -602,6 +629,7 @@ export default function ImprovementSetup({
               <Typography sx={{ typography: "s2" }}>
                 {`${train} failing to fix · ${held} held back to prove it · ${mustPassAll} must keep passing`}
               </Typography>
+              <HeldBackLine heldBack={heldBack} />
             </ConfirmRow>
             <ConfirmRow k="Budget">
               <Box sx={{ maxWidth: 240 }}>
@@ -617,7 +645,7 @@ export default function ImprovementSetup({
               <Typography
                 sx={{ typography: "s3", color: "text.secondary", mt: 0.75 }}
               >
-                {`Up to ${trials} trials · ${creditsLabel(estimate.likely)} · ${estimate.minutes} min. Stops at the budget with the best it found.`}
+                {`Up to ${trials} trials · ${creditsLabel(estimate.likely)} · ${estimate.minutes} min. Stops at the limit with the best it found.`}
               </Typography>
             </ConfirmRow>
             {estimate.parts?.length > 0 && (
@@ -885,7 +913,7 @@ export default function ImprovementSetup({
                       ? "We can only call this agent, so an improvement ends in a suggested change."
                       : suggestOnly
                         ? "Nothing is tried or proven. Apply the suggestion yourself; a run on the new version proves it."
-                        : "Nothing ships on its own either way — a winner comes back as a draft."}
+                        : "Either way, a winner comes back as a new version. You decide whether to make it the default."}
                   </Typography>
                 </Box>
                 {/* An evaluation as the goal is only as good as its agreement with people. */}
@@ -931,7 +959,7 @@ export default function ImprovementSetup({
                 >
                   {nothing
                     ? `Nothing to improve — every scenario already meets ${goalWords(goalOf)}. Pick another goal.`
-                    : `${preview?.goal ? `Targets the ${preview.goalTargets} ${preview.goalTargets === 1 ? "scenario" : "scenarios"} short of it. ` : ""}${overBudget ? `May reach the budget before all ${trials} runs — you'll get the best it found by then.` : "If it runs over, it stops at the budget with the best it found."}`}
+                    : `${preview?.goal ? `Targets the ${preview.goalTargets} ${preview.goalTargets === 1 ? "scenario" : "scenarios"} short of it. ` : ""}${overBudget ? `May reach the limit before all ${trials} trials — you'll get the best it found by then.` : "If it runs over, it stops at the limit with the best it found."}`}
                 </Typography>
               </Box>
             )}
@@ -1083,6 +1111,7 @@ export default function ImprovementSetup({
                 }}
               >
                 <Stack spacing={1.25}>
+                  <Row label="Plan" value={review} />
                   <Row
                     label="Starts from"
                     value={
@@ -1103,10 +1132,11 @@ export default function ImprovementSetup({
                     value={`${train} target · ${held} held back · ${mustPassAll} must-pass`}
                     note={`The headline number comes from held-back scenarios the search never sees.${notCounted ? ` ${notCounted}` : ""}`}
                   />
+                  <HeldBackLine heldBack={heldBack} />
                   <Row
                     label="Cost"
                     value={`Up to ${creditsLabel(estimate.likely)} · ${estimate.minutes} min`}
-                    note={`Up to ${trials} trials × ${train} target scenarios, then the finalists on held-back and must-pass. ${stopEarlyNote()} ${inText ? "Runs as text conversations; only the finalists are confirmed as real calls." : "A trial is a full pass through the real tools, not a dataset lookup."}`}
+                    note={`Up to ${trials} trials × ${train} target scenarios, then the finalists on held-back and must-pass. ${stopEarlyNote(trials)} ${inText ? "Runs as text conversations; only the finalists are confirmed as real calls." : "A trial is a full pass through the real tools, not a dataset lookup."}`}
                   />
                   <Row
                     label="Constraints"
@@ -1169,8 +1199,8 @@ export default function ImprovementSetup({
           {main && !searchTasks
             ? `${main.name} has no scenarios to run yet.`
             : today
-              ? "It runs the environment on today's version first. Nothing ships on its own — a winner comes back as a draft."
-              : "Nothing ships on its own — a winner comes back as a draft."}
+              ? "It runs the environment on today's version first. A winner comes back as a new version. You decide whether to make it the default."
+              : "A winner comes back as a new version. You decide whether to make it the default."}
         </Typography>
         {/* The same experiment from code — what Start improvement would make. */}
         {main && (
@@ -1239,6 +1269,39 @@ export default function ImprovementSetup({
     </SetupFrame>
   );
 }
+
+/* Held-back below the minimum still starts — proven on the targets only. */
+function HeldBackLine({ heldBack }) {
+  if (!heldBack.belowRecommended) return null;
+  return (
+    <Stack
+      direction="row"
+      spacing={0.75}
+      alignItems="flex-start"
+      sx={{ mt: 0.5 }}
+    >
+      {heldBack.tooFew && (
+        <Iconify
+          icon="solar:danger-triangle-linear"
+          width={14}
+          sx={{ color: "status.warning.fg", flexShrink: 0, mt: "2px" }}
+        />
+      )}
+      <Typography
+        sx={{
+          typography: "s3",
+          color: heldBack.tooFew ? "text.primary" : "text.tertiary",
+        }}
+      >
+        {heldBack.tooFew
+          ? `Too few held-back scenarios to tell a real fix from noise. The fix will be proven on the targets only. ${heldBack.n} of at least ${heldBack.minimum}; ${heldBack.recommended} recommended.`
+          : `${heldBack.n} held back — ${heldBack.recommended} recommended for a surer read.`}
+      </Typography>
+    </Stack>
+  );
+}
+
+HeldBackLine.propTypes = { heldBack: PropTypes.object.isRequired };
 
 /* One line of the short confirm: a label and its value. */
 function ConfirmRow({ k, children }) {

@@ -421,7 +421,7 @@ export default function ImprovementRunsView({
               sx={{ fontWeight: 400, color: "text.subtitle" }}
             >
               {r.n === searchWinner
-                ? " · verified"
+                ? ""
                 : needsVerify
                   ? " · not verified"
                   : " · your pick"}
@@ -441,7 +441,7 @@ export default function ImprovementRunsView({
     }
     return (
       <Typography noWrap sx={{ typography: "s2", color: "text.subtitle" }}>
-        Not kept
+        Passed, not picked
       </Typography>
     );
   };
@@ -699,18 +699,30 @@ export default function ImprovementRunsView({
                 {`Re-check on ${behind.prod}`}
               </Button>
             ) : onShip ? (
-              <Button
-                size="small"
-                variant="contained"
-                color="primary"
-                onClick={onShip}
-                startIcon={
-                  <Iconify icon="solar:upload-minimalistic-linear" width={14} />
+              <Tooltip
+                arrow
+                title={
+                  row?.output
+                    ? ""
+                    : `Makes ${kept.name}'s version the default in ${env?.name || "this environment"}. A rejected trial can't ship.`
                 }
-                sx={{ flexShrink: 0 }}
               >
-                {row?.output ? "Hand-over" : "Ship"}
-              </Button>
+                <Button
+                  size="small"
+                  variant="contained"
+                  color="primary"
+                  onClick={onShip}
+                  startIcon={
+                    <Iconify
+                      icon="solar:upload-minimalistic-linear"
+                      width={14}
+                    />
+                  }
+                  sx={{ flexShrink: 0 }}
+                >
+                  {row?.output ? "Hand-over" : "Ship"}
+                </Button>
+              </Tooltip>
             ) : null)}
         </Stack>
       </Box>
@@ -874,6 +886,14 @@ export default function ImprovementRunsView({
             /* What this improvement spent, part by part, on the versions in
                its header; a stop at the budget keeps what it found. */
             <Box sx={{ p: 2 }}>
+              <CreditLedger
+                spent={improvementSpendParts(record, env?.surface).reduce(
+                  (n, p) => n + (p.usd || 0),
+                  0,
+                )}
+                budget={record.budget}
+                running={running}
+              />
               <CostPartsTable
                 parts={improvementSpendParts(record, env?.surface)}
                 totalLabel="Spent"
@@ -1564,16 +1584,20 @@ function Verdict({ outcome, result, targetNow }) {
   const projected = !!outcome.chosen?.projected;
   const effect = outcome.effect || null;
   const cells = [
-    result?.winner && {
-      k: "Held back",
-      v: thin ? "Too few to measure" : `${result.heldBase}% → ${heldNow}%`,
-      sub: projected
-        ? "projected"
-        : result.confirm
-          ? "re-run after the pick"
-          : "never seen by the search",
-      pts: thin || !lift ? null : lift,
-    },
+    /* Hidden when nothing was held back — proven on the targets only. */
+    result?.winner &&
+      !thin &&
+      heldNow != null &&
+      result?.heldBase != null && {
+        k: "Held back",
+        v: thin ? "Too few to measure" : `${result.heldBase}% → ${heldNow}%`,
+        sub: projected
+          ? "projected"
+          : result.confirm
+            ? "re-run after the pick"
+            : "never seen by the search",
+        pts: thin || !lift ? null : lift,
+      },
     result?.winner &&
       targetLift != null && {
         k: "Target",
@@ -1763,7 +1787,7 @@ function Verdict({ outcome, result, targetNow }) {
               noWrap
               sx={{ typography: "s2", fontWeight: 600, flexShrink: 0 }}
             >
-              {`Constraints · ${passed} of ${checks.length} passed`}
+              {`Checks · ${passed} of ${checks.length} passed`}
             </Typography>
             <Typography
               noWrap
@@ -1867,6 +1891,58 @@ Verdict.propTypes = {
   outcome: PropTypes.object.isRequired,
   result: PropTypes.object,
   targetNow: PropTypes.number,
+};
+
+/*
+  The credit ledger: spent so far, reserved for work still running (released
+  when it ends), committed (spent plus reserved) and the budget.
+*/
+function CreditLedger({ spent, budget, running }) {
+  const reserved = running && budget ? Math.max(0, budget - spent) : 0;
+  const cells = [
+    { k: "Spent", v: spent },
+    { k: "Reserved", v: reserved },
+    { k: "Committed", v: spent + reserved },
+    { k: "Budget", v: budget ?? null },
+  ];
+  return (
+    <Stack
+      direction="row"
+      sx={{
+        mb: 1.5,
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 1,
+      }}
+    >
+      {cells.map((c, i) => (
+        <Box
+          key={c.k}
+          sx={{
+            flex: 1,
+            px: 1.5,
+            py: 1,
+            ...(i > 0 && { borderLeft: "1px solid", borderColor: "divider" }),
+          }}
+        >
+          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+            {c.k}
+          </Typography>
+          <Typography
+            sx={{ typography: "s2", fontVariantNumeric: "tabular-nums" }}
+          >
+            {creditsLabel(c.v)}
+          </Typography>
+        </Box>
+      ))}
+    </Stack>
+  );
+}
+
+CreditLedger.propTypes = {
+  spent: PropTypes.number,
+  budget: PropTypes.number,
+  running: PropTypes.bool,
 };
 
 ImprovementRunsView.propTypes = {

@@ -17,7 +17,7 @@ import { paths } from "src/routes/paths";
 import { creditsLabel } from "../_mock/metering";
 import { runPlanHref } from "../_mock/runPlanLink";
 import { defaultRunCap, estimateRunPlan } from "../_mock/pricing";
-import { repeatsFor } from "../_mock/improvementStart";
+import { FIX_DEFAULTS, repeatsFor } from "../_mock/improvementStart";
 import { resolveEval } from "../_mock/evals";
 import { protoRunId } from "../_mock/executionAdapter";
 import { useConnectedAgents, useSimStore } from "../store";
@@ -174,7 +174,11 @@ export default function FixStartDialog({
         label: d.title,
         meta: d.traceCount ? `${d.traceCount} traces` : null,
       }));
-  const spend = budget ?? budgets[budgets.length - 1];
+  const spend =
+    budget ??
+    (budgets.includes(FIX_DEFAULTS.dollars)
+      ? FIX_DEFAULTS.dollars
+      : budgets[budgets.length - 1]);
   /* A live agent's consent, complete — given by Start fix itself. */
   const [consent, setConsent] = useState(null);
   const waiting = plan.consentNeeded && !consent;
@@ -599,7 +603,7 @@ export default function FixStartDialog({
                 <Typography
                   sx={{ typography: "s3", color: "text.secondary", mt: 0.75 }}
                 >
-                  {`Up to ${estimate.runs} trials · ${creditsLabel(estimate.likely)} · ${estimate.minutes} min. Stops at the budget with the best it found.`}
+                  {`Up to ${estimate.runs} trials · ${creditsLabel(estimate.likely)} · ${estimate.minutes} min. Stops at the limit with the best it found.`}
                 </Typography>
               </Row>
             )}

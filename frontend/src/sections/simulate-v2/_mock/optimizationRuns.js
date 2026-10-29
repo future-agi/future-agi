@@ -295,7 +295,7 @@ export const DEFAULT_LIMITS = {
   latencyCeiling: 10,
   allowed: ["prompt", "tools"],
   protected: [],
-  budget: { dollars: 250, minutes: 60 },
+  budget: { dollars: 250, minutes: 150 },
 };
 
 /* The cost ceiling the seeded improvements were once rewritten to — read
@@ -403,8 +403,8 @@ export const modelLimitLabel = (limits, model) =>
   limits?.model?.mode === "approved" && limits.model.approved?.length
     ? `${[model, ...limits.model.approved.filter((m) => m !== model)].filter(Boolean).join(", ")} only`
     : model
-      ? `Locked to ${model}`
-      : "Locked";
+      ? `Unchanged · ${model}`
+      : "Unchanged";
 export const ceilingLabel = (n) => (n <= 0 ? "No increase" : `At most +${n}%`);
 
 /* A cost ceiling is a percentage over today, or an amount per conversation. */
@@ -461,7 +461,7 @@ export const limitRows = (
           id: "mustPass",
           label: "Must-pass",
           value: mustPass
-            ? `${mustPass} ${mustPass === 1 ? "scenario" : "scenarios"} — a failure counts only if it repeats on a re-run; flaky ones don't count`
+            ? `${mustPass} ${mustPass === 1 ? "scenario" : "scenarios"}. A case that passed every time before must not drop beyond normal noise. A case that fails every run is run again to confirm before it counts.`
             : "none yet",
         },
       ]
@@ -476,7 +476,16 @@ export const limitRows = (
       ]
     : []),
   ...(limits.budget?.minutes
-    ? [{ id: "time", label: "Time cap", value: `${limits.budget.minutes} min` }]
+    ? [
+        {
+          id: "time",
+          label: "Time limit",
+          value:
+            limits.budget.minutes < 60
+              ? `${limits.budget.minutes} min`
+              : `${Math.floor(limits.budget.minutes / 60)} h${limits.budget.minutes % 60 ? ` ${limits.budget.minutes % 60} min` : ""}`,
+        },
+      ]
     : []),
 ];
 

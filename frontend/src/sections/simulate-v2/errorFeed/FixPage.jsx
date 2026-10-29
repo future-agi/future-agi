@@ -25,6 +25,7 @@ import { useAgentImprovementFlag } from "../_mock/featureFlags";
 import BuildEnvironmentDialog from "../agents/BuildEnvironmentDialog";
 import { buildPresetFor } from "../agents/agentViewUtils";
 import {
+  FIX_DEFAULTS,
   budgetsWithin,
   envMustPassOf,
   stopEarlyNote,
@@ -277,7 +278,11 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
   );
   /* Up to the agent's run budget and time cap by default; more is this fix's own. */
   const budgets = budgetsWithin(agentLimits.budget.dollars);
-  const spend = budget ?? budgets[budgets.length - 1];
+  const spend =
+    budget ??
+    (budgets.includes(FIX_DEFAULTS.dollars)
+      ? FIX_DEFAULTS.dollars
+      : budgets[budgets.length - 1]);
   const minuteChoices = minutesWithin(
     agentLimits.budget?.minutes || DEFAULT_LIMITS.budget.minutes,
   );
@@ -492,7 +497,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
       ? "Its environment is still building — start the fix when it's done."
       : overBalance
         ? `Up to ${creditsLabel(spend)}, but ${Math.max(0, creditBalance.left).toLocaleString()} credits are left this month — lower the budget or ask an admin.`
-        : "Nothing ships on its own — the fix ends as a draft for you to review.";
+        : "A winner comes back as a new version. You decide whether to make it the default.";
   const startButton = needsEnv ? (
     <Button
       fullWidth
@@ -1314,8 +1319,8 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                           }}
                         >
                           {overBudget || overTime
-                            ? `May reach the ${overBudget ? "credit" : "time"} budget before all ${estimate.runs} trials — you'll get the best it found. ${stopEarlyNote()}`
-                            : `Up to ${estimate.conversations.toLocaleString()} simulated conversations. ${stopEarlyNote()}`}
+                            ? `May reach the ${overBudget ? "credit" : "time"} budget before all ${estimate.runs} trials — you'll get the best it found. ${stopEarlyNote(estimate.runs)}`
+                            : `Up to ${estimate.conversations.toLocaleString()} simulated conversations. ${stopEarlyNote(estimate.runs)}`}
                         </Typography>
                         {/* What the ceiling is made of, part by part. */}
                         <Box sx={{ mt: 1.5 }}>
