@@ -29,6 +29,8 @@ from tfc.middleware.workspace_context import (
 # URL constants
 INVITE_URL = "/accounts/organization/invite/"
 INVITE_RESEND_URL = "/accounts/organization/invite/resend/"
+LEGACY_USER_RESEND_URL = "/accounts/user/resend-invite/"
+BULK_RESEND_URL = "/accounts/resend-invitation-emails/"
 MEMBER_LIST_URL = "/accounts/organization/members/"
 MEMBER_REMOVE_URL = "/accounts/organization/members/remove/"
 MEMBER_REACTIVATE_URL = "/accounts/organization/members/reactivate/"
@@ -426,6 +428,108 @@ class TestResendInviteFromWorkspaceTab:
         # Resend should refresh expiration (resets created_at to now)
         resp = owner_client.post(
             INVITE_RESEND_URL, {"invite_id": str(invite.id)}, format="json"
+        )
+        assert resp.status_code == status.HTTP_200_OK
+
+        invite.refresh_from_db()
+        assert invite.effective_status == "Pending"
+
+    def test_resend_expired_invite_from_legacy_user_endpoint(
+        self, owner_client, org, default_ws, second_ws
+    ):
+        """The members-screen legacy resend (#2437) must refresh the same
+        OrganizationInvite expiry InviteResendAPIView does, not just re-send
+        the email — otherwise the invite still reads as expired everywhere
+        that checks OrganizationInvite.is_expired."""
+        _invite_user(
+            owner_client,
+            ["legacy_resend@ws.com"],
+            Level.MEMBER,
+            workspace_access=[
+                {"workspace_id": str(second_ws.id), "level": Level.WORKSPACE_MEMBER}
+            ],
+        )
+
+        invite = OrganizationInvite.objects.get(
+            organization=org, target_email="legacy_resend@ws.com"
+        )
+        invite.created_at = timezone.now() - timedelta(days=30)
+        invite.save(update_fields=["created_at"])
+        assert invite.effective_status == "Expired"
+
+        invited_user = User.objects.get(email="legacy_resend@ws.com")
+
+        resp = owner_client.post(
+            LEGACY_USER_RESEND_URL,
+            {"user_id": str(invited_user.id)},
+            format="json",
+        )
+        assert resp.status_code == status.HTTP_200_OK
+
+        invite.refresh_from_db()
+        assert invite.effective_status == "Pending"
+
+    def test_resend_from_legacy_endpoint_does_not_reopen_accepted_invite(
+        self, owner_client, org, default_ws, second_ws
+    ):
+        """An already-accepted invite must not be silently reopened by a
+        resend from the legacy endpoint."""
+        _invite_user(
+            owner_client,
+            ["already_accepted@ws.com"],
+            Level.MEMBER,
+            workspace_access=[
+                {"workspace_id": str(second_ws.id), "level": Level.WORKSPACE_MEMBER}
+            ],
+        )
+
+        invite = OrganizationInvite.objects.get(
+            organization=org, target_email="already_accepted@ws.com"
+        )
+        invite.status = InviteStatus.ACCEPTED
+        invite.created_at = timezone.now() - timedelta(days=30)
+        invite.save(update_fields=["status", "created_at"])
+
+        invited_user = User.objects.get(email="already_accepted@ws.com")
+
+        resp = owner_client.post(
+            LEGACY_USER_RESEND_URL,
+            {"user_id": str(invited_user.id)},
+            format="json",
+        )
+        assert resp.status_code == status.HTTP_200_OK
+
+        invite.refresh_from_db()
+        assert invite.status == InviteStatus.ACCEPTED
+        assert invite.effective_status == "Accepted"
+
+    def test_resend_expired_invite_from_bulk_endpoint(
+        self, owner_client, org, default_ws, second_ws
+    ):
+        """The bulk resend-invitation-emails endpoint (#2437) has the exact
+        same gap as the legacy per-user one and must be fixed the same way."""
+        _invite_user(
+            owner_client,
+            ["bulk_resend@ws.com"],
+            Level.MEMBER,
+            workspace_access=[
+                {"workspace_id": str(second_ws.id), "level": Level.WORKSPACE_MEMBER}
+            ],
+        )
+
+        invite = OrganizationInvite.objects.get(
+            organization=org, target_email="bulk_resend@ws.com"
+        )
+        invite.created_at = timezone.now() - timedelta(days=30)
+        invite.save(update_fields=["created_at"])
+        assert invite.effective_status == "Expired"
+
+        invited_user = User.objects.get(email="bulk_resend@ws.com")
+
+        resp = owner_client.post(
+            BULK_RESEND_URL,
+            {"user_ids": [str(invited_user.id)]},
+            format="json",
         )
         assert resp.status_code == status.HTTP_200_OK
 

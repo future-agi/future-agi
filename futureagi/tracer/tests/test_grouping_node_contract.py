@@ -101,7 +101,7 @@ process.stdout.write(JSON.stringify(completion));
     with patch(
         "tracer.services.grouping.context.GroupingFeatureStore"
     ) as feature_store:
-        feature_store.return_value.candidate_occurrences.return_value = []
+        feature_store.return_value.candidate_occurrences.return_value = {}
         feature_store.return_value.read_vectors.return_value = vectors
         grouping_claim = claim_grouping_work(worker_id="contract-test", limit=1)[
             "claims"

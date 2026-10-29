@@ -3,11 +3,18 @@ import Box from "@mui/material/Box";
 import Iconify from "src/components/iconify";
 import { getSurface } from "src/api/simulate-environments/_fixtures/surfaces";
 
+// What the tile shows when nothing identifies the channel yet.
+const UNKNOWN = {
+  label: "Channel not known",
+  icon: "solar:question-circle-linear",
+  color: "text.disabled",
+};
+
 // A rounded tile carrying the channel's icon. The designer's neutral treatment
 // is tinted here so the surface tone reads at a glance; the icon alone still
 // names the channel. Icon-only, so the tile carries an aria-label.
 export default function SurfaceIcon({ surface, size = 40, radius = 1.25 }) {
-  const s = getSurface(surface);
+  const s = getSurface(surface) || UNKNOWN;
   return (
     <Box
       role="img"

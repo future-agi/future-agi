@@ -147,6 +147,9 @@ const UsersGrid = React.memo(
 
     const { observeId } = useParams();
     const updatedObserveId = observeId;
+    // Without a project in the route this is the cross-project Users page:
+    // rows from several projects share the grid, so each names its project.
+    const includeProject = !observeId;
     const sortStorageKey = `ag-grid-sort-model-${updatedObserveId}`;
     const debouncedSearchQuery = useDebounce(searchQuery.trim(), 500);
 
@@ -176,7 +179,7 @@ const UsersGrid = React.memo(
     }, [hasActiveListReads]);
 
     useEffect(() => {
-      const initial = getUsersColumnConfig();
+      const initial = getUsersColumnConfig({ includeProject });
 
       const transformed = initial.map((col) => ({
         id: col.field,
@@ -187,10 +190,10 @@ const UsersGrid = React.memo(
       }));
 
       setColumns(transformed);
-    }, []);
+    }, [includeProject, setColumns]);
 
     const userColumnDefs = useMemo(() => {
-      const baseConfig = getUsersColumnConfig();
+      const baseConfig = getUsersColumnConfig({ includeProject });
 
       // If columns from store isn't ready, use baseConfig directly
       if (!columns || !Array.isArray(columns)) {
@@ -256,7 +259,7 @@ const UsersGrid = React.memo(
       }
 
       return result;
-    }, [columns]);
+    }, [columns, includeProject]);
 
     const requestedProjection = useMemo(() => {
       // Zustand starts with an empty list and is hydrated in an effect. AG Grid
@@ -266,7 +269,7 @@ const UsersGrid = React.memo(
       const projectionColumns =
         Array.isArray(columns) && columns.length > 0
           ? columns
-          : getUsersColumnConfig().map((column) => ({
+          : getUsersColumnConfig({ includeProject }).map((column) => ({
               id: column.field,
               isVisible: column.hide !== true,
               groupBy: null,
@@ -284,7 +287,7 @@ const UsersGrid = React.memo(
           .map((column) => column.id)
           .filter(Boolean),
       };
-    }, [columns]);
+    }, [columns, includeProject]);
 
     const dataSource = useMemo(() => {
       cursorPagination.current.reset();

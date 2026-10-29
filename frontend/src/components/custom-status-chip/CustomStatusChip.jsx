@@ -5,6 +5,7 @@ import SvgColor from "../svg-color";
 import {
   getStatusDetails,
   getAvailableStatuses,
+  STATUS_TYPES,
 } from "../../utils/statusUtils";
 
 const DARK_BG_MAP = {
@@ -25,11 +26,12 @@ const StatusChip = ({
   status,
   disabled = false,
   showIcon = true,
+  neutralTextColor,
   ...otherProps
 }) => {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
-  const { finalLabel, config } = getStatusDetails({
+  const { finalLabel, finalStatus, config } = getStatusDetails({
     status,
     label,
   });
@@ -38,9 +40,18 @@ const StatusChip = ({
     ? DARK_BG_MAP[config.bgColor] || config.bgColor
     : config.bgColor;
 
-  const textColor = isDark
+  const defaultTextColor = isDark
     ? DARK_TEXT_MAP[config.textColor] || config.textColor
     : config.textColor;
+
+  // Opt-in readability override for neutral (UNSET-classified) chips only. Callers whose
+  // chip background was measured too close to `text.disabled` pass a higher-contrast theme
+  // token; every other status, every disabled chip and every caller that omits the prop keep
+  // the shared STATUS_CONFIG colours. (TH-4088, scoped to the Observe span list.)
+  const textColor =
+    neutralTextColor && !disabled && finalStatus === STATUS_TYPES.UNSET
+      ? neutralTextColor
+      : defaultTextColor;
 
   const chipStyles = {
     color: textColor,
@@ -94,6 +105,7 @@ const StatusChip = ({
 StatusChip.propTypes = {
   label: PropTypes.string,
   showIcon: PropTypes.bool,
+  neutralTextColor: PropTypes.string,
   status: PropTypes.oneOfType([
     PropTypes.oneOf([...getAvailableStatuses(), null, undefined]),
     PropTypes.string,

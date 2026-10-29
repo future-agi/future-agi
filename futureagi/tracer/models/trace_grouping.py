@@ -145,6 +145,11 @@ class TraceGroupingWork(BaseModel):
     input_revision = models.PositiveBigIntegerField()
     not_before = models.DateTimeField()
     attempt_number = models.PositiveIntegerField(default=0)
+    failure_code = models.CharField(max_length=100, blank=True, db_default="")
+    last_failure_at = models.DateTimeField(null=True, blank=True)
+    # Recovery grants a bounded new retry window without renumbering history.
+    retry_start_attempt = models.PositiveIntegerField(default=0, db_default=0)
+    retry_limit = models.PositiveSmallIntegerField(default=5, db_default=5)
 
     class Meta:
         db_table = "tracer_trace_grouping_work"
@@ -177,6 +182,7 @@ class TraceGroupingAttempt(BaseModel):
     snapshot_digest = models.CharField(max_length=71)
     registry_revision = models.PositiveBigIntegerField()
     claimed_work_ids = models.JSONField(default=list)
+    failure_code = models.CharField(max_length=100, blank=True, db_default="")
     pending_occurrence_ids = models.JSONField(default=list)
     offered_issue_ids = models.JSONField(default=list)
     omitted_candidate_ids = models.JSONField(default=list)

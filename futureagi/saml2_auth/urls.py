@@ -6,6 +6,7 @@ from saml2_auth.views import (
     ACSView,
     Auth0CallbackView,
     Auth0LoginView,
+    CompleteView,
     GithubCallbackView,
     IDPLoginView,
     MicrosoftCallbackView,
@@ -17,6 +18,7 @@ router = DefaultRouter()
 router.register(r"idp-uploads", views.IDPUploadViews)
 urlpatterns = [
     re_path(r"^acs/$", ACSView.as_view(), name="acs"),
+    re_path(r"^complete/$", CompleteView.as_view(), name="complete"),
     re_path(r"^idp-login/$", IDPLoginView.as_view(), name="idp_signin"),
     # re_path(r'^denied/$', denied, name="denied"),
     # re_path(r'^logout/$', LogoutView.as_view(), name='logout'),

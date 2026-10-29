@@ -110,12 +110,19 @@ func (s *Store) LoadBulk(configs map[string]*OrgConfig) {
 // MergeBulk merges successfully parsed org configs into the store.
 //   - Orgs in parsedConfigs are added or updated.
 //   - Orgs present in the control plane response (allOrgIDs) but NOT in
-//     parsedConfigs failed to parse — their existing store entries are preserved.
+//     parsedConfigs failed to parse here or could not be built by the control
+//     plane — their existing store entries are preserved.
 //   - Orgs in the store that are NOT in allOrgIDs were removed from the control
 //     plane — they are deleted from the store.
 //
 // Fires the onChange callback for each org that was added, updated, or removed.
 func (s *Store) MergeBulk(parsedConfigs map[string]*OrgConfig, allOrgIDs map[string]struct{}) {
+	// Hashing serializes every config, so it runs before the write lock every request's Get waits on.
+	hashes := make(map[string][32]byte, len(parsedConfigs))
+	for orgID, cfg := range parsedConfigs {
+		hashes[orgID] = hashConfig(cfg)
+	}
+
 	s.mu.Lock()
 
 	// Track orgs that actually changed so we can fire onChange outside the lock.
@@ -133,7 +140,7 @@ func (s *Store) MergeBulk(parsedConfigs map[string]*OrgConfig, allOrgIDs map[str
 	// Upsert configs. Only mark as changed if the config content differs
 	// (compared via SHA-256 of JSON serialization).
 	for orgID, cfg := range parsedConfigs {
-		newHash := hashConfig(cfg)
+		newHash := hashes[orgID]
 		if oldHash, exists := s.configHash[orgID]; !exists || oldHash != newHash {
 			changed = append(changed, orgID)
 		}

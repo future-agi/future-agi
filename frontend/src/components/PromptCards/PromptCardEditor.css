@@ -68,3 +68,19 @@
   max-height: 900px;
   min-height: 300px;
 }
+
+/* Attachment cards are atomic embeds: their file name, size and buttons must
+   never become part of a text selection or a copy. */
+.prompt-editor-card .ql-editor [data-image-data],
+.prompt-editor-card .ql-editor [data-audio-data],
+.prompt-editor-card .ql-editor [data-pdf-data],
+.prompt-editor-card .ql-editor > div[contenteditable="false"] {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.prompt-editor-card .ql-editor .prompt-media-embed.is-selected {
+  outline: 2px solid var(--primary-main);
+  outline-offset: 2px;
+  border-radius: 8px;
+}

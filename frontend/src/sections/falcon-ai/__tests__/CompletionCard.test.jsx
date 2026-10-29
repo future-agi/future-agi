@@ -16,6 +16,11 @@ vi.mock("src/components/iconify", () => ({
   default: MockIconify,
 }));
 
+const authState = { user: { restrict_simulate_to_environments: false } };
+vi.mock("src/auth/hooks", () => ({
+  useAuthContext: () => authState,
+}));
+
 // Mock useRouter
 const mockPush = vi.fn();
 vi.mock("src/routes/hooks", () => ({
@@ -94,5 +99,64 @@ describe("CompletionCard", () => {
     );
     const btn = screen.getByRole("button", { name: /view results/i });
     expect(btn).toBeInTheDocument();
+  });
+
+  describe("for an org restricted to Environments", () => {
+    const restrict = (value) => {
+      authState.user = { restrict_simulate_to_environments: value };
+    };
+
+    it.each([
+      "/dashboard/simulate/scenarios/s-1",
+      "/dashboard/simulate/agent-definitions/a-1",
+      "/dashboard/simulate/test/t-1",
+    ])("hides the link into %s, a page it cannot open", (path) => {
+      restrict(true);
+      render(
+        <CompletionCard
+          card={{
+            title: "Created",
+            action_label: "Go to it",
+            action_path: path,
+          }}
+        />,
+      );
+      expect(screen.getByText("Created")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Go to it/ })).toBeNull();
+      restrict(false);
+    });
+
+    it("keeps links to pages it can open", () => {
+      restrict(true);
+      render(
+        <CompletionCard
+          card={{
+            title: "Created",
+            action_label: "Go to dashboard",
+            action_path: "/dashboard/dashboards/d-1",
+          }}
+        />,
+      );
+      expect(
+        screen.getByRole("button", { name: /Go to dashboard/ }),
+      ).toBeInTheDocument();
+      restrict(false);
+    });
+
+    it("keeps the Simulate links for other orgs", () => {
+      restrict(false);
+      render(
+        <CompletionCard
+          card={{
+            title: "Created",
+            action_label: "Go to scenario",
+            action_path: "/dashboard/simulate/scenarios/s-1",
+          }}
+        />,
+      );
+      expect(
+        screen.getByRole("button", { name: /Go to scenario/ }),
+      ).toBeInTheDocument();
+    });
   });
 });

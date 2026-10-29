@@ -196,6 +196,7 @@ const TracingControls = ({
           open={isDatePickerOpen}
           onClose={() => setIsDatePickerOpen(false)}
           anchorEl={customDatePickerAnc?.current}
+          value={dateFilter?.dateFilter}
           setDateFilter={(range) =>
             setDateFilter((prev) => ({
               ...prev,

@@ -40,6 +40,9 @@ export const EvalPickerContext = createContext({
 
   // Opt-in: refuse to add an eval that has no inputs to map.
   requireInputs: false,
+
+  // Opt-in: "Create new" offers single evals only.
+  hideCompositeCreate: false,
 });
 
 export const useEvalPickerContext = () => useContext(EvalPickerContext);

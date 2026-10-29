@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+import gzip
 import hashlib
 import io
 import ipaddress
@@ -17,7 +19,8 @@ import uuid
 import zlib
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import contextmanager, nullcontext
-from datetime import timedelta
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -34,9 +37,11 @@ from simulate.models import (
     HostedHarnessAttempt,
     HostedHarnessConversation,
     HostedHarnessConversationLease,
+    HostedHarnessConversationMessage,
     HostedHarnessJob,
     HostedHarnessSecret,
 )
+from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     activate_attempt_capability,
@@ -44,8 +49,10 @@ from simulate.services.hosted_harness import (
     record_cleanup,
     register_attempt,
     request_cancellation,
+    scope_dispatch_to_rerun,
 )
 from simulate.services.hosted_harness_conversation import (
+    _unacked_commands,
     ensure_conversation,
     issue_conversation_capability,
     load_workspace_archive,
@@ -119,6 +126,7 @@ _CHAT_POLICY = (
     b"    build: {enabled: true}\n"
     b"    scenarios: {enabled: true}\n"
     b"    run: {enabled: true}\n"
+    b"    builder: {enabled: true}\n"
     b"  lifecycle:\n"
     b"    request_user_input: true\n"
     b"    interrupt_response: true\n"
@@ -135,7 +143,6 @@ _SCENARIO_DIRECTORY_COUNT_COMMAND = (
 _ADJUSTMENTS_PATH = "/run/futureagi/adjustments.jsonl"
 _ADJUSTMENT_STATUS_PATH = "/run/futureagi/adjustment-status.jsonl"
 _SIMULATOR_SECRETS_PATH = "/run/futureagi/simulator-secrets.json"
-_SIMULATOR_VERTEX_CREDENTIALS_PATH = "/run/futureagi/simulator-vertex-sa.json"
 _PROVIDER_POLL_TIMEOUT_SECONDS = 15
 _DIAGNOSTICS_POLL_INTERVAL_SECONDS = 15
 _PROGRESS_FILE_TIMEOUT_SECONDS = 5
@@ -156,6 +163,119 @@ def _authoring_ttl_seconds(provider_name: str | None = None) -> int:
             int(getattr(settings, "ALK_HOSTED_AUTHORING_TTL_MINUTES", 40)) * 60,
         )
     return max(60, int(getattr(settings, "ALK_HOSTED_AUTHORING_TIMEOUT", 3900)))
+
+
+def _current_chat_workspace(job: HostedHarnessJob, checkpoint: bytes) -> bytes | None:
+    """The environment's current files, with the chat's own state from its checkpoint.
+
+    A new sandbox always starts from what the environment holds now. Every finished turn saves
+    its changes, so anything in the checkpoint the environment lacks is left over from a turn
+    that never finished; publishing it later would apply changes nobody confirmed. Only the
+    chat's own state (its root dot files: sessions, journal, kept notes) carries over.
+    """
+    environment = job.environment or job
+    revision = str(
+        ((environment.payload or {}).get("metadata") or {}).get("authoring_revision") or ""
+    )
+    if not revision:
+        return checkpoint
+    current = _authoring_archive_for(environment)
+    if current is None:
+        return checkpoint
+    return with_authoring_basis(_with_chat_state(current, checkpoint), revision)
+
+
+def _with_chat_state(current: bytes, checkpoint: bytes | None) -> bytes:
+    """The environment's files with the chat's own state (its root dot files) from its
+    checkpoint; the basis files are stamped afresh."""
+    out = io.BytesIO()
+    with (
+        tarfile.open(fileobj=io.BytesIO(current), mode="r:gz") as accepted,
+        tarfile.open(fileobj=out, mode="w:gz") as target,
+    ):
+        for member in accepted.getmembers():
+            parts = _archive_parts(member.name)
+            if parts and not parts[0].startswith("."):
+                target.addfile(member, accepted.extractfile(member) if member.isfile() else None)
+        if checkpoint is not None:
+            with tarfile.open(fileobj=io.BytesIO(checkpoint), mode="r:gz") as chat:
+                for member in chat.getmembers():
+                    parts = _archive_parts(member.name)
+                    if (
+                        parts
+                        and parts[0].startswith(".")
+                        and parts[0] not in _STAMPED_FILES
+                    ):
+                        target.addfile(
+                            member,
+                            chat.extractfile(member) if member.isfile() else None,
+                        )
+    return out.getvalue()
+
+
+def chat_workspace_for(
+    job: HostedHarnessJob,
+    conversation: HostedHarnessConversation,
+    *,
+    chat_state: bytes | None,
+) -> bytes | None:
+    """The files a chat sandbox starts from: the environment's unsaved changes over its
+    defaults where drafts apply, else the environment's current files, with the chat's
+    own state from ``chat_state`` (its latest checkpoint)."""
+    from simulate.services.harness_versioning import archives, drafts
+
+    environment = job.environment or job
+    revision = str(
+        ((environment.payload or {}).get("metadata") or {}).get("authoring_revision")
+        or ""
+    )
+    composed = None
+    if drafts.drafts_apply(environment):
+        from simulate.services.harness_versioning.rebuild import nudge_composition
+
+        composed = drafts.compose_workspace(
+            environment,
+            conversation,
+            only_draft=nudge_composition(environment, conversation),
+        )
+    if composed is not None:
+        body = _with_chat_state(archives.pack_archive(composed.files), chat_state)
+        return with_draft_basis(with_authoring_basis(body, revision), composed.token)
+    if chat_state is not None:
+        return _current_chat_workspace(job, chat_state)
+    body = _authoring_archive_for(environment)
+    if body is not None and revision:
+        body = with_authoring_basis(body, revision)
+    return body
+
+
+def _ask_harness_to_build(
+    job: HostedHarnessJob, attempt: HostedHarnessAttempt, endpoint_base_url: str
+) -> None:
+    """Put the build request into the environment's conversation; its harness does the build."""
+    from simulate.services.hosted_harness_conversation import send_to_harness
+
+    send_to_harness(
+        job,
+        content=f"Build the test environment for this agent, with {job.scenario_count} scenarios.",
+        client_request_id=f"build-{attempt.id}",
+        endpoint_base_url=endpoint_base_url,
+    )
+
+
+def _alk_source_overlay() -> bytes | None:
+    """The ALK source a development chat sandbox runs instead of its image's, when configured."""
+    root = str(getattr(settings, "ALK_HOSTED_SOURCE_OVERLAY", "") or "").strip()
+    if not root or not Path(root, "fi").is_dir():
+        return None
+    stream = io.BytesIO()
+    with tarfile.open(fileobj=stream, mode="w:gz") as archive:
+        archive.add(
+            Path(root, "fi"),
+            arcname="fi",
+            filter=lambda member: None if "__pycache__" in member.name else member,
+        )
+    return stream.getvalue()
 
 
 def _chat_idle_seconds() -> int:
@@ -185,13 +305,6 @@ def _execution_ttl_seconds(
         int(getattr(settings, "ALK_HOSTED_SANDBOX_TTL_SECONDS", 7200)),
         authoring_seconds + runtime_seconds + 120,
     )
-
-
-def _claude_code_use_vertex(gateway_ready: bool) -> str:
-    """Must be an explicit "0" behind the gateway: the CLI treats an empty value as set."""
-    if gateway_ready:
-        return "0"
-    return str(os.environ.get("CLAUDE_CODE_USE_VERTEX") or "1")
 
 
 _BACKGROUND_SOUNDS = (
@@ -224,37 +337,36 @@ def _noise_catalogue_setting() -> str:
     return configured or _background_noise_catalogue()
 
 
-def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
-    """Return control-process-only simulator config and optional Vertex ADC bytes.
+def _sandbox_collector_url() -> str:
+    """The collector address a sandbox can reach, as configured; empty when none is."""
+    return str(
+        os.environ.get("ALK_HOSTED_FI_BASE_URL")
+        # The harness callback URL is already required to be sandbox-reachable. It is a
+        # safer fallback than FI_BASE_URL, which commonly names an internal Compose/K8s
+        # service (for example ``http://backend:80``) that cannot resolve from E2B.
+        or os.environ.get("HARNESS_PUBLIC_BASE_URL")
+        or os.environ.get("FI_BASE_URL")
+        or ""
+    ).strip()
+
+
+def _platform_simulator_material() -> dict[str, str]:
+    """Return control-process-only simulator config.
 
     These values come from platform deployment configuration, never the customer request.  The
     returned map is uploaded on its own channel and consumed by ALK's hosted entrypoint; it is not
     added to ``secrets.json`` and therefore cannot acquire the ``target_provider`` purpose or be
     injected into an untrusted agent process.
-    """
-    source_path = str(
-        os.environ.get("ALK_HOSTED_SIMULATOR_GOOGLE_APPLICATION_CREDENTIALS")
-        or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-        or ""
-    ).strip()
-    credential_bytes: bytes | None = None
-    project = str(os.environ.get("GOOGLE_CLOUD_PROJECT") or "").strip()
-    if source_path:
-        try:
-            credential_bytes = Path(source_path).read_bytes()
-            document = json.loads(credential_bytes)
-            if not project and isinstance(document, dict):
-                project = str(document.get("project_id") or "").strip()
-        except (OSError, ValueError, TypeError) as exc:
-            raise HostedHarnessError(
-                "simulator_credentials_invalid",
-                "the platform simulator Vertex credential could not be loaded",
-                status_code=503,
-            ) from exc
 
+    Every model and speech call in a hosted run (harness, simulated caller, judge) goes through
+    AgentCC on its key, so no vendor's credential is placed in a sandbox. AgentCC relays speech
+    for Deepgram and Cartesia only, which is why no other speech provider is accepted.
+    """
     provider = str(os.environ.get("SIMULATOR_LLM_PROVIDER") or "vertex").strip()
-    model = str(os.environ.get("SIMULATOR_LLM_MODEL") or "gemini-3.8-flash").strip()
-    location = str(os.environ.get("GOOGLE_CLOUD_LOCATION") or "global").strip()
+    # Gateway model names carry the serving provider: a bare Gemini name is the Gemini API.
+    model = str(
+        os.environ.get("SIMULATOR_LLM_MODEL") or "vertex_ai/gemini-3.8-flash"
+    ).strip()
     backend = str(os.environ.get("ALK_HARNESS") or "claude").strip()
     agentcc_url = str(
         os.environ.get("ALK_HOSTED_AGENTCC_BASE_URL")
@@ -271,74 +383,67 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
     agentcc_model = str(
         os.environ.get("ALK_HOSTED_AGENTCC_MODEL") or "vertex_ai/gemini-3.7-flash"
     ).strip()
-    agentcc_ready = bool(agentcc_url and agentcc_key)
+    if not (agentcc_url and agentcc_key):
+        raise HostedHarnessError(
+            "agentcc_not_configured",
+            "hosted runs reach every model through AgentCC; configure a sandbox-reachable "
+            "AgentCC URL and a platform-owned harness or internal API key",
+            status_code=503,
+        )
+    unsupported_speech = sorted(
+        {
+            str(os.environ.get(name) or "").strip().lower()
+            for name in ("SIMULATOR_STT_PROVIDER", "SIMULATOR_TTS_PROVIDER")
+        }
+        - {"", "deepgram", "cartesia"}
+    )
+    if unsupported_speech:
+        raise HostedHarnessError(
+            "simulator_speech_provider_unsupported",
+            "hosted runs speak through deepgram or cartesia, not "
+            + ", ".join(unsupported_speech),
+            status_code=503,
+        )
+
     default_authoring_model = (
         model
         if backend.lower()
         in {"gemini", "vertex-gemini", "vertex_gemini", "vertexai-gemini"}
         else agentcc_model
-        if agentcc_ready
-        else "claude-sonnet-4-6"
     )
     authoring_model = str(
         os.environ.get("ALK_HARNESS_MODEL") or default_authoring_model
     ).strip()
-    if (
-        backend.lower() in {"claude", "claude-code"}
-        and ("gemini" in authoring_model.lower() or agentcc_url or agentcc_key)
-        and not agentcc_ready
-    ):
-        raise HostedHarnessError(
-            "authoring_gateway_not_configured",
-            "Claude gateway authoring requires a sandbox-reachable AgentCC URL "
-            "and a platform-owned harness or internal API key",
-            status_code=503,
-        )
-    claude_region = str(
-        os.environ.get("CLOUD_ML_REGION")
-        or getattr(settings, "ALK_HOSTED_AUTHORING_CLAUDE_REGION", "us-east5")
-    ).strip()
     values = {
         "ALK_HARNESS": backend,
         "ALK_HARNESS_MODEL": authoring_model,
-        "CLAUDE_CODE_USE_VERTEX": _claude_code_use_vertex(agentcc_ready),
-        "CLOUD_ML_REGION": claude_region,
-        "ALK_VERTEX_LOCATION": location,
-        "GOOGLE_CLOUD_LOCATION": location,
-        "GOOGLE_GENAI_USE_VERTEXAI": str(
-            os.environ.get("GOOGLE_GENAI_USE_VERTEXAI") or "True"
-        ),
+        # Explicit "0": Claude Code treats an empty value as set.
+        "CLAUDE_CODE_USE_VERTEX": "0",
         "SIMULATOR_LLM_PROVIDER": provider,
         "SIMULATOR_LLM_MODEL": model,
+        "ALK_CLAUDE_GATEWAY_URL": agentcc_url.rstrip("/"),
+        "ALK_CLAUDE_GATEWAY_API_KEY": agentcc_key,
+        "AGENTCC_BASE_URL": agentcc_url.rstrip("/"),
+        "AGENTCC_API_KEY": agentcc_key,
     }
     # Unset keeps ALK's per-model least deliberation; set it to go lower where a model allows
     # (e.g. "minimal" on gemini-3.5-flash-lite, which gemini-3.7-flash refuses).
     thinking = str(os.environ.get("SIMULATOR_LLM_THINKING") or "").strip()
     if thinking:
         values["SIMULATOR_LLM_THINKING"] = thinking
-    if agentcc_ready:
-        values["ALK_CLAUDE_GATEWAY_URL"] = agentcc_url.rstrip("/")
-        values["ALK_CLAUDE_GATEWAY_API_KEY"] = agentcc_key
-        values["AGENTCC_BASE_URL"] = agentcc_url.rstrip("/")
-        values["AGENTCC_API_KEY"] = agentcc_key
     from simulate.services.phone_telephony import platform_phone_telephony
 
     values.update(
         {name: value for name, value in platform_phone_telephony().items() if value}
     )
     for name in (
-        "CARTESIA_API_KEY",
-        "DEEPGRAM_API_KEY",
-        "GEMINI_API_KEY",
-        "GOOGLE_API_KEY",
-        "OPENAI_API_KEY",
+        # Models the simulated caller tries in turn when the chosen one fails.
+        "SIMULATOR_LLM_FALLBACK_MODELS",
         "SIMULATOR_STT_MODEL",
         "SIMULATOR_STT_PROVIDER",
         "SIMULATOR_TTS_MODEL",
         "SIMULATOR_TTS_PROVIDER",
-        # Observe credentials for the guest. The harness's model calls happen inside the sandbox,
-        # so without these a run is only readable as log text in the diagnostics archive.
-        "HARNESS_OBSERVABILITY",
+        # Observe account of the guest: platform evals and, on opt-in, the harness's own traces.
         "FI_API_KEY",
         "FI_SECRET_KEY",
         "FI_HARNESS_PROJECT",
@@ -351,26 +456,29 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         "ALK_VOICEMAIL_SCENARIOS",
         "ALK_HARNESS_WORKERS_AT_ONCE",
         "ALK_VALIDATION_INSTANCES",
+        # The guest waits this long for the build; unset, it falls back to its own default.
+        "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS",
     ):
         value = str(os.environ.get(name) or "").strip()
         if value:
             values[name] = value
+    # Keys always travel (the evals need them); self-tracing is opt-in, because a
+    # collector of another deployment refuses them on every run.
+    values["HARNESS_OBSERVABILITY"] = (
+        "on"
+        if str(os.environ.get("HARNESS_OBSERVABILITY") or "").strip().lower()
+        in {"1", "on", "true", "yes"}
+        else "off"
+    )
     catalogue = _noise_catalogue_setting()
     if catalogue:
         values["ALK_BACKGROUND_NOISE_CATALOG"] = catalogue
     # The sandbox resolves nothing on our network, so the guest's collector is configured
     # separately and only falls back to ours when they are the same host.
-    collector = str(
-        os.environ.get("ALK_HOSTED_FI_BASE_URL") or os.environ.get("FI_BASE_URL") or ""
-    ).strip()
+    collector = _sandbox_collector_url()
     if collector:
         values["FI_BASE_URL"] = collector
-    if project:
-        values["GOOGLE_CLOUD_PROJECT"] = project
-        values["ANTHROPIC_VERTEX_PROJECT_ID"] = project
-    if credential_bytes is not None:
-        values["GOOGLE_APPLICATION_CREDENTIALS"] = _SIMULATOR_VERTEX_CREDENTIALS_PATH
-    return values, credential_bytes
+    return values
 
 
 def _add_scoped_guest_pin_policy(values: dict[str, str], job: HostedHarnessJob) -> bool:
@@ -916,38 +1024,90 @@ class HostedSourceAcquirer:
             return archive.getvalue(), commit_sha
 
 
+def _check_secret_reference(alias: str, reference: Mapping[str, Any]) -> None:
+    if reference["manager"] != "platform-vault":
+        raise HostedHarnessError(
+            "secret_manager_unsupported",
+            f"unsupported secret manager for {alias}",
+            status_code=422,
+        )
+    if reference["purpose"] != "target_provider":
+        raise HostedHarnessError(
+            "secret_purpose_invalid",
+            f"secret {alias} is not a target_provider secret",
+            status_code=422,
+        )
+
+
+def resolve_secret_reference(
+    organization: Any, alias: str, reference: Mapping[str, Any]
+) -> str:
+    """One platform-vault reference's value, read from the stored secrets."""
+    _check_secret_reference(alias, reference)
+    query = HostedHarnessSecret.no_workspace_objects.filter(
+        organization=organization,
+        name=reference["key"],
+    )
+    version = reference.get("version")
+    if version is not None:
+        query = query.filter(version=version)
+    secret = query.order_by("-created_at").first()
+    if secret is None:
+        raise HostedHarnessError(
+            "secret_not_found",
+            f"platform secret not found for alias {alias}",
+            status_code=422,
+        )
+    return secret.get_value()
+
+
 class PlatformSecretResolver:
     def resolve(self, job: HostedHarnessJob) -> dict[str, str]:
-        resolved: dict[str, str] = {}
-        for alias, reference in job.payload["agent"]["secret_refs"].items():
-            if reference["manager"] != "platform-vault":
-                raise HostedHarnessError(
-                    "secret_manager_unsupported",
-                    f"unsupported secret manager for {alias}",
-                    status_code=422,
-                )
-            if reference["purpose"] != "target_provider":
-                raise HostedHarnessError(
-                    "secret_purpose_invalid",
-                    f"secret {alias} is not a target_provider secret",
-                    status_code=422,
-                )
-            query = HostedHarnessSecret.no_workspace_objects.filter(
-                organization=job.organization,
-                name=reference["key"],
+        from simulate.services.harness_agent_versions import (
+            environment_credential_values,
+            pinned_credential_values,
+        )
+        from simulate.services.harness_credentials import is_names_only_ref
+
+        # A job pinned to an agent version with its own credential set reads it; a
+        # legacy or unpinned one reads the stored secrets its refs name.
+        # Locals holding values are named for the error tracker's scrubber.
+        pinned_secrets = pinned_credential_values(job)
+        secret_refs = job.payload["agent"]["secret_refs"]
+        environment_secrets = None
+        if pinned_secrets is None and any(
+            is_names_only_ref(reference) for reference in secret_refs.values()
+        ):
+            # Names-only refs no pin answers (an unpinned run, or versioning off):
+            # the environment's default version holds their values.
+            environment_secrets = environment_credential_values(job) or {}
+        resolved_secrets: dict[str, str] = {}
+        for alias, reference in secret_refs.items():
+            if pinned_secrets is not None:
+                _check_secret_reference(alias, reference)
+                if alias in pinned_secrets:
+                    resolved_secrets[alias] = pinned_secrets[alias]
+                    continue
+                if is_names_only_ref(reference):
+                    raise HostedHarnessError(
+                        "credential_unavailable",
+                        f"the pinned agent version holds no value for {alias}",
+                        status_code=422,
+                    )
+            elif environment_secrets is not None and is_names_only_ref(reference):
+                _check_secret_reference(alias, reference)
+                if alias not in environment_secrets:
+                    raise HostedHarnessError(
+                        "credential_unavailable",
+                        f"the environment's agent version holds no value for {alias}",
+                        status_code=422,
+                    )
+                resolved_secrets[alias] = environment_secrets[alias]
+                continue
+            resolved_secrets[alias] = resolve_secret_reference(
+                job.organization, alias, reference
             )
-            version = reference.get("version")
-            if version is not None:
-                query = query.filter(version=version)
-            secret = query.order_by("-created_at").first()
-            if secret is None:
-                raise HostedHarnessError(
-                    "secret_not_found",
-                    f"platform secret not found for alias {alias}",
-                    status_code=422,
-                )
-            resolved[alias] = secret.get_value()
-        return resolved
+        return resolved_secrets
 
 
 def resolve_platform_simulator_secrets() -> dict[str, str]:
@@ -1009,6 +1169,354 @@ def attach_platform_simulator_secret_refs(
     agent["secret_refs"] = refs
     dispatched["agent"] = agent
     return dispatched
+
+
+# The decision whether a run exports to the agent's hidden simulation project is made once, at
+# launch, and shipped in job.json; the sandbox repeats none of it. It never fails a launch.
+_EXPORT_SNAPSHOTS_SETTING = "ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS"
+_EXPORT_SECRET_PURPOSE = "observability_export"
+# Only the endpoints name where a customer's spans go; their headers are merged by the hook.
+_OTEL_EXPORT_NAMES = frozenset(
+    {"OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"}
+)
+# The names the sandbox key ships under; no instrumenter reads them, so they never clash
+# with a name the customer's own code or its libraries look up.
+_INGEST_ALIAS_PREFIX = "FI_SIMULATION_INGEST_"
+_INGEST_API_KEY_ALIAS = f"{_INGEST_ALIAS_PREFIX}API_KEY"
+_INGEST_SECRET_KEY_ALIAS = f"{_INGEST_ALIAS_PREFIX}SECRET_KEY"
+# Refusals that fire on every launch that was never meant to export: unbound, from an
+# unlisted snapshot, a hosted agent, observability off or no instrumentation. They log at info
+# so the reasons someone running the platform can act on stand out at warning.
+_QUIET_EXPORT_REASONS = frozenset(
+    {
+        "not_bound",
+        "snapshot_unsupported",
+        "not_source",
+        "observability_off",
+        "not_instrumented",
+    }
+)
+_MARK_NAME = re.compile(r"(OTEL_|FI_SIMULATION_|FI_BASE_URL$)[A-Z0-9_]*")
+# Credentials ride as sandbox secrets; a document that named them would put them in job.json.
+_MARK_FORBIDDEN_NAMES = frozenset(
+    {
+        "OTEL_EXPORTER_OTLP_HEADERS",
+        "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
+        "FI_API_KEY",
+        "FI_SECRET_KEY",
+        _INGEST_API_KEY_ALIAS,
+        _INGEST_SECRET_KEY_ALIAS,
+    }
+)
+_MARK_MAX_ENTRIES = 10
+_MARK_MAX_VALUE_LENGTH = 2048
+
+
+class _ExportRefused(Exception):
+    """The export is decided off; ``reason`` is the word the log line carries."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+@dataclass(frozen=True)
+class _ExportPlan:
+    """What the launch writes once the guard has finished; the default writes nothing."""
+
+    project_name: str | None = None
+    collector_url: str | None = None
+    export: str | None = None
+    instrumentation: str | None = None
+    # Not in the repr: a plan caught in a traceback or a frame dump must not print keys.
+    secrets: tuple[tuple[str, str], ...] = field(default=(), repr=False)
+    egress_domains: frozenset[str] | None = None
+    redaction_values: tuple[str, ...] = field(default=(), repr=False)
+
+
+def _bound_agent_definition(job: HostedHarnessJob, payload: Mapping[str, Any]):
+    from django.core.exceptions import ValidationError
+
+    from simulate.models import AgentDefinition
+
+    metadata = payload.get("metadata")
+    agent_id = (
+        metadata.get("agent_definition_id") if isinstance(metadata, Mapping) else None
+    )
+    if not agent_id:
+        run_test = job.run_test
+        agent_id = run_test.agent_definition_id if run_test is not None else None
+    if not agent_id:
+        raise _ExportRefused("not_bound")
+    try:
+        # The id may have come from the request, so it must belong to this job's tenant.
+        agent = AgentDefinition.no_workspace_objects.filter(
+            id=agent_id,
+            organization=job.organization,
+            workspace=job.workspace,
+            deleted=False,
+        ).first()
+    except (ValueError, ValidationError):
+        agent = None
+    if agent is None:
+        raise _ExportRefused("not_bound")
+    return agent
+
+
+def _decide_observability_export(
+    job: HostedHarnessJob,
+    payload: Mapping[str, Any],
+    *,
+    selected_snapshot: str,
+    allowed_domains: Iterable[str],
+    max_egress_domains: int | None,
+) -> _ExportPlan:
+    listed = {
+        name.strip()
+        for name in os.environ.get(_EXPORT_SNAPSHOTS_SETTING, "").split(",")
+        if name.strip()
+    }
+    if selected_snapshot not in listed:
+        raise _ExportRefused("snapshot_unsupported")
+
+    agent = _bound_agent_definition(job, payload)
+
+    provider = agent.observability_provider
+    if provider is None or provider.deleted or not provider.enabled:
+        raise _ExportRefused("observability_off")
+    # The row only gates the export: spans go to the hidden project, never to this one.
+    project = provider.project
+    if project.deleted or project.organization_id != job.organization_id:
+        raise _ExportRefused("observability_off")
+    from simulate.services.agent_setup import agent_summary
+
+    summary = agent_summary(agent.id)
+    if summary.kind != "source":
+        raise _ExportRefused("not_source")
+    from tracer.services.simulation_project import ensure_simulation_project
+
+    # A failure to make the project escapes to the guard, which logs the exception's class.
+    hidden = ensure_simulation_project(agent)
+    if hidden.workspace_id is None:
+        raise _ExportRefused("no_workspace")
+
+    # Trailing slashes are cut so the traces path is never appended to a double slash.
+    collector_url = _sandbox_collector_url().rstrip("/")
+    try:
+        parsed = urlparse(collector_url)
+    except ValueError:
+        parsed = None
+    # The traces path is appended to this address, so it needs a scheme as well as a host.
+    host = (parsed.hostname or "").lower().rstrip(".") if parsed else ""
+    if not host or parsed.scheme not in {"http", "https"}:
+        raise _ExportRefused("no_collector")
+    # The address is written into job.json, so it must not carry a credential.
+    if parsed.username or parsed.password:
+        raise _ExportRefused("no_collector")
+    # A sandbox must not reach a private host just because the operator's base URL names one.
+    try:
+        _validate_egress_host(host)
+    except HostedHarnessError:
+        raise _ExportRefused("no_collector") from None
+
+    refs = (payload.get("agent") or {}).get("secret_refs") or {}
+    declared = {
+        str(alias).upper()
+        for alias, ref in refs.items()
+        if isinstance(ref, Mapping) and ref.get("purpose") == "target_provider"
+    }
+    instrumentation = summary.instrumentation
+    if instrumentation == "opentelemetry":
+        if declared & _OTEL_EXPORT_NAMES:
+            raise _ExportRefused("customer_configuration")
+    elif instrumentation == "traceai":
+        if declared & (_OTEL_EXPORT_NAMES | {"FI_BASE_URL"}):
+            raise _ExportRefused("customer_configuration")
+    else:
+        raise _ExportRefused("not_instrumented")
+    # A customer value under one of our names would be overwritten by the sandbox key.
+    if any(alias.startswith(_INGEST_ALIAS_PREFIX) for alias in declared):
+        raise _ExportRefused("customer_configuration")
+
+    from tracer.services.collector_ingest import get_or_create_export_credentials
+
+    try:
+        credentials = get_or_create_export_credentials(
+            organization_id=str(job.organization_id),
+            workspace_id=str(hidden.workspace_id),
+            agent_definition_id=str(agent.id),
+        )
+    except Exception:  # noqa: BLE001 - the reason word is all the log may carry
+        raise _ExportRefused("no_key") from None
+    if credentials is None or not (credentials.api_key and credentials.secret_key):
+        raise _ExportRefused("no_key")
+    # A disabled or deleted key stops the export; its pair never reaches the sandbox.
+    if not credentials.enabled:
+        raise _ExportRefused("key_disabled")
+
+    # The key and the hidden project, both made on first use, may remain when the cap refuses;
+    # nothing of the launch is written yet.
+    egress_domains = _normalize_egress_domains({*allowed_domains, host})
+    if max_egress_domains is not None and len(egress_domains) > max_egress_domains:
+        raise _ExportRefused("egress_cap")
+
+    return _ExportPlan(
+        project_name=hidden.name,
+        collector_url=collector_url,
+        export="our_keys",
+        instrumentation=instrumentation,
+        secrets=(
+            (_INGEST_API_KEY_ALIAS, credentials.api_key),
+            (_INGEST_SECRET_KEY_ALIAS, credentials.secret_key),
+        ),
+        egress_domains=frozenset(egress_domains),
+        redaction_values=(credentials.api_key, credentials.secret_key),
+    )
+
+
+def _plan_observability_export(
+    job: HostedHarnessJob,
+    payload: Mapping[str, Any],
+    *,
+    selected_snapshot: str,
+    allowed_domains: Iterable[str],
+    max_egress_domains: int | None,
+) -> _ExportPlan:
+    """Decide the export without writing anything; any failure means no export."""
+    try:
+        return _decide_observability_export(
+            job,
+            payload,
+            selected_snapshot=selected_snapshot,
+            allowed_domains=allowed_domains,
+            max_egress_domains=max_egress_domains,
+        )
+    except _ExportRefused as refusal:
+        reason = refusal.reason
+        quiet = reason in _QUIET_EXPORT_REASONS
+    except Exception as exc:  # noqa: BLE001 - an export never fails a launch
+        reason = type(exc).__name__
+        quiet = False
+    log = structlog_logger.info if quiet else structlog_logger.warning
+    log("observability_export_unavailable", job_id=str(job.id), reason=reason)
+    return _ExportPlan()
+
+
+def _mark_is_acceptable(mark: Any) -> bool:
+    if not isinstance(mark, dict) or len(mark) > _MARK_MAX_ENTRIES:
+        return False
+    for name, value in mark.items():
+        if not isinstance(name, str) or not isinstance(value, str):
+            return False
+        if name in _MARK_FORBIDDEN_NAMES or not _MARK_NAME.fullmatch(name):
+            return False
+        if len(value) > _MARK_MAX_VALUE_LENGTH:
+            return False
+        if not (value.isascii() and value.isprintable()):
+            return False
+    return True
+
+
+def _simulation_mark(
+    job: Any, plan: _ExportPlan | None = None
+) -> tuple[dict[str, str], bool]:
+    """The environment dictionary for this run, and whether it may be used.
+
+    Unusable means an empty dictionary and ``False``; the launch goes on unmarked.
+    """
+    plan = plan or _ExportPlan()
+    try:
+        from tracer.services.simulation_mark import customer_code_environment
+
+        mark = customer_code_environment(
+            organization_id=str(job.organization_id),
+            job_id=str(job.id),
+            run_id=str(job.run_id),
+            run_test_id=None if job.run_test_id is None else str(job.run_test_id),
+            test_execution_id=(
+                None if job.test_execution_id is None else str(job.test_execution_id)
+            ),
+            project_name=plan.project_name,
+            collector_url=plan.collector_url,
+            export=plan.export,
+            instrumentation=plan.instrumentation,
+        )
+    except Exception:  # noqa: BLE001 - the mark never fails a launch
+        structlog_logger.warning(
+            "simulation_mark_unavailable", job_id=str(job.id), reason="raised"
+        )
+        return {}, False
+    if not _mark_is_acceptable(mark):
+        structlog_logger.warning(
+            "simulation_mark_unavailable", job_id=str(job.id), reason="invalid"
+        )
+        return {}, False
+    return mark, True
+
+
+def _with_simulation_mark(
+    payload: Mapping[str, Any], mark: Mapping[str, str]
+) -> dict[str, Any]:
+    """A copy of the document that carries the mark, replacing any value already there."""
+    document = dict(payload)
+    metadata = dict(document.get("metadata") or {})
+    metadata["customer_code_environment"] = dict(mark)
+    document["metadata"] = metadata
+    return document
+
+
+def _with_used_scenario_keys(
+    payload: Mapping[str, Any], job: HostedHarnessJob
+) -> dict[str, Any]:
+    """A copy of the document carrying every key the environment has given a scenario, a
+    dropped one's included, so the harness never gives one to a new scenario and the new
+    scenario never inherits another's row and run history."""
+    from simulate.models import HostedHarnessScenario
+
+    document = dict(payload)
+    if not isinstance(job, HostedHarnessJob):
+        return document
+    metadata = dict(document.get("metadata") or {})
+    metadata["used_scenario_keys"] = sorted(
+        set(
+            HostedHarnessScenario.all_objects.filter(job_id=(job.environment or job).id)
+            .exclude(scenario_key="")
+            .values_list("scenario_key", flat=True)
+        )
+    )
+    document["metadata"] = metadata
+    return document
+
+
+def attach_observability_export_secret_refs(
+    payload: dict[str, Any], aliases: Iterable[str]
+) -> dict[str, Any]:
+    """Add value-free refs for the export's aliases to the ephemeral job document only."""
+    dispatched = dict(payload)
+    agent = dict(dispatched.get("agent") or {})
+    refs = dict(agent.get("secret_refs") or {})
+    for alias in aliases:
+        refs[alias] = {
+            "manager": "platform-config",
+            "key": alias,
+            "purpose": _EXPORT_SECRET_PURPOSE,
+        }
+    agent["secret_refs"] = refs
+    dispatched["agent"] = agent
+    return dispatched
+
+
+def _ingest_key_values(organization_id: Any) -> tuple[str, ...]:
+    """Every ingest key's two values, switched off, deleted or not; read and never created."""
+    from accounts.models.user import OrgApiKey
+
+    # A key switched off or deleted mid-run may still be in a sandbox that another worker
+    # polls. The base manager, because the others hide deleted rows or filter by the
+    # request's workspace.
+    rows = OrgApiKey._base_manager.filter(
+        organization_id=organization_id, type="ingest"
+    ).values_list("api_key", "secret_key")
+    return tuple(value for row in rows for value in row if value)
 
 
 _MAX_EGRESS_DOMAINS = 20
@@ -1369,17 +1877,9 @@ def _resolved_egress_domains(
             )
             if clip_host:
                 values.append(clip_host)
-    # Observe, when the guest is given credentials for it. Derived rather than requested, because a
-    # customer cannot be expected to know the collector is a dependency of their own run.
+    # The guest's Observe host, derived because a customer cannot know their run depends on it.
     simulator_values = {str(k).upper(): v for k, v in simulator_env.items()}
-    observability_off = str(
-        simulator_values.get("HARNESS_OBSERVABILITY") or ""
-    ).strip().lower() in {"0", "off", "false", "no"}
-    if (
-        not observability_off
-        and simulator_values.get("FI_API_KEY")
-        and simulator_values.get("FI_SECRET_KEY")
-    ):
+    if simulator_values.get("FI_API_KEY") and simulator_values.get("FI_SECRET_KEY"):
         collector = _hostname_from_url(simulator_values.get("FI_BASE_URL"))
         if collector:
             values.append(collector)
@@ -1403,23 +1903,112 @@ def _resolved_egress_domains(
     return _normalize_egress_domains(values)
 
 
-_KNOWN_SIMULATOR_SECRET_ALIASES = (
-    "GOOGLE_APPLICATION_CREDENTIALS_JSON",
-    "GOOGLE_APPLICATION_CREDENTIALS",
-    "GEMINI_API_KEY",
-    "GOOGLE_API_KEY",
-    "DEEPGRAM_API_KEY",
-    "CARTESIA_API_KEY",
-    "OPENAI_API_KEY",
-    "ANTHROPIC_API_KEY",
-)
 _KNOWN_SIMULATOR_CONFIG_NAMES = (
     "SIMULATOR_LLM_PROVIDER",
     "SIMULATOR_STT_PROVIDER",
     "SIMULATOR_TTS_PROVIDER",
-    "GOOGLE_CLOUD_LOCATION",
-    "CLOUD_ML_REGION",
 )
+
+
+def _authoring_egress_domains(
+    simulator_env: Mapping[str, str], connector: str, *, provider_profile: bool
+) -> list[str]:
+    """What authoring reaches: the source host, AgentCC and package indexes.
+
+    AgentCC serves every authoring model; real-runtime validation installs packages.
+    Daytona caps the domain allow list at 20 entries, so this stays focused and excludes
+    call-time media domains (LiveKit/Deepgram) that only the execution sandbox needs.
+    """
+    default_authoring_egress = [
+        "github.com",
+        "codeload.github.com",
+        "api.github.com",
+        "objects.githubusercontent.com",
+        "raw.githubusercontent.com",
+        "pypi.org",
+        "files.pythonhosted.org",
+    ]
+    gateway_host = _hostname_from_url(simulator_env.get("AGENTCC_BASE_URL"))
+    if gateway_host and gateway_host not in default_authoring_egress:
+        default_authoring_egress.insert(0, gateway_host)
+    allowed_domains = list(
+        dict.fromkeys(
+            getattr(
+                settings,
+                "ALK_HOSTED_AUTHORING_EGRESS_DOMAINS",
+                default_authoring_egress,
+            )
+        )
+    )
+    if provider_profile:
+        provider_domain = {
+            "vapi": "api.vapi.ai",
+            "retell": "api.retellai.com",
+            "retell_chat": "api.retellai.com",
+        }.get(connector)
+        if provider_domain and provider_domain not in allowed_domains:
+            allowed_domains.insert(0, provider_domain)
+    return allowed_domains
+
+
+def _with_certify_egress(
+    allowed_domains: Iterable[str],
+    simulator_env: Mapping[str, str],
+    *,
+    max_domains: int | None,
+) -> set[str]:
+    """A cache miss certifies in the run sandbox, so it also needs authoring's egress."""
+    merged = _normalize_egress_domains(
+        [
+            *allowed_domains,
+            *_authoring_egress_domains(simulator_env, "", provider_profile=False),
+        ]
+    )
+    if max_domains is not None and len(merged) > max_domains:
+        raise HostedHarnessError(
+            "bundle_cache_miss_egress",
+            "this run has to rebuild its environment bundle, which needs "
+            f"{len(merged)} egress domains; the sandbox provider allows {max_domains}",
+            status_code=422,
+        )
+    return merged
+
+
+# Launch failures of the bundle cache, recorded against the environment-validation stage.
+_BUNDLE_CACHE_FAILURES = frozenset({"bundle_cache_miss_egress", "assembly_unavailable"})
+
+
+def _prepare_assembly(job: HostedHarnessJob) -> tuple[Any, HostedHarnessError | None]:
+    """The run's assembly plan, or the typed failure its launch records.
+
+    A run pinned to the environment's default pair falls back to today's path when it
+    cannot be assembled; any other pin has no such path. A storage outage is raised, so
+    the launch is retried.
+    """
+    from simulate.services.harness_versioning import assembly as bundle_cache
+
+    try:
+        return bundle_cache.prepare_launch(job), None
+    except Exception as exc:
+        if bundle_cache.is_transient(exc):
+            raise
+        if bundle_cache.falls_back(job):
+            logger.warning(
+                "could not assemble run=%s; it runs the default pair",
+                job.id,
+                exc_info=True,
+            )
+            return None, None
+        if isinstance(exc, HostedHarnessError) and exc.code == "assembly_unavailable":
+            logger.warning("could not assemble run=%s: %s", job.id, exc.message)
+            return None, exc
+        logger.exception("could not assemble run=%s", job.id)
+        return None, HostedHarnessError(
+            "assembly_unavailable",
+            "this run's pinned environment and scenario versions could not be "
+            f"assembled: {type(exc).__name__}",
+            status_code=422,
+        )
 
 
 def _known_simulator_egress_inputs() -> dict[str, str]:
@@ -1433,9 +2022,6 @@ def _known_simulator_egress_inputs() -> dict[str, str]:
             values[str(alias)] = (
                 raw if "LOCATION" in upper_alias or "REGION" in upper_alias else ""
             )
-    for alias in _KNOWN_SIMULATOR_SECRET_ALIASES:
-        if os.getenv(alias):
-            values.setdefault(alias, "")
     for name in _KNOWN_SIMULATOR_CONFIG_NAMES:
         value = str(os.getenv(name) or "").strip()
         if value:
@@ -1602,6 +2188,8 @@ class HostedHarnessGateway:
                 retryable=True,
             ) from exc
 
+    # TODO: no caller since the authoring activity was removed; delete with its
+    # sandbox helpers.
     def author(self, job: HostedHarnessJob) -> bytes:
         """Run ALK authoring inside an isolated managed sandbox.
 
@@ -1620,6 +2208,9 @@ class HostedHarnessGateway:
         if payload != job.payload:
             job.payload = payload
             job.save(update_fields=["payload", "updated_at"])
+        from simulate.services.harness_agent_versions import stamp_built_commit
+
+        stamp_built_commit(job, commit_sha)
 
         # An imported provider target is part of the agent source of truth. Give the isolated
         # authoring control process only the one provider credential it needs to fetch a
@@ -1638,74 +2229,22 @@ class HostedHarnessGateway:
 
         # Authoring reaches only the model provider and the source host - never the target
         # (LiveKit/Deepgram) media secrets, which belong to the execution sandbox alone.
-        simulator_env, simulator_vertex_credentials = _platform_simulator_material()
+        simulator_env = _platform_simulator_material()
         guest_pin_policy_released = _add_scoped_guest_pin_policy(simulator_env, job)
-        project_id = str(simulator_env.get("GOOGLE_CLOUD_PROJECT") or "")
 
-        # Authoring reaches the source host, the authoring model provider (Vertex/Claude), and
-        # package indexes needed when real-runtime validation builds the generated environment.
-        # Daytona caps the domain allow list at 20 entries, so this stays focused and excludes
-        # call-time media domains (LiveKit/Deepgram) that only the execution sandbox needs.
-        default_authoring_egress = [
-            "github.com",
-            "codeload.github.com",
-            "api.github.com",
-            "objects.githubusercontent.com",
-            "raw.githubusercontent.com",
-            "pypi.org",
-            "files.pythonhosted.org",
-            "oauth2.googleapis.com",
-            "www.googleapis.com",
-            "sts.googleapis.com",
-            "accounts.google.com",
-            "aiplatform.googleapis.com",
-            "us-east5-aiplatform.googleapis.com",
-            "us-central1-aiplatform.googleapis.com",
-        ]
-        gateway_host = _hostname_from_url(simulator_env.get("AGENTCC_BASE_URL"))
-        if gateway_host and gateway_host not in default_authoring_egress:
-            default_authoring_egress.insert(0, gateway_host)
-        allowed_domains = list(
-            dict.fromkeys(
-                getattr(
-                    settings,
-                    "ALK_HOSTED_AUTHORING_EGRESS_DOMAINS",
-                    default_authoring_egress,
-                )
-            )
+        allowed_domains = _authoring_egress_domains(
+            simulator_env, connector, provider_profile=bool(authoring_target_secrets)
         )
-        if authoring_target_secrets:
-            provider_domain = {
-                "vapi": "api.vapi.ai",
-                "retell": "api.retellai.com",
-                "retell_chat": "api.retellai.com",
-            }.get(connector)
-            if provider_domain and provider_domain not in allowed_domains:
-                allowed_domains.insert(0, provider_domain)
         _validate_resolved_egress_domains(
             allowed_domains, max_domains=self.client.max_egress_domains
         )
+        # Authoring is never bound to an agent, so it gets the mark and no export.
+        simulation_mark, _accepted = _simulation_mark(job)
         authoring_env = {
-            **{
-                name: value
-                for name, value in simulator_env.items()
-                if name not in {"LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"}
-            },
-            "CLAUDE_CODE_USE_VERTEX": _claude_code_use_vertex(
-                bool(simulator_env.get("ALK_CLAUDE_GATEWAY_URL"))
-            ),
-            "GOOGLE_GENAI_USE_VERTEXAI": "True",
-            "CLOUD_ML_REGION": getattr(
-                settings, "ALK_HOSTED_AUTHORING_CLAUDE_REGION", "us-east5"
-            ),
-            "GOOGLE_CLOUD_LOCATION": getattr(
-                settings, "ALK_HOSTED_AUTHORING_GEMINI_LOCATION", "us-central1"
-            ),
-            "GOOGLE_APPLICATION_CREDENTIALS": _SIMULATOR_VERTEX_CREDENTIALS_PATH,
+            name: value
+            for name, value in simulator_env.items()
+            if name not in {"LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"}
         }
-        if project_id:
-            authoring_env["GOOGLE_CLOUD_PROJECT"] = project_id
-            authoring_env["ANTHROPIC_VERTEX_PROJECT_ID"] = project_id
 
         ttl_seconds = _authoring_ttl_seconds(self.client.name)
         sandbox = None
@@ -1728,14 +2267,13 @@ class HostedHarnessGateway:
             )
             sandbox.fs.upload_file(source_archive, "/work/source.tar.gz")
             sandbox.fs.upload_file(
-                json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(),
+                json.dumps(
+                    _with_simulation_mark(guest_job_document(payload), simulation_mark),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode(),
                 "/work/job.json",
             )
-            if simulator_vertex_credentials is not None:
-                sandbox.fs.upload_file(
-                    simulator_vertex_credentials,
-                    _SIMULATOR_VERTEX_CREDENTIALS_PATH,
-                )
             authoring_secrets_arg = ""
             if authoring_target_secrets:
                 authoring_secrets_path = "/run/futureagi/authoring-target-secrets.json"
@@ -1893,20 +2431,26 @@ class HostedHarnessGateway:
         self, job: HostedHarnessJob, *, endpoint_base_url: str
     ) -> HostedHarnessAttempt:
 
+        from simulate.services.harness_versioning import assembly as bundle_cache
+
         _mark_stage(job, "acquiring_source")
         source_archive, commit_sha = HostedSourceAcquirer().acquire(job)
+        # A pinned run replays its assembled pair; on a cache miss it certifies it first.
+        assembled, assembly_error = _prepare_assembly(job)
+        certify = assembled is not None and not assembled.hit
         authoring_archive = _authoring_archive_for(job)
         payload = dict(job.payload)
         if authoring_archive is not None:
             # Resolve cached authoring created before connector resolution shipped as well as
             # newly-authored jobs. This must happen before network policy and job.json are built.
             payload = resolve_authored_connector(payload, authoring_archive)
-        simulator_env, simulator_vertex_credentials = _platform_simulator_material()
+        simulator_env = _platform_simulator_material()
         guest_pin_policy_released = _add_scoped_guest_pin_policy(simulator_env, job)
         # A chat-driven "add N scenarios" request replays the frozen world but re-runs
-        # scenario-gen (extend) against it. The marker persists across infra retries and is
-        # cleared only once the extended authoring is stored (store_authoring_archive), so a
-        # mid-flight retry re-extends to the same total instead of replaying the old set.
+        # scenario-gen (extend) against it. The marker persists across infra retries and
+        # is cleared only once the extended authoring is stored
+        # (freeze_authoring_archive), so a mid-flight retry re-extends to the same total
+        # instead of replaying the old set.
         extend_command = (
             _extend_command_for(job, payload, include_job=guest_pin_policy_released)
             if authoring_archive is not None
@@ -1919,6 +2463,10 @@ class HostedHarnessGateway:
         if payload != job.payload:
             job.payload = payload
             job.save(update_fields=["payload", "updated_at"])
+        from simulate.services.harness_agent_versions import stamp_built_commit
+
+        # An environment's build pins the versions naming only its branch to this commit.
+        stamp_built_commit(job, commit_sha)
         # Bundle authoring is performed inside the sandbox. The platform sends source plus any
         # frozen authoring inputs; it does not select or execute a host-side bundle.
         secrets_map = PlatformSecretResolver().resolve(job)
@@ -1927,9 +2475,18 @@ class HostedHarnessGateway:
             if authoring_archive is None
             else ({}, "")
         )
-        dispatch_payload = prepare_dispatch_payload(
-            payload, secrets_map, simulator_secrets=simulator_env, job=job
-        )
+        from simulate.services.harness_capacity import configured_capacity
+
+        # The export decision needs the selected snapshot, so capacity comes first.
+        try:
+            capacity = configured_capacity(scope_dispatch_to_rerun(payload))
+        except ValueError as exc:
+            raise HostedHarnessError(
+                "sandbox_capacity_unavailable",
+                str(exc),
+                status_code=503,
+            ) from exc
+        selected_snapshot = capacity.snapshot_name or self.client.runtime_name
         platform_host = _hostname_from_url(endpoint_base_url)
         allowed_domains = _resolved_egress_domains(
             payload,
@@ -1944,17 +2501,36 @@ class HostedHarnessGateway:
         _validate_resolved_egress_domains(
             allowed_domains, max_domains=self.client.max_egress_domains
         )
-        from simulate.services.harness_capacity import configured_capacity
-
-        try:
-            capacity = configured_capacity(payload)
-        except ValueError as exc:
-            raise HostedHarnessError(
-                "sandbox_capacity_unavailable",
-                str(exc),
-                status_code=503,
-            ) from exc
-        selected_snapshot = capacity.snapshot_name or self.client.runtime_name
+        # Decided before the attempt is registered or a sandbox exists, and applied in one
+        # step below, so a failure anywhere in it leaves the secrets, the egress list and
+        # the document exactly as they were.
+        export_plan = _plan_observability_export(
+            job,
+            payload,
+            selected_snapshot=selected_snapshot,
+            allowed_domains=allowed_domains,
+            max_egress_domains=self.client.max_egress_domains,
+        )
+        simulation_mark, mark_accepted = _simulation_mark(job, export_plan)
+        if not mark_accepted:
+            # A guest must never get our key without the dictionary that says what to do
+            # with it.
+            export_plan = _ExportPlan()
+        secrets_map = {**secrets_map, **dict(export_plan.secrets)}
+        if export_plan.egress_domains is not None:
+            allowed_domains = set(export_plan.egress_domains)
+        dispatch_payload = scope_dispatch_to_rerun(
+            prepare_dispatch_payload(
+                payload, secrets_map, simulator_secrets=simulator_env, job=job
+            )
+        )
+        if export_plan.secrets:
+            dispatch_payload = attach_observability_export_secret_refs(
+                dispatch_payload, [alias for alias, _value in export_plan.secrets]
+            )
+        dispatch_payload = _with_used_scenario_keys(
+            _with_simulation_mark(dispatch_payload, simulation_mark), job
+        )
         registered_snapshot_digest = (
             capacity.snapshot_digest or self.client.runtime_digest
         )
@@ -1989,9 +2565,7 @@ class HostedHarnessGateway:
             attempt.id,
             redaction_values(
                 {**secrets_map, **simulator_env},
-                extra=(simulator_vertex_credentials.decode("utf-8", errors="replace"),)
-                if simulator_vertex_credentials
-                else (),
+                extra=export_plan.redaction_values,
             ),
         )
         # Record provenance digests on the attempt.
@@ -2007,6 +2581,14 @@ class HostedHarnessGateway:
         allowed_cidrs = _webrtc_egress_cidrs(payload, secrets_map)
         sandbox = None
         try:
+            if assembly_error is not None:
+                raise assembly_error
+            if certify:
+                allowed_domains = _with_certify_egress(
+                    allowed_domains,
+                    simulator_env,
+                    max_domains=self.client.max_egress_domains,
+                )
             launch_spec = SandboxLaunchSpec(
                 cpu_units=capacity.cpu_units,
                 memory_mb=capacity.memory_mb,
@@ -2048,6 +2630,17 @@ class HostedHarnessGateway:
                 ).encode(),
                 "/work/job.json",
             )
+            if certify:
+                sandbox.fs.upload_file(
+                    json.dumps(
+                        bundle_cache.certify_job_payload(
+                            dispatch_payload, bundle_cache.certify_scenario_count(job)
+                        ),
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode(),
+                    bundle_cache.CERTIFY_JOB_PATH,
+                )
             sandbox.fs.upload_file(
                 json.dumps(secrets_map, sort_keys=True, separators=(",", ":")).encode(),
                 "/run/futureagi/secrets.json",
@@ -2073,11 +2666,6 @@ class HostedHarnessGateway:
                 ).encode(),
                 _SIMULATOR_SECRETS_PATH,
             )
-            if simulator_vertex_credentials is not None:
-                sandbox.fs.upload_file(
-                    simulator_vertex_credentials,
-                    _SIMULATOR_VERTEX_CREDENTIALS_PATH,
-                )
             # Provider creation and uploads can consume much of the initial lease. Re-arm
             # providers with mutable leases before exposing a full-duration capability.
             self.client.renew_ttl(sandbox, ttl_seconds)
@@ -2108,8 +2696,17 @@ class HostedHarnessGateway:
                 sandbox.fs.upload_file(adjustment_body, _ADJUSTMENTS_PATH)
             if authoring_archive is not None:
                 sandbox.fs.upload_file(authoring_archive, "/work/authoring.tar.gz")
+            overlay = _alk_source_overlay()
+            if overlay is not None:
+                sandbox.fs.upload_file(overlay, "/work/alk-src.tar.gz")
             prepared = sandbox.process.exec(
-                "if [ -f /work/authoring.tar.gz ]; then "
+                (
+                    "mkdir -p /work/alk-src && tar -xzf /work/alk-src.tar.gz -C /work/alk-src && "
+                    "rm /work/alk-src.tar.gz && "
+                    if overlay is not None
+                    else ""
+                )
+                + "if [ -f /work/authoring.tar.gz ]; then "
                 "mkdir -p /work/authoring && "
                 "tar -xzf /work/authoring.tar.gz -C /work/authoring && "
                 "rm /work/authoring.tar.gz; fi && "
@@ -2122,12 +2719,7 @@ class HostedHarnessGateway:
                 f"{_CHAT_POLICY_PATH} "
                 f"{_SIMULATOR_SECRETS_PATH} "
                 + (authoring_secrets_path if authoring_target_secrets else "")
-                + " "
-                + (
-                    _SIMULATOR_VERTEX_CREDENTIALS_PATH
-                    if simulator_vertex_credentials is not None
-                    else ""
-                ),
+                + (f" {bundle_cache.CERTIFY_JOB_PATH}" if certify else ""),
                 timeout=120,
             )
             if prepared.exit_code:
@@ -2150,19 +2742,19 @@ class HostedHarnessGateway:
                     "ALK_SIMULATOR_FUNDING",
                     "ALK_HARNESS_MODEL",
                     "ALK_HARNESS_WORKERS_AT_ONCE",
+                    "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS",
+                    "AGENTCC_BASE_URL",
+                    "AGENTCC_API_KEY",
                     "ALK_CLAUDE_GATEWAY_URL",
                     "ALK_CLAUDE_GATEWAY_API_KEY",
-                    "ALK_VERTEX_LOCATION",
                     "ALK_VOICEMAIL_SCENARIOS",
                     "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER",
                     "ALK_CAB_GUEST_POC_PIN",
-                    "GOOGLE_APPLICATION_CREDENTIALS",
-                    "GOOGLE_CLOUD_LOCATION",
-                    "GOOGLE_CLOUD_PROJECT",
-                    "GOOGLE_GENAI_USE_VERTEXAI",
                 }
             }
             authoring_exports["PATH"] = _CHAT_RUNTIME_PATH
+            if overlay is not None:
+                authoring_exports["PYTHONPATH"] = "/work/alk-src"
             provider_profile_args = (
                 f"--target-secrets {authoring_secrets_path} "
                 "--provider-profile-cache /work/provider-import-profile.json "
@@ -2171,6 +2763,12 @@ class HostedHarnessGateway:
             )
             simulation_only = bool(
                 (dispatch_payload.get("metadata") or {}).get("simulation_only")
+            )
+            # A fresh build is the conversation's harness's work; this command waits for it.
+            harness_builds = (
+                authoring_archive is None
+                and not simulation_only
+                and getattr(settings, "ALK_HOSTED_BUILDER_SESSION", True)
             )
             bundle_command = (
                 "rm -rf /work/bundle && "
@@ -2187,14 +2785,21 @@ class HostedHarnessGateway:
                     "cp -a /work/bundle /work/authoring/environment-bundle"
                 )
             )
+            if certify:
+                bundle_command = bundle_cache.certify_command()
+            elif assembled is not None:
+                bundle_command = (
+                    bundle_cache.source_check_command(assembled.source_digest)
+                    + bundle_command
+                )
             command = sandbox.process.execute_session_command(
                 _ENTRYPOINT_SESSION,
                 SandboxCommandRequest(
                     command=(
                         "if [ ! -f /work/authoring/contract.json ]; then "
-                        "ALK_FOREGROUND_COORDINATOR=1 python -m fi.alk.harness.hosted_authoring_entrypoint "
+                        "python -m fi.alk.harness.hosted_authoring_entrypoint "
                         "/work/job.json --source /work/source --output /work/authoring "
-                        f"--adjustments {_ADJUSTMENTS_PATH} "
+                        + ("--await-harness " if harness_builds else f"--adjustments {_ADJUSTMENTS_PATH} ")
                         + provider_profile_args
                         + "; fi && "
                         + ((extend_command + " && ") if extend_command else "")
@@ -2214,6 +2819,8 @@ class HostedHarnessGateway:
             attempt.state = HostedHarnessAttempt.State.RUNNING
             attempt.heartbeat_at = timezone.now()
             attempt.save(update_fields=["state", "heartbeat_at", "updated_at"])
+            if harness_builds:
+                _ask_harness_to_build(job, attempt, endpoint_base_url)
             return attempt
         except Exception as exc:
             provider_status_code = getattr(exc, "status_code", None)
@@ -2238,7 +2845,11 @@ class HostedHarnessGateway:
                 # user's environment to fix; keep its typed code instead of blaming the sandbox.
                 attempt.terminal_failure = {
                     "domain": "environment",
-                    "stage": "acquiring_source",
+                    "stage": (
+                        "validating_environment"
+                        if exc.code in _BUNDLE_CACHE_FAILURES
+                        else "acquiring_source"
+                    ),
                     "code": exc.code,
                     "message": exc.message,
                     "details": details,
@@ -2303,7 +2914,7 @@ class HostedHarnessGateway:
         endpoint_base_url: str,
     ) -> HostedHarnessConversationLease:
         """Start the conversation process beside the job's existing harness process."""
-        simulator_env, simulator_vertex_credentials = _platform_simulator_material()
+        simulator_env = _platform_simulator_material()
         _add_scoped_guest_pin_policy(simulator_env, job)
         capability = issue_conversation_capability(
             conversation,
@@ -2317,6 +2928,7 @@ class HostedHarnessGateway:
             runtime_name=self.client.runtime_name,
             runtime_digest=self.client.runtime_digest,
         )
+        assert capability is not None  # no claim_ref: never given up
         sandbox.fs.upload_file(
             json.dumps(
                 capability.document, sort_keys=True, separators=(",", ":")
@@ -2324,11 +2936,6 @@ class HostedHarnessGateway:
             _CHAT_CAPABILITIES_PATH,
         )
         sandbox.fs.upload_file(_CHAT_POLICY, _CHAT_POLICY_PATH)
-        if simulator_vertex_credentials is not None:
-            sandbox.fs.upload_file(
-                simulator_vertex_credentials,
-                _SIMULATOR_VERTEX_CREDENTIALS_PATH,
-            )
         environment = job.environment or job
         basis = str(
             ((environment.payload or {}).get("metadata") or {}).get(
@@ -2345,8 +2952,18 @@ class HostedHarnessGateway:
                 ).encode("utf-8"),
                 f"/work/authoring/{AUTHORING_BASIS_FILE}",
             )
+        overlay = _alk_source_overlay()
+        if overlay is not None:
+            sandbox.fs.upload_file(overlay, "/work/alk-chat-src.tar.gz")
         prepared = sandbox.process.exec(
-            "mkdir -p /work/authoring && "
+            (
+                "rm -rf /work/alk-chat-src && mkdir -p /work/alk-chat-src && "
+                "tar -xzf /work/alk-chat-src.tar.gz -C /work/alk-chat-src && "
+                "rm /work/alk-chat-src.tar.gz && "
+                if overlay is not None
+                else ""
+            )
+            + "mkdir -p /work/authoring && "
             "chown -R svc-control:svc-control /work/authoring && "
             f"chmod 0600 {_CHAT_CAPABILITIES_PATH} {_CHAT_POLICY_PATH}",
             timeout=60,
@@ -2366,31 +2983,28 @@ class HostedHarnessGateway:
             in {
                 "ALK_HARNESS",
                 "ALK_HARNESS_MODEL",
-                "ALK_VERTEX_LOCATION",
+                "ALK_HARNESS_WORKERS_AT_ONCE",
+                "ALK_SIMULATOR_FUNDING",
+                "ALK_VOICEMAIL_SCENARIOS",
+                "AGENTCC_BASE_URL",
+                "AGENTCC_API_KEY",
                 "ALK_CLAUDE_GATEWAY_URL",
                 "ALK_CLAUDE_GATEWAY_API_KEY",
                 "CLAUDE_CODE_USE_VERTEX",
                 "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER",
                 "ALK_CAB_GUEST_POC_PIN",
-                "CLOUD_ML_REGION",
-                "GOOGLE_APPLICATION_CREDENTIALS",
-                "GOOGLE_CLOUD_LOCATION",
-                "GOOGLE_CLOUD_PROJECT",
-                "ANTHROPIC_VERTEX_PROJECT_ID",
-                "GOOGLE_GENAI_USE_VERTEXAI",
             }
         }
         chat_exports["PATH"] = _CHAT_RUNTIME_PATH
-        export_command = " ".join(
-            f"{name}={shlex.quote(value)}"
-            for name, value in sorted(chat_exports.items())
-        )
+        if overlay is not None:
+            chat_exports["PYTHONPATH"] = "/work/alk-chat-src"
         command = sandbox.process.execute_session_command(
             _CHAT_SESSION,
             SandboxCommandRequest(
+                # Settings go in the environment, never on the command line a process listing shows.
+                env=chat_exports,
                 command=(
-                    (f"export {export_command} && " if export_command else "")
-                    + "python -m fi.alk.harness.hosted_chat_entrypoint "
+                    "python -m fi.alk.harness.hosted_chat_entrypoint "
                     "--job /work/job.json --source /work/source "
                     "--workspace /work/authoring "
                     f"--capabilities {_CHAT_CAPABILITIES_PATH} "
@@ -2410,6 +3024,7 @@ class HostedHarnessGateway:
         *,
         conversation: HostedHarnessConversation,
         endpoint_base_url: str,
+        claim_again: bool = True,
     ) -> HostedHarnessConversationLease | None:
         """Keep one live ALK conversation process for this environment, or wait for a home.
 
@@ -2426,7 +3041,15 @@ class HostedHarnessGateway:
             HostedHarnessJob.State.FAILED,
             HostedHarnessJob.State.CANCELED,
         }
+        from simulate.services.harness_versioning import rebuild
+
         attempt = None
+        wanted = None
+        if job.environment_id is None and job.state in terminal_states:
+            if rebuild.landing_pending(job):
+                # A rebuild's result is landing; chat restarts once it has.
+                return None
+            wanted = rebuild.wanted_agent_version(job, conversation)
         if job.state not in terminal_states:
             attempt = (
                 HostedHarnessAttempt.no_workspace_objects.filter(
@@ -2460,6 +3083,15 @@ class HostedHarnessGateway:
                 lease is not None
                 and lease.attempt_id == home
                 and runtime_is_live(lease, now=now)
+                # A sandbox running as another agent than chat wants is retired,
+                # once its turn is over.
+                and (
+                    rebuild.runs_as_wanted_agent(lease, wanted)
+                    or bool(conversation.active_invocation_id)
+                    or _unacked_commands(conversation)
+                    .filter(state=HostedHarnessConversationMessage.State.DELIVERED)
+                    .exists()
+                )
             ):
                 live = lease
             elif runtime_start_pending(lease, now=now):
@@ -2507,21 +3139,7 @@ class HostedHarnessGateway:
                 self._renew_chat_idle_window(live)
             return live
         if retired_ref:
-            try:
-                self.client.delete(
-                    self.client.get(
-                        retired_ref, request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS
-                    ),
-                    timeout=120,
-                    wait=True,
-                )
-            except SandboxNotFoundError:
-                pass
-            except Exception:
-                logger.exception(
-                    "retired conversation sandbox deletion failed conversation=%s",
-                    conversation.id,
-                )
+            self._delete_chat_sandbox(retired_ref, conversation.id)
         try:
             if attempt is not None:
                 return self._start_chat_in_sandbox(
@@ -2534,8 +3152,12 @@ class HostedHarnessGateway:
                     ),
                     endpoint_base_url=endpoint_base_url,
                 )
-            return self._start_chat_sandbox(
-                job, conversation=conversation, endpoint_base_url=endpoint_base_url
+            started = self._start_chat_sandbox(
+                job,
+                conversation=conversation,
+                endpoint_base_url=endpoint_base_url,
+                agent_version=wanted,
+                claim_ref=claim_ref,
             )
         except Exception as exc:
             HostedHarnessConversationLease.no_workspace_objects.filter(
@@ -2559,6 +3181,32 @@ class HostedHarnessGateway:
                 status_code=503,
                 retryable=True,
             ) from exc
+        if started is None and claim_again:
+            # A close gave the claim up meanwhile; the restart it asked for is this one.
+            return self.ensure_conversation_runtime(
+                job,
+                conversation=conversation,
+                endpoint_base_url=endpoint_base_url,
+                claim_again=False,
+            )
+        return started
+
+    def _delete_chat_sandbox(self, provider_ref: str, conversation_id: Any) -> None:
+        try:
+            self.client.delete(
+                self.client.get(
+                    provider_ref, request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS
+                ),
+                timeout=120,
+                wait=True,
+            )
+        except SandboxNotFoundError:
+            pass
+        except Exception:
+            logger.exception(
+                "retired conversation sandbox deletion failed conversation=%s",
+                conversation_id,
+            )
 
     def _renew_chat_idle_window(self, lease: HostedHarnessConversationLease) -> None:
         """Keep a chat sandbox for the idle window after the user's latest message."""
@@ -2588,26 +3236,42 @@ class HostedHarnessGateway:
         *,
         conversation: HostedHarnessConversation,
         endpoint_base_url: str,
-    ) -> HostedHarnessConversationLease:
-        """Restore the latest workspace checkpoint into a sandbox of chat's own."""
-        workspace_archive = load_workspace_archive(conversation)
-        if workspace_archive is None:
-            workspace_archive = _authoring_archive_for(job)
-            if workspace_archive is not None:
-                environment = job.environment or job
-                basis = str(
-                    ((environment.payload or {}).get("metadata") or {}).get(
-                        "authoring_revision"
-                    )
-                    or ""
-                )
-                if basis:
-                    workspace_archive = with_authoring_basis(workspace_archive, basis)
+        agent_version: Any = None,
+        claim_ref: str | None = None,
+    ) -> HostedHarnessConversationLease | None:
+        """Restore the latest workspace checkpoint into a sandbox of chat's own.
+
+        With ``agent_version`` the sandbox gets that version's agent settings and
+        source; secret refs name its credentials only, never a value. ``None`` when
+        ``claim_ref``'s claim was given up meanwhile; the new sandbox is deleted.
+        """
+        workspace_archive = chat_workspace_for(
+            job, conversation, chat_state=load_workspace_archive(conversation)
+        )
         control_only = workspace_archive is None
         if workspace_archive is None:
             workspace_archive = _empty_workspace_archive()
+        if agent_version is not None:
+            from simulate.services.harness_agent_versions import (
+                _side_row,
+                apply_agent_version,
+            )
+            from simulate.services.harness_versioning.backfill import (
+                effective_runtime,
+            )
+
+            payload = copy.deepcopy(job.payload)
+            apply_agent_version(
+                payload,
+                effective_runtime(
+                    job, _side_row(agent_version.id), version=agent_version
+                ),
+                environment_id=job.id,
+            )
+            job = copy.copy(job)
+            job.payload = payload
         source_archive, _commit_sha = HostedSourceAcquirer().acquire(job)
-        simulator_env, simulator_vertex_credentials = _platform_simulator_material()
+        simulator_env = _platform_simulator_material()
         _add_scoped_guest_pin_policy(simulator_env, job)
         platform_host = _hostname_from_url(endpoint_base_url)
         allowed_domains = _resolved_egress_domains(
@@ -2619,6 +3283,8 @@ class HostedHarnessGateway:
         _validate_resolved_egress_domains(
             allowed_domains, max_domains=self.client.max_egress_domains
         )
+        # A chat sandbox is never bound to an agent, so it gets the mark and no export.
+        simulation_mark, _accepted = _simulation_mark(job)
         ttl_seconds = _chat_idle_seconds()
         launch_spec = SandboxLaunchSpec(
             cpu_units=2,
@@ -2648,11 +3314,25 @@ class HostedHarnessGateway:
                 control_only=control_only,
                 runtime_name=self.client.runtime_name,
                 runtime_digest=self.client.runtime_digest,
+                agent_version=agent_version,
+                claim_ref=claim_ref,
             )
+            if capability is None:
+                self._delete_chat_sandbox(str(sandbox.id), conversation.id)
+                return None
             sandbox.fs.upload_file(source_archive, "/work/source.tar.gz")
             sandbox.fs.upload_file(workspace_archive, "/work/conversation.tar.gz")
             sandbox.fs.upload_file(
-                json.dumps(job.payload, sort_keys=True, separators=(",", ":")).encode(),
+                json.dumps(
+                    _with_used_scenario_keys(
+                        _with_simulation_mark(
+                            guest_job_document(job.payload), simulation_mark
+                        ),
+                        job,
+                    ),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode(),
                 "/work/job.json",
             )
             sandbox.fs.upload_file(
@@ -2662,11 +3342,9 @@ class HostedHarnessGateway:
                 _CHAT_CAPABILITIES_PATH,
             )
             sandbox.fs.upload_file(_CHAT_POLICY, _CHAT_POLICY_PATH)
-            if simulator_vertex_credentials is not None:
-                sandbox.fs.upload_file(
-                    simulator_vertex_credentials,
-                    _SIMULATOR_VERTEX_CREDENTIALS_PATH,
-                )
+            overlay = _alk_source_overlay()
+            if overlay is not None:
+                sandbox.fs.upload_file(overlay, "/work/alk-src.tar.gz")
             prepared = sandbox.process.exec(
                 "mkdir -p /work/authoring && "
                 "tar -xzf /work/conversation.tar.gz -C /work/authoring && "
@@ -2675,7 +3353,13 @@ class HostedHarnessGateway:
                 "rm /work/source.tar.gz && "
                 "chown -R svc-control:svc-control /work/source /work/authoring && "
                 "chmod -R a-w /work/source && "
-                f"chmod 0600 /work/job.json {_CHAT_CAPABILITIES_PATH} "
+                + (
+                    "mkdir -p /work/alk-src && tar -xzf /work/alk-src.tar.gz -C /work/alk-src && "
+                    "rm /work/alk-src.tar.gz && "
+                    if overlay is not None
+                    else ""
+                )
+                + f"chmod 0600 /work/job.json {_CHAT_CAPABILITIES_PATH} "
                 f"{_CHAT_POLICY_PATH}",
                 timeout=120,
             )
@@ -2694,31 +3378,25 @@ class HostedHarnessGateway:
                 in {
                     "ALK_HARNESS",
                     "ALK_HARNESS_MODEL",
-                    "ALK_VERTEX_LOCATION",
+                    "AGENTCC_BASE_URL",
+                    "AGENTCC_API_KEY",
                     "ALK_CLAUDE_GATEWAY_URL",
                     "ALK_CLAUDE_GATEWAY_API_KEY",
                     "CLAUDE_CODE_USE_VERTEX",
                     "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER",
                     "ALK_CAB_GUEST_POC_PIN",
-                    "CLOUD_ML_REGION",
-                    "GOOGLE_APPLICATION_CREDENTIALS",
-                    "GOOGLE_CLOUD_LOCATION",
-                    "GOOGLE_CLOUD_PROJECT",
-                    "ANTHROPIC_VERTEX_PROJECT_ID",
-                    "GOOGLE_GENAI_USE_VERTEXAI",
                 }
             }
             chat_exports["PATH"] = _CHAT_RUNTIME_PATH
-            export_command = " ".join(
-                f"{name}={shlex.quote(value)}"
-                for name, value in sorted(chat_exports.items())
-            )
+            if overlay is not None:
+                chat_exports["PYTHONPATH"] = "/work/alk-src"
             command = sandbox.process.execute_session_command(
                 _CHAT_SESSION,
                 SandboxCommandRequest(
+                    # Settings go in the environment, never on the command line a process listing shows.
+                    env=chat_exports,
                     command=(
-                        (f"export {export_command} && " if export_command else "")
-                        + "python -m fi.alk.harness.hosted_chat_entrypoint "
+                        "python -m fi.alk.harness.hosted_chat_entrypoint "
                         "--job /work/job.json --source /work/source "
                         "--workspace /work/authoring "
                         f"--capabilities {_CHAT_CAPABILITIES_PATH} "
@@ -2765,7 +3443,10 @@ class HostedHarnessGateway:
                 simulator_secrets = resolve_platform_simulator_secrets()
                 secret_values = cache_attempt_redaction_values(
                     attempt.id,
-                    redaction_values({**target_secrets, **simulator_secrets}),
+                    redaction_values(
+                        {**target_secrets, **simulator_secrets},
+                        extra=_ingest_key_values(attempt.job.organization_id),
+                    ),
                 )
             except Exception as exc:  # noqa: BLE001 - unsafe logs must not be persisted
                 attempt.diagnostics_error = f"redaction:{type(exc).__name__}"
@@ -3015,18 +3696,19 @@ class HostedHarnessGateway:
                 if existing is not None:
                     return locked
 
-            delta = _scenario_delta(instruction)
-            if delta and locked.scenario_count + delta > 200:
+            delta = request.get("scenario_delta") or _scenario_delta(instruction)
+            if delta and locked.scenario_count + delta > MAX_SCENARIOS_PER_JOB:
                 raise HostedHarnessError(
                     "scenario_limit_exceeded",
-                    "a hosted run can contain at most 200 scenarios",
+                    f"a hosted run can contain at most {MAX_SCENARIOS_PER_JOB} scenarios",
                     status_code=422,
                 )
             record = {
                 "adjustment_id": str(uuid.uuid4()),
                 "client_request_id": client_request_id,
                 "instruction": instruction,
-                "target_stage": _adjustment_stage(instruction, locked.current_stage),
+                "target_stage": request.get("target_stage")
+                or _adjustment_stage(instruction, locked.current_stage),
                 "scenario_delta": delta,
                 "status": "pending",
                 "created_at": timezone.now().isoformat(),
@@ -3076,16 +3758,21 @@ class HostedHarnessGateway:
             except Exception:  # noqa: BLE001 - an absent/incomplete stage file is expected
                 return None
 
-        def _activity_events() -> list[dict[str, Any]]:
-            try:
-                raw = sandbox.fs.download_file(
+        try:
+            event_lines = (
+                sandbox.fs.download_file(
                     "/work/authoring/harness-events.jsonl",
                     _PROGRESS_FILE_TIMEOUT_SECONDS,
-                ).decode("utf-8")
-            except Exception:  # noqa: BLE001 - the file appears after the first model event
-                return []
+                )
+                .decode("utf-8")
+                .splitlines()
+            )
+        except Exception:  # noqa: BLE001 - the file appears after the first model event
+            event_lines = []
+
+        def _activity_events() -> list[dict[str, Any]]:
             events: list[dict[str, Any]] = []
-            for line in raw.splitlines()[-200:]:
+            for line in event_lines[-200:]:
                 try:
                     item = json.loads(line)
                 except ValueError:
@@ -3094,12 +3781,28 @@ class HostedHarnessGateway:
                     events.append(
                         {
                             "event_id": item.get("event_id"),
-                            "event_type": item.get("event_type"),
+                            "event_type": item.get("type") or item.get("event_type"),
                             "sequence": item.get("sequence"),
                             "payload": item.get("payload") or {},
                         }
                     )
             return events
+
+        def _running_authoring_stage() -> str:
+            """The stage the pipeline last started; after a rewind the files alone would say later."""
+            for line in reversed(event_lines):
+                if "harness.stage.started" not in line:
+                    continue
+                try:
+                    item = json.loads(line)
+                except ValueError:
+                    continue
+                return {
+                    "understand": "understanding_agent",
+                    "environment": "generating_environment",
+                    "scenarios": "generating_scenarios",
+                }.get(str((item.get("payload") or {}).get("stage") or ""), "")
+            return ""
 
         contract = _json("/work/authoring/contract.json")
         environment = _json("/work/authoring/environment.json")
@@ -3112,7 +3815,6 @@ class HostedHarnessGateway:
                 "/work/authoring/environment-bundle/environment-plan.json"
             )
         authored_bundle = _json("/work/authoring/environment-bundle/manifest.json")
-        scenarios = _json("/work/authoring/scenarios.json")
         sub_goals = _json("/work/authoring/sub_goals.json")
         bundle = _json("/work/bundle/manifest.json")
         # Written when the world is sealed, so it appears later than the authoring
@@ -3128,28 +3830,26 @@ class HostedHarnessGateway:
         metadata = (job.payload or {}).get("metadata") or {}
         if not metadata.get("simulation_only"):
             _record_harness_spend(job, spend, attempt.attempt_number)
+        from simulate.services.harness_versioning import assembly as bundle_cache
+
+        # Certifying prunes the suite index; a run reads the suite it was assembled with.
+        scenarios = _json(
+            bundle_cache.SUITE_INDEX_PATH
+            if bundle_cache.certifies_here(job)
+            else "/work/authoring/scenarios.json"
+        )
+        if (
+            bundle_cache.wants_fill(job, attempt.attempt_number)
+            and isinstance(bundle, dict)
+            and _json("/work/runtime-validation.json") is not None
+        ):
+            bundle_cache.fill_bundle(job, attempt, sandbox, bundle)
+            job.refresh_from_db(fields=["payload"])
         authoring_complete = (
             isinstance(bundle, dict)
             and isinstance(scenarios, list)
             and len(scenarios) == job.scenario_count
         )
-        if (
-            not metadata.get("simulation_only")
-            and authoring_complete
-            and isinstance(spend, dict)
-        ):
-            from simulate.services.harness_usage import (
-                record_harness_authoring_usage,
-            )
-
-            try:
-                record_harness_authoring_usage(attempt, spend)
-            except Exception:  # noqa: BLE001 - poll must continue to terminal cleanup
-                logger.exception(
-                    "could not price hosted authoring usage job=%s attempt=%s",
-                    job.id,
-                    attempt.id,
-                )
 
         # Unified hosted execution authors the contract/world/scenarios in the same
         # sandbox that later runs the calls.  Freeze those inputs as soon as Bundle V2
@@ -3158,9 +3858,15 @@ class HostedHarnessGateway:
         # author a different suite for an already-registered RunTest.
         # A chat "add scenarios" extend re-authors the SAME RunTest up to N+delta, so it must
         # re-freeze even though a key already exists — gated on its one-shot marker.
-        # store_authoring_archive clears that marker in the same save.
-        if authoring_complete and (
-            not metadata.get("authoring_object_key") or metadata.get("scenario_extend")
+        # freeze_authoring_archive clears that marker in the same save.
+        attempt_number = int(getattr(attempt, "attempt_number", None) or 1)
+        if (
+            authoring_complete
+            and (
+                not metadata.get("authoring_object_key")
+                or metadata.get("scenario_extend")
+            )
+            and _freeze_failures(metadata, attempt_number) < FREEZE_FAILURE_LIMIT
         ):
             try:
                 packed = sandbox.process.exec(
@@ -3172,7 +3878,12 @@ class HostedHarnessGateway:
                 if packed.exit_code:
                     raise RuntimeError(str(packed.result or "authoring pack failed"))
                 body = sandbox.fs.download_file("/tmp/authoring-rerun.tar.gz", 300)
-                store_authoring_archive(job, body, advance_lifecycle=False)
+                freeze_authoring_archive(
+                    job,
+                    body,
+                    extending=bool(metadata.get("scenario_extend")),
+                    proved_since=getattr(attempt, "created_at", None),
+                )
                 job.refresh_from_db()
             except Exception:  # noqa: BLE001 - retry on the next poll; do not abort calls
                 logger.exception(
@@ -3180,6 +3891,8 @@ class HostedHarnessGateway:
                     job.id,
                     attempt.id,
                 )
+                _note_freeze_failure(job, attempt_number)
+                job.refresh_from_db()
         outputs = authoring_stage_outputs(
             contract,
             environment,
@@ -3219,6 +3932,7 @@ class HostedHarnessGateway:
                 stage = "validating_environment"
             else:
                 stage = "generating_scenarios"
+        stage = _running_authoring_stage() or stage
         HostedHarnessGateway._sync_adjustment_progress(job, sandbox)
         if not outputs:
             return
@@ -3233,7 +3947,7 @@ class HostedHarnessGateway:
         }:
             job.current_stage = stage
         # Authoring archives use per-scenario files rather than a top-level
-        # scenarios.json.  ``store_authoring_archive`` has already materialized
+        # scenarios.json.  ``freeze_authoring_archive`` has already materialized
         # that snapshot, so a later heartbeat must enrich the visible stages
         # instead of deleting stages whose source file is not present here.
         previous_stage = job.current_stage
@@ -3276,19 +3990,26 @@ class HostedHarnessGateway:
                 statuses[str(value["adjustment_id"])] = value
         if not statuses:
             return
-        payload = dict(job.payload)
-        metadata = dict(payload.get("metadata") or {})
-        adjustments = list(metadata.get("adjustments") or [])
-        merged = [
-            {**item, **statuses.get(str(item.get("adjustment_id")), {})}
-            for item in adjustments
-        ]
-        if merged == adjustments:
-            return
-        metadata["adjustments"] = merged
-        payload["metadata"] = metadata
-        job.payload = payload
-        job.save(update_fields=["payload", "updated_at"])
+        # Merge into the locked row's list: an adjustment appended meanwhile must survive.
+        with transaction.atomic():
+            locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+                id=job.id
+            )
+            payload = dict(locked.payload)
+            metadata = dict(payload.get("metadata") or {})
+            adjustments = list(metadata.get("adjustments") or [])
+            merged = [
+                {**item, **statuses.get(str(item.get("adjustment_id")), {})}
+                for item in adjustments
+            ]
+            if merged == adjustments:
+                return
+            metadata["adjustments"] = merged
+            payload["metadata"] = metadata
+            locked.payload = payload
+            locked.save(update_fields=["payload", "updated_at"])
+        job.payload = locked.payload
+        job.updated_at = locked.updated_at
 
     def _recover_offline_delivery(self, attempt: HostedHarnessAttempt) -> bool:
         """Replay the guest's durable outbound mirror through normal ingestion.
@@ -3446,6 +4167,7 @@ class HostedHarnessGateway:
                 recovered_artifact_ids=recovered_by_scenario.get(
                     receipt.get("scenario_key"), []
                 ),
+                replay_usage=False,
             )
 
         manifest_name = "outbound-spool/manifest.json"
@@ -3868,6 +4590,15 @@ class HostedHarnessGateway:
             retry_pending = not authoring_invalid and self._should_retry(
                 attempt, "infrastructure"
             )
+            if exit_code == 78:
+                from simulate.services.harness_versioning.assembly import mark_failed
+
+                try:
+                    mark_failed(attempt.job, attempt.terminal_failure["message"])
+                except Exception:  # noqa: BLE001 - the cache never changes the outcome
+                    logger.exception(
+                        "could not mark the bundle cache failed attempt=%s", attempt.id
+                    )
         elif exit_code == 0 and (
             not attempt.terminal_event_received or not attempt.manifest_acked
         ):
@@ -4287,6 +5018,22 @@ def _provider_import_authoring_material(
     return ({secret_name: value} if value else {}), connector
 
 
+# Builder-chat state the server keeps on the job; ALK rejects its basis ``token``.
+_SERVER_ONLY_METADATA = ("conversation_checkpoints", "draft_saves")
+
+
+def guest_job_document(payload: dict[str, Any]) -> dict[str, Any]:
+    """A copy of the job payload without metadata only the server reads."""
+    document = dict(payload)
+    if isinstance(document.get("metadata"), dict):
+        document["metadata"] = {
+            key: value
+            for key, value in document["metadata"].items()
+            if key not in _SERVER_ONLY_METADATA
+        }
+    return document
+
+
 def prepare_dispatch_payload(
     payload: dict[str, Any],
     secrets_map: dict[str, str],
@@ -4302,7 +5049,7 @@ def prepare_dispatch_payload(
     API keys and secret values remain exclusively in ``secrets.json`` and the stored job payload is
     never mutated.
     """
-    dispatched = dict(payload)
+    dispatched = guest_job_document(payload)
     agent = dict(dispatched.get("agent") or {})
     # The secret values remain exclusively in the one-shot secrets file, but ALK's
     # bundle preflight still needs to know which environment names were resolved.
@@ -4455,7 +5202,7 @@ def _read_harness_usage(attempt: HostedHarnessAttempt, sandbox) -> None:
     try:
         serializer = HarnessUsageRequestSerializer(data=json.loads(body))
         serializer.is_valid(raise_exception=True)
-        record_harness_usage(attempt, serializer.validated_data)
+        record_harness_usage(attempt, serializer.validated_data, emit=False)
     except Exception:
         logger.exception("could not recover usage journal attempt=%s", attempt.id)
 
@@ -4487,39 +5234,47 @@ def _record_harness_spend(
         total = float(spend.get("total_usd") or 0.0)
     except (TypeError, ValueError):
         return
-    payload = dict(job.payload or {})
-    metadata = dict(payload.get("metadata") or {})
-    recorded = metadata.get("harness_spend")
-    attempts = (
-        dict((recorded or {}).get("attempts") or {})
-        if isinstance(recorded, dict)
-        else {}
-    )
     key = str(int(attempt_number or 1))
-    mine = attempts.get(key)
-    if isinstance(mine, dict):
-        try:
-            if float(mine.get("total_usd") or 0.0) > total:
-                return
-        except (TypeError, ValueError):
-            pass
-    attempts[key] = {
-        "total_usd": round(total, 6),
-        "unpriced_turns": int(spend.get("unpriced_turns") or 0),
-        "stages": spend.get("stages") or [],
-    }
-    metadata["harness_spend"] = {
-        "total_usd": round(
-            sum(float(one.get("total_usd") or 0.0) for one in attempts.values()), 6
-        ),
-        "unpriced_turns": sum(
-            int(one.get("unpriced_turns") or 0) for one in attempts.values()
-        ),
-        "attempts": attempts,
-    }
-    payload["metadata"] = metadata
-    job.payload = payload
-    job.save(update_fields=["payload", "updated_at"])
+    # Re-read under the lock so a refusal or another attempt's entry written meanwhile is kept.
+    with transaction.atomic():
+        locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+            id=job.id
+        )
+        payload = dict(locked.payload or {})
+        metadata = dict(payload.get("metadata") or {})
+        recorded = metadata.get("harness_spend")
+        attempts = (
+            dict((recorded or {}).get("attempts") or {})
+            if isinstance(recorded, dict)
+            else {}
+        )
+        mine = attempts.get(key)
+        if isinstance(mine, dict):
+            try:
+                if float(mine.get("total_usd") or 0.0) > total:
+                    return
+            except (TypeError, ValueError):
+                pass
+        attempts[key] = {
+            "total_usd": round(total, 6),
+            "unpriced_turns": int(spend.get("unpriced_turns") or 0),
+            "stages": spend.get("stages") or [],
+        }
+        metadata["harness_spend"] = {
+            "total_usd": round(
+                sum(float(one.get("total_usd") or 0.0) for one in attempts.values()),
+                6,
+            ),
+            "unpriced_turns": sum(
+                int(one.get("unpriced_turns") or 0) for one in attempts.values()
+            ),
+            "attempts": attempts,
+        }
+        payload["metadata"] = metadata
+        locked.payload = payload
+        locked.save(update_fields=["payload", "updated_at"])
+    job.payload = locked.payload
+    job.updated_at = locked.updated_at
 
 
 def authoring_stage_outputs(
@@ -4767,36 +5522,37 @@ def authoring_content_digest(body: bytes) -> str:
 
 
 AUTHORING_BASIS_FILE = ".futureagi-authoring-basis.json"
+# Which unsaved changes a chat workspace was composed from: a random token only.
+DRAFT_BASIS_FILE = ".futureagi-draft-basis.json"
+# Root files the platform writes into a chat workspace; never carried from a checkpoint.
+_STAMPED_FILES = (AUTHORING_BASIS_FILE, ".futureagi-published.json", DRAFT_BASIS_FILE)
 
 
-def with_authoring_basis(body: bytes, revision: str) -> bytes:
-    """Stamp the environment revision a chat workspace was built from."""
-    data = json.dumps(
-        {"authoring_revision": revision}, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
+def _with_root_json(body: bytes, name: str, value: dict[str, str]) -> bytes:
+    data = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
     out = io.BytesIO()
     with (
         tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as source,
-        tarfile.open(fileobj=out, mode="w:gz") as target,
+        gzip.GzipFile(fileobj=out, mode="wb", mtime=0) as zipped,
+        tarfile.open(fileobj=zipped, mode="w") as target,
     ):
         for member in source.getmembers():
-            if _archive_parts(member.name) == (AUTHORING_BASIS_FILE,):
+            if _archive_parts(member.name) == (name,):
                 continue
             target.addfile(
                 member, source.extractfile(member) if member.isfile() else None
             )
-        info = tarfile.TarInfo(AUTHORING_BASIS_FILE)
+        info = tarfile.TarInfo(name)
         info.size = len(data)
         info.mode = 0o600
         target.addfile(info, io.BytesIO(data))
     return out.getvalue()
 
 
-def authoring_basis(body: bytes) -> str:
-    """The environment revision a chat workspace declares it was built from."""
+def _root_json_value(body: bytes, name: str, key: str) -> str:
     with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
         for member in archive.getmembers():
-            if _archive_parts(member.name) != (AUTHORING_BASIS_FILE,):
+            if _archive_parts(member.name) != (name,):
                 continue
             source = archive.extractfile(member) if member.isfile() else None
             if source is None:
@@ -4805,8 +5561,28 @@ def authoring_basis(body: bytes) -> str:
                 value = json.loads(source.read().decode("utf-8"))
             except (UnicodeDecodeError, ValueError):
                 return ""
-            return str((value or {}).get("authoring_revision") or "")
+            return str((value or {}).get(key) or "")
     return ""
+
+
+def with_authoring_basis(body: bytes, revision: str) -> bytes:
+    """Stamp the environment revision a chat workspace was built from."""
+    return _with_root_json(body, AUTHORING_BASIS_FILE, {"authoring_revision": revision})
+
+
+def authoring_basis(body: bytes) -> str:
+    """The environment revision a chat workspace declares it was built from."""
+    return _root_json_value(body, AUTHORING_BASIS_FILE, "authoring_revision")
+
+
+def with_draft_basis(body: bytes, token: str) -> bytes:
+    """Stamp the composition of unsaved changes a chat workspace was built from."""
+    return _with_root_json(body, DRAFT_BASIS_FILE, {"token": token})
+
+
+def draft_basis_token(body: bytes) -> str:
+    """The composition of unsaved changes a chat workspace declares it was built from."""
+    return _root_json_value(body, DRAFT_BASIS_FILE, "token")
 
 
 # A run replays these byte for byte against their sealed manifests, so an edit never touches them.
@@ -4954,9 +5730,39 @@ def _push_scenarios_to_sandbox(sandbox: Any, suite: list[dict]) -> None:
 class AuthoringArchiveKept(Exception):
     """The edited suite could not be written into the archive without breaking a run."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "authoring_archive_kept",
+        status_code: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.status_code = status_code
 
-def rewrite_authoring_scenarios(job: HostedHarnessJob, suite: list[dict]) -> str | None:
-    """Write an edited suite back into the sealed archive a rerun replays."""
+
+SCENARIO_EDIT_ON_RUN = "scenario_edit_on_run"
+
+
+def rewrite_authoring_scenarios(
+    job: HostedHarnessJob, suite: list[dict], *, user: Any = None
+) -> str | None:
+    """Write an edited suite back into the environment's authoring archive."""
+    from simulate.services.harness_versioning.versions import (
+        is_versioned,
+        record_authoring,
+    )
+
+    if job.environment_id is not None:
+        # A run's suite is a copy taken when it started; saving it would roll back the
+        # environment's newer scenarios.
+        raise AuthoringArchiveKept(
+            "Edit scenarios from the environment",
+            code=SCENARIO_EDIT_ON_RUN,
+            status_code=409,
+        )
+    versioned = is_versioned(job)
     metadata = (job.payload or {}).get("metadata") or {}
     object_key = str(metadata.get("authoring_object_key") or "").strip()
     if not object_key:
@@ -4981,21 +5787,45 @@ def rewrite_authoring_scenarios(job: HostedHarnessJob, suite: list[dict]) -> str
             job.id,
         )
         raise AuthoringArchiveKept("the change would lose files a run needs")
-    client.put_object(
-        bucket_name=UPLOAD_BUCKET_NAME,
-        object_name=object_key,
-        data=io.BytesIO(rewritten),
-        length=len(rewritten),
-        content_type="application/gzip",
-    )
-    payload = dict(job.payload or {})
-    metadata = dict(payload.get("metadata") or {})
-    metadata["authoring_revision"] = authoring_content_digest(rewritten)
-    payload["metadata"] = metadata
-    job.payload = payload
-    job.content_updated_at = timezone.now()
-    job.save(update_fields=["payload", "content_updated_at", "updated_at"])
-    return object_key
+    if versioned:
+        # A versioned archive is never overwritten: the edit becomes the next suite version.
+        try:
+            recorded = record_authoring(
+                job,
+                rewritten,
+                origin="manual",
+                user=user,
+                expected_pair_key=object_key,
+            )
+        except HostedHarnessError as exc:
+            raise AuthoringArchiveKept(
+                exc.message, code=exc.code, status_code=exc.status_code
+            ) from exc
+        except Exception as exc:  # noqa: BLE001 - an edit that cannot be saved changes nothing
+            logger.exception("could not version an amended suite job=%s", job.id)
+            raise AuthoringArchiveKept("the change could not be saved") from exc
+        if recorded is None:
+            raise AuthoringArchiveKept("the change could not be saved")
+        return recorded.pair_key
+    # A new content-keyed object; an archive a run replayed is never overwritten.
+    from simulate.services.harness_versioning import archives
+
+    new_key = archives.pair_key(job.organization_id, job.id, rewritten)
+    archives.put_archive(new_key, rewritten)
+    with transaction.atomic():
+        locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+            pk=job.pk
+        )
+        payload = dict(locked.payload or {})
+        metadata = dict(payload.get("metadata") or {})
+        metadata["authoring_object_key"] = new_key
+        metadata["authoring_revision"] = authoring_content_digest(rewritten)
+        payload["metadata"] = metadata
+        locked.payload = payload
+        locked.content_updated_at = timezone.now()
+        locked.save(update_fields=["payload", "content_updated_at", "updated_at"])
+    job.refresh_from_db()
+    return new_key
 
 
 def rewrite_conversation_scenarios(job: HostedHarnessJob, suite: list[dict]) -> int:
@@ -5174,6 +6004,117 @@ def _rewritten_authoring_archive(body: bytes, suite: list[dict]) -> bytes | None
     return out.getvalue()
 
 
+def _authored_payload(payload: dict[str, Any], body: bytes) -> dict[str, Any]:
+    """The payload changes every freshly stored authoring archive brings."""
+    payload = resolve_authored_connector(dict(payload), body)
+    metadata = dict(payload.get("metadata") or {})
+    metadata["authoring_mode"] = "fresh"
+    # A chat "add scenarios" run consumes its one-shot extend marker here, once the
+    # extended authoring is durably stored, so a later plain rerun replays this set
+    # without re-extending.
+    metadata.pop("scenario_extend", None)
+    payload["metadata"] = metadata
+    return payload
+
+
+def freeze_authoring_archive(
+    job: HostedHarnessJob,
+    body: bytes,
+    *,
+    extending: bool,
+    proved_since: datetime | None = None,
+) -> None:
+    """Store a build's or an extend's authoring archive.
+
+    An environment that already has versions is recorded as its next versions, which
+    move the archive pointer in the same save; if recording fails nothing moves and the
+    error reaches the caller, so the freeze is tried again. Otherwise the archive is
+    stored as one object, and a first build also records versions when versioning is on.
+    """
+    from simulate.services.harness_versioning.versions import (
+        is_versioned,
+        record_authoring,
+        record_authoring_quietly,
+    )
+
+    origin = "extend" if extending else "authoring"
+    # Read fresh: a backfill can version the environment while the archive downloads.
+    if job.environment_id is None and is_versioned(job):
+        record_authoring(
+            job,
+            body,
+            origin=origin,
+            proved_since=proved_since,
+            prepare_payload=lambda payload: _authored_payload(payload, body),
+            consumes_extend_marker=extending,
+        )
+        if extending:
+            from simulate.services.harness_versioning.nudges import schedule_reconcile
+            from simulate.services.harness_versioning.rebuild import (
+                schedule_deferred_activations,
+            )
+
+            schedule_reconcile(job.id)
+            schedule_deferred_activations(job.id)
+        return
+    store_authoring_archive(job, body, advance_lifecycle=False)
+    if job.environment_id is None and is_versioned(job):
+        # A backfill versioned the environment while the legacy store ran; keep its
+        # versions in step with the archive just stored.
+        record_authoring(job, body, origin=origin, proved_since=proved_since)
+    elif not extending:
+        # An extend is versioned only once the first build is.
+        record_authoring_quietly(job, body, origin=origin, proved_since=proved_since)
+
+
+# A versioned freeze that keeps failing for one attempt stops being retried after this.
+FREEZE_FAILURE_LIMIT = 5
+
+
+def _freeze_failures(metadata: dict[str, Any], attempt_number: int) -> int:
+    failures = metadata.get("versioning_freeze_failures") or {}
+    try:
+        return int(failures.get(str(attempt_number)) or 0)
+    except (AttributeError, TypeError, ValueError):
+        return 0
+
+
+def _note_freeze_failure(job: HostedHarnessJob, attempt_number: int) -> None:
+    """Count a failed freeze of an environment with versions, per attempt."""
+    from simulate.services.harness_versioning.versions import is_versioned
+
+    if job.environment_id is not None or not is_versioned(job):
+        return
+    try:
+        with transaction.atomic():
+            locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+                id=job.id
+            )
+            payload = dict(locked.payload or {})
+            metadata = dict(payload.get("metadata") or {})
+            failures = dict(metadata.get("versioning_freeze_failures") or {})
+            count = _freeze_failures(metadata, attempt_number) + 1
+            failures[str(attempt_number)] = count
+            metadata["versioning_freeze_failures"] = failures
+            if count >= FREEZE_FAILURE_LIMIT:
+                # The extend marker stays, so the job keeps saying it never finished.
+                metadata["versioning_error"] = {
+                    "code": "freeze_failed",
+                    "attempt": attempt_number,
+                }
+                logger.error(
+                    "harness versioned freeze gave up job=%s attempt=%s failures=%s",
+                    job.id,
+                    attempt_number,
+                    count,
+                )
+            payload["metadata"] = metadata
+            locked.payload = payload
+            locked.save(update_fields=["payload", "updated_at"])
+    except Exception:  # noqa: BLE001 - counting must never stop a run
+        logger.exception("could not count a freeze failure job=%s", job.id)
+
+
 def store_authoring_archive(
     job: HostedHarnessJob, body: bytes, *, advance_lifecycle: bool = True
 ) -> str:
@@ -5189,26 +6130,32 @@ def store_authoring_archive(
         length=len(body),
         content_type="application/gzip",
     )
-    payload = resolve_authored_connector(dict(job.payload or {}), body)
-    metadata = dict(payload.get("metadata") or {})
-    metadata["authoring_object_key"] = object_key
-    metadata["authoring_revision"] = authoring_content_digest(body)
-    metadata["authoring_mode"] = "fresh"
-    # A chat "add scenarios" run consumes its one-shot extend marker here, once the extended
-    # authoring is durably stored, so a later plain rerun replays this set without re-extending.
-    metadata.pop("scenario_extend", None)
-    payload["metadata"] = metadata
-    job.payload = payload
-    job.content_updated_at = timezone.now()
-    update_fields = ["payload", "content_updated_at", "updated_at"]
-    if advance_lifecycle:
-        job.stage_outputs = authoring_stage_outputs_from_archive(
-            body, scenario_limit=job.scenario_count
+    stage_outputs = (
+        authoring_stage_outputs_from_archive(body, scenario_limit=job.scenario_count)
+        if advance_lifecycle
+        else None
+    )
+    # Re-read under the lock so keys written since the caller read the job are kept.
+    with transaction.atomic():
+        locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+            id=job.id
         )
-        job.current_stage = "validating_scenarios"
-        job.state = HostedHarnessJob.State.ADMITTED
-        update_fields.extend(["stage_outputs", "current_stage", "state"])
-    job.save(update_fields=update_fields)
+        payload = _authored_payload(dict(locked.payload or {}), body)
+        metadata = dict(payload.get("metadata") or {})
+        metadata["authoring_object_key"] = object_key
+        metadata["authoring_revision"] = authoring_content_digest(body)
+        payload["metadata"] = metadata
+        locked.payload = payload
+        locked.content_updated_at = timezone.now()
+        update_fields = ["payload", "content_updated_at", "updated_at"]
+        if advance_lifecycle:
+            locked.stage_outputs = stage_outputs
+            locked.current_stage = "validating_scenarios"
+            locked.state = HostedHarnessJob.State.ADMITTED
+            update_fields.extend(["stage_outputs", "current_stage", "state"])
+        locked.save(update_fields=update_fields)
+    for field in update_fields:
+        setattr(job, field, getattr(locked, field))
     return object_key
 
 

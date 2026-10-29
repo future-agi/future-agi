@@ -9,12 +9,14 @@ from collections.abc import Callable
 from typing import Any
 
 from django.core.cache import cache
+from django.db import connections, router
 from django.db.models import (
     Avg,
     BooleanField,
     Case,
     CharField,
     Count,
+    Exists,
     Expression,
     F,
     FloatField,
@@ -31,7 +33,12 @@ from django.db.models import (
     Value,
     When,
 )
-from django.db.models.fields.json import HasKey, KeyTextTransform, KeyTransform
+from django.db.models.fields.json import (
+    DataContains,
+    HasKey,
+    KeyTextTransform,
+    KeyTransform,
+)
 from django.db.models.functions import (
     Cast,
     Coalesce,
@@ -46,13 +53,19 @@ from django.db.models.lookups import (
     GreaterThan,
     GreaterThanOrEqual,
     In,
+    IsNull,
     LessThan,
     LessThanOrEqual,
 )
 from django.db.models.sql.datastructures import BaseTable
 
 from model_hub.models.develop_dataset import Cell
-from simulate.models import CallExecution, SimulateEvalConfig, TestExecution
+from simulate.models import (
+    CallExecution,
+    HarnessSuiteMember,
+    SimulateEvalConfig,
+    TestExecution,
+)
 from simulate.models.hosted_harness import HostedHarnessJob, HostedHarnessScenario
 from simulate.semantics import SupportedProviders
 from simulate.services.harness_scenarios import GROUP_BY as SCENARIO_GROUP_BY
@@ -66,9 +79,22 @@ from simulate.services.run_results_v3_expressions import (
     project_annotation,
 )
 from simulate.services.run_results_v3_scoring import (
+    ERRORED_CALL_STATUSES,
+    ERRORED_EVAL_STATUSES,
+    HARNESS_ERROR,
+    HARNESS_FAILED,
+    HARNESS_INCONCLUSIVE,
+    HARNESS_PASSED,
+    IN_PROGRESS_CALL_STATUSES,
+    NATIVE_FAILED,
+    NATIVE_PASSED,
+    QUEUED_CALL_STATUSES,
+    UNMEASURED_EVAL_STATUSES,
     EvalScoringSpec,
+    LiveEvals,
+    live_eval_specs,
     resolve_eval_scoring_spec,
-    warn_invalid_eval_threshold,
+    score_tokens,
 )
 
 OUTCOMES = tuple(OUTCOME_LABELS)
@@ -84,6 +110,18 @@ GROUP_FIELDS = {
 }
 UNGROUPED = "Ungrouped"
 LIST_AXES = frozenset({"sub_goal"})
+# The ``ordering`` values a run's calls sort by, and the field each one orders on.
+ORDERING_FIELDS = {
+    "started_at": "started_at",
+    "duration_seconds": "duration_seconds",
+    "latency_ms": "result_latency_ms",
+    "turn_count": "result_turn_count",
+    "tokens": "result_tokens",
+    "cost_cents": "result_cost_cents",
+    "scenario": "scenario__name",
+    "goal": "result_goal",
+    "outcome": "result_outcome",
+}
 READ_ONCE_JSON_COLUMNS = frozenset({"call_metadata", "eval_outputs"})
 
 
@@ -141,6 +179,72 @@ def _authored_level(field: str):
     return KeyTextTransform(tail, head)
 
 
+def _member_level(field: str, *, text: bool = True):
+    """The same value read from a suite member's ``content`` document."""
+    head, _, tail = field.partition(".")
+    transform = KeyTextTransform if text else KeyTransform
+    if not tail:
+        return transform(head, "content")
+    return transform(tail, KeyTransform(head, "content"))
+
+
+def _member_first(
+    member: QuerySet | None,
+    member_value: Any,
+    authored: QuerySet,
+    output_field: Any,
+    *,
+    empty: Any = None,
+) -> tuple[Any, ...]:
+    """A pinned run's suite member value, else the authored scenario's.
+
+    The member is authoritative: when a pinned run has one, a value it lacks reads
+    empty rather than the identity row's newer one. Without pinned runs the member read
+    is left out, so the query is unchanged.
+    """
+
+    def first(rows: QuerySet) -> Any:
+        value = Subquery(rows[:1], output_field=output_field)
+        return NullIf(value, empty) if empty is not None else value
+
+    if member is None:
+        return (first(authored),)
+    return (
+        first(member.values(level=member_value)),
+        Case(When(~Exists(member), then=first(authored)), output_field=output_field),
+    )
+
+
+def _member_json(field: str):
+    """A member ``content`` value as JSON, NULL when it is absent or JSON null."""
+    return Case(
+        When(
+            ~Q(IsNull(_member_level(field), True)),
+            then=_member_level(field, text=False),
+        ),
+        output_field=JSONField(),
+    )
+
+
+def _member_scenario_key():
+    """The call's scenario key, else its linked scenario's: the scan's rule too."""
+    linked = (
+        HostedHarnessScenario.all_objects.filter(
+            call_execution_id=OuterRef(OuterRef("pk"))
+        )
+        .order_by("-created_at")
+        .values("scenario_key")[:1]
+    )
+    return Coalesce(
+        NullIf(
+            KeyTextTransform("harness_scenario_key", OuterRef("call_metadata")),
+            Value(""),
+        ),
+        Subquery(linked, output_field=CharField()),
+        output_field=CharField(),
+    )
+
+
 def _group_q(group_by: str, key: str) -> Q:
     field = GROUP_FIELDS[group_by]
     if group_by not in LIST_AXES:
@@ -173,14 +277,44 @@ _NO_RESULT_SUB_GOALS = (
 ) & (Q(call_metadata__sub_goals__isnull=True) | Q(call_metadata__sub_goals=[]))
 
 
-def _authored_sub_goal_q(value: Any) -> Q:
+def _member_sub_goals() -> Subquery:
+    """The sub-goals of a call's scenario in the suite version its run was pinned to.
+
+    Self-contained, so it also works on unannotated call querysets. NULL when the call
+    has no member; an empty list when its member lists none.
+    """
+    pinned_suite = (
+        HostedHarnessJob.no_workspace_objects.filter(
+            test_execution_id=OuterRef(OuterRef("test_execution_id")),
+            suite_version__isnull=False,
+        )
+        .order_by("-created_at")
+        .values("suite_version_id")[:1]
+    )
+    member = HarnessSuiteMember.no_workspace_objects.filter(
+        suite_version_id=Subquery(pinned_suite),
+        scenario_key=_member_scenario_key(),
+    ).values(
+        level=Coalesce(
+            _member_json("sub_goals"),
+            Value([], output_field=JSONField()),
+            output_field=JSONField(),
+        )
+    )[
+        :1
+    ]
+    return Subquery(member, output_field=JSONField())
+
+
+def _authored_sub_goal_q(value: Any, *, pinned: bool = False) -> Q:
     """Match a call whose linked scenario lists ``value`` as a sub-goal.
 
-    A trial's source scenario wins over a registration, as in the rows.
+    A trial's source scenario wins over a registration, as in the rows. With pinned
+    runs in view, the pinned suite's member wins over both.
     """
     execution = "hosted_harness_execution__source_scenario__sub_goals"
     registration = "hosted_registration__sub_goals"
-    return (
+    authored = (
         Q(**{f"{execution}__contains": [value]})
         | Q(**{f"{execution}__contains": [{"name": value}]})
         | (
@@ -191,11 +325,20 @@ def _authored_sub_goal_q(value: Any) -> Q:
             )
         )
     )
+    if not pinned:
+        return authored
+    member = _member_sub_goals()
+    return (
+        Q(DataContains(member, Value([value], output_field=JSONField())))
+        | Q(DataContains(member, Value([{"name": value}], output_field=JSONField())))
+        | (Q(IsNull(member, True)) & authored)
+    )
 
 
-def _authored_sub_goals_expression():
+def _authored_sub_goals_expression(*, pinned: bool = False):
     empty = Value([], output_field=JSONField())
     return Coalesce(
+        *([_member_sub_goals()] if pinned else []),
         NullIf(F("hosted_harness_execution__source_scenario__sub_goals"), empty),
         NullIf(F("hosted_registration__sub_goals"), empty),
         output_field=JSONField(),
@@ -219,7 +362,7 @@ def _eval_measured_q(eval_id: str, field: str | Expression = "eval_outputs") -> 
         output_field=TextField(),
     )
     return Q(HasKey(_json_value(field), eval_id)) & ~Q(
-        In(Lower(Trim(status)), ["pending", "skipped", "error", "failed"])
+        In(Lower(Trim(status)), list(UNMEASURED_EVAL_STATUSES))
     )
 
 
@@ -230,7 +373,7 @@ def _eval_errored_q(eval_id: str) -> Q:
         output_field=TextField(),
     )
     return Q(eval_outputs__has_key=eval_id) & Q(
-        In(Lower(Trim(status)), ["error", "failed"])
+        In(Lower(Trim(status)), list(ERRORED_EVAL_STATUSES))
     )
 
 
@@ -251,6 +394,8 @@ def _choice_array_matches(
     )
 
 
+# Twin: ``_EvalScore`` in run_results_v3_scan; change both. Guarded by
+# test_every_stored_entry_shape_scores_like_the_sql_read_model.
 def _expanded_eval_score(
     eval_id: str,
     spec: EvalScoringSpec | None = None,
@@ -341,14 +486,7 @@ def _expanded_eval_score(
             ),
             output_field=FloatField(),
         )
-    positive = ["true"]
-    negative = ["false"]
-    if spec is None or spec.output_type == "pass_fail":
-        positive += ["pass", "yes", "success", "successful"]
-        negative += ["fail", "no", "failure", "unsuccessful"]
-    if spec is None:
-        positive.append("passed")
-        negative.append("failed")
+    positive, negative = score_tokens(spec)
     raw_score = Case(
         When(
             In(normalized, positive),
@@ -462,6 +600,8 @@ def _eval_score(eval_id: str, spec: EvalScoringSpec | None = None):
     )
 
 
+# Twin: ``_ConfiguredVerdict`` in run_results_v3_scan; change both. Guarded by
+# test_every_stored_entry_shape_scores_like_the_sql_read_model.
 def _configured_eval_verdict(
     eval_id: str, config: SimulateEvalConfig, spec: EvalScoringSpec | None = None
 ):
@@ -542,6 +682,13 @@ def _configured_eval_verdict(
     return score, passed, failed
 
 
+def _sql_texts(values: tuple[str, ...]) -> str:
+    """Constant words as SQL string literals."""
+    return ", ".join(f"'{value}'" for value in values)
+
+
+# Twin: ``_native_verdicts`` in run_results_v3_scan; change both. Guarded by
+# test_every_stored_entry_shape_scores_like_the_sql_read_model.
 class _NativeHarnessVerdict(Func):
     """Judge template-less harness checks using the call-row verdict rules."""
 
@@ -558,16 +705,12 @@ class _NativeHarnessVerdict(Func):
         ids_sql, ids_params = compiler.compile(self.source_expressions[1])
         status_sql = "lower(btrim(COALESCE(check_result.value->>'status', '')))"
         if self.verdict == "error":
-            condition = f"{status_sql} IN ('error', 'failed')"
+            condition = f"{status_sql} IN ({_sql_texts(ERRORED_EVAL_STATUSES)})"
             verdict_params = []
         else:
-            tokens = (
-                ["pass", "passed", "true", "success", "successful"]
-                if self.verdict == "passed"
-                else ["fail", "failed", "false", "failure", "unsuccessful"]
-            )
+            tokens = list(NATIVE_PASSED if self.verdict == "passed" else NATIVE_FAILED)
             condition = (
-                f"{status_sql} NOT IN ('pending', 'skipped', 'error', 'failed') "
+                f"{status_sql} NOT IN ({_sql_texts(UNMEASURED_EVAL_STATUSES)}) "
                 "AND jsonb_typeof(check_result.value->'output') IN ('string', 'boolean') "
                 "AND lower(btrim(check_result.value->>'output')) = ANY(%s)"
             )
@@ -584,26 +727,26 @@ class _NativeHarnessVerdict(Func):
 
 
 def run_calls_queryset(
-    execution: TestExecution, execution_ids: list[Any] | None = None
+    execution: TestExecution,
+    execution_ids: list[Any] | None = None,
+    *,
+    live_evals: LiveEvals | None = None,
 ) -> QuerySet[CallExecution]:
-    live_configs = list(
-        SimulateEvalConfig.objects.filter(
-            run_test=execution.run_test, deleted=False
-        ).select_related("eval_template")
-    )
+    if live_evals is None:
+        live_evals = live_eval_specs(execution.run_test_id)
+    live_evals.warn_invalid_thresholds()
     failed_eval = Q(pk__in=[])
     passed_eval = Q(pk__in=[])
     errored_eval = Q(pk__in=[])
-    for config in live_configs:
-        eval_id = str(config.id)
-        spec = resolve_eval_scoring_spec(config)
-        warn_invalid_eval_threshold(config, spec)
-        _, passed_q, failed_q = _configured_eval_verdict(eval_id, config, spec)
+    for eval_id, live in live_evals.items():
+        _, passed_q, failed_q = _configured_eval_verdict(
+            eval_id, live.config, live.spec
+        )
         failed_eval |= failed_q
         passed_eval |= passed_q
         errored_eval |= _eval_errored_q(eval_id)
 
-    configured_ids = [str(config.id) for config in live_configs]
+    configured_ids = list(live_evals)
     failed_eval |= Q(_NativeHarnessVerdict(configured_ids, "failed"))
     passed_eval |= Q(_NativeHarnessVerdict(configured_ids, "passed"))
     errored_eval |= Q(_NativeHarnessVerdict(configured_ids, "error"))
@@ -640,14 +783,30 @@ def run_calls_queryset(
     # scanned the job table for every call.
     own_run = Q(pk__in=[])
     own_environment = Q(pk__in=[])
-    run_jobs = HostedHarnessJob.all_objects.filter(
-        test_execution_id__in=run_ids
-    ).values_list("test_execution_id", "id", "environment_id")
-    for run_id, job_id, environment_id in run_jobs:
+    # A run pinned to a suite version shows that version's scenario content. A run
+    # has one job; a deleted one pins nothing, as everywhere else that reads the pin.
+    pinned_suites: dict[Any, Any] = {}
+    # Oldest first, so the newest pinned job wins.
+    run_jobs = (
+        HostedHarnessJob.all_objects.filter(test_execution_id__in=run_ids)
+        .order_by("created_at", "id")
+        .values_list(
+            "test_execution_id", "id", "environment_id", "suite_version_id", "deleted"
+        )
+    )
+    for run_id, job_id, environment_id, suite_version_id, deleted in run_jobs:
         this_run = Exact(OuterRef("test_execution_id"), Value(run_id))
         own_run |= Q(this_run, job_id=job_id)
         if environment_id:
             own_environment |= Q(this_run, job_id=environment_id)
+        if suite_version_id and not deleted:
+            pinned_suites[run_id] = suite_version_id
+    pinned_suite = Q(pk__in=[])
+    for run_id, suite_version_id in pinned_suites.items():
+        pinned_suite |= Q(
+            Exact(OuterRef("test_execution_id"), Value(run_id)),
+            suite_version_id=suite_version_id,
+        )
     authored = (
         HostedHarnessScenario.all_objects.filter(
             Q(call_execution_id=OuterRef("pk"))
@@ -666,15 +825,35 @@ def run_calls_queryset(
     queryset = _read_large_json_once(
         CallExecution.objects.filter(execution_filter), run_ids
     ).annotate(result_scenario_key=_json_text("call_metadata", "harness_scenario_key"))
+    member = None
+    if pinned_suites:
+        queryset = queryset.alias(
+            result_pinned_suite=Value(True),
+            result_member_key=Coalesce(
+                NullIf(F("result_scenario_key"), Value("")),
+                Subquery(
+                    HostedHarnessScenario.all_objects.filter(
+                        call_execution_id=OuterRef("pk")
+                    )
+                    .order_by("-created_at")
+                    .values("scenario_key")[:1],
+                    output_field=CharField(),
+                ),
+                output_field=CharField(),
+            ),
+        )
+        member = HarnessSuiteMember.no_workspace_objects.filter(
+            pinned_suite, scenario_key=OuterRef("result_member_key")
+        )
     queryset = queryset.annotate(
         **{
             GROUP_FIELDS[axis]: Coalesce(
-                NullIf(
-                    Subquery(
-                        authored.values(level=_authored_level(field))[:1],
-                        output_field=TextField(),
-                    ),
-                    Value(""),
+                *_member_first(
+                    member,
+                    _member_level(field),
+                    authored.values(level=_authored_level(field)),
+                    TextField(),
+                    empty=Value(""),
                 ),
                 Value(UNGROUPED),
                 output_field=CharField(),
@@ -684,9 +863,11 @@ def run_calls_queryset(
         },
         **{
             GROUP_FIELDS[axis]: Coalesce(
-                Subquery(
-                    authored.values(SCENARIO_GROUP_BY[axis])[:1],
-                    output_field=JSONField(),
+                *_member_first(
+                    member,
+                    _member_json(SCENARIO_GROUP_BY[axis]),
+                    authored.values(SCENARIO_GROUP_BY[axis]),
+                    JSONField(),
                 ),
                 Value([], output_field=JSONField()),
                 output_field=JSONField(),
@@ -700,10 +881,14 @@ def run_calls_queryset(
             default=Value("inconclusive"),
             output_field=CharField(),
         ),
+        # Twin: the goal fallbacks in run_results_v3_scan.scan_call_values; change both.
         result_goal=Coalesce(
-            NullIf(
-                Subquery(authored.values("use_case")[:1], output_field=TextField()),
-                Value(""),
+            *_member_first(
+                member,
+                _member_level("use_case"),
+                authored.values("use_case"),
+                TextField(),
+                empty=Value(""),
             ),
             _json_text("call_metadata", "use_case"),
             _json_text("call_metadata", "goal"),
@@ -715,45 +900,29 @@ def run_calls_queryset(
             F("scenario__name"),
             output_field=CharField(),
         ),
+        # Twin: ``_outcome`` in run_results_v3_scan; change both. Guarded by
+        # test_every_stored_entry_shape_scores_like_the_sql_read_model.
         result_outcome=Case(
-            When(status__in=["pending", "queued"], then=Value("queued")),
-            When(status__in=["ongoing", "analyzing"], then=Value("in_progress")),
+            When(status__in=list(QUEUED_CALL_STATUSES), then=Value("queued")),
+            When(status__in=list(IN_PROGRESS_CALL_STATUSES), then=Value("in_progress")),
             When(
-                call_metadata__harness_outcome_status__in=[
-                    "error",
-                    "errored",
-                    "cancelled",
-                    "canceled",
-                ],
+                call_metadata__harness_outcome_status__in=list(HARNESS_ERROR),
                 then=Value("error"),
             ),
-            When(status__in=["failed", "cancelled"], then=Value("error")),
+            When(status__in=list(ERRORED_CALL_STATUSES), then=Value("error")),
             When(~Q(status="completed"), then=Value("inconclusive")),
             When(
-                call_metadata__harness_outcome_status__in=[
-                    "failed",
-                    "fail",
-                    "failure",
-                ],
+                call_metadata__harness_outcome_status__in=list(HARNESS_FAILED),
                 then=Value("failed"),
             ),
             When(failed_eval, then=Value("failed")),
             When(errored_eval, then=Value("inconclusive")),
             When(
-                call_metadata__harness_outcome_status__in=[
-                    "inconclusive",
-                    "unknown",
-                    "skipped",
-                ],
+                call_metadata__harness_outcome_status__in=list(HARNESS_INCONCLUSIVE),
                 then=Value("inconclusive"),
             ),
             When(
-                call_metadata__harness_outcome_status__in=[
-                    "passed",
-                    "pass",
-                    "success",
-                    "successful",
-                ],
+                call_metadata__harness_outcome_status__in=list(HARNESS_PASSED),
                 then=Value("passed"),
             ),
             When(passed_eval, then=Value("passed")),
@@ -825,6 +994,20 @@ def run_call_rows_queryset(queryset: QuerySet) -> QuerySet:
     )
 
 
+def _sub_goal_q(values: list[str], *, pinned: bool = False) -> Q:
+    sub_goal_query = Q(pk__in=[])
+    for value in values:
+        sub_goal_query |= Q(
+            call_metadata__hosted_harness_receipt__sub_goals__contains=[{"name": value}]
+        )
+        sub_goal_query |= Q(call_metadata__sub_goals__contains=[value])
+        sub_goal_query |= Q(call_metadata__sub_goals__contains=[{"name": value}])
+        sub_goal_query |= _NO_RESULT_SUB_GOALS & _authored_sub_goal_q(
+            value, pinned=pinned
+        )
+    return sub_goal_query
+
+
 def apply_run_call_query(queryset: QuerySet, query: dict[str, Any]) -> QuerySet:
     search = str(query.get("search") or "").strip()
     filters = query.get("filters") or {}
@@ -840,26 +1023,35 @@ def apply_run_call_query(queryset: QuerySet, query: dict[str, Any]) -> QuerySet:
         queryset = queryset.filter(id__in=values)
     if values := filters.get("goal"):
         queryset = queryset.filter(result_goal__in=values)
+    if values := filters.get("goal_not"):
+        queryset = queryset.filter(
+            ~Q(result_goal__in=values) | Q(result_goal__isnull=True)
+        )
     if values := filters.get("status"):
         queryset = queryset.filter(
             result_outcome__in=[str(value).lower() for value in values]
+        )
+    if values := filters.get("status_not"):
+        queryset = queryset.filter(
+            ~Q(result_outcome__in=[str(value).lower() for value in values])
+            | Q(result_outcome__isnull=True)
         )
     if values := filters.get("goal_outcome"):
         from simulate.services.run_dashboard_v3 import annotate_goal_outcome
 
         queryset = annotate_goal_outcome(queryset).filter(dashboard_goal__in=values)
+    pinned = "result_pinned_suite" in queryset.query.annotations
     if values := filters.get("sub_goal"):
-        sub_goal_query = Q(pk__in=[])
-        for value in values:
-            sub_goal_query |= Q(
-                call_metadata__hosted_harness_receipt__sub_goals__contains=[
-                    {"name": value}
-                ]
+        queryset = queryset.filter(_sub_goal_q(values, pinned=pinned))
+    if values := filters.get("sub_goal_not"):
+        # NOT EXISTS, so a call whose sub-goal JSON is NULL still counts as "not".
+        queryset = queryset.filter(
+            ~Exists(
+                CallExecution._base_manager.filter(
+                    _sub_goal_q(values, pinned=pinned), pk=OuterRef("pk")
+                )
             )
-            sub_goal_query |= Q(call_metadata__sub_goals__contains=[value])
-            sub_goal_query |= Q(call_metadata__sub_goals__contains=[{"name": value}])
-            sub_goal_query |= _NO_RESULT_SUB_GOALS & _authored_sub_goal_q(value)
-        queryset = queryset.filter(sub_goal_query)
+        )
 
     group_by = query.get("group_by")
     group_key = query.get("group_key")
@@ -869,18 +1061,7 @@ def apply_run_call_query(queryset: QuerySet, query: dict[str, Any]) -> QuerySet:
     ordering = str(query.get("ordering") or "-started_at")
     descending = ordering.startswith("-")
     requested = ordering.lstrip("-")
-    fields = {
-        "started_at": "started_at",
-        "duration_seconds": "duration_seconds",
-        "latency_ms": "result_latency_ms",
-        "turn_count": "result_turn_count",
-        "tokens": "result_tokens",
-        "cost_cents": "result_cost_cents",
-        "scenario": "scenario__name",
-        "goal": "result_goal",
-        "outcome": "result_outcome",
-    }
-    field = fields.get(requested, "started_at")
+    field = ORDERING_FIELDS.get(requested, "started_at")
     return queryset.order_by(f"-{field}" if descending else field, "id")
 
 
@@ -948,40 +1129,66 @@ def _summary_from_values(values: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def run_call_facets(
-    queryset: QuerySet | Callable[[], QuerySet], facets_cache_key: str | None = None
-) -> dict[str, list[dict[str, Any]]]:
-    if facets_cache_key and (cached := cache.get(facets_cache_key)) is not None:
-        return cached
-    if callable(queryset):
-        queryset = queryset()
-    facets = {}
-    for name, field in (("goal", "result_goal"), ("status", "result_outcome")):
-        facets[name] = [
-            {"value": row[field], "count": row["count"]}
-            for row in queryset.values(field)
-            .annotate(count=Count("id"))
-            .order_by("-count", field)
-        ]
+def _result_sub_goals_expression(*, pinned: bool = False) -> Coalesce:
+    """A call's own sub-goals, else its authored scenario's, as the rows show."""
+    empty = Value([], output_field=JSONField())
+    return Coalesce(
+        NullIf(
+            _json_value("call_metadata", "hosted_harness_receipt", "sub_goals"), empty
+        ),
+        NullIf(_json_value("call_metadata", "sub_goals"), empty),
+        _authored_sub_goals_expression(pinned=pinned),
+        empty,
+        output_field=JSONField(),
+    )
 
+
+def _collation_order(values: list[str]) -> dict[str, int]:
+    """Rank values as the database collation sorts them."""
+    with connections[router.db_for_read(CallExecution)].cursor() as cursor:
+        cursor.execute(
+            "SELECT value FROM unnest(%s::text[]) AS value ORDER BY value", [values]
+        )
+        return {value: index for index, (value,) in enumerate(cursor.fetchall())}
+
+
+def _value_facets(
+    rows: list[dict[str, Any]], fields: dict[str, str]
+) -> dict[str, list[dict[str, Any]]]:
+    """Count each field's values, ordered as ``ORDER BY -count, value`` would."""
+    counts = {
+        name: Counter(row[field] for row in rows) for name, field in fields.items()
+    }
+    tied = set()
+    for counter in counts.values():
+        repeats = Counter(counter.values())
+        tied.update(
+            value
+            for value, count in counter.items()
+            if value is not None and repeats[count] > 1
+        )
+    order = _collation_order(sorted(tied)) if tied else {}
+    return {
+        name: [
+            {"value": value, "count": count}
+            for value, count in sorted(
+                counter.items(),
+                key=lambda item: (-item[1], item[0] is None, order.get(item[0], 0)),
+            )
+        ]
+        for name, counter in counts.items()
+    }
+
+
+def _sub_goal_facet(calls: QuerySet) -> list[dict[str, Any]]:
+    pinned = HostedHarnessJob.no_workspace_objects.filter(
+        test_execution_id__in=calls.order_by().values("test_execution_id"),
+        suite_version__isnull=False,
+    ).exists()
     sub_goals = Counter()
     metadata_rows = (
-        queryset.order_by()
-        .annotate(
-            result_sub_goals=Coalesce(
-                NullIf(
-                    _json_value("call_metadata", "hosted_harness_receipt", "sub_goals"),
-                    Value([], output_field=JSONField()),
-                ),
-                NullIf(
-                    _json_value("call_metadata", "sub_goals"),
-                    Value([], output_field=JSONField()),
-                ),
-                _authored_sub_goals_expression(),
-                Value([], output_field=JSONField()),
-                output_field=JSONField(),
-            )
-        )
+        calls.order_by()
+        .annotate(result_sub_goals=_result_sub_goals_expression(pinned=pinned))
         .values_list("result_sub_goals", flat=True)
         .iterator(chunk_size=2000)
     )
@@ -992,12 +1199,24 @@ def run_call_facets(
             name = value.get("name") if isinstance(value, dict) else value
             if name:
                 sub_goals[str(name)] += 1
-    facets["sub_goal"] = [
+    return [
         {"value": value, "count": count}
         for value, count in sorted(
             sub_goals.items(), key=lambda item: (-item[1], item[0].lower())
         )
     ]
+
+
+def run_call_facets(
+    rows: Callable[[], list[dict[str, Any]]],
+    calls: Callable[[], QuerySet],
+    facets_cache_key: str | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Facets of the call-value rows; ``calls`` are the same calls, unannotated."""
+    if facets_cache_key and (cached := cache.get(facets_cache_key)) is not None:
+        return cached
+    facets = _value_facets(rows(), {"goal": "result_goal", "status": "result_outcome"})
+    facets["sub_goal"] = _sub_goal_facet(calls())
     if facets_cache_key:
         cache.set(facets_cache_key, facets, timeout=60 * 60)
     return facets
@@ -1042,29 +1261,64 @@ def _breakdown_run_calls(queryset: QuerySet, field: str) -> list[dict[str, Any]]
 
 
 def build_run_comparison(
-    execution: TestExecution, queryset: QuerySet
+    execution: TestExecution,
+    queryset: QuerySet,
+    *,
+    against: TestExecution | None = None,
+    with_pairs: bool = False,
 ) -> dict[str, Any]:
-    """Compare scenario verdicts with the immediately preceding completed run.
+    """Compare scenario verdicts with ``against``, else the immediately preceding
+    completed run.
 
     Only scenarios evaluated in both runs participate. A scenario passes when every
     evaluated trial passed; any evaluated failure makes it failing. Infrastructure
     errors and unevaluated trials do not invent a verdict.
-    """
 
-    def verdicts(calls: QuerySet) -> tuple[dict[str, bool], dict[str, str]]:
+    ``with_pairs`` also judges each scenario on its pass rate over trials, where a
+    trial passes when all its sub-goal checks held (see ``run_compare``), and adds
+    ``pairs``, ``summary`` and ``versions``.
+    """
+    from simulate.services import run_compare
+
+    def verdicts(
+        calls: QuerySet,
+    ) -> tuple[dict[str, bool], dict[str, str], dict[str, run_compare.ScenarioTrials]]:
         counts: dict[str, list[int]] = defaultdict(lambda: [0, 0])
         labels: dict[str, str] = {}
-        for scenario_key, scenario_label, outcome in (
-            calls.order_by()
-            .values_list("result_scenario_key", "result_scenario", "result_outcome")
-            .iterator(chunk_size=2000)
-        ):
+        trials: dict[str, run_compare.ScenarioTrials] = {}
+        fields = ["result_scenario_key", "result_scenario", "result_outcome"]
+        calls = calls.order_by()
+        if with_pairs:
+            calls = calls.annotate(
+                result_receipt_sub_goals=_json_value(
+                    "call_metadata", "hosted_harness_receipt", "sub_goals"
+                ),
+                result_harness_status=_json_text(
+                    "call_metadata", "harness_outcome_status"
+                ),
+            )
+            fields += [
+                "result_eval_outcome",
+                "result_receipt_sub_goals",
+                "result_harness_status",
+            ]
+        for scenario_key, scenario_label, outcome, *trial in calls.values_list(
+            *fields
+        ).iterator(chunk_size=2000):
             key = str(scenario_key)
             labels[key] = str(scenario_label or key)
             if outcome == "passed":
                 counts[key][0] += 1
             elif outcome == "failed":
                 counts[key][1] += 1
+            if trial:
+                eval_outcome, sub_goals, harness_status = trial
+                trials.setdefault(key, run_compare.ScenarioTrials(labels[key])).add(
+                    sub_goals if isinstance(sub_goals, list) else None,
+                    harness_status,
+                    outcome,
+                    eval_outcome,
+                )
         return (
             {
                 scenario: failed == 0
@@ -1072,9 +1326,10 @@ def build_run_comparison(
                 if passed or failed
             },
             labels,
+            trials,
         )
 
-    previous = (
+    previous = against or (
         TestExecution.objects.filter(
             run_test=execution.run_test,
             status=TestExecution.ExecutionStatus.COMPLETED,
@@ -1084,17 +1339,31 @@ def build_run_comparison(
         .first()
     )
     if previous is None:
-        return {
+        comparison: dict[str, Any] = {
             "available": False,
             "previous_execution_id": None,
             "shared_scenarios": 0,
             "newly_passing": [],
             "newly_failing": [],
         }
-    current_verdicts, current_labels = verdicts(queryset)
-    previous_verdicts, _ = verdicts(run_calls_queryset(previous))
+        if with_pairs:
+            current_trials = verdicts(queryset)[2]
+            pairs, summary = run_compare.scenario_pairs(current_trials, {})
+            comparison.update(
+                pairs=pairs,
+                summary=summary,
+                versions={
+                    "current": run_compare.run_versions([execution.id])[
+                        str(execution.id)
+                    ],
+                    "against": None,
+                },
+            )
+        return comparison
+    current_verdicts, current_labels, current_trials = verdicts(queryset)
+    previous_verdicts, _, previous_trials = verdicts(run_calls_queryset(previous))
     shared = sorted(current_verdicts.keys() & previous_verdicts.keys())
-    return {
+    comparison = {
         "available": True,
         "previous_execution_id": str(previous.id),
         "shared_scenarios": len(shared),
@@ -1109,6 +1378,74 @@ def build_run_comparison(
             if not current_verdicts[scenario] and previous_verdicts[scenario]
         ],
     }
+    if with_pairs:
+        comparison.update(
+            _run_pairs(execution, previous, current_trials, previous_trials)
+        )
+    return comparison
+
+
+def _run_pairs(
+    execution: TestExecution,
+    previous: TestExecution,
+    current_trials: dict[str, Any],
+    previous_trials: dict[str, Any],
+) -> dict[str, Any]:
+    """The pairs of two runs, with the bands read from their suite versions."""
+    from simulate.services import run_compare
+
+    versions = run_compare.run_versions([execution.id, previous.id])
+    current_versions = versions[str(execution.id)]
+    previous_versions = versions[str(previous.id)]
+    environments = [
+        (one["environment"] or {}).get("id")
+        for one in (current_versions, previous_versions)
+    ]
+    digests = (
+        run_compare.sub_goal_digests(environments)
+        if all(environments) and environments[0] != environments[1]
+        else {}
+    )
+    current_suite, previous_suite = (
+        (pinned["suite"] or {}).get("id")
+        for pinned in (current_versions, previous_versions)
+    )
+    # Bands read from the older run to the newer, whichever one is compared against:
+    # by suite lineage, as a rerun or a picked version can pin an older suite, else
+    # by when the runs were made.
+    against_is_newer = run_compare.suite_is_newer(previous_suite, current_suite)
+    if against_is_newer is None:
+        against_is_newer = previous.created_at > execution.created_at
+    newer, older = (
+        (previous_trials, current_trials)
+        if against_is_newer
+        else (current_trials, previous_trials)
+    )
+    newer_suite, older_suite = (
+        (previous_suite, current_suite)
+        if against_is_newer
+        else (current_suite, previous_suite)
+    )
+    pairs, summary = run_compare.scenario_pairs(
+        current_trials,
+        previous_trials,
+        digests=digests.get(environments[0]),
+        against_digests=digests.get(environments[1]),
+        removed=run_compare.removed_keys(
+            older_suite, newer_suite, older.keys() - newer.keys()
+        ),
+        not_run=run_compare.suite_members(older_suite, newer.keys() - older.keys()),
+        against_is_newer=against_is_newer,
+    )
+    return {
+        "pairs": pairs,
+        "summary": summary,
+        "versions": {"current": current_versions, "against": previous_versions},
+    }
+
+
+def build_run_reliability(execution: TestExecution) -> dict[str, Any]:
+    return build_reliability(run_calls_queryset(execution), execution.trials)
 
 
 def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
@@ -1293,7 +1630,7 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
             ),
         ),
         "dashboard": build_run_dashboard(
-            queryset, summary, evaluations, risk, reliability, comparison
+            queryset, summary, evaluations, risk, comparison
         ),
         "failure_breakdown": [
             {

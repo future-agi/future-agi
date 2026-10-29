@@ -1,6 +1,12 @@
 from django.urls import path  # type: ignore
 from rest_framework.routers import DefaultRouter
 
+from tracer.views.alerts import (
+    AlertDetailView,
+    AlertOptionsView,
+    AlertView,
+    ErrorFeedAlertTestView,
+)
 from tracer.views.annotation import (
     BulkAnnotationView,
     GetAnnotationLabelsView,
@@ -21,6 +27,7 @@ from tracer.views.feed import (
     FeedDetailView,
     FeedListView,
     FeedOverviewView,
+    FeedRedirectView,
     FeedRootCauseView,
     FeedSidebarView,
     FeedStatsView,
@@ -37,7 +44,12 @@ from tracer.views.project import ProjectView
 from tracer.views.project_version import ProjectVersionView
 from tracer.views.replay_session import ReplaySessionView
 from tracer.views.saved_view import SavedViewViewSet
-from tracer.views.shared_link import SharedLinkViewSet, resolve_shared_link
+from tracer.views.shared_link import (
+    SharedIssueSidebarView,
+    SharedLinkViewSet,
+    resolve_shared_issue_trace,
+    resolve_shared_link,
+)
 from tracer.views.trace import GetUserCodeExampleView, TraceView, UsersView
 from tracer.views.trace_grouping import (
     AcknowledgeGroupingOutboxView,
@@ -54,6 +66,7 @@ from tracer.views.trace_grouping import (
 )
 from tracer.views.trace_investigation import (
     ClaimInvestigationsView,
+    ConversationEvidenceView,
     PublishInvestigationView,
     RecordTraceNotificationsView,
     SimulationEvidenceView,
@@ -95,6 +108,18 @@ router.register(r"shared-links", SharedLinkViewSet, basename="shared-link")
 router.register(r"dashboard", DashboardViewSet, basename="dashboard")
 
 urlpatterns = [
+    path("alerts/", AlertView.as_view(), name="alerts"),
+    path("alerts/options/", AlertOptionsView.as_view(), name="alert-options"),
+    path(
+        "alerts/error_feed/<uuid:alert_id>/test/",
+        ErrorFeedAlertTestView.as_view(),
+        name="error-feed-alert-test",
+    ),
+    path(
+        "alerts/<str:kind>/<uuid:alert_id>/",
+        AlertDetailView.as_view(),
+        name="alert-detail",
+    ),
     path(
         "internal/error-feed-v2/grouping/severity/claims/",
         ClaimSeverityView.as_view(),
@@ -191,6 +216,11 @@ urlpatterns = [
         name="error-feed-v2-attempt",
     ),
     path(
+        "internal/error-feed-v2/attempts/<uuid:attempt_id>/conversation-evidence/",
+        ConversationEvidenceView.as_view(),
+        name="error-feed-v2-conversation-evidence",
+    ),
+    path(
         "internal/error-feed-v2/attempts/<uuid:attempt_id>/simulation-evidence/",
         SimulationEvidenceView.as_view(),
         name="error-feed-v2-simulation-evidence",
@@ -221,6 +251,16 @@ urlpatterns = [
         name="get-annotation-labels",
     ),
     path("shared/<str:token>/", resolve_shared_link, name="resolve-shared-link"),
+    path(
+        "shared/<str:token>/sidebar/",
+        SharedIssueSidebarView.as_view(),
+        name="resolve-shared-issue-sidebar",
+    ),
+    path(
+        "shared/<str:token>/traces/<str:trace_id>/",
+        resolve_shared_issue_trace,
+        name="resolve-shared-issue-trace",
+    ),
     path("users/", UsersView.as_view(), name="users"),
     path("users/get_code_example/", GetUserCodeExampleView.as_view(), name="users"),
     # Deprecated — replaced by /feed/ endpoints (TH-3816 Phase 5)
@@ -251,6 +291,11 @@ urlpatterns = [
         "feed/issues/<str:cluster_id>/",
         FeedDetailView.as_view(),
         name="feed-issue-detail",
+    ),
+    path(
+        "feed/issues/<str:cluster_id>/redirect/",
+        FeedRedirectView.as_view(),
+        name="feed-issue-redirect",
     ),
     path(
         "feed/issues/<str:cluster_id>/overview/",

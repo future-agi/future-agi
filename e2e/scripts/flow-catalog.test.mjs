@@ -85,3 +85,16 @@ test("renders grouped markdown", () => {
   assert.match(md, /## projects/);
   assert.match(md, /OBS-E2E-001/);
 });
+
+test("labels browser-only checks without claiming backend verification", () => {
+  const browserEntry = entry("FEED-E2E-001", "error-feed");
+  const meta = JSON.parse(browserEntry.annotations[0].description);
+  delete meta.backendChecks;
+  browserEntry.annotations[0].description = JSON.stringify({
+    ...meta,
+    browserChecks: ["redirect request receives a stubbed response"],
+  });
+  const md = renderCatalog(extractFlows([browserEntry]));
+  assert.match(md, /Browser observations:/);
+  assert.doesNotMatch(md, /Backend state verified:/);
+});

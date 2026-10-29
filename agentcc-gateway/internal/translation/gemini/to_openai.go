@@ -65,16 +65,6 @@ func (t *Translator) RequestToCanonical(body []byte) (*models.ChatCompletionRequ
 		out.Messages = append(out.Messages, msgs...)
 	}
 
-	// Store the per-name ID lists in Extra so a response path can reconstruct
-	// the same correlation if needed.
-	if len(callIDsByName) > 0 {
-		mapBytes, _ := json.Marshal(callIDsByName)
-		if out.Extra == nil {
-			out.Extra = make(map[string]json.RawMessage)
-		}
-		out.Extra["gemini_tool_call_id_map"] = json.RawMessage(mapBytes)
-	}
-
 	// ── 4. generationConfig ──────────────────────────────────────────────────
 	if cfg := req.GenerationConfig; cfg != nil {
 		out.Temperature = cfg.Temperature

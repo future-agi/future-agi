@@ -16,7 +16,8 @@ criteria: "You are evaluating whether a generated SQL query correctly translates
   \n## Inputs\n\n<input>{{input}}</input>\n\n<output>{{output}}</output>"
 eval_tags:
 - Code
-- Text
+- SQL
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

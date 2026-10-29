@@ -135,6 +135,42 @@ def test_build_run_config_view_reads_all_saved_keys():
     }
 
 
+def test_build_run_config_view_passes_through_saved_model_and_choice_keys():
+    binding = _fake_binding(
+        config={
+            "run_config": {
+                "model": "turing_small",
+                "choice_scores": {"yes": 1, "no": 0},
+                "multi_choice": True,
+            }
+        }
+    )
+    result = build_run_config_view(binding)
+    assert result["model"] == "turing_small"
+    assert result["choice_scores"] == {"yes": 1, "no": 0}
+    assert result["multi_choice"] is True
+
+
+def test_build_run_config_view_omits_model_and_choice_keys_when_unsaved():
+    # These three are deliberately not in _RUN_CONFIG_DEFAULTS: absent means
+    # "no override", which lets the picker fall back to the canonical template
+    # model rather than a stripped or stale value.
+    result = build_run_config_view(_fake_binding(config={"run_config": {}}))
+    assert "model" not in result
+    assert "choice_scores" not in result
+    assert "multi_choice" not in result
+
+
+def test_build_run_config_view_preserves_falsy_saved_choice_values():
+    binding = _fake_binding(
+        config={"run_config": {"model": "", "choice_scores": {}, "multi_choice": False}}
+    )
+    result = build_run_config_view(binding)
+    assert result["model"] == ""
+    assert result["choice_scores"] == {}
+    assert result["multi_choice"] is False
+
+
 def test_build_run_config_view_ignores_top_level_run_config_none():
     binding = _fake_binding(config={"run_config": None})
     result = build_run_config_view(binding)
@@ -206,7 +242,12 @@ def test_evaluation_configs_endpoint_surfaces_run_config(
         mapping={"output": "model_output"},
         config={
             "params": {},
-            "run_config": {"model": "gpt-4.1", "agent_mode": "agent"},
+            "run_config": {
+                "model": "gpt-4.1",
+                "agent_mode": "agent",
+                "choice_scores": {"yes": 1, "no": 0},
+                "multi_choice": True,
+            },
         },
     )
 
@@ -216,7 +257,17 @@ def test_evaluation_configs_endpoint_surfaces_run_config(
     row = response.json()["result"]["evaluation_configs"][0]
     assert row["run_config"]["agent_mode"] == "agent"
     assert row["run_config"]["pass_threshold"] == 0.5
-    assert set(row["run_config"].keys()) == set(_RUN_CONFIG_DEFAULTS)
+    # Values, not just key presence: the picker reads these back on edit, and
+    # the whitelist used to drop all three so the form fell back to template
+    # defaults.
+    assert row["run_config"]["model"] == "gpt-4.1"
+    assert row["run_config"]["choice_scores"] == {"yes": 1, "no": 0}
+    assert row["run_config"]["multi_choice"] is True
+    assert set(row["run_config"].keys()) == set(_RUN_CONFIG_DEFAULTS) | {
+        "model",
+        "choice_scores",
+        "multi_choice",
+    }
 
 
 @pytest.mark.django_db

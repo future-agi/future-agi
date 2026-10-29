@@ -80,6 +80,22 @@ jobs:
           key: test-durations-${{ github.run_id }} # never matches; forces prefix restore
           restore-keys: |
             test-durations-
+      - name: Test CI asset verification and failure paths
+        run: python3 -I -m unittest discover -s futureagi/.ci -p 'test_*.py' -v
+      - name: Restore pinned Temporal archive
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/temporal-archive
+          key: temporal-test-server-linux-x64-${{ hashFiles('futureagi/.ci/temporal-test-server.sh') }}
+      - name: Prefetch and verify Temporal test server once per run
+        run: bash futureagi/.ci/temporal-test-server.sh fetch "$RUNNER_TEMP/temporal-archive"
+      - name: Distribute pinned Temporal archive to shards
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: temporal-test-server
+          path: ${{ runner.temp }}/temporal-archive/*.tar.gz
+          if-no-files-found: error
+          compression-level: 0
       - uses: actions/upload-artifact@v4
         with:
           name: test-durations-plan
@@ -93,7 +109,7 @@ jobs:
     name: pytest shard ${{ matrix.group }}
     needs: [changes, plan]
     if: needs.changes.outputs.backend == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -181,8 +197,31 @@ jobs:
           enable-cache: true
           cache-dependency-glob: futureagi/uv.lock
 
-      - name: Install ffmpeg (pydub reads recordings through ffprobe, as in the runtime image)
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
+      - name: Identify exact runner image for the apt cache
+        id: image
+        run: echo "version=${ImageVersion:?}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Ubuntu test packages and indexes
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          # /tmp is traversable by apt's _apt user; ~/.cache need not be.
+          path: /tmp/futureagi-backend-ci-apt
+          # No prefix restores: package closure must match preinstalled libraries.
+          key: backend-ci-apt-ubuntu24-${{ runner.arch }}-${{ steps.image.outputs.version }}-${{ hashFiles('futureagi/.ci/install-test-packages.sh') }}
+
+      - name: Install ffmpeg, ffprobe and xmlsec1 from bounded Ubuntu cache
+        run: bash .ci/install-test-packages.sh /tmp/futureagi-backend-ci-apt
+
+      - name: Fetch this run's pinned Temporal archive
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: temporal-test-server
+          path: ${{ runner.temp }}/temporal-archive
+
+      - name: Verify and install Temporal test server (no downloads)
+        run: |
+          bash .ci/temporal-test-server.sh install "$RUNNER_TEMP/temporal-archive" "$RUNNER_TEMP/temporal-bin"
+          echo "TEMPORAL_TEST_SERVER=$RUNNER_TEMP/temporal-bin/temporal-test-server" >> "$GITHUB_ENV"
 
       - name: Install dependencies (overlaps with service startup)
         run: uv sync --frozen --all-extras
@@ -204,6 +243,9 @@ jobs:
         id: run-shard
         run: |
           set +e
+          # pytest.ini adds -v; -q restores compact module progress. Verbose
+          # auto-generated parameter IDs can exceed 1 MiB and stall Actions log
+          # processing after the tests have passed. Keep full JUnit results.
           uv run pytest -q -ra --ignore=tests/stress \
             --splits "$SPLITS" --group "${{ matrix.group }}" \
             --splitting-algorithm least_duration \
@@ -247,6 +289,76 @@ jobs:
           cat /tmp/compose-up.log || true
           docker compose -f docker-compose.test.yml -p futureagi-test ps
           docker compose -f docker-compose.test.yml -p futureagi-test logs --tail 200
+
+  saml-multiworker:
+    # The SAML race guarantees (one token per duplicated ACS post, no usable
+    # credential from any TX-B interleaving) need two real server processes
+    # sharing one database, so the shards deselect them. This job runs them
+    # against two Granian workers on the test database pytest creates.
+    name: SAML multiworker races
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: futureagi
+    env:
+      CH25_DATABASE: test_tfc
+      CH_DATABASE: test_tfc
+      PYTHONHASHSEED: "0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: futureagi/uv.lock
+
+      - name: Identify exact runner image for the apt cache
+        id: image
+        run: echo "version=${ImageVersion:?}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Ubuntu test packages and indexes
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: /tmp/futureagi-backend-ci-apt
+          key: backend-ci-apt-ubuntu24-${{ runner.arch }}-${{ steps.image.outputs.version }}-${{ hashFiles('futureagi/.ci/install-test-packages.sh') }}
+
+      - name: Install cached xmlsec1 (same package closure as pytest shards)
+        run: bash .ci/install-test-packages.sh /tmp/futureagi-backend-ci-apt
+
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras
+
+      - name: Start test services
+        run: docker compose -f docker-compose.test.yml -p futureagi-test up -d --wait --wait-timeout 180
+
+      - name: Create and migrate the test database
+        # Collecting the module needs the database; without SAML_MULTIWORKER
+        # every case skips, and --reuse-db (pytest.ini) keeps the database.
+        run: uv run pytest saml2_auth/tests/test_multiworker.py -m multiworker --create-db -q
+
+      - name: Run the races against two workers
+        run: |
+          for port in 38001 38002; do
+            DJANGO_SETTINGS_MODULE=tfc.settings.test PG_DB=test_tfc_test \
+            BASE_URL=http://127.0.0.1:38001 APP_URL=127.0.0.1:38001 \
+            SAML_TX_B_BARRIERS_ENABLED=1 \
+              uv run granian --interface asgi --host 127.0.0.1 --port "$port" \
+              --workers 1 tfc.asgi:application > "$RUNNER_TEMP/worker-$port.log" 2>&1 &
+          done
+          for port in 38001 38002; do
+            timeout 120 bash -c "until curl -s -o /dev/null http://127.0.0.1:$port/health/; do sleep 2; done"
+          done
+          SAML_MULTIWORKER=1 SAML_WORKER_URLS=http://127.0.0.1:38001,http://127.0.0.1:38002 \
+            uv run pytest saml2_auth/tests/test_multiworker.py -m multiworker -q -ra
+
+      - name: Dump worker and service logs on failure
+        if: failure()
+        run: |
+          tail -n 200 "$RUNNER_TEMP"/worker-*.log || true
+          docker compose -f docker-compose.test.yml -p futureagi-test logs --tail 100
 
   slim-smoke:
     # The only leg that exercises the slim (base-only) environment the OSS
@@ -408,7 +520,15 @@ jobs:
 
   backend-tests:
     name: Backend Tests Pass # the ONLY required status check
-    needs: [changes, plan, test, slim-smoke, code-executor-base-pin]
+    needs:
+      [
+        changes,
+        plan,
+        test,
+        saml-multiworker,
+        slim-smoke,
+        code-executor-base-pin,
+      ]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

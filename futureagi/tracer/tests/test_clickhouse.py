@@ -3826,11 +3826,13 @@ class TestSessionListQueryBuilder:
         assert "trace_session_id IN %(candidate_session_ids)s" in query
         # Legacy start_time is a replacement-key column: precise acquisition
         # is safe, but native exclusions still bind only after latest replay.
+        # Root acquisition + replay, member acquisition + replay, and the
+        # page's message read: each is pruned to the window.
         assert (
             query.count(
                 "AND start_time >= fromUnixTimestamp64Micro(%(start_date_us)s, 'UTC')"
             )
-            == 2
+            == 5
         )
         assert (
             "latest_start_time >= fromUnixTimestamp64Micro(%(start_date_us)s, 'UTC')"
@@ -3906,11 +3908,13 @@ class TestSessionListQueryBuilder:
         assert query.count("build_page_hydration_query_latest_time_0_end") == 1
         latest = query.split("latest_roots AS (", 1)[1].split("GROUP BY", 1)[0]
         assert "build_page_hydration_query_latest_time_0_start" not in latest
+        # Root acquisition + replay, member acquisition + replay, and the
+        # page's message read: each is pruned to the window.
         assert (
             query.count(
                 "AND start_time >= fromUnixTimestamp64Micro(%(start_date_us)s, 'UTC')"
             )
-            == 2
+            == 5
         )
         assert "GROUP BY project_id, trace_id, id, start_time" in query
         assert (
@@ -3975,11 +3979,13 @@ class TestSessionListQueryBuilder:
         assert query.count("build_page_hydration_query_latest_time_0_end") == 1
         latest = query.split("latest_roots AS (", 1)[1].split("GROUP BY", 1)[0]
         assert "build_page_hydration_query_latest_time_0_start" not in latest
+        # Root acquisition + replay, member acquisition + replay, and the
+        # page's message read: each is pruned to the window.
         assert (
             query.count(
                 "AND start_time >= toStartOfHour(fromUnixTimestamp64Micro(%(start_date_us)s, 'UTC'))"
             )
-            == 2
+            == 5
         )
         assert "%(end_date_us)s - 1" in latest
         assert (

@@ -17,8 +17,10 @@ export default function NavList({ data, depth, slotProps }) {
   const theme = useTheme();
   const pathname = usePathname();
 
+  // activePath lets an item that links to a child route stay active for its
+  // whole section (e.g. Agents → /agents/connected, active under /agents).
   const active = useActiveLink(
-    data.path,
+    data.activePath || data.path,
     !!data.children || !!data.hasChildren,
   );
 

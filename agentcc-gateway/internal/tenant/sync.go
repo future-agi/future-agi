@@ -45,10 +45,13 @@ func SyncFromControlPlane(ctx context.Context, baseURL, adminToken string, store
 		return fmt.Errorf("control plane returned status %d from %s: %s", resp.StatusCode, endpoint, body)
 	}
 
-	// Django response format: {"status": true, "result": {"org_id": {...}, ...}}
+	// Django response format:
+	// {"status": true, "result": {"org_id": {...}, ...}, "unbuilt_org_ids": ["org_id", ...]}
+	// unbuilt_org_ids names orgs whose config the control plane could not build.
 	var envelope struct {
-		Status bool                       `json:"status"`
-		Result map[string]json.RawMessage `json:"result"`
+		Status        bool                       `json:"status"`
+		Result        map[string]json.RawMessage `json:"result"`
+		UnbuiltOrgIDs []string                   `json:"unbuilt_org_ids"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 10<<20)).Decode(&envelope); err != nil {
 		return fmt.Errorf("parsing sync response: %w", err)
@@ -58,8 +61,13 @@ func SyncFromControlPlane(ctx context.Context, baseURL, adminToken string, store
 		return fmt.Errorf("control plane sync: status=false")
 	}
 
-	// Build set of all org IDs in the response (including those that fail to parse).
-	allOrgIDs := make(map[string]struct{}, len(envelope.Result))
+	// Build set of all org IDs in the response, including those that fail to
+	// parse here and those the control plane could not build. MergeBulk keeps
+	// the stored entry of every org in this set that has no parsed config.
+	allOrgIDs := make(map[string]struct{}, len(envelope.Result)+len(envelope.UnbuiltOrgIDs))
+	for _, orgID := range envelope.UnbuiltOrgIDs {
+		allOrgIDs[orgID] = struct{}{}
+	}
 	configs := make(map[string]*OrgConfig, len(envelope.Result))
 	var parseErrors int
 	for orgID, raw := range envelope.Result {
@@ -77,9 +85,15 @@ func SyncFromControlPlane(ctx context.Context, baseURL, adminToken string, store
 	}
 
 	store.MergeBulk(configs, allOrgIDs)
+	if len(envelope.UnbuiltOrgIDs) > 0 {
+		slog.Warn("control plane sync: control plane could not build some org configs, keeping existing entries",
+			"org_ids", envelope.UnbuiltOrgIDs,
+		)
+	}
 	slog.Info("control plane sync completed",
 		"orgs_loaded", len(configs),
 		"parse_errors", parseErrors,
+		"unbuilt", len(envelope.UnbuiltOrgIDs),
 	)
 	return nil
 }

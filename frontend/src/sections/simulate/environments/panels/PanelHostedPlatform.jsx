@@ -23,20 +23,23 @@ import { HOSTED_PLATFORMS_BY_TYPE, HOSTED_EMPTY_ROSTER_COPY } from "../hostedPla
    of agent is being connected. Default to voice (what we integrate with today)
    and seed the platform to that type's first entry. `simMode` is web (WebRTC) or
    phone (PSTN); `inboundCalls` is the old call-direction binary (on = inbound);
-   `agentSpeaksFirst` waits for the agent's greeting. `otherPrompt` is the
-   Others-only system prompt. */
+   `agentSpeaksFirst` waits for the agent's greeting. `systemPrompt` is the
+   pasted prompt Others and LiveKit need, since neither exposes one to fetch;
+   `livekitUrl` and `apiSecret` are LiveKit-only. */
 const initial = {
   agentType: AGENT_TYPES.VOICE,
   platform: (HOSTED_PLATFORMS_BY_TYPE[AGENT_TYPES.VOICE] || [])[0]?.id || "",
   id: "",
   key: "",
+  apiSecret: "",
+  livekitUrl: "",
   repoUrl: "",
   simMode: "web",
   countryIso: "US",
   contactNumber: "",
   inboundCalls: true,
   agentSpeaksFirst: false,
-  otherPrompt: "",
+  systemPrompt: "",
   scenarioCount: DEFAULT_SCENARIOS,
 };
 
@@ -55,8 +58,8 @@ export default function PanelHostedPlatform() {
     build.resetPreflight();
   };
   const {
-    agentType, platform, id, key, repoUrl,
-    simMode, countryIso, contactNumber, inboundCalls, agentSpeaksFirst, otherPrompt,
+    agentType, platform, id, key, apiSecret, livekitUrl, repoUrl,
+    simMode, countryIso, contactNumber, inboundCalls, agentSpeaksFirst, systemPrompt,
     scenarioCount,
   } = form;
   const platforms = HOSTED_PLATFORMS_BY_TYPE[agentType] || [];
@@ -74,22 +77,30 @@ export default function PanelHostedPlatform() {
     set("platform")(first?.id || "");
     set("id")("");
     set("key")("");
+    set("apiSecret")("");
+    set("livekitUrl")("");
     set("repoUrl")("");
-    set("otherPrompt")("");
+    set("systemPrompt")("");
   };
 
   const chosen = platforms.find((p) => p.id === platform) || platforms[0];
   const isOther = !!chosen?.isOther;
+  const isLiveKit = !!chosen?.isLiveKit;
   // Others has no WebRTC path, so it requires a number regardless of simMode;
   // other voice envs only require it in Phone mode.
-  const phoneRequired = agentType === AGENT_TYPES.VOICE && (isOther || simMode === "phone");
+  const phoneRequired =
+    agentType === AGENT_TYPES.VOICE && (isOther || (!isLiveKit && simMode === "phone"));
   const phoneOk =
     !phoneRequired || isValidPhoneNumber(COUNTRY_BY_ISO[countryIso]?.dial, contactNumber);
   const phoneError = phoneRequired
     ? phoneNumberError(COUNTRY_BY_ISO[countryIso]?.dial, contactNumber)
     : null;
   const preflightBlockedReason = phoneError ? `Contact number: ${phoneError}` : null;
-  const credsOk = isOther ? !!otherPrompt.trim() : (!!id.trim() && !!key.trim());
+  const hasPrompt = !!systemPrompt.trim();
+  const credsOk = isOther
+    ? hasPrompt
+    : !!id.trim() && !!key.trim() &&
+      (!isLiveKit || (!!apiSecret.trim() && !!livekitUrl.trim() && hasPrompt));
   const canGo = !!chosen && credsOk && phoneOk;
 
   const buildSource = () => ({
@@ -98,12 +109,19 @@ export default function PanelHostedPlatform() {
     provider: chosen?.id,
     scenarioCount: Number(scenarioCount) || undefined,
     ...(isOther
-      ? { agentMode: "prompt", prompt: otherPrompt.trim() }
+      ? { agentMode: "prompt", prompt: systemPrompt.trim() }
       : { agentId: id.trim(), apiKey: key.trim() }),
+    ...(isLiveKit
+      ? {
+          apiSecret: apiSecret.trim(),
+          livekitUrl: livekitUrl.trim(),
+          prompt: systemPrompt.trim(),
+        }
+      : {}),
     ...(repoUrl.trim() ? { repoUrl: repoUrl.trim() } : {}),
     ...(agentType === AGENT_TYPES.VOICE
       ? (() => {
-          const contactMode = isOther ? "phone" : simMode;
+          const contactMode = isOther ? "phone" : isLiveKit ? "web" : simMode;
           return {
             // Others is always inbound; its toggle is locked on.
             callDirection: isOther || inboundCalls ? "inbound" : "outbound",
@@ -172,7 +190,7 @@ export default function PanelHostedPlatform() {
               label="System prompt"
               required
               placeholder="You are a friendly returns agent for Acme…"
-              value={otherPrompt} onChange={set("otherPrompt")}
+              value={systemPrompt} onChange={set("systemPrompt")}
               multiline
               helper="The platform dials the number below with its own telephony. The prompt only seeds scenarios; it never changes the live agent."
             />
@@ -186,6 +204,15 @@ export default function PanelHostedPlatform() {
                 autoComplete="new-password"
                 mono
               />
+              {isLiveKit && (
+                <Field
+                  label="LiveKit URL"
+                  required
+                  placeholder="wss://your-project.livekit.cloud"
+                  value={livekitUrl} onChange={set("livekitUrl")}
+                  mono
+                />
+              )}
               <Field
                 label={chosen.keyLabel || "API key"}
                 required
@@ -196,6 +223,27 @@ export default function PanelHostedPlatform() {
                 mono
                 helper="Stored encrypted; used only to invoke the agent on your behalf."
               />
+              {isLiveKit && (
+                <>
+                  <Field
+                    label="LiveKit API secret"
+                    required
+                    placeholder="secret…"
+                    value={apiSecret} onChange={set("apiSecret")}
+                    type="password"
+                    autoComplete="new-password"
+                    mono
+                  />
+                  <Field
+                    label="System prompt"
+                    required
+                    placeholder="You are a friendly returns agent for Acme…"
+                    value={systemPrompt} onChange={set("systemPrompt")}
+                    multiline
+                    helper="LiveKit doesn't expose your agent's prompt, so paste it here. It only seeds scenarios; it never changes the live agent."
+                  />
+                </>
+              )}
             </>
           )}
           {agentType === AGENT_TYPES.VOICE && (
@@ -206,6 +254,7 @@ export default function PanelHostedPlatform() {
               inboundCalls={inboundCalls} onInboundCalls={set("inboundCalls")}
               agentSpeaksFirst={agentSpeaksFirst} onAgentSpeaksFirst={set("agentSpeaksFirst")}
               phoneOnly={isOther}
+              webOnly={isLiveKit}
             />
           )}
           <Field

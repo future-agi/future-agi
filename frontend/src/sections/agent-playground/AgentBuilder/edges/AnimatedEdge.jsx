@@ -201,14 +201,22 @@ export default function AnimatedEdge({
       if (isWorkflowRunning || isReadOnly) return;
 
       const sourceNode = getNode(source);
+      if (!sourceNode) {
+        // Only reachable from a *deferred* Agent insert (TH-4549 setup dialog):
+        // the source node was deleted while the dialog was open. Never attach
+        // a new node to a source that no longer exists (PRD R-13).
+        enqueueSnackbar(
+          "The node this Agent node was going to attach to no longer exists. Choose a new target.",
+          { variant: "warning" },
+        );
+        return;
+      }
 
       // Position the new node branching from the source
-      const position = sourceNode
-        ? {
-            x: sourceNode.position.x + NODE_X_OFFSET,
-            y: sourceNode.position.y,
-          }
-        : undefined;
+      const position = {
+        x: sourceNode.position.x + NODE_X_OFFSET,
+        y: sourceNode.position.y,
+      };
 
       // One-to-many: add new node with edge from source, keep existing edge intact
       addNode({

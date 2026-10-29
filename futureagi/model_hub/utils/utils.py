@@ -16,11 +16,7 @@ from django.utils.functional import SimpleLazyObject
 from huggingface_hub.errors import HfHubHTTPError
 from litellm.llms.custom_llm import CustomLLM, ModelResponse
 
-logger = structlog.get_logger(__name__)
-
 from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
-
-# (available_models always available)
 from model_hub.models.ai_model import AIModel
 from model_hub.models.api_key import ApiKey
 from model_hub.models.choices import DataTypeChoices
@@ -35,6 +31,8 @@ from tfc.settings.settings import (
 from tfc.utils.clickhouse import ClickHouseClientSingleton
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.types import ClickhouseDatatypes
+
+logger = structlog.get_logger(__name__)
 
 
 # The HuggingFace Hub now emits the `List` feature type (datasets 4.0) in dataset
@@ -486,16 +484,17 @@ async def send_message_to_channel_async(organization_id, message):
         # raise e
 
 
-async def send_message_to_uuid_async(uuid, message):
+async def send_message_to_uuid_async(uuid, message, organization_id=None):
     if not isinstance(message, dict):
         logger.exception(f"Message is not a dictionary: {message}")
         return
     channel_name = f"uuid_{uuid}"
     channel_layer = get_channel_layer()
     try:
-        await channel_layer.group_send(
-            channel_name, {"type": "send_data", "data": message}
-        )
+        event = {"type": "send_data", "data": message}
+        await channel_layer.group_send(channel_name, event)
+        if organization_id is not None:
+            await channel_layer.group_send(f"uuid_org_{organization_id}_{uuid}", event)
     except Exception as e:
         logger.exception(
             f"websocket: Error sending message to channel {channel_name}: {str(e)}"
@@ -503,19 +502,19 @@ async def send_message_to_uuid_async(uuid, message):
         # raise e
 
 
-async def broadcast_to_uuid_async(uuid, data):
+async def broadcast_to_uuid_async(uuid, data, organization_id=None):
     if not isinstance(data, dict):
         logger.exception(f"Message is not a dictionary: {data}")
         return
     channel_layer = get_channel_layer()
     try:
-        await channel_layer.group_send(
-            f"uuid_{uuid}",
-            {
-                "type": "send_data",
-                "data": {"type": "message_type", "data": data, "uuid": uuid},
-            },
-        )
+        event = {
+            "type": "send_data",
+            "data": {"type": "message_type", "data": data, "uuid": uuid},
+        }
+        await channel_layer.group_send(f"uuid_{uuid}", event)
+        if organization_id is not None:
+            await channel_layer.group_send(f"uuid_org_{organization_id}_{uuid}", event)
     except Exception as e:
         logger.exception(
             f"websocket: Error sending message to channel uuid {uuid}: {str(e)}"
@@ -608,13 +607,13 @@ def get_diff(base_text, modified_text):
     return result
 
 
-def send_message_to_uuid(uuid, message):
+def send_message_to_uuid(uuid, message, organization_id=None):
     """
     Synchronous wrapper for sending messages to a specific UUID channel
     """
     try:
         # Try using async_to_sync first
-        async_to_sync(send_message_to_uuid_async)(uuid, message)
+        async_to_sync(send_message_to_uuid_async)(uuid, message, organization_id)
     except RuntimeError:
         # If that fails (which can happen in Celery), use a more
         # careful approach to event loop management
@@ -632,9 +631,12 @@ def send_message_to_uuid(uuid, message):
             # Get a fresh channel layer in this loop's context
             channel_layer = get_channel_layer()
             try:
-                await channel_layer.group_send(
-                    channel_name, {"type": "send_data", "data": message}
-                )
+                event = {"type": "send_data", "data": message}
+                await channel_layer.group_send(channel_name, event)
+                if organization_id is not None:
+                    await channel_layer.group_send(
+                        f"uuid_org_{organization_id}_{uuid}", event
+                    )
             except Exception as e:
                 logger.exception(
                     f"websocket: Error sending message to channel {channel_name}: {str(e)}"
@@ -649,13 +651,13 @@ def send_message_to_uuid(uuid, message):
             new_loop.close()
 
 
-def broadcast_to_uuid(uuid, data):
+def broadcast_to_uuid(uuid, data, organization_id=None):
     """
     Synchronous wrapper for broadcasting messages to a specific UUID channel
     """
     try:
         # Try using async_to_sync first
-        async_to_sync(broadcast_to_uuid_async)(uuid, data)
+        async_to_sync(broadcast_to_uuid_async)(uuid, data, organization_id)
     except RuntimeError:
         # If that fails (which can happen in Celery), use a more
         # careful approach to event loop management
@@ -672,13 +674,15 @@ def broadcast_to_uuid(uuid, data):
             # Get a fresh channel layer in this loop's context
             channel_layer = get_channel_layer()
             try:
-                await channel_layer.group_send(
-                    f"uuid_{uuid}",
-                    {
-                        "type": "send_data",
-                        "data": {"type": "message_type", "data": data, "uuid": uuid},
-                    },
-                )
+                event = {
+                    "type": "send_data",
+                    "data": {"type": "message_type", "data": data, "uuid": uuid},
+                }
+                await channel_layer.group_send(f"uuid_{uuid}", event)
+                if organization_id is not None:
+                    await channel_layer.group_send(
+                        f"uuid_org_{organization_id}_{uuid}", event
+                    )
             except Exception as e:
                 logger.exception(
                     f"websocket: Error sending message to channel uuid {uuid}: {str(e)}"

@@ -31,12 +31,16 @@ describe("buildSummaryRow", () => {
     expect(row.scores).toEqual({ task_success: 49, policy: 28 });
   });
 
-  it("nulls the columns the backend does not provide (no fabricated values)", () => {
+  it("leaves tokens and cost empty: the runs list has no field for them", () => {
     const row = buildSummaryRow(run, {});
     expect(row.tokens).toBeNull();
     expect(row.cost).toBeNull();
-    expect(row.saidNotDone).toBeNull();
-    expect(row.meanReturn).toBeNull();
+  });
+
+  it("carries no columns the API has no data for", () => {
+    const row = buildSummaryRow(run, {});
+    expect(row).not.toHaveProperty("saidNotDone");
+    expect(row).not.toHaveProperty("meanReturn");
   });
 
   it("does not divide by zero on an empty run", () => {

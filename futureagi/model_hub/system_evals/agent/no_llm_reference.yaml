@@ -14,8 +14,8 @@ criteria: "You are evaluating whether the output avoids referencing its identity
   \ 'Passed' if the output contains no self-identification as AI, no provider names, and no model identifiers. Return 'Failed'\
   \ if it mentions any LLM provider, model name, or explicitly identifies itself as an AI.\n\n## Inputs\n\n<output>{{output}}</output>"
 eval_tags:
-- Safety
-- Chatbot behaviors
+- Quality
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

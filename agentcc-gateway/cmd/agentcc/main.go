@@ -451,7 +451,8 @@ func main() {
 	}
 
 	// Create cost tracking plugin.
-	plugins = append(plugins, costplugin.New(cfg.CostTracking.Enabled, modelDBGetter, tenantStore, cfg.CostTracking.AliasCostFactors))
+	costPlugin := costplugin.New(cfg.CostTracking.Enabled, modelDBGetter, tenantStore, cfg.CostTracking.AliasCostFactors)
+	plugins = append(plugins, costPlugin)
 
 	// Create credits plugin for managed keys with optional Redis backend.
 	if keyStore != nil {
@@ -577,6 +578,7 @@ func main() {
 
 	// Create and start server (shares the same ModelDB pointer for hot-reload).
 	srv := server.New(cfg, *configPath, registry, engine, keyStore, grEngine, policyStore, metricsRegistry, &sharedModelDB, tenantStore, onOrgConfigChange, redisClient)
+	costPlugin.SetPriceTables(srv.PriceTableName)
 
 	// Register onChange callback on tenantStore so that periodic sync (MergeBulk)
 	// evicts the OrgProviderCache for any org whose config changed. Without this,
