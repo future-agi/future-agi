@@ -34518,10 +34518,12 @@ export const SimulateApiAgentFixRunsCandidatesMakeDefaultResponse = zod.object({
 /**
  * The candidate's change as a git patch on the base version, to apply by hand.
  */
-export const SimulateApiAgentFixRunsCandidatesPatchParams = zod.object({
-  id: zod.string(),
-  candidate_id: zod.string(),
-});
+export const SimulateApiAgentFixRunsCandidatesCandidatePatchParams = zod.object(
+  {
+    id: zod.string(),
+    candidate_id: zod.string(),
+  },
+);
 
 /**
  * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,

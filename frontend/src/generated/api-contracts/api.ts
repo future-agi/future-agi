@@ -58174,30 +58174,30 @@ export const simulateApiAgentFixRunsCandidatesMakeDefault = async (
   );
 };
 
-export type simulateApiAgentFixRunsCandidatesPatchResponse200 = {
+export type simulateApiAgentFixRunsCandidatesCandidatePatchResponse200 = {
   data: void;
   status: 200;
 };
 
-export type simulateApiAgentFixRunsCandidatesPatchResponseDefault = {
+export type simulateApiAgentFixRunsCandidatesCandidatePatchResponseDefault = {
   data: ManagementAPIErrorResponseApi;
   status: Exclude<HTTPStatusCodes, 200>;
 };
 
-export type simulateApiAgentFixRunsCandidatesPatchResponseSuccess =
-  simulateApiAgentFixRunsCandidatesPatchResponse200 & {
+export type simulateApiAgentFixRunsCandidatesCandidatePatchResponseSuccess =
+  simulateApiAgentFixRunsCandidatesCandidatePatchResponse200 & {
     headers: Headers;
   };
-export type simulateApiAgentFixRunsCandidatesPatchResponseError =
-  simulateApiAgentFixRunsCandidatesPatchResponseDefault & {
+export type simulateApiAgentFixRunsCandidatesCandidatePatchResponseError =
+  simulateApiAgentFixRunsCandidatesCandidatePatchResponseDefault & {
     headers: Headers;
   };
 
-export type simulateApiAgentFixRunsCandidatesPatchResponse =
-  | simulateApiAgentFixRunsCandidatesPatchResponseSuccess
-  | simulateApiAgentFixRunsCandidatesPatchResponseError;
+export type simulateApiAgentFixRunsCandidatesCandidatePatchResponse =
+  | simulateApiAgentFixRunsCandidatesCandidatePatchResponseSuccess
+  | simulateApiAgentFixRunsCandidatesCandidatePatchResponseError;
 
-export const getSimulateApiAgentFixRunsCandidatesPatchUrl = (
+export const getSimulateApiAgentFixRunsCandidatesCandidatePatchUrl = (
   id: string,
   candidateId: string,
 ) => {
@@ -58207,13 +58207,13 @@ export const getSimulateApiAgentFixRunsCandidatesPatchUrl = (
 /**
  * The candidate's change as a git patch on the base version, to apply by hand.
  */
-export const simulateApiAgentFixRunsCandidatesPatch = async (
+export const simulateApiAgentFixRunsCandidatesCandidatePatch = async (
   id: string,
   candidateId: string,
   options?: RequestInit,
-): Promise<simulateApiAgentFixRunsCandidatesPatchResponse> => {
-  return apiMutator<simulateApiAgentFixRunsCandidatesPatchResponse>(
-    getSimulateApiAgentFixRunsCandidatesPatchUrl(id, candidateId),
+): Promise<simulateApiAgentFixRunsCandidatesCandidatePatchResponse> => {
+  return apiMutator<simulateApiAgentFixRunsCandidatesCandidatePatchResponse>(
+    getSimulateApiAgentFixRunsCandidatesCandidatePatchUrl(id, candidateId),
     {
       ...options,
       method: "GET",

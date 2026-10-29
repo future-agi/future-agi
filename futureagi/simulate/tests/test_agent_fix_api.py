@@ -691,6 +691,13 @@ class TestUserApi:
             f'attachment; filename="fix-{fix_run.id}-attempt-3.patch"'
         )
 
+    def test_http_patch_is_not_an_action_of_a_fix(self, auth_client, source_run):
+        fix_run = _fix_run(source_run)
+
+        response = auth_client.patch(f"{BASE}/{fix_run.id}/", {}, format="json")
+
+        assert response.status_code == 405
+
     def test_a_proven_candidate_is_made_the_default(
         self, auth_client, environment, source_run
     ):

@@ -27864,7 +27864,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/patch/": {
       get: {
-        operationId: "simulate_api_agent-fix-runs_candidates_patch",
+        operationId: "simulate_api_agent-fix-runs_candidates_candidate_patch",
         runtimeRequestValidation: false,
         runtimeResponseValidation: false,
         requestBody: null,

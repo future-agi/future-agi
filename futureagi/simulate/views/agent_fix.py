@@ -206,7 +206,8 @@ class AgentFixRunViewSet(viewsets.ViewSet):
         methods=["get"],
         url_path=r"candidates/(?P<candidate_id>[0-9a-f-]{36})/patch",
     )
-    def patch(self, request, pk=None, candidate_id=None):
+    # Not named `patch`: a viewset method by that name answers HTTP PATCH on every route.
+    def candidate_patch(self, request, pk=None, candidate_id=None):
         """The candidate's change as a git patch on the base version, to apply by hand."""
         candidate = self._candidate(request, pk, candidate_id)
         if candidate is None:
