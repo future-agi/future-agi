@@ -138,8 +138,6 @@ class AgentFixEngineAuthentication(BaseAuthentication):
     rotated, has nothing left to do and exits.
     """
 
-    require_fence = True
-
     def authenticate(self, request):
         from django.utils import timezone
 
@@ -163,29 +161,16 @@ class AgentFixEngineAuthentication(BaseAuthentication):
             raise refuse(
                 "authentication_invalid", "the fix run bearer is invalid"
             ) from exc
-        fence = request.headers.get("X-Fix-Fence", "")
         if not fix_run.token_hash or not secrets.compare_digest(
             fix_run.token_hash, hash_secret(token)
         ):
             raise refuse("authentication_invalid", "the fix run bearer is invalid")
-        if self.require_fence and (
-            not fence
-            or not secrets.compare_digest(fix_run.fence_hash, hash_secret(fence))
-        ):
-            raise refuse("fix_sandbox_replaced", "a newer sandbox runs this fix")
         if (
             fix_run.token_expires_at is None
             or timezone.now() >= fix_run.token_expires_at
         ):
             raise refuse("authentication_expired", "the fix run bearer has expired")
         return AgentFixEngineUser(fix_run), fix_run
-
-
-class AgentFixModelAuthentication(AgentFixEngineAuthentication):
-    """The engine's model calls. An OpenAI-compatible client sends the token alone; a
-    relaunch rotates the token with the fence, so a replaced sandbox is still refused."""
-
-    require_fence = False
 
 
 class HarnessConversationUser:

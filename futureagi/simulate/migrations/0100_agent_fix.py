@@ -87,7 +87,6 @@ class Migration(migrations.Migration):
                     models.CharField(blank=True, default="", max_length=255),
                 ),
                 ("token_hash", models.CharField(blank=True, default="", max_length=64)),
-                ("fence_hash", models.CharField(blank=True, default="", max_length=64)),
                 ("token_expires_at", models.DateTimeField(blank=True, null=True)),
                 ("heartbeat_at", models.DateTimeField(blank=True, null=True)),
                 (
@@ -210,7 +209,7 @@ class Migration(migrations.Migration):
             field=models.ForeignKey(
                 blank=True,
                 null=True,
-                on_delete=django.db.models.deletion.PROTECT,
+                on_delete=django.db.models.deletion.CASCADE,
                 related_name="check_runs",
                 to="simulate.agentfixrun",
             ),

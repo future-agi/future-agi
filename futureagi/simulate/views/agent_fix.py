@@ -12,10 +12,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from simulate.authentication import (
-    AgentFixEngineAuthentication,
-    AgentFixModelAuthentication,
-)
+from simulate.authentication import AgentFixEngineAuthentication
 from simulate.models import AgentFixCandidate, AgentFixRun, HostedHarnessJob
 from simulate.pydantic_schemas.agent_fix import (
     CandidateCreated,
@@ -328,7 +325,7 @@ class AgentFixModelView(APIView):
     """The engine's model calls, at the path an OpenAI-compatible client builds from its
     base URL: no trailing slash, so it is routed on its own, not by the router."""
 
-    authentication_classes = [AgentFixModelAuthentication]
+    authentication_classes = [AgentFixEngineAuthentication]
     permission_classes = [IsAuthenticated]
     content_negotiation_class = _GatewayReply
 

@@ -489,9 +489,7 @@ class TestAddCandidate:
     [
         lambda fix_run: _candidate(fix_run),
         lambda fix_run: _check(fix_run),
-        lambda fix_run: engine.apply_report(
-            fix_run, EngineReport(stage="x", spent_usd=0)
-        ),
+        lambda fix_run: engine.apply_report(fix_run, EngineReport(stage="x")),
         lambda fix_run: engine.store_checkpoint(fix_run, b"{}"),
     ],
     ids=["candidate", "check-run", "report", "checkpoint"],
@@ -806,21 +804,18 @@ class TestBrief:
 
 
 class TestReport:
-    def test_spend_never_goes_down(self, source_run):
+    def test_a_report_leaves_the_metered_spend_alone(self, source_run):
+        # Only the model proxy writes spend; the engine's own figure is not trusted.
         fix_run = _fix_run(source_run, spent_usd=Decimal("2"))
 
-        lower = engine.apply_report(fix_run, EngineReport(stage="coding", spent_usd=1))
-        higher = engine.apply_report(
-            fix_run, EngineReport(stage="proving", spent_usd=3)
-        )
+        reported = engine.apply_report(fix_run, EngineReport(stage="coding"))
 
-        assert (lower.spent_usd, lower.stage) == (Decimal("2"), "coding")
-        assert (higher.spent_usd, higher.stage, higher.state) == (
-            Decimal("3"),
-            "proving",
+        assert (reported.spent_usd, reported.stage, reported.state) == (
+            Decimal("2"),
+            "coding",
             State.RUNNING,
         )
-        assert higher.heartbeat_at is not None
+        assert reported.heartbeat_at is not None
 
     def test_updates_this_fixs_candidates_only(self, source_run):
         fix_run = _fix_run(source_run)
@@ -845,7 +840,6 @@ class TestReport:
             fix_run,
             EngineReport(
                 stage="judging",
-                spent_usd=1,
                 candidates=[
                     CandidateUpdate(
                         candidate_id=str(mine.id), outcome="rejected", verdict=verdict
@@ -874,25 +868,24 @@ class TestReport:
         ],
     )
     def test_an_ending_closes_the_fix_in_its_state(self, source_run, ending, state):
-        fix_run = _fix_run(
-            source_run, token_hash=hash_secret("t"), fence_hash=hash_secret("f")
-        )
+        fix_run = _fix_run(source_run, token_hash=hash_secret("t"))
 
         closed = engine.apply_report(
             fix_run,
-            EngineReport(stage="done", spent_usd=1, ending=ending, summary="why"),
+            EngineReport(stage="done", ending=ending, summary="why"),
         )
 
         closed.refresh_from_db()
         assert closed.state == state
-        assert (closed.token_hash, closed.fence_hash) == ("", "")
+        assert closed.token_hash == ""
         assert closed.finished_at is not None
         assert closed.report["summary"] == "why"
         assert "candidates" not in closed.report
         # A report after the ending is refused: the engine exits.
-        assert _refusal(
-            engine.apply_report, closed, EngineReport(stage="late", spent_usd=2)
-        ) == ("fix_run_not_running", 409)
+        assert _refusal(engine.apply_report, closed, EngineReport(stage="late")) == (
+            "fix_run_not_running",
+            409,
+        )
 
 
 class TestClose:
@@ -913,7 +906,6 @@ class TestClose:
             fix_run,
             EngineReport(
                 stage="done",
-                spent_usd=2,
                 ending=Ending.READY,
                 candidates=[
                     CandidateUpdate(candidate_id=str(candidates[one].id), outcome=one)
@@ -1044,7 +1036,6 @@ class TestMakeDefault:
             fix_run,
             EngineReport(
                 stage="done",
-                spent_usd=1,
                 ending=Ending.READY,
                 winner_candidate_id=str(candidate.id),
             ),

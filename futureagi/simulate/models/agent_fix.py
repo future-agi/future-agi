@@ -67,12 +67,11 @@ class AgentFixRun(BaseModel):
     checkpoint_key = models.CharField(max_length=512, blank=True, default="")
     started_at = models.DateTimeField(null=True, blank=True)
     finished_at = models.DateTimeField(null=True, blank=True)
-    # The sandbox now running the engine. A relaunch rotates the token and the fence,
-    # so a sandbox that outlived its attempt can no longer call back.
+    # The sandbox now running the engine. A relaunch rotates the token, so a sandbox
+    # that outlived its attempt can no longer call back.
     sandbox_attempt = models.PositiveIntegerField(default=0)
     sandbox_ref = models.CharField(max_length=255, blank=True, default="")
     token_hash = models.CharField(max_length=64, blank=True, default="")
-    fence_hash = models.CharField(max_length=64, blank=True, default="")
     token_expires_at = models.DateTimeField(null=True, blank=True)
     heartbeat_at = models.DateTimeField(null=True, blank=True)
 

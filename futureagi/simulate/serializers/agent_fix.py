@@ -152,7 +152,6 @@ class AgentFixCandidateUpdateSerializer(serializers.Serializer):
 
 class AgentFixEngineReportSerializer(serializers.Serializer):
     stage = serializers.CharField(max_length=32)
-    spent_usd = serializers.FloatField(min_value=0)
     candidates = AgentFixCandidateUpdateSerializer(
         many=True, required=False, default=list
     )

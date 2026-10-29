@@ -58,7 +58,7 @@ pytestmark = pytest.mark.django_db
 
 BASE = "/simulate/api/agent-fix-runs"
 ENGINE = "/simulate/api/agent-fix-engine"
-TOKEN, FENCE = "token-1", "fence-1"
+TOKEN = "token-1"
 ENGINE_MODEL = "deepseek/deepseek-v4.1-flash"
 PLATFORM_KEY = "platform-harness-key"
 
@@ -73,14 +73,13 @@ def _armed(fix_run, *, expires_in=timedelta(hours=1)):
     """Give the fix the credentials its sandbox holds."""
     AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
         token_hash=hash_secret(TOKEN),
-        fence_hash=hash_secret(FENCE),
         token_expires_at=timezone.now() + expires_in,
     )
     return fix_run
 
 
-def _engine(client, method, fix_run, path, *, token=TOKEN, fence=FENCE, **kwargs):
-    headers = {"HTTP_X_FIX_FENCE": fence}
+def _engine(client, method, fix_run, path, *, token=TOKEN, **kwargs):
+    headers = {}
     if token is not None:
         headers["HTTP_AUTHORIZATION"] = f"Bearer {token}"
     return getattr(client, method)(f"{ENGINE}/{fix_run.id}/{path}", **headers, **kwargs)
@@ -111,10 +110,8 @@ class TestEngineAuthentication:
         [
             ({"token": "token-2"}, "authentication_invalid"),
             ({"token": None}, "authentication_required"),
-            ({"fence": "fence-0"}, "fix_sandbox_replaced"),
-            ({"fence": ""}, "fix_sandbox_replaced"),
         ],
-        ids=["wrong-token", "no-bearer", "rotated-fence", "no-fence"],
+        ids=["wrong-token", "no-bearer"],
     )
     def test_wrong_credentials_are_refused(self, api_client, source_run, sent, code):
         fix_run = _armed(_fix_run(source_run))
@@ -213,7 +210,6 @@ class TestEngineCalls:
             "report/",
             data={
                 "stage": "done",
-                "spent_usd": 1.5,
                 "ending": "ready",
                 "winner_candidate_id": candidate["candidate_id"],
             },
@@ -234,7 +230,7 @@ class TestEngineCalls:
                 {"label": "x", "agent_version_id": "a"},
                 "agent_version_id",
             ),
-            ("report/", {"stage": "x" * 33, "spent_usd": 1}, "stage"),
+            ("report/", {"stage": "x" * 33}, "stage"),
         ],
         ids=[
             "candidate-without-files",
@@ -261,7 +257,7 @@ class TestEngineCalls:
         [
             (
                 "report/",
-                {"stage": "x", "spent_usd": 1, "winner_candidate_id": "not-a-uuid"},
+                {"stage": "x", "winner_candidate_id": "not-a-uuid"},
                 "json",
             ),
             (
@@ -312,13 +308,12 @@ class TestEngineModelCalls:
         ) as post:
             yield post
 
-    def _complete(self, client, fix_run, *, fence=FENCE, HTTP_ACCEPT="*/*", **body):
+    def _complete(self, client, fix_run, *, HTTP_ACCEPT="*/*", **body):
         return _engine(
             client,
             "post",
             fix_run,
             "v1/chat/completions",
-            fence=fence,
             data=json.dumps({"model": ENGINE_MODEL, "messages": [], **body}),
             content_type="application/json",
             HTTP_ACCEPT=HTTP_ACCEPT,
@@ -329,8 +324,7 @@ class TestEngineModelCalls:
     ):
         fix_run = _armed(_fix_run(source_run))
 
-        # An OpenAI-compatible client sends its token and no fence.
-        response = self._complete(api_client, fix_run, fence="")
+        response = self._complete(api_client, fix_run)
 
         assert response.status_code == 200, response.content
         assert response.json() == {"choices": [{"message": {"content": "diagnosis"}}]}
@@ -416,7 +410,6 @@ class TestEngineModelCalls:
             fix_run,
             "v1/chat/completions",
             token="token-0",
-            fence="",
             data=json.dumps({"model": ENGINE_MODEL}),
             content_type="application/json",
         )
@@ -654,6 +647,14 @@ class TestCheckRunsStayOutOfTheUsersRuns:
             str(runs.latest.test_execution_id),
         } <= listed
         assert str(runs.check.test_execution_id) not in listed
+
+    def test_the_harness_job_list(self, auth_client, runs):
+        response = auth_client.get("/simulate/api/harness-jobs/")
+
+        assert response.status_code == 200, response.content
+        listed = {row["job"]["job_id"] for row in response.json()}
+        assert {str(runs.first.id), str(runs.latest.id)} <= listed
+        assert str(runs.check.id) not in listed
 
     def test_the_run_compared_against_by_default(self, runs):
         execution = Execution.objects.get(id=runs.latest.test_execution_id)

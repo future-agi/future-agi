@@ -34202,8 +34202,6 @@ export const SimulateApiAgentFixEngineReportParams = zod.object({
 
 export const simulateApiAgentFixEngineReportBodyStageMax = 32;
 
-export const simulateApiAgentFixEngineReportBodySpentUsdMin = 0;
-
 export const simulateApiAgentFixEngineReportBodyCandidatesItemVerdictMustPassWithinNoiseDefault =
   [];
 export const simulateApiAgentFixEngineReportBodyCandidatesDefault = [];
@@ -34211,7 +34209,6 @@ export const simulateApiAgentFixEngineReportBodySummaryDefault = ``;
 
 export const SimulateApiAgentFixEngineReportBody = zod.object({
   stage: zod.string().min(1).max(simulateApiAgentFixEngineReportBodyStageMax),
-  spent_usd: zod.number().min(simulateApiAgentFixEngineReportBodySpentUsdMin),
   candidates: zod
     .array(
       zod.object({

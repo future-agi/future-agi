@@ -124422,8 +124422,7 @@
         },
         "AgentFixEngineReport": {
             "required": [
-                "stage",
-                "spent_usd"
+                "stage"
             ],
             "type": "object",
             "properties": {
@@ -124432,11 +124431,6 @@
                     "type": "string",
                     "maxLength": 32,
                     "minLength": 1
-                },
-                "spent_usd": {
-                    "title": "Spent usd",
-                    "type": "number",
-                    "minimum": 0
                 },
                 "candidates": {
                     "type": "array",

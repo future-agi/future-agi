@@ -173,15 +173,15 @@ def _capability(sandbox):
 
 def _engine_request(fix_run, credentials):
     request = RequestFactory().post(
-        "/",
-        HTTP_AUTHORIZATION=f"Bearer {credentials.token}",
-        HTTP_X_FIX_FENCE=credentials.fence,
+        "/", HTTP_AUTHORIZATION=f"Bearer {credentials.token}"
     )
     request.resolver_match = SimpleNamespace(kwargs={"pk": str(fix_run.id)})
     return request
 
 
-def test_rotation_stores_only_hashes_and_a_second_rotation_fences_the_first(fix_run):
+def test_rotation_stores_only_a_hash_and_a_second_rotation_locks_out_the_first(
+    fix_run,
+):
     _running(fix_run)
 
     first = rotate_credentials(fix_run.id)
@@ -189,10 +189,8 @@ def test_rotation_stores_only_hashes_and_a_second_rotation_fences_the_first(fix_
 
     fix_run.refresh_from_db()
     assert fix_run.token_hash == hash_secret(second.token)
-    assert fix_run.fence_hash == hash_secret(second.fence)
-    # The first sandbox's token and fence no longer match anything stored.
-    assert hash_secret(first.token) not in (fix_run.token_hash, fix_run.fence_hash)
-    assert hash_secret(first.fence) not in (fix_run.token_hash, fix_run.fence_hash)
+    # The first sandbox's token no longer matches what is stored.
+    assert fix_run.token_hash != hash_secret(first.token)
     # Rotating starts no engine, so it uses up none of the run's attempts.
     assert fix_run.sandbox_attempt == 0
     # The token lives as long as the run may plus a grace, not one sandbox lease.
@@ -257,7 +255,6 @@ def test_launch_writes_the_capability_file_0600_and_never_the_environment(
             f"https://platform.example.test/simulate/api/agent-fix-engine/{fix_run.id}/"
         ),
         "token": capability["token"],
-        "fence": capability["fence"],
         "expires_at": fix_run.token_expires_at.isoformat(),
         # The engine's model calls go to its own fix, on its own token.
         "models": {
@@ -269,7 +266,6 @@ def test_launch_writes_the_capability_file_0600_and_never_the_environment(
         },
     }
     assert hash_secret(capability["token"]) == fix_run.token_hash
-    assert hash_secret(capability["fence"]) == fix_run.fence_hash
     assert sandbox.process.exec_calls == [f"chmod 0600 {CAPABILITY_PATH}"]
     [(_session, request)] = sandbox.process.started
     assert request.command == "node /opt/agent-improvement/platform-entry.mjs"
@@ -278,7 +274,7 @@ def test_launch_writes_the_capability_file_0600_and_never_the_environment(
     assert set(request.env) == {"PATH"}
     assert "/opt/node22/bin" in request.env["PATH"]
     started_with = request.command + json.dumps(request.env)
-    for secret in (capability["token"], capability["fence"], MODEL_KEY):
+    for secret in (capability["token"], MODEL_KEY):
         assert secret not in started_with
     # The platform's own gateway key never enters the sandbox.
     assert MODEL_KEY.encode() not in sandbox.fs.uploads[CAPABILITY_PATH]
@@ -297,7 +293,9 @@ def test_launch_lets_the_engine_reach_only_the_platform(fix_run, provider):
     assert spec.unrestricted_egress is False
 
 
-def test_relaunch_deletes_the_previous_sandbox_and_fences_its_engine(fix_run, provider):
+def test_relaunch_deletes_the_previous_sandbox_and_locks_out_its_engine(
+    fix_run, provider
+):
     launch(str(fix_run.id))
     first = _capability(provider.live["sandbox-1"])
 
@@ -310,12 +308,11 @@ def test_relaunch_deletes_the_previous_sandbox_and_fences_its_engine(fix_run, pr
     assert fix_run.sandbox_attempt == 2
     assert fix_run.token_hash == hash_secret(second["token"])
     assert fix_run.token_hash != hash_secret(first["token"])
-    assert fix_run.fence_hash != hash_secret(first["fence"])
     # The new engine calls models on its own token; the old token no longer works.
     assert second["models"]["api_key"] == second["token"]
 
 
-def test_a_relaunch_fences_the_old_engine_even_when_the_new_sandbox_fails(
+def test_a_relaunch_locks_out_the_old_engine_even_when_the_new_sandbox_fails(
     fix_run, provider
 ):
     launch(str(fix_run.id))
@@ -329,7 +326,6 @@ def test_a_relaunch_fences_the_old_engine_even_when_the_new_sandbox_fails(
 
     fix_run.refresh_from_db()
     assert fix_run.token_hash == ""
-    assert fix_run.fence_hash == ""
     # A create that never produced an engine does not use up one of the run's sandboxes.
     assert fix_run.sandbox_attempt == 1
 

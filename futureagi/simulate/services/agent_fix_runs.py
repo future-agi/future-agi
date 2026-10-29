@@ -160,14 +160,12 @@ def close_fix_run(
             locked.failure = failure
             locked.finished_at = timezone.now()
             locked.token_hash = ""
-            locked.fence_hash = ""
             locked.save(
                 update_fields=[
                     "state",
                     "failure",
                     "finished_at",
                     "token_hash",
-                    "fence_hash",
                     "updated_at",
                 ]
             )

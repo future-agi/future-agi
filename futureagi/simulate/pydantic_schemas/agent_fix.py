@@ -118,7 +118,6 @@ class EngineReport(BaseModel):
     """Progress, and at the end the run's ending. A report with an ending is the last."""
 
     stage: str = Field(max_length=32)
-    spent_usd: float = Field(ge=0)
     candidates: list[CandidateUpdate] = Field(default_factory=list)
     ending: Ending | None = None
     summary: str = ""
@@ -139,6 +138,5 @@ class EngineCapability(BaseModel):
     fix_run_id: str
     api_base: str
     token: str
-    fence: str
     expires_at: str
     models: EngineModels

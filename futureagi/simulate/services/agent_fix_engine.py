@@ -305,13 +305,9 @@ def apply_report(fix_run: AgentFixRun, report: EngineReport) -> AgentFixRun:
         locked = _locked_running(fix_run.id)
         locked.stage = report.stage
         locked.heartbeat_at = timezone.now()
-        # Spend only grows: a resumed engine may report less than it already spent.
-        locked.spent_usd = max(locked.spent_usd, Decimal(str(report.spent_usd)))
         if report.ending is not None:
             locked.report = report.model_dump(mode="json", exclude={"candidates"})
-        locked.save(
-            update_fields=["stage", "heartbeat_at", "spent_usd", "report", "updated_at"]
-        )
+        locked.save(update_fields=["stage", "heartbeat_at", "report", "updated_at"])
         for update in report.candidates:
             AgentFixCandidate.no_workspace_objects.filter(
                 fix_run=locked, id=update.candidate_id

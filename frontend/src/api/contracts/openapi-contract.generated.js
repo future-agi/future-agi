@@ -49252,7 +49252,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     AgentFixEngineReport: {
-      required: ["stage", "spent_usd"],
+      required: ["stage"],
       type: "object",
       properties: {
         stage: {
@@ -49260,11 +49260,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           maxLength: 32,
           minLength: 1,
-        },
-        spent_usd: {
-          title: "Spent usd",
-          type: "number",
-          minimum: 0,
         },
         candidates: {
           type: "array",

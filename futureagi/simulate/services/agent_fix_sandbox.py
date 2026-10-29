@@ -56,7 +56,6 @@ _TRANSIENT_WATCH_ERRORS = (
 @dataclass(frozen=True)
 class EngineCredentials:
     token: str
-    fence: str
     expires_at: datetime
 
 
@@ -83,7 +82,6 @@ def launch(fix_run_id: str) -> AgentFixLaunch:
         fix_run_id=str(fix_run.id),
         api_base=api_base,
         token=credentials.token,
-        fence=credentials.fence,
         expires_at=credentials.expires_at.isoformat(),
         # The engine's model calls go through its fix's own API on the same token: the
         # platform forwards them with its own key and meters them (agent_fix_models).
@@ -100,10 +98,9 @@ def launch(fix_run_id: str) -> AgentFixLaunch:
 
 
 def rotate_credentials(fix_run_id: str) -> EngineCredentials | None:
-    """New token and fence for the sandbox about to run the engine; the previous
-    sandbox's stop working. None when the run is no longer running."""
+    """A new token for the sandbox about to run the engine; the previous sandbox's stops
+    working. None when the run is no longer running."""
     token = secrets.token_urlsafe(32)
-    fence = secrets.token_urlsafe(32)
     with transaction.atomic():
         fix_run = AgentFixRun.no_workspace_objects.select_for_update().get(
             id=fix_run_id
@@ -111,22 +108,18 @@ def rotate_credentials(fix_run_id: str) -> EngineCredentials | None:
         if fix_run.state != AgentFixRun.State.RUNNING:
             return None
         fix_run.token_hash = hash_secret(token)
-        fix_run.fence_hash = hash_secret(fence)
         fix_run.token_expires_at = _credentials_expiry(fix_run)
         # A new engine has the report timeout to send its first report.
         fix_run.heartbeat_at = timezone.now()
         fix_run.save(
             update_fields=[
                 "token_hash",
-                "fence_hash",
                 "token_expires_at",
                 "heartbeat_at",
                 "updated_at",
             ]
         )
-    return EngineCredentials(
-        token=token, fence=fence, expires_at=fix_run.token_expires_at
-    )
+    return EngineCredentials(token=token, expires_at=fix_run.token_expires_at)
 
 
 def observe(fix_run_id: str, command_id: str) -> Observation:
@@ -260,13 +253,11 @@ def _claim_launch(fix_run_id: str) -> Observation | None:
             fix_run.state = AgentFixRun.State.RUNNING
             fix_run.started_at = timezone.now()
         fix_run.token_hash = ""
-        fix_run.fence_hash = ""
         fix_run.save(
             update_fields=[
                 "state",
                 "started_at",
                 "token_hash",
-                "fence_hash",
                 "updated_at",
             ]
         )

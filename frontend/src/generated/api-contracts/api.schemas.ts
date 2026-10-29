@@ -16923,8 +16923,6 @@ export interface AgentFixEngineReportApi {
    * @maxLength 32
    */
   stage: string;
-  /** @minimum 0 */
-  spent_usd: number;
   candidates?: AgentFixCandidateUpdateApi[];
   ending?: AgentFixEngineReportApiEnding;
   summary?: string;
