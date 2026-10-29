@@ -773,6 +773,17 @@ export function renderHuman(result) {
     lines.push(
       `Areas with no flows yet: ${result.areasWithoutFlows.join(", ")}`,
     );
+  // UNDETERMINED is the commonest verdict, and on its own it only says "behaviour
+  // files changed" — on a large diff that leaves the author guessing which ones.
+  // Name them, so the answer to "why is this asking me?" is on screen.
+  if (result.classification === "UNDETERMINED") {
+    const behaviour = result.files.filter((f) => /^B[1-6]$/.test(f.cls));
+    const shown = behaviour.slice(0, 5).map((f) => `${f.path} (${f.cls})`);
+    const rest = behaviour.length - shown.length;
+    lines.push(
+      `Why: ${behaviour.length} behaviour file${behaviour.length === 1 ? "" : "s"} — ${shown.join(", ")}${rest > 0 ? `, +${rest} more` : ""}`,
+    );
+  }
   lines.push(`Marker: ${result.marker ? result.marker.raw : "missing"}`);
   lines.push(`Verdict: ${result.verdict} — ${result.explanation}`);
   return lines;
