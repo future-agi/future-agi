@@ -691,6 +691,32 @@ class TestUserApi:
             f'attachment; filename="fix-{fix_run.id}-attempt-3.patch"'
         )
 
+    def test_a_fix_shows_its_check_runs_and_each_candidates(
+        self, auth_client, source_run
+    ):
+        fix_run = _fix_run(source_run)
+        candidate = _candidate(fix_run)
+        baseline = _check(fix_run, label="baseline")
+        screen = _check(
+            fix_run, label="c1-target", version_id=candidate.agent_version_id
+        )
+
+        body = auth_client.get(f"{BASE}/{fix_run.id}/").json()
+
+        assert body["check_runs"] == [
+            {
+                "run_id": str(baseline.id),
+                "test_execution_id": str(baseline.test_execution_id),
+                "label": "baseline",
+                "purpose": "baseline",
+                "state": baseline.state,
+            }
+        ]
+        [shown] = body["candidates"]
+        assert [
+            (run["run_id"], run["label"], run["purpose"]) for run in shown["check_runs"]
+        ] == [(str(screen.id), "c1-target", "target")]
+
     def test_http_patch_is_not_an_action_of_a_fix(self, auth_client, source_run):
         fix_run = _fix_run(source_run)
 

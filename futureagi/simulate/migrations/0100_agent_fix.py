@@ -214,6 +214,11 @@ class Migration(migrations.Migration):
                 to="simulate.agentfixrun",
             ),
         ),
+        migrations.AddField(
+            model_name="hostedharnessjob",
+            name="fix_label",
+            field=models.CharField(blank=True, default="", max_length=64),
+        ),
         migrations.AddIndex(
             model_name="agentfixrun",
             index=models.Index(

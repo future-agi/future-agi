@@ -49446,6 +49446,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         failure: {
           $ref: "#/definitions/AgentFixFailure",
         },
+        check_runs: {
+          description: "The runs of no candidate: the base version's.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixCheckRun",
+          },
+          readOnly: true,
+        },
         candidates: {
           type: "array",
           items: {
@@ -87305,11 +87313,58 @@ export const OPENAPI_CONTRACT = Object.freeze({
         verdict: {
           $ref: "#/definitions/AgentFixVerdict",
         },
+        check_runs: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixCheckRun",
+          },
+          readOnly: true,
+        },
         created_at: {
           title: "Created at",
           type: "string",
           format: "date-time",
           readOnly: true,
+        },
+      },
+    },
+    AgentFixCheckRun: {
+      required: ["run_id", "test_execution_id", "label", "purpose", "state"],
+      type: "object",
+      properties: {
+        run_id: {
+          title: "Run id",
+          type: "string",
+          format: "uuid",
+        },
+        test_execution_id: {
+          title: "Test execution id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+        },
+        purpose: {
+          title: "Purpose",
+          type: "string",
+          enum: [
+            "baseline",
+            "target",
+            "held-back",
+            "finalist",
+            "confirm",
+            "check",
+          ],
+          "x-nullable": true,
+        },
+        state: {
+          title: "State",
+          type: "string",
+          minLength: 1,
         },
       },
     },

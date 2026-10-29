@@ -7,6 +7,7 @@ from datetime import timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
+from uuid import uuid4
 
 import pytest
 from django.test import TestCase
@@ -33,6 +34,7 @@ from simulate.pydantic_schemas.agent_fix import (
 from simulate.selectors.agent_fix import (
     TRANSCRIPT_CHARS,
     _record,
+    check_run_rows,
     check_run_status,
     engine_brief,
 )
@@ -1095,3 +1097,25 @@ def test_the_base_source_is_fetched_once_per_fix(source_run):
 
     assert first == again == body
     assert acquirer.return_value.acquire.call_count == 1
+
+
+@pytest.mark.parametrize(
+    ("label", "attempt", "purpose"),
+    [
+        ("baseline", None, "baseline"),
+        ("c3-target", 3, "target"),
+        ("c3-held-back", 3, "held-back"),
+        ("c12-finalist", 12, "finalist"),
+        ("c2-confirm", 2, "confirm"),
+        ("c2-check1", 2, "check"),
+        ("something-else", None, None),
+    ],
+)
+def test_a_check_runs_label_names_its_attempt_and_purpose(label, attempt, purpose):
+    run = SimpleNamespace(
+        id=uuid4(), test_execution_id=None, fix_label=label, state="completed"
+    )
+
+    [row] = check_run_rows(SimpleNamespace(check_run_list=[run]))
+
+    assert (row.attempt, row.purpose) == (attempt, purpose)

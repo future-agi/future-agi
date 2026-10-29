@@ -23,7 +23,7 @@ from simulate.selectors.agent_fix import (
     check_run_status,
     engine_brief,
     fix_runs_for_environment,
-    with_committed_usd,
+    fix_runs_for_read,
 )
 from simulate.serializers.agent_fix import (
     AgentFixCandidateCreatedSerializer,
@@ -97,13 +97,12 @@ class AgentFixRunViewSet(viewsets.ViewSet):
 
     def _fix_run(self, request, pk):
         return (
-            with_committed_usd(
+            fix_runs_for_read(
                 AgentFixRun.no_workspace_objects.filter(
                     id=pk, environment__in=self._jobs(request)
                 )
             )
             .select_related("environment")
-            .prefetch_related("candidates__agent_version")
             .first()
         )
 

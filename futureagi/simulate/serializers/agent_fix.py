@@ -1,7 +1,9 @@
+from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
 from simulate.models import AgentFixCandidate, AgentFixRun
 from simulate.pydantic_schemas.agent_fix import CandidateOutcome, Ending, Surface
+from simulate.selectors.agent_fix import CHECK_RUN_PURPOSES, check_run_rows
 
 
 class AgentFixLaunchSerializer(serializers.Serializer):
@@ -59,10 +61,30 @@ class AgentFixFailureSerializer(serializers.Serializer):
     message = serializers.CharField()
 
 
+class AgentFixCheckRunSerializer(serializers.Serializer):
+    """A Run the fix started to check a candidate or the base version. It stays out of
+    the environment's run list; its results open by ``test_execution_id``."""
+
+    run_id = serializers.UUIDField()
+    test_execution_id = serializers.UUIDField(allow_null=True)
+    label = serializers.CharField()
+    purpose = serializers.ChoiceField(choices=CHECK_RUN_PURPOSES, allow_null=True)
+    state = serializers.CharField()
+
+
 class AgentFixCandidateSerializer(serializers.ModelSerializer):
     agent_version_id = serializers.UUIDField()
     version_number = serializers.IntegerField(source="agent_version.version_number")
     verdict = AgentFixVerdictSerializer(allow_null=True)
+    check_runs = serializers.SerializerMethodField()
+
+    @swagger_serializer_method(
+        serializer_or_field=AgentFixCheckRunSerializer(many=True)
+    )
+    def get_check_runs(self, candidate: AgentFixCandidate) -> list[dict]:
+        rows = check_run_rows(candidate.fix_run)
+        mine = [row for row in rows if row.attempt == candidate.attempt]
+        return AgentFixCheckRunSerializer(mine, many=True).data
 
     class Meta:
         model = AgentFixCandidate
@@ -74,6 +96,7 @@ class AgentFixCandidateSerializer(serializers.ModelSerializer):
             "summary",
             "outcome",
             "verdict",
+            "check_runs",
             "created_at",
         ]
 
@@ -88,6 +111,15 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
     spent_usd = serializers.DecimalField(max_digits=10, decimal_places=4)
     committed_usd = serializers.DecimalField(max_digits=12, decimal_places=4)
     candidates = AgentFixCandidateSerializer(many=True)
+    check_runs = serializers.SerializerMethodField()
+
+    @swagger_serializer_method(
+        serializer_or_field=AgentFixCheckRunSerializer(many=True)
+    )
+    def get_check_runs(self, fix_run: AgentFixRun) -> list[dict]:
+        """The runs of no candidate: the base version's."""
+        rows = [row for row in check_run_rows(fix_run) if row.attempt is None]
+        return AgentFixCheckRunSerializer(rows, many=True).data
 
     class Meta:
         model = AgentFixRun
@@ -103,6 +135,7 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
             "committed_usd",
             "report",
             "failure",
+            "check_runs",
             "candidates",
             "started_at",
             "finished_at",

@@ -229,6 +229,11 @@ def start_check_run(fix_run: AgentFixRun, request: CheckRunRequest) -> HostedHar
             **kind.run_options(locked, version_id),
         )
         if created:
+            # The engine's name for the run: the read says which candidate and check it served.
+            HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(
+                fix_label=request.label
+            )
+            run.fix_label = request.label
             transaction.on_commit(lambda: _dispatch(run))
     return run
 

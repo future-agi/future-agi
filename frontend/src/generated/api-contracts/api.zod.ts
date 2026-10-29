@@ -34328,6 +34328,25 @@ export const SimulateApiAgentFixRunsListResponseItem = zod.object({
     code: zod.string().min(1),
     message: zod.string().min(1),
   }),
+  check_runs: zod
+    .array(
+      zod.object({
+        run_id: zod.string().uuid(),
+        test_execution_id: zod.string().uuid(),
+        label: zod.string().min(1),
+        purpose: zod.enum([
+          "baseline",
+          "target",
+          "held-back",
+          "finalist",
+          "confirm",
+          "check",
+        ]),
+        state: zod.string().min(1),
+      }),
+    )
+    .optional()
+    .describe("The runs of no candidate: the base version's."),
   candidates: zod.array(
     zod.object({
       id: zod.string().uuid().optional(),
@@ -34353,6 +34372,24 @@ export const SimulateApiAgentFixRunsListResponseItem = zod.object({
             simulateApiAgentFixRunsListResponseCandidatesItemVerdictMustPassWithinNoiseDefault,
           ),
       }),
+      check_runs: zod
+        .array(
+          zod.object({
+            run_id: zod.string().uuid(),
+            test_execution_id: zod.string().uuid(),
+            label: zod.string().min(1),
+            purpose: zod.enum([
+              "baseline",
+              "target",
+              "held-back",
+              "finalist",
+              "confirm",
+              "check",
+            ]),
+            state: zod.string().min(1),
+          }),
+        )
+        .optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
     }),
   ),
@@ -34467,6 +34504,25 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
     code: zod.string().min(1),
     message: zod.string().min(1),
   }),
+  check_runs: zod
+    .array(
+      zod.object({
+        run_id: zod.string().uuid(),
+        test_execution_id: zod.string().uuid(),
+        label: zod.string().min(1),
+        purpose: zod.enum([
+          "baseline",
+          "target",
+          "held-back",
+          "finalist",
+          "confirm",
+          "check",
+        ]),
+        state: zod.string().min(1),
+      }),
+    )
+    .optional()
+    .describe("The runs of no candidate: the base version's."),
   candidates: zod.array(
     zod.object({
       id: zod.string().uuid().optional(),
@@ -34492,6 +34548,24 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
             simulateApiAgentFixRunsReadResponseCandidatesItemVerdictMustPassWithinNoiseDefault,
           ),
       }),
+      check_runs: zod
+        .array(
+          zod.object({
+            run_id: zod.string().uuid(),
+            test_execution_id: zod.string().uuid(),
+            label: zod.string().min(1),
+            purpose: zod.enum([
+              "baseline",
+              "target",
+              "held-back",
+              "finalist",
+              "confirm",
+              "check",
+            ]),
+            state: zod.string().min(1),
+          }),
+        )
+        .optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
     }),
   ),
@@ -34584,6 +34658,25 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
     code: zod.string().min(1),
     message: zod.string().min(1),
   }),
+  check_runs: zod
+    .array(
+      zod.object({
+        run_id: zod.string().uuid(),
+        test_execution_id: zod.string().uuid(),
+        label: zod.string().min(1),
+        purpose: zod.enum([
+          "baseline",
+          "target",
+          "held-back",
+          "finalist",
+          "confirm",
+          "check",
+        ]),
+        state: zod.string().min(1),
+      }),
+    )
+    .optional()
+    .describe("The runs of no candidate: the base version's."),
   candidates: zod.array(
     zod.object({
       id: zod.string().uuid().optional(),
@@ -34609,6 +34702,24 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
             simulateApiAgentFixRunsStopResponseCandidatesItemVerdictMustPassWithinNoiseDefault,
           ),
       }),
+      check_runs: zod
+        .array(
+          zod.object({
+            run_id: zod.string().uuid(),
+            test_execution_id: zod.string().uuid(),
+            label: zod.string().min(1),
+            purpose: zod.enum([
+              "baseline",
+              "target",
+              "held-back",
+              "finalist",
+              "confirm",
+              "check",
+            ]),
+            state: zod.string().min(1),
+          }),
+        )
+        .optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
     }),
   ),

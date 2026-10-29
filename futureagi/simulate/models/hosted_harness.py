@@ -130,6 +130,8 @@ class HostedHarnessJob(BaseModel):
         blank=True,
         related_name="check_runs",
     )
+    # The name the engine gave a check run ("baseline", "c2-target"); empty on other Runs.
+    fix_label = models.CharField(max_length=64, blank=True, default="")
 
     class Meta:
         db_table = "simulate_hosted_harness_job"

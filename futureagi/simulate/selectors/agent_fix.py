@@ -1,15 +1,19 @@
 """Reads for "Fix my agent": the engine's brief, a check run's results, the run list."""
 
+import re
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
+from uuid import UUID
 
 from django.conf import settings
 from django.db.models import (
     DecimalField,
     ExpressionWrapper,
     F,
+    Prefetch,
     Q,
     QuerySet,
     Sum,
@@ -239,10 +243,59 @@ def with_committed_usd(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
     )
 
 
+# What the engine names its check runs: "baseline", or "c<attempt>-<purpose>", where the
+# worker's own target checks are "c<attempt>-check<k>".
+CHECK_RUN_PURPOSES = ("baseline", "target", "held-back", "finalist", "confirm", "check")
+_CANDIDATE_CHECK = re.compile(
+    r"c(?P<attempt>\d+)-(?P<purpose>target|held-back|finalist|confirm|check)\d*"
+)
+
+
+@dataclass(frozen=True)
+class CheckRunRow:
+    run_id: UUID
+    test_execution_id: UUID | None
+    label: str
+    # Null for a label the engine did not write this way.
+    purpose: str | None
+    attempt: int | None
+    state: str
+
+
+def check_run_rows(fix_run: AgentFixRun) -> list[CheckRunRow]:
+    """The fix's check runs, oldest first, with the attempt and purpose each label names.
+    Reads the prefetch that ``fix_runs_for_read`` makes."""
+    rows = []
+    for run in fix_run.check_run_list:
+        found = _CANDIDATE_CHECK.fullmatch(run.fix_label)
+        purpose = found["purpose"] if found else None
+        rows.append(
+            CheckRunRow(
+                run_id=run.id,
+                test_execution_id=run.test_execution_id,
+                label=run.fix_label,
+                purpose="baseline" if run.fix_label == "baseline" else purpose,
+                attempt=int(found["attempt"]) if found else None,
+                state=run.state,
+            )
+        )
+    return rows
+
+
+def fix_runs_for_read(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
+    """Fixes with everything their read shows: committed spend, candidates, check runs."""
+    check_runs = HostedHarnessJob.no_workspace_objects.only(
+        "id", "fix_run_id", "fix_label", "state", "test_execution_id", "created_at"
+    ).order_by("created_at")
+    return with_committed_usd(runs).prefetch_related(
+        "candidates__agent_version",
+        Prefetch("check_runs", queryset=check_runs, to_attr="check_run_list"),
+    )
+
+
 def fix_runs_for_environment(environment: HostedHarnessJob) -> QuerySet[AgentFixRun]:
-    return with_committed_usd(
+    return fix_runs_for_read(
         AgentFixRun.no_workspace_objects.filter(environment=environment)
         .select_related("base_agent_version", "source_run")
-        .prefetch_related("candidates__agent_version")
         .order_by("-created_at")
     )
