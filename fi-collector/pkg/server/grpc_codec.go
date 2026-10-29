@@ -11,14 +11,12 @@ import (
 // traceExportRequestName is the message checkProtoNesting walks.
 const traceExportRequestName protoreflect.FullName = "opentelemetry.proto.collector.trace.v1.ExportTraceServiceRequest"
 
-// nestingCheckedCodec is the gRPC server's codec: grpc-go's proto codec, plus
-// the nesting limit (checkProtoNesting) on an ExportTraceServiceRequest before
-// pdata decodes it, as the OTLP/HTTP handler does. The check is in the codec
-// because the service handler only ever sees the decoded request. A refused
-// request fails with INTERNAL ("error unmarshalling request"), which is what
-// grpc-go returns for any request its codec cannot decode. Only the trace
-// service is registered; any other message type is passed to the proto codec
-// unchanged.
+// nestingCheckedCodec is the gRPC server's codec. The Export handler
+// (grpc_export.go) receives and sends raw bytes (rawExport), which it copies
+// as they are. Any other message goes to grpc-go's proto codec, with the
+// nesting limit (checkProtoNesting) on an ExportTraceServiceRequest. No
+// served method decodes through it today: Export reads its message itself
+// and refuses deep nesting with INVALID_ARGUMENT in its scan.
 type nestingCheckedCodec struct {
 	encoding.CodecV2
 }
@@ -28,6 +26,11 @@ func newNestingCheckedCodec() nestingCheckedCodec {
 }
 
 func (c nestingCheckedCodec) Unmarshal(data mem.BufferSlice, v any) error {
+	if raw, ok := v.(*rawExport); ok {
+		// A copy: grpc-go frees the message's buffers when this returns.
+		raw.b = data.Materialize()
+		return nil
+	}
 	if !isTraceExportRequest(v) {
 		return c.CodecV2.Unmarshal(data, v)
 	}
@@ -39,6 +42,13 @@ func (c nestingCheckedCodec) Unmarshal(data mem.BufferSlice, v any) error {
 		return err
 	}
 	return c.CodecV2.Unmarshal(mem.BufferSlice{buf}, v)
+}
+
+func (c nestingCheckedCodec) Marshal(v any) (mem.BufferSlice, error) {
+	if raw, ok := v.(*rawExport); ok {
+		return mem.BufferSlice{mem.SliceBuffer(raw.b)}, nil
+	}
+	return c.CodecV2.Marshal(v)
 }
 
 // isTraceExportRequest reports whether v is an ExportTraceServiceRequest.

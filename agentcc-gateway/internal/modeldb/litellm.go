@@ -13,8 +13,16 @@ type liteLLMEntry struct {
 	InputCostPerTokenBatches        float64  `json:"input_cost_per_token_batches"`
 	OutputCostPerTokenBatches       float64  `json:"output_cost_per_token_batches"`
 	OutputCostPerImage              float64  `json:"output_cost_per_image"`
+	InputCostPerImage               float64  `json:"input_cost_per_image"`
 	InputCostPerSecond              float64  `json:"input_cost_per_second"`
 	InputCostPerCharacter           float64  `json:"input_cost_per_character"`
+	InputCostPerQuery               float64  `json:"input_cost_per_query"`
+	OCRCostPerPage                  float64  `json:"ocr_cost_per_page"`
+	OutputCostPerSecond             float64  `json:"output_cost_per_second"`
+	InputCostPerPixel               float64  `json:"input_cost_per_pixel"`
+	OutputCostPerPixel              float64  `json:"output_cost_per_pixel"`
+	InputCostPerImageToken          float64  `json:"input_cost_per_image_token"`
+	OutputCostPerImageToken         float64  `json:"output_cost_per_image_token"`
 	Provider                        string   `json:"litellm_provider"`
 	Mode                            string   `json:"mode"`
 	MaxInputTokens                  float64  `json:"max_input_tokens"`
@@ -22,13 +30,13 @@ type liteLLMEntry struct {
 	MaxTokens                       float64  `json:"max_tokens"`
 	DeprecationDate                 string   `json:"deprecation_date"`
 	SupportedRegions                []string `json:"supported_regions"`
-	SupportsFunctionCalling         bool     `json:"supports_function_calling"`
+	SupportsFunctionCalling         *bool    `json:"supports_function_calling"`
 	SupportsParallelFunctionCalling bool     `json:"supports_parallel_function_calling"`
-	SupportsVision                  bool     `json:"supports_vision"`
+	SupportsVision                  *bool    `json:"supports_vision"`
 	SupportsAudioInput              bool     `json:"supports_audio_input"`
 	SupportsAudioOutput             bool     `json:"supports_audio_output"`
 	SupportsPDFInput                bool     `json:"supports_pdf_input"`
-	SupportsResponseSchema          bool     `json:"supports_response_schema"`
+	SupportsResponseSchema          *bool    `json:"supports_response_schema"`
 	SupportsSystemMessages          bool     `json:"supports_system_messages"`
 	SupportsPromptCaching           bool     `json:"supports_prompt_caching"`
 	SupportsReasoning               bool     `json:"supports_reasoning"`
@@ -80,21 +88,33 @@ func parseLiteLLM(data []byte) (map[string]*ModelInfo, error) {
 				BatchInputPerToken:  entry.InputCostPerTokenBatches,
 				BatchOutputPerToken: entry.OutputCostPerTokenBatches,
 				OutputPerImage:      entry.OutputCostPerImage,
+				InputPerImage:       entry.InputCostPerImage,
 				InputPerSecond:      entry.InputCostPerSecond,
 				InputPerCharacter:   entry.InputCostPerCharacter,
+				InputPerQuery:       entry.InputCostPerQuery,
+				PerPage:             entry.OCRCostPerPage,
+				OutputPerSecond:     entry.OutputCostPerSecond,
+				InputPerPixel:       entry.InputCostPerPixel,
+				OutputPerPixel:      entry.OutputCostPerPixel,
+				InputPerImageToken:  entry.InputCostPerImageToken,
+				OutputPerImageToken: entry.OutputCostPerImageToken,
 			},
 			Capabilities: CapabilityFlags{
-				FunctionCalling:   entry.SupportsFunctionCalling,
+				FunctionCalling:   stated(entry.SupportsFunctionCalling),
 				ParallelToolCalls: entry.SupportsParallelFunctionCalling,
-				Vision:            entry.SupportsVision,
+				Vision:            stated(entry.SupportsVision),
 				AudioInput:        entry.SupportsAudioInput,
 				AudioOutput:       entry.SupportsAudioOutput,
 				PDFInput:          entry.SupportsPDFInput,
 				Streaming:         mode == ModeChat,
-				ResponseSchema:    entry.SupportsResponseSchema,
+				ResponseSchema:    stated(entry.SupportsResponseSchema),
 				SystemMessages:    entry.SupportsSystemMessages,
 				PromptCaching:     entry.SupportsPromptCaching,
 				Reasoning:         entry.SupportsReasoning,
+
+				FunctionCallingUnstated: entry.SupportsFunctionCalling == nil,
+				VisionUnstated:          entry.SupportsVision == nil,
+				ResponseSchemaUnstated:  entry.SupportsResponseSchema == nil,
 			},
 			DeprecationDate: entry.DeprecationDate,
 			Regions:         entry.SupportedRegions,
@@ -107,13 +127,18 @@ func parseLiteLLM(data []byte) (map[string]*ModelInfo, error) {
 	return models, nil
 }
 
+// stated reports a capability flag the table states as true.
+func stated(flag *bool) bool {
+	return flag != nil && *flag
+}
+
 func mapMode(s string) ModelMode {
 	switch s {
 	case "chat", "completion":
 		return ModeChat
 	case "embedding":
 		return ModeEmbedding
-	case "image_generation":
+	case "image_generation", "image_edit":
 		return ModeImageGeneration
 	case "audio_transcription":
 		return ModeAudioTranscription
@@ -123,6 +148,14 @@ func mapMode(s string) ModelMode {
 		return ModeRerank
 	case "moderation":
 		return ModeModeration
+	// Mapped to chat, these were dropped as zero-priced chat models, so the
+	// per-page, per-second and per-query prices never loaded.
+	case "ocr":
+		return ModeOCR
+	case "video_generation":
+		return ModeVideoGeneration
+	case "search":
+		return ModeSearch
 	default:
 		return ModeChat
 	}

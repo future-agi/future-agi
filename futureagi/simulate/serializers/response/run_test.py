@@ -15,6 +15,7 @@ stays in RunTestSerializer in simulate.serializers.run_test.
 from rest_framework import serializers
 
 from simulate.models import RunTest
+from simulate.serializers.harness_job import RunVersionLabelSerializer
 from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tracer.serializers.filters import filter_list_field, json_object_field
 
@@ -167,6 +168,12 @@ class TestExecutionItemResponseSerializer(serializers.Serializer):
     outcome_passed = serializers.IntegerField(read_only=True, allow_null=True)
     outcome_failed = serializers.IntegerField(read_only=True, allow_null=True)
     outcome_skipped = serializers.IntegerField(read_only=True, allow_null=True)
+    environment_version = RunVersionLabelSerializer(read_only=True, allow_null=True)
+    suite_version = RunVersionLabelSerializer(read_only=True, allow_null=True)
+    # ``agent_version`` is the version's name; this is the run's agent pin.
+    pinned_agent_version = RunVersionLabelSerializer(read_only=True, allow_null=True)
+    # The run's agent is not the one its environment version was built with.
+    agent_differs = serializers.BooleanField(read_only=True)
 
 
 class RunTestExecutionsResponseSerializer(serializers.Serializer):

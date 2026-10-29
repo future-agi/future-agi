@@ -2,12 +2,27 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 )
+
+// MaxNewProjectsPerRequest is how many project names one request may add to
+// a key's project map. Each new name is a Postgres lookup, and a project is
+// created when none exists, one after the other while the request waits.
+const MaxNewProjectsPerRequest = 16
+
+// ErrTooManyNewProjects reports a request that names more projects new to its
+// key than MaxNewProjectsPerRequest. The first of them (in name order) were
+// resolved, and created where needed, before it was returned; a name that
+// failed a permanent value constraint is not tried again for a while; its spans are
+// reported as rejected in OTLP partial success. So a retry makes
+// progress: callers answer it as retryable.
+var ErrTooManyNewProjects = errors.New("stamp: too many new project names in one request; retry")
 
 // StampResourceAttrs walks all ResourceSpans in the traces, resolves
 // project_name -> project_id from the auth result, and stamps fi.project_id
@@ -38,6 +53,9 @@ func StampResourceAttrs(ctx context.Context, a *Authenticator, cacheKey string, 
 			missing = append(missing, i)
 			continue
 		}
+		if err := validateProjectName(pn, "project_name"); err != nil {
+			return 0, err
+		}
 		nameSet[pn] = struct{}{}
 	}
 	if len(missing) > 0 {
@@ -48,6 +66,18 @@ func StampResourceAttrs(ctx context.Context, a *Authenticator, cacheKey string, 
 	names := make([]string, 0, len(nameSet))
 	for n := range nameSet {
 		names = append(names, n)
+	}
+	if a != nil {
+		if missing, ok := result.MissingProjectsInWorkspace(result.WorkspaceID, names); ok && len(missing) > MaxNewProjectsPerRequest {
+			// The first names, in order, are added; deterministic value
+			// failures are skipped for a while, so each retry
+			// gets further either way.
+			sort.Strings(missing)
+			if err := a.ResolveProjectsForKey(ctx, cacheKey, result, missing[:MaxNewProjectsPerRequest]); err != nil {
+				return 0, fmt.Errorf("stamp: resolve projects: %w", err)
+			}
+			return 0, ErrTooManyNewProjects
+		}
 	}
 
 	if err := a.ResolveProjectsForKey(ctx, cacheKey, result, names); err != nil {
@@ -67,6 +97,7 @@ func StampResourceAttrs(ctx context.Context, a *Authenticator, cacheKey string, 
 
 		attrs.PutStr("fi.project_id", projectID)
 		attrs.PutStr("fi.org_id", result.OrgID)
+		stampObserveProjectType(attrs, result, projectID)
 	}
 
 	if len(unresolvable) == 0 {
@@ -83,6 +114,29 @@ func StampResourceAttrs(ctx context.Context, a *Authenticator, cacheKey string, 
 	})
 
 	return before - rss.Len(), nil
+}
+
+// resourceProjectTypeKey is the resource attribute the fi_instrumentation SDK
+// sets to the project's type; the converter links user.id to an end user only
+// when it reads "observe" there.
+const resourceProjectTypeKey = "project_type"
+
+// stampObserveProjectType writes project_type "observe" onto a resource that
+// sends none (absent or an empty string) when its stamped project is known to
+// be an Observe project. Exporters that cannot set resource attributes, such
+// as OpenRouter Broadcast naming its project with X-Project-Name, send no
+// project_type, yet their project is an Observe one, and Django links user.id
+// on the project's own type. A project_type the sender set is never changed,
+// and a project of another or unknown type gets none.
+func stampObserveProjectType(attrs pcommon.Map, result *ResolveResult, projectID string) {
+	if v, ok := attrs.Get(resourceProjectTypeKey); ok &&
+		(v.Type() != pcommon.ValueTypeStr || v.Str() != "") {
+		return
+	}
+	if result.ProjectTypeInWorkspace(result.WorkspaceID, projectID) != ProjectTypeObserve {
+		return
+	}
+	attrs.PutStr(resourceProjectTypeKey, ProjectTypeObserve)
 }
 
 // getStrAttr returns the string value of key from attrs, or "" if absent/wrong type.

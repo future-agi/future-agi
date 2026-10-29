@@ -98,24 +98,6 @@ export const useEnvironmentsStore = create(
             "recordRun",
           ),
 
-        addAgentVersion: (envId, version) =>
-          set(
-            (s) => {
-              const prev = s.byEnv[envId] || emptyEnvState();
-              return {
-                byEnv: {
-                  ...s.byEnv,
-                  [envId]: {
-                    ...prev,
-                    agentVersions: [...(prev.agentVersions || []), version],
-                  },
-                },
-              };
-            },
-            false,
-            "addAgentVersion",
-          ),
-
         // Register a fork produced by helpers/forkEnvironment.js. `fork` is the
         // pure `{ env, envState }` clone; the source id is accepted for call-site
         // symmetry. Prepends the fork record and writes its cloned state.

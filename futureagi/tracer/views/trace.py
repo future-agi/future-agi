@@ -4651,7 +4651,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         builder paired with the V2 query service supplied by its endpoint.
         """
         from tracer.services.clickhouse.v2.query_builders.trace_list import (
-            TraceListQueryBuilderV2,
+            apply_trace_rollup,
         )
 
         read_deadline = read_deadline or ReadDeadline.start(TRACE_LIST_WALL_DEADLINE_MS)
@@ -4823,7 +4823,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "Cursor pagination is unavailable for this query shape.",
             )
         cursor_enabled = cursor_requested and cursor_supported
-        builder = TraceListQueryBuilderV2(
+        from tracer.services.clickhouse.v2.query_builders.observe_usage import (
+            ObserveTraceListQueryBuilderV2,
+        )
+
+        builder = ObserveTraceListQueryBuilderV2(
             project_id=None if org_scope else str(project_id),
             project_ids=[str(p) for p in org_project_ids] if org_scope else None,
             filters=filters,
@@ -4835,7 +4839,10 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             eval_count_mode=True,
         )
         pin_filter_seed_witness_slack(builder, cursor_state)
-        requires_cursor = builder.requires_cursor_for_long_filtered_read()
+        usage_sort = validated_data.get("sort_params") or []
+        requires_cursor = (
+            not usage_sort and builder.requires_cursor_for_long_filtered_read()
+        )
         if requires_cursor and not cursor_supported:
             # A long filtered request must never escape to the legacy broad
             # query merely because its filter shape cannot carry a cursor.
@@ -4893,7 +4900,25 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "Trace data is temporarily unavailable. Please retry.",
                 code="service_unavailable",
             )
-        if builder.supports_bounded_filter_scan():
+        if usage_sort:
+            query, params = builder.build_usage_sorted_query(usage_sort)
+            result = analytics.execute_ch_query(
+                query,
+                params,
+                timeout_ms=read_deadline.remaining_ms(),
+                settings=page_read_settings,
+            )
+            count_query, count_params = builder.build_usage_sorted_query(
+                usage_sort, count_only=True
+            )
+            count_result = analytics.execute_ch_query(
+                count_query,
+                count_params,
+                timeout_ms=read_deadline.remaining_ms(),
+                settings=page_read_settings,
+            )
+            total_count = count_result.data[0]["total"]
+        elif builder.supports_bounded_filter_scan():
             from tracer.selectors.trace_filter_reads import read_bounded_filter_page
             from tracer.services.clickhouse.query_service import QueryResult
 
@@ -5212,6 +5237,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     root_identities=builder.content_root_identities_for_rows(
                         chunk_rows
                     ),
+                    # Whole-trace usage and the first LLM span's content, for
+                    # traces whose root carries neither (OpenRouter Broadcast).
+                    include_trace_rollup=True,
                 )
             except ValueError:
                 # Never publish a cursor checkpoint for roots that cannot be
@@ -5405,6 +5433,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 ),
                 {},
             )
+            apply_trace_rollup(row, content)
             raw_meta = content.get("metadata", "{}")
             if isinstance(raw_meta, str):
                 try:
@@ -5613,7 +5642,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "prompt_tokens": row.get("prompt_tokens"),
                 "completion_tokens": row.get("completion_tokens"),
                 "cost": (
-                    round(raw_cost, 6)
+                    raw_cost
                     if isinstance(raw_cost, (int, float))
                     and not isinstance(raw_cost, bool)
                     and math.isfinite(raw_cost)

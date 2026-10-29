@@ -1,5 +1,5 @@
 version: 1
-expected_tool_count: 105
+expected_tool_count: 107
 
 # Pagination is an MCP-only page-size ceiling, so an oversized page is rejected
 # before the REST view queries and serializes it. The generator keeps a stricter
@@ -325,9 +325,25 @@ tools:
       limit: {maximum: 100}
   - name: get_error_cluster
     group: error_feed
-    description: Return an error issue and its grouped trace information.
+    description: Return an error issue, its grouped trace information and its stored root-cause analysis. `rca` holds the synthesis, the recommended fix, a confidence and the evidence trace ids; it stays empty (analyzed_at null) until someone runs Analyze Cluster on the issue in the Error Feed. The step-by-step investigation trail is left out because it exceeds the MCP response size limit; read the evidence traces with get_trace instead.
     operation: {method: GET, path: "/tracer/feed/issues/{cluster_id}/"}
     access: read
+    response:
+      omit: [rca.trace]
+  - name: get_error_cluster_overview
+    group: error_feed
+    description: Return a cluster's pattern summary - the statistical insights that separate its failing traces from the passing baseline - plus its daily error counts and representative traces with their evidence and agent flow. Representative traces carry inputs, outputs and conversation reels, and long conversations can push the response past the MCP size limit, so start with rep_limit=3. If even rep_limit=1 is too large, read list_error_cluster_traces instead - the pattern summary is not available in a smaller form.
+    operation: {method: GET, path: "/tracer/feed/issues/{cluster_id}/overview/"}
+    access: read
+    pagination:
+      rep_limit: {maximum: 20}
+  - name: list_error_cluster_traces
+    group: error_feed
+    description: List the traces grouped into a cluster with each one's score, latency, tokens and cost, alongside cluster-wide aggregates. Use the returned trace ids with get_trace.
+    operation: {method: GET, path: "/tracer/feed/issues/{cluster_id}/traces/"}
+    access: read
+    pagination:
+      limit: {maximum: 100}
   # annotations
   - name: list_annotation_queues
     group: annotations

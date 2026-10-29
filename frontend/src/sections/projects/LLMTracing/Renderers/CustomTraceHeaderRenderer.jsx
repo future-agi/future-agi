@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import { useTheme } from "@mui/material/styles";
 import HeaderIcon from "./HeaderIcon";
@@ -22,8 +22,17 @@ const CustomTraceHeaderRenderer = ({
   group,
   column,
   eGridHeader,
+  enableSorting = false,
+  progressSort,
 }) => {
   const theme = useTheme();
+  const [sort, setSort] = useState(column?.getSort?.() || null);
+  useEffect(() => {
+    const changed = () => setSort(column?.getSort?.() || null);
+    column?.addEventListener?.("sortChanged", changed);
+    return () => column?.removeEventListener?.("sortChanged", changed);
+  }, [column]);
+  const Wrapper = enableSorting ? "button" : "div";
 
   useEffect(() => {
     if (eGridHeader?.style) {
@@ -52,7 +61,29 @@ const CustomTraceHeaderRenderer = ({
   };
 
   return (
-    <div style={wrapperStyle}>
+    <Wrapper
+      style={{
+        ...wrapperStyle,
+        ...(enableSorting
+          ? {
+              border: 0,
+              background: "transparent",
+              cursor: "pointer",
+              font: "inherit",
+            }
+          : {}),
+      }}
+      {...(enableSorting
+        ? {
+            type: "button",
+            "aria-label": `Sort ${displayName}`,
+            title: sort
+              ? `Sorted ${sort === "asc" ? "ascending" : "descending"}; click to change`
+              : "Sort by this column",
+            onClick: (event) => progressSort?.(event.shiftKey),
+          }
+        : {})}
+    >
       <HeaderIcon
         displayName={displayName}
         isGroup={isGroupHeader}
@@ -62,7 +93,26 @@ const CustomTraceHeaderRenderer = ({
       <OverflowTooltip title={displayName}>
         <span style={textStyle}>{displayName}</span>
       </OverflowTooltip>
-    </div>
+      {enableSorting && (
+        <svg
+          aria-hidden="true"
+          width="12"
+          height="14"
+          viewBox="0 0 12 14"
+          style={{ flexShrink: 0, color: theme.palette.text.secondary }}
+        >
+          <path
+            d={
+              sort === "desc" ? "M6 2v10m-4-4 4 4 4-4" : "M6 12V2m-4 4 4-4 4 4"
+            }
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            opacity={sort ? 1 : 0.35}
+          />
+        </svg>
+      )}
+    </Wrapper>
   );
 };
 
@@ -71,6 +121,8 @@ CustomTraceHeaderRenderer.propTypes = {
   group: PropTypes.oneOfType([PropTypes.bool, PropTypes.string]),
   column: PropTypes.object,
   eGridHeader: PropTypes.object,
+  enableSorting: PropTypes.bool,
+  progressSort: PropTypes.func,
 };
 
 export default CustomTraceHeaderRenderer;

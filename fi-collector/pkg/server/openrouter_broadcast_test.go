@@ -25,7 +25,8 @@ const openRouterBroadcastFixture = "../../exporter/clickhouse25exporter/testdata
 // JSON body unchanged and checks the `spans` rows ClickHouse receives: the
 // generation span's input/output come from span.input / span.output, its cost
 // is OpenRouter's gen_ai.usage.total_cost even with the production pricer
-// wired in, and the root and attempt spans stay empty and cost nothing.
+// wired in, and the root and attempt spans stay empty, cost nothing and are
+// stored as chains.
 func TestOTLPHTTPJSONOpenRouterBroadcast(t *testing.T) {
 	body, err := os.ReadFile(openRouterBroadcastFixture)
 	if err != nil {
@@ -140,6 +141,9 @@ func TestOTLPHTTPJSONOpenRouterBroadcast(t *testing.T) {
 		}
 		if r := rows[id]; r["cost"] != float64(0) {
 			t.Errorf("span %s cost = %v, want 0 (only the generation span is charged)", id, r["cost"])
+		}
+		if r := rows[id]; r["observation_type"] != "chain" {
+			t.Errorf("span %s observation_type = %v, want chain", id, r["observation_type"])
 		}
 	}
 }

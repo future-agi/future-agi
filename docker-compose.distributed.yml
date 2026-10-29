@@ -845,6 +845,12 @@ services:
       FI_OBSERVED_CATALOG_MAX_ARRAY_MEMBERS_PER_SPAN: ${FI_OBSERVED_CATALOG_MAX_ARRAY_MEMBERS_PER_SPAN:-256}
       FI_ERROR_FEED_KAFKA_BROKERS: property-catalog-kafka:9092
       FI_ERROR_FEED_KAFKA_TOPIC: ${ERROR_FEED_KAFKA_TOPIC:-error-feed.trace-available.v1}
+      # OTLP ingest limits; empty leaves the collector's defaults, derived from
+      # its memory limit (mem_limit above, with no GOMEMLIMIT set).
+      FI_INGEST_BUDGET_MIB: ${FI_INGEST_BUDGET_MIB:-}
+      FI_OTLP_MAX_BODY_MIB: ${FI_OTLP_MAX_BODY_MIB:-}
+      FI_GRPC_MAX_RECV_MIB: ${FI_GRPC_MAX_RECV_MIB:-}
+      FI_OTLP_MAX_CONNECTIONS: ${FI_OTLP_MAX_CONNECTIONS:-}
       # Point at the same ClickHouse the backend uses (HTTP port 8123).
       FI_CH_URL: http://clickhouse:8123
       FI_CH_DATABASE: ${FI_CH_DATABASE:-${CH25_DATABASE:-${CH_DATABASE:-default}}}

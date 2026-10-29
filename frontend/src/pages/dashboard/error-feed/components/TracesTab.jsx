@@ -11,6 +11,7 @@ import PropTypes from "prop-types";
 import { AgGridReact } from "ag-grid-react";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { useErrorFeedTraces } from "src/api/errorFeed/error-feed";
+import { useSharedIssue } from "../sharedIssueContext";
 import { useGetProjectDetails } from "src/api/project/project-detail";
 import { useVoiceCallDetail } from "src/sections/agents/helper";
 import { PROJECT_SOURCE } from "src/utils/constants";
@@ -258,11 +259,18 @@ TracesGrid.propTypes = {
 export default function TracesTab({ error }) {
   const clusterId = error?.cluster_id;
   const projectId = error?.project_id;
-  const { data, isLoading } = useErrorFeedTraces(clusterId, { limit: 200 });
+  // A shared issue carries its traces; signed-out viewers can't fetch them.
+  const shared = useSharedIssue();
+  const fetched = useErrorFeedTraces(shared ? null : clusterId, { limit: 200 });
+  const data = shared ? shared.traces : fetched.data;
+  const isLoading = shared ? false : fetched.isLoading;
   const [drawerTraceId, setDrawerTraceId] = useState(null);
 
   // Sim/voice projects need the VAPI call drawer, not the generic trace drawer.
-  const { data: projectDetail } = useGetProjectDetails(projectId, !!projectId);
+  const { data: projectDetail } = useGetProjectDetails(
+    projectId,
+    !!projectId && !shared,
+  );
   const isVoiceProject = projectDetail?.source === PROJECT_SOURCE.SIMULATOR;
   const { data: voiceCallData, isFetching: voiceLoading } = useVoiceCallDetail(
     drawerTraceId,
@@ -382,6 +390,8 @@ export default function TracesTab({ error }) {
           onNext={handleNext}
           hasPrev={traceIndex > 0}
           hasNext={traceIndex < rows.length - 1}
+          readOnly={!!shared}
+          sharedToken={shared?.token ?? null}
         />
       )}
     </Stack>

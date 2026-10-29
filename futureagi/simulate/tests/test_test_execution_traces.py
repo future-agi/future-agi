@@ -512,6 +512,27 @@ def test_the_runs_own_version_decides_the_kind(
     assert [trace["trace_id"] for trace in response.json()["traces"]] == ["trace-a"]
 
 
+def test_a_run_on_a_version_with_nothing_stored_takes_the_agents_kind(
+    auth_client, execution, job, call, agent, source_setup, hidden_project, clickhouse
+):
+    # As a version a push made: it stores no setup of its own.
+    pushed = agent.create_version(
+        description="", commit_message="pushed", status="active"
+    )
+    TestExecution.objects.filter(id=execution.id).update(agent_version=pushed)
+    clickhouse.rows = [
+        (
+            str(hidden_project.id),
+            str(job.id),
+            _row("trace-a", timezone.now(), call_id=str(call.id)),
+        )
+    ]
+
+    response = _get(auth_client, execution, call)
+
+    assert [trace["trace_id"] for trace in response.json()["traces"]] == ["trace-a"]
+
+
 def _own_agent_execution(organization, workspace, run_agent, simulator_agent, own):
     """A run of ``run_agent``'s run test whose execution names ``own`` instead."""
     run_test = RunTest.no_workspace_objects.create(
