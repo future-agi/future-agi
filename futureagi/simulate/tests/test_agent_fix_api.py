@@ -994,6 +994,22 @@ class TestUserApi:
         )
         assert _git(github.bare, "show", f"{branch}:agent.py") == "PROMPT = 'mine'"
 
+    def test_a_repository_name_that_could_leave_its_path_is_refused(
+        self, auth_client, source_run, github
+    ):
+        fix_run, candidate = self._proven(source_run, "github")
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_version_id=source_run.agent_version_id
+        ).update(source={"repository": "acme/../agent", "ref": "refs/heads/main"})
+
+        response, calls = self._ship(auth_client, fix_run, candidate, [])
+
+        assert (response.status_code, response.json()["error"], calls) == (
+            422,
+            "github_repository_invalid",
+            [],
+        )
+
     @pytest.mark.parametrize("unconnected", ["archive", "no_installation"])
     def test_a_pull_request_needs_a_connected_repository(
         self, auth_client, source_run, github, unconnected

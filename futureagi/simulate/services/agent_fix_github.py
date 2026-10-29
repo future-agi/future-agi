@@ -12,7 +12,7 @@ from django.conf import settings
 from simulate.models import AgentFixCandidate, HarnessAgentVersionRuntime
 from simulate.services.agent_fix_engine import load_object
 from simulate.services.agent_fix_runs import require_shippable
-from simulate.services.harness_github import short_ref
+from simulate.services.harness_github import safe_repository, short_ref
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.services.hosted_harness_gateway import (
     GitHubAppTokenProvider,
@@ -49,6 +49,10 @@ def open_pull_request(candidate: AgentFixCandidate) -> str:
         )
     source = runtime.source or {}
     repository = str(source.get("repository") or "")
+    if not safe_repository(repository):
+        raise HostedHarnessError(
+            "github_repository_invalid", "invalid GitHub repository", status_code=422
+        )
     run = fix_run.source_run
     run_source = ((run.payload if run else None) or {}).get("source") or {}
     commit = str(run_source.get("commit_sha") or "")
