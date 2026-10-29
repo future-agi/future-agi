@@ -37,3 +37,8 @@ class SdkConfig(AppConfig):
             trace_scan,  # noqa: F401
             trace_session,  # noqa: F401
         )
+        from tracer.services.derived_metrics.deletion_protocol import (
+            register_deletion_hooks,
+        )
+
+        register_deletion_hooks()

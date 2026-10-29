@@ -304,7 +304,7 @@ def test_migration_rolls_back_to_0125_and_forward():
         )
     finally:
         executor.loader.build_graph()
-        executor.migrate(current)
+        executor.migrate([("tracer", "0127_metric_lifecycle_safety")])
 
 
 # --- generation, epoch and sequence allocation --------------------------------
@@ -590,7 +590,9 @@ def test_state_changes_never_touch_the_dirty_key_ledger(observe_project):
 
 
 @pytest.mark.django_db
-def test_project_hard_delete_removes_the_whole_ledger(workspace, observe_project):
+def test_project_hard_delete_keeps_erasure_work_not_the_ledger(
+    workspace, observe_project
+):
     now = timezone.now()
     grant = _lease(observe_project, now)
     _commit(observe_project, grant, now)
@@ -609,7 +611,7 @@ def test_project_hard_delete_removes_the_whole_ledger(workspace, observe_project
     MetricGenerationPin.pin_head(
         observe_project.id, consumer_kind="request", ttl=timedelta(minutes=1), now=now
     )
-    MetricErasureRequest.record(
+    request = MetricErasureRequest.record(
         organization_id=workspace.organization_id,
         project_id=observe_project.id,
         scope_kind="project",
@@ -630,11 +632,16 @@ def test_project_hard_delete_removes_the_whole_ledger(workspace, observe_project
         MetricAttemptBatch,
         MetricReadManifest,
         MetricGenerationPin,
-        MetricErasureRequest,
         DerivedMetricVersion,
     ):
         assert not model.objects.exists(), model.__name__
     assert not DerivedMetric.all_objects.filter(id=metric.id).exists()
+    request.refresh_from_db()
+    assert request.project_id is None
+    assert request.project_key == observe_project.id
+    assert request.status == "queued" and request.receipts == {}
+    # Relational cascade is not evidence of physical-store cleanup.
+    assert MetricErasureRequest.objects.filter(scope_kind="project").exists()
 
 
 # --- fenced publication, manifests and pins ------------------------------------
@@ -813,7 +820,10 @@ def test_pins_expire_and_erasure_invalidates_them(workspace, observe_project):
         )
     grant = _lease(observe_project, now)
     _, manifest = _commit(observe_project, grant, now)
-    version = _version(_metric(workspace, observe_project))
+    version = _version(_metric(workspace, observe_project), backfill_status="complete")
+    DerivedMetric.activate_version(
+        version.metric_id, version.id, expected_active_id=None, now=now
+    )
 
     request_pin = MetricGenerationPin.pin_head(
         observe_project.id, consumer_kind="request", ttl=timedelta(minutes=1), now=now

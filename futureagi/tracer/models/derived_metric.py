@@ -191,8 +191,14 @@ class DerivedMetric(BaseModel):
         activation happened in between, nothing changes.
         """
 
+        from tracer.services.derived_metrics.deletion_protocol import project_lock
+
         now = _now(now)
         with transaction.atomic():
+            project_id = cls._base_manager.values_list("project_id", flat=True).get(
+                id=metric_id
+            )
+            project_lock(project_id)
             ready = DerivedMetricVersion.objects.filter(
                 id=version_id,
                 metric_id=metric_id,
@@ -331,6 +337,8 @@ class DerivedMetricVersion(models.Model):
     backfill_days_total = models.PositiveIntegerField(default=0)
     backfill_updated_at = models.DateTimeField(null=True, blank=True)
     activated_at = models.DateTimeField(null=True, blank=True)
+    # Permanent capture fence; only the lifecycle protocol may set it.
+    pins_revoked_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -458,7 +466,7 @@ class DerivedMetricRun(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     definition = models.ForeignKey(
-        DerivedMetricVersion, on_delete=models.PROTECT, related_name="runs"
+        DerivedMetricVersion, on_delete=models.CASCADE, related_name="runs"
     )
     requested_by = models.ForeignKey(
         "accounts.User", on_delete=models.SET_NULL, null=True
@@ -811,6 +819,9 @@ class MetricProjectRefresh(models.Model):
     def _locked(cls, project_id, epoch: int, token, now: datetime):
         """Lock the project row and require the caller's current lease."""
 
+        from tracer.services.derived_metrics.deletion_protocol import project_lock
+
+        project_lock(project_id)
         row = cls.objects.select_for_update().filter(project_id=project_id).first()
         if row is None or not (
             row.fencing_epoch == epoch
@@ -830,8 +841,11 @@ class MetricProjectRefresh(models.Model):
         now = _now(now)
         if not timedelta(0) < ttl <= LEASE_MAX_TTL:
             raise ValueError("lease ttl must be positive and at most one hour")
-        cls.for_project(project_id)
+        from tracer.services.derived_metrics.deletion_protocol import project_lock
+
         with transaction.atomic():
+            project_lock(project_id)
+            cls.for_project(project_id)
             row = cls.objects.select_for_update().get(project_id=project_id)
             if row.lease_expires_at is not None and row.lease_expires_at > now:
                 return None
@@ -957,6 +971,9 @@ class MetricRefreshAttempt(models.Model):
         blank=True,
         related_name="+",
     )
+    # Audit ancestry never changes, even when the read-retaining FK is detached.
+    parent_manifest_key = models.UUIDField(null=True, blank=True)
+    parent_manifest_sha256 = models.CharField(max_length=64, blank=True, default="")
     # Frozen at prepare: discovery ceilings/cursors and the metric versions.
     source_ceilings = models.JSONField(default=dict)
     metric_versions = models.JSONField(default=list)
@@ -1089,6 +1106,12 @@ class MetricRefreshAttempt(models.Model):
                 lease_token=token,
                 purpose=purpose,
                 parent_manifest_id=refresh.head_manifest_id,
+                parent_manifest_key=refresh.head_manifest_id,
+                parent_manifest_sha256=(
+                    refresh.head_manifest.manifest_sha256
+                    if refresh.head_manifest_id
+                    else ""
+                ),
                 source_ceilings=source_ceilings,
                 metric_versions=metric_versions,
                 prepared_sha256=_sha256_json(frozen),
@@ -1109,6 +1132,16 @@ class MetricRefreshAttempt(models.Model):
     def _locked_open(cls, attempt_id, epoch: int, token, now: datetime, state: str):
         """Lock the small attempt row; require its writer's current lease."""
 
+        from tracer.services.derived_metrics.deletion_protocol import project_lock
+
+        project_id = (
+            cls.objects.filter(id=attempt_id)
+            .values_list("project_id", flat=True)
+            .first()
+        )
+        if project_id is None:
+            raise MetricStateConflict("attempt not found")
+        project_lock(project_id)
         attempt = (
             cls.objects.select_for_update()
             .only(
@@ -1619,6 +1652,11 @@ class MetricReadManifest(models.Model):
     parent = models.ForeignKey(
         "self", on_delete=models.RESTRICT, null=True, blank=True, related_name="+"
     )
+    parent_manifest_key = models.UUIDField(null=True, blank=True)
+    parent_manifest_sha256 = models.CharField(max_length=64, blank=True, default="")
+    remap_revision = models.BigIntegerField(default=0)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    revocation_reason = models.CharField(max_length=32, blank=True, default="")
     checkpoint_attempt = models.ForeignKey(
         MetricRefreshAttempt,
         on_delete=models.RESTRICT,
@@ -1721,6 +1759,18 @@ class MetricReadManifest(models.Model):
                 if refresh.head_manifest_id
                 else None
             )
+            # A revoked base cannot be inherited into a fresh, usable generation.
+            # Erasure/retention rebuilds must publish a complete checkpoint.
+            if (
+                parent
+                and parent.revoked_at
+                and attempt.purpose != MetricRefreshAttempt.Purpose.COMPACTION
+            ):
+                raise MetricStateConflict("expired base requires a new checkpoint")
+            if not MetricRefreshAttempt.objects.filter(
+                id=attempt.id, expires_at__gt=now
+            ).exists():
+                raise MetricStateConflict("attempt expired")
             if attempt.purpose == MetricRefreshAttempt.Purpose.COMPACTION:
                 checkpoint = (attempt.id, attempt.generation)
                 deltas: list[tuple[uuid.UUID, int]] = []
@@ -1770,6 +1820,9 @@ class MetricReadManifest(models.Model):
                 generation=attempt.generation,
                 published_by_id=attempt.id,
                 parent_id=refresh.head_manifest_id,
+                parent_manifest_key=refresh.head_manifest_id,
+                parent_manifest_sha256=parent.manifest_sha256 if parent else "",
+                remap_revision=cursors.get("remap_cursor_ns", refresh.remap_cursor_ns),
                 checkpoint_attempt_id=checkpoint[0],
                 checkpoint_generation=checkpoint[1],
                 delta_attempt_ids=[a for a, _ in deltas],
@@ -1828,11 +1881,12 @@ class MetricGenerationPin(models.Model):
     )
     definition_version = models.ForeignKey(
         DerivedMetricVersion,
-        on_delete=models.RESTRICT,
+        on_delete=models.CASCADE,
         null=True,
         blank=True,
         related_name="+",
     )
+    remap_revision = models.BigIntegerField(default=0)
     consumer_kind = models.CharField(max_length=16, choices=Consumer.choices)
     consumer_ref = models.CharField(max_length=128, blank=True, default="")
     captured_at = models.DateTimeField(default=timezone.now)
@@ -1871,7 +1925,22 @@ class MetricGenerationPin(models.Model):
         ]
 
     def is_usable(self, now: datetime | None = None) -> bool:
-        return self.invalidated_at is None and self.expires_at > _now(now)
+        # Always consult durable state, including when this instance predates
+        # revocation or has already been removed by GC.
+        return (
+            type(self)
+            .objects.filter(
+                id=self.id,
+                invalidated_at__isnull=True,
+                expires_at__gt=_now(now),
+                manifest__revoked_at__isnull=True,
+            )
+            .filter(
+                Q(definition_version__isnull=True)
+                | Q(definition_version__pins_revoked_at__isnull=True)
+            )
+            .exists()
+        )
 
     @classmethod
     def pin_head(
@@ -1882,28 +1951,20 @@ class MetricGenerationPin(models.Model):
         ttl: timedelta,
         consumer_ref: str = "",
         definition_version_id=None,
+        metric_id=None,
         now: datetime | None = None,
     ) -> MetricGenerationPin:
-        """Pin the project's committed head for one request or snapshot."""
+        """Compatibility entry point; mandatory synchronized capture, never bare."""
+        from tracer.services.derived_metrics.deletion_protocol import capture_pin
 
-        now = _now(now)
-        if not timedelta(0) < ttl <= PIN_MAX_LIFETIME:
-            raise ValueError("pin ttl must be positive and at most 24 hours")
-        head = (
-            MetricProjectRefresh.objects.filter(project_id=project_id)
-            .values_list("head_manifest_id", flat=True)
-            .first()
-        )
-        if head is None:
-            raise MetricStateConflict("no committed refresh to pin yet")
-        return cls.objects.create(
-            project_id=project_id,
-            manifest_id=head,
-            definition_version_id=definition_version_id,
+        return capture_pin(
+            project_id,
             consumer_kind=consumer_kind,
+            ttl=ttl,
             consumer_ref=consumer_ref,
-            captured_at=now,
-            expires_at=now + ttl,
+            definition_version_id=definition_version_id,
+            metric_id=metric_id,
+            now=now,
         )
 
     @classmethod
@@ -1918,24 +1979,33 @@ class MetricGenerationPin(models.Model):
     ) -> int:
         """Invalidate live pins of a project (retention, erasure, version retired)."""
 
-        if reason not in cls.Invalidation.values or not reason:
-            raise ValueError("unknown invalidation reason")
-        pins = cls.objects.filter(project_id=project_id, invalidated_at__isnull=True)
-        if manifest_ids is not None:
-            pins = pins.filter(manifest_id__in=list(manifest_ids))
-        if definition_version_ids is not None:
-            pins = pins.filter(definition_version_id__in=list(definition_version_ids))
-        return pins.update(invalidated_at=_now(now), invalidation_reason=reason)
+        from tracer.services.derived_metrics.deletion_protocol import revoke_generations
+
+        return revoke_generations(
+            project_id,
+            reason=reason,
+            manifest_ids=manifest_ids,
+            definition_version_ids=definition_version_ids,
+            now=now,
+        )
 
     @classmethod
     def manifest_in_use(cls, manifest_id, now: datetime | None = None) -> bool:
         """True while any usable pin holds the manifest (blocks its cleanup)."""
 
-        return cls.objects.filter(
-            manifest_id=manifest_id,
-            invalidated_at__isnull=True,
-            expires_at__gt=_now(now),
-        ).exists()
+        return (
+            cls.objects.filter(
+                manifest_id=manifest_id,
+                invalidated_at__isnull=True,
+                manifest__revoked_at__isnull=True,
+                expires_at__gt=_now(now),
+            )
+            .filter(
+                Q(definition_version__isnull=True)
+                | Q(definition_version__pins_revoked_at__isnull=True)
+            )
+            .exists()
+        )
 
 
 class MetricErasureRequest(models.Model):
@@ -1951,6 +2021,10 @@ class MetricErasureRequest(models.Model):
         PROJECT = "project"
         SESSIONS = "sessions"
         USERS = "users"
+        METRIC = "metric"
+        VERSION = "version"
+        RUN = "run"
+        HISTORY = "history"
 
     class Status(models.TextChoices):
         QUEUED = "queued"
@@ -1967,15 +2041,29 @@ class MetricErasureRequest(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     organization = models.ForeignKey(
-        "accounts.Organization", on_delete=models.CASCADE, related_name="+"
-    )
-    project = models.ForeignKey(
-        "tracer.Project",
-        on_delete=models.CASCADE,
+        "accounts.Organization",
+        on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name="+",
     )
+    project = models.ForeignKey(
+        "tracer.Project",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    # Immutable external-store identity, independent of navigation FKs.
+    organization_key = models.UUIDField()
+    project_key = models.UUIDField(null=True, blank=True)
+    metric_key = models.UUIDField(null=True, blank=True)
+    version_key = models.UUIDField(null=True, blank=True)
+    run_key = models.UUIDField(null=True, blank=True)
+    snapshot_key = models.UUIDField(null=True, blank=True)
+    result_key = models.UUIDField(null=True, blank=True)
+    deletion_key = models.CharField(max_length=100, null=True, blank=True, unique=True)
+    store_payload = models.JSONField(default=dict, blank=True)
     scope_kind = models.CharField(max_length=16, choices=Scope.choices)
     subject_ids = models.JSONField(default=list, blank=True)
     subject_count = models.PositiveIntegerField(default=0)
@@ -2005,7 +2093,16 @@ class MetricErasureRequest(models.Model):
         constraints = [
             models.CheckConstraint(
                 condition=Q(
-                    scope_kind__in=["organization", "project", "sessions", "users"]
+                    scope_kind__in=[
+                        "organization",
+                        "project",
+                        "sessions",
+                        "users",
+                        "metric",
+                        "version",
+                        "run",
+                        "history",
+                    ]
                 ),
                 name="metric_erasure_scope",
             ),
@@ -2019,12 +2116,31 @@ class MetricErasureRequest(models.Model):
                     subject_count__gte=1,
                     subject_count__lte=ERASURE_MAX_SUBJECT_IDS,
                 )
-                | Q(scope_kind__in=["organization", "project"], subject_count=0),
+                | Q(
+                    scope_kind__in=[
+                        "organization",
+                        "project",
+                        "metric",
+                        "version",
+                        "run",
+                        "history",
+                    ],
+                    subject_count=0,
+                ),
                 name="metric_erasure_subjects",
             ),
             models.CheckConstraint(
-                condition=~Q(scope_kind__in=["project", "sessions"])
-                | Q(project__isnull=False),
+                condition=~Q(
+                    scope_kind__in=[
+                        "project",
+                        "sessions",
+                        "metric",
+                        "version",
+                        "run",
+                        "history",
+                    ]
+                )
+                | Q(project_key__isnull=False),
                 name="metric_erasure_project_scope",
             ),
             models.CheckConstraint(
@@ -2042,6 +2158,40 @@ class MetricErasureRequest(models.Model):
                 fields=["status", "requested_at"], name="metric_erasure_queue_idx"
             )
         ]
+
+    FROZEN_FIELDS = (
+        "organization_key",
+        "project_key",
+        "metric_key",
+        "version_key",
+        "run_key",
+        "snapshot_key",
+        "result_key",
+        "deletion_key",
+        "scope_kind",
+        "subject_ids",
+        "subject_count",
+        "subject_sha256",
+        "store_payload",
+        "requested_at",
+    )
+
+    def save(self, *args, **kwargs):
+        if self._state.adding:
+            if self.organization_key is None:
+                self.organization_key = self.organization_id
+            if self.project_key is None:
+                self.project_key = self.project_id
+            if (
+                self.organization_id is not None
+                and self.organization_key != self.organization_id
+            ) or (self.project_id is not None and self.project_key != self.project_id):
+                raise ValidationError("erasure navigation and immutable scope differ")
+        else:
+            frozen = type(self).objects.values(*self.FROZEN_FIELDS).get(id=self.id)
+            if any(getattr(self, key) != value for key, value in frozen.items()):
+                raise MetricLedgerConflict("erasure identity and payload are immutable")
+        super().save(*args, **kwargs)
 
     def __repr__(self):
         return (
