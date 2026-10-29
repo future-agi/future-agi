@@ -185,6 +185,36 @@ export default function ConnectAgentPage() {
             <TextLink onClick={leave}>Back to Environments</TextLink>
           </Stack>
         )}
+      {/* Sent here from New improvement: say why, and that it comes back. */}
+      {!prefill &&
+        returnTo?.startsWith(paths.dashboard.simulate.improvements) && (
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1.25}
+            sx={{
+              mb: 2,
+              px: 1.75,
+              py: 1.125,
+              borderRadius: 1,
+              border: "1px solid",
+              borderColor: "divider",
+              bgcolor: "background.paper",
+            }}
+          >
+            <Iconify
+              icon="solar:graph-up-linear"
+              width={16}
+              sx={{ color: "text.secondary", flexShrink: 0 }}
+            />
+            <Typography sx={{ typography: "s2", flex: 1, minWidth: 0 }}>
+              Connecting an agent to improve — once it&apos;s connected, New
+              improvement opens with it picked. GitHub and Upload a folder can
+              be changed and proven; the others end in a suggested change.
+            </Typography>
+            <TextLink onClick={leave}>Back to Improvements</TextLink>
+          </Stack>
+        )}
       {prefill && traced && (
         <Box sx={{ mb: 2.5 }}>
           <IssueConnectCard

@@ -710,17 +710,6 @@ export default function ImprovementSetup({
                   )}
                 </Box>
               ))}
-            {!main && agentField && !preset?.agentKey && (
-              <Typography
-                sx={{
-                  typography: "s3",
-                  color: "text.tertiary",
-                  mt: "-12px !important",
-                }}
-              >
-                Its goals, budget and cost show here once it&apos;s picked.
-              </Typography>
-            )}
             {main && (
               <>
                 <Box>

@@ -2,7 +2,7 @@ import PropTypes from "prop-types";
 import ImprovementMetricsStrip from "./ImprovementMetricsStrip";
 import NewImprovement from "./NewImprovement";
 import { useEffect, useMemo, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useSearchParams, useLocation, useNavigate } from "react-router-dom";
 import {
   Box,
   Button,
@@ -59,6 +59,19 @@ export default function ImprovementSourcesList({ agent, run }) {
   const [selectedIds, setSelectedIds] = useState([]);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
+  /* Back from Connect a new agent (?new=1&agent=agt_…): New improvement
+     opens again with that agent picked. The params are dropped once read. */
+  const [params, setParams] = useSearchParams();
+  const [newAgentId, setNewAgentId] = useState(null);
+  useEffect(() => {
+    if (run || params.get("new") !== "1") return;
+    setNewAgentId(params.get("agent"));
+    setNewOpen(true);
+    const next = new URLSearchParams(params);
+    next.delete("new");
+    next.delete("agent");
+    setParams(next, { replace: true });
+  }, [params]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* A running improvement ticks its phase — read the clock while one runs. */
   const [now, setNow] = useState(() => Date.now());
@@ -504,7 +517,14 @@ export default function ImprovementSourcesList({ agent, run }) {
             New improvement
           </Button>
         )}
-        <NewImprovement open={newOpen} onClose={() => setNewOpen(false)} />
+        <NewImprovement
+          open={newOpen}
+          initialAgentId={newAgentId}
+          onClose={() => {
+            setNewOpen(false);
+            setNewAgentId(null);
+          }}
+        />
       </Stack>
 
       {/* Acceptance rate, time to proposal, fix survival — over what's listed. */}

@@ -38,6 +38,7 @@ export default function AgentPicker({
   onChange,
   locked = null,
   emptyText = null,
+  emptyAction = null,
 }) {
   const theme = useTheme();
   const anchor = useRef(null);
@@ -392,6 +393,32 @@ export default function AgentPicker({
                         ? "No agent matches"
                         : emptyText || "No agents to pick from."}
                     </Typography>
+                    {/* Searched and it isn't there: bring it in from here. */}
+                    {emptyAction && (
+                      <Typography
+                        component="button"
+                        type="button"
+                        onClick={() => {
+                          setOpen(false);
+                          emptyAction.onClick();
+                        }}
+                        sx={{
+                          ...focusRing,
+                          mt: 0.75,
+                          p: 0,
+                          border: 0,
+                          bgcolor: "transparent",
+                          cursor: "pointer",
+                          typography: "s2",
+                          fontWeight: 500,
+                          color: "text.primary",
+                          textDecoration: "underline",
+                          textUnderlineOffset: "3px",
+                        }}
+                      >
+                        {emptyAction.label}
+                      </Typography>
+                    )}
                   </Box>
                 )}
               </Box>
@@ -422,6 +449,11 @@ AgentPicker.propTypes = {
   locked: PropTypes.string,
   /* Why there are no choices at all — the caller knows what it left out. */
   emptyText: PropTypes.string,
+  /* A link under "No agent matches", e.g. Connect a new agent. */
+  emptyAction: PropTypes.shape({
+    label: PropTypes.string.isRequired,
+    onClick: PropTypes.func.isRequired,
+  }),
 };
 
 function RailItem({ cat, on, count, onClick }) {
