@@ -534,6 +534,15 @@ def _distribution(run) -> list[dict]:
     ]
 
 
+# What a run keeps for Future AGI only: the model spend that reached it after
+# a Stop, which isn't charged (ee.agenthub.insights.pipeline.SPENT_AFTER_STOP).
+INTERNAL_SETTINGS = frozenset({"spent_after_stop_usd"})
+
+
+def _public_settings(settings) -> dict:
+    return {k: v for k, v in (settings or {}).items() if k not in INTERNAL_SETTINGS}
+
+
 def _error_code(run) -> str:
     """Why a failed run ended when running it again can't help as it is:
     "license" or "model_setup" (an administrator must fix the licence or the
@@ -1542,7 +1551,7 @@ class InsightRunDetailView(InsightsLicenseRequired, APIView):
                 "progress": run.progress or {},
                 "unit": run.unit,
                 "scope": normalize_scope(run.scope),
-                "settings": run.settings or {},
+                "settings": _public_settings(run.settings),
                 "population_size": run.population_size,
                 "sample_size": run.sample_size,
                 "analysed_count": (

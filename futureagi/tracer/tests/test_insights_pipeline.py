@@ -26,6 +26,7 @@ from ee.agenthub.insights import (  # noqa: E402
 from ee.agenthub.insights.llm import InsightModelError  # noqa: E402
 from ee.agenthub.insights.units import UnitText  # noqa: E402
 from tracer.models.insights import InsightConfig, InsightRun, InsightUnit  # noqa: E402
+from tracer.tests.test_insights_api import insight_enabled as insight_enabled  # noqa: E402
 
 WINDOW = ["2026-10-01T00:00:00+00:00", "2026-10-08T00:00:00+00:00"]
 
@@ -961,6 +962,27 @@ def charged(monkeypatch):
 
     monkeypatch.setattr(billing, "charge", charge)
     return calls
+
+
+@pytest.mark.django_db
+def test_what_a_stop_left_uncharged_stays_out_of_the_run_the_page_reads(
+    auth_client, report, user
+):
+    from tracer.views import insights as views
+
+    assert pipeline.SPENT_AFTER_STOP in views.INTERNAL_SETTINGS
+    run = pipeline.create_run(
+        config=report,
+        scope={"window": WINDOW, "preset": "Custom"},
+        population=[{"id": "u-0"}],
+        sample_size=10,
+        user=user,
+    )
+    run.settings = {**run.settings, pipeline.SPENT_AFTER_STOP: 0.08}
+    run.save(update_fields=["settings"])
+    detail = auth_client.get(f"/tracer/insights/runs/{run.id}/").json()["result"]
+    assert pipeline.SPENT_AFTER_STOP not in detail["settings"]
+    assert detail["settings"]["lens"] == run.settings["lens"]
 
 
 @pytest.mark.django_db
