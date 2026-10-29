@@ -583,9 +583,6 @@ def _catalogue_index(catalogue: Any) -> dict[str, dict[str, Any]]:
             "kind": "judge" if entry.get("judged") else "checkpoint",
             "claim": str(entry.get("judged") or ""),
         }
-        # The sub-actor this sub-goal grades the agent's treatment of, when it names one.
-        if entry.get("sub_actor"):
-            index[name]["sub_actor"] = str(entry["sub_actor"])
     return index
 
 
@@ -855,11 +852,6 @@ def _catalogue_entries(catalogue: Any) -> list[dict[str, Any]]:
                 "kind": "judge" if judged else "checkpoint",
                 "claim": judged,
                 "check": str(entry.get("check") or ""),
-                **(
-                    {"sub_actor": str(entry["sub_actor"])}
-                    if entry.get("sub_actor")
-                    else {}
-                ),
             }
         )
     return goals

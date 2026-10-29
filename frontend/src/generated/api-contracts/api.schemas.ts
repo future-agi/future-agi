@@ -17679,8 +17679,6 @@ export interface HarnessEnvironmentCatalogueSubGoalApi {
   kind: HarnessEnvironmentCatalogueSubGoalApiKind;
   claim: string;
   check: string;
-  /** @minLength 1 */
-  sub_actor?: string;
 }
 
 export type HarnessEnvironmentSubActorApiPersona = { [key: string]: string };
@@ -17823,8 +17821,6 @@ export interface HarnessEnvironmentSubGoalApi {
   what?: string;
   kind?: HarnessEnvironmentSubGoalApiKind;
   claim?: string;
-  /** @minLength 1 */
-  sub_actor?: string;
 }
 
 export type HarnessEnvironmentScenarioSubActorApiTrigger = {
@@ -19135,7 +19131,6 @@ export type HarnessResultReceiptApiStatus =
 export const HarnessResultReceiptApiStatus = {
   passed: "passed",
   failed: "failed",
-  inconclusive: "inconclusive",
   errored: "errored",
   skipped: "skipped",
 } as const;

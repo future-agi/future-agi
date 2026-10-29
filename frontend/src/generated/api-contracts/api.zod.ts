@@ -35551,7 +35551,6 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
         kind: zod.enum(["checkpoint", "judge"]),
         claim: zod.string(),
         check: zod.string(),
-        sub_actor: zod.string().min(1).optional(),
       }),
     ),
     sub_actors: zod.array(
@@ -35622,7 +35621,6 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
           what: zod.string().optional(),
           kind: zod.enum(["checkpoint", "judge"]).optional(),
           claim: zod.string().optional(),
-          sub_actor: zod.string().min(1).optional(),
         }),
       ),
       sub_actors: zod.array(
@@ -35780,7 +35778,6 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
         kind: zod.enum(["checkpoint", "judge"]),
         claim: zod.string(),
         check: zod.string(),
-        sub_actor: zod.string().min(1).optional(),
       }),
     ),
     sub_actors: zod.array(
@@ -35851,7 +35848,6 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
           what: zod.string().optional(),
           kind: zod.enum(["checkpoint", "judge"]).optional(),
           claim: zod.string().optional(),
-          sub_actor: zod.string().min(1).optional(),
         }),
       ),
       sub_actors: zod.array(
@@ -36072,7 +36068,6 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
           kind: zod.enum(["checkpoint", "judge"]),
           claim: zod.string(),
           check: zod.string(),
-          sub_actor: zod.string().min(1).optional(),
         }),
       ),
       sub_actors: zod.array(
@@ -36143,7 +36138,6 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
             what: zod.string().optional(),
             kind: zod.enum(["checkpoint", "judge"]).optional(),
             claim: zod.string().optional(),
-            sub_actor: zod.string().min(1).optional(),
           }),
         ),
         sub_actors: zod.array(
@@ -38250,7 +38244,7 @@ export const SimulateApiHarnessAttemptsResultsBody = zod.object({
     .number()
     .min(simulateApiHarnessAttemptsResultsBodyWorldIndexMin)
     .max(simulateApiHarnessAttemptsResultsBodyWorldIndexMax),
-  status: zod.enum(["passed", "failed", "inconclusive", "errored", "skipped"]),
+  status: zod.enum(["passed", "failed", "errored", "skipped"]),
   sub_goals: zod.array(
     zod.object({
       name: zod

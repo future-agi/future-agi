@@ -745,7 +745,7 @@ def build_call_rows(
                 "outcome": call_outcome(call, live_eval_configs, specs),
                 "execution_status": call.status,
                 "harness_outcome_status": metadata.get("harness_outcome_status"),
-                # Why it was skipped, or why a call that ran is inconclusive.
+                # Why it was skipped, when the harness gave a reason.
                 "outcome_reason": receipt.get("reason"),
                 "source_scenario_key": metadata.get("harness_scenario_key"),
                 "trial_index": metadata.get("harness_trial_index"),

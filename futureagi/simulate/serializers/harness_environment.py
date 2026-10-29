@@ -314,7 +314,6 @@ class HarnessEnvironmentCatalogueSubGoalSerializer(serializers.Serializer):
     kind = serializers.ChoiceField(choices=("checkpoint", "judge"))
     claim = serializers.CharField(allow_blank=True)
     check = serializers.CharField(allow_blank=True)
-    sub_actor = serializers.CharField(required=False)
 
 
 class HarnessEnvironmentEndConditionsSerializer(serializers.Serializer):
@@ -425,7 +424,6 @@ class HarnessEnvironmentSubGoalSerializer(serializers.Serializer):
     what = serializers.CharField(required=False, allow_blank=True)
     kind = serializers.ChoiceField(choices=("checkpoint", "judge"), required=False)
     claim = serializers.CharField(required=False, allow_blank=True)
-    sub_actor = serializers.CharField(required=False)
 
 
 class HarnessEnvironmentScenarioSerializer(serializers.Serializer):

@@ -64756,7 +64756,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         status: {
           title: "Status",
           type: "string",
-          enum: ["passed", "failed", "inconclusive", "errored", "skipped"],
+          enum: ["passed", "failed", "errored", "skipped"],
         },
         sub_goals: {
           type: "array",
@@ -111917,11 +111917,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Check",
           type: "string",
         },
-        sub_actor: {
-          title: "Sub actor",
-          type: "string",
-          minLength: 1,
-        },
       },
     },
     HarnessEnvironmentEndConditions: {
@@ -112276,11 +112271,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         claim: {
           title: "Claim",
           type: "string",
-        },
-        sub_actor: {
-          title: "Sub actor",
-          type: "string",
-          minLength: 1,
         },
       },
     },

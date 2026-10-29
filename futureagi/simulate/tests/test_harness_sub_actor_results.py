@@ -116,10 +116,10 @@ def test_a_pass_rate_leaves_out_what_was_neither_a_pass_nor_a_fail():
     [
         # No pass or fail at all: every zero-denominator mix reads no score.
         ("passed", [_GOALS[1]], "no_score"),
-        ("inconclusive", [_GOALS[2], _GOALS[2]], "no_score"),
-        ("inconclusive", [_GOALS[1], _GOALS[2]], "no_score"),
-        # A call with a pass keeps its own status, inconclusive included.
-        ("inconclusive", [_GOALS[0], _GOALS[2]], "inconclusive"),
+        ("passed", [_GOALS[2], _GOALS[2]], "no_score"),
+        ("passed", [_GOALS[1], _GOALS[2]], "no_score"),
+        # A call with a pass keeps its own status.
+        ("passed", [_GOALS[0], _GOALS[2]], "passed"),
         ("failed", [{**_GOALS[0], "held": False, "verdict": "fail"}], "failed"),
         # An execution error stays an error, never no score.
         ("errored", [_GOALS[1]], "errored"),
@@ -129,16 +129,3 @@ def test_a_call_with_no_pass_or_fail_has_no_score_and_an_error_stays_an_error(
     status, goals, outcome
 ):
     assert receipt_outcome_status({"status": status, "sub_goals": goals}) == outcome
-
-
-def test_an_inconclusive_call_is_accepted_with_its_reason_and_kept_as_a_completed_call():
-    from simulate.models import CallExecution
-    from simulate.serializers.hosted_harness import HarnessResultReceiptSerializer
-    from simulate.services.hosted_harness_ingestion import _call_lifecycle_status
-
-    field = HarnessResultReceiptSerializer().fields["status"]
-    assert "inconclusive" in field.choices
-    assert (
-        _call_lifecycle_status({"status": "inconclusive", "call": None})
-        == CallExecution.CallStatus.COMPLETED
-    )

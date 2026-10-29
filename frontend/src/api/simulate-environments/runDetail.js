@@ -543,12 +543,6 @@ function messageText(content) {
   return String(content);
 }
 
-// A chat message names its sender on its content items; voice turns carry `speaker_name`.
-const contentName = (content) =>
-  (Array.isArray(content) ? content : [])
-    .map((item) => item?.name)
-    .find(Boolean) || "";
-
 /**
  * Maps one raw `call-executions/{id}/` payload → a `CallDetail`. Pure and
  * exported for unit tests.
@@ -561,7 +555,7 @@ export function mapCallDetail(raw) {
   const isChat = raw.simulation_call_type === "text";
   const turns = callTranscript(raw).map((t) => ({
     role: normalizeRole(t.speaker_role ?? t.role),
-    speakerName: t.speaker_name || contentName(t.content),
+    speakerName: t.speaker_name || "",
     text: messageText(t.content),
     at: t.start_time_seconds ?? null,
     toolCalls: t.tool_calls ?? null,

@@ -158,14 +158,12 @@ class HarnessResultReceiptSerializer(serializers.Serializer):
     scenario_id = serializers.UUIDField()
     scenario_attempt = serializers.IntegerField(min_value=1, max_value=2)
     world_index = serializers.IntegerField(min_value=0, max_value=7, allow_null=True)
-    status = serializers.ChoiceField(
-        choices=("passed", "failed", "inconclusive", "errored", "skipped")
-    )
+    status = serializers.ChoiceField(choices=("passed", "failed", "errored", "skipped"))
     sub_goals = HarnessSubGoalSerializer(many=True)
     evaluations = serializers.JSONField()
     call = HarnessCallSerializer(allow_null=True)
     failure = HarnessFailureSerializer(allow_null=True)
-    # Why a scenario was skipped for a reason, or why a call that ran is inconclusive.
+    # Why a scenario was skipped, when the harness gave a reason.
     reason = serializers.CharField(required=False, max_length=500)
     digest = serializers.RegexField(_SHA256)
 
@@ -202,9 +200,9 @@ class HarnessResultReceiptSerializer(serializers.Serializer):
                 )
         elif status == "errored" and attrs["failure"] is None:
             raise serializers.ValidationError("errored receipt requires failure")
-        elif status in {"passed", "failed", "inconclusive"} and attrs["failure"] is not None:
+        elif status in {"passed", "failed"} and attrs["failure"] is not None:
             raise serializers.ValidationError(
-                "passed/failed/inconclusive receipt must not include failure"
+                "passed/failed receipt must not include failure"
             )
         if status != "skipped" and attrs["world_index"] is None:
             raise serializers.ValidationError(

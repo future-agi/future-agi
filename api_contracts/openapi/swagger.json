@@ -125084,11 +125084,6 @@
                 "check": {
                     "title": "Check",
                     "type": "string"
-                },
-                "sub_actor": {
-                    "title": "Sub actor",
-                    "type": "string",
-                    "minLength": 1
                 }
             }
         },
@@ -125506,11 +125501,6 @@
                 "claim": {
                     "title": "Claim",
                     "type": "string"
-                },
-                "sub_actor": {
-                    "title": "Sub actor",
-                    "type": "string",
-                    "minLength": 1
                 }
             }
         },
@@ -128823,7 +128813,6 @@
                     "enum": [
                         "passed",
                         "failed",
-                        "inconclusive",
                         "errored",
                         "skipped"
                     ]

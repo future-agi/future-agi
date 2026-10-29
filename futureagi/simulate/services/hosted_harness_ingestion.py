@@ -1178,7 +1178,7 @@ def _call_lifecycle_status(body: dict[str, Any]) -> str:
     call = body.get("call")
     if isinstance(call, dict) and call.get("started_at") and call.get("ended_at"):
         return CallExecution.CallStatus.COMPLETED
-    if outcome in {"passed", "failed", "inconclusive"}:
+    if outcome in {"passed", "failed"}:
         return CallExecution.CallStatus.COMPLETED
     return CallExecution.CallStatus.FAILED
 
@@ -1188,7 +1188,7 @@ def receipt_outcome_status(body: dict[str, Any]) -> str:
     sub-goal not applicable, inconclusive, or a mix of the two. An execution error stays an error."""
     goals = [one for one in body.get("sub_goals") or [] if isinstance(one, dict)]
     if (
-        body["status"] in ("passed", "inconclusive")
+        body["status"] == "passed"
         and goals
         and not any(sub_goal_result(one) in ("pass", "fail") for one in goals)
     ):
