@@ -11,7 +11,7 @@ export default function FixRunningView({ fix }) {
   const trials = fix.candidates || [];
   const max = fix.plan?.max_candidates;
   return (
-    <Box sx={{ px: 3, py: 2.5 }}>
+    <Box data-testid="fix-running-view" sx={{ px: 3, py: 2.5 }}>
       <FixSteps fix={fix} />
       <TrialChart candidates={trials} />
       {trials.length > 0 && (

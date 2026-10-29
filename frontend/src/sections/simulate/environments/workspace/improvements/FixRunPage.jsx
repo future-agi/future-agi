@@ -1,4 +1,5 @@
 import PropTypes from "prop-types";
+import { useState } from "react";
 import { Box } from "@mui/material";
 
 import { LoadingScreen } from "src/components/loading-screen";
@@ -11,13 +12,15 @@ import EmptyState from "../../components/EmptyState";
 
 import FixHeader from "./FixHeader";
 import FixRunningView from "./FixRunningView";
-import FixFinishedView from "./FixFinishedView";
+import FixFinishedView, { FinishedActions } from "./FixFinishedView";
 
 // One page for a fix: it follows a running one and, once it ends, becomes the
 // place to decide on it. The read polls while the fix is live, so the finished
 // view replaces the running one without a reload.
 export default function FixRunPage({ envId, fixId }) {
   const { fix, isLoading, error } = useFixRun(fixId);
+  const [tab, setTab] = useState("trials");
+  const [, setReviewing] = useState(null);
   if (isLoading) return <LoadingScreen />;
   if (error || !fix) {
     return (
@@ -38,9 +41,27 @@ export default function FixRunPage({ envId, fixId }) {
         minHeight: 0,
       }}
     >
-      <FixHeader fix={fix} envId={envId} />
+      <FixHeader
+        fix={fix}
+        envId={envId}
+        actions={
+          live ? null : (
+            <FinishedActions
+              fix={fix}
+              onReview={(candidateId) => {
+                setReviewing(candidateId);
+                setTab("changes");
+              }}
+            />
+          )
+        }
+      />
       <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-        {live ? <FixRunningView fix={fix} /> : <FixFinishedView fix={fix} />}
+        {live ? (
+          <FixRunningView fix={fix} />
+        ) : (
+          <FixFinishedView fix={fix} tab={tab} onTab={setTab} />
+        )}
       </Box>
     </Box>
   );
