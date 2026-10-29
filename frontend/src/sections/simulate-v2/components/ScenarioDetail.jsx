@@ -41,6 +41,7 @@ import { personalDataDetail, REPLAY_NOTE } from "../_mock/scenarioSources";
 import { ScenarioRowContext } from "../workspace/scenarios/scenarioRowContext";
 import { clickable, focusRing } from "./clickable";
 import { scenarioTitle } from "../_mock/scenarios";
+import ScenarioOrgPart from "../workspace/scenarios/ScenarioOrgPart";
 
 /**
  * A scenario, in full.
@@ -115,6 +116,7 @@ export default function ScenarioDetail({
   if (bare) {
     return (
       <DrawerSheet
+        locked={locked}
         row={row}
         env={env}
         envState={envState}
@@ -656,6 +658,7 @@ function DrawerSheet({
   usageOf,
   onMark,
   onAction,
+  locked = false,
 }) {
   const navigate = useNavigate();
   const [details, setDetails] = useState(false);
@@ -852,6 +855,9 @@ function DrawerSheet({
         )}
       </Part>
 
+      {/* tags, groups, grounding and the lifecycle — in the drawer */}
+      {env?.id && <ScenarioOrgPart env={env} row={row} locked={locked} />}
+
       {/* status */}
       <Part title="Status">
         {state &&
@@ -1028,6 +1034,7 @@ function DrawerSheet({
   );
 }
 DrawerSheet.propTypes = {
+  locked: PropTypes.bool,
   row: PropTypes.object,
   env: PropTypes.object,
   envState: PropTypes.object,

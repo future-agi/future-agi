@@ -115,6 +115,12 @@ const COLUMNS = [
   },
   { id: "persona", label: "Persona", w: 170 },
   {
+    id: "org",
+    label: "Tags · groups",
+    w: 180,
+    tip: "Tags describe and filter; groups select scenarios for a run",
+  },
+  {
     id: "subgoals",
     label: "Sub-goals",
     w: 88,
@@ -829,6 +835,20 @@ export default function ScenarioTable({
                           )}
                         </Typography>
                       </Stack>
+                    </TableCell>
+
+                    {/* TAGS · GROUPS — one line; the drawer edits them. */}
+                    <TableCell sx={cellSx}>
+                      <OneLine
+                        text={[
+                          ...(envState?.scenarioTags || [])
+                            .filter((t) => (row.tagIds || []).includes(t.id))
+                            .map((t) => t.name),
+                          ...(envState?.scenarioGroups || [])
+                            .filter((g) => g.ids.includes(row.id))
+                            .map((g) => `▸ ${g.name}`),
+                        ].join(" · ")}
+                      />
                     </TableCell>
 
                     {/* SUB-GOALS — met in the latest run, of all. */}

@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
 import { alpha } from "@mui/material/styles";
+import { useState } from "react";
 import {
   Box,
   Stack,
@@ -7,6 +8,8 @@ import {
   Button,
   IconButton,
   Tooltip,
+  Menu,
+  MenuItem,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import TrialsPicker from "./TrialsPicker";
@@ -41,7 +44,13 @@ export default function SelectionBar({
   onMustPass,
   allMustPass = false,
   run = null,
+  /* Tag, add to group, duplicate, validate, archive, promote, export — each
+     confirmed with its exact count (onBulk(kind)). */
+  onBulk = null,
+  /* Select all matching is its own action, never a silent widening. */
+  matching = null,
 }) {
+  const [moreAnchor, setMoreAnchor] = useState(null);
   return (
     <Stack
       direction="row"
@@ -96,9 +105,67 @@ export default function SelectionBar({
             />
           </IconButton>
         </Tooltip>
+        {matching && matching.count > count && (
+          <Button
+            size="small"
+            onClick={matching.onSelectAll}
+            sx={{ color: "text.secondary", whiteSpace: "nowrap" }}
+          >
+            {`Select all ${matching.count} matching`}
+          </Button>
+        )}
       </Stack>
 
       <Box sx={{ flex: 1 }} />
+
+      {onBulk && (
+        <>
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={(e) => setMoreAnchor(e.currentTarget)}
+            endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={14} />}
+            sx={BTN_SX}
+          >
+            Organise
+          </Button>
+          <Menu
+            anchorEl={moreAnchor}
+            open={!!moreAnchor}
+            onClose={() => setMoreAnchor(null)}
+          >
+            {[
+              ["tag", "Add tag…", "solar:tag-linear"],
+              ["group", "Add to group…", "solar:folder-2-linear"],
+              ["duplicate", "Duplicate to edit", "solar:copy-linear"],
+              ["validate", "Validate", "solar:shield-check-linear"],
+              [
+                "promote",
+                "Promote to regression",
+                "solar:lock-keyhole-minimalistic-linear",
+              ],
+              ["export", "Export", "solar:export-linear"],
+              ["archive", "Archive", "solar:archive-linear"],
+            ].map(([k, label, icon]) => (
+              <MenuItem
+                key={k}
+                onClick={() => {
+                  setMoreAnchor(null);
+                  onBulk(k);
+                }}
+                sx={{ typography: "s2", gap: 1 }}
+              >
+                <Iconify
+                  icon={icon}
+                  width={16}
+                  sx={{ color: "text.secondary" }}
+                />
+                {label}
+              </MenuItem>
+            ))}
+          </Menu>
+        </>
+      )}
 
       {/* Must-pass: every selected scenario becomes a release blocker —
           or, when they all already are, stops being one. */}
@@ -218,6 +285,8 @@ SelectionBar.propTypes = {
   onClear: PropTypes.func.isRequired,
   onMustPass: PropTypes.func,
   allMustPass: PropTypes.bool,
+  onBulk: PropTypes.func,
+  matching: PropTypes.object,
   run: PropTypes.shape({
     repeats: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
     onRepeats: PropTypes.func,

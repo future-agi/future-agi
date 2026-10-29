@@ -307,9 +307,12 @@ export const SCENARIO_STATES = {
   outdated: { label: "Outdated", note: "rewrite it" },
   retired: { label: "Retired", note: "no longer applies" },
   new: { label: "New", note: "added since this version" },
+  blocked: { label: "Blocked", note: "fix what failed, then validate" },
 };
 
 export const scenarioStateOf = (row, status, versions = []) => {
+  /* Failed a check on add or on Validate: kept as a draft, never run. */
+  if (row?.blocked) return { id: "blocked", canRun: false, correct: null, ...SCENARIO_STATES.blocked, why: row.blocked.reason };
   if (row?.retired) return { id: "retired", canRun: null, correct: false, ...SCENARIO_STATES.retired, why: row.retired.why || "Its capability is gone." };
   if (row?.outdatedBy) return { id: "outdated", canRun: true, correct: false, ...SCENARIO_STATES.outdated, why: `Tests ${row.outdatedBy.ruleId}, which changed in ${/^agent /.test(String(row.outdatedBy.version)) ? row.outdatedBy.version : displayEnvLabel(row.outdatedBy.version, versions)} as a policy change.` };
   const s = status?.id;

@@ -13,6 +13,13 @@ import Iconify from "src/components/iconify";
 import SideDrawer from "../../components/SideDrawer";
 import DatasetImport from "./DatasetImport";
 import ScriptUpload from "./ScriptUpload";
+import ManualScenarioForm from "./ManualScenarioForm";
+import { enqueueSnackbar } from "notistack";
+import { useEnvState } from "../../store";
+import { useRoleGates } from "../../_mock/previewRole";
+import { currentEnvVersion } from "../../_mock/versions";
+import { sourceOf } from "../../_mock/scenarioProvenance";
+import { validateRows, validatePatch } from "../../_mock/scenarioOrg";
 import ErrorFeedImport from "./ErrorFeedImport";
 import FailingCasesImport from "./FailingCasesImport";
 import ChatSource from "./ChatSource";
@@ -89,6 +96,12 @@ const ROUTES = [
 
 /* Kept, but quieter: one line each under More sources. */
 const MORE_ROUTES = [
+  {
+    id: "manual",
+    label: "By hand",
+    icon: "solar:pen-new-square-linear",
+    hint: "Write one: situation, starting state, what passes, what must not happen",
+  },
   /* Phase 2 — a production conversation's caller turns, replayed verbatim. */
   {
     id: "replay",
@@ -145,6 +158,26 @@ export default function AddScenariosDrawer({
     onAdd(rows, route);
     close();
   };
+  /* Re-check only what's still blocked, under the same import. */
+  const { patch } = useEnvState(env?.id);
+  const gates = useRoleGates();
+  const blocked = (envState?.scenarios || []).filter((r) => r.blocked);
+  const retryBlocked =
+    blocked.length && gates.canEdit
+      ? () => {
+          const res = validateRows(
+            blocked,
+            env,
+            currentEnvVersion(env, envState).label,
+          );
+          patch(validatePatch(envState, res));
+          const ok = res.filter((x) => x.result.pass).length;
+          enqueueSnackbar(
+            `${ok} of ${res.length} now pass and are ready to add; ${res.length - ok} still blocked.`,
+            { variant: ok ? "success" : "info" },
+          );
+        }
+      : null;
 
   const toggle = (id) => setRoute((r) => (r === id ? null : id));
 
@@ -390,7 +423,79 @@ export default function AddScenariosDrawer({
             {route === "script" && (
               <ScriptUpload env={env} onAdd={add} selected={selected} />
             )}
+            {route === "manual" && <ManualScenarioForm env={env} onAdd={add} />}
           </Box>
+          {/* Every import's counts stay — created, blocked, duplicate — and
+              Retry re-checks only the blocked ones. */}
+          {!route && (envState?.importHistory || []).length > 0 && (
+            <Box sx={{ mt: 2 }}>
+              <Typography
+                sx={{
+                  typography: "s3",
+                  fontWeight: 600,
+                  color: "text.tertiary",
+                  mb: 0.5,
+                }}
+              >
+                Recent imports
+              </Typography>
+              <Box
+                sx={{
+                  border: "1px solid",
+                  borderColor: "divider",
+                  borderRadius: 1,
+                }}
+              >
+                {[...envState.importHistory]
+                  .reverse()
+                  .slice(0, 5)
+                  .map((h) => (
+                    <Stack
+                      key={h.at}
+                      direction="row"
+                      spacing={1.5}
+                      alignItems="center"
+                      sx={{
+                        px: 1.25,
+                        py: 0.75,
+                        "& + &": {
+                          borderTop: "1px solid",
+                          borderColor: "divider",
+                        },
+                      }}
+                    >
+                      <Typography
+                        sx={{
+                          typography: "s3",
+                          color: "text.tertiary",
+                          width: 92,
+                          flexShrink: 0,
+                        }}
+                      >
+                        {new Date(h.at).toLocaleString("en-GB", {
+                          day: "numeric",
+                          month: "short",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </Typography>
+                      <Typography sx={{ typography: "s3", flex: 1 }}>
+                        {`${sourceOf(h.source).label} · ${h.created} created · ${h.blocked} blocked · ${h.duplicate} duplicate`}
+                      </Typography>
+                      {h.blocked > 0 && retryBlocked && (
+                        <Button
+                          size="small"
+                          onClick={retryBlocked}
+                          sx={{ color: "text.secondary", minWidth: 0 }}
+                        >
+                          Retry blocked
+                        </Button>
+                      )}
+                    </Stack>
+                  ))}
+              </Box>
+            </Box>
+          )}
         </Box>
 
         {!route && (

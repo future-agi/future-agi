@@ -81,6 +81,7 @@ const SOURCE_MAP = {
   replay: "production",
   dataset: "dataset-import",
   script: "manual",
+  manual: "manual",
   personas: "persona-library",
 };
 import { ObjectFilterPanel } from "src/components/filter";
@@ -136,6 +137,22 @@ import SideDrawer from "../components/SideDrawer";
 import { ScenarioRowContext } from "./scenarios/scenarioRowContext";
 import { runSummaries } from "../_mock/comparison";
 import AlsoRunIn from "../run/AlsoRunIn";
+import {
+  tagsOf as orgTagsOf,
+  groupsOf as orgGroupsOf,
+  tagPatch,
+  groupPatch,
+  duplicatePatch,
+  validateRows,
+  validatePatch,
+  archivePatch,
+  promotePatch,
+  exportScenarios,
+} from "../_mock/scenarioOrg";
+import {
+  TagsGroupsManager,
+  BulkOrgDialog,
+} from "./scenarios/ScenarioOrgDialogs";
 import { clickable, focusRing } from "../components/clickable";
 
 /**
@@ -262,6 +279,9 @@ export default function ScenariosStep({
   /* Row-level facet filter — same shape the rest of the product uses
      (Runs list, Improvements list). Four dimensions, each a multi-select. */
   const [filters, setFilters] = useState({});
+  /* Tags & groups manager, and one bulk operation awaiting its confirm. */
+  const [orgOpen, setOrgOpen] = useState(false);
+  const [bulk, setBulk] = useState(null);
   const [filterAnchor, setFilterAnchor] = useState(null);
   const filterCount = Object.values(filters).reduce(
     (sum, arr) => sum + (Array.isArray(arr) ? arr.length : 0),
@@ -497,7 +517,29 @@ export default function ScenariosStep({
     return subs?.[0]?.label || null;
   };
 
+  const orgTags = orgTagsOf(envState);
+  const orgGroups = orgGroupsOf(envState);
+  const tagNamesOf = (r) =>
+    orgTags.filter((t) => (r.tagIds || []).includes(t.id)).map((t) => t.name);
+  const groupNamesOf = (r) =>
+    orgGroups.filter((g) => g.ids.includes(r.id)).map((g) => g.name);
   const matchesFilters = (r) => {
+    /* Tags match any or all, as asked; a group selects its identities. */
+    if (
+      filters.tag?.length &&
+      !filters.tag.some((t) => tagNamesOf(r).includes(t))
+    )
+      return false;
+    if (
+      filters.tagAll?.length &&
+      !filters.tagAll.every((t) => tagNamesOf(r).includes(t))
+    )
+      return false;
+    if (
+      filters.group?.length &&
+      !filters.group.some((g) => groupNamesOf(r).includes(g))
+    )
+      return false;
     if (filters.status?.length) {
       const ids = statusFacets(r);
       if (!filters.status.some((s) => ids.includes(s))) return false;
@@ -559,9 +601,27 @@ export default function ScenariosStep({
         type: "enum",
         choices: subgoalChoices,
       },
+      {
+        value: "group",
+        label: "Group",
+        type: "enum",
+        choices: orgGroups.map((g) => g.name),
+      },
+      {
+        value: "tag",
+        label: "Tag — any of",
+        type: "enum",
+        choices: orgTags.map((t) => t.name),
+      },
+      {
+        value: "tagAll",
+        label: "Tag — all of",
+        type: "enum",
+        choices: orgTags.map((t) => t.name),
+      },
       // eslint-disable-next-line react-hooks/exhaustive-deps
     ],
-    [personaChoices, subgoalChoices],
+    [personaChoices, subgoalChoices, orgTags, orgGroups],
   );
 
   const shown = selected.filter((r) => {
@@ -574,7 +634,10 @@ export default function ScenariosStep({
   /* Groups first, then apply the hide list. Row-level narrowing lives in
      `shown` (search) and everything else — hiding — is expressed as
      "which groups to show" so the interaction stays purely visual. */
-  const allGroups = groupScenarios(shown, groupBy, env);
+  const allGroups = groupScenarios(shown, groupBy, {
+    ...env,
+    __org: { tagNamesOf, groupNamesOf },
+  });
   const shownGroups = allGroups.filter((g) => !hiddenGroupIds.includes(g.id));
   const hiddenCount = allGroups.length - shownGroups.length;
 
@@ -626,12 +689,40 @@ export default function ScenariosStep({
         envState,
         source: stampSource,
       });
-      /* Proved on add: a row that fails one of the three gates isn't added. */
+      /* Proved on add: a row that fails a gate isn't added — it's kept as a
+         blocked draft you can open, fix and validate, never silently dropped. */
+      const at0 = new Date().toISOString();
+      const blockedRows = batch.rejected
+        .map((x) => {
+          const row = fresh.find((r) => r.id === x.id);
+          return row
+            ? {
+                ...row,
+                proposed: { at: at0, source: stampSource },
+                blocked: { gate: x.gate, reason: x.reason },
+              }
+            : null;
+        })
+        .filter(Boolean);
+      const history = [
+        ...(envState.importHistory || []),
+        {
+          at: at0,
+          source: stampSource,
+          attempted,
+          created: batch.rows.length,
+          blocked: blockedRows.length,
+          duplicate: dupeCount,
+        },
+      ].slice(-12);
       const kept = batch.rows.length;
       if (!kept) {
+        patch({
+          scenarios: [...selected, ...blockedRows],
+          importHistory: history,
+        });
         enqueueSnackbar(
-          rejectedNote(batch) ||
-            "None of those passed their checks, so none were added.",
+          `${blockedRows.length} kept as blocked drafts — none passed their checks yet. Open them to see why.`,
           { variant: "warning", autoHideDuration: 7000 },
         );
         return;
@@ -661,7 +752,8 @@ export default function ScenariosStep({
          whichever add route was used last. A proposal isn't part of the set
          yet, so it writes no new version — adding it does (approve below). */
       const nextScenarios = {
-        scenarios: [...grouped, ...fresh2],
+        scenarios: [...grouped, ...fresh2, ...blockedRows],
+        importHistory: history,
         ...(!envState.scenarioSource && { scenarioSource: source }),
       };
       patch(
@@ -679,10 +771,10 @@ export default function ScenariosStep({
         });
       }
       if (batch.rejected.length) {
-        enqueueSnackbar(rejectedNote(batch), {
-          variant: "warning",
-          autoHideDuration: 7000,
-        });
+        enqueueSnackbar(
+          `${rejectedNote(batch)} Kept as blocked drafts — open them to see why.`,
+          { variant: "warning", autoHideDuration: 7000 },
+        );
       }
       const base = waiting
         ? `${kept} proposed — review and add them to the environment`
@@ -725,6 +817,52 @@ export default function ScenariosStep({
   };
   const clearSelection = () => {
     clearScenarioSelection();
+  };
+  /* One bulk operation on exactly the selected scenarios, after its confirm. */
+  const runBulk = (kind, value) => {
+    const ids = selectedIds;
+    const n = ids.length;
+    const say = (m) => enqueueSnackbar(m, { variant: "success" });
+    if (kind === "tag") {
+      patch(tagPatch(envState, ids, value));
+      say(`Tagged ${n} scenario${n === 1 ? "" : "s"} ${value}.`);
+    } else if (kind === "group") {
+      patch(groupPatch(envState, ids, value));
+      say(`${n} scenario${n === 1 ? "" : "s"} in ${value}.`);
+    } else if (kind === "duplicate") {
+      const { copies, ...p } = duplicatePatch(envState, selectedRows);
+      patch(p);
+      say(
+        `${copies.length} draft cop${copies.length === 1 ? "y" : "ies"} made — review them as proposals.`,
+      );
+    } else if (kind === "validate") {
+      const res = validateRows(selectedRows, env, envLabel);
+      patch(validatePatch(envState, res));
+      const bad = res.filter((x) => !x.result.pass).length;
+      say(
+        `${n - bad} passed validation${bad ? ` · ${bad} blocked — open them to see why` : ""}.`,
+      );
+    } else if (kind === "archive") {
+      patch(archivePatch(envState, ids));
+      clearSelection();
+      say(`Archived ${n}. They stay in history and past runs.`);
+    } else if (kind === "promote") {
+      patch(promotePatch(envState, ids, "regression"));
+      say(
+        `Promoted ${n} to regression — their checks are frozen and they're must-pass.`,
+      );
+    } else if (kind === "export") {
+      const blob = new Blob([exportScenarios(selectedRows)], {
+        type: "application/json",
+      });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `${env.id}-scenarios.json`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      say(`Exported ${n} scenario definitions.`);
+    }
+    setBulk(null);
   };
 
   /* Escape key + click outside the *table* both drop the selection.
@@ -977,7 +1115,14 @@ export default function ScenariosStep({
   };
 
   /* Proposals join the environment only once someone adds them. */
-  const approve = (rows) => {
+  const approve = (input) => {
+    /* A blocked draft can't join the set until it passes. */
+    const rows = input.filter((r) => !r.blocked);
+    if (input.length > rows.length)
+      enqueueSnackbar(
+        `${input.length - rows.length} blocked — open ${input.length - rows.length === 1 ? "it" : "them"}, fix what failed and validate first.`,
+        { variant: "warning" },
+      );
     if (!rows.length) return;
     const ids = new Set(rows.map((r) => r.id));
     patch(
@@ -1278,6 +1423,12 @@ export default function ScenariosStep({
               <Box data-scenarios-safe="selection-bar">
                 <SelectionBar
                   count={selectedIds.length}
+                  onBulk={ro ? null : setBulk}
+                  matching={{
+                    count: shown.length,
+                    onSelectAll: () =>
+                      handleSelectionChange(shown.map((r) => r.id)),
+                  }}
                   onEdit={handleEditSelected}
                   onDelete={bulkDelete}
                   onMustPass={() =>
@@ -1378,11 +1529,26 @@ export default function ScenariosStep({
                 {/* Grouping is the one display choice; the shared sub-goal list
                 (opened from a scenario's "used by N") has its way back here. */}
                 {mode === "scenarios" ? (
-                  <GroupByMenu
-                    value={groupBy}
-                    onChange={setGroupBy}
-                    options={SCENARIO_GROUPINGS}
-                  />
+                  <>
+                    <GroupByMenu
+                      value={groupBy}
+                      onChange={setGroupBy}
+                      options={SCENARIO_GROUPINGS}
+                    />
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      onClick={() => setOrgOpen(true)}
+                      startIcon={<Iconify icon="solar:tag-linear" width={14} />}
+                      sx={{
+                        flexShrink: 0,
+                        color: "text.primary",
+                        borderColor: "divider",
+                      }}
+                    >
+                      Tags &amp; groups
+                    </Button>
+                  </>
                 ) : (
                   <Button
                     size="small"
@@ -1729,6 +1895,24 @@ export default function ScenariosStep({
                       onClose={() => setHistoryOpen(false)}
                     />
                   </SideDrawer>
+                  <TagsGroupsManager
+                    open={orgOpen}
+                    onClose={() => setOrgOpen(false)}
+                    envState={envState}
+                    patch={patch}
+                    readOnly={ro}
+                    onShowGroup={(name) => setFilters({ group: [name] })}
+                  />
+                  {bulk && (
+                    <BulkOrgDialog
+                      kind={bulk}
+                      ids={selectedIds}
+                      env={env}
+                      envState={envState}
+                      onClose={() => setBulk(null)}
+                      onConfirm={runBulk}
+                    />
+                  )}
                   <ScenarioDrawer
                     row={selected.find((r) => r.id === openId) || null}
                     env={env}
@@ -2099,6 +2283,19 @@ const deriveUseCase = (row) => {
  * table's "Persona" bucket after a run.
  */
 const groupKeyOf = (row, mode, env) => {
+  /* A scenario in two groups is listed under its first — still one identity. */
+  if (mode === "group") {
+    const g = env?.__org?.groupNamesOf(row)?.[0];
+    return g
+      ? { id: `group:${g}`, label: g }
+      : { id: "group:none", label: "Not in a group" };
+  }
+  if (mode === "tag") {
+    const t = env?.__org?.tagNamesOf(row)?.[0];
+    return t
+      ? { id: `tag:${t}`, label: t }
+      : { id: "tag:none", label: "No tags" };
+  }
   if (mode === "persona") {
     const name = row?.persona?.name;
     if (!name) return { id: "persona:none", label: "No persona" };
@@ -2145,6 +2342,8 @@ const SCENARIO_GROUPINGS = [
   { id: "subgoal", label: "Sub-goal", icon: "solar:map-linear" },
   { id: "source", label: "Source", icon: "solar:magic-stick-3-linear" },
   { id: "addedBy", label: "Added by", icon: "solar:user-plus-linear" },
+  { id: "group", label: "Group", icon: "solar:folder-2-linear" },
+  { id: "tag", label: "Tag", icon: "solar:tag-linear" },
 ];
 
 const groupScenarios = (rows, mode = "goal", env) => {

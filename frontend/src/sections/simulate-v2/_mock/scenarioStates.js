@@ -40,7 +40,7 @@ export const EXTRA_STATES = {
 /* The filter's state choices, in the doc's order. */
 export const STATE_CHOICES = [
   SCENARIO_STATES.valid.label, SCENARIO_STATES.recheck.label, SCENARIO_STATES.outdated.label,
-  EXTRA_STATES.stale.label, EXTRA_STATES.archived.label,
+  EXTRA_STATES.stale.label, EXTRA_STATES.archived.label, SCENARIO_STATES.blocked.label,
 ];
 
 /** Archived by hand — or retired before v7, which reads the same. */
