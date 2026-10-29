@@ -27,6 +27,46 @@ class SimulationInvestigationConflict(Exception):
     pass
 
 
+def _transcript_with_gaps(entries: list[CallTranscript]) -> list[dict]:
+    """Each transcript entry, plus ``gap_ms``: the silence immediately before
+    it — since the call began, for the first entry (the greeting delay), or
+    since the previous entry ended otherwise (the turn latency). Negative
+    means this entry started before the previous one ended: an interruption.
+    """
+    rows = []
+    previous_end_ms = 0
+    for entry in entries:
+        rows.append(
+            {
+                "id": str(entry.id),
+                "speaker": entry.speaker_role,
+                "content": entry.content,
+                "start_time": entry.start_time_ms / 1000,
+                "end_time": entry.end_time_ms / 1000,
+                "gap_ms": entry.start_time_ms - previous_end_ms,
+            }
+        )
+        previous_end_ms = entry.end_time_ms
+    return rows
+
+
+def _call_metrics(call: CallExecution) -> dict | None:
+    """Customer/ALK-reported conversation metrics for ``call``, when any of
+    them were captured; ``None`` when none were (most calls run through
+    FutureAGI's own harness never carry these, only ALK-ingested ones)."""
+    if (
+        call.avg_agent_latency_ms is None
+        and call.user_interruption_count is None
+        and call.user_interruption_rate is None
+    ):
+        return None
+    return {
+        "avg_agent_latency_ms": call.avg_agent_latency_ms,
+        "interruption_count": call.user_interruption_count,
+        "interruption_rate": call.user_interruption_rate,
+    }
+
+
 def _project_for_execution(execution: TestExecution) -> Project:
     project, _ = Project.objects.get_or_create(
         organization_id=execution.run_test.organization_id,
@@ -428,16 +468,8 @@ def simulation_evidence_page(
                 "call_summary": call.call_summary,
                 "error_message": call.error_message,
                 "ended_reason": call.ended_reason,
-                "transcript": [
-                    {
-                        "id": str(entry.id),
-                        "speaker": entry.speaker_role,
-                        "content": entry.content,
-                        "start_time": entry.start_time_ms / 1000,
-                        "end_time": entry.end_time_ms / 1000,
-                    }
-                    for entry in call.transcripts.all()
-                ],
+                "transcript": _transcript_with_gaps(call.transcripts.all()),
+                "call_metrics": _call_metrics(call),
                 "goals": authored.get(call.id),
                 # The run's own verdicts: Omega explains how a goal broke, the
                 # evals decide whether it did.
