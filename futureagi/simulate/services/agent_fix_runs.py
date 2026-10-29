@@ -15,6 +15,7 @@ from simulate.pydantic_schemas.agent_fix import FixRequest, Surface
 from simulate.selectors.agent_fix import FINISHED_RUN_STATES, failing_sub_goals
 from simulate.services.agent_fix_agents import agent_kind
 from simulate.services.harness_agent_versions import discard_agent_version
+from simulate.services.harness_usage import require_agent_fix_usage
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     request_cancellation,
@@ -77,6 +78,8 @@ def launch_fix_run(
         budget_usd=budget_usd,
         max_minutes=max_minutes,
     )
+    # The engine's model calls bill AI credits. Each check run checks its call rail when it starts.
+    require_agent_fix_usage(str(environment.organization_id))
     try:
         with transaction.atomic():
             fix_run = AgentFixRun.no_workspace_objects.create(

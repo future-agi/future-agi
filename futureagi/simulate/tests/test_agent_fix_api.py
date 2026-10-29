@@ -86,6 +86,23 @@ def _engine(client, method, fix_run, path, *, token=TOKEN, **kwargs):
     return getattr(client, method)(f"{ENGINE}/{fix_run.id}/{path}", **headers, **kwargs)
 
 
+def _out_of_credits():
+    """The usage check's refusal when the organization's AI credits are paused."""
+    from ee.usage.exceptions import UsageLimitExceeded
+    from ee.usage.schemas.events import CheckResult
+
+    return UsageLimitExceeded(
+        CheckResult(
+            allowed=False,
+            error_code="BUDGET_PAUSED",
+            dimension="ai_credits",
+            reason="AI credits are paused by your budget",
+            current_usage=12,
+            limit=12,
+        )
+    )
+
+
 def _launch_body(source_run, **overrides):
     return {
         "source_run_id": str(source_run.id),
@@ -280,6 +297,32 @@ class TestEngineCalls:
 
         assert response.status_code == 400
 
+    def test_a_check_run_past_the_organizations_limit_is_refused_with_its_reason(
+        self, api_client, source_run, temporal
+    ):
+        temporal.usage.side_effect = _out_of_credits()
+        fix_run = _armed(_fix_run(source_run))
+
+        response = _engine(
+            api_client,
+            "post",
+            fix_run,
+            "check-runs/",
+            data={
+                "label": "base",
+                "agent_version_id": str(fix_run.base_agent_version_id),
+                "scenario_keys": [KEYS[0]],
+                "trials": 1,
+            },
+            format="json",
+        )
+
+        assert response.status_code == 402, response.content
+        assert response.json()["error_code"] == "BUDGET_PAUSED"
+        assert not HostedHarnessJob.no_workspace_objects.filter(
+            fix_run=fix_run
+        ).exists()
+
     def test_the_engine_reads_only_its_own_check_runs(self, api_client, source_run):
         fix_run = _armed(_fix_run(source_run))
 
@@ -302,12 +345,22 @@ class TestEngineModelCalls:
         reply = httpx.Response(
             200,
             json={"choices": [{"message": {"content": "diagnosis"}}]},
-            headers={"x-agentcc-cost": "0.0123"},
+            headers={"x-agentcc-cost": "0.0123", "x-agentcc-request-id": "req-1"},
         )
         with patch(
             "simulate.services.agent_fix_models.httpx.post", return_value=reply
         ) as post:
             yield post
+
+    @pytest.fixture(autouse=True)
+    def billed(self, monkeypatch):
+        """The usage events the calls emit, as on the cloud."""
+        from ee.usage.services import emitter
+
+        events = []
+        monkeypatch.setattr("simulate.services.agent_fix_models.is_oss", lambda: False)
+        monkeypatch.setattr(emitter, "emit", events.append)
+        return events
 
     def _complete(self, client, fix_run, *, HTTP_ACCEPT="*/*", **body):
         return _engine(
@@ -336,8 +389,46 @@ class TestEngineModelCalls:
         fix_run.refresh_from_db()
         assert fix_run.spent_usd == Decimal("0.0123")
 
+    def test_a_metered_call_is_billed_to_the_organization_as_ai_credits(
+        self, api_client, source_run, billed
+    ):
+        from ee.usage.services.config import BillingConfig
+
+        fix_run = _armed(_fix_run(source_run))
+
+        assert self._complete(api_client, fix_run).status_code == 200
+
+        [event] = billed
+        assert (event.org_id, event.event_type) == (
+            str(fix_run.organization_id),
+            "agent_fix",
+        )
+        assert event.amount == BillingConfig.get().calculate_ai_credits(
+            Decimal("0.0123")
+        )
+        assert event.properties["fix_run_id"] == str(fix_run.id)
+        assert event.properties["raw_cost_usd"] == "0.0123"
+        assert event.properties["gateway_request_id"] == "req-1"
+
+    def test_a_billing_failure_leaves_the_call_answered_and_metered(
+        self, api_client, source_run, monkeypatch
+    ):
+        from ee.usage.services import emitter
+
+        def down(event):
+            raise ConnectionError("redis down")
+
+        monkeypatch.setattr(emitter, "emit", down)
+        fix_run = _armed(_fix_run(source_run))
+
+        response = self._complete(api_client, fix_run)
+
+        assert response.status_code == 200, response.content
+        fix_run.refresh_from_db()
+        assert fix_run.spent_usd == Decimal("0.0123")
+
     def test_the_gateway_s_refusal_reaches_the_engine_and_costs_nothing(
-        self, api_client, source_run, gateway
+        self, api_client, source_run, gateway, billed
     ):
         fix_run = _armed(_fix_run(source_run))
         gateway.return_value = httpx.Response(429, json={"error": "rate limited"})
@@ -350,6 +441,7 @@ class TestEngineModelCalls:
         )
         fix_run.refresh_from_db()
         assert fix_run.spent_usd == 0
+        assert billed == []
 
     @pytest.mark.parametrize(
         ("fix", "body", "refusal"),
@@ -433,6 +525,22 @@ class TestUserApi:
         assert response.status_code == 402
         assert entitled.call_args.args == (EEFeature.FIX_MY_AGENT,)
         assert not AgentFixRun.no_workspace_objects.exists()
+
+    def test_out_of_ai_credits_nothing_starts(self, auth_client, source_run, temporal):
+        decision = _out_of_credits().check_result.model_dump(mode="json")
+        with patch(
+            "simulate.services.harness_usage.check_harness_action",
+            return_value=decision,
+        ) as usage:
+            response = auth_client.post(
+                f"{BASE}/", _launch_body(source_run), format="json"
+            )
+
+        assert response.status_code == 402, response.content
+        assert response.json()["error_code"] == "BUDGET_PAUSED"
+        assert usage.call_args.args == (str(source_run.organization_id), "agent_fix")
+        assert not AgentFixRun.no_workspace_objects.exists()
+        temporal.start.assert_not_called()
 
     def test_starts_a_fix_from_a_finished_run(
         self, auth_client, source_run, temporal, django_capture_on_commit_callbacks

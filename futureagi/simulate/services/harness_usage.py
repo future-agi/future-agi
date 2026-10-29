@@ -16,7 +16,7 @@ from simulate.services.harness_environment import _VOICE_CONNECTORS
 from simulate.services.hosted_harness import HostedHarnessError
 from tfc.ee_gating import is_oss
 
-_ACTIONS = frozenset({"harness_authoring", "text_call", "voice_call"})
+_ACTIONS = frozenset({"agent_fix", "harness_authoring", "text_call", "voice_call"})
 _REPORT_KEY = "usage_reports"
 _AUTHORING_REPORT_KEY = "authoring_usage_reports"
 _NON_BILLABLE_FAILURE_DOMAINS = frozenset(
@@ -68,6 +68,10 @@ def _require_harness_action(organization_id: str, action: str) -> None:
 
 def require_harness_authoring(organization_id: str) -> None:
     _require_harness_action(organization_id, "harness_authoring")
+
+
+def require_agent_fix_usage(organization_id: str) -> None:
+    _require_harness_action(organization_id, "agent_fix")
 
 
 def require_harness_call_usage(job: HostedHarnessJob) -> None:

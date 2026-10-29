@@ -3,7 +3,8 @@
 The engine in its sandbox calls an OpenAI-compatible endpoint on its fix's own API with its
 fix token. The platform forwards the call to the model gateway with its own key, which never
 enters the sandbox, and adds what the gateway says the call cost to the fix's spend. Future
-AGI pays for these calls, and the fix's budget stops them.
+AGI pays for these calls and bills them to the organization as AI credits; the fix's budget
+stops them.
 """
 
 import json
@@ -21,6 +22,7 @@ from simulate.models import AgentFixRun
 from simulate.services.agent_fix_engine import committed_usd
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.services.hosted_harness_gateway import platform_model_gateway
+from tfc.ee_gating import is_oss
 
 logger = structlog.get_logger(__name__)
 
@@ -84,7 +86,7 @@ def complete(fix_run: AgentFixRun, body: bytes) -> ModelReply:
             status_code=502,
             retryable=True,
         ) from exc
-    _meter(fix_run, response.headers.get("x-agentcc-cost"))
+    _meter(fix_run, model, response.headers)
     return ModelReply(
         status_code=response.status_code,
         body=response.content,
@@ -92,7 +94,8 @@ def complete(fix_run: AgentFixRun, body: bytes) -> ModelReply:
     )
 
 
-def _meter(fix_run: AgentFixRun, cost: str | None) -> None:
+def _meter(fix_run: AgentFixRun, model: str, headers: httpx.Headers) -> None:
+    cost = headers.get("x-agentcc-cost")
     try:
         usd = Decimal(cost or "0")
     except InvalidOperation:
@@ -100,7 +103,44 @@ def _meter(fix_run: AgentFixRun, cost: str | None) -> None:
             "agent_fix_model_cost_unreadable", fix_run=str(fix_run.id), cost=cost
         )
         return
-    if usd > 0:
-        AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
-            spent_usd=F("spent_usd") + usd, updated_at=timezone.now()
+    if usd <= 0:
+        return
+    AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+        spent_usd=F("spent_usd") + usd, updated_at=timezone.now()
+    )
+    _bill(fix_run, model, usd, headers.get("x-agentcc-request-id"))
+
+
+def _bill(
+    fix_run: AgentFixRun, model: str, usd: Decimal, request_id: str | None
+) -> None:
+    """Bill one engine call to the organization as AI credits. The call has already been
+    made and paid for, so a billing failure is logged and never fails it: an error here
+    would make the engine retry the call and pay for it twice."""
+    if is_oss():
+        return
+    try:
+        from ee.usage.schemas.event_types import BillingEventType
+        from ee.usage.schemas.events import UsageEvent
+        from ee.usage.services.config import BillingConfig
+        from ee.usage.services.emitter import emit
+
+        emit(
+            UsageEvent(
+                org_id=str(fix_run.organization_id),
+                event_type=BillingEventType.AGENT_FIX,
+                amount=BillingConfig.get().calculate_ai_credits(usd),
+                properties={
+                    "source": "agent_fix",
+                    "source_id": str(fix_run.id),
+                    "fix_run_id": str(fix_run.id),
+                    "environment_id": str(fix_run.environment_id),
+                    "workspace_id": str(fix_run.workspace_id or ""),
+                    "model": model,
+                    "raw_cost_usd": str(usd),
+                    "gateway_request_id": request_id,
+                },
+            )
         )
+    except Exception:
+        logger.exception("agent_fix_billing_emit_failed", fix_run=str(fix_run.id))

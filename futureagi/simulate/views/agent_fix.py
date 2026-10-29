@@ -43,7 +43,11 @@ from simulate.services.agent_fix_runs import (
     make_candidate_default,
     request_stop,
 )
-from simulate.services.harness_provider import request_organization, scope_jobs
+from simulate.services.harness_provider import (
+    _usage_limit_response,
+    request_organization,
+    scope_jobs,
+)
 from simulate.services.hosted_harness import HostedHarnessError
 from tfc.ee_gating import EEFeature, check_ee_feature
 from tfc.utils.api_contracts import validated_request
@@ -58,7 +62,7 @@ def _error_response(exc):
             {"error": "validation_error", "message": str(exc), "retryable": False},
             status=status.HTTP_400_BAD_REQUEST,
         )
-    return None
+    return _usage_limit_response(exc)
 
 
 def _not_found():
