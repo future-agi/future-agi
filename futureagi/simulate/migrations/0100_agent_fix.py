@@ -68,6 +68,9 @@ class Migration(migrations.Migration):
                     ),
                 ),
                 ("stage", models.CharField(blank=True, default="", max_length=32)),
+                ("step", models.CharField(blank=True, default="", max_length=16)),
+                ("plan", models.JSONField(blank=True, null=True)),
+                ("diagnosis", models.JSONField(blank=True, null=True)),
                 ("request", models.JSONField()),
                 (
                     "spent_usd",

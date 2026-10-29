@@ -24,6 +24,7 @@ from simulate.selectors.agent_fix import (
     engine_brief,
     fix_runs_for_environment,
     fix_runs_for_read,
+    launch_options,
 )
 from simulate.serializers.agent_fix import (
     AgentFixCandidateCreatedSerializer,
@@ -32,6 +33,8 @@ from simulate.serializers.agent_fix import (
     AgentFixCheckRunRequestSerializer,
     AgentFixEngineReportSerializer,
     AgentFixEngineStateSerializer,
+    AgentFixLaunchOptionsQuerySerializer,
+    AgentFixLaunchOptionsSerializer,
     AgentFixLaunchSerializer,
     AgentFixListQuerySerializer,
     AgentFixMakeDefaultSerializer,
@@ -135,6 +138,29 @@ class AgentFixRunViewSet(viewsets.ViewSet):
         )
         return paginator.get_paginated_response(
             AgentFixRunSerializer(page, many=True).data
+        )
+
+    @validated_request(
+        query_serializer=AgentFixLaunchOptionsQuerySerializer,
+        responses={200: AgentFixLaunchOptionsSerializer},
+    )
+    @action(detail=False, methods=["get"], url_path="launch-options")
+    def launch_options(self, request):
+        """What the launch form shows and prefills for a finished run, and what would
+        refuse the launch now."""
+        source_run = (
+            self._jobs(request)
+            .filter(
+                id=request.validated_query_data["source_run_id"],
+                environment__isnull=False,
+            )
+            .select_related("environment__environment_version", "environment_version")
+            .first()
+        )
+        if source_run is None:
+            return _not_found()
+        return Response(
+            AgentFixLaunchOptionsSerializer(launch_options(source_run)).data
         )
 
     @validated_request(

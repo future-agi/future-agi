@@ -2,7 +2,17 @@ from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
 from simulate.models import AgentFixCandidate, AgentFixRun
-from simulate.pydantic_schemas.agent_fix import CandidateOutcome, Ending, Surface
+from simulate.pydantic_schemas.agent_fix import (
+    BUDGET_CREDITS_MAX,
+    MAX_MINUTES_MAX,
+    SCENARIOS_MAX,
+    CandidateOutcome,
+    Ending,
+    FixStep,
+    Surface,
+)
+from simulate.selectors.agent_fix import agent_identity
+from simulate.services.harness_environment import environment_name
 
 
 class CreditsField(serializers.FloatField):
@@ -15,7 +25,9 @@ class CreditsField(serializers.FloatField):
 class AgentFixLaunchSerializer(serializers.Serializer):
     source_run_id = serializers.UUIDField()
     target_scenario_keys = serializers.ListField(
-        child=serializers.CharField(max_length=255), min_length=1, max_length=200
+        child=serializers.CharField(max_length=255),
+        min_length=1,
+        max_length=SCENARIOS_MAX,
     )
     surfaces = serializers.ListField(
         child=serializers.ChoiceField(choices=[one.value for one in Surface]),
@@ -25,8 +37,8 @@ class AgentFixLaunchSerializer(serializers.Serializer):
         child=serializers.CharField(max_length=512), required=False, default=list
     )
     # The fix's limit in credits; it covers the engine's model calls and the check runs.
-    budget_credits = serializers.IntegerField(min_value=1, max_value=50_000)
-    max_minutes = serializers.IntegerField(min_value=1, max_value=24 * 60)
+    budget_credits = serializers.IntegerField(min_value=1, max_value=BUDGET_CREDITS_MAX)
+    max_minutes = serializers.IntegerField(min_value=1, max_value=MAX_MINUTES_MAX)
 
 
 class AgentFixListQuerySerializer(serializers.Serializer):
@@ -49,6 +61,40 @@ class AgentFixRequestSerializer(serializers.Serializer):
     max_minutes = serializers.IntegerField()
 
 
+class AgentFixVerdictTierSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    status = serializers.ChoiceField(choices=["passed", "failed", "pending", "skipped"])
+    detail = serializers.CharField(required=False, allow_blank=True, default="")
+
+
+class AgentFixPlanSerializer(serializers.Serializer):
+    target = serializers.IntegerField(min_value=0)
+    held_back = serializers.IntegerField(min_value=0)
+    must_pass = serializers.IntegerField(min_value=0)
+    protected = serializers.IntegerField(min_value=0, required=False, default=0)
+    max_candidates = serializers.IntegerField(min_value=0)
+    repeats = serializers.IntegerField(min_value=0)
+    baseline_spread_pts = serializers.IntegerField(min_value=0)
+
+
+class AgentFixDiagnosisSerializer(serializers.Serializer):
+    causes = serializers.ListField(child=serializers.CharField(), default=list)
+
+
+class AgentFixAgentSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    kind = serializers.CharField()
+    version_id = serializers.UUIDField()
+    version_number = serializers.IntegerField(allow_null=True)
+    ref = serializers.CharField(allow_null=True)
+
+
+class AgentFixEnvironmentSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    version = serializers.IntegerField(allow_null=True)
+    default_agent_version_id = serializers.UUIDField(allow_null=True)
+
+
 class AgentFixVerdictSerializer(serializers.Serializer):
     accepted = serializers.BooleanField()
     reason = serializers.CharField()
@@ -62,6 +108,8 @@ class AgentFixVerdictSerializer(serializers.Serializer):
     must_pass_within_noise = serializers.ListField(
         child=serializers.CharField(), required=False, default=list
     )
+    # The verdict's checks in order; a verdict from an older engine has none.
+    tiers = AgentFixVerdictTierSerializer(many=True, required=False, default=list)
 
 
 class AgentFixReportSerializer(serializers.Serializer):
@@ -131,6 +179,39 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
     committed_credits = CreditsField(source="committed_usd")
     candidates = AgentFixCandidateSerializer(many=True)
     check_runs = serializers.SerializerMethodField()
+    # The fix's place among the environment's fixes, and its run's among its runs.
+    number = serializers.IntegerField(allow_null=True)
+    source_run_number = serializers.IntegerField(allow_null=True)
+    step = serializers.SerializerMethodField()
+    plan = AgentFixPlanSerializer(allow_null=True)
+    diagnosis = AgentFixDiagnosisSerializer(allow_null=True)
+    agent = serializers.SerializerMethodField()
+    environment = serializers.SerializerMethodField()
+
+    @swagger_serializer_method(
+        serializer_or_field=serializers.ChoiceField(
+            choices=[one.value for one in FixStep], allow_null=True
+        )
+    )
+    def get_step(self, fix_run: AgentFixRun) -> str | None:
+        """A finished fix is done, whatever the engine last said."""
+        if fix_run.state not in AgentFixRun.ACTIVE_STATES:
+            return FixStep.DONE.value
+        return fix_run.step or None
+
+    @swagger_serializer_method(serializer_or_field=AgentFixAgentSerializer)
+    def get_agent(self, fix_run: AgentFixRun) -> dict:
+        return agent_identity(fix_run.base_agent_version).model_dump(mode="json")
+
+    @swagger_serializer_method(serializer_or_field=AgentFixEnvironmentSerializer)
+    def get_environment(self, fix_run: AgentFixRun) -> dict:
+        environment = fix_run.environment
+        version = environment.environment_version
+        return {
+            "name": environment_name(environment),
+            "version": version.version_number if version else None,
+            "default_agent_version_id": environment.agent_version_id,
+        }
 
     @swagger_serializer_method(
         serializer_or_field=AgentFixCheckRunSerializer(many=True)
@@ -147,11 +228,18 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
         model = AgentFixRun
         fields = [
             "id",
+            "number",
             "environment_id",
+            "environment",
             "source_run_id",
+            "source_run_number",
             "base_agent_version_id",
+            "agent",
             "state",
             "stage",
+            "step",
+            "plan",
+            "diagnosis",
             "request",
             "spent_credits",
             "committed_credits",
@@ -222,6 +310,11 @@ class AgentFixCandidateUpdateSerializer(serializers.Serializer):
 
 class AgentFixEngineReportSerializer(serializers.Serializer):
     stage = serializers.CharField(max_length=32)
+    step = serializers.ChoiceField(
+        choices=[one.value for one in FixStep], required=False, allow_null=True
+    )
+    plan = AgentFixPlanSerializer(required=False, allow_null=True)
+    diagnosis = AgentFixDiagnosisSerializer(required=False, allow_null=True)
     candidates = AgentFixCandidateUpdateSerializer(
         many=True, required=False, default=list
     )
@@ -234,3 +327,66 @@ class AgentFixEngineReportSerializer(serializers.Serializer):
 
 class AgentFixEngineStateSerializer(serializers.Serializer):
     state = serializers.CharField()
+
+
+class AgentFixLaunchOptionsQuerySerializer(serializers.Serializer):
+    source_run_id = serializers.UUIDField()
+
+
+class AgentFixLaunchSourceRunSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    number = serializers.IntegerField(allow_null=True)
+    state = serializers.CharField()
+    finished_at = serializers.CharField(allow_null=True)
+
+
+class AgentFixLaunchEnvironmentSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    version = serializers.IntegerField(allow_null=True)
+
+
+class AgentFixLaunchScenarioSerializer(serializers.Serializer):
+    key = serializers.CharField()
+    name = serializers.CharField()
+    passed = serializers.BooleanField(allow_null=True)
+    failing_sub_goals = serializers.ListField(child=serializers.CharField())
+
+
+class AgentFixLaunchSuggestedSerializer(serializers.Serializer):
+    target_scenario_keys = serializers.ListField(child=serializers.CharField())
+    protected_scenario_keys = serializers.ListField(child=serializers.CharField())
+
+
+class AgentFixLaunchSurfaceSerializer(serializers.Serializer):
+    id = serializers.ChoiceField(choices=[one.value for one in Surface])
+    label = serializers.CharField()
+    allowed = serializers.BooleanField()
+    reason = serializers.CharField(allow_null=True)
+
+
+class AgentFixLaunchDefaultsSerializer(serializers.Serializer):
+    surfaces = serializers.ListField(
+        child=serializers.ChoiceField(choices=[one.value for one in Surface])
+    )
+    budget_credits = serializers.IntegerField()
+    max_minutes = serializers.IntegerField()
+
+
+class AgentFixLaunchLimitsSerializer(serializers.Serializer):
+    budget_credits_max = serializers.IntegerField()
+    max_minutes_max = serializers.IntegerField()
+    scenarios_max = serializers.IntegerField()
+
+
+class AgentFixLaunchOptionsSerializer(serializers.Serializer):
+    source_run = AgentFixLaunchSourceRunSerializer()
+    environment = AgentFixLaunchEnvironmentSerializer()
+    agent = AgentFixAgentSerializer()
+    scenarios = AgentFixLaunchScenarioSerializer(many=True)
+    suggested = AgentFixLaunchSuggestedSerializer()
+    surfaces = AgentFixLaunchSurfaceSerializer(many=True)
+    defaults = AgentFixLaunchDefaultsSerializer()
+    limits = AgentFixLaunchLimitsSerializer()
+    # Set when Start must be disabled, with the reason launch would give.
+    blocked = AgentFixFailureSerializer(allow_null=True)

@@ -15,6 +15,7 @@ from simulate.models import (
     HarnessAgentVersionRuntime,
     HostedHarnessJob,
 )
+from simulate.pydantic_schemas.agent_fix import Surface
 from simulate.services.harness_agent_versions import (
     create_agent_version,
     make_default,
@@ -30,6 +31,9 @@ from simulate.services.hosted_harness_gateway import (
 
 
 class AgentKind(Protocol):
+    # The parts of the agent a fix may change; launch refuses any other.
+    surfaces: frozenset[Surface]
+
     def handles(self, environment: HostedHarnessJob) -> bool: ...
 
     def require_available(self) -> None:
@@ -76,6 +80,8 @@ class VersionedSourceAgent:
         HarnessAgentVersionRuntime.SourceKind.ARCHIVE,
         HarnessAgentVersionRuntime.SourceKind.GITHUB,
     }
+    # The worker edits the agent's own files, so every part is open to it.
+    surfaces = frozenset(Surface)
 
     def handles(self, environment: HostedHarnessJob) -> bool:
         return HarnessAgentVersionRuntime.no_workspace_objects.filter(

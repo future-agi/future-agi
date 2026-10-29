@@ -90,6 +90,7 @@ import type {
   AgentFixEngineReportApi,
   AgentFixEngineStateApi,
   AgentFixLaunchApi,
+  AgentFixLaunchOptionsApi,
   AgentFixMakeDefaultApi,
   AgentFixPullRequestApi,
   AgentFixRunApi,
@@ -1172,6 +1173,7 @@ import type {
   SimulateApiAgentFixEngineCandidatesBodyOne,
   SimulateApiAgentFixEngineCandidatesBodyTwo,
   SimulateApiAgentFixEngineV1ChatCompletionsCreateBody,
+  SimulateApiAgentFixRunsLaunchOptionsParams,
   SimulateApiAgentFixRunsListParams,
   SimulateApiAgentPromptOptimiserList200,
   SimulateApiAgentPromptOptimiserListParams,
@@ -58093,6 +58095,68 @@ export const simulateApiAgentFixRunsCreate = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(agentFixLaunchApi),
+    },
+  );
+};
+
+export type simulateApiAgentFixRunsLaunchOptionsResponse200 = {
+  data: AgentFixLaunchOptionsApi;
+  status: 200;
+};
+
+export type simulateApiAgentFixRunsLaunchOptionsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixRunsLaunchOptionsResponseSuccess =
+  simulateApiAgentFixRunsLaunchOptionsResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixRunsLaunchOptionsResponseError =
+  simulateApiAgentFixRunsLaunchOptionsResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixRunsLaunchOptionsResponse =
+  | simulateApiAgentFixRunsLaunchOptionsResponseSuccess
+  | simulateApiAgentFixRunsLaunchOptionsResponseError;
+
+export const getSimulateApiAgentFixRunsLaunchOptionsUrl = (
+  params: SimulateApiAgentFixRunsLaunchOptionsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/agent-fix-runs/launch-options/?${stringifiedParams}`
+    : `/simulate/api/agent-fix-runs/launch-options/`;
+};
+
+/**
+ * What the launch form shows and prefills for a finished run, and what would
+refuse the launch now.
+ */
+export const simulateApiAgentFixRunsLaunchOptions = async (
+  params: SimulateApiAgentFixRunsLaunchOptionsParams,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixRunsLaunchOptionsResponse> => {
+  return apiMutator<simulateApiAgentFixRunsLaunchOptionsResponse>(
+    getSimulateApiAgentFixRunsLaunchOptionsUrl(params),
+    {
+      ...options,
+      method: "GET",
     },
   );
 };

@@ -25,6 +25,8 @@ from simulate.models import (
     HostedHarnessJob,
 )
 from simulate.models import TestExecution as Execution
+from simulate.pydantic_schemas.agent_fix import Surface
+from simulate.services.agent_fix_agents import VersionedSourceAgent
 from simulate.services.agent_fix_runs import close_fix_run
 from simulate.services.harness_environment import (
     annotate_for_list,
@@ -326,13 +328,70 @@ class TestEngineCalls:
             "post",
             fix_run,
             "report/",
-            data={"stage": "Diagnose", "plan": {"held_back": 2}},
+            data={"stage": "Diagnose", "insights": {"held_back": 2}},
             format="json",
         )
 
         assert response.status_code == 200, response.content
         fix_run.refresh_from_db()
         assert fix_run.stage == "Diagnose"
+
+    def test_a_progress_report_s_step_plan_diagnosis_and_tiers_reach_the_read(
+        self, api_client, auth_client, source_run
+    ):
+        fix_run = _armed(_fix_run(source_run))
+        candidate = _candidate(fix_run)
+        tiers = [
+            {"name": "static", "status": "passed", "detail": "1 file changed"},
+            {"name": "target", "status": "failed", "detail": "0 of 1 passed"},
+        ]
+
+        response = _engine(
+            api_client,
+            "post",
+            fix_run,
+            "report/",
+            data={
+                "stage": "Screen · attempt 1",
+                "step": "search",
+                "plan": {
+                    "target": 1,
+                    "held_back": 0,
+                    "must_pass": 1,
+                    "max_candidates": 4,
+                    "repeats": 3,
+                    "baseline_spread_pts": 17,
+                },
+                "diagnosis": {"causes": ["It never refunds before closing"]},
+                "candidates": [
+                    {
+                        "candidate_id": str(candidate.id),
+                        "outcome": "rejected",
+                        "verdict": {
+                            "accepted": False,
+                            "reason": "target: 0 of 1 passed",
+                            "must_pass_regressions": [],
+                            "tiers": tiers,
+                        },
+                    }
+                ],
+            },
+            format="json",
+        )
+
+        assert response.status_code == 200, response.content
+        read = auth_client.get(f"{BASE}/{fix_run.id}/").json()
+        assert (
+            read["step"],
+            read["plan"]["baseline_spread_pts"],
+            read["plan"]["protected"],
+        ) == (
+            "search",
+            17,
+            0,
+        )
+        assert read["diagnosis"] == {"causes": ["It never refunds before closing"]}
+        assert read["candidates"][0]["verdict"]["tiers"] == tiers
 
     def test_a_check_run_past_the_organizations_limit_is_refused_with_its_reason(
         self, api_client, source_run, temporal
@@ -629,6 +688,102 @@ class TestUserApi:
 
         assert response.status_code == 400
         assert not AgentFixRun.no_workspace_objects.exists()
+
+    def test_launch_options_prefill_the_form_from_the_run(
+        self, auth_client, environment, source_run
+    ):
+        response = auth_client.get(
+            f"{BASE}/launch-options/", {"source_run_id": str(source_run.id)}
+        )
+
+        assert response.status_code == 200, response.content
+        options = response.json()
+        assert [
+            (one["key"], one["passed"], one["failing_sub_goals"])
+            for one in options["scenarios"]
+        ] == [
+            (KEYS[0], False, ["refunded"]),
+            (KEYS[1], True, []),
+        ]
+        assert options["suggested"] == {
+            "target_scenario_keys": [KEYS[0]],
+            "protected_scenario_keys": [KEYS[1]],
+        }
+        assert options["source_run"]["id"] == str(source_run.id)
+        assert options["source_run"]["number"] == 1
+        assert options["environment"]["id"] == str(environment.id)
+        assert options["agent"]["kind"] == "github"
+        assert options["agent"]["version_id"] == str(source_run.agent_version_id)
+        assert [(one["id"], one["allowed"]) for one in options["surfaces"]] == [
+            ("prompt", True),
+            ("tools", True),
+            ("settings", True),
+            ("code", True),
+        ]
+        assert options["defaults"] == {
+            "surfaces": ["prompt"],
+            "budget_credits": 1500,
+            "max_minutes": 150,
+        }
+        assert options["limits"] == {
+            "budget_credits_max": 50000,
+            "max_minutes_max": 1440,
+            "scenarios_max": 200,
+        }
+        assert options["blocked"] is None
+
+    def test_launch_options_say_what_would_refuse_the_launch(
+        self, auth_client, environment, source_run
+    ):
+        _fix_run(source_run)
+
+        options = auth_client.get(
+            f"{BASE}/launch-options/", {"source_run_id": str(source_run.id)}
+        ).json()
+        launched = auth_client.post(f"{BASE}/", _launch_body(source_run), format="json")
+
+        assert options["blocked"]["code"] == "fix_run_active"
+        assert (launched.status_code, launched.json()["error"]) == (
+            409,
+            "fix_run_active",
+        )
+
+    def test_launch_refuses_a_part_the_agent_does_not_offer(
+        self, auth_client, source_run, monkeypatch
+    ):
+        monkeypatch.setattr(
+            VersionedSourceAgent, "surfaces", frozenset({Surface.PROMPT})
+        )
+
+        response = auth_client.post(
+            f"{BASE}/",
+            _launch_body(source_run, surfaces=["prompt", "code"]),
+            format="json",
+        )
+
+        assert (response.status_code, response.json()["error"]) == (
+            422,
+            "fix_surface_not_allowed",
+        )
+
+    def test_the_read_names_the_fix_its_run_and_its_agent(
+        self, auth_client, environment, source_run
+    ):
+        first = _fix_run(source_run, state=AgentFixRun.State.READY)
+        second = _fix_run(source_run, step="search")
+
+        older = auth_client.get(f"{BASE}/{first.id}/").json()
+        newer = auth_client.get(f"{BASE}/{second.id}/").json()
+
+        assert (older["number"], newer["number"]) == (1, 2)
+        assert (older["step"], newer["step"]) == ("done", "search")
+        assert newer["source_run_number"] == 1
+        assert newer["agent"]["kind"] == "github"
+        assert newer["agent"]["version_id"] == str(source_run.agent_version_id)
+        assert newer["environment"]["default_agent_version_id"] == str(
+            environment.agent_version_id
+        )
+        assert newer["environment"]["name"]
 
     def test_lists_an_environments_fixes_newest_first(
         self, auth_client, environment, source_run

@@ -7,12 +7,15 @@ from typing import Any
 
 from django.conf import settings
 from django.db.models import (
+    Count,
     DecimalField,
     ExpressionWrapper,
     F,
+    OuterRef,
     Prefetch,
     Q,
     QuerySet,
+    Subquery,
     Sum,
     Value,
 )
@@ -20,6 +23,8 @@ from django.db.models.functions import Coalesce
 
 from simulate.models import (
     AgentFixRun,
+    AgentVersion,
+    HarnessAgentVersionRuntime,
     HarnessSuiteMember,
     HostedHarnessExecution,
     HostedHarnessJob,
@@ -27,13 +32,31 @@ from simulate.models import (
 )
 from simulate.models.test_execution import CallTranscript
 from simulate.pydantic_schemas.agent_fix import (
+    BUDGET_CREDITS_MAX,
+    MAX_MINUTES_MAX,
+    SCENARIOS_MAX,
+    AgentIdentity,
     CheckRecord,
     CheckRunStatus,
     EngineBrief,
     FixRequest,
     InventoryScenario,
+    LaunchBlocked,
+    LaunchDefaults,
+    LaunchEnvironment,
+    LaunchLimits,
+    LaunchOptions,
+    LaunchScenario,
+    LaunchSourceRun,
+    LaunchSuggested,
+    LaunchSurface,
+    Surface,
 )
+from simulate.selectors.runs import user_executions
+from simulate.services.agent_fix_agents import AgentKind, agent_kind
 from simulate.services.harness_environment import environment_name
+from simulate.services.harness_github import short_ref
+from simulate.services.harness_usage import check_harness_action
 from simulate.services.hosted_harness import HostedHarnessError
 
 TRANSCRIPT_CHARS = 8000
@@ -208,26 +231,46 @@ def _transcripts(call_ids: Iterable[Any]) -> dict[Any, str]:
     }
 
 
-def failing_sub_goals_by_scenario(
-    source_run: HostedHarnessJob, scenario_keys: list[str]
-) -> dict[str, list[str]]:
-    """The sub-goals that did not hold on each of the given scenarios of a finished run, in
-    the order the scenarios are given; a scenario where everything held maps to []."""
-    executions = HostedHarnessExecution.no_workspace_objects.filter(
-        job=source_run, source_scenario__scenario_key__in=scenario_keys
-    ).select_related("call_execution", "source_scenario")
-    failing: dict[str, list[str]] = {key: [] for key in scenario_keys}
+def scenario_results(source_run: HostedHarnessJob) -> list[LaunchScenario]:
+    """Each scenario of a finished run with the sub-goals that did not hold in any of its
+    trials, in the suite's order. ``passed`` is None when nothing of it was judged."""
+    executions = (
+        HostedHarnessExecution.no_workspace_objects.filter(job=source_run)
+        .select_related("call_execution", "source_scenario")
+        .order_by("source_scenario__number", "source_scenario__scenario_key")
+    )
+    results: dict[str, LaunchScenario] = {}
     for execution in executions:
+        scenario = execution.source_scenario
+        result = results.setdefault(
+            scenario.scenario_key,
+            LaunchScenario(
+                key=scenario.scenario_key,
+                name=scenario.name or scenario.scenario_key,
+                passed=None,
+                failing_sub_goals=[],
+            ),
+        )
         receipt = (execution.call_execution.call_metadata or {}).get(
             "hosted_harness_receipt"
         )
         if not isinstance(receipt, Mapping):
             continue
-        names = failing[execution.source_scenario.scenario_key]
         for name, held in judged_sub_goals(receipt).items():
-            if held is False and name not in names:
-                names.append(name)
-    return failing
+            if held is False and name not in result.failing_sub_goals:
+                result.failing_sub_goals.append(name)
+            if held is not None:
+                result.passed = not result.failing_sub_goals
+    return list(results.values())
+
+
+def failing_sub_goals_by_scenario(
+    source_run: HostedHarnessJob, scenario_keys: list[str]
+) -> dict[str, list[str]]:
+    """The sub-goals that did not hold on each of the given scenarios of a finished run, in
+    the order the scenarios are given; a scenario where everything held maps to []."""
+    found = {one.key: one.failing_sub_goals for one in scenario_results(source_run)}
+    return {key: found.get(key, []) for key in scenario_keys}
 
 
 def failing_sub_goals(
@@ -265,8 +308,44 @@ def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
     )
 
 
+def run_number(path: str = "") -> Subquery:
+    """A run's place among its environment's runs, for the run at ``path`` (e.g.
+    ``"source_run__"``); the count ``run_summaries`` shows."""
+    return Subquery(
+        user_executions()
+        .filter(
+            run_test=OuterRef(f"{path}test_execution__run_test"),
+            created_at__lte=OuterRef(f"{path}test_execution__created_at"),
+        )
+        .values("run_test")
+        .annotate(total=Count("id"))
+        .values("total")
+    )
+
+
+def agent_identity(version: AgentVersion) -> AgentIdentity:
+    """How the user names an agent version: its agent, kind, number and, for a GitHub
+    agent, the branch and commit it was built from."""
+    runtime = getattr(version, "harness_runtime", None)
+    source = (runtime.source if runtime else None) or {}
+    kind = str(runtime.source_kind) if runtime else ""
+    ref = None
+    if kind == HarnessAgentVersionRuntime.SourceKind.GITHUB:
+        branch = short_ref(source.get("ref")) or "default branch"
+        commit = str(source.get("commit_sha") or "")[:7]
+        ref = f"{branch} @ {commit}" if commit else branch
+    return AgentIdentity(
+        name=version.agent_definition.agent_name,
+        kind=kind,
+        version_id=str(version.id),
+        version_number=version.version_number,
+        ref=ref,
+    )
+
+
 def fix_runs_for_read(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
-    """Fixes with everything their read shows: spend, candidates, check runs."""
+    """Fixes with everything their read shows: spend, candidates, check runs, and the
+    numbers and names the user knows the fix, its run and its agent by."""
     check_runs = HostedHarnessJob.no_workspace_objects.only(
         "id",
         "fix_run_id",
@@ -276,9 +355,26 @@ def fix_runs_for_read(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
         "agent_version_id",
         "created_at",
     ).order_by("created_at")
-    return with_spend(runs).prefetch_related(
-        "candidates__agent_version",
-        Prefetch("check_runs", queryset=check_runs, to_attr="check_run_list"),
+    number = (
+        AgentFixRun.no_workspace_objects.filter(
+            environment=OuterRef("environment"), created_at__lte=OuterRef("created_at")
+        )
+        .values("environment")
+        .annotate(total=Count("id"))
+        .values("total")
+    )
+    return (
+        with_spend(runs)
+        .annotate(number=Subquery(number), source_run_number=run_number("source_run__"))
+        .select_related(
+            "environment__environment_version",
+            "base_agent_version__agent_definition",
+            "base_agent_version__harness_runtime",
+        )
+        .prefetch_related(
+            "candidates__agent_version",
+            Prefetch("check_runs", queryset=check_runs, to_attr="check_run_list"),
+        )
     )
 
 
@@ -288,4 +384,129 @@ def fix_runs_for_environment(environment: HostedHarnessJob) -> QuerySet[AgentFix
         .select_related("base_agent_version", "source_run")
         # The id breaks ties, so a page holds still while fixes are added.
         .order_by("-created_at", "-id")
+    )
+
+
+SURFACE_LABELS = {
+    Surface.PROMPT: "Instructions",
+    Surface.TOOLS: "Tools",
+    Surface.SETTINGS: "Settings",
+    Surface.CODE: "Code",
+}
+# What the launch form starts from: the instructions only, within 1,500 credits and two
+# and a half hours.
+DEFAULT_SURFACES = [Surface.PROMPT]
+DEFAULT_BUDGET_CREDITS = 1500
+DEFAULT_MAX_MINUTES = 150
+
+
+def launch_blocker(
+    source_run: HostedHarnessJob, *, usage: bool = True
+) -> HostedHarnessError | None:
+    """What would refuse a fix from this run now, in the order launch checks it; None
+    when nothing would. Launch checks usage itself, to answer with the usage refusal."""
+    if source_run.state not in FINISHED_RUN_STATES:
+        return HostedHarnessError(
+            "fix_source_running", "wait for the run to finish", status_code=409
+        )
+    try:
+        agent_kind(source_run.environment).require_available()
+    except HostedHarnessError as exc:
+        return exc
+    if AgentFixRun.no_workspace_objects.filter(
+        environment=source_run.environment, state__in=AgentFixRun.ACTIVE_STATES
+    ).exists():
+        return HostedHarnessError(
+            "fix_run_active",
+            "this environment already has a fix in progress",
+            status_code=409,
+        )
+    if usage:
+        decision = check_harness_action(str(source_run.organization_id), "agent_fix")
+        if not decision["allowed"]:
+            return HostedHarnessError(
+                "usage_limit",
+                decision.get("reason") or "AI credits are used up",
+                status_code=402,
+            )
+    return None
+
+
+def _kind_or_none(environment: HostedHarnessJob) -> AgentKind | None:
+    try:
+        return agent_kind(environment)
+    except HostedHarnessError:
+        return None
+
+
+def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
+    """Everything the launch form shows and prefills for a finished run of an environment."""
+    environment = source_run.environment
+    kind = _kind_or_none(environment)
+    version_id = (
+        kind.base_version_id(source_run)
+        if kind
+        else source_run.agent_version_id or environment.agent_version_id
+    )
+    version = AgentVersion.no_workspace_objects.select_related(
+        "agent_definition", "harness_runtime"
+    ).get(id=version_id)
+    scenarios = scenario_results(source_run)
+    offered = kind.surfaces if kind else frozenset()
+    number = (
+        HostedHarnessJob.no_workspace_objects.filter(id=source_run.id)
+        .annotate(number=run_number())
+        .values_list("number", flat=True)
+        .first()
+    )
+    environment_version = (
+        source_run.environment_version or environment.environment_version
+    )
+    blocked = launch_blocker(source_run)
+    return LaunchOptions(
+        source_run=LaunchSourceRun(
+            id=str(source_run.id),
+            number=number,
+            state=source_run.state,
+            finished_at=source_run.terminal_at.isoformat()
+            if source_run.terminal_at
+            else None,
+        ),
+        environment=LaunchEnvironment(
+            id=str(environment.id),
+            name=environment_name(environment),
+            version=environment_version.version_number if environment_version else None,
+        ),
+        agent=agent_identity(version),
+        scenarios=scenarios,
+        suggested=LaunchSuggested(
+            target_scenario_keys=[
+                one.key for one in scenarios if one.failing_sub_goals
+            ],
+            protected_scenario_keys=[one.key for one in scenarios if one.passed],
+        ),
+        surfaces=[
+            LaunchSurface(
+                id=surface,
+                label=label,
+                allowed=surface in offered,
+                reason=None
+                if surface in offered
+                else "this kind of agent does not let a fix change it",
+            )
+            for surface, label in SURFACE_LABELS.items()
+        ],
+        defaults=LaunchDefaults(
+            surfaces=[one for one in DEFAULT_SURFACES if one in offered],
+            budget_credits=DEFAULT_BUDGET_CREDITS,
+            max_minutes=DEFAULT_MAX_MINUTES,
+        ),
+        limits=LaunchLimits(
+            budget_credits_max=BUDGET_CREDITS_MAX,
+            max_minutes_max=MAX_MINUTES_MAX,
+            scenarios_max=SCENARIOS_MAX,
+        ),
+        blocked=LaunchBlocked(code=blocked.code, message=blocked.message)
+        if blocked
+        else None,
     )

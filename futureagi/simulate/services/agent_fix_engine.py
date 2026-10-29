@@ -311,9 +311,28 @@ def apply_report(fix_run: AgentFixRun, report: EngineReport) -> AgentFixRun:
         locked = _locked_running(fix_run.id)
         locked.stage = report.stage
         locked.heartbeat_at = timezone.now()
+        # An engine that does not send them keeps what an earlier report said.
+        if report.step is not None:
+            locked.step = report.step
+        if report.plan is not None:
+            locked.plan = report.plan.model_dump(mode="json")
+        if report.diagnosis is not None:
+            locked.diagnosis = report.diagnosis.model_dump(mode="json")
         if report.ending is not None:
-            locked.report = report.model_dump(mode="json", exclude={"candidates"})
-        locked.save(update_fields=["stage", "heartbeat_at", "report", "updated_at"])
+            locked.report = report.model_dump(
+                mode="json", exclude={"candidates", "step", "plan", "diagnosis"}
+            )
+        locked.save(
+            update_fields=[
+                "stage",
+                "step",
+                "plan",
+                "diagnosis",
+                "heartbeat_at",
+                "report",
+                "updated_at",
+            ]
+        )
         for update in report.candidates:
             AgentFixCandidate.no_workspace_objects.filter(
                 fix_run=locked, id=update.candidate_id

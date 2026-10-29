@@ -58,6 +58,11 @@ class AgentFixRun(BaseModel):
     state = models.CharField(max_length=32, choices=State.choices, default=State.QUEUED)
     # The engine's current stage, as it last reported it.
     stage = models.CharField(max_length=32, blank=True, default="")
+    # Which of the user's four steps that stage belongs to (simulate.pydantic_schemas.agent_fix.FixStep).
+    step = models.CharField(max_length=16, blank=True, default="")
+    # The comparison the engine froze (FixPlan), and what it diagnosed (FixDiagnosis).
+    plan = models.JSONField(null=True, blank=True)
+    diagnosis = models.JSONField(null=True, blank=True)
     # What the user asked for (simulate.pydantic_schemas.agent_fix.FixRequest).
     request = models.JSONField()
     spent_usd = models.DecimalField(max_digits=10, decimal_places=4, default=0)

@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1106,
+  endpointCount: 1107,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -27837,6 +27837,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/api/agent-fix-runs/launch-options/": {
+      get: {
+        operationId: "simulate_api_agent-fix-runs_launch_options",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          source_run_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentFixLaunchOptions",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/api/agent-fix-runs/{id}/": {
       get: {
         operationId: "simulate_api_agent-fix-runs_read",
@@ -49293,6 +49318,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
           maxLength: 32,
           minLength: 1,
         },
+        step: {
+          title: "Step",
+          type: "string",
+          enum: ["reproduce", "search", "verify", "done"],
+          "x-nullable": true,
+        },
+        plan: {
+          $ref: "#/definitions/AgentFixPlan",
+        },
+        diagnosis: {
+          $ref: "#/definitions/AgentFixDiagnosis",
+        },
         candidates: {
           type: "array",
           items: {
@@ -49392,6 +49429,55 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    AgentFixLaunchOptions: {
+      required: [
+        "source_run",
+        "environment",
+        "agent",
+        "scenarios",
+        "suggested",
+        "surfaces",
+        "defaults",
+        "limits",
+        "blocked",
+      ],
+      type: "object",
+      properties: {
+        source_run: {
+          $ref: "#/definitions/AgentFixLaunchSourceRun",
+        },
+        environment: {
+          $ref: "#/definitions/AgentFixLaunchEnvironment",
+        },
+        agent: {
+          $ref: "#/definitions/AgentFixAgent",
+        },
+        scenarios: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixLaunchScenario",
+          },
+        },
+        suggested: {
+          $ref: "#/definitions/AgentFixLaunchSuggested",
+        },
+        surfaces: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixLaunchSurface",
+          },
+        },
+        defaults: {
+          $ref: "#/definitions/AgentFixLaunchDefaults",
+        },
+        limits: {
+          $ref: "#/definitions/AgentFixLaunchLimits",
+        },
+        blocked: {
+          $ref: "#/definitions/AgentFixFailure",
+        },
+      },
+    },
     AgentFixMakeDefault: {
       required: ["outcome"],
       type: "object",
@@ -49417,9 +49503,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
     },
     AgentFixRun: {
       required: [
+        "number",
         "environment_id",
         "source_run_id",
+        "source_run_number",
         "base_agent_version_id",
+        "plan",
+        "diagnosis",
         "request",
         "spent_credits",
         "committed_credits",
@@ -49435,10 +49525,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
           format: "uuid",
           readOnly: true,
         },
+        number: {
+          title: "Number",
+          type: "integer",
+          "x-nullable": true,
+        },
         environment_id: {
           title: "Environment id",
           type: "string",
           format: "uuid",
+        },
+        environment: {
+          $ref: "#/definitions/AgentFixEnvironment",
         },
         source_run_id: {
           title: "Source run id",
@@ -49446,10 +49544,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
           format: "uuid",
           "x-nullable": true,
         },
+        source_run_number: {
+          title: "Source run number",
+          type: "integer",
+          "x-nullable": true,
+        },
         base_agent_version_id: {
           title: "Base agent version id",
           type: "string",
           format: "uuid",
+        },
+        agent: {
+          $ref: "#/definitions/AgentFixAgent",
         },
         state: {
           title: "State",
@@ -49470,6 +49576,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Stage",
           type: "string",
           maxLength: 32,
+        },
+        step: {
+          title: "Step",
+          description: "A finished fix is done, whatever the engine last said.",
+          type: "string",
+          enum: ["reproduce", "search", "verify", "done"],
+          readOnly: true,
+          "x-nullable": true,
+        },
+        plan: {
+          $ref: "#/definitions/AgentFixPlan",
+        },
+        diagnosis: {
+          $ref: "#/definitions/AgentFixDiagnosis",
         },
         request: {
           $ref: "#/definitions/AgentFixRequest",
@@ -87361,6 +87481,280 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    AgentFixDiagnosis: {
+      type: "object",
+      properties: {
+        causes: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          default: [],
+        },
+      },
+      "x-nullable": true,
+    },
+    AgentFixPlan: {
+      required: [
+        "target",
+        "held_back",
+        "must_pass",
+        "max_candidates",
+        "repeats",
+        "baseline_spread_pts",
+      ],
+      type: "object",
+      properties: {
+        target: {
+          title: "Target",
+          type: "integer",
+          minimum: 0,
+        },
+        held_back: {
+          title: "Held back",
+          type: "integer",
+          minimum: 0,
+        },
+        must_pass: {
+          title: "Must pass",
+          type: "integer",
+          minimum: 0,
+        },
+        protected: {
+          title: "Protected",
+          type: "integer",
+          default: 0,
+          minimum: 0,
+        },
+        max_candidates: {
+          title: "Max candidates",
+          type: "integer",
+          minimum: 0,
+        },
+        repeats: {
+          title: "Repeats",
+          type: "integer",
+          minimum: 0,
+        },
+        baseline_spread_pts: {
+          title: "Baseline spread pts",
+          type: "integer",
+          minimum: 0,
+        },
+      },
+      "x-nullable": true,
+    },
+    AgentFixAgent: {
+      required: ["name", "kind", "version_id", "version_number", "ref"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          minLength: 1,
+        },
+        version_id: {
+          title: "Version id",
+          type: "string",
+          format: "uuid",
+        },
+        version_number: {
+          title: "Version number",
+          type: "integer",
+          "x-nullable": true,
+        },
+        ref: {
+          title: "Ref",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    AgentFixFailure: {
+      required: ["code", "message"],
+      type: "object",
+      properties: {
+        code: {
+          title: "Code",
+          type: "string",
+          minLength: 1,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+        },
+      },
+      "x-nullable": true,
+    },
+    AgentFixLaunchDefaults: {
+      required: ["surfaces", "budget_credits", "max_minutes"],
+      type: "object",
+      properties: {
+        surfaces: {
+          type: "array",
+          items: {
+            type: "string",
+            enum: ["prompt", "tools", "settings", "code"],
+          },
+        },
+        budget_credits: {
+          title: "Budget credits",
+          type: "integer",
+        },
+        max_minutes: {
+          title: "Max minutes",
+          type: "integer",
+        },
+      },
+    },
+    AgentFixLaunchEnvironment: {
+      required: ["id", "name", "version"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        version: {
+          title: "Version",
+          type: "integer",
+          "x-nullable": true,
+        },
+      },
+    },
+    AgentFixLaunchLimits: {
+      required: ["budget_credits_max", "max_minutes_max", "scenarios_max"],
+      type: "object",
+      properties: {
+        budget_credits_max: {
+          title: "Budget credits max",
+          type: "integer",
+        },
+        max_minutes_max: {
+          title: "Max minutes max",
+          type: "integer",
+        },
+        scenarios_max: {
+          title: "Scenarios max",
+          type: "integer",
+        },
+      },
+    },
+    AgentFixLaunchScenario: {
+      required: ["key", "name", "passed", "failing_sub_goals"],
+      type: "object",
+      properties: {
+        key: {
+          title: "Key",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        passed: {
+          title: "Passed",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        failing_sub_goals: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
+    AgentFixLaunchSourceRun: {
+      required: ["id", "number", "state", "finished_at"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        number: {
+          title: "Number",
+          type: "integer",
+          "x-nullable": true,
+        },
+        state: {
+          title: "State",
+          type: "string",
+          minLength: 1,
+        },
+        finished_at: {
+          title: "Finished at",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    AgentFixLaunchSuggested: {
+      required: ["target_scenario_keys", "protected_scenario_keys"],
+      type: "object",
+      properties: {
+        target_scenario_keys: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        protected_scenario_keys: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
+    AgentFixLaunchSurface: {
+      required: ["id", "label", "allowed", "reason"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          enum: ["prompt", "tools", "settings", "code"],
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+        },
+        allowed: {
+          title: "Allowed",
+          type: "boolean",
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
     AgentFixCandidate: {
       required: ["attempt", "agent_version_id", "version_number", "verdict"],
       type: "object",
@@ -87446,22 +87840,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    AgentFixFailure: {
-      required: ["code", "message"],
+    AgentFixEnvironment: {
+      required: ["name", "version", "default_agent_version_id"],
       type: "object",
       properties: {
-        code: {
-          title: "Code",
+        name: {
+          title: "Name",
           type: "string",
           minLength: 1,
         },
-        message: {
-          title: "Message",
+        version: {
+          title: "Version",
+          type: "integer",
+          "x-nullable": true,
+        },
+        default_agent_version_id: {
+          title: "Default agent version id",
           type: "string",
-          minLength: 1,
+          format: "uuid",
+          "x-nullable": true,
         },
       },
-      "x-nullable": true,
     },
     AgentFixReport: {
       required: ["ending", "summary", "winner_candidate_id"],
@@ -109813,6 +110212,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           default: [],
         },
+        tiers: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixVerdictTier",
+          },
+          default: [],
+        },
       },
       "x-nullable": true,
     },
@@ -121397,6 +121803,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "date-time",
           "x-nullable": true,
+        },
+      },
+    },
+    AgentFixVerdictTier: {
+      required: ["name", "status"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["passed", "failed", "pending", "skipped"],
+        },
+        detail: {
+          title: "Detail",
+          type: "string",
+          default: "",
         },
       },
     },

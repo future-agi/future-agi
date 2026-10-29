@@ -18,6 +18,7 @@ from simulate.pydantic_schemas.agent_fix import FixRequest, Surface
 from simulate.selectors.agent_fix import (
     FINISHED_RUN_STATES,
     failing_sub_goals_by_scenario,
+    launch_blocker,
 )
 from simulate.services.agent_fix_agents import agent_kind
 from simulate.services.harness_agent_versions import discard_agent_version
@@ -77,12 +78,16 @@ def launch_fix_run(
         raise HostedHarnessError(
             "fix_source_not_a_run", "Fix my agent starts from a run", status_code=422
         )
-    if source_run.state not in FINISHED_RUN_STATES:
-        raise HostedHarnessError(
-            "fix_source_running", "wait for the run to finish", status_code=409
-        )
+    # Usage is checked below, to answer with the usage refusal itself.
+    if blocked := launch_blocker(source_run, usage=False):
+        raise blocked
     kind = agent_kind(environment)
-    kind.require_available()
+    if refused := sorted(set(surfaces) - kind.surfaces):
+        raise HostedHarnessError(
+            "fix_surface_not_allowed",
+            f"a fix cannot change this agent's {', '.join(refused)}",
+            status_code=422,
+        )
     base_version_id = kind.base_version_id(source_run)
     ran = set(
         source_run.scenario_executions.values_list(

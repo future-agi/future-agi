@@ -6,6 +6,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+# What one fix may ask for; the launch form shows the same limits.
+SCENARIOS_MAX = 200
+BUDGET_CREDITS_MAX = 50_000
+MAX_MINUTES_MAX = 24 * 60
+
 
 class Surface(StrEnum):
     PROMPT = "prompt"
@@ -22,6 +27,15 @@ class Ending(StrEnum):
     FAILED = "failed"
 
 
+class FixStep(StrEnum):
+    """Where a fix is, in the four steps the user follows."""
+
+    REPRODUCE = "reproduce"
+    SEARCH = "search"
+    VERIFY = "verify"
+    DONE = "done"
+
+
 class CandidateOutcome(StrEnum):
     PENDING = "pending"
     REJECTED = "rejected"
@@ -32,7 +46,7 @@ class CandidateOutcome(StrEnum):
 class FixRequest(BaseModel):
     """What the user asked for. Stored on the run as it was asked."""
 
-    target_scenario_keys: list[str] = Field(min_length=1, max_length=200)
+    target_scenario_keys: list[str] = Field(min_length=1, max_length=SCENARIOS_MAX)
     # The failing cases among the targets that the worker never sees: the verdict proves the
     # fix holds on them. Chosen at launch; empty when there are too few to split.
     held_back_scenario_keys: list[str] = Field(default_factory=list)
@@ -40,8 +54,8 @@ class FixRequest(BaseModel):
     failing_sub_goals: list[str] = Field(min_length=1)
     surfaces: list[Surface] = Field(min_length=1)
     locked_paths: list[str] = Field(default_factory=list)
-    budget_usd: float = Field(gt=0, le=500)
-    max_minutes: int = Field(gt=0, le=24 * 60)
+    budget_usd: float = Field(gt=0, le=BUDGET_CREDITS_MAX / 100)
+    max_minutes: int = Field(gt=0, le=MAX_MINUTES_MAX)
 
 
 class InventoryScenario(BaseModel):
@@ -101,6 +115,15 @@ class CheckRunStatus(BaseModel):
     records: list[CheckRecord]
 
 
+class VerdictTier(BaseModel):
+    """One check of the verdict, in the order the engine runs them."""
+
+    name: str
+    # passed | failed | pending | skipped
+    status: str
+    detail: str = ""
+
+
 class CandidateVerdict(BaseModel):
     accepted: bool
     reason: str
@@ -109,6 +132,7 @@ class CandidateVerdict(BaseModel):
     must_pass_regressions: list[str] = Field(default_factory=list)
     # Must-pass checks that dropped within the baseline's own noise: shown, not counted.
     must_pass_within_noise: list[str] = Field(default_factory=list)
+    tiers: list[VerdictTier] = Field(default_factory=list)
 
 
 class CandidateUpdate(BaseModel):
@@ -117,10 +141,30 @@ class CandidateUpdate(BaseModel):
     verdict: CandidateVerdict | None = None
 
 
+class FixPlan(BaseModel):
+    """The comparison the engine froze: how many scenarios of each kind, and its noise."""
+
+    target: int
+    held_back: int
+    must_pass: int
+    protected: int = 0
+    max_candidates: int
+    repeats: int
+    # How far the current version's pass rate moved between its repeats, in points.
+    baseline_spread_pts: int
+
+
+class FixDiagnosis(BaseModel):
+    causes: list[str] = Field(default_factory=list)
+
+
 class EngineReport(BaseModel):
     """Progress, and at the end the run's ending. A report with an ending is the last."""
 
     stage: str = Field(max_length=32)
+    step: FixStep | None = None
+    plan: FixPlan | None = None
+    diagnosis: FixDiagnosis | None = None
     candidates: list[CandidateUpdate] = Field(default_factory=list)
     ending: Ending | None = None
     summary: str = ""
@@ -143,3 +187,80 @@ class EngineCapability(BaseModel):
     token: str
     expires_at: str
     models: EngineModels
+
+
+class AgentIdentity(BaseModel):
+    """The agent version a fix or a run is about, as the user names it."""
+
+    name: str
+    # github | archive
+    kind: str
+    version_id: str
+    version_number: int | None
+    # Branch and commit of a GitHub agent, e.g. "main @ 0487e25"; None otherwise.
+    ref: str | None
+
+
+class LaunchSourceRun(BaseModel):
+    id: str
+    number: int | None
+    state: str
+    finished_at: str | None
+
+
+class LaunchEnvironment(BaseModel):
+    id: str
+    name: str
+    version: int | None
+
+
+class LaunchScenario(BaseModel):
+    key: str
+    name: str
+    # True when every judged sub-goal held in every trial; None when nothing was judged.
+    passed: bool | None
+    failing_sub_goals: list[str]
+
+
+class LaunchSuggested(BaseModel):
+    target_scenario_keys: list[str]
+    protected_scenario_keys: list[str]
+
+
+class LaunchSurface(BaseModel):
+    id: Surface
+    label: str
+    allowed: bool
+    reason: str | None = None
+
+
+class LaunchDefaults(BaseModel):
+    surfaces: list[Surface]
+    budget_credits: int
+    max_minutes: int
+
+
+class LaunchLimits(BaseModel):
+    budget_credits_max: int
+    max_minutes_max: int
+    scenarios_max: int
+
+
+class LaunchBlocked(BaseModel):
+    code: str
+    message: str
+
+
+class LaunchOptions(BaseModel):
+    """Everything the launch form shows and prefills for one finished run."""
+
+    source_run: LaunchSourceRun
+    environment: LaunchEnvironment
+    agent: AgentIdentity
+    scenarios: list[LaunchScenario]
+    suggested: LaunchSuggested
+    surfaces: list[LaunchSurface]
+    defaults: LaunchDefaults
+    limits: LaunchLimits
+    # Set when Start must be disabled, with the reason launch would give.
+    blocked: LaunchBlocked | None = None
