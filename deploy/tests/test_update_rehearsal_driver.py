@@ -156,7 +156,7 @@ class RehearsalDriverTests(unittest.TestCase):
         self.assertEqual(shipping.wire(value),{'values':{'rows':[1,2]},'at':'2026-10-28T00:00:00+00:00','path':'/not/executed.py'})
 
     def test_every_container_operation_payload_compiles_without_executing_on_host(self):
-        for name in ('S3_OPERATION','TEMPORAL_OPERATION','SPOOL_OPERATION','REFERENCE_SEED'):
+        for name in ('S3_OPERATION','TEMPORAL_OPERATION','SPOOL_OPERATION','REFERENCE_SEED','REDIS_OPERATION'):
             with self.subTest(name=name): compile(getattr(shipping,name),'<fixed-product-operation>','exec')
 
     def test_missing_reference_workload_cannot_seed_arbitrary_defaults(self):
@@ -173,7 +173,7 @@ class RehearsalDriverTests(unittest.TestCase):
     def test_factory_never_claims_unrun_suite_callbacks(self):
         driver=object.__new__(shipping.ShippingRehearsal)
         for suite in rehearsal.SUITES:
-            if suite=='source_snapshot':
+            if suite in ('source_snapshot','target_readiness'):
                 callbacks=driver.suite_assertions(suite)
                 self.assertEqual(set(callbacks),rehearsal.required_cases(suite,rehearsal.topology_profile('standalone',())))
                 self.assertTrue(all(callable(f) for f in callbacks.values()))
@@ -369,6 +369,188 @@ class Wave4bDriverRegressionTests(unittest.TestCase):
         self.assertEqual(result['phase_timings'][0]['phase'],'source_first_boot')
         self.assertEqual(result['phase_timings'][0]['refusal'],'suite_timed_out')
         self.assertGreaterEqual(result['phase_timings'][0]['duration_seconds'],0)
+
+
+class Wave4cDriverRegressionTests(unittest.TestCase):
+    """Executed stdlib regressions, never proof that a product release qualified."""
+    def test_subprocess_refusal_reaches_ci_without_raw_stderr_or_secret_argv(self):
+        stderr = b'PRIVATE credentials\nqualification refused: shipping_executor_unavailable\n'
+        completed = subprocess.CompletedProcess([], 2, stdout=b'', stderr=stderr)
+        with mock.patch.object(rehearsal.subprocess, 'run', return_value=completed):
+            with self.assertRaises(rehearsal.CommandError) as raised:
+                rehearsal.command(['/private/python3', '--password', 'PRIVATE'])
+        self.assertIn('shipping_executor_unavailable', str(raised.exception))
+        self.assertIn('exit 2', str(raised.exception))
+        self.assertNotIn('PRIVATE', str(raised.exception))
+        data = rehearsal.failure_diagnostics(raised.exception)
+        self.assertEqual(data['refusal_code'], 'shipping_executor_unavailable')
+        self.assertEqual(data['command'], dict(executable='python3', exit_code=2))
+        self.assertNotIn('credentials', json.dumps(data))
+        self.assertEqual(sum(data['executed_assertions'].values()), 0)
+
+    def test_subprocess_only_accepts_closed_refusal_lines_and_keeps_failure_nonzero(self):
+        for stderr in (b'qualification refused: arbitrary_private_reason\n',
+                       b'qualification refused: suite_unrun PRIVATE\n',
+                       b'raw password=PRIVATE\n', b''):
+            with self.subTest(stderr=stderr):
+                error = rehearsal.CommandError('/private/python3', -9, stderr)
+                self.assertEqual(error.refusal_code, 'suite_failed')
+                self.assertNotIn('PRIVATE', str(error))
+                self.assertFalse(rehearsal.failure_diagnostics(error)['eligible'])
+        with mock.patch.object(rehearsal.subprocess, 'run', side_effect=subprocess.TimeoutExpired([], 1)):
+            with self.assertRaisesRegex(rehearsal.ManualRelease, 'suite_timed_out'):
+                rehearsal.command(['python3'])
+
+    def test_qualify_missing_inputs_retains_exact_phase_and_exception_without_paths(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            with mock.patch.object(rehearsal, '_validate_context'):
+                code = rehearsal.qualify(['--source-ref', 'absent', '--target-ref', 'absent',
+                    '--platform', 'linux/amd64', '--deployment-dir', str(root/'private-absent'),
+                    '--reference-scale', 'registered-100k', '--out', str(root/'out')])
+            self.assertEqual(code, 2)
+            failure = json.loads((root/'out/failure.json').read_bytes())
+            self.assertEqual(failure['phase'], 'read_manifest_inputs')
+            self.assertEqual(failure['exception_type'], 'FileNotFoundError')
+            self.assertNotIn(str(root), json.dumps(failure))
+            self.assertEqual(set(failure['suites'].values()), {'unrun'})
+
+    def test_qualify_reaches_explicit_executor_refusal_after_authenticated_inputs(self):
+        # Synthetic trust stub tests entrypoint sequencing only; never product
+        # evidence or permission to package this row.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            _, old_raw, _, _ = restore_release(0)
+            old = json.loads(old_raw)
+            target = default_v2()
+            (root/'source-manifest.json').write_bytes(old_raw)
+            (root/'target-manifest.json').write_bytes(canonical_json(target))
+            (root/'source-manifest.sigstore.json').write_bytes(b'SYNTHETIC-TRUST-STUB')
+            verified = SimpleNamespace(verified=True, method='cosign-key', signer='', issuer='',
+                                      tool='cosign', public_key_sha256='a'*64)
+            verifier = SimpleNamespace(verify=mock.Mock(return_value=verified))
+            with mock.patch.object(rehearsal, '_validate_context'), \
+                 mock.patch.object(rehearsal, 'select_retained_layout', return_value=(old['deployment'], ())), \
+                 mock.patch.object(rehearsal, '_local_verifier', return_value=verifier), \
+                 mock.patch.object(shipping, 'SHIPPING_TRANSACTION_INTEGRATED', False), \
+                 mock.patch.object(shipping.ShippingRehearsal, '__init__') as provision:
+                code = rehearsal.qualify(['--source-ref', old['components']['standalone']['image']+'@'+old['components']['standalone']['digest'],
+                    '--target-ref', target['components']['standalone']['image']+'@'+target['components']['standalone']['digest'],
+                    '--platform', 'linux/amd64', '--deployment-dir', str(root),
+                    '--reference-scale', 'registered-100k', '--out', str(root/'out')])
+            self.assertEqual(code, 2)
+            verifier.verify.assert_called_once()
+            provision.assert_not_called()
+            failure = json.loads((root/'out/proof-row.json').read_bytes())
+            self.assertEqual(failure['phase'], 'shipping_product_rehearsal')
+            self.assertEqual(failure['refusal_code'], 'shipping_executor_unavailable')
+            self.assertEqual(set(failure['suites'].values()), {'unrun'})
+            self.assertFalse((root/'out/rows/evidence.json').exists())
+
+    def test_local_package_requires_host_verification_of_its_own_signature(self):
+        # No signing occurs: this is an explicitly stubbed packaging contract.
+        # A successful sign command alone cannot attest the requested public key.
+        for accepted in (False, True):
+            with self.subTest(verified=accepted), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                candidate = default_v2()
+                (root/'proof-row.json').write_bytes(canonical_json(dict(eligible=True, rows_directory='rows',
+                    run_id=42, candidate_sha256=rehearsal.sha(canonical_json(candidate)))))
+                (root/'candidate.json').write_bytes(canonical_json(candidate))
+                (root/'test-private.pem').write_bytes(b'SYNTHETIC PRIVATE KEY NOT A REAL KEY')
+                (root/'rows').mkdir()
+                (root/'rows/policy.json').write_bytes(b'{}')
+                verifier = SimpleNamespace(verify=mock.Mock(return_value=SimpleNamespace(verified=accepted)))
+                with mock.patch('scripts.build_update_compatibility_proof.build', return_value=(b'{}',canonical_json(candidate))) as build, \
+                     mock.patch.object(rehearsal, '_local_verifier', return_value=verifier), \
+                     mock.patch.object(rehearsal, 'command', return_value=b'') as sign:
+                    code = rehearsal.package(['--rows', str(root), '--target', str(root/'candidate.json'),
+                        '--key', str(root/'test-private.pem'), '--public-key', str(root/'test-public.pem'),
+                        '--out', str(root/'package'), '--run-id', '42'])
+                self.assertEqual(code, 0 if accepted else 2)
+                build.assert_called_once()
+                sign.assert_called_once()
+                argv = sign.call_args.args[0]
+                self.assertIn('--tlog-upload=false', argv)
+                self.assertIn('--use-signing-config=false', argv)
+                self.assertEqual(argv[0:3], ['cosign', 'sign-blob', '--yes'])
+                verifier.verify.assert_called_once()
+                fetched = verifier.verify.call_args.args[0]
+                self.assertEqual(fetched.raw, canonical_json(candidate))
+                self.assertEqual(fetched.bundle_path, root/'package/future-agi-update-manifest.sigstore.json')
+                failure = root/'package/failure.json'
+                if accepted:
+                    self.assertFalse(failure.exists())
+                else:
+                    data = json.loads(failure.read_bytes())
+                    self.assertEqual(data['phase'], 'verify_local_test_package')
+                    self.assertEqual(data['assertion_detail'], 'local test package signature rejected')
+                    self.assertFalse(data['eligible'])
+
+    def test_product_json_list_is_not_mistaken_for_a_manifest_object(self):
+        rows = [dict(identity='/data/collector/real-file', payload_sha256='a'*64)]
+        raw = b'product startup log\n'+canonical_json({'rows': rows})+b'\n'
+        self.assertEqual(shipping.decode_product_output(raw), {'rows': rows})
+        self.assertEqual(shipping.decode_product_output(b'product startup log\n'+json.dumps(rows).encode()+b'\n'), rows)
+        self.assertEqual(shipping.decode_product_output(b'[]\n'), [])
+        for raw in (b'', b'[]\n\n', b'{"k":1,"k":2}\n', b'[NaN]\n', b'[]\nnot-json\n'):
+            with self.subTest(raw=raw), self.assertRaises((ValueError, rehearsal.RehearsalError)):
+                shipping.decode_product_output(raw)
+
+    def test_shipping_app_operation_decodes_real_spool_list_and_sends_json_stdin(self):
+        driver = object.__new__(shipping.ShippingRehearsal)
+        driver.root = Path('/not-a-bind')
+        driver.installation = SimpleNamespace(containers=lambda: [dict(id='app-id', service='app')],
+            docker=['docker', '--context', 'colima-fagi-update'], subprocess_env=lambda: {})
+        driver.runner = mock.Mock(return_value=subprocess.CompletedProcess([], 0, stdout=b'[]\n', stderr=b''))
+        self.assertEqual(driver.app_python(shipping.SPOOL_OPERATION, {'paths': None}), [])
+        args, kwargs = driver.runner.call_args
+        self.assertEqual(args[0][-5:], ['python', '-I', '-B', '-c', shipping.SPOOL_OPERATION])
+        self.assertEqual(kwargs['input'], b'{"paths":null}')
+
+    def test_redis_reset_requires_a_positive_source_seed_and_live_absence(self):
+        driver = object.__new__(shipping.ShippingRehearsal)
+        driver.corpus = {}
+        driver.app_python = mock.Mock(return_value={'absent': True})
+        with self.assertRaisesRegex(rehearsal.RehearsalError, 'not seeded'):
+            driver._redis_ephemeral()
+        driver.app_python.assert_not_called()
+        driver.corpus['redis_source_seeded'] = True
+        driver.redis_key = 'controlled-redis-key'
+        driver.app_python.return_value = {'absent': False}
+        with self.assertRaisesRegex(rehearsal.RehearsalError, 'persisted'):
+            driver._redis_ephemeral()
+        self.assertNotIn('redis_target_reset', driver.corpus)
+        driver.app_python.return_value = {'absent': True}
+        self.assertIsNone(driver._redis_ephemeral())
+        driver.app_python.assert_called_with(shipping.REDIS_OPERATION,
+            dict(action='verify_reset', key='controlled-redis-key'))
+        self.assertEqual(driver.corpus['redis_target_reset'], {'absent': True})
+
+    def test_all_target_readiness_cases_are_live_assertions_not_precomputed_verdicts(self):
+        driver = object.__new__(shipping.ShippingRehearsal)
+        driver.corpus = {}
+        callbacks = driver.suite_assertions('target_readiness')
+        self.assertEqual(set(callbacks), rehearsal.required_cases('target_readiness', rehearsal.topology_profile('standalone', ())))
+        cases = rehearsal.ExecutedCases()
+        # An uninitialized driver has no real target roster or model. Merely
+        # exposing the callbacks cannot render an affirmative target suite.
+        for name, assertion in callbacks.items():
+            with self.subTest(case=name), self.assertRaises((AttributeError, KeyError, rehearsal.RehearsalError)):
+                cases.check('target_readiness', name, assertion)
+        self.assertEqual(cases.cases['target_readiness'], {})
+        with self.assertRaises(rehearsal.RehearsalError):
+            cases.render('target_readiness', rehearsal.topology_profile('standalone', ()), {})
+
+    def test_clickhouse_witness_reader_uses_the_installation_credentials(self):
+        driver = object.__new__(shipping.ShippingRehearsal)
+        driver.installation = SimpleNamespace(containers=lambda: [dict(id='ch-id', service='clickhouse')],
+            env={'CH_PASSWORD': 'not-a-real-secret', 'CH_USERNAME': 'fixture-user'})
+        driver._docker = mock.Mock(return_value='{"id":"span"}\n')
+        self.assertEqual(driver.clickhouse('SELECT 1', params={'trace': 'controlled-id'}), [{'id': 'span'}])
+        self.assertEqual(driver._docker.call_args.args,
+            ('exec', 'ch-id', 'clickhouse-client', '--user', 'fixture-user', '--password',
+             'not-a-real-secret', '--query', 'SELECT 1', '--param_trace=controlled-id'))
 
 
 def time_limit():

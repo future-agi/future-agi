@@ -57,6 +57,21 @@ def observation(binding, containers, now):
         restart_policies={c['Id']: c['HostConfig']['RestartPolicy']['Name'] for c in containers.values()}, ready=True, stable=True)
 
 
+def prepare_fixture_configuration(root):
+    """Nonsecret shipped binds must be readable by native container uid 101.
+
+    The enclosing HOME fixture and evidence stay 0700. Docker bind-mounts the
+    exact files, not the private parent tree. Keep .env private and do not make
+    the vendor run as root merely to hide a fixture permission error.
+    """
+    for name in backup.CONFIG_FILES:
+        path = root/name
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        path.write_bytes(b'FUTURE_AGI_VERSION=v1.53.0\nSECRET_KEY=fixture\n' if name == '.env' else
+                         b'{}' if name == 'docker-compose.yml' else (ROOT/name).read_bytes())
+        path.chmod(0o600 if name == '.env' else 0o644)
+
+
 def recovery_worker(root, destination, attempt_id, cut):
     """A fresh shipping-storage executor; only disposable fixture paths supplied."""
     root, destination = Path(root), Path(destination)
@@ -113,7 +128,7 @@ class DedicatedBackupRestoreTests(unittest.TestCase):
         self.daemon = json.loads(self.cmd('info', '--format', '{{json .ID}}'))
         for image in [*IMAGES.values(), BUSYBOX]:
             self.assertEqual(json.loads(self.cmd('image', 'inspect', image))[0]['Id'], image)
-        self.prefix = 'fagi-upd-e2e-snapshot-restore-ledger-' + uuid.uuid4().hex[:8]
+        self.prefix = 'fagi-upd-e2e-ci-acceptance-' + uuid.uuid4().hex[:8]
         self.owned_volumes = []
         self.executor_sources = {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
             for path in [Path(__file__), *(ROOT / 'deploy/update' / name for name in (
@@ -191,7 +206,8 @@ class DedicatedBackupRestoreTests(unittest.TestCase):
         while time.monotonic() < end:
             row = json.loads(self.cmd('inspect', cid))[0]
             state = row['State']
-            self.assertTrue(state['Running'], str(state))
+            if not state['Running'] and not state.get('Restarting'):
+                break  # diagnose the early exit just like a readiness timeout
             if state.get('Health', {}).get('Status') == 'healthy':
                 return
             time.sleep(0.2)
@@ -340,12 +356,7 @@ class DedicatedBackupRestoreTests(unittest.TestCase):
                 project = self.prefix + '-' + db[:2]
                 root = self.evidence / project
                 root.mkdir(mode=0o700)
-                for name in backup.CONFIG_FILES:
-                    path = root / name
-                    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-                    path.write_bytes(b'FUTURE_AGI_VERSION=v1.53.0\nSECRET_KEY=fixture\n' if name == '.env' else
-                                     b'{}' if name == 'docker-compose.yml' else (ROOT / name).read_bytes())
-                    path.chmod(0o600)
+                prepare_fixture_configuration(root)
                 services = {}
                 for service in IMAGES:
                     env = dict(backup.LOCAL_ENV) if service == 'app' else {}

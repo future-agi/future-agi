@@ -175,6 +175,26 @@ def sha(raw):
     return hashlib.sha256(raw).hexdigest()
 
 
+class CommandError(RehearsalError):
+    """Safe subprocess provenance; never interpolate argv, env or raw stderr.
+
+    In particular the acceptance publisher captures the qualify subprocess's
+    stderr. Preserve its closed refusal code in the exception that reaches CI,
+    instead of reducing every failure to 'rehearsal command failed'.
+    """
+    def __init__(self, executable, returncode, stderr):
+        name = Path(str(executable)).name
+        self.command_name = name if re.fullmatch(r'[A-Za-z0-9_.-]{1,80}', name) else 'command'
+        self.returncode = returncode
+        self.refusal_code = 'suite_failed'
+        text = stderr.decode('utf-8', errors='replace') if isinstance(stderr, bytes) else str(stderr)
+        for code in re.findall(r'(?m)^(?:qualification|release rehearsal) refused: ([a-z_]+)$', text):
+            if code in MANUAL_REASONS:
+                self.refusal_code = code
+        super().__init__('rehearsal command failed (%s, exit %d, refusal %s)' %
+                         (self.command_name, returncode, self.refusal_code))
+
+
 def command(argv, *, cwd=ROOT, input=None, timeout=1800, env=None):
     """Fixed caller-owned argv; never execute an artifact or manifest command."""
     try:
@@ -182,7 +202,8 @@ def command(argv, *, cwd=ROOT, input=None, timeout=1800, env=None):
                                 env=env, capture_output=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         raise ManualRelease('suite_timed_out') from None
-    need(result.returncode == 0, 'rehearsal command failed')
+    if result.returncode != 0:
+        raise CommandError(argv[0], result.returncode, result.stderr)
     need(len(result.stdout) <= MAX_EVIDENCE_BYTES, 'rehearsal output too large')
     return result.stdout
 
@@ -1083,6 +1104,17 @@ class Budgets:
              'invalid rehearsal budget')
 
 
+EXECUTOR_REQUIREMENTS = (
+    'lock_held_updater_automatic_transaction',
+    'real_loader_pending_plan_and_table_scope',
+    'touched_registered_table_reference_workloads',
+    'normal_bootstrap_per_migration_boundaries_and_resources',
+    'post_migration_failure_shipping_restore',
+    'durable_boundary_process_termination_and_fresh_recovery',
+    'extracted_tree_config_and_corruption_assertions',
+)
+
+
 def shipping_factory():
     """Private checked-in runtime API, never a customer CLI/admission bypass.
 
@@ -1170,7 +1202,7 @@ def failure_diagnostics(exc, executor=None, *, completed_rows=0):
     reason = str(exc) if isinstance(exc, ManualRelease) else 'suite_failed'
     if reason not in MANUAL_REASONS:
         reason = 'suite_failed'
-    code = getattr(exc, 'reason_code', None)
+    code = getattr(exc, 'reason_code', getattr(exc, 'refusal_code', None))
     code = getattr(code, 'value', code)
     if not isinstance(code, str) or re.fullmatch(r'[a-z_]{1,80}', code) is None:
         code = reason
@@ -1181,6 +1213,11 @@ def failure_diagnostics(exc, executor=None, *, completed_rows=0):
     if isinstance(exc, RehearsalError):
         # Only this producer's own fixed diagnostics, not third-party stderr.
         result['assertion_detail'] = str(exc)[:512]
+    if isinstance(exc, CommandError):
+        result['command'] = dict(executable=exc.command_name, exit_code=exc.returncode)
+    if reason == 'shipping_executor_unavailable':
+        # A fixed integration checklist, not external success data or waivers.
+        result['missing_executor_requirements'] = list(EXECUTOR_REQUIREMENTS)
     return result
 
 
@@ -1416,26 +1453,31 @@ def qualify(argv):
     need(not args.out.exists() and not args.out.is_symlink(), 'qualification output must be new')
     args.out.mkdir(mode=0o700, parents=True)
     output, workspace = args.out / 'rows', args.out / 'workspace'
+    phase = 'context_validation'
     try:
         _validate_context(args.docker_context, args.out)
         from deploy.update.manifest import parse_image_ref, hash_path
         from deploy.update.trust import FetchedManifest
         from deploy.update.discovery import DiscoveredRelease
         from deploy.update.contracts import VerificationSnapshot
+        phase = 'read_manifest_inputs'
         source_path = args.deployment_dir / 'source-manifest.json'
         raw = read_bytes(source_path)
         old = validate_manifest(decode_document(raw))
         target = validate_manifest(decode_document(read_bytes(args.deployment_dir / 'target-manifest.json')))
         need(target['compatibility']['contract_version'] == 2 and target['compatibility']['automatic_apply'] is False
              and target['compatibility']['validation'] is None, 'candidate must be uncertified')
+        phase = 'verify_explicit_image_pins'
         for ref, manifest in ((args.source_ref, old), (args.target_ref, target)):
             parsed, component = parse_image_ref(ref), manifest['components']['standalone']
             need(parsed.digest is not None and parsed.digest == component['digest'] and
                  parsed.repository == parse_image_ref(component['image']).repository and
                  args.platform in component['platforms'], 'explicit image pin differs from manifest')
+        phase = 'select_authenticated_retained_layout'
         proof_raw = (read_bytes(args.deployment_dir / 'source-compatibility.json')
                      if old.get('compatibility', {}).get('validation') is not None else None)
         execution, dependencies = select_retained_layout(old, proof_raw, args.deployment_dir, args.platform)
+        phase = 'verify_source_signature'
         verifier = _local_verifier(args.public_key)
         bundle = args.deployment_dir / 'source-manifest.sigstore.json'
         bundle_raw = read_bytes(bundle, 1024 * 1024)
@@ -1448,6 +1490,7 @@ def qualify(argv):
             release_proof=proof_raw or b'')
         workspace.mkdir(mode=0o700)
         row = Row(release, execution, old['source_sha'], dependencies, args.platform, args.deployment_dir.resolve())
+        phase = 'shipping_product_rehearsal'
         produce(target, [row], workspace, output, run_id=args.run_id, docker_context=args.docker_context,
                 budgets=Budgets(startup_seconds=args.boot_timeout), purpose='product')
         envelope = decode_document(read_bytes(output / 'evidence.json', MAX_EVIDENCE_BYTES), MAX_EVIDENCE_BYTES)
@@ -1457,7 +1500,8 @@ def qualify(argv):
         write_pair(((args.out / 'proof-row.json', canonical_json(result)),))
         return 0
     except Exception as exc:
-        reason = str(exc) if isinstance(exc, ManualRelease) else 'suite_failed'
+        diagnostics = failure_diagnostics(exc)
+        reason = diagnostics['reason']
         counts = {s: 0 for s in SUITES}
         failed = None
         if (output / 'failure.json').is_file():
@@ -1468,8 +1512,8 @@ def qualify(argv):
         suites = {s: ('failed' if failed and failed[0] == s else
                       'passed' if counts[s] == len(required_cases(s, layout)) else
                       'incomplete' if counts[s] else 'unrun') for s in SUITES}
-        result = dict(schema_version=1, eligible=False, reason=reason, completed_rows=0,
-            suites=suites, executed_assertions=counts, failed_assertion=failed,
+        result = dict(diagnostics, schema_version=1, eligible=False, reason=reason, completed_rows=0,
+            phase=phase, suites=suites, executed_assertions=counts, failed_assertion=failed,
             candidate_sha256=sha(canonical_json(target)) if target else None)
         write_pair(((args.out / 'proof-row.json', canonical_json(result)),))
         if not (args.out / 'failure.json').exists():
@@ -1492,6 +1536,8 @@ def package(argv):
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--run-id', type=int, required=True)
     args = parser.parse_args(argv)
+    phase = 'read_qualification_row'
+    created = False
     try:
         result = decode_document(read_bytes(args.rows / 'proof-row.json', MAX_EVIDENCE_BYTES), MAX_EVIDENCE_BYTES)
         need(result.get('eligible') is True and result.get('rows_directory') == 'rows'
@@ -1501,20 +1547,36 @@ def package(argv):
         need(not args.out.exists(), 'package output must be new')
         from scripts.build_update_compatibility_proof import build
         evidence = args.rows / 'rows'
+        phase = 'validate_executed_evidence'
         proof, manifest = build(target, decode_document(read_bytes(evidence / 'policy.json')), evidence,
             run_id=args.run_id, verifier=_local_verifier(args.public_key))
         # Require an explicit readable private key; there is no keyless fallback.
+        phase = 'read_local_test_key'
         key_bytes = read_bytes(args.key, 65536)
         need(b'PRIVATE KEY' in key_bytes, 'explicit local test private key required')
         args.out.mkdir(mode=0o700, parents=True)
+        created = True
         from deploy.update.compatibility import PROOF_ASSET
         write_pair(((args.out / PROOF_ASSET, proof), (args.out / MANIFEST_ASSET, manifest)))
+        phase = 'sign_local_test_manifest'
         command(['cosign', 'sign-blob', '--yes', '--key', args.key.resolve(), '--tlog-upload=false',
                  '--use-signing-config=false', '--bundle', args.out / BUNDLE_ASSET, args.out / MANIFEST_ASSET],
                 timeout=60, env=dict(os.environ, COSIGN_PASSWORD=os.environ.get('COSIGN_PASSWORD', '')))
+        phase = 'verify_local_test_package'
+        from deploy.update.trust import FetchedManifest
+        verified = _local_verifier(args.public_key).verify(FetchedManifest(
+            'local-test-package', args.out, args.out / MANIFEST_ASSET,
+            manifest, validate_manifest(decode_document(manifest)), args.out / BUNDLE_ASSET))
+        need(verified.verified is True, 'local test package signature rejected')
         return 0
-    except Exception:
-        print('local-test package refused: incomplete or inconsistent qualification', file=sys.stderr)
+    except Exception as exc:
+        failure = dict(failure_diagnostics(exc), phase=phase)
+        if created:
+            # A partially signed directory is never a usable package. Keep a
+            # bounded refusal instead of presenting stale/invalid bundle bytes
+            # as a successful package. No pre-existing output is overwritten.
+            write_pair(((args.out / 'failure.json', canonical_json(failure)),))
+        print('local-test package refused: ' + failure['refusal_code'] + ' (' + phase + ')', file=sys.stderr)
         return 2
 
 

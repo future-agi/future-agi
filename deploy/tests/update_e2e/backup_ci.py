@@ -9,6 +9,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -45,8 +46,27 @@ def main(argv=None):
     pins=out/'fixture-images.json'; pins.write_text(json.dumps(images)); pins.chmod(0o600)
     env=dict(os.environ,FAGI_UPDATE_BACKUP_E2E='1',FAGI_UPDATE_BACKUP_EVIDENCE=str(out),
              FAGI_UPDATE_NATIVE_BACKUP_IMAGES=str(pins))
-    return subprocess.call([sys.executable,'-m','unittest','discover','-s','deploy/tests/update_e2e',
-                            '-p','native_backup.py','-v'],cwd=ROOT,env=env)
+    status = 1
+    count = None
+    log = out/'test-output.log'
+    try:
+        with log.open('wb') as output:
+            result = subprocess.run([sys.executable,'-m','unittest','discover','-s','deploy/tests/update_e2e',
+                '-p','native_backup.py','-v'],cwd=ROOT,env=env,stdout=output,stderr=subprocess.STDOUT,timeout=4800)
+        if log.stat().st_size > 8*1024*1024:
+            raise RuntimeError('vendor fixture output exceeds verification bound')
+        text = log.read_text(errors='replace')
+        print(text, end='')
+        found = re.search(r'Ran ([0-9]+) tests? in ',text)
+        count = int(found[1]) if found else None
+        if result.returncode == 0 and (count != 2 or re.search(r'skipped=[1-9]',text)):
+            raise RuntimeError('both complete vendor/crash matrices must execute without skips')
+        status = result.returncode
+        return status
+    finally:
+        (out/'summary.json').write_text(json.dumps(dict(schema_version=1,
+            kind='small-vendor-storage-fixture-not-product-qualification',product_qualification=False,
+            status='passed' if status == 0 else 'failed',tests=count,expected_tests=2)))
 
 
 if __name__ == '__main__':

@@ -78,6 +78,35 @@ def policy_cli_arguments(policy):
     return tuple(value for name in names for value in ('--'+name.replace('_','-'), str(getattr(policy,name))))
 
 
+def redacted_tail(value, secret_values=(), *, limit=8192):
+    """Bounded CI diagnostics only; never raw env/config/credential inventories."""
+    text = value.decode('utf-8', 'replace') if isinstance(value, bytes) else str(value)
+    for secret in sorted({str(v) for v in secret_values if len(str(v)) >= 6}, key=len, reverse=True):
+        text = text.replace(secret, '[REDACTED]')
+    text = re.sub(r'(?i)(bearer\s+)[A-Za-z0-9_.~+/=-]+', r'\1[REDACTED]', text)
+    text = re.sub(r'(?i)((?:password|secret|token|api[_-]?key)["\s:=]+)[^\s,;]+', r'\1[REDACTED]', text)
+    text = re.sub(r'(?i)(https?://)[^/\s:@]+:[^/\s@]+@', r'\1[REDACTED]@', text)
+    return ''.join(c for c in text if c in '\n\r\t' or ord(c) >= 32)[-limit:]
+
+
+def read_attempt_ledger(directory):
+    """Bounded read-only test oracle. RecoveryLedger.open() may reconcile writes.
+
+    Do not let a test finalize the scheduler's transaction just by inspecting
+    it. Read its checkpoint and immutable decision leaves without calling any
+    mutation/recovery API; ambiguity fails the acceptance instead of repairing it.
+    """
+    from deploy.update.compatibility import decode_document
+    from deploy.update.recovery import MAX_LEDGER_BYTES
+    from deploy.update.standalone_backup import _directory, _read
+    with _directory(Path(directory)) as fd:
+        doc = decode_document(_read(fd, 'recovery.json', MAX_LEDGER_BYTES), MAX_LEDGER_BYTES)
+        leaves = set(os.listdir(fd))
+    if doc.get('schema_version') != 2 or doc.get('attempt_id') != Path(directory).name:
+        raise AssertionError('automatic ledger identity differs')
+    return doc, leaves
+
+
 def canonical(value: Any) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"),
                       ensure_ascii=False, allow_nan=False).encode("utf-8")
@@ -233,6 +262,12 @@ class ProductHarness:
         self.source_manifest = validate_manifest(manifest)
         self.root.mkdir(mode=0o700)
         copy_retained_files(Path(directory), self.root, manifest['deployment'])
+        # Native binds retain host modes. Only the shipped ClickHouse XML data
+        # needs uid-101 readability; no env, generated secret or evidence file
+        # is made public, and retained deployment bytes/hashes do not change.
+        from deploy.update.standalone_backup import BINDS
+        for name in BINDS['clickhouse'].values():
+            (self.root/name).chmod(0o644)
 
     def install(self):
         if self.source_manifest is None:
@@ -323,9 +358,11 @@ print(json.dumps({'planned':planned,'applied':applied,'pending':[n for n in plan
         status, _ = self.request(self.ports['BACKEND_PORT'], '/health/')
         if status != 200:
             raise AssertionError('installed target API is not ready')
-        self.record('installed-'+manifest['version']+'.private.json', dict(
+        self.record('installed-'+manifest['version']+'.json', dict(
             version=manifest['version'], run_id=receipt['run_id'], images={s: c['Image'] for s,c in services.items()},
-            migrations=migrations))
+            manifest_sha256=manifest_hash(manifest), target_digest=target['digest'],
+            migration_inventory_sha256=migrations['inventory_sha256'],
+            applied_set_sha256=migrations['applied_sha256'], applied_count=len(migrations['applied']), pending_count=0))
         return migrations
 
     def seed_and_check(self, generation='acceptance-a'):
@@ -400,6 +437,31 @@ print(json.dumps({'identity':a['identity'],'absent':absent}))
             raise AssertionError('candidate-only local write survived snapshot restoration')
         self.record('candidate-only-restored-absence.json', observed)
 
+    def pending_forward_attempt(self, manifest):
+        """Read the enrolled transaction before an external acceptance fault.
+
+        A healthy B that has already crossed success_decided is not an eligible
+        fault-injection boundary. Never claim restore acceptance for an ordinary
+        outage after success or write a fake readiness/ledger outcome.
+        """
+        from deploy.update.enrollment import load_setup_configuration
+        from deploy.update.host_facts import selected_store
+        from deploy.update.manifest import manifest_hash
+        store = selected_store(self.root)
+        current = store.read_state()
+        if current.active_attempt_id is None:
+            raise AssertionError('target has no active pre-success automatic attempt')
+        attempt = store.read_attempt(current.active_attempt_id)
+        config = load_setup_configuration(store)
+        ledger, leaves = read_attempt_ledger(config.backup_destination/attempt.attempt_id)
+        if (attempt.target.manifest_hash != manifest_hash(manifest)
+                or ledger['operation_token'] != attempt.operation_token
+                or ledger['expectation']['target_manifest_hash'] != manifest_hash(manifest)
+                or ledger['direction'] != 'forward_pending'
+                or {'success-decision.json', 'restore-decision.json'} & leaves):
+            raise AssertionError('fault boundary is not the exact pending target')
+        return ledger['run_id']
+
     def fail_after_migrations(self, manifest, *, timeout=5400):
         """Induce a real outage on the exact B app after bootstrap, not a tick.
 
@@ -426,11 +488,14 @@ print(json.dumps({'identity':a['identity'],'absent':absent}))
                     if status == 200:
                         migrations = self.migration_inventory()
                         if migrations['planned'] and not migrations['pending']:
+                            run_id = self.pending_forward_attempt(manifest)
                             candidate_only = self.create_candidate_only_witness()
+                            if self.pending_forward_attempt(manifest) != run_id:
+                                raise AssertionError('automatic attempt changed before fault')
                             current = json.loads(self.docker('inspect',app[0]['Id']).stdout)[0]
                             if current['Image'] != app[0]['Image'] or not current['State']['Running']:
                                 raise AssertionError('target identity changed before fault')
-                            self.record('failure-after-migrations.json', dict(target=manifest['version'],
+                            self.record('failure-after-migrations.json', dict(target=manifest['version'], run_id=run_id,
                                 image_id=current['Image'], container_id=current['Id'], migrations=migrations,
                                 candidate_only=candidate_only))
                             self.docker('stop','--time','10',current['Id'],timeout=60)
@@ -555,6 +620,8 @@ print(json.dumps({'identity':a['identity'],'absent':absent}))
         for key in ("SECRET_KEY", "REDIS_PASSWORD", "PG_PASSWORD",
                     "CH_PASSWORD", "MINIO_ROOT_PASSWORD", "AGENTCC_INTERNAL_API_KEY", "AGENTCC_ADMIN_TOKEN"):
             values[key] = secrets.token_hex(32)
+        self._secret_values.update(str(value) for key, value in values.items()
+                                   if re.search(r'PASSWORD|SECRET|TOKEN|KEY', key))
         (self.root / ".env").write_text("".join("{}={}\n".format(k, v) for k, v in values.items()))
         (self.root / ".env").chmod(0o600)
         self.model = json.loads(self.dc("config", "--format", "json").stdout)
@@ -834,6 +901,56 @@ print(json.dumps({'identity':a['identity'],'absent':absent}))
             finally:
                 os.close(fd)
             path.chmod(0o500)
+        return result
+
+    def collect_diagnostics(self, failure=None):
+        """Read-only, bounded CI artifact; never a qualification/restore oracle.
+
+        Inspect only this exact project's services, not private Docker configs,
+        database/witness data or host env. Raw logs stay private; tails are
+        scrubbed against every generated credential and common token formats.
+        Diagnostic failure cannot replace a failed test or authorize cleanup.
+        """
+        from deploy.update.contracts import AutomationPolicy, ReasonCode
+        from deploy.update.processes import ProcessSupervisor
+        result = dict(schema_version=1, qualification_evidence=False, services={}, collection_errors=[])
+        if failure is not None:
+            result['exception_type'] = type(failure).__name__[:80]
+            code = getattr(failure, 'reason_code', None)
+            if isinstance(code, ReasonCode):
+                result['reason_code'] = code.value
+        runner = ProcessSupervisor(AutomationPolicy(), docker_context=CONTEXT,
+                                   environment=self.env, output_limit=65536, grace_seconds=.2)
+        runner.deadline = time.monotonic()+30
+        def read(*args):
+            completed = runner(['docker', '--context', CONTEXT, *args], capture_output=True, timeout=10)
+            if completed.returncode:
+                raise RuntimeError('diagnostic command failed')
+            return completed.stdout
+        try:
+            ids = read('ps', '-aq', '--filter', 'label=com.docker.compose.project='+self.project).decode().split()
+            if len(ids) > 3 or any(not re.fullmatch(r'[0-9a-f]{12,64}', cid) for cid in ids):
+                raise ValueError('diagnostic roster differs')
+            for cid in ids:
+                row = json.loads(read('inspect', cid))[0]
+                labels = row['Config']['Labels']
+                service = labels.get('com.docker.compose.service')
+                if (labels.get('com.docker.compose.project') != self.project
+                        or service not in ('app', 'postgres', 'clickhouse') or service in result['services']):
+                    raise ValueError('diagnostic ownership differs')
+                state = row['State']
+                summary = dict(status=state['Status'], health=state.get('Health', {}).get('Status'),
+                    exit_code=state['ExitCode'], oom_killed=state.get('OOMKilled'), restart_count=row['RestartCount'])
+                result['services'][service] = summary
+                logs = runner(['docker', '--context', CONTEXT, 'logs', '--timestamps', '--tail', '60', cid],
+                              capture_output=True, timeout=5)
+                summary['logs'] = redacted_tail(logs.stdout+logs.stderr, self._secret_values)
+        except Exception as error:
+            result['collection_errors'].append(type(error).__name__[:80])
+        try:
+            self.record('acceptance-diagnostics.json', result)
+        except OSError:
+            pass  # evidence I/O is not permission to change the transaction
         return result
 
     def collect_logs(self) -> None:

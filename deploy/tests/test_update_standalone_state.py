@@ -335,7 +335,10 @@ class RuntimeFixture:
 
 class RuntimeBindingTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        # Positive ownership fixtures need trusted ancestors. On Ubuntu the
+        # default /tmp is world-writable, so _runtime correctly refuses its
+        # bind paths before the capacity guard can examine the supplied sizes.
+        self.temp = tempfile.TemporaryDirectory(dir=Path.home())
         self.addCleanup(self.temp.cleanup)
         self.inst = RuntimeFixture(Path(self.temp.name).resolve())
         self.release = SimpleNamespace(manifest=self.inst.manifest)
@@ -702,6 +705,36 @@ class RuntimeBindingTests(unittest.TestCase):
             with self.subTest(bad=bad):
                 with self.assertRaises(GuardRefused) as error:
                     self._measure_inode_sizes((base[0], bad, base[2]))
+                self.assertEqual(error.exception.reason_codes, (ReasonCode.RESTORE_CAPACITY_UNKNOWN,))
+
+    def test_untrusted_fixture_ancestry_refuses_before_capacity_is_examined(self):
+        # Reproduce Ubuntu's default /tmp ancestry without relying on a host
+        # path or changing any system permission. The production refusal wins
+        # before measurements; making the fixture genuinely safe reaches it.
+        ancestor = self.inst.root/'untrusted-parent'
+        ancestor.mkdir()
+        ancestor.chmod(0o777)
+        root = ancestor/'installation'
+        root.mkdir(mode=0o700)
+        installation = RuntimeFixture(root)
+        release = SimpleNamespace(manifest=installation.manifest)
+        with self.assertRaises(GuardRefused) as error:
+            state._runtime(installation, installation.binding, release, LAYOUT)
+        self.assertEqual(error.exception.reason_codes, (ReasonCode.OWNERSHIP_UNCONFIRMED,))
+        ancestor.chmod(0o700)
+        self.assertTrue(state._runtime(installation, installation.binding, release, LAYOUT))
+
+    def test_conflicting_backing_identity_is_unknown_capacity_at_the_typed_boundary(self):
+        from dataclasses import replace
+        base = self._inode_capacity_volumes(free_inodes=100000)
+        for bad in (replace(base[1], filesystem='xfs'), replace(base[1], backing_sha256='a'*64)):
+            rows = (base[0], bad, base[2])
+            with self.subTest(backing=(bad.filesystem, bad.backing_sha256)):
+                # Do not let an unrelated runtime ownership refusal satisfy
+                # this test: exercise the actual shared-device capacity guard.
+                with self.assertRaises(GuardRefused) as error:
+                    state.StandaloneHostSizeObservation((), {v.role: v.restore_work_bytes for v in rows},
+                        min(v.free_bytes for v in rows), 100*1024**3, volume_storage=rows)
                 self.assertEqual(error.exception.reason_codes, (ReasonCode.RESTORE_CAPACITY_UNKNOWN,))
 
     def test_preoutage_inode_threshold_matches_actual_restore_capacity_guard(self):

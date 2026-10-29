@@ -179,7 +179,10 @@ jobs:
     # Python 3.9 (the oldest bin/update supports) has setup-python builds for
     # Ubuntu 22.04 and 24.04 only; ubuntu-latest is moving to 26.04.
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # The expanded serial crash/restore contracts take about 19 minutes in
+    # measured full-suite runs. Ten minutes cancelled both 22bb323a1 jobs
+    # before unittest could print final results or run the later harness suites.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -349,6 +352,11 @@ jobs:
             ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/summary.json
             ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/failure.json
             ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/test-output.log
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/command-diagnostics.json
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/acceptance-diagnostics.json
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/acceptance-result.json
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/installed-v*.json
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-publisher-*/v*/qualification/diagnostics.json
           if-no-files-found: warn
           retention-days: 7
 
@@ -400,6 +408,11 @@ jobs:
             ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/summary.json
             ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/failure.json
             ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/test-output.log
+            ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/command-diagnostics.json
+            ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/acceptance-diagnostics.json
+            ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/acceptance-result.json
+            ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/installed-v*.json
+            ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-publisher-*/v*/qualification/diagnostics.json
           if-no-files-found: warn
           retention-days: 7
 
@@ -430,3 +443,14 @@ jobs:
           umask 077
           python -I deploy/tests/update_e2e/backup_ci.py \
             --out "$HOME/fagi-upd-e2e-real-backup-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+      - name: Retain fixture results and verified cleanup, never archives or env
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-backup-result
+          path: |
+            ~/fagi-upd-e2e-real-backup-${{ github.run_id }}-${{ github.run_attempt }}/summary.json
+            ~/fagi-upd-e2e-real-backup-${{ github.run_id }}-${{ github.run_attempt }}/test-output.log
+            ~/fagi-upd-e2e-real-backup-${{ github.run_id }}-${{ github.run_attempt }}/fagi-upd-e2e-ci-acceptance-*.json
+          if-no-files-found: warn
+          retention-days: 7

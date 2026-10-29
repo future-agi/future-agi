@@ -295,6 +295,19 @@ class AutomaticPublisher:
                 'assets':[{'name':name} for name in assets]}
             self._published[version] = prepared['inputs']
 
+    def hide_releases(self):
+        """Reset only channel visibility between fully cleaned-up scenarios.
+
+        Immutable test-key packages, qualification evidence, CA and trust key
+        stay unchanged. Callers must deactivate the preceding installation first.
+        This is not an updater tick or a way to alter an enrolled installation.
+        """
+        rehearsal.need(self._server is not None, 'publisher is not running')
+        with self._lock:
+            self._assets.clear()
+            self._records.clear()
+            self._published.clear()
+
     def new_checkout(self, name):
         rehearsal.need(self.lane=='product' and self.product_factory is not None,'real ProductHarness required')
         rehearsal.need(all(v in self._prepared for v in self.versions),'qualify all releases before installing A')

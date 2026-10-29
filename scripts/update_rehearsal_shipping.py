@@ -136,6 +136,22 @@ async def main():
 asyncio.run(main())
 """
 
+REDIS_OPERATION = """
+import sys,os,json,redis
+a=json.load(sys.stdin)
+r=redis.Redis.from_url(os.environ['REDIS_URL'],socket_connect_timeout=5,socket_timeout=5)
+assert r.config_get('appendonly').get('appendonly')=='no'
+assert r.config_get('save').get('save')==''
+if a['action']=='seed':
+    assert r.set(a['key'],a['value'],nx=True)
+    assert r.get(a['key'])==a['value'].encode()
+    result={'seeded':True}
+else:
+    assert a['action']=='verify_reset'
+    result={'absent':r.get(a['key']) is None}
+print(json.dumps(result))
+"""
+
 SPOOL_OPERATION = """
 import sys,json,hashlib,os,stat
 from pathlib import Path
@@ -193,6 +209,21 @@ while count<a['rows']:
     count+=len(batch)
 print(json.dumps({'seeded_rows':count}))
 """
+
+
+def decode_product_output(raw):
+    """Read a fixed operation's final JSON value, after product startup logging.
+
+    The manifest decoder deliberately accepts only objects; spool enumeration is
+    a list. Wrap the final line so duplicate keys, nonfinite numbers, depth and
+    size still use the same strict decoder, rather than relaxing manifest input.
+    """
+    p = producer()
+    raw = raw.encode('utf-8') if isinstance(raw, str) else raw
+    p.need(type(raw) is bytes and len(raw) <= p.MAX_EVIDENCE_BYTES, 'product operation output bound')
+    lines = raw.splitlines()
+    p.need(bool(lines) and bool(lines[-1].strip()), 'missing product operation result')
+    return p.decode_document(b'{"value":' + lines[-1] + b'}', p.MAX_EVIDENCE_BYTES)['value']
 
 
 class ProductWitnesses:
@@ -566,11 +597,12 @@ class ShippingRehearsal:
             self._diagnostic_data['product_operations'] = self._diagnostic_data['product_operations'][-8:]
             self._collect_diagnostics()
         p.need(result.returncode==0,'product witness operation failed')
-        return p.decode_document(result.stdout,p.MAX_EVIDENCE_BYTES)
+        return decode_product_output(result.stdout)
 
     def clickhouse(self,sql,*,params=None):
         cid=next(r['id'] for r in self.installation.containers() if r['service']=='clickhouse')
-        argv=['exec',cid,'clickhouse-client','--query',sql]
+        argv=['exec',cid,'clickhouse-client','--user',self.installation.env.get('CH_USERNAME','default'),
+              '--password',self.installation.env.get('CH_PASSWORD',''),'--query',sql]
         argv.extend('--param_'+k+'='+v for k,v in (params or {}).items())
         return [json.loads(line) for line in self._docker(*argv).splitlines() if line.strip()]
 
@@ -702,6 +734,10 @@ print(json.dumps(dict(engine='postgres',table=schema+'.'+table,rows=count,bytes=
     def _source_snapshot(self):
         p=producer()
         self.corpus['source_witnesses']=p.witness_inventory(self.witnesses.create('source'))
+        self.redis_key='update-qualification:'+uuid.uuid4().hex
+        p.equal(self.app_python(REDIS_OPERATION,dict(action='seed',key=self.redis_key,value=uuid.uuid4().hex)),
+                {'seeded':True},'source Redis witness was not independently read')
+        self.corpus['redis_source_seeded']=True
         self.corpus['source_witnesses_rechecked']=p.witness_inventory(self.witnesses.read('source'))
         p.equal(self.corpus['source_witnesses_rechecked'],self.corpus['source_witnesses'],'source witnesses changed before backup')
         p.need(hasattr(self, 'reference_registry'), 'pre-start reference scope not measured')
@@ -711,7 +747,7 @@ print(json.dumps(dict(engine='postgres',table=schema+'.'+table,rows=count,bytes=
         self.corpus['large_volume_reference']=dict(snapshot_generation=p.sha(p.canonical_json(snapshot)),
             registry_sha256=p.sha(p.read_bytes(p.ROOT/'deploy/update/high-volume-tables.json',p.MAX_EVIDENCE_BYTES)),
             reference_rows=p.REFERENCE_ROWS,tables=self.corpus['reference_tables_before_backup'])
-        p.equal(self.source.runtime.release_version,self.row.release.version,'source version differs')
+        p.equal(self.source.runtime_observation.release_version,self.row.release.version,'source version differs')
         p.need(self.backup.verify_hold(self.ledger,self.source.runtime_observation) is not None,'source cold hold unavailable')
 
     def _source_migrations(self):
@@ -769,6 +805,14 @@ print(json.dumps(dict(engine='postgres',table=schema+'.'+table,rows=count,bytes=
         p.equal(self._json('image','inspect',self.target['components']['standalone']['image']+'@'+
             self.target['components']['standalone']['digest'])[0]['Id'],roster['app']['Image'],'target image differs from qualified pin')
 
+    def _redis_ephemeral(self):
+        p=producer()
+        p.need(self.corpus.get('redis_source_seeded') is True and hasattr(self,'redis_key'),
+               'source Redis witness was not seeded')
+        result=self.app_python(REDIS_OPERATION,dict(action='verify_reset',key=self.redis_key))
+        p.equal(result,{'absent':True},'Redis persisted source cache data into target')
+        self.corpus['redis_target_reset']=result
+
     def _reference_scope_verified(self):
         producer().validate_reference_inventory(self.corpus['large_volume_reference'], registry=self.registry,
             pending_migration_tables=self.corpus['pending_migration_tables'], plan=self.corpus['target_pending_plan'])
@@ -785,9 +829,9 @@ print(json.dumps(dict(engine='postgres',table=schema+'.'+table,rows=count,bytes=
                            for domain in p.topology_profile('standalone',()).backup_domains})
             return result
         if suite=='target_readiness':
-            # Redis witness reset must be independently exercised before this
-            # suite can issue its required case. It is not inferred from restart.
-            raise p.ManualRelease('suite_unrun')
+            return {'normal_compose_direct_start':self._normal_model, 'health':self._target_health,
+                'restart_count_stability':self._target_stability, 'final_identities':self._target_identities,
+                'redis_ephemeral':self._redis_ephemeral}
         # Per-migration *execution* boundaries and the complete registry-specific
         # workloads are not yet available. Do not turn migration recorder times,
         # API health or a manual migrate into the missing A6 assertions.

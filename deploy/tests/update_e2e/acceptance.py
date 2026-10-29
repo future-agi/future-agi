@@ -31,7 +31,7 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0,str(ROOT))
 
-from deploy.tests.update_e2e.real_automatic import CONTEXT, home_path, native_ci
+from deploy.tests.update_e2e.real_automatic import CONTEXT, home_path, native_ci, redacted_tail
 from deploy.tests.update_e2e.oci_registry import OCIRegistry
 from deploy.update.manifest import (COMPONENT_REPOSITORIES, COMPONENT_TAG_SUFFIX, PRODUCT,
                                     canonical_json, deployment_hashes, hash_path, parse_version,
@@ -76,6 +76,9 @@ class NativeAcceptance:
     def __init__(self,out):
         self.out = home_path(out)
         self.commands=[]
+        self.diagnostics=[]
+        self._secret_values = {value for key, value in os.environ.items()
+                               if re.search(r'PASSWORD|SECRET|TOKEN|KEY', key, re.I)}
         # Shared by qualification, bootstrap, forward/restore cases and teardown.
         self.deadline = time.monotonic()+21000
 
@@ -83,13 +86,35 @@ class NativeAcceptance:
         index=len(self.commands)+1
         self.commands.append([str(a) for a in args])
         (self.out/'commands.json').write_bytes(canonical_json(self.commands))
-        with (self.out/('command-%04d.stderr'%index)).open('wb') as err:
-            result=subprocess.run([str(a) for a in args],cwd=ROOT,env=os.environ.copy(),
-                                  stdout=subprocess.PIPE,stderr=err,timeout=max(1,min(timeout,self.deadline-time.monotonic())))
-        (self.out/('command-%04d.stdout'%index)).write_bytes(result.stdout)
-        if result.returncode:
-            raise RuntimeError('native acceptance prerequisite/command %d failed; private diagnostics retained'%index)
-        return result.stdout
+        started = time.monotonic()
+        entry = dict(index=index, executable=Path(str(args[0])).name, outcome='interrupted')
+        # Only fixed caller-owned command categories, never credential/argv dumps.
+        for category in ('build', 'inspect', 'archive', 'rev-parse', 'cat-file', 'ls-tree', 'is-active'):
+            if category in args:
+                entry['operation'] = category
+        stderr = self.out/('command-%04d.stderr'%index)
+        try:
+            with stderr.open('wb') as err:
+                result=subprocess.run([str(a) for a in args],cwd=ROOT,env=os.environ.copy(),
+                                      stdout=subprocess.PIPE,stderr=err,
+                                      timeout=max(1,min(timeout,self.deadline-time.monotonic())))
+            (self.out/('command-%04d.stdout'%index)).write_bytes(result.stdout)
+            entry.update(outcome='passed' if result.returncode == 0 else 'failed', exit_code=result.returncode)
+            if result.returncode:
+                raise RuntimeError('native acceptance prerequisite/command %d failed; see command-diagnostics.json'%index)
+            return result.stdout
+        except subprocess.TimeoutExpired:
+            entry['outcome'] = 'timed_out'
+            raise
+        finally:
+            entry['seconds'] = round(time.monotonic()-started, 3)
+            if entry['outcome'] != 'passed' and stderr.is_file():
+                with stderr.open('rb') as source:
+                    source.seek(max(0, stderr.stat().st_size-32768))
+                    entry['stderr_tail'] = redacted_tail(source.read(32768), self._secret_values)
+            self.diagnostics.append(entry)
+            (self.out/'command-diagnostics.json').write_bytes(canonical_json(dict(
+                schema_version=1, qualification_evidence=False, commands=self.diagnostics)))
 
     def extract_deployment(self, version, sha, names):
         """Extract regular deployment DATA only; never execute a historical tree."""
@@ -293,7 +318,7 @@ class NativeAcceptance:
             versions.append(target['version']); candidates[target['version']]=target
             deployments[target['version']]=str(ROOT)
         config=self.out/'inputs.json'
-        config.write_bytes(canonical_json(dict(versions=versions,candidates=candidates,deployment_dirs=deployments,
+        config.write_bytes(canonical_json(dict(mode=mode,versions=versions,candidates=candidates,deployment_dirs=deployments,
             base=str(self.out/'acceptance'),run_id=int(os.environ['GITHUB_RUN_ID']),
             deadline_monotonic=self.deadline)))
         config.chmod(0o600)

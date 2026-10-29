@@ -155,6 +155,28 @@ class HTTPSAutomaticPublisherTests(unittest.TestCase):
             result=publisher.discovery(self.root/('prepare-cache-'+os.urandom(8).hex())).refresh(a['version'])
             self.assertTrue(result.candidate.verification.verified)
 
+    def test_independent_scenarios_reuse_immutable_packages_without_requalification(self):
+        from unittest.mock import patch
+        a = self.a
+        fixtures = {a['version']: self.fixtures[a['version']]}
+        directory = self.root/('scenario-reset-'+os.urandom(8).hex())
+        with AutomaticPublisher(directory, lane='synthetic', versions=tuple(fixtures),
+                retained_layout=a['version'], synthetic_fixtures=fixtures, cosign=self.publisher.cosign) as publisher:
+            publisher.prepare(a['version'])
+            publisher.publish(a['version'])
+            prepared = dict(publisher._prepared)
+            files = {str(p.relative_to(directory)): p.read_bytes() for p in directory.rglob('*') if p.is_file()}
+            with patch.object(publisher, '_command', side_effect=AssertionError('visibility must not sign or qualify')):
+                publisher.hide_releases()
+                self.assertEqual(publisher._records, {})
+                self.assertEqual(publisher._assets, {})
+                self.assertEqual(publisher._published, {})
+                publisher.publish(a['version'])
+            self.assertEqual(publisher._prepared, prepared)
+            self.assertEqual(files, {str(p.relative_to(directory)): p.read_bytes()
+                                   for p in directory.rglob('*') if p.is_file()})
+            self.assertEqual(set(publisher._records), {a['version']})
+
     def test_product_visibility_cannot_qualify_or_start_a_fixture(self):
         directory=self.root/('product-unprepared-'+os.urandom(8).hex())
         with AutomaticPublisher(directory,lane='product',versions=(self.a['version'],),
