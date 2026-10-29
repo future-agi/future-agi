@@ -38,7 +38,13 @@ const files = process.argv
   .map((file) => path.relative(rootDir, file))
   .filter((file) => extensions.has(path.extname(file)))
   .filter((file) => !file.startsWith(`frontend${path.sep}`))
-  .filter((file) => !file.startsWith(path.join("api_contracts", "openapi")));
+  .filter((file) => !file.startsWith(path.join("api_contracts", "openapi")))
+  // CI compares the generated MCP manifest byte for byte with its generator.
+  .filter(
+    (file) =>
+      file !==
+      path.join("futureagi", "mcp_server", "catalog", "tools.generated.json"),
+  );
 
 const uniqueFiles = [...new Set(files)];
 if (uniqueFiles.length === 0) process.exit(0);
