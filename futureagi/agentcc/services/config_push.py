@@ -240,25 +240,50 @@ def _transform_guardrails(guardrails_data, org_id=None):
         return result
 
     # Checks as dict (from frontend saves via OrgConfig)
-    if isinstance(raw_checks, dict) and raw_checks:
+    if isinstance(raw_checks, dict):
         # Inject decrypted guardrail credentials (replaces __encrypted__ sentinels)
-        _inject_guardrail_credentials(raw_checks)
+        if raw_checks:
+            _inject_guardrail_credentials(raw_checks)
 
-        mapped = {}
-        for name, cfg in raw_checks.items():
+        checks = {}
+        for name, check_data in raw_checks.items():
+            if not isinstance(check_data, dict):
+                continue
             registry_name = _RULE_TO_REGISTRY.get(name, name)
-            # Strip internal metadata keys before forwarding to gateway
-            clean_cfg = (
-                {k: v for k, v in cfg.items() if not k.startswith("_")}
-                if isinstance(cfg, dict)
-                else cfg
+            cfg = dict(check_data.get("config") or {})
+            provider = (
+                check_data.get("provider")
+                or _RULE_PROVIDER_DEFAULTS.get(name)
+                or _RULE_PROVIDER_DEFAULTS.get(registry_name)
             )
-            inner = clean_cfg.get("config") if isinstance(clean_cfg, dict) else None
-            _normalize_eval_ids(inner)
-            mapped[registry_name] = clean_cfg
-        if org_id:
-            _inject_fi_credentials(mapped, org_id)
-        return {**guardrails_data, "checks": mapped}
+            if provider and "provider" not in cfg:
+                cfg["provider"] = provider
+            _normalize_eval_ids(cfg)
+            threshold = check_data.get("confidence_threshold")
+            if threshold is None:
+                threshold = check_data.get("confidenceThreshold")
+            if threshold is None:
+                threshold = check_data.get("threshold", 0.8)
+            checks[registry_name] = {
+                "enabled": check_data.get("enabled", True),
+                "action": check_data.get("action", "block"),
+                "confidence_threshold": threshold,
+                "config": cfg,
+            }
+        if org_id and checks:
+            _inject_fi_credentials(checks, org_id)
+        result = {
+            "checks": checks,
+            "fail_open": guardrails_data.get(
+                "failOpen", guardrails_data.get("fail_open", False)
+            ),
+            "pipeline_mode": guardrails_data.get("pipeline_mode", "parallel"),
+        }
+        if guardrails_data.get("timeout_ms"):
+            result["timeout_ms"] = guardrails_data["timeout_ms"]
+        elif guardrails_data.get("timeoutMs"):
+            result["timeout_ms"] = guardrails_data["timeoutMs"]
+        return result
 
     # Convert rules array → checks map
     if not isinstance(rules, list) or not rules:
