@@ -21,10 +21,15 @@ shapes per model release, not per API version.
   totals (models, cases, error cases, recordable and synthetic-only cases).
   `internal/providers/contractcoverage` generates it and fails while an
   implemented cell has neither a case nor a reasoned exemption, so its
-  numbers are the coverage.
+  numbers are the coverage. As of this writing: 207 implemented cells over
+  21 provider keys, 89 with contract cases and 118 exempt with a sourced
+  reason (99 not served, 12 unverifiable, 6 answered without an upstream
+  call, 1 relayed unparsed), none uncovered; 73 models and 383 cases, 111 of
+  them error cases.
 - **Losses**: [`internal/providers/KNOWN_GAPS.md`](../KNOWN_GAPS.md) lists
-  every `known gap <ID>` the suites and the spec checks allowlist, one line
-  per ID, with where each is pinned. A gap is allowlisted, not fixed.
+  every `known gap <ID>` the suites, the spec checks and the preset-health
+  table (`TestPresetHealth`) allowlist, one line per ID, with where each is
+  pinned: 186 IDs as of this writing. A gap is allowlisted, not fixed.
 - **Drift between pull requests**: three scheduled workflows. None runs on
   pull requests; every secret is optional, and a provider without its secret
   is skipped.
@@ -476,7 +481,7 @@ A provider whose stream is not SSE sets `Strict.Codec` to a `Codec{Decode,
 Encode}` for its framing (Bedrock's event stream). `Strict.MaxMutations`
 caps the mutations per case (default 400, sampled evenly; the unknown event
 is always kept). Every suite logs its totals: as of this writing the six
-suites detect all of about 5,400 mutations over their 294 cases (the
+suites detect all of about 6,100 mutations over their 371 cases (the
 Anthropic suite: 1,000 over 41 cases, in about half a second, two under
 `-race`).
 
