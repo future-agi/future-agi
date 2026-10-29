@@ -7,9 +7,11 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
+	"github.com/futureagi/agentcc-gateway/internal/streaming"
 )
 
 // CreateResponse handles POST /v1/responses.
@@ -52,6 +54,7 @@ func (h *Handlers) CreateResponse(w http.ResponseWriter, r *http.Request) {
 	rc.Model = req.Model
 	rc.IsStream = req.Stream
 	rc.UserID = req.User
+	rc.GuardrailRequest = responsesGuardrailRequest(&req)
 
 	// Extract client IP.
 	rc.Metadata["client_ip"] = extractClientIP(r)
@@ -94,25 +97,17 @@ func (h *Handlers) CreateResponse(w http.ResponseWriter, r *http.Request) {
 	var provider providers.Provider
 	var orgModelResolved bool
 
-	if orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
-		for providerID, provCfg := range orgCfg.Providers {
-			if provCfg == nil || !provCfg.Enabled || !provCfg.HasCredentials() {
-				continue
-			}
-			for _, m := range provCfg.Models {
-				if orgModelMatches(m, req.Model, providerID) {
-					orgProvider, err := h.orgProviderCache.GetOrCreateWithTenantConfig(orgID, providerID, provCfg.APIKey, provCfg)
-					if err == nil {
-						provider = orgProvider
-						rc.Provider = providerID
-						rc.Metadata["org_provider_model_match"] = req.Model
-						orgModelResolved = true
-						break
-					}
+	if orgID != "" {
+		if orgProvider, providerID, upstreamModel, _ := h.orgProviderFor(orgID, orgCfg, req.Model); orgProvider != nil {
+			provider = orgProvider
+			rc.Provider = providerID
+			rc.Metadata["org_provider_model_match"] = req.Model
+			orgModelResolved = true
+			if upstreamModel != req.Model {
+				if body, err = rewriteRequestModel(body, upstreamModel); err != nil {
+					models.WriteError(w, models.ErrBadRequest("invalid_json", "Invalid JSON in request body: "+err.Error()))
+					return
 				}
-			}
-			if orgModelResolved {
-				break
 			}
 		}
 	}
@@ -175,36 +170,8 @@ func (h *Handlers) handleResponseNonStream(ctx context.Context, w http.ResponseW
 			return err
 		}
 		respBody = body
-
-		// Parse usage from the response for cost tracking.
-		var parsed struct {
-			Model string `json:"model"`
-			Usage *struct {
-				InputTokens  int `json:"input_tokens"`
-				OutputTokens int `json:"output_tokens"`
-				TotalTokens  int `json:"total_tokens"`
-			} `json:"usage"`
-		}
-		if json.Unmarshal(body, &parsed) == nil && parsed.Usage != nil {
-			if parsed.Model != "" {
-				callRC.ResolvedModel = parsed.Model
-			}
-			callRC.Response = &models.ChatCompletionResponse{
-				Model: callRC.ResolvedModel,
-				Usage: &models.Usage{
-					PromptTokens:     parsed.Usage.InputTokens,
-					CompletionTokens: parsed.Usage.OutputTokens,
-					TotalTokens:      parsed.Usage.TotalTokens,
-				},
-			}
-		} else {
-			if parsed.Model != "" {
-				callRC.ResolvedModel = parsed.Model
-			}
-			callRC.Response = &models.ChatCompletionResponse{
-				Model: callRC.ResolvedModel,
-			}
-		}
+		applyResponsesUsage(callRC, body)
+		callRC.GuardrailResponse = assistantText(responsesOutputText(body))
 		return nil
 	}
 
@@ -297,42 +264,168 @@ func (h *Handlers) handleResponseStream(ctx context.Context, w http.ResponseWrit
 	}
 	flusher.Flush()
 
-	// Relay the SSE stream directly from the provider.
-	buf := make([]byte, 32*1024)
-streamLoop:
+	// Post-plugins (cost, logging, etc.) run when the stream ends. Without a
+	// terminal event there is no usage: the output relayed is estimated, and a
+	// stream that relayed none goes unpriced rather than priced at zero.
+	var streamed streamedChars
+	finalize := func(detach bool) {
+		if rc.Response == nil {
+			rc.Response = &models.ChatCompletionResponse{Model: rc.ResolvedModel}
+		}
+		if rc.Response.Usage == nil && streamed > 0 {
+			rc.Response.Usage = estimatedStreamUsage(rc, responsesPromptTokens(reqBody), streamed)
+		}
+		pluginCtx := ctx
+		if detach {
+			pluginCtx = context.Background()
+		}
+		h.engine.RunPostPlugins(pluginCtx, rc)
+	}
+
+	// fail ends a stream that stopped before its terminal event, telling the
+	// client why unless the client is the one that left.
+	fail := func(err error) {
+		if apiErr := streamEndError(ctx, err); apiErr != nil {
+			rc.AddError(apiErr)
+			if _, writeErr := w.Write(responsesStreamErrorEvent(apiErr)); writeErr == nil {
+				flusher.Flush()
+			}
+		}
+		finalize(ctx.Err() != nil)
+	}
+
+	// Relay the stream one event at a time, each as it arrived. The terminal
+	// event carries the whole response, usage included, so it is held until
+	// that usage is priced.
+	events := streaming.NewEventReader(stream)
 	for {
-		n, readErr := stream.Read(buf)
-		if n > 0 {
-			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+		ev, readErr := events.Next()
+		if readErr != nil && readErr != io.EOF {
+			// The event the error cut off is not forwarded: run into the error
+			// event, it would hide that event from the client's parser.
+			slog.Warn("error reading response stream",
+				"request_id", rc.RequestID,
+				"error", readErr,
+			)
+			fail(readErr)
+			return
+		}
+		eventType := responsesEventType(ev)
+		if strings.HasSuffix(eventType, ".delta") {
+			streamed.addEvent(ev.Data())
+		}
+		if responsesTerminalEvents[eventType] {
+			if data := ev.Data(); readErr == nil || json.Valid(data) {
+				var terminal struct {
+					Response json.RawMessage `json:"response"`
+				}
+				if json.Unmarshal(data, &terminal) == nil {
+					applyResponsesUsage(rc, terminal.Response)
+				}
+				if eventType == "response.failed" {
+					rc.AddError(upstreamStreamError(data))
+				}
+				endRelay(ctx, w, flusher, rc, ev, stream, finalize)
+				return
+			}
+		}
+		if eventType == "error" {
+			rc.AddError(upstreamStreamError(ev.Data()))
+		}
+		if len(ev.Raw) > 0 {
+			if _, writeErr := w.Write(ev.Raw); writeErr != nil {
 				slog.Warn("error writing response stream",
 					"request_id", rc.RequestID,
 					"error", writeErr,
 				)
-				break streamLoop
+				finalize(true)
+				return
 			}
 			flusher.Flush()
 		}
-		if readErr != nil {
-			if readErr != io.EOF {
-				slog.Warn("error reading response stream",
-					"request_id", rc.RequestID,
-					"error", readErr,
-				)
-			}
-			break streamLoop
-		}
-
-		// Check for context cancellation.
-		select {
-		case <-ctx.Done():
-			break streamLoop
-		default:
+		switch {
+		case readErr == io.EOF:
+			finalize(false)
+			return
+		case ctx.Err() != nil:
+			fail(ctx.Err())
+			return
 		}
 	}
+}
 
-	// Run post-plugins (cost, logging, etc.) after stream completes.
+// responsesTerminalEvents end a Responses stream. Each carries the whole
+// response, its usage included.
+var responsesTerminalEvents = map[string]bool{
+	"response.completed":  true,
+	"response.incomplete": true,
+	"response.failed":     true,
+}
+
+// responsesEventType is an event's type: its event: field, or the type in its
+// payload for an upstream that sends data lines alone.
+func responsesEventType(ev streaming.Event) string {
+	if ev.Name != "" {
+		return ev.Name
+	}
+	var payload struct {
+		Type string `json:"type"`
+	}
+	_ = json.Unmarshal(ev.Data(), &payload)
+	return payload.Type
+}
+
+// applyResponsesUsage moves a Responses API response's model and token counts
+// onto rc, which is what the cost plugin prices from. A response without usage
+// leaves rc.Response without it, so the request goes unpriced rather than
+// priced at zero.
+func applyResponsesUsage(rc *models.RequestContext, body []byte) {
+	var parsed struct {
+		Model string `json:"model"`
+		Usage *struct {
+			InputTokens  int `json:"input_tokens"`
+			OutputTokens int `json:"output_tokens"`
+			TotalTokens  int `json:"total_tokens"`
+		} `json:"usage"`
+	}
+	_ = json.Unmarshal(body, &parsed)
+	if parsed.Model != "" {
+		rc.ResolvedModel = parsed.Model
+	}
 	rc.Response = &models.ChatCompletionResponse{Model: rc.ResolvedModel}
-	h.engine.RunPostPlugins(ctx, rc)
+	if parsed.Usage != nil {
+		rc.Response.Usage = &models.Usage{
+			PromptTokens:     parsed.Usage.InputTokens,
+			CompletionTokens: parsed.Usage.OutputTokens,
+			TotalTokens:      parsed.Usage.TotalTokens,
+		}
+	}
+}
+
+// responsesStreamErrorEvent is an error as a Responses stream event: the
+// fields of OpenAI's error event, plus an error object. The object is what
+// makes the OpenAI SDKs raise; without it they hand the event to code that
+// may read only text deltas, and the failure goes unseen.
+func responsesStreamErrorEvent(apiErr *models.APIError) []byte {
+	data, _ := json.Marshal(struct {
+		Type    string             `json:"type"`
+		Code    string             `json:"code"`
+		Message string             `json:"message"`
+		Param   *string            `json:"param"`
+		Error   models.ErrorDetail `json:"error"`
+	}{
+		Type:    "error",
+		Code:    apiErr.Code,
+		Message: apiErr.Message,
+		Param:   apiErr.Param,
+		Error: models.ErrorDetail{
+			Message: apiErr.Message,
+			Type:    apiErr.Type,
+			Param:   apiErr.Param,
+			Code:    apiErr.Code,
+		},
+	})
+	return fmt.Appendf(nil, "event: error\ndata: %s\n\n", data)
 }
 
 // GetResponse handles GET /v1/responses/{id}.

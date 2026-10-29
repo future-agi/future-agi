@@ -530,8 +530,13 @@ def _carried_proofs(
     )
     if previous is None or not isinstance(previous.proofs, dict):
         return {}
+
+    def proved(content: Mapping[str, Any]) -> dict[str, Any]:
+        # A rename keeps the key and what the proof checked.
+        return {field: value for field, value in content.items() if field != "name"}
+
     contents = {
-        member.scenario_key: member.content
+        member.scenario_key: proved(member.content or {})
         for member in HarnessSuiteMember.no_workspace_objects.filter(
             suite_version_id=previous.suite_version_id
         )
@@ -542,7 +547,7 @@ def _carried_proofs(
         if (
             isinstance(proof, dict)
             and row.scenario_key in contents
-            and contents[row.scenario_key] == _member_content(document)
+            and contents[row.scenario_key] == proved(_member_content(document))
         ):
             carried[row.scenario_key] = proof
     return carried

@@ -78,9 +78,15 @@ def _scenario(name, **fields):
     }
 
 
-def _resealed_manifest(tree, **fields):
-    """A bundle manifest stamped for ``tree`` as ALK's reseal stamps it."""
-    return json.dumps({**fields, "metadata": {"sealed_from": drafts.sealed_from(tree)}})
+def _resealed_manifest(tree, *, compiled=True, **fields):
+    """A bundle manifest stamped for ``tree`` as ALK's reseal stamps it; ``compiled``
+    False when ALK left the contract edit to a build (e.g. a first tool added)."""
+    if not compiled:
+        return json.dumps({**fields, "metadata": {}})
+    metadata = {"sealed_from": drafts.sealed_from(tree)}
+    if "contract.json" in tree:
+        metadata["contract_compiled"] = archives.sha256_hex(tree["contract.json"])
+    return json.dumps({**fields, "metadata": metadata})
 
 
 def _authoring(names=NAMES[:2], *, contract=None, proofs=None, sealed=True, **extra):
@@ -637,6 +643,44 @@ class TestValidation:
         )
         assert set(validation.proofs) == {_key(NAMES[1]), _key(NAMES[2])}
         assert validation.status == "partial"
+
+    def test_a_renamed_scenario_keeps_its_old_proof(self, user, workspace, storage):
+        environment = _environment(user, workspace, "proofs-carry-renamed")
+        first_proofs = {_key(name): _proof(True, at=SESSION) for name in NAMES[:2]}
+        record_authoring(
+            environment,
+            _authoring(proofs=first_proofs),
+            origin="authoring",
+            proved_since=SESSION,
+        )
+        environment.refresh_from_db()
+        extend_session = timezone.now() + timedelta(minutes=5)
+        renamed = {**_scenario(NAMES[0]), "name": "renamed"}
+        documents = [renamed, *(_scenario(name) for name in NAMES[1:])]
+        proofs = {
+            **first_proofs,
+            _key(NAMES[2]): _proof(True, at=extend_session),
+        }
+
+        recorded = record_authoring(
+            environment,
+            _authoring(
+                NAMES,
+                proofs=proofs,
+                **{
+                    "scenarios.json": json.dumps(documents),
+                    f"scenarios/{NAMES[0]}/scenario.json": json.dumps(renamed),
+                },
+            ),
+            origin="extend",
+            proved_since=extend_session,
+        )
+
+        validation = HarnessSuiteValidation.no_workspace_objects.get(
+            suite_version=recorded.suite
+        )
+        assert set(validation.proofs) == {_key(name) for name in NAMES}
+        assert validation.status == "passed"
 
     def test_a_build_without_a_session_start_records_no_validation(
         self, user, workspace, storage

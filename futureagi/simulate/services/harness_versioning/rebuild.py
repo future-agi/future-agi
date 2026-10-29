@@ -34,6 +34,7 @@ from simulate.models import (
     HostedHarnessJob,
 )
 from simulate.models.harness_versioning import DiscardReason, VersionStatus
+from simulate.serializers.harness_job import CREDENTIAL_VALUE_MAX_CHARS
 from simulate.services.harness_versioning import nudges
 from simulate.services.harness_versioning import read as reads
 from simulate.services.hosted_harness import HostedHarnessError
@@ -56,12 +57,8 @@ BRIEFING_MAX = 64 * 1024
 NOTES_MAX = 4000
 PROBLEMS_MAX = 50
 PROBLEM_TEXT_MAX = 500
-# ALK writes up to PROBLEMS_MAX of each list, each text up to 4000 characters.
+# ALK writes up to PROBLEMS_MAX of each list and keeps the whole file under this.
 RESULT_FILE_MAX = 4 * 1024 * 1024
-# Longer than any credential value: a text is cut to its cap plus this before masking
-# (after masking would strip control characters), so a value across the cap is still
-# whole and the patterns stay cheap.
-SECRET_VALUE_MAX = 16 * 1024
 PROOFS_FILE_MAX = 64 * 1024 * 1024
 DEFERRED_RETRIES = 20
 DEFERRED_RETRY_AFTER = timedelta(minutes=5)
@@ -1349,7 +1346,10 @@ def _buckets(
 
 
 def _redacted(
-    environment: HostedHarnessJob, nudge: HarnessNudge, secret_texts: list[str]
+    environment: HostedHarnessJob,
+    nudge: HarnessNudge,
+    secret_texts: list[str],
+    cut: list[bool],
 ) -> list[str]:
     # Named for the error tracker's scrubber: the texts may hold a value until masked.
     # The environment's own agents too: a suite rebuild names no agent version.
@@ -1364,6 +1364,7 @@ def _redacted(
                 getattr(nudge.base_environment_version, "agent_version_id", None),
                 (nudge.draft_snapshot or {}).get("ran_as_agent_version_id"),
             ],
+            cut=cut,
         )
     except HostedHarnessError:
         return ["" for _ in secret_texts]
@@ -1412,12 +1413,20 @@ def _report(
             for field in ("key", "why")
         ),
     ]
+    # Cut to the cap plus the longest credential, so a value starting inside the cap is
+    # whole and the patterns stay cheap. ALK cuts at the same bound; a cut text may end
+    # inside a value, so its trailing start of one is masked too.
+    secret_texts = [
+        _normalize_log_text(text)[: cap + CREDENTIAL_VALUE_MAX_CHARS]
+        for _part, _at, text, cap in secret_parts
+    ]
     masked = _redacted(
         environment,
         nudge,
+        secret_texts,
         [
-            _normalize_log_text(text)[: cap + SECRET_VALUE_MAX]
-            for _part, _at, text, cap in secret_parts
+            len(text) >= cap + CREDENTIAL_VALUE_MAX_CHARS
+            for text, (_part, _at, _text, cap) in zip(secret_texts, secret_parts)
         ],
     )
     report: dict[str, Any] = {

@@ -136,6 +136,30 @@ describe("toVersion", () => {
       isDraft: false,
       commitMessage: "Shorter greeting",
       createdAt: "2026-10-15T09:00:00Z",
+      origin: null,
+      check: null,
+      environmentsCount: 0,
+      source: null,
+    });
+  });
+
+  it("carries a version's origin, check, environments and source when the list has them", () => {
+    const raw = {
+      ...HOSTED_AGENT_DETAIL.versions[0],
+      origin: "sync",
+      preflight_status: "pending",
+      environments_count: 2,
+      source: {
+        kind: "github",
+        repository: "acme/agent",
+        commit_sha: "a".repeat(40),
+      },
+    };
+    expect(toVersion(raw)).toMatchObject({
+      origin: "sync",
+      check: "pending",
+      environmentsCount: 2,
+      source: { kind: "github", repository: "acme/agent" },
     });
   });
 });
@@ -244,6 +268,7 @@ describe("hooks", () => {
         name: "ride-voice-agent",
         status: "ready",
         agentVersion: { id: "93956ae6", number: 3 },
+        policy: "follow",
         lastRun: toRun(ENVIRONMENT_RUN),
       },
       {
@@ -251,6 +276,7 @@ describe("hooks", () => {
         name: "Refund edge cases",
         status: "failed",
         agentVersion: null,
+        policy: "follow",
         lastRun: null,
       },
     ]);

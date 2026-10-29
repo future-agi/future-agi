@@ -1488,6 +1488,54 @@ sandbox port, and its `ml` and `sandbox` profiles publish none either.
     text = "CPU and memory limit of the trace collector."
 
   [[part.section]]
+  heading = "Trace ingestion limits"
+  body = '''
+The trace collector bounds the memory that OTLP requests hold at once, from
+reading a body until its spans are stored. When that budget is full, a request
+waits its turn while the budget frees up (up to 2 seconds in all, so that
+exporters with a 10-second export timeout can still retry), then gets `503`
+with `Retry-After` (gRPC `UNAVAILABLE`), which OpenTelemetry exporters retry. A request that cannot succeed as sent gets
+`413` or `400` (gRPC `INVALID_ARGUMENT`), which they do not retry. See
+[Ingestion request limits](/docs/observe/reference/export-formats#ingestion-request-limits).
+'''
+
+    [[part.section.row]]
+    keys = ["FI_INGEST_BUDGET_MIB"]
+    default = { S = "`216`, from the collector's `GOMEMLIMIT=512MiB`", D = "about `402`, from `FI_COLLECTOR_MEMORY=1G`", H = "`391`, from `fiCollector.goMemLimit` (`900MiB`); chart value `fiCollector.ingestBudgetMiB`" }
+    setups = ["S", "D", "H"]
+    text = "Memory, in MiB, that all OTLP requests may hold at once in the trace collector. Unset: about half of the collector's Go memory limit, less a fixed allowance. Without `GOMEMLIMIT` the collector sets that limit to 90% of its container's memory limit; with neither, the budget is 256. A third of it is for receiving bodies. A batch whose processing needs more than this collector can give one request gets `413` naming this setting: send smaller batches, or raise the collector's memory and this."
+
+    [[part.section.row]]
+    keys = ["FI_OTLP_MAX_BODY_MIB"]
+    default = "`16`"
+    setups = ["S", "D", "H"]
+    text = "Largest OTLP/HTTP body, in MiB, as sent and after gzip decompression (`413` above it). Lowered at start to a sixth of the ingest budget when that is smaller. Helm: `fiCollector.maxBodyMiB`."
+
+    [[part.section.row]]
+    keys = ["FI_GRPC_MAX_RECV_MIB"]
+    default = "`FI_OTLP_MAX_BODY_MIB`"
+    setups = ["S", "D", "H"]
+    text = "Largest OTLP/gRPC message, in MiB (`INVALID_ARGUMENT` above it). Lowered like `FI_OTLP_MAX_BODY_MIB`. Helm: `fiCollector.grpcMaxRecvMiB`."
+
+    [[part.section.row]]
+    keys = ["FI_OTLP_MAX_CONNECTIONS"]
+    default = "`0` (no cap)"
+    setups = ["S", "D", "H"]
+    text = "Open connections each OTLP listener (gRPC and HTTP) accepts. Helm: `fiCollector.maxConnections`."
+
+    [[part.section.row]]
+    keys = ["FI_INGEST_MAX_WAIT"]
+    default = "`2s`"
+    setups = ["S", "D", "H"]
+    text = "Longest a request waits, in all, for its share of the ingest budget before it gets `503` with `Retry-After: 1` (gRPC `UNAVAILABLE`). A Go duration such as `1500ms` or `3s`. Keep it well under your exporters' export timeout: the OpenTelemetry SDKs allow 10 seconds per export, retries included."
+
+    [[part.section.row]]
+    keys = ["FI_INSERT_CONCURRENCY"]
+    default = "`3` from a 512 MiB collector `GOMEMLIMIT` up, `2` from 384 MiB, else `1`"
+    setups = ["S", "D", "H"]
+    text = "ClickHouse inserts of received spans that the trace collector runs at once, across batches and within a large one. More drains bursts faster; each insert takes about two 8 to 16 MiB buffers out of the ingest budget's allowance."
+
+  [[part.section]]
   heading = "Databases and storage"
   body = '''
 The Postgres and ClickHouse hosts are set by the compose files. To use a managed

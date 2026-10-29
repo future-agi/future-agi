@@ -1055,18 +1055,21 @@ class TestExactKeys:
             job=environment, scenario_key=_key(NAMES[1])
         ).deleted
 
-    def test_a_legacy_environment_still_matches_by_name(self, user, workspace, storage):
+    def test_a_legacy_environment_matches_only_a_keyless_document_by_name(
+        self, user, workspace, storage
+    ):
         environment = _legacy(user, workspace, "runs-exact-legacy", storage)
-        renamed = {**_scenario(NAMES[0]), "scenario_key": "a-brand-new-key"}
+        rekeyed = {**_scenario(NAMES[0]), "scenario_key": "a-brand-new-key"}
+        keyless = {"name": NAMES[1], "instruction": "no key here"}
 
-        index_scenarios(environment, [renamed, _scenario(NAMES[1])], prune=True)
+        index_scenarios(environment, [rekeyed, keyless], prune=True)
 
         live = set(
             HostedHarnessScenario.no_workspace_objects.filter(
                 job=environment
             ).values_list("scenario_key", flat=True)
         )
-        assert live == {_key(NAMES[0]), _key(NAMES[1])}
+        assert live == {"a-brand-new-key", _key(NAMES[1])}
 
     def test_a_document_without_a_key_falls_back_to_its_name(
         self, user, workspace, storage
@@ -1144,7 +1147,9 @@ class TestExactKeys:
         assert new.name == NAMES[1]
         assert new.number not in {None, old.number}
 
-    def test_a_runs_own_rows_still_match_by_name(self, user, workspace, storage):
+    def test_a_runs_own_rows_still_match_a_keyless_document_by_name(
+        self, user, workspace, storage
+    ):
         environment = _versioned(user, workspace, "runs-exact-run", storage)
         run = _run(environment)
         assert run.environment_version_id is not None
@@ -1152,13 +1157,13 @@ class TestExactKeys:
             job=run, scenario_key=_key(NAMES[0]), name=NAMES[0]
         )
 
-        index_scenarios(run, [{**_scenario(NAMES[0]), "scenario_key": "other-key"}])
+        index_scenarios(run, [{"name": NAMES[0], "instruction": "no key here"}])
 
         assert list(
             HostedHarnessScenario.all_objects.filter(job=run).values_list(
-                "id", "scenario_key"
+                "id", "scenario_key", "instruction"
             )
-        ) == [(row.id, _key(NAMES[0]))]
+        ) == [(row.id, _key(NAMES[0]), "no key here")]
 
     def test_a_person_may_not_take_the_key_of_a_row_paired_by_name(
         self, user, workspace, storage

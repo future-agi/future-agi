@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
+from itertools import count
 from typing import Any
 from uuid import UUID
 
@@ -528,6 +529,90 @@ def scenario_fields(doc: dict[str, Any], key: str) -> dict[str, Any]:
     }
 
 
+def _rows_held(
+    rows: list[HostedHarnessScenario], docs: list[dict[str, Any]]
+) -> list[HostedHarnessScenario | None]:
+    """The existing row each scenario writes, or ``None`` for a new one.
+
+    A key names one scenario, so a scenario takes the row holding its key. When several
+    repeat a key, the one under that row's name keeps it and the others take the rows
+    they were given before (``<key>-2`` and on). Only an older scenario without a key is
+    matched by name, and never to a row already taken.
+    """
+    from simulate.services.hosted_harness_gateway import _scenario_token
+
+    by_key: dict[str, HostedHarnessScenario] = {}
+    by_key_token: dict[str, HostedHarnessScenario] = {}
+    by_token: dict[str, HostedHarnessScenario] = {}
+    for row in sorted(rows, key=lambda row: row.deleted):
+        if row.scenario_key:
+            by_key.setdefault(row.scenario_key, row)
+            by_key_token.setdefault(_scenario_token(row.scenario_key), row)
+        for token in (_scenario_token(row.scenario_key), _scenario_token(row.name)):
+            if token:
+                by_token.setdefault(token, row)
+
+    def key_of(doc: dict[str, Any]) -> str:
+        return str(doc.get("scenario_key") or "").strip()
+
+    held_rows: list[HostedHarnessScenario | None] = [None] * len(docs)
+    used: set[Any] = set()
+
+    def take(index: int, row: HostedHarnessScenario | None) -> None:
+        if row is not None and row.id not in used:
+            held_rows[index] = row
+            used.add(row.id)
+
+    # The row's own name first, so the order of a repeated key never swaps two scenarios.
+    for index in sorted(
+        range(len(docs)),
+        key=lambda index: (
+            getattr(by_key.get(key_of(docs[index])), "name", None)
+            != docs[index].get("name")
+        ),
+    ):
+        take(index, by_key.get(key_of(docs[index])))
+    owner = {
+        key_of(doc): doc.get("name")
+        for doc, row in zip(docs, held_rows)
+        if row is not None
+    }
+    for index, doc in enumerate(docs):
+        key = key_of(doc)
+        # The same scenario listed twice writes its one row (``index_scenarios``).
+        if (
+            held_rows[index] is not None
+            or key not in by_key
+            or owner.get(key) == doc.get("name")
+        ):
+            continue
+        repeats = sorted(
+            (
+                row
+                for given, row in by_key.items()
+                if given.startswith(f"{key}-") and given[len(key) + 1 :].isdigit()
+            ),
+            key=lambda row: (
+                row.name != doc.get("name"),
+                int(row.scenario_key.rsplit("-", 1)[1]),
+            ),
+        )
+        for row in repeats:
+            if row.id not in used:
+                take(index, row)
+                break
+    for index, doc in enumerate(docs):
+        if held_rows[index] is None:
+            # Older outputs spelled keys and folders differently.
+            take(
+                index,
+                by_key_token.get(_scenario_token(key_of(doc)))
+                if key_of(doc)
+                else by_token.get(_scenario_token(doc.get("name"))),
+            )
+    return held_rows
+
+
 def index_scenarios(
     job: HostedHarnessJob,
     docs: list[dict[str, Any]],
@@ -562,7 +647,8 @@ def plan_pairs(
     else the row with that key, compared as normalised tokens. A row the default suite
     links to one document is never given to a document with another key; one whose key
     such a row holds gets a row of its own under a derived key. A document without a key
-    falls back to name matching, as legacy suites without keys need.
+    falls back to name matching, as legacy suites without keys need. Otherwise rows are
+    matched as ``_rows_held`` matches them.
     """
     if not docs:
         return []
@@ -594,8 +680,15 @@ def plan_pairs(
     taken = max(
         (row.number for row in existing.values() if row.number is not None), default=0
     )
+    held_rows = [None] * len(docs) if exact else _rows_held(rows, docs)
+    keys = {row.scenario_key for row in rows}
+    # Every key given out, by a row or by this suite, so a repeat gets one nobody holds.
+    given = keys | {str(doc.get("scenario_key") or "").strip() for doc in docs}
+    # Each key planned so far, with the name it was planned under and its number.
+    holder: dict[str, tuple[str, int]] = {}
+    seen: set[str] = set()
     plan: list[PlannedPair] = []
-    for position, doc in enumerate(docs, start=1):
+    for position, (doc, held) in enumerate(zip(docs, held_rows, strict=True), start=1):
         doc_key = str(doc.get("scenario_key") or "").strip()
         if exact and doc_key:
             # The default suite's pairing outranks a dropped row that shares the key.
@@ -604,15 +697,8 @@ def plan_pairs(
                 or existing.get(doc_key)
                 or by_key_token.get(_scenario_token(doc_key))
             )
-        else:
-            held = next(
-                (
-                    by_token[token]
-                    for value in (doc.get("scenario_key"), doc.get("name"))
-                    if (token := _scenario_token(value)) in by_token
-                ),
-                None,
-            )
+        elif exact:
+            held = by_token.get(_scenario_token(doc.get("name")))
         if (
             exact
             and held is not None
@@ -635,7 +721,22 @@ def plan_pairs(
         if not key:
             continue
         key_tokens.add(_scenario_token(key))
-        if held is not None and held.number is not None:
+        name = str(doc.get("name") or key)[:255]
+        repeat = None
+        if not exact and held is None:
+            if key in holder and holder[key][0] == name:
+                # The same scenario listed twice: both write the one row.
+                repeat = holder[key][1]
+            elif key in keys or key in seen:
+                # Another scenario in this suite already holds this key: this one gets
+                # its own, so neither is lost and the key stays unique.
+                key = next(
+                    f"{key}-{n}" for n in count(2) if f"{key}-{n}" not in given | seen
+                )
+        seen.add(key)
+        if repeat is not None:
+            number = repeat
+        elif held is not None and held.number is not None:
             number = held.number
         elif not existing:
             number = position
@@ -644,6 +745,7 @@ def plan_pairs(
             number = taken
         if held is not None:
             used.add(held.id)
+        holder.setdefault(key, (name, number))
         plan.append(PlannedPair(row=held, key=key, number=number, doc=doc))
     return plan
 
@@ -660,22 +762,25 @@ def pair_scenarios(
     """
     pairs: list[tuple[HostedHarnessScenario, dict[str, Any]]] = []
     seen: set[str] = set()
+    # A scenario listed twice is planned twice under one key: both write one row.
+    written: dict[str, HostedHarnessScenario] = {}
     for planned in plan_pairs(job, docs, exact=exact):
         seen.add(planned.key)
         fields = {
             "number": planned.number,
             **scenario_fields(planned.doc, planned.key),
         }
-        row = planned.row
+        row = planned.row or written.get(planned.key)
         if row is None:
             row = HostedHarnessScenario.no_workspace_objects.create(
                 job=job, scenario_key=planned.key, **fields
             )
         else:
             fields.update(deleted=False, deleted_at=None)
-            for name, value in fields.items():
-                setattr(row, name, value)
+            for field, value in fields.items():
+                setattr(row, field, value)
             row.save(update_fields=[*fields, "updated_at"])
+        written[planned.key] = row
         pairs.append((row, planned.doc))
     if not docs:
         return pairs

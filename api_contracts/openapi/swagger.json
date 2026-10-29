@@ -4619,7 +4619,7 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
+                            "$ref": "#/definitions/TeamCreateErrorResponse"
                         }
                     },
                     "401": {
@@ -4791,7 +4791,7 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/AccountsErrorResponse"
+                            "$ref": "#/definitions/TeamCreateErrorResponse"
                         }
                     },
                     "401": {
@@ -59514,7 +59514,19 @@
                             "$ref": "#/definitions/ErrorResponse"
                         }
                     },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
                     "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "503": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
@@ -59796,6 +59808,38 @@
                 ],
                 "x-runtime-request-validation": true,
                 "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "test_execution_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/v3/test-executions/{test_execution_id}/reliability/": {
+            "get": {
+                "operationId": "simulate_v3_test_execution_reliability",
+                "description": "The reliability block alone, for the run header.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/Reliability"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
             },
             "parameters": [
                 {
@@ -69748,6 +69792,136 @@
                 }
             ]
         },
+        "/tracer/shared/{token}/sidebar/": {
+            "get": {
+                "operationId": "tracer_shared_sidebar_list",
+                "summary": "A shared Error Feed issue's sidebar, scoped to one of its traces.",
+                "description": "Mirrors the issue page: AI metadata and evaluations follow the trace\npicked in Traces affected (``?trace_id=``).",
+                "parameters": [
+                    {
+                        "name": "trace_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "minLength": 1
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/FeedSidebarApiResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SharedLinkResolveError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SharedLinkResolveError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SharedLinkResolveError"
+                        }
+                    },
+                    "410": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SharedLinkResolveError"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "token",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/shared/{token}/traces/{trace_id}/": {
+            "get": {
+                "operationId": "tracer_shared_traces_read",
+                "summary": "One trace of a shared Error Feed issue, under the issue link's rules.",
+                "description": "Only traces linked to the shared issue are readable through its token.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/TraceDetailResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SharedLinkResolveError"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SharedLinkResolveError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SharedLinkResolveError"
+                        }
+                    },
+                    "410": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SharedLinkResolveError"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "tracer"
+                ]
+            },
+            "parameters": [
+                {
+                    "name": "token",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "trace_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/tracer/trace-annotation/get_annotation_values/": {
             "get": {
                 "operationId": "tracer_trace-annotation_get_annotation_values",
@@ -71822,6 +71996,14 @@
                 "operationId": "tracer_trace_list_traces_of_session",
                 "description": "List traces filtered by project ID with optimized queries.",
                 "parameters": [
+                    {
+                        "name": "sort_params",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "default": "[]",
+                        "minLength": 1
+                    },
                     {
                         "name": "project_id",
                         "in": "query",
@@ -85394,6 +85576,74 @@
                 }
             }
         },
+        "TeamCreatedMemberResponse": {
+            "required": [
+                "id",
+                "email",
+                "name",
+                "organization_role",
+                "organization",
+                "created_at",
+                "status",
+                "role"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "email": {
+                    "title": "Email",
+                    "type": "string",
+                    "format": "email",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "organization_role": {
+                    "title": "Organization role",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "organization": {
+                    "$ref": "#/definitions/AccountOrganizationDetail"
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "role": {
+                    "title": "Role",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "goals": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "x-nullable": true
+                },
+                "invite_email_warning": {
+                    "title": "Invite email warning",
+                    "description": "Member was added, but the invitation email could not be sent.",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
         "TeamCreateErrorItem": {
             "required": [
                 "error"
@@ -85427,7 +85677,7 @@
                 "created_members": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/AccountUserItemResponse"
+                        "$ref": "#/definitions/TeamCreatedMemberResponse"
                     }
                 },
                 "workspace": {
@@ -85454,6 +85704,117 @@
                 },
                 "result": {
                     "$ref": "#/definitions/TeamCreateResult"
+                }
+            }
+        },
+        "TeamCreateErrorResponse": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": false
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "enum": [
+                        "validation_error",
+                        "authentication_error",
+                        "payment_required",
+                        "entitlement_error",
+                        "permission_error",
+                        "not_found",
+                        "conflict",
+                        "client_error",
+                        "rate_limit",
+                        "server_error",
+                        "service_unavailable",
+                        "timeout",
+                        "api_error"
+                    ],
+                    "x-nullable": true
+                },
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "detail": {
+                    "title": "Detail",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "object",
+                    "x-nullable": true,
+                    "description": "String error message or structured account/login error metadata.",
+                    "x-string-or-object": true,
+                    "properties": {
+                        "error": {
+                            "type": "string"
+                        },
+                        "error_code": {
+                            "type": "string"
+                        },
+                        "message": {
+                            "type": "string"
+                        },
+                        "blocked": {
+                            "type": "boolean"
+                        },
+                        "remaining_attempts": {
+                            "type": "integer"
+                        },
+                        "block_time": {
+                            "type": "integer"
+                        },
+                        "block_time_remaining": {
+                            "type": "integer"
+                        },
+                        "created_members": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/TeamCreatedMemberResponse"
+                            }
+                        },
+                        "workspace": {
+                            "$ref": "#/definitions/WorkspaceSummary"
+                        },
+                        "errors": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/TeamCreateErrorItem"
+                            }
+                        }
+                    }
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "attr": {
+                    "title": "Attr",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "details": {
+                    "title": "Details",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        }
+                    }
                 }
             }
         },
@@ -126053,6 +126414,7 @@
                 "tools_count",
                 "runs_count",
                 "agent_version",
+                "agent_policy",
                 "last_updated",
                 "created_at",
                 "last_run"
@@ -126129,6 +126491,14 @@
                 },
                 "agent_version": {
                     "$ref": "#/definitions/AgentVersionRef"
+                },
+                "agent_policy": {
+                    "title": "Agent policy",
+                    "type": "string",
+                    "enum": [
+                        "follow",
+                        "pinned"
+                    ]
                 },
                 "last_updated": {
                     "title": "Last updated",
@@ -126272,6 +126642,7 @@
                 "tools_count",
                 "runs_count",
                 "agent_version",
+                "agent_policy",
                 "last_updated",
                 "created_at",
                 "flows_count",
@@ -126353,6 +126724,14 @@
                 },
                 "agent_version": {
                     "$ref": "#/definitions/AgentVersionRef"
+                },
+                "agent_policy": {
+                    "title": "Agent policy",
+                    "type": "string",
+                    "enum": [
+                        "follow",
+                        "pinned"
+                    ]
                 },
                 "last_updated": {
                     "title": "Last updated",
@@ -141979,8 +142358,8 @@
                 "low",
                 "high",
                 "effective_n",
-                "evaluated",
-                "clusters"
+                "scenarios",
+                "evaluated"
             ],
             "type": "object",
             "properties": {
@@ -141996,12 +142375,12 @@
                     "title": "Effective n",
                     "type": "number"
                 },
-                "evaluated": {
-                    "title": "Evaluated",
+                "scenarios": {
+                    "title": "Scenarios",
                     "type": "integer"
                 },
-                "clusters": {
-                    "title": "Clusters",
+                "evaluated": {
+                    "title": "Evaluated",
                     "type": "integer"
                 }
             },
@@ -142020,7 +142399,8 @@
                 "runs",
                 "evaluated",
                 "pass_rate",
-                "verdict"
+                "verdict",
+                "call_ids"
             ],
             "type": "object",
             "properties": {
@@ -142080,6 +142460,13 @@
                         "flaky",
                         "not_evaluated"
                     ]
+                },
+                "call_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
                 }
             }
         },
@@ -142092,6 +142479,15 @@
                 "repeated",
                 "flaky",
                 "flip_rate",
+                "k",
+                "inconclusive",
+                "pass_hat_1",
+                "pass_hat_k",
+                "pass_hat_k_scenarios",
+                "pass_hat_k_passed",
+                "pass_hat_k_excluded",
+                "trials_passed",
+                "trials_evaluated",
                 "pass_rate_interval",
                 "rows"
             ],
@@ -142125,6 +142521,45 @@
                     "title": "Flip rate",
                     "type": "number",
                     "x-nullable": true
+                },
+                "k": {
+                    "title": "K",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "inconclusive": {
+                    "title": "Inconclusive",
+                    "type": "integer"
+                },
+                "pass_hat_1": {
+                    "title": "Pass hat 1",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "pass_hat_k": {
+                    "title": "Pass hat k",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "pass_hat_k_scenarios": {
+                    "title": "Pass hat k scenarios",
+                    "type": "integer"
+                },
+                "pass_hat_k_passed": {
+                    "title": "Pass hat k passed",
+                    "type": "integer"
+                },
+                "pass_hat_k_excluded": {
+                    "title": "Pass hat k excluded",
+                    "type": "integer"
+                },
+                "trials_passed": {
+                    "title": "Trials passed",
+                    "type": "integer"
+                },
+                "trials_evaluated": {
+                    "title": "Trials evaluated",
+                    "type": "integer"
                 },
                 "pass_rate_interval": {
                     "$ref": "#/definitions/ReliabilityInterval"
@@ -155468,7 +155903,8 @@
                         "eval_run",
                         "dataset",
                         "project",
-                        "call_execution"
+                        "call_execution",
+                        "error_feed_issue"
                     ],
                     "readOnly": true
                 },
@@ -155543,7 +155979,8 @@
                         "trace",
                         "dashboard",
                         "project",
-                        "call_execution"
+                        "call_execution",
+                        "error_feed_issue"
                     ]
                 },
                 "resource_id": {
@@ -155638,7 +156075,8 @@
                         "eval_run",
                         "dataset",
                         "project",
-                        "call_execution"
+                        "call_execution",
+                        "error_feed_issue"
                     ],
                     "readOnly": true
                 },
@@ -155905,6 +156343,21 @@
                 "widget_count": {
                     "title": "Widget count",
                     "type": "integer"
+                },
+                "issue": {
+                    "$ref": "#/definitions/FeedDetailCore"
+                },
+                "overview": {
+                    "$ref": "#/definitions/OverviewResponse"
+                },
+                "traces": {
+                    "$ref": "#/definitions/TracesTabResponse"
+                },
+                "trends": {
+                    "$ref": "#/definitions/TrendsTabResponse"
+                },
+                "sidebar": {
+                    "$ref": "#/definitions/FeedSidebar"
                 }
             }
         },
@@ -155926,7 +156379,8 @@
                         "eval_run",
                         "dataset",
                         "project",
-                        "call_execution"
+                        "call_execution",
+                        "error_feed_issue"
                     ]
                 },
                 "resource_id": {
@@ -156017,6 +156471,221 @@
                             "minLength": 1
                         }
                     }
+                }
+            }
+        },
+        "EvalRollupSpan": {
+            "required": [
+                "span_id"
+            ],
+            "type": "object",
+            "properties": {
+                "span_id": {
+                    "title": "Span id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "span_name": {
+                    "title": "Span name",
+                    "type": "string"
+                },
+                "value": {
+                    "title": "Value",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "explanation": {
+                    "title": "Explanation",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "boolean"
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "eval_config_id": {
+                    "title": "Eval config id",
+                    "type": "string"
+                }
+            }
+        },
+        "EvalRollupEval": {
+            "required": [
+                "eval_config_id",
+                "eval_name",
+                "aggregate",
+                "spans"
+            ],
+            "type": "object",
+            "properties": {
+                "eval_config_id": {
+                    "title": "Eval config id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "eval_name": {
+                    "title": "Eval name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "output_type": {
+                    "title": "Output type",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "template_type": {
+                    "title": "Template type",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "target_type": {
+                    "title": "Target type",
+                    "type": "string",
+                    "enum": [
+                        "span",
+                        "trace"
+                    ],
+                    "x-nullable": true
+                },
+                "choices_map": {
+                    "title": "Choices map",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "aggregate": {
+                    "title": "Aggregate",
+                    "type": "object",
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "spans": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/EvalRollupSpan"
+                    }
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "boolean"
+                }
+            }
+        },
+        "EvalRollup": {
+            "required": [
+                "scope",
+                "evals"
+            ],
+            "type": "object",
+            "properties": {
+                "scope": {
+                    "title": "Scope",
+                    "type": "string",
+                    "enum": [
+                        "trace",
+                        "span"
+                    ]
+                },
+                "evals": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/EvalRollupEval"
+                    }
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "boolean"
+                }
+            }
+        },
+        "TraceDetailSpan": {
+            "required": [
+                "observation_span"
+            ],
+            "type": "object",
+            "properties": {
+                "observation_span": {
+                    "title": "Observation span",
+                    "type": "object"
+                },
+                "children": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "eval_scores": {
+                    "description": "Raw eval rows retained for backwards-compatible array consumers.",
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "eval_rollup": {
+                    "$ref": "#/definitions/EvalRollup"
+                },
+                "annotations": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                }
+            }
+        },
+        "TraceDetailResult": {
+            "required": [
+                "trace",
+                "observation_spans",
+                "summary",
+                "graph"
+            ],
+            "type": "object",
+            "properties": {
+                "trace": {
+                    "title": "Trace",
+                    "type": "object"
+                },
+                "observation_spans": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/TraceDetailSpan"
+                    }
+                },
+                "summary": {
+                    "title": "Summary",
+                    "type": "object"
+                },
+                "graph": {
+                    "title": "Graph",
+                    "type": "object"
+                }
+            }
+        },
+        "TraceDetailResponse": {
+            "required": [
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": true
+                },
+                "result": {
+                    "$ref": "#/definitions/TraceDetailResult"
                 }
             }
         },
@@ -158255,6 +158924,13 @@
         "TraceObserveListQuery": {
             "type": "object",
             "properties": {
+                "sort_params": {
+                    "title": "Sort params",
+                    "type": "string",
+                    "default": "[]",
+                    "minLength": 1,
+                    "description": "JSON-encoded list of sort params."
+                },
                 "project_id": {
                     "title": "Project id",
                     "type": "string",
@@ -158520,115 +159196,6 @@
                 "allow_sampled": {
                     "title": "Allow sampled",
                     "description": "Omit for backward-compatible complete bounded pages, which may label count as a lower bound. Send false to require an exact total. Send true to opt in explicitly to lower-bound totals and, on the first page, a clearly labelled bounded partial result when the full ordered prefix cannot be proven inside the read budget.",
-                    "type": "boolean"
-                }
-            }
-        },
-        "EvalRollupSpan": {
-            "required": [
-                "span_id"
-            ],
-            "type": "object",
-            "properties": {
-                "span_id": {
-                    "title": "Span id",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "span_name": {
-                    "title": "Span name",
-                    "type": "string"
-                },
-                "value": {
-                    "title": "Value",
-                    "type": "object",
-                    "x-nullable": true,
-                    "x-json-value": true,
-                    "description": "Any valid JSON value."
-                },
-                "explanation": {
-                    "title": "Explanation",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "error": {
-                    "title": "Error",
-                    "type": "boolean"
-                },
-                "status": {
-                    "title": "Status",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "eval_config_id": {
-                    "title": "Eval config id",
-                    "type": "string"
-                }
-            }
-        },
-        "EvalRollupEval": {
-            "required": [
-                "eval_config_id",
-                "eval_name",
-                "aggregate",
-                "spans"
-            ],
-            "type": "object",
-            "properties": {
-                "eval_config_id": {
-                    "title": "Eval config id",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "eval_name": {
-                    "title": "Eval name",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "output_type": {
-                    "title": "Output type",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "template_type": {
-                    "title": "Template type",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "target_type": {
-                    "title": "Target type",
-                    "type": "string",
-                    "enum": [
-                        "span",
-                        "trace"
-                    ],
-                    "x-nullable": true
-                },
-                "choices_map": {
-                    "title": "Choices map",
-                    "type": "object",
-                    "x-nullable": true,
-                    "x-json-value": true,
-                    "description": "Any valid JSON value."
-                },
-                "aggregate": {
-                    "title": "Aggregate",
-                    "type": "object",
-                    "x-json-value": true,
-                    "description": "Any valid JSON value."
-                },
-                "spans": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/EvalRollupSpan"
-                    }
-                },
-                "error": {
-                    "title": "Error",
                     "type": "boolean"
                 }
             }
@@ -159004,112 +159571,6 @@
                 },
                 "result": {
                     "$ref": "#/definitions/TraceVoiceCallDetailResult"
-                }
-            }
-        },
-        "EvalRollup": {
-            "required": [
-                "scope",
-                "evals"
-            ],
-            "type": "object",
-            "properties": {
-                "scope": {
-                    "title": "Scope",
-                    "type": "string",
-                    "enum": [
-                        "trace",
-                        "span"
-                    ]
-                },
-                "evals": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/EvalRollupEval"
-                    }
-                },
-                "error": {
-                    "title": "Error",
-                    "type": "boolean"
-                }
-            }
-        },
-        "TraceDetailSpan": {
-            "required": [
-                "observation_span"
-            ],
-            "type": "object",
-            "properties": {
-                "observation_span": {
-                    "title": "Observation span",
-                    "type": "object"
-                },
-                "children": {
-                    "type": "array",
-                    "items": {
-                        "type": "object"
-                    }
-                },
-                "eval_scores": {
-                    "description": "Raw eval rows retained for backwards-compatible array consumers.",
-                    "type": "array",
-                    "items": {
-                        "type": "object"
-                    }
-                },
-                "eval_rollup": {
-                    "$ref": "#/definitions/EvalRollup"
-                },
-                "annotations": {
-                    "type": "array",
-                    "items": {
-                        "type": "object"
-                    }
-                }
-            }
-        },
-        "TraceDetailResult": {
-            "required": [
-                "trace",
-                "observation_spans",
-                "summary",
-                "graph"
-            ],
-            "type": "object",
-            "properties": {
-                "trace": {
-                    "title": "Trace",
-                    "type": "object"
-                },
-                "observation_spans": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/TraceDetailSpan"
-                    }
-                },
-                "summary": {
-                    "title": "Summary",
-                    "type": "object"
-                },
-                "graph": {
-                    "title": "Graph",
-                    "type": "object"
-                }
-            }
-        },
-        "TraceDetailResponse": {
-            "required": [
-                "result"
-            ],
-            "type": "object",
-            "properties": {
-                "status": {
-                    "title": "Status",
-                    "type": "boolean",
-                    "default": true
-                },
-                "result": {
-                    "$ref": "#/definitions/TraceDetailResult"
                 }
             }
         },

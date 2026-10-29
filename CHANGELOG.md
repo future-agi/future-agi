@@ -1,5 +1,39 @@
 # Changelog
 
+## [1.55.0](https://github.com/future-agi/future-agi/compare/v1.54.0...v1.55.0) (2026-10-27)
+
+
+### Features
+
+* **error-feed:** export an issue's traces as a dataset-ready CSV ([72b59a8](https://github.com/future-agi/future-agi/commit/72b59a87d5be084a64da48595295d8349becdba2))
+* **error-feed:** export an issue's traces as a dataset-ready CSV ([57f68c8](https://github.com/future-agi/future-agi/commit/57f68c89effdcef642516661c7a5dfe0ae112914))
+* **error-feed:** open the share dialog from the issue page ([231374b](https://github.com/future-agi/future-agi/commit/231374b761a0731657e7250ef2a050564562081d))
+* **error-feed:** share an issue through a shared link ([a6ec656](https://github.com/future-agi/future-agi/commit/a6ec6565c6ae175cee1aab9e98974d88e96a599f))
+* **shared:** read one trace inside a shared Error Feed issue ([6e0aad3](https://github.com/future-agi/future-agi/commit/6e0aad3f41120f89118ba065bd35dcb869a962ff))
+* **shared:** read-only shared Error Feed issue page ([ef5ccfe](https://github.com/future-agi/future-agi/commit/ef5ccfeb3ec09c33e70dc39f131441fb52c4feb0))
+
+
+### Bug Fixes
+
+* **contracts:** validate the shared sidebar query and match CI's swagger order ([b7d5db2](https://github.com/future-agi/future-agi/commit/b7d5db2e8373fdec1376290360c99b47a4d7601f))
+* **error-feed:** copy the cluster ID from the issue page header ([d0887e7](https://github.com/future-agi/future-agi/commit/d0887e7bf11e546508cbc4d7ea696e2101ffe2cd))
+* **error-feed:** share an Error Feed issue, hotfix to main [TH-8796] ([6da856d](https://github.com/future-agi/future-agi/commit/6da856dc5c25030ed677261062540670bae2a7aa))
+* **error-feed:** show a check on Copy cluster ID instead of a toast ([3983cef](https://github.com/future-agi/future-agi/commit/3983cef6147587a7ea7a2878ad4cc03f81333b63))
+* **shared:** fit the hotfix onto main ([b69f98d](https://github.com/future-agi/future-agi/commit/b69f98dfb0851c47846f16b2fed4aba29da31596))
+* **shared:** no generic error toast over the shared page's own error screen ([d138caa](https://github.com/future-agi/future-agi/commit/d138caaa44c907d45a990272fd3a77c75dc36f02))
+* **shared:** review fixes for the shared Error Feed issue ([205a8f3](https://github.com/future-agi/future-agi/commit/205a8f3059cf664230e9b4e2512f45f1243ff29e))
+* **shared:** review round 1 for the shared Error Feed issue ([f663db7](https://github.com/future-agi/future-agi/commit/f663db7cdd2cb5dd883c408df44ba640cda00e1c))
+* **shared:** show the right shared-link error and keep signed-out viewers on the page ([037a337](https://github.com/future-agi/future-agi/commit/037a3376b72fcef2ace982360153169fed3a56ac))
+* **shared:** show the saved analysis in the real Fix tab and stop cutting short IDs ([589c1f1](https://github.com/future-agi/future-agi/commit/589c1f195b46a7dbc692ba29f4a8a009d2a2ef73))
+
+## [1.54.0](https://github.com/future-agi/future-agi/compare/v1.53.0...v1.54.0) (2026-10-22)
+
+
+### Features
+
+* **simulate:** agent layer and voice observability, phase 1 (TH-7957) ([be6f2f3](https://github.com/future-agi/future-agi/commit/be6f2f3329cfef991d6dea4e6b2c877191d63946))
+* **simulate:** real data and designer updates on the environment detail page [TH-8684] ([4428549](https://github.com/future-agi/future-agi/commit/44285494beb2797506c7394f52e7383300019ace))
+
 ## [1.53.0](https://github.com/future-agi/future-agi/compare/v1.52.0...v1.53.0) (2026-10-21)
 
 

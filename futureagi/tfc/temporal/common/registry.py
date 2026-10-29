@@ -30,6 +30,8 @@ TEMPORAL_ACTIVITY_MODULES = [
     "tfc.temporal.agent_prompt_optimiser.eval_activities",
     # Background tasks (post-registration, huggingface, etc.)
     "tfc.temporal.background_tasks.activities",
+    # agentcc gateway alert emails
+    "agentcc.services.email_sender",
     # model_hub tasks
     "model_hub.tasks.run_prompt",
     "model_hub.tasks.experiment_runner",

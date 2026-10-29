@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "6aeb59043498588ab0a7768fb3c2c0926c3fdb83a58872c6d59f91a275803882",
-  "tool_count": 105,
+  "source_contract_sha256": "3cff96b2e73f3edb044f39dce6b253b55bce1d1df1a5e0333fe57cbcf5a7826d",
+  "tool_count": 107,
   "tools": [
     {
       "name": "whoami",
@@ -3627,6 +3627,11 @@
       "inputSchema": {
         "type": "object",
         "properties": {
+          "sort_params": {
+            "type": "string",
+            "default": "[]",
+            "minLength": 1
+          },
           "project_id": {
             "type": "string",
             "format": "uuid"
@@ -3692,6 +3697,7 @@
         "parameters": {
           "path": [],
           "query": [
+            "sort_params",
             "project_id",
             "project_version_id",
             "session_id",
@@ -5691,7 +5697,7 @@
     },
     {
       "name": "get_error_cluster",
-      "description": "Return an error issue and its grouped trace information.",
+      "description": "Return an error issue, its grouped trace information and its stored root-cause analysis. `rca` holds the synthesis, the recommended fix, a confidence and the evidence trace ids; it stays empty (analyzed_at null) until someone runs Analyze Cluster on the issue in the Error Feed. The step-by-step investigation trail is left out because it exceeds the MCP response size limit; read the evidence traces with get_trace instead.",
       "group": "error_feed",
       "inputSchema": {
         "type": "object",
@@ -5729,10 +5735,115 @@
         }
       },
       "response": {
-        "unwrap": "result"
+        "unwrap": "result",
+        "omit": [
+          "rca.trace"
+        ]
       },
       "source": {
         "operationId": "tracer_feed_issues_read"
+      }
+    },
+    {
+      "name": "get_error_cluster_overview",
+      "description": "Return a cluster's pattern summary - the statistical insights that separate its failing traces from the passing baseline - plus its daily error counts and representative traces with their evidence and agent flow. Representative traces carry inputs, outputs and conversation reels, and long conversations can push the response past the MCP size limit, so start with rep_limit=3. If even rep_limit=1 is too large, read list_error_cluster_traces instead - the pattern summary is not available in a smaller form.",
+      "group": "error_feed",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "cluster_id": {
+            "type": "string"
+          },
+          "rep_limit": {
+            "type": "integer",
+            "default": 20,
+            "minimum": 1,
+            "maximum": 20
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "cluster_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/tracer/feed/issues/{cluster_id}/overview/",
+        "parameters": {
+          "path": [
+            "cluster_id"
+          ],
+          "query": [
+            "rep_limit"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "tracer_feed_issues_overview_list"
+      }
+    },
+    {
+      "name": "list_error_cluster_traces",
+      "description": "List the traces grouped into a cluster with each one's score, latency, tokens and cost, alongside cluster-wide aggregates. Use the returned trace ids with get_trace.",
+      "group": "error_feed",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "cluster_id": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 50,
+            "minimum": 1,
+            "maximum": 100
+          },
+          "offset": {
+            "type": "integer",
+            "default": 0,
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "cluster_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/tracer/feed/issues/{cluster_id}/traces/",
+        "parameters": {
+          "path": [
+            "cluster_id"
+          ],
+          "query": [
+            "limit",
+            "offset"
+          ],
+          "body": []
+        }
+      },
+      "response": {
+        "unwrap": "result"
+      },
+      "source": {
+        "operationId": "tracer_feed_issues_traces_list"
       }
     },
     {
