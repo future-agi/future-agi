@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Box, ButtonBase, Stack, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { SectionCard } from "../components/primitives";
@@ -28,6 +29,7 @@ import { firstSnapshotOfWorld } from "../_mock/envSnapshot";
 import BuildStreamNote from "../environments/BuildStreamNote";
 import SourcesSection from "./data/SourcesSection";
 import IdentityMapCard from "./IdentityMapCard";
+import SandboxPreviewDrawer from "./SandboxPreviewDrawer";
 
 /**
  * The world — the data and tool answers a run executes against.
@@ -90,6 +92,19 @@ export default function WorldPanel({
   buildProgress = null,
   buildDone = null,
 }) {
+  /* The sandbox preview opens from here, or from the header's ⋯ (?sandbox=1). */
+  const [params, setParams] = useSearchParams();
+  const sandboxOpen = params.get("sandbox") === "1";
+  const setSandbox = (on) =>
+    setParams(
+      (cur) => {
+        const next = new URLSearchParams(cur);
+        if (on) next.set("sandbox", "1");
+        else next.delete("sandbox");
+        return next;
+      },
+      { replace: true },
+    );
   /* On the build screen: the world fills in as it's built — each tool's row
      once its handler is written, the rest once the world is done. */
   const inBuild = Array.isArray(buildDone) && !buildDone.includes("build");
@@ -189,6 +204,14 @@ export default function WorldPanel({
 
   return (
     <Box sx={{ p: 2 }}>
+      <SandboxPreviewDrawer
+        open={sandboxOpen}
+        onClose={() => setSandbox(false)}
+        env={env}
+        envState={envState}
+        patch={patch}
+        locked={locked}
+      />
       {/* One line above the world: what the agent calls against what the world
           answers, and how to add more — then, quieter on the right, the kind of
           proof a run is and where the world lives in the repo (each explained
@@ -225,6 +248,23 @@ export default function WorldPanel({
             Add tools from an MCP server
           </ButtonBase>
         )}
+        <ButtonBase
+          onClick={() => setSandbox(true)}
+          sx={{
+            ...focusRing,
+            typography: "s2",
+            fontWeight: 600,
+            color: "text.primary",
+            textDecoration: "underline",
+            textUnderlineOffset: 3,
+            textDecorationColor: (t) => t.palette.text.disabled,
+            borderRadius: "4px",
+            flexShrink: 0,
+            "&:hover": { textDecorationColor: "currentColor" },
+          }}
+        >
+          Try in sandbox
+        </ButtonBase>
         <Box flex={1} />
         <EnvironmentKindNote env={env} envState={envState} compact />
         {origin && (

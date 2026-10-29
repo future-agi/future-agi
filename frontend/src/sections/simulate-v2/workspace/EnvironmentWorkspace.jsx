@@ -2469,6 +2469,34 @@ export default function EnvironmentWorkspace() {
                   </Typography>
                 </Box>
               </MenuItem>
+              <MenuItem
+                onClick={() => {
+                  setActionsAnchor(null);
+                  navigate(
+                    `${paths.dashboard.simulate.environmentStep(envId, "world")}?sandbox=1`,
+                  );
+                }}
+                sx={{
+                  gap: 1,
+                  py: 1,
+                  alignItems: "flex-start",
+                  whiteSpace: "normal",
+                }}
+              >
+                <Iconify
+                  icon="solar:play-circle-linear"
+                  width={16}
+                  sx={{ flexShrink: 0, mt: "2px", color: "text.secondary" }}
+                />
+                <Box>
+                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                    Try in sandbox
+                  </Typography>
+                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                    Act as the agent and watch the world. Not a run.
+                  </Typography>
+                </Box>
+              </MenuItem>
               {!releaseUpdateOf(env, envState) &&
                 releaseUpdateOf(env, envState, { includeSkipped: true }) && (
                   <MenuItem
