@@ -146,6 +146,15 @@ export const AGENT_TYPES = {
   VOICE: "voice",
 };
 
+export const SIMULATION_TYPE_LABELS = {
+  [AGENT_TYPES.CHAT]: "Chat",
+  [AGENT_TYPES.VOICE]: "Call",
+};
+
+export const getSimulationTypeLabel = (simulationCallType) =>
+  SIMULATION_TYPE_LABELS[simulationCallType] ??
+  SIMULATION_TYPE_LABELS[AGENT_TYPES.VOICE];
+
 export const VOICE_CHAT_PROVIDERS = [
   { label: "Vapi", value: "vapi" },
   { label: "Retell", value: "retell" },
