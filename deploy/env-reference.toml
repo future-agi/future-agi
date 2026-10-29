@@ -721,6 +721,12 @@ the default backend ([Backend variants](/docs/self-hosting/images#backend-varian
     text = "`true` tells an environment when its agent or environment version changed and offers a rebuild. Turn it on together with `HARNESS_BUNDLE_CERTIFY_ENABLED`, after `HARNESS_VERSIONING_ENABLED`, once the sandbox template carries an agent-learning-kit release that supports versioning."
 
     [[part.section.row]]
+    keys = ["HARNESS_SOURCE_SUBFOLDER_ENABLED"]
+    default = "`false`"
+    setups = ["S", "D", "H"]
+    text = "`true` lets a GitHub build name the folder of the agent inside the repository (`source.subfolder`). Turn it on only once the sandbox template carries an agent-learning-kit release that reads `subfolder`; before that a build would silently use the repository root, so the field is refused."
+
+    [[part.section.row]]
     keys = ["HARNESS_BUNDLE_CERTIFY_ENABLED"]
     default = "`false`"
     setups = ["S", "D", "H"]

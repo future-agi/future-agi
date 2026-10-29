@@ -11,6 +11,7 @@ from rest_framework.test import APIClient
 from accounts.models import Organization
 from simulate.models import (
     AgentDefinition,
+    AgentVersion,
     HostedHarnessAttempt,
     HostedHarnessJob,
     HostedHarnessReceipt,
@@ -702,3 +703,59 @@ def test_each_environment_run_records_the_latest_version_at_launch(user, workspa
     assert after.test_execution.agent_version_id == second.id
     environment.run_test.refresh_from_db()
     assert environment.run_test.agent_version_id is None
+
+
+def test_bulk_delete_refuses_a_tested_agent_and_deletes_nothing(
+    auth_client, organization, workspace
+):
+    tested = _agent(organization, workspace, "tested")
+    _environment(tested, 1)
+    idle = _agent(organization, workspace, "idle")
+
+    response = auth_client.delete(
+        "/simulate/agent-definitions/",
+        {"agent_ids": [str(idle.id), str(tested.id)]},
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert "tested is tested by 1 environment" in response.json()["error"]
+    assert (
+        AgentDefinition.objects.filter(
+            id__in=[idle.id, tested.id], deleted=False
+        ).count()
+        == 2
+    )
+
+
+def test_an_agent_version_cannot_be_deleted(auth_client, organization, workspace):
+    agent = _agent(organization, workspace, "kept")
+    version = agent.create_version(description="p", commit_message="v1")
+
+    response = auth_client.delete(
+        f"/simulate/agent-definitions/{agent.id}/versions/{version.id}/delete/"
+    )
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+    assert AgentVersion.objects.filter(id=version.id, deleted=False).exists()
+
+
+def test_overview_reports_the_environment_pin_not_the_latest_version(
+    organization, workspace
+):
+    from simulate.services.harness_environment import _agent as overview_agent
+
+    agent = _agent(organization, workspace, "pinned")
+    first = agent.create_version(description="p", commit_message="v1", status="active")
+    agent.create_version(description="p2", commit_message="v2", status="active")
+    environment = _environment(agent, 1)
+
+    assert overview_agent(environment)["active_version"] == "v2"
+
+    HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+        agent_version=first
+    )
+    environment.refresh_from_db()
+
+    assert overview_agent(environment)["active_version"] == "v1"
+    assert overview_agent(environment)["versions_count"] == 2

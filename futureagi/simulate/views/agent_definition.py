@@ -223,11 +223,16 @@ class AgentDefinitionView(APIView):
             agent_ids = request.validated_data["agent_ids"]
 
             with transaction.atomic():
-                updated_agents = AgentDefinition.objects.filter(
+                agents = AgentDefinition.objects.filter(
                     id__in=agent_ids,
                     organization=getattr(request, "organization", None)
                     or request.user.organization,
-                ).update(deleted=True, deleted_at=timezone.now())
+                )
+                for agent in agents:
+                    refusal = tested_agent_refusal(agent)
+                    if refusal:
+                        return self._gm.bad_request(refusal)
+                updated_agents = agents.update(deleted=True, deleted_at=timezone.now())
 
                 updated_versions = AgentVersion.objects.filter(
                     agent_definition_id__in=agent_ids,

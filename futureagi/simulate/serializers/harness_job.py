@@ -20,6 +20,10 @@ from tfc.utils.serializer_fields import JsonValueField
 
 _LOOPBACK_ENDPOINT_RE = re.compile(r"(?:localhost|127\.0\.0\.1|\[::1\]):\d+")
 
+# A folder inside the repository, relative to its root: no leading slash, no "." or
+# ".." segment, no empty segment, no trailing slash. Empty means the root.
+SUBFOLDER_PATTERN = r"^(?!/)(?!.*(^|/)\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$"
+
 RUNNER_RESERVED_ENVIRONMENT = {
     "DOCKER_HOST",
     "FI_API_KEY",
@@ -105,6 +109,13 @@ class HarnessSourceSerializer(serializers.Serializer):
     installation_id = serializers.CharField(
         max_length=255, required=False, allow_null=True
     )
+    subfolder = serializers.RegexField(
+        SUBFOLDER_PATTERN,
+        max_length=512,
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+    )
     archive_artifact_id = serializers.UUIDField(required=False, allow_null=True)
     endpoint = serializers.URLField(required=False, allow_null=True)
     visibility = serializers.ChoiceField(
@@ -120,6 +131,16 @@ class HarnessSourceSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         kind = attrs["kind"]
+        if attrs.get("subfolder") and kind != "github":
+            raise serializers.ValidationError(
+                {"subfolder": "only a github source names a folder"}
+            )
+        if attrs.get("subfolder") and not getattr(
+            settings, "HARNESS_SOURCE_SUBFOLDER_ENABLED", False
+        ):
+            raise serializers.ValidationError(
+                {"subfolder": "not supported yet; builds use the repository root"}
+            )
         if kind == "github":
             if not attrs.get("repository"):
                 raise serializers.ValidationError(

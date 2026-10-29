@@ -956,13 +956,16 @@ def _agent(job: HostedHarnessJob) -> dict[str, Any] | None:
     definition = getattr(run_test, "agent_definition", None)
     if definition is None:
         return None
-    latest = definition.latest_version
+    # The environment's own pin; an unpinned environment runs the agent's active version.
+    version = job.agent_version or definition.active_version
+    if version is not None and version.agent_definition_id != definition.id:
+        version = definition.active_version
     return {
         "id": str(definition.id),
         "name": definition.agent_name or None,
         "provider": definition.provider or None,
         "versions_count": definition.version_count,
-        "active_version": f"v{latest.version_number}" if latest else None,
+        "active_version": f"v{version.version_number}" if version else None,
     }
 
 

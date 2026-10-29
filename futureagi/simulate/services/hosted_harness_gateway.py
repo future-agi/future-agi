@@ -51,6 +51,7 @@ from simulate.services.hosted_harness import (
     HostedHarnessError,
     activate_attempt_capability,
     finish_deferred_delete,
+    platform_set_failure,
     record_cleanup,
     register_attempt,
     request_cancellation,
@@ -4515,7 +4516,7 @@ class HostedHarnessGateway:
             )
             cause = guest_failure_cause(guest_logs)
             attempt.terminal_stage = "failed"
-            attempt.terminal_failure = {
+            attempt.terminal_failure = platform_set_failure(attempt) or {
                 "domain": "environment" if authoring_invalid else "infrastructure",
                 "stage": "validating_environment"
                 if exit_code == 78

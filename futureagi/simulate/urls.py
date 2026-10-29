@@ -99,7 +99,6 @@ from .views.agent_version import (
     AgentVersionEvalSummaryView,
     AgentVersionListView,
     CreateAgentVersionView,
-    DeleteAgentVersionView,
     RestoreAgentVersionView,
 )
 from .views.alk_simulate_ingestion import ALKSimulateIngestionViewSet
@@ -305,11 +304,6 @@ urlpatterns = [
         "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/activate/",
         ActivateAgentVersionView.as_view(),
         name="agent-versions-activate",
-    ),
-    path(
-        "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/delete/",
-        DeleteAgentVersionView.as_view(),
-        name="agent-versions-delete",
     ),
     path(
         "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/restore/",

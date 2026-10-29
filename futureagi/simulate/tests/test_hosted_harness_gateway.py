@@ -2885,6 +2885,61 @@ def test_reconcile_reads_the_refusal_file_before_the_exit_code(
         assert attempt.terminal_failure["domain"] == "infrastructure"
 
 
+@pytest.mark.django_db
+def test_reconcile_keeps_a_failure_the_platform_set_over_a_crash_exit(
+    organization, monkeypatch
+):
+    from simulate.services.hosted_harness import (
+        _fail_attempt_from_platform,
+        record_cleanup,
+    )
+
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(organization, payload, idempotency_key="kept-gateway")
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = _Daytona()
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = ""
+    captured = {}
+
+    def _fake_delete(attempt, *, retry_pending=False):
+        captured["retry_pending"] = retry_pending
+        return record_cleanup(
+            attempt.id,
+            provider_ref=str(attempt.provider_ref),
+            verified_absent=True,
+            retry_pending=retry_pending,
+            details={"provider": "test"},
+        )
+
+    monkeypatch.setattr(gateway, "_delete_and_record", _fake_delete)
+    acquire = patch(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        return_value=(b"archive", ""),
+    )
+    with acquire:
+        attempt = gateway.launch(job, endpoint_base_url="https://platform.example.com")
+    _fail_attempt_from_platform(
+        attempt,
+        stage="understanding_agent",
+        code="subfolder_ignored",
+        message="the harness read the repository root",
+    )
+    monkeypatch.setattr(gateway, "inspect", lambda _: {"exit_code": 1, "logs": ""})
+
+    job = gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    assert attempt.terminal_failure["code"] == "subfolder_ignored"
+    assert job.failure["code"] == "subfolder_ignored"
+    assert job.state == HostedHarnessJob.State.FAILED
+
+
 def test_read_refusal_file_tells_absent_from_malformed():
     from simulate.services.hosted_harness_gateway import _read_refusal_file
 

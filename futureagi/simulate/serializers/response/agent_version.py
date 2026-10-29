@@ -165,15 +165,6 @@ class AgentVersionActivateResponseSerializer(serializers.Serializer):
     version = AgentVersionResponseSerializer(read_only=True)
 
 
-class AgentVersionDeleteResponseSerializer(serializers.Serializer):
-    """
-    Response serializer for DELETE /agent-definitions/{id}/versions/{id}/delete/.
-    Shape: {"message": "..."}
-    """
-
-    message = serializers.CharField(read_only=True)
-
-
 class AgentVersionRestoreResponseSerializer(serializers.Serializer):
     """
     Response serializer for POST /agent-definitions/{id}/versions/{id}/restore/.

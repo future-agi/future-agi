@@ -1428,6 +1428,88 @@ def _apply_parallelism_admission(
     return admitted
 
 
+BUILD_PIN_KEY = "build_agent_version_id"
+
+
+def _freeze_build_pin(job: HostedHarnessJob) -> None:
+    """Keep the agent version a build is tied to on its first attempt, so a retry and
+    the write-back land on it even when the environment's default moves meanwhile."""
+    if job.environment_id is not None or job.test_execution_id is not None:
+        return
+    from simulate.services.harness_agent_versions import agent_pin_candidate
+
+    pinned = job.agent_version_id or getattr(agent_pin_candidate(job), "id", None)
+    if pinned is None:
+        return
+    metadata = dict((job.payload or {}).get("metadata") or {})
+    metadata[BUILD_PIN_KEY] = str(pinned)
+    job.payload = {**(job.payload or {}), "metadata": metadata}
+
+
+def frozen_build_pin(job: HostedHarnessJob) -> AgentVersion | None:
+    """The version a build was frozen on, or None for a build made before pins."""
+    pinned = ((job.payload or {}).get("metadata") or {}).get(BUILD_PIN_KEY)
+    if not pinned:
+        return None
+    return AgentVersion._base_manager.filter(id=pinned).first()
+
+
+def platform_set_failure(attempt: HostedHarnessAttempt) -> dict[str, Any] | None:
+    """A failure the platform put on the attempt itself, which the guest's later
+    terminal event or exit code must not replace."""
+    failure = attempt.terminal_failure
+    if isinstance(failure, dict) and (failure.get("details") or {}).get(
+        "set_by"
+    ) == "platform":
+        return failure
+    return None
+
+
+def _fail_attempt_from_platform(
+    attempt: HostedHarnessAttempt, *, stage: str, code: str, message: str
+) -> None:
+    attempt.terminal_stage = "failed"
+    attempt.terminal_failure = {
+        "domain": "infrastructure",
+        "stage": stage,
+        "code": code,
+        "message": message,
+        "retryable": False,
+        "details": {"set_by": "platform"},
+    }
+    attempt.save(update_fields=["terminal_stage", "terminal_failure", "updated_at"])
+
+
+def _check_subfolder_echo(
+    attempt: HostedHarnessAttempt, payload: dict[str, Any]
+) -> None:
+    """A build that named a folder must hear the harness used it; an older harness
+    that built the repository root instead is an infrastructure failure, not a result."""
+    job = attempt.job
+    expected = str((job.payload.get("source") or {}).get("subfolder") or "")
+    sent = payload.get("agent")
+    if not expected or not isinstance(sent, dict):
+        return
+    extension = (sent.get("agent") or {}).get("extension") or {}
+    echoed = (extension.get("source") or {}).get("subfolder")
+    if echoed == expected:
+        return
+    _fail_attempt_from_platform(
+        attempt,
+        stage="understanding_agent",
+        code="subfolder_ignored",
+        message=(
+            f"the build asked for folder {expected!r} but the harness read "
+            + (f"{echoed!r}" if echoed else "the repository root")
+        ),
+    )
+    raise HostedHarnessError(
+        "subfolder_ignored",
+        "the harness did not build from the requested folder",
+        status_code=422,
+    )
+
+
 def register_attempt(
     job_id: uuid.UUID | str,
     *,
@@ -1480,6 +1562,8 @@ def register_attempt(
             snapshot_digest=snapshot_digest,
         )
         job.current_attempt_number = attempt_number
+        if attempt_number == 1:
+            _freeze_build_pin(job)
         job.state = HostedHarnessJob.State.PROVISIONING
         # A retry is a fresh active attempt. Do not keep presenting the previous
         # attempt's terminal state while Daytona is launching (or even running)
@@ -1497,6 +1581,7 @@ def register_attempt(
         job.save(
             update_fields=[
                 "current_attempt_number",
+                "payload",
                 "state",
                 "current_stage",
                 "failure",
@@ -1966,6 +2051,7 @@ def provision_scenarios(
                 for persona, row in zip(payload["personas"], dataset_rows, strict=True)
             ]
         _record_target_agent_facts(locked, agent_definition, payload)
+        _check_subfolder_echo(attempt, payload)
         stored = _store_authored_agent(locked, agent_definition, payload)
         _turn_on_observability(locked, agent_definition, payload, stored)
         from simulate.services.harness_agent_versions import fill_agent_pin
@@ -2214,8 +2300,11 @@ def _store_authored_agent(
         with transaction.atomic():
             from simulate.services.harness_agent_versions import agent_pin_candidate
 
-            # An unpinned environment stores on the version it is about to be pinned to.
-            pinned = job.agent_version or agent_pin_candidate(job)
+            # The build's frozen pin; an unpinned environment made before pins stores
+            # on the version it is about to be pinned to.
+            pinned = (
+                frozen_build_pin(job) or job.agent_version or agent_pin_candidate(job)
+            )
             version = (
                 pinned
                 if pinned is not None

@@ -1121,6 +1121,11 @@ HARNESS_BUNDLE_CERTIFY_ENABLED = os.getenv(
 HARNESS_VERSIONING_NUDGES_ENABLED = os.getenv(
     "HARNESS_VERSIONING_NUDGES_ENABLED", ""
 ).lower() in ("1", "true", "yes")
+# Accepting source.subfolder on a build; only once the sandbox's agent-learning-kit
+# reads it, else the harness would silently build from the repository root.
+HARNESS_SOURCE_SUBFOLDER_ENABLED = os.getenv(
+    "HARNESS_SOURCE_SUBFOLDER_ENABLED", ""
+).lower() in ("1", "true", "yes")
 # Most scenarios × trials one simulation Run may submit.
 HARNESS_MAX_EXECUTIONS_PER_RUN = int(os.getenv("HARNESS_MAX_EXECUTIONS_PER_RUN", "200"))
 # Each profile is an operator-certified size/connector/snapshot combination.
