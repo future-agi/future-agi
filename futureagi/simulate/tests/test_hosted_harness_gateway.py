@@ -2795,6 +2795,159 @@ def test_reconcile_terminal_and_authoring_exits_never_retry(
         assert attempt.terminal_failure["code"] == "authoring_runtime_validation_failed"
 
 
+def _refusal(**overrides):
+    return {
+        "domain": "agent",
+        "stage": "understanding_agent",
+        "code": "agent_type_unsupported",
+        "message": "browser agents are not supported yet",
+        "retryable": False,
+        "details": {"agent_type": "browser"},
+        **overrides,
+    }
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("refusal_file", "expected_code", "expected_retry"),
+    [
+        (_refusal(), "agent_type_unsupported", False),
+        (
+            _refusal(code="subfolder_not_found", stage="acquiring_source"),
+            "subfolder_not_found",
+            False,
+        ),
+        (
+            _refusal(code="source_unreachable", retryable=True),
+            "source_unreachable",
+            True,
+        ),
+        (_refusal(retryable="no"), "guest_crashed", True),
+        (_refusal(domain="nowhere"), "guest_crashed", True),
+        ("invalid", "guest_crashed", True),
+        (None, "guest_crashed", True),
+    ],
+)
+def test_reconcile_reads_the_refusal_file_before_the_exit_code(
+    organization, monkeypatch, refusal_file, expected_code, expected_retry
+):
+    from simulate.services.hosted_harness import record_cleanup
+
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(organization, payload, idempotency_key="refusal-gateway")
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = _Daytona()
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = ""
+    captured = {}
+
+    def _fake_delete(attempt, *, retry_pending=False):
+        captured["retry_pending"] = retry_pending
+        return record_cleanup(
+            attempt.id,
+            provider_ref=str(attempt.provider_ref),
+            verified_absent=True,
+            retry_pending=retry_pending,
+            details={"provider": "test"},
+        )
+
+    monkeypatch.setattr(gateway, "_delete_and_record", _fake_delete)
+    acquire = patch(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        return_value=(b"archive", ""),
+    )
+    with acquire:
+        attempt = gateway.launch(job, endpoint_base_url="https://platform.example.com")
+    monkeypatch.setattr(
+        gateway,
+        "inspect",
+        lambda _: {"exit_code": 1, "logs": "", "refusal_file": refusal_file},
+    )
+
+    gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    assert attempt.state == HostedHarnessAttempt.State.FAILED
+    assert attempt.terminal_failure["code"] == expected_code
+    assert captured["retry_pending"] is expected_retry
+    if expected_code != "guest_crashed":
+        assert attempt.terminal_failure["domain"] == refusal_file["domain"]
+        assert attempt.terminal_failure["stage"] == refusal_file["stage"]
+        assert attempt.terminal_failure["message"] == refusal_file["message"]
+        assert attempt.terminal_failure["retryable"] is refusal_file["retryable"]
+        assert attempt.terminal_failure["details"] == refusal_file["details"]
+    else:
+        assert attempt.terminal_failure["domain"] == "infrastructure"
+
+
+def test_read_refusal_file_tells_absent_from_malformed():
+    from simulate.services.hosted_harness_gateway import _read_refusal_file
+
+    def _sandbox(body):
+        def download(path, timeout=None):
+            assert path == "/work/authoring/failure.json"
+            if body is None:
+                raise FileNotFoundError(path)
+            return body
+
+        return SimpleNamespace(fs=SimpleNamespace(download_file=download))
+
+    assert _read_refusal_file(_sandbox(None)) is None
+    assert _read_refusal_file(_sandbox(b"")) is None
+    assert _read_refusal_file(_sandbox(b"not json")) == "invalid"
+    assert _read_refusal_file(_sandbox(b"\xff\xfe")) == "invalid"
+    assert _read_refusal_file(_sandbox(json.dumps(_refusal()).encode())) == _refusal()
+
+
+@pytest.mark.django_db
+def test_inspect_reads_the_refusal_file_only_on_a_failed_exit(
+    organization, monkeypatch
+):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="inspect-refusal"
+    )
+    attempt = register_attempt(
+        job.id,
+        endpoint_base_url="https://platform.example.com",
+        provider_ref="sandbox-1",
+        snapshot_name="alk-hosted-v1",
+    ).attempt
+    client = _Daytona()
+    process = client.sandbox.process
+    reads = []
+
+    def download(path, timeout=None):
+        reads.append(path)
+        if path == "/work/authoring/failure.json":
+            return json.dumps(_refusal()).encode()
+        return b"command-1"
+
+    client.sandbox.fs.download_file = download
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway.HostedHarnessGateway._capture_diagnostics",
+        lambda *args, **kwargs: None,
+    )
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = client
+
+    assert "refusal_file" not in gateway.inspect(attempt)
+    process.command_exit_code = 0
+    process.command_status = "finished"
+    assert "refusal_file" not in gateway.inspect(attempt)
+    assert "/work/authoring/failure.json" not in reads
+
+    process.command_exit_code = 1
+    observation = gateway.inspect(attempt)
+
+    assert observation["exit_code"] == 1
+    assert observation["refusal_file"] == _refusal()
+
+
 @pytest.mark.django_db
 def test_reconcile_legacy_authoring_exit_is_not_reported_as_guest_crash(
     organization, monkeypatch

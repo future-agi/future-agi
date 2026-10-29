@@ -3438,6 +3438,8 @@ class HostedHarnessGateway:
         if capture is not None:
             observation["logs"] = capture.entrypoint_log[-8000:]
             observation["process_logs"] = capture.process_logs[-16000:]
+        if command.exit_code:
+            observation["refusal_file"] = _read_refusal_file(sandbox)
         if command.exit_code is not None:
             # Keep the bounded failure tails in the worker log as well as the durable S3
             # snapshot so an operator can diagnose a run from either surface.
@@ -4430,7 +4432,31 @@ class HostedHarnessGateway:
                 ]
             )
         retry_pending = False
-        if exit_code == 3:
+        refusal = None
+        if exit_code and not attempt.terminal_event_received:
+            refusal = refusal_failure(observation)
+            if refusal is None and observation.get("refusal_file") is not None:
+                logger.warning(
+                    "refusal_file_invalid attempt=%s exit_code=%s",
+                    attempt.id,
+                    exit_code,
+                )
+        if refusal is not None:
+            attempt.terminal_stage = "failed"
+            attempt.terminal_failure = refusal
+            attempt.state = HostedHarnessAttempt.State.FAILED
+            attempt.save(
+                update_fields=[
+                    "terminal_stage",
+                    "terminal_failure",
+                    "state",
+                    "updated_at",
+                ]
+            )
+            retry_pending = refusal["retryable"] and self._should_retry(
+                attempt, "infrastructure"
+            )
+        elif exit_code == 3:
             attempt.state = HostedHarnessAttempt.State.SUPERSEDED
             attempt.save(update_fields=["state", "updated_at"])
         elif exit_code == 4 and (
@@ -5108,6 +5134,41 @@ def _secret_safe(value: Any, *, key: str = "") -> Any:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     return str(value)
+
+
+_REFUSAL_FILE = "/work/authoring/failure.json"
+_REFUSAL_FILE_INVALID = "invalid"
+
+
+def _read_refusal_file(sandbox) -> Any:
+    """The failure the guest wrote before exiting: None, the parsed object, or invalid."""
+    try:
+        body = sandbox.fs.download_file(_REFUSAL_FILE, _PROGRESS_FILE_TIMEOUT_SECONDS)
+    except Exception:  # noqa: BLE001 - no file is the ordinary case
+        return None
+    if not body:
+        return None
+    try:
+        return json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return _REFUSAL_FILE_INVALID
+
+
+def refusal_failure(observation: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The guest's declared failure, validated; None when absent or malformed."""
+    from simulate.serializers.hosted_harness import HarnessFailureSerializer
+
+    value = observation.get("refusal_file")
+    if not isinstance(value, dict):
+        return None
+    serializer = HarnessFailureSerializer(data=value)
+    if not serializer.is_valid():
+        return None
+    retryable = value.get("retryable", False)
+    details = value.get("details", {})
+    if not isinstance(retryable, bool) or not isinstance(details, dict):
+        return None
+    return {**serializer.validated_data, "retryable": retryable, "details": details}
 
 
 def _read_harness_usage(attempt: HostedHarnessAttempt, sandbox) -> None:
