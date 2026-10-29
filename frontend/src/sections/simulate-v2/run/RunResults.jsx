@@ -1363,6 +1363,15 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
               return src ? ` · continues run ${src.ordinal}` : "";
             })()}
             {(() => {
+              /* A reviewed eligible subset: the requested count stays the denominator. */
+              const c = (envState.runs || []).find(
+                (r) => r.id === runId,
+              )?.compat;
+              return c && c.requested > c.evaluated
+                ? ` · ${c.evaluated} evaluated / ${c.requested} requested`
+                : "";
+            })()}
+            {(() => {
               /* Tools answered from an earlier run's recording. */
               const of = (envState.runs || []).find(
                 (r) => r.id === runId,

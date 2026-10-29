@@ -3,6 +3,7 @@ import PropTypes from "prop-types";
 import {
   Box,
   Button,
+  Checkbox,
   Collapse,
   Dialog,
   DialogActions,
@@ -44,6 +45,8 @@ import {
   runLimitsOf,
 } from "../_mock/runLimits";
 import { currentEnvVersion } from "../_mock/versions";
+import { COMPAT_STATUS } from "../_mock/compatibility";
+import { StatusDot } from "../components/primitives";
 
 /*
   The run plan: what a run will do and what it can cost, confirmed before
@@ -141,6 +144,8 @@ export default function RunPlanDialog({
   alsoScopes = [],
   breakdown = null,
   seedFrom = null,
+  compat = null,
+  onRepairCompat,
 }) {
   const voice = ["voice", "multi"].includes(env?.surface);
   const [attempts, setAttempts] = useState(initialAttempts || 3);
@@ -158,6 +163,9 @@ export default function RunPlanDialog({
   const [showBreakdown, setShowBreakdown] = useState(false);
   const [limits, setLimits] = useState(() => runLimitsOf(env, envState));
   const [showLimits, setShowLimits] = useState(false);
+  /* Blocked cases: running only the eligible ones is an explicit choice. */
+  const [subsetOk, setSubsetOk] = useState(false);
+  const blockedN = compat?.scope?.blocked?.length || 0;
 
   /* Each opening starts from the header's attempts and the current version. */
   useEffect(() => {
@@ -175,6 +183,7 @@ export default function RunPlanDialog({
     setShowBreakdown(false);
     setLimits(runLimitsOf(env, envState));
     setShowLimits(false);
+    setSubsetOk(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -489,6 +498,67 @@ export default function RunPlanDialog({
                 .filter(Boolean)
                 .join(" · ")}
             </Typography>
+          )}
+
+          {/* ── compatibility: what this agent can't run here, before spending ── */}
+          {compat && blockedN > 0 && (
+            <Box
+              sx={{
+                border: "1px solid",
+                borderColor: "status.warning.border",
+                borderRadius: "8px",
+                px: 1.5,
+                py: 1,
+              }}
+            >
+              <Stack direction="row" alignItems="center" spacing={0.75}>
+                <StatusDot
+                  status={COMPAT_STATUS.blocked.dot}
+                  size={6}
+                  live={false}
+                />
+                <Typography sx={{ typography: "s2", fontWeight: 600, flex: 1 }}>
+                  {`${blockedN} of ${compat.scope.requested} requested cases can't run with this agent`}
+                </Typography>
+                {onRepairCompat && (
+                  <Button
+                    size="small"
+                    onClick={onRepairCompat}
+                    sx={{ color: "text.primary", flexShrink: 0 }}
+                  >
+                    Repair
+                  </Button>
+                )}
+              </Stack>
+              {compat.rows
+                .filter((r) => r.blocks)
+                .map((r) => (
+                  <Typography
+                    key={r.id}
+                    sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
+                  >
+                    {`${r.label} · ${r.detail}`}
+                  </Typography>
+                ))}
+              <Stack
+                direction="row"
+                alignItems="flex-start"
+                spacing={0.75}
+                onClick={() => setSubsetOk((v) => !v)}
+                sx={{ mt: 0.75, cursor: "pointer" }}
+              >
+                <Checkbox
+                  size="small"
+                  checked={subsetOk}
+                  tabIndex={-1}
+                  sx={{ p: 0, mt: "1px" }}
+                  inputProps={{ "aria-label": "Run the eligible cases only" }}
+                />
+                <Typography sx={{ typography: "s2" }}>
+                  {`Run the ${compat.scope.eligible} eligible cases. The ${blockedN} blocked stay in the count as not run — the result reads ${compat.scope.eligible} evaluated / ${compat.scope.requested} requested.`}
+                </Typography>
+              </Stack>
+            </Box>
           )}
 
           {snapshotPick && (
@@ -929,7 +999,7 @@ export default function RunPlanDialog({
             <Button
               size="small"
               variant="contained"
-              disabled={!check.canStart}
+              disabled={!check.canStart || (blockedN > 0 && !subsetOk)}
               startIcon={<Iconify icon="solar:play-bold" width={14} />}
               onClick={() =>
                 onStart({
@@ -940,6 +1010,14 @@ export default function RunPlanDialog({
                   alertAt,
                   estimate,
                   limits,
+                  compatSubset:
+                    blockedN > 0
+                      ? {
+                          ids: compat.scope.eligibleIds,
+                          requested: compat.scope.requested,
+                          blocked: compat.scope.blocked.map((b) => b.id),
+                        }
+                      : null,
                 })
               }
             >
@@ -984,4 +1062,7 @@ RunPlanDialog.propTypes = {
   breakdown: PropTypes.object,
   /* "run 3" when the run reuses an earlier run's seed. */
   seedFrom: PropTypes.string,
+  /* The compatibility report for this scope — blocked cases ask for a reviewed subset. */
+  compat: PropTypes.object,
+  onRepairCompat: PropTypes.func,
 };

@@ -48,6 +48,7 @@ import { BOOT_STEPS } from "../_mock/runStream";
 import { useSimStore, useEnvState, useConnectedAgents } from "../store";
 import {
   envAgentKey,
+  agentIdOf,
   needsFoundCheck,
   needsToolSafety,
 } from "../_mock/agentRegistry";
@@ -164,6 +165,7 @@ import AlsoRunIn from "../run/AlsoRunIn";
 import WorldPanel from "./WorldPanel";
 import SettingsPanel from "./SettingsPanel";
 import { clickable, focusRing } from "../components/clickable";
+import { compatibilityOf } from "../_mock/compatibility";
 
 /**
  * `setup` marks the items that gate a run — those carry a completion tick and
@@ -720,6 +722,7 @@ export default function EnvironmentWorkspace() {
       candidate,
       limits,
       toolReplay,
+      compatSubset,
     } = {},
   ) => {
     const runId = protoRunId(envId, Date.now().toString(36));
@@ -753,6 +756,11 @@ export default function EnvironmentWorkspace() {
     if (limits?.runDeadline) params.set("deadline", String(limits.runDeadline));
     if (limits?.stepLimit) params.set("steps", String(limits.stepLimit));
     if (toolReplay) params.set("tools", toolReplay);
+    /* A reviewed eligible subset: the requested count and what was blocked travel with it. */
+    if (compatSubset) {
+      params.set("requested", String(compatSubset.requested));
+      params.set("blocked", compatSubset.blocked.join(","));
+    }
     const qs = params.toString();
     if (qs) url += `?${qs}`;
     navigate(url);
@@ -784,6 +792,7 @@ export default function EnvironmentWorkspace() {
     cap,
     alertAt,
     limits,
+    compatSubset,
   }) => {
     const req = runPlanReq;
     setRunPlanReq(null);
@@ -797,17 +806,22 @@ export default function EnvironmentWorkspace() {
       });
     if (req.also?.length && !req.scenarioIds?.length)
       return runGroup.start(req.also, { trials: attempts, cap, alertAt });
-    return launchRun(req.scenarioIds, attempts, {
-      agent: versions[0] && versions[0] !== current ? versions[0] : undefined,
-      cap,
-      alertAt,
-      continues: req.continues,
-      snapshot: req.snapshot,
-      envVersion: req.envVersion,
-      candidate,
-      limits,
-      toolReplay: req.toolReplay,
-    });
+    return launchRun(
+      compatSubset ? compatSubset.ids : req.scenarioIds,
+      attempts,
+      {
+        agent: versions[0] && versions[0] !== current ? versions[0] : undefined,
+        cap,
+        alertAt,
+        continues: req.continues,
+        snapshot: req.snapshot,
+        envVersion: req.envVersion,
+        candidate,
+        limits,
+        toolReplay: req.toolReplay,
+        compatSubset,
+      },
+    );
   };
   const startRun = (scenarioIds, trials, opts = {}) =>
     runNow(scenarioIds, trials, opts);
@@ -2797,6 +2811,27 @@ export default function EnvironmentWorkspace() {
                   agentLabel: runPlanReq.agent || null,
                 })
               : null
+          }
+          compat={
+            runPlanReq && !runPlanReq.continues && !runPlanReq.snapshot
+              ? compatibilityOf({
+                  env: worldEnv,
+                  envState,
+                  agent: {
+                    ...envState.agent,
+                    values: {
+                      ...(envState.agent?.values || {}),
+                      ...(connectedAgent?.values || {}),
+                    },
+                  },
+                  scenarioIds: runPlanReq.scenarioIds,
+                })
+              : null
+          }
+          onRepairCompat={() =>
+            navigate(
+              `${paths.dashboard.agents}/connected/${agentIdOf(agentKey)}?tab=connections`,
+            )
           }
           seedFrom={
             runPlanReq?.snapshot

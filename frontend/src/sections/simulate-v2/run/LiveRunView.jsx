@@ -95,6 +95,7 @@ import { scenarioTitle } from "../_mock/scenarios";
 import { approvalOf } from "../_mock/approvals";
 import { actorsInRun, matchesTrialFilters } from "../_mock/trialFilters";
 import TrialFilters from "./TrialFilters";
+import { compatibilityOf, compatStampOf } from "../_mock/compatibility";
 
 // Flaky counts and results read as neutral words — amber never colours text.
 const FLAKY = "text.primary";
@@ -911,6 +912,18 @@ function LiveRun() {
         pendingMember?.ordinal ??
         Math.max(0, ...(envState.runs || []).map((r) => r.ordinal || 0)) + 1,
       seed: replaySeed || runId,
+      /* The compatibility report as it stood at start — kept with the run;
+         a reviewed subset keeps its requested count. */
+      compat: {
+        ...compatStampOf(
+          compatibilityOf({ env, envState }),
+          scenarios.map((sc) => sc.id),
+        ),
+        ...(params.get("requested") && {
+          requested: Number(params.get("requested")),
+          blocked: (params.get("blocked") || "").split(",").filter(Boolean),
+        }),
+      },
       /* Recorded-tool replay: which run's tool responses it played back. */
       ...(params.get("tools") && { toolReplayOf: params.get("tools") }),
       /* The run plan's limits, as it started. */

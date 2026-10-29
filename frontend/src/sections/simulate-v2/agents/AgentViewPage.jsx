@@ -106,6 +106,7 @@ import { clickable, focusRing } from "../components/clickable";
 import { EmptyState } from "../components/primitives";
 import SettingsSection from "./SettingsSection";
 import ConnectionCheckSection from "./ConnectionCheckSection";
+import AgentCompatibilityTab from "../compat/AgentCompatibilityTab";
 import { checksConnection, connectionStateOf } from "../_mock/connectionCheck";
 import { IdentityCard, SourceCard } from "./AgentProfileCards";
 import {
@@ -142,6 +143,8 @@ const TABS = [
   /* The improvement runs that tried to make this agent better. */
   { id: "improvements", label: "Improvements" },
   { id: "connections", label: "Connections" },
+  /* Can it run a given world — per capability, with the cases each gap affects. */
+  { id: "compatibility", label: "Compatibility" },
 ];
 
 /* Old tab ids still arrive in links — each lands on the tab that took its
@@ -728,7 +731,9 @@ export default function AgentViewPage() {
                       sx={{ cursor: "pointer" }}
                       onClick={() => setQuery({ tab: "connections" })}
                     >
-                      <QuietTag tone={c.state === "attention" ? "error" : undefined}>
+                      <QuietTag
+                        tone={c.state === "attention" ? "error" : undefined}
+                      >
                         {c.label}
                       </QuietTag>
                     </Box>
@@ -1261,6 +1266,16 @@ export default function AgentViewPage() {
         </Stack>
       )}
       {tab === "improvements" && <ImprovementSourcesList agent={agent} />}
+      {tab === "compatibility" && (
+        <AgentCompatibilityTab
+          agent={agent}
+          state={state}
+          envId={params.get("env")}
+          mainEnvId={mainEnv?.envId}
+          onPickEnv={(id) => setQuery({ env: id })}
+          onRepair={() => setQuery({ tab: "connections", env: null })}
+        />
+      )}
       {tab === "connections" && (
         <ConnectionTab
           agent={agent}

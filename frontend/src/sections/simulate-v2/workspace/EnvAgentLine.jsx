@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Box,
@@ -47,6 +47,12 @@ import AgentVersionCard, { ScenarioStepCard } from "./AgentVersionCard";
 import NudgeCard from "./NudgeCard";
 import ChangeAgentDrawer from "./agents/ChangeAgentDrawer";
 import ConnectNewAgentDrawer from "./agents/ConnectNewAgentDrawer";
+import {
+  COMPAT_STATUS,
+  compatibilityOf,
+  compatSummaryLine,
+} from "../_mock/compatibility";
+import { StatusDot } from "../components/primitives";
 
 const outlined = {
   color: "text.primary",
@@ -211,6 +217,26 @@ export default function EnvAgentLine({
     );
   };
   /* The agent, on its Environments tab, with this environment picked out. */
+  /* Can this agent run this world — the compatibility summary, one line. */
+  const compat = useMemo(
+    () =>
+      agent && !placeholder
+        ? compatibilityOf({
+            env,
+            envState,
+            agent: {
+              ...agent,
+              values: { ...(agent.values || {}), ...(record?.values || {}) },
+            },
+          })
+        : null,
+    [agent, placeholder, env, envState, record],
+  );
+  const viewCompat = () =>
+    navigate(
+      `${paths.dashboard.agents}/connected/${agentIdOf(key)}?tab=compatibility&env=${encodeURIComponent(env.id)}`,
+      { state: { from: "environment", envId: env.id, envName: env.name } },
+    );
   const viewAgent = () =>
     navigate(
       `${paths.dashboard.agents}/connected/${agentIdOf(key)}?tab=environments&env=${encodeURIComponent(env.id)}`,
@@ -393,6 +419,48 @@ export default function EnvAgentLine({
           </IconButton>
         )}
       </Stack>
+      {compat && (
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          sx={{
+            px: 2,
+            py: 0.75,
+            borderTop: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <StatusDot
+            status={COMPAT_STATUS[compat.worst].dot}
+            size={6}
+            live={false}
+          />
+          <Typography
+            noWrap
+            sx={{
+              typography: "s2",
+              color: "text.secondary",
+              flex: 1,
+              minWidth: 0,
+            }}
+          >
+            {`Compatibility · ${compatSummaryLine(compat)} · ${
+              compat.scope.blocked.length
+                ? `${compat.scope.blocked.length} of ${compat.scope.requested} cases blocked by this agent`
+                : "no case blocked by this agent"
+            }`}
+          </Typography>
+          <Button
+            size="small"
+            onClick={viewCompat}
+            endIcon={<Iconify icon="solar:arrow-right-linear" width={14} />}
+            sx={{ color: "text.primary", flexShrink: 0 }}
+          >
+            View report
+          </Button>
+        </Stack>
+      )}
       {agentNeedsRuntime(agent) && !locked && (
         <Box sx={{ px: 2, pb: 1.5 }}>
           <AgentRuntimeEditor agent={{ ...agent, key }} variant="embedded" />

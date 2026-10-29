@@ -26,7 +26,7 @@ import {
   toolEnvPatch,
   unsafeLiveToolNames,
 } from "./toolEnv";
-import { requiredToolsOf } from "./toolFit";
+import { knownToolsFor, requiredToolsOf } from "./toolFit";
 import { isConnectOnly } from "./envModel";
 import { envChangePatch } from "./versions";
 import {
@@ -799,8 +799,7 @@ export const runReadiness = (envState, env = null) => {
       step: "overview",
       href: agentHref?.replace("tab=connections", "tab=overview"),
       foundCheck: true,
-      reason:
-        "Mark the tools that must never run for real before a live run",
+      reason: "Mark the tools that must never run for real before a live run",
     };
   /* A disconnected or archived agent can't be run — the agent page says why. */
   const status =
@@ -824,9 +823,19 @@ export const runReadiness = (envState, env = null) => {
     };
   /* Its last connection check found a tool still reaching production: the
      controlled cases can't run until it's pointed at the test world or
-     observed only (roadmap connect.md, Week 1). */
-  const prodTools = envState.agent?.values?.connectionTest?.productionTools || [];
-  if (prodTools.length)
+     observed only (roadmap connect.md, Week 1). Only the cases that need
+     it are blocked (release.md): while others don't, the run plan offers
+     them as a reviewed subset — this holds the run only when none can. */
+  const prodTools =
+    envState.agent?.values?.connectionTest?.productionTools || [];
+  const known = env ? knownToolsFor(env, envState) : [];
+  const unaffected = (envState.scenarios || []).filter(
+    (s) =>
+      !s.archived &&
+      !s.retired &&
+      !requiredToolsOf(s, known).some((t) => prodTools.includes(t)),
+  ).length;
+  if (prodTools.length && (!env || !unaffected))
     return {
       ready: false,
       step: "overview",
