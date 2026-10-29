@@ -44,7 +44,7 @@ STAGES = ('assemble_retained_a', 'install_and_boot_a', 'seed_and_enumerate',
 
 
 TARGET_VERSION = 'v1.54.0'
-TARGET_DIGEST = 'sha256:22be1ed65d5e67f361ac9e99dc4c49873bbf7daf4a193c906d1689aa1249c056'
+TARGET_DIGEST = 'sha256:c2b0f344b4e9f60435c6ce503764fbc5be793c9d44776cb6ff12b7c92bdd3492'
 TARGET_IMAGE = 'futureagi/standalone:'+TARGET_VERSION+'@'+TARGET_DIGEST
 TARGET_PREFIX = 'fagi-upd-e2e-m2-'
 TARGET_STAGES = STAGES[:4] + ('prefetch_target',) + STAGES[4:] + ('prepare_target', 'target_readiness')

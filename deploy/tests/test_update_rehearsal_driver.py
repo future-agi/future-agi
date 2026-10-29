@@ -1306,3 +1306,21 @@ class TargetReadinessMilestoneTests(unittest.TestCase):
 def time_limit():
     import time
     return time.monotonic()+30
+
+
+class MilestoneImagePlatformTests(unittest.TestCase):
+    # Leaf manifests of the published multi-arch indexes, recorded from the
+    # registry. The first native M2 run failed because the target was pinned
+    # to the arm64 leaf while the runner and the source are amd64.
+    LEAVES = {
+        'v1.53.0': {'linux/amd64': 'sha256:1bcaf9deccd6ff8b999a66e8ebd44657811d91419aeb5339a6d6327d1cbef7fd',
+                    'linux/arm64': 'sha256:c88acf35821b4b78d1406ec03c86c072381738429ffeaaa2175103c5c23fd863'},
+        'v1.54.0': {'linux/amd64': 'sha256:c2b0f344b4e9f60435c6ce503764fbc5be793c9d44776cb6ff12b7c92bdd3492',
+                    'linux/arm64': 'sha256:22be1ed65d5e67f361ac9e99dc4c49873bbf7daf4a193c906d1689aa1249c056'},
+    }
+
+    def test_source_and_target_are_pinned_to_the_runner_platform_leaf(self):
+        from scripts import update_rehearsal_milestone as milestone
+        self.assertEqual(milestone.DIGEST, self.LEAVES[milestone.VERSION][milestone.PLATFORM])
+        self.assertEqual(milestone.TARGET_DIGEST, self.LEAVES[milestone.TARGET_VERSION][milestone.PLATFORM])
+        self.assertTrue(milestone.TARGET_IMAGE.endswith('@' + milestone.TARGET_DIGEST))
