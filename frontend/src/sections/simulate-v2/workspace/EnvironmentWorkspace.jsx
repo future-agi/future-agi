@@ -108,6 +108,7 @@ import {
   saveBothPatch,
 } from "../_mock/teammateSave";
 import SaveClashDialog from "./SaveClashDialog";
+import { groupsOf as orgGroupsOf, groupRunPlanOf } from "../_mock/scenarioOrg";
 import AttachmentsCard from "./data/AttachmentsCard";
 import DataProposalCard from "./data/DataProposalCard";
 import ActorsPanel from "./ActorsPanel";
@@ -434,6 +435,8 @@ export default function EnvironmentWorkspace() {
   const [runMenu, setRunMenu] = useState(null);
   /* The run group's picker, opened from the Run menu's third option. */
   const [groupAnchor, setGroupAnchor] = useState(null);
+  /* Run a group, from the Run menu. */
+  const [groupRunAnchor, setGroupRunAnchor] = useState(null);
   /* The picks as they were when the picker opened — Cancel puts them back. */
   const [groupBefore, setGroupBefore] = useState([]);
   const [confirmDelete, setConfirmDelete] = useState(null);
@@ -2013,6 +2016,26 @@ export default function EnvironmentWorkspace() {
                         body: "Starts now — you watch it here, and it lands in Runs.",
                         onClick: runHere,
                       },
+                      /* A group is a playlist of scenarios — run exactly what it selects. */
+                      ...(orgGroupsOf(envState).length
+                        ? [
+                            {
+                              id: "group",
+                              icon: "solar:folder-2-linear",
+                              title: "Run a group",
+                              body: `${orgGroupsOf(envState)
+                                .slice(0, 2)
+                                .map((g) => g.name)
+                                .join(
+                                  ", ",
+                                )}${orgGroupsOf(envState).length > 2 ? "…" : ""} — the scenarios each group selects.`,
+                              onClick: () => {
+                                setGroupRunAnchor(runMenu);
+                                setRunMenu(null);
+                              },
+                            },
+                          ]
+                        : []),
                       {
                         id: "code",
                         icon: "solar:code-linear",
@@ -2437,6 +2460,36 @@ export default function EnvironmentWorkspace() {
             />
           );
         })()}
+        <Menu
+          anchorEl={groupRunAnchor}
+          open={!!groupRunAnchor}
+          onClose={() => setGroupRunAnchor(null)}
+          anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+          transformOrigin={{ vertical: "top", horizontal: "right" }}
+          slotProps={{ paper: { sx: { width: 320, mt: 0.5 } } }}
+        >
+          {orgGroupsOf(envState).map((g) => {
+            const plan = groupRunPlanOf(g, envState.scenarios);
+            return (
+              <MenuItem
+                key={g.id}
+                disabled={!plan.run.length}
+                onClick={() => {
+                  setGroupRunAnchor(null);
+                  runNow(plan.run, headerTrials);
+                }}
+                sx={{ display: "block", whiteSpace: "normal" }}
+              >
+                <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                  {g.name}
+                </Typography>
+                <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                  {`${g.ids.length} scenario${g.ids.length === 1 ? "" : "s"}${plan.left.length ? ` · ${plan.left.length} archived, blocked or proposed sit out` : ""} — the run plan shows the rest`}
+                </Typography>
+              </MenuItem>
+            );
+          })}
+        </Menu>
         <SaveClashDialog
           open={!!clashReq && !!clash}
           save={clash}

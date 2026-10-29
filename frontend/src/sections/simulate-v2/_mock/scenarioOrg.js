@@ -337,3 +337,45 @@ export const scenarioCli = {
   export: (env) =>
     `agent-learn scenario export --environment ${env?.id || "<env>"} --destination ./scenarios.json`,
 };
+
+/**
+ * Running a group (roadmap scenarios.md: "Selecting a group for a run
+ * resolves its current eligible scenarios. Invalid, archived or stale cases
+ * are shown separately … they do not disappear from the count").
+ *   { run: [ids], left: [{ id, title, why }] }
+ * `stateOf` (the Scenarios tab's) adds what the row alone can't say —
+ * outdated or stale.
+ */
+export const groupRunPlanOf = (group, rows, stateOf) => {
+  const byId = new Map((rows || []).map((r) => [r.id, r]));
+  const run = [];
+  const left = [];
+  (group?.ids || []).forEach((id) => {
+    const r = byId.get(id);
+    if (!r)
+      return left.push({
+        id,
+        title: "A deleted scenario",
+        why: "No longer in this environment",
+      });
+    const title = r.title || r.summary || r.name || id;
+    if (r.archived) return left.push({ id, title, why: "Archived" });
+    if (r.blocked)
+      return left.push({ id, title, why: `Blocked — ${r.blocked.reason}` });
+    if (r.proposed)
+      return left.push({
+        id,
+        title,
+        why: "Still a proposal — add it to the set first",
+      });
+    const st = stateOf ? stateOf(r) : null;
+    if (st && st.canRun === false)
+      return left.push({
+        id,
+        title,
+        why: `${st.label}${st.why ? ` — ${st.why}` : ""}`,
+      });
+    return run.push(id);
+  });
+  return { run, left };
+};

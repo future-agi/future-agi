@@ -154,6 +154,7 @@ import {
   TagsGroupsManager,
   BulkOrgDialog,
 } from "./scenarios/ScenarioOrgDialogs";
+import GroupsBar from "./scenarios/GroupsBar";
 import { clickable, focusRing } from "../components/clickable";
 
 /**
@@ -539,6 +540,28 @@ export default function ScenariosStep({
 
   const orgTags = orgTagsOf(envState);
   const orgGroups = orgGroupsOf(envState);
+  /* A group or tag that no longer exists stops filtering — otherwise the
+     list would read empty with nothing left to click back from. */
+  const orgNames = `${orgGroups.map((g) => g.name).join("|")}::${orgTags.map((t) => t.name).join("|")}`;
+  useEffect(() => {
+    setFilters((f) => {
+      const keep = (list, names) =>
+        (list || []).filter((n) => names.includes(n));
+      const groups = orgGroups.map((g) => g.name);
+      const tags = orgTags.map((t) => t.name);
+      const next = {
+        ...f,
+        group: keep(f.group, groups),
+        tag: keep(f.tag, tags),
+        tagAll: keep(f.tagAll, tags),
+      };
+      ["group", "tag", "tagAll"].forEach((k) => {
+        if (!next[k].length) delete next[k];
+      });
+      return JSON.stringify(next) === JSON.stringify(f) ? f : next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgNames]);
   const tagNamesOf = (r) =>
     orgTags.filter((t) => (r.tagIds || []).includes(t.id)).map((t) => t.name);
   const groupNamesOf = (r) =>
@@ -849,7 +872,21 @@ export default function ScenariosStep({
       say(`Tagged ${n} scenario${n === 1 ? "" : "s"} ${value}.`);
     } else if (kind === "group") {
       patch(groupPatch(envState, ids, value));
-      say(`${n} scenario${n === 1 ? "" : "s"} in ${value}.`);
+      enqueueSnackbar(`${n} scenario${n === 1 ? "" : "s"} added to ${value}.`, {
+        variant: "success",
+        action: (key) => (
+          <Button
+            size="small"
+            onClick={() => {
+              closeSnackbar(key);
+              setFilters((f) => ({ ...f, group: [value] }));
+            }}
+            sx={{ color: "inherit", fontWeight: 600 }}
+          >
+            View group
+          </Button>
+        ),
+      });
     } else if (kind === "duplicate") {
       const { copies, ...p } = duplicatePatch(envState, rowsSel);
       patch(p);
@@ -1548,6 +1585,7 @@ export default function ScenariosStep({
                       }
                       sx={{
                         flexShrink: 0,
+                        fontWeight: 400,
                         color: filterCount ? "primary.main" : "text.primary",
                         borderColor: filterCount ? "primary.main" : "divider",
                       }}
@@ -1586,6 +1624,7 @@ export default function ScenariosStep({
                         }
                         sx={{
                           flexShrink: 0,
+                          fontWeight: 400,
                           color: "text.primary",
                           borderColor: "divider",
                         }}
@@ -1605,7 +1644,7 @@ export default function ScenariosStep({
                             color: "text.primary",
                           }}
                         >
-                          <Iconify icon="solar:tag-linear" width={16} />
+                          <Iconify icon="solar:tag-linear" width={14} />
                         </IconButton>
                       </Tooltip>
                     ) : null}
@@ -1691,7 +1730,7 @@ export default function ScenariosStep({
                                 : "transparent",
                             }}
                           >
-                            <Iconify icon="solar:history-linear" width={16} />
+                            <Iconify icon="solar:history-linear" width={14} />
                           </IconButton>
                         </Tooltip>
                       </>
@@ -1715,7 +1754,7 @@ export default function ScenariosStep({
                               color: "text.primary",
                             }}
                           >
-                            <Iconify icon="solar:menu-dots-bold" width={16} />
+                            <Iconify icon="solar:menu-dots-bold" width={14} />
                           </IconButton>
                         </Tooltip>
                         <Menu
@@ -1998,6 +2037,34 @@ export default function ScenariosStep({
                     }
                     onBack={() => setAsOf(null)}
                   />
+                  {!asOfBatch && mode === "scenarios" && (
+                    <Box data-scenarios-safe="groups-bar">
+                      <GroupsBar
+                        groups={orgGroups}
+                        rows={selected}
+                        stateOf={stateOf}
+                        total={selected.length}
+                        active={filters.group?.[0] || null}
+                        onPick={(name) =>
+                          setFilters((f) => {
+                            const { group: _g, ...rest } = f;
+                            return name ? { ...rest, group: [name] } : rest;
+                          })
+                        }
+                        onCreate={(name) => {
+                          patch(groupPatch(envState, selectedIds, name));
+                          setFilters((f) => ({ ...f, group: [name] }));
+                        }}
+                        onRun={(ids) =>
+                          onStartRun?.(ids, Number(selectionRun?.repeats) || 3)
+                        }
+                        selectedCount={selectedIds.length}
+                        readOnly={ro || !onStartRun}
+                        repeats={Number(selectionRun?.repeats) || 3}
+                        envId={env.id}
+                      />
+                    </Box>
+                  )}
                   {!asOfBatch && <ProtectionLine tally={protection} />}
                   {containers}
                   {/* Opens from the right edge like Figma's version history, and

@@ -35,6 +35,7 @@ export default function NeedsReviewMenu({ notices, compact = false }) {
           flexShrink: 0,
           whiteSpace: "nowrap",
           color: "text.primary",
+          fontWeight: 400,
           borderColor: anchor ? "text.primary" : "divider",
           bgcolor: anchor ? "action.selected" : "transparent",
         }}
