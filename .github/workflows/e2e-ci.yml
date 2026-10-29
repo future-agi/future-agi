@@ -425,24 +425,31 @@ jobs:
           npx --yes pnpm@8.15.0 install --ignore-workspace --frozen-lockfile --ignore-scripts
           npx --yes pnpm@8.15.0 run test:live
 
-      - name: SDK operation names match the MCP tools
+      - name: SDK operation names match the MCP tools (warning only)
         # The SDK catalog records, per operation, the MCP tool it corresponds
         # to; the tool list itself is generated here (scripts/generate-mcp-tools.py).
-        # A tool renamed or added on one side without the other fails here.
+        # A tool added or renamed here that the SDK catalog does not know yet is
+        # reported as a warning, never a failure: the SDK calls the REST endpoints,
+        # not the tools, so a name gap breaks no SDK call, and the SDK's own CI
+        # enforces parity at the backend release it is pinned to
+        # (futureagi-sdk: sdkgen/check_mcp_parity.py). A tool this tree gained
+        # since that release shows up here first, as the reminder to add its
+        # catalog entry.
         if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
         run: |
           python3 -m pip install --quiet pyyaml
           python3 - <<'EOF'
-          import json, sys, yaml
+          import json, yaml
           tools = {t["name"] for t in json.load(open("futureagi/mcp_server/catalog/tools.generated.json"))["tools"]}
           catalog = yaml.safe_load(open("futureagi-sdk/sdkgen/catalog/operations.yaml"))["operations"]
           sdk = {(e["surfaces"]["mcp"].get("name") or e["id"].replace(".", "_"))
                  for e in catalog if e.get("surfaces", {}).get("mcp") not in (None, False)}
-          if tools != sdk:
-              print("only in the MCP tool list:", sorted(tools - sdk))
-              print("only in the SDK catalog:  ", sorted(sdk - tools))
-              sys.exit("futureagi/mcp_server/catalog/tools.yaml and futureagi-sdk/sdkgen/catalog/operations.yaml disagree")
-          print(f"{len(tools)} MCP tools, same names in the SDK catalog")
+          if tools - sdk:
+              print(f"::warning title=MCP tools without an SDK catalog entry::{', '.join(sorted(tools - sdk))} (add them to futureagi-sdk/sdkgen/catalog/operations.yaml)")
+          if sdk - tools:
+              print(f"::warning title=SDK catalog entries without an MCP tool::{', '.join(sorted(sdk - tools))}")
+          if tools == sdk:
+              print(f"{len(tools)} MCP tools, same names in the SDK catalog")
           EOF
 
       - name: Dump stack state on failure
