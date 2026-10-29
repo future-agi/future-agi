@@ -19,7 +19,15 @@ These tests seed the real CH25 ``spans`` table of the test database, one row
 per storage shape, and ask the endpoint for the list with the toggle off and
 on. Because ClickHouse drops simulator calls first, the view's check only
 decides a row the predicate missed, so a second test turns the predicate off
-and requires the Python check alone to drop them from the hydrated rows.
+and requires the Python check alone to drop them from the hydrated rows. The
+same check hides a call the predicate misses, so a third test turns it off and
+requires the predicate alone to drop them.
+
+Since the collector began ranking ``gen_ai.provider.name`` above
+``gen_ai.system``, a Vapi call whose assistant runs an OpenAI model is stored
+with ``provider='openai'`` and ``gen_ai.system='vapi'``. The list renders it
+as a Vapi call, so the toggle, the Voice chart and the call's detail must
+treat it as one too.
 """
 
 from __future__ import annotations
@@ -42,6 +50,9 @@ from tracer.services.clickhouse.v2.adapter import (
     CH_INSERT_COLUMNS,
     adapt,
     row_to_tuple,
+)
+from tracer.services.clickhouse.v2.query_builders.voice_call_list import (
+    VoiceCallListQueryBuilderV2,
 )
 from tracer.tests._ch_seed import _get_ch_client, seed_ch_spans
 
@@ -83,11 +94,33 @@ _CAPITALIZED_PROVIDER_CALL = (
     "collector",
 )
 
+# Vapi calls whose provider column holds the assistant's LLM provider; only
+# gen_ai.system names the voice provider.
+_LLM_PROVIDER_CALLS = (
+    (
+        "llm-provider-simulator",
+        "openai",
+        {"customer": {"number": _SIMULATOR}},
+        "collector",
+    ),
+    ("llm-provider-caller", "openai", {"customer": {"number": _CALLER}}, "collector"),
+)
+_VAPI_SYSTEM = {"gen_ai.system": "vapi"}
 
-def _span_row(project, start, index, trace_id, span_id, provider, raw_log, storage):
+# What the list shows for each toggle once those calls are seeded.
+_LISTED_WITH_LLM_PROVIDER_CALLS = {
+    False: _ALL_CALLS | {call for call, *_ in _LLM_PROVIDER_CALLS},
+    True: (_ALL_CALLS - _SIMULATOR_CALLS) | {"llm-provider-caller"},
+}
+
+
+def _span_row(
+    project, start, index, trace_id, span_id, provider, raw_log, storage, attributes
+):
     started = start + timedelta(minutes=index)
     if storage == "collector" and not isinstance(raw_log, str):
         raw_log = json.dumps(raw_log)
+    span_attributes = {} if storage == "json-text" else {"raw_log": raw_log}
     return {
         "id": span_id,
         "trace_id": trace_id,
@@ -102,7 +135,7 @@ def _span_row(project, start, index, trace_id, span_id, provider, raw_log, stora
         "latency_ms": 30_000,
         "provider": provider,
         "cost": 0.01,
-        "span_attributes": {} if storage == "json-text" else {"raw_log": raw_log},
+        "span_attributes": {**span_attributes, **attributes},
         "created_at": started,
         "updated_at": started,
     }
@@ -123,7 +156,7 @@ def _seed_raw_log_as_json_text(row, raw_log):
         client.close()
 
 
-def _seed(project, start, calls, fixture):
+def _seed(project, start, calls, fixture, attributes=None):
     rows = []
     for index, (call, provider, raw_log, storage) in enumerate(
         calls, start=len(fixture["trace_ids"])
@@ -139,6 +172,7 @@ def _seed(project, start, calls, fixture):
             provider,
             raw_log,
             storage,
+            attributes or {},
         )
         if storage == "json-text":
             _seed_raw_log_as_json_text(row, raw_log)
@@ -176,8 +210,33 @@ def capitalized_provider_call(voice_calls):
     return _CAPITALIZED_PROVIDER_CALL[0]
 
 
+@pytest.fixture()
+def llm_provider_calls(voice_calls):
+    _seed(
+        voice_calls["project"],
+        voice_calls["start"],
+        _LLM_PROVIDER_CALLS,
+        voice_calls,
+        attributes=_VAPI_SYSTEM,
+    )
+    return {call for call, *_ in _LLM_PROVIDER_CALLS}
+
+
+def _window_filters(fixture):
+    return [
+        {
+            "column_id": "created_at",
+            "filter_config": {
+                "col_type": "SYSTEM_METRIC",
+                "filter_type": "datetime",
+                "filter_op": "between",
+                "filter_value": [bound.isoformat() for bound in fixture["window"]],
+            },
+        }
+    ]
+
+
 def _voice_list(client, fixture, remove_simulation_calls):
-    window = fixture["window"]
     response = client.post(
         "/tracer/trace/list_voice_calls/",
         {
@@ -185,17 +244,7 @@ def _voice_list(client, fixture, remove_simulation_calls):
             "page_size": 25,
             "cursor_mode": True,
             "remove_simulation_calls": remove_simulation_calls,
-            "filters": [
-                {
-                    "column_id": "created_at",
-                    "filter_config": {
-                        "col_type": "SYSTEM_METRIC",
-                        "filter_type": "datetime",
-                        "filter_op": "between",
-                        "filter_value": [bound.isoformat() for bound in window],
-                    },
-                }
-            ],
+            "filters": _window_filters(fixture),
         },
         format="json",
     )
@@ -227,13 +276,90 @@ def test_toggle_drops_exactly_the_simulator_calls(
 
 
 def test_python_check_alone_drops_the_simulator_calls(
-    auth_client, voice_calls, monkeypatch
+    auth_client, voice_calls, llm_provider_calls, monkeypatch
 ):
     # With the ClickHouse predicate matching nothing, every simulator call
     # reaches the view's hydrated rows and only is_simulator_call can drop it;
-    # passing it the span attributes instead of the parsed raw_log drops none.
+    # passing it the span attributes instead of the parsed raw_log drops none,
+    # and passing it the provider column drops no call stored under its LLM
+    # provider.
     monkeypatch.setattr(voice_call_list, "simulator_call_sql", lambda **_: "0")
 
     listed = _voice_list(auth_client, voice_calls, True)
 
-    assert listed == _ALL_CALLS - _SIMULATOR_CALLS
+    assert listed == _LISTED_WITH_LLM_PROVIDER_CALLS[True]
+
+
+def test_clickhouse_predicate_alone_drops_the_simulator_calls(
+    auth_client, voice_calls, llm_provider_calls, monkeypatch
+):
+    # With the view's check keeping every row, only simulator_call_sql can
+    # drop a simulator call, including one stored under its LLM provider.
+    monkeypatch.setattr(
+        VoiceCallListQueryBuilderV2,
+        "is_simulator_call",
+        staticmethod(lambda raw_log, provider: False),
+    )
+
+    listed = _voice_list(auth_client, voice_calls, True)
+
+    assert listed == _LISTED_WITH_LLM_PROVIDER_CALLS[True]
+
+
+@pytest.mark.parametrize("remove_simulation_calls", [False, True])
+def test_toggle_reads_the_voice_provider_not_the_llm_provider(
+    auth_client, voice_calls, llm_provider_calls, remove_simulation_calls
+):
+    listed = _voice_list(auth_client, voice_calls, remove_simulation_calls)
+
+    assert listed == _LISTED_WITH_LLM_PROVIDER_CALLS[remove_simulation_calls]
+
+
+@pytest.mark.parametrize("remove_simulation_calls", [False, True])
+def test_voice_chart_counts_the_calls_the_list_shows(
+    auth_client, voice_calls, llm_provider_calls, remove_simulation_calls
+):
+    # The Voice chart compiles the same toggle through
+    # simulator_call_root_predicate; it counts one per listed call.
+    scope = {"observe_type": "voice"}
+    if remove_simulation_calls:
+        scope["remove_simulation_calls"] = True
+    response = auth_client.post(
+        "/tracer/trace/get_graph_methods/",
+        {
+            "project_id": str(voice_calls["project"].id),
+            "interval": "day",
+            "property": "average",
+            "req_data_config": {
+                "id": "traffic",
+                "type": "SYSTEM_METRIC",
+                "property_id": "system_attribute:traces:traffic",
+                "source": "traces",
+            },
+            "filters": _window_filters(voice_calls),
+            **scope,
+        },
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_200_OK, response.content
+    body = response.json()
+    result = body.get("result", body)
+    assert result["query_status"] == "complete", result
+    traffic = sum(
+        point["value"] for point in result["data"] if point["primary_traffic"]
+    )
+    assert traffic == len(_LISTED_WITH_LLM_PROVIDER_CALLS[remove_simulation_calls])
+
+
+def test_voice_detail_names_the_voice_provider_not_the_llm_provider(
+    auth_client, voice_calls, llm_provider_calls
+):
+    response = auth_client.get(
+        "/tracer/trace/voice_call_detail/",
+        {"trace_id": voice_calls["trace_ids"]["llm-provider-caller"]},
+    )
+
+    assert response.status_code == status.HTTP_200_OK, response.content
+    root = response.json()["result"]["observation_span"][0]
+    assert root["provider"] == "vapi"

@@ -18,6 +18,18 @@ class ProviderChoices(models.TextChoices):
     TWILIO = "twilio", "Twilio"
 
 
+# The providers a voice call root can name, in the order the ClickHouse
+# voice-provider rule lists them. ``ObservabilityService.resolve_voice_provider``
+# and ``voice_provider_expression`` both read this tuple.
+VOICE_CALL_PROVIDERS = (
+    ProviderChoices.VAPI,
+    ProviderChoices.RETELL,
+    ProviderChoices.ELEVEN_LABS,
+    ProviderChoices.BLAND,
+    ProviderChoices.TWILIO,
+)
+
+
 class ObservabilityProvider(BaseModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     project = models.ForeignKey(

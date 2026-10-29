@@ -12,7 +12,9 @@ from tracer.services.clickhouse.query_builders.voice_filter_expressions import (
     VOICE_CALL_STATUS_FILTER_EXPRESSION,
     VOICE_CALL_TYPE_FILTER_EXPRESSION,
     VOICE_COST_CENTS_FILTER_EXPRESSION,
+    voice_provider_expression,
 )
+from tracer.services.observability_providers import ObservabilityService
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
@@ -205,3 +207,32 @@ def test_status_and_call_type_use_consumer_provider_precedence(
 
     assert status == expected_status
     assert call_type == expected_call_type
+
+
+@pytest.mark.parametrize(
+    ("provider", "gen_ai_system"),
+    [
+        ("openai", "vapi"),
+        ("vapi", "vapi"),
+        ("Retell", ""),
+        ("", "retell"),
+        ("openai", ""),
+        ("bland", "vapi"),
+    ],
+)
+def test_sql_and_python_resolve_the_same_voice_provider(
+    ch_client, provider, gen_ai_system
+):
+    # The Voice list's ClickHouse predicate and its Python check must agree on
+    # which provider's simulator number a call root carries.
+    sql = _evaluate_expression(
+        ch_client,
+        voice_provider_expression("provider", "span_attr_str"),
+        raw_log={},
+        provider=provider,
+        gen_ai_system=gen_ai_system,
+    )
+
+    assert sql == ObservabilityService.resolve_voice_provider(
+        provider, {"gen_ai.system": gen_ai_system}
+    )
