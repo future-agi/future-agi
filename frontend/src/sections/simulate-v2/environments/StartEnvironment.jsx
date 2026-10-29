@@ -70,6 +70,12 @@ import {
 import DescribeFlowStep from "./intake/DescribeFlowStep";
 import MyEnvironmentsTable from "./MyEnvironmentsTable";
 import PersonaLibraryTab from "./personas/PersonaLibraryTab";
+import JobsPage from "../jobs/JobsPage";
+
+/* Jobs (package validation, training) is on hold until open product
+   questions are answered — the tab and its links stay hidden. Flip to bring
+   it back; the screen and its model are kept as built. */
+const SHOW_JOBS = false;
 import {
   PLATFORM_LOGOS,
   AGENT_TYPES,
@@ -154,7 +160,11 @@ export default function StartEnvironment({ entry = false }) {
      ?tab=build link opens the drawer. Deep-linkable via ?tab=. */
   const initialParams = new URLSearchParams(window.location.search);
   const [tab, setTabState] = useState(() =>
-    initialParams.get("tab") === "personas" ? "personas" : "my",
+    (SHOW_JOBS ? ["personas", "jobs"] : ["personas"]).includes(
+      initialParams.get("tab"),
+    )
+      ? initialParams.get("tab")
+      : "my",
   );
   const setTab = (t) => {
     setTabState(t);
@@ -338,7 +348,9 @@ export default function StartEnvironment({ entry = false }) {
           entry
             ? tab === "personas"
               ? "Reusable callers for voice and chat agents. Use writes an environment's tasks in a persona's voice."
-              : "Build a simulated world for your agent, then run callers against it and read the failures."
+              : tab === "jobs"
+                ? "Long background work on your environments — package validation and training — with its stage, checkpoints and where its evidence came from."
+                : "Build a simulated world for your agent, then run callers against it and read the failures."
             : "Every environment needs a world to simulate in. Start by telling us where the agent lives — or start blank if you don't have one yet."
         }
         back={
@@ -355,7 +367,7 @@ export default function StartEnvironment({ entry = false }) {
           ) : null
         }
         actions={
-          entry && (hasEnvs || tab === "personas") ? (
+          entry && (hasEnvs || tab !== "my") ? (
             /* One click to a new environment from either tab: a drawer over
                the list once environments exist; before that the way to build
                is My environments itself, so from Personas it goes there. */
@@ -438,6 +450,9 @@ export default function StartEnvironment({ entry = false }) {
               sx={TAB_SX}
             />
             <Tab value="personas" disableRipple label="Personas" sx={TAB_SX} />
+            {SHOW_JOBS && (
+              <Tab value="jobs" disableRipple label="Jobs" sx={TAB_SX} />
+            )}
           </Tabs>
         </Box>
       )}
@@ -690,6 +705,7 @@ export default function StartEnvironment({ entry = false }) {
       )}
 
       {entry && tab === "personas" && <PersonaLibraryTab />}
+      {SHOW_JOBS && entry && tab === "jobs" && <JobsPage embedded />}
 
       {entry && tab === "my" && hasEnvs && (
         /* Datasets-page pattern — flex column that fills the remaining

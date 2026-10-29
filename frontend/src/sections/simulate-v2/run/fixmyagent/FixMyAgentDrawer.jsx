@@ -13,7 +13,12 @@ import {
 import { improvementRunName } from "../../_mock/optimizer";
 import { shippedCandidate } from "./tradeoffs";
 import { nextAgentVersion, currentEnvVersion } from "../../_mock/versions";
-import { optimizationSummary, OPT_STATUS } from "../../_mock/optimizationRuns";
+import {
+  optimizationSummary,
+  OPT_STATUS,
+  runningTwinOf,
+} from "../../_mock/optimizationRuns";
+import { useSnackbar } from "notistack";
 import { protoRunId } from "../../_mock/executionAdapter";
 import DiagnosisPane from "./DiagnosisPane";
 import ImprovementSetup from "./ImprovementSetup";
@@ -68,6 +73,7 @@ export default function FixMyAgentDrawer({
   openOptimizationId,
 }) {
   const navigate = useNavigate();
+  const { enqueueSnackbar } = useSnackbar();
   const { state: simState, commit } = useSimStore();
   /* Opening a row in the runs list lands on that run, not on the diagnosis —
      the list already told you which one you wanted. */
@@ -222,6 +228,22 @@ export default function FixMyAgentDrawer({
   }) => {
     /* An outside change re-read at Start is measured first, on that version
        — recorded as a run, and part of what the improvement spends. */
+    /* The same improvement already running: open it — nothing new starts. */
+    const twin = !today
+      ? runningTwinOf(envState, {
+          fromRunId: sourceRunId,
+          baseAgentVersion: base?.agentVersion || runAgentVersion,
+          goalId: goal?.id,
+        })
+      : null;
+    if (twin) {
+      setSetupOpen(false);
+      enqueueSnackbar(
+        `${twin.name} is already running on this — opened it. Nothing new started.`,
+        { variant: "info" },
+      );
+      return navigate(improvementPath(env.id, twin.id));
+    }
     if (today) commit({ type: "recordRun", envId: env.id, run: today });
     const record = buildImprovement({
       /* Edit plan's cases to fix and to protect, when the person changed them. */

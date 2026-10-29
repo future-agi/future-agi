@@ -2331,3 +2331,17 @@ export const settleImprovements = (es, now = Date.now()) => {
   });
   return changed ? { ...es, optimizations } : es;
 };
+
+/**
+ * Starting the same improvement twice returns the one already running
+ * (roadmap runs.md: repeated submission reuses the existing handle) — same
+ * source run, base version and goal. Null when nothing matches.
+ */
+export const runningTwinOf = (envState, { fromRunId, baseAgentVersion, goalId = null }) =>
+  optimizations(envState).find(
+    (o) =>
+      o.status === OPT_STATUS.RUNNING &&
+      o.fromRunId === fromRunId &&
+      (o.baseAgentVersion || null) === (baseAgentVersion || null) &&
+      (o.trigger?.goal?.id || null) === (goalId || null),
+  ) || null;

@@ -494,7 +494,11 @@ export default function ImprovementRunsView({
             </Stack>
             {/* The version pair, shown the same way on every screen (RSI PRD),
                 then where it ran and what started it; the id on hover. */}
-            <Tooltip arrow placement="bottom-start" title={record.id}>
+            <Tooltip
+              arrow
+              placement="bottom-start"
+              title="The improvement's ID — the same in the CLI and API. Starting the same improvement again opens this one."
+            >
               <Typography
                 noWrap
                 sx={{
@@ -512,6 +516,7 @@ export default function ImprovementRunsView({
                   record.trigger?.issueId
                     ? `${record.trigger.issueId} ${mockCluster(record.trigger.issueId)?.error?.name || ""}`.trim()
                     : row?.trigger?.label,
+                  record.id,
                 ]
                   .filter(Boolean)
                   .join(" · ")}

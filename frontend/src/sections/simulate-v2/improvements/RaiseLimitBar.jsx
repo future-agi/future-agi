@@ -101,36 +101,45 @@ export default function RaiseLimitBar({
       ? "It already had the longest time cap — improve towards a narrower goal instead."
       : `The whole search needs about ${creditsLabel(needed || 0)}, more than the largest budget — improve towards a narrower goal instead.`;
 
+  /* What Continue keeps and what it starts over — before it acts. */
+  const resumeNote = before
+    ? "Continue runs the whole search. Reproduce already ran, so it isn't repeated."
+    : `Continue keeps the ${s.trials} trial${s.trials === 1 ? "" : "s"} it finished — not repeated or charged again — and runs the other ${Math.max(0, (s.of || 0) - s.trials)}. A trial that was partway starts over from its seed.`;
   const controls = steps.length > 0 && (
-    <Stack
-      direction="row"
-      spacing={1}
-      alignItems="flex-start"
-      sx={{ mt: 1.25 }}
-    >
-      <Box sx={{ width: 220 }}>
-        <ConstraintPicker
-          agent={agent}
-          limits={agentLimits}
-          field={byTime ? "minutes" : "dollars"}
-          value={byTime ? pickMinutes : pickDollars}
-          onChange={byTime ? setMinutes : setDollars}
-          steps={steps}
-          fullWidth
-          sx={{ height: 32 }}
-        />
-      </Box>
-      <Button
-        size="small"
-        variant="contained"
-        color="primary"
-        onClick={resume}
-        startIcon={<Iconify icon="solar:play-bold" width={14} />}
-        sx={{ height: 32, flexShrink: 0 }}
+    <Box>
+      <Stack
+        direction="row"
+        spacing={1}
+        alignItems="flex-start"
+        sx={{ mt: 1.25 }}
       >
-        Continue
-      </Button>
-    </Stack>
+        <Box sx={{ width: 220 }}>
+          <ConstraintPicker
+            agent={agent}
+            limits={agentLimits}
+            field={byTime ? "minutes" : "dollars"}
+            value={byTime ? pickMinutes : pickDollars}
+            onChange={byTime ? setMinutes : setDollars}
+            steps={steps}
+            fullWidth
+            sx={{ height: 32 }}
+          />
+        </Box>
+        <Button
+          size="small"
+          variant="contained"
+          color="primary"
+          onClick={resume}
+          startIcon={<Iconify icon="solar:play-bold" width={14} />}
+          sx={{ height: 32, flexShrink: 0 }}
+        >
+          Continue
+        </Button>
+      </Stack>
+      <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 0.75 }}>
+        {resumeNote}
+      </Typography>
+    </Box>
   );
 
   if (!framed)

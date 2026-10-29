@@ -1456,6 +1456,13 @@ export const dashboardRoutes = (
               element: <SimImprovementsPage />,
             },
             {
+              /* Jobs is on hold (hidden tab on the Environments page). */
+              path: "jobs",
+              element: (
+                <Navigate to="/dashboard/simulate/environments" replace />
+              ),
+            },
+            {
               /* The per-environment level is gone — an improvement is level 1's
                  row now. Old links land on the list. */
               path: "improvements/env/:envId",
