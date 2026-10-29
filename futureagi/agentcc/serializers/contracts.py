@@ -303,6 +303,9 @@ class GatewayConfigPatchRequestSerializer(serializers.Serializer):
     mcp = serializers.DictField(child=JsonValueField(), required=False)
     a2a = serializers.DictField(child=JsonValueField(), required=False)
     audit = serializers.DictField(child=JsonValueField(), required=False)
+    # Object values only, on purpose: the section's one key is the
+    # `overrides` map (the gateway's ModelDatabaseOrgConfig, and
+    # OrgConfigSerializer.validate_model_database requires an object).
     model_database = serializers.DictField(
         child=serializers.JSONField(), required=False
     )
