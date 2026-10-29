@@ -211,19 +211,6 @@ const invalidateVersions = (queryClient, agentId) =>
     queryClient.invalidateQueries({ queryKey: ["agents", "version", agentId] }),
   ]);
 
-// Makes a version the one in production. Environments keep the version each
-// is pinned to; only the marker moves.
-export function useActivateVersion(agentId) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ versionId }) =>
-      axios.post(
-        endpoints.agentDefinitions.activateVersion(agentId, versionId),
-      ),
-    onSuccess: () => invalidateVersions(queryClient, agentId),
-  });
-}
-
 export function useDeleteAgent(agentId) {
   const queryClient = useQueryClient();
   return useMutation({
@@ -347,24 +334,12 @@ export function useSetEnvironmentPolicy(agentId) {
         },
       ),
     onSuccess: () =>
-      queryClient.invalidateQueries({
-        queryKey: ["agents", "environments", agentId],
-      }),
-  });
-}
-
-// How a version fits the world an environment was built from.
-export function useVersionCompatibility(agentId, versionId, environmentId) {
-  return useQuery({
-    queryKey: ["agents", "compatibility", agentId, versionId, environmentId],
-    queryFn: async () =>
-      (
-        await axios.get(
-          endpoints.agentDefinitions.versionCompatibility(agentId, versionId),
-          { params: { environment_id: environmentId } },
-        )
-      ).data,
-    enabled: !!agentId && !!versionId && !!environmentId,
+      Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["agents", "environments", agentId],
+        }),
+        invalidateVersions(queryClient, agentId),
+      ]),
   });
 }
 

@@ -2,19 +2,7 @@ import PropTypes from "prop-types";
 import React from "react";
 import { Box, Skeleton, Typography } from "@mui/material";
 import { Editor } from "@monaco-editor/react";
-
-export const editorTheme = () =>
-  document.body.getAttribute("data-theme") === "dark" ? "vs-dark" : "light";
-
-export const EDITOR_OPTIONS = {
-  readOnly: true,
-  minimap: { enabled: false },
-  scrollBeyondLastLine: false,
-  fontSize: 12,
-  lineNumbersMinChars: 3,
-  renderLineHighlight: "none",
-  wordWrap: "on",
-};
+import { EDITOR_OPTIONS, editorTheme } from "./editorOptions";
 
 const KIND_TEXT = {
   binary: "This file is binary; nothing to show.",

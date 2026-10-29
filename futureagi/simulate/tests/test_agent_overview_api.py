@@ -1204,3 +1204,22 @@ def test_overview_reports_the_environment_pin_not_the_latest_version(
 
     assert overview_agent(environment)["active_version"] == "v1"
     assert overview_agent(environment)["versions_count"] == 2
+
+
+def test_environment_rows_carry_their_policy(auth_client, organization, workspace):
+    from simulate.services.harness_agent_versions import POLICY_KEY
+
+    agent = _agent(organization, workspace, "policies")
+    following = _environment(agent, 1)
+    pinned = _environment(agent, 2)
+    HostedHarnessJob.no_workspace_objects.filter(id=pinned.id).update(
+        payload={**pinned.payload, "metadata": {POLICY_KEY: "pinned"}}
+    )
+
+    response = auth_client.get(
+        "/simulate/api/harness-environments/", {"agent_definition_id": str(agent.id)}
+    )
+
+    assert response.status_code == status.HTTP_200_OK, response.content
+    rows = {row["id"]: row["agent_policy"] for row in response.json()["results"]}
+    assert rows == {str(following.id): "follow", str(pinned.id): "pinned"}

@@ -15,6 +15,7 @@ from simulate.services.hosted_harness import (
     create_hosted_job,
     frozen_build_pin,
     platform_set_failure,
+    provision_scenarios,
     register_attempt,
 )
 from simulate.tests.test_hosted_harness_channels import (
@@ -170,3 +171,21 @@ def test_the_guest_terminal_event_does_not_replace_a_platform_failure(organizati
     assert attempt.state == HostedHarnessAttempt.State.FINALIZING
     assert attempt.terminal_failure["code"] == "subfolder_ignored"
     assert attempt.terminal_stage == "failed"
+
+
+def test_provisioning_keeps_the_echo_failure_when_it_refuses(organization):
+    attempt = register_attempt(
+        _job(organization, "echo-provision", subfolder="agents/support").id,
+        endpoint_base_url="https://platform.example",
+    ).attempt
+
+    with pytest.raises(HostedHarnessError) as refused:
+        provision_scenarios(
+            attempt,
+            {"operation": "provision", "personas": [], **_document("agents/billing")},
+        )
+
+    assert refused.value.code == "subfolder_ignored"
+    attempt.refresh_from_db()
+    assert attempt.terminal_failure["code"] == "subfolder_ignored"
+    assert platform_set_failure(attempt) is not None

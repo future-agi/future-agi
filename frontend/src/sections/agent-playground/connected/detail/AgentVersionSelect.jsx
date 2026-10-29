@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import React from "react";
-import { Box, MenuItem, Select, Skeleton } from "@mui/material";
+import { Box, MenuItem, Select } from "@mui/material";
 import { MONO, ago } from "./format";
 import usePinnedVersions from "./usePinnedVersions";
 import { LineSkeleton } from "./bits";

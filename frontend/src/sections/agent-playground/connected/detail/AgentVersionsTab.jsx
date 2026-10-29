@@ -1,4 +1,3 @@
-import PropTypes from "prop-types";
 import React, { useEffect, useState } from "react";
 import { format } from "date-fns";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -16,11 +15,19 @@ import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import ComingSoonCard from "./ComingSoonCard";
-import { Card, LineSkeleton } from "./bits";
+import { Card, LineSkeleton, Pill } from "./bits";
 import { agentDetailPath } from "./agentDetailTabs";
 import { MONO } from "./format";
 import useAgentRoute from "./useAgentRoute";
 import usePinnedVersions from "./usePinnedVersions";
+import {
+  CHECK_LABEL,
+  ORIGIN_LABEL,
+  canDiscard,
+  canPromote,
+  canRetry,
+  environmentsLabel,
+} from "./versionLabels";
 
 const VERSION_ACTION = { typography: "s2", minWidth: 0, height: 24, px: 1 };
 
@@ -36,53 +43,6 @@ const actionProps = (onClick) => ({
   },
   onKeyDown: (e) => e.stopPropagation(),
 });
-
-function Chip({ label }) {
-  return (
-    <Box
-      sx={{
-        px: 0.75,
-        height: 20,
-        display: "inline-flex",
-        alignItems: "center",
-        borderRadius: 0.75,
-        bgcolor: "action.selected",
-        color: "text.secondary",
-      }}
-    >
-      <Typography sx={{ typography: "s2", fontWeight: 500, color: "inherit" }}>
-        {label}
-      </Typography>
-    </Box>
-  );
-}
-
-Chip.propTypes = { label: PropTypes.string };
-
-// How a version came to be, from its side row's trigger.
-export const ORIGIN_LABEL = {
-  connect: "Connected",
-  creation: "Built with an environment",
-  sync: "Synced",
-  push: "Pushed",
-  upload: "Uploaded",
-  prompt: "Prompt edited",
-  agent_payload: "Settings changed",
-  credentials: "Credentials changed",
-  provider_sync: "Provider synced",
-  backfill: "Recorded",
-};
-
-// The check a new version goes through before it can run; a version from
-// before versioning has none and reads as checked.
-export const CHECK_LABEL = {
-  pending: "Checking",
-  failed: "Check failed",
-  discarded: "Discarded",
-};
-
-export const environmentsLabel = (count) =>
-  count ? `Running in ${count} environment${count === 1 ? "" : "s"}` : null;
 
 // A timeline row while it loads, laid out like a real one: the dot and its
 // line, then label, message and date at the same sizes and spacing.
@@ -195,7 +155,7 @@ export default function AgentVersionsTab() {
             variant: "info",
           }),
         onError: (e) =>
-          enqueueSnackbar(errorMessage(e) || `Couldn't retry ${v.label}`, {
+          enqueueSnackbar(errorMessage(e), {
             variant: "error",
           }),
       },
@@ -211,7 +171,7 @@ export default function AgentVersionsTab() {
           enqueueSnackbar(`${v.label} discarded`, { variant: "success" });
         },
         onError: (e) =>
-          enqueueSnackbar(errorMessage(e) || `Couldn't discard ${v.label}`, {
+          enqueueSnackbar(errorMessage(e), {
             variant: "error",
           }),
       },
@@ -234,12 +194,9 @@ export default function AgentVersionsTab() {
           );
         },
         onError: (e) =>
-          enqueueSnackbar(
-            errorMessage(e) || `Couldn't set ${v.label} as production`,
-            {
-              variant: "error",
-            },
-          ),
+          enqueueSnackbar(errorMessage(e), {
+            variant: "error",
+          }),
       },
     );
   };
@@ -307,16 +264,7 @@ export default function AgentVersionsTab() {
                 data-testid="version-entry"
                 direction="row"
                 spacing={1.5}
-                role="button"
-                tabIndex={0}
                 aria-current={selected ? "true" : undefined}
-                onClick={() => selectVersion(v.id)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    selectVersion(v.id);
-                  }
-                }}
                 sx={{
                   mx: -1,
                   px: 1,
@@ -324,15 +272,7 @@ export default function AgentVersionsTab() {
                   pb: i === versions.length - 1 ? 0.75 : 1.5,
                   mb: i === versions.length - 1 ? 0 : 0.75,
                   borderRadius: 1,
-                  cursor: "pointer",
                   bgcolor: selected ? "action.selected" : "transparent",
-                  "&:hover": {
-                    bgcolor: selected ? "action.selected" : "action.hover",
-                  },
-                  "&:focus-visible": {
-                    outline: "2px solid",
-                    outlineColor: "primary.main",
-                  },
                 }}
               >
                 <Stack alignItems="center" sx={{ flexShrink: 0, pt: 0.25 }}>
@@ -363,28 +303,38 @@ export default function AgentVersionsTab() {
                     rowGap={0.5}
                   >
                     <Typography
+                      component="button"
+                      type="button"
                       data-testid="version-label"
+                      aria-pressed={selected}
+                      onClick={() => selectVersion(v.id)}
                       sx={{
                         typography: "s2",
                         fontWeight: 500,
                         fontFamily: MONO,
+                        background: "none",
+                        border: 0,
+                        p: 0,
+                        color: "inherit",
+                        cursor: "pointer",
+                        "&:hover": { textDecoration: "underline" },
                       }}
                     >
                       {v.label}
                     </Typography>
-                    {v.isLatest && <Chip label="Latest" />}
-                    {v.isActive && <Chip label="In production" />}
+                    {v.isLatest && <Pill tone="primary">Latest</Pill>}
+                    {v.isActive && <Pill>In production</Pill>}
                     {v.isDraft && !v.isActive && !CHECK_LABEL[v.check] && (
-                      <Chip label="Draft" />
+                      <Pill>Draft</Pill>
                     )}
                     {CHECK_LABEL[v.check] && (
-                      <Chip label={CHECK_LABEL[v.check]} />
+                      <Pill>{CHECK_LABEL[v.check]}</Pill>
                     )}
                     {ORIGIN_LABEL[v.origin] && (
-                      <Chip label={ORIGIN_LABEL[v.origin]} />
+                      <Pill>{ORIGIN_LABEL[v.origin]}</Pill>
                     )}
                     {environmentsLabel(v.environmentsCount) && (
-                      <Chip label={environmentsLabel(v.environmentsCount)} />
+                      <Pill>{environmentsLabel(v.environmentsCount)}</Pill>
                     )}
                   </Stack>
                   {v.commitMessage && (
@@ -419,25 +369,21 @@ export default function AgentVersionsTab() {
                     <Button {...actionProps(() => viewDefinition(v))}>
                       View definition
                     </Button>
-                    {!v.isActive &&
-                      canEdit &&
-                      !["pending", "failed", "discarded"].includes(v.check) && (
-                        <Button {...actionProps(() => setToActivate(v))}>
-                          Set as production
-                        </Button>
-                      )}
-                    {canEdit && v.check === "failed" && (
+                    {canEdit && canPromote(v) && (
+                      <Button {...actionProps(() => setToActivate(v))}>
+                        Set as production
+                      </Button>
+                    )}
+                    {canEdit && canRetry(v) && (
                       <Button {...actionProps(() => retryCheck(v))}>
                         Retry
                       </Button>
                     )}
-                    {!v.isActive &&
-                      canEdit &&
-                      ["pending", "failed"].includes(v.check) && (
-                        <Button {...actionProps(() => setToDiscard(v))}>
-                          Discard
-                        </Button>
-                      )}
+                    {canEdit && canDiscard(v) && (
+                      <Button {...actionProps(() => setToDiscard(v))}>
+                        Discard
+                      </Button>
+                    )}
                   </Stack>
                 </Box>
               </Stack>

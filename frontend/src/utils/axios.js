@@ -2186,6 +2186,7 @@ export const endpoints = {
     },
     github: {
       install: apiPath("/integrations/github/install/"),
+      installComplete: apiPath("/integrations/github/install/complete/"),
     },
     connections: {
       list: apiPath("/integrations/connections/"),

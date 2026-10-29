@@ -124,18 +124,28 @@ def built_from(environment: HostedHarnessJob) -> AgentVersion | None:
     return frozen_build_pin(environment) or environment.agent_version
 
 
+def stored_document(version: AgentVersion) -> Mapping[str, Any] | None:
+    """The agent document stored on a version, raw extension included; None when
+    the version was never read."""
+    return stored_agent(version.id, with_raw_setup=True, include_stale=True)
+
+
 def environment_compatibility(
-    environment: HostedHarnessJob, version: AgentVersion
+    environment: HostedHarnessJob,
+    version: AgentVersion,
+    *,
+    document: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """``version`` against the version ``environment`` was built from; unmeasured
-    when either has no stored document."""
+    when either has no stored document. A caller judging many environments passes
+    the version's ``document`` once."""
     base = built_from(environment)
     if base is None:
         return {"status": UNMEASURED, "reason": "environment_not_built", "base": None}
     if base.id == version.id:
         return {"status": CLEAN, "base": str(base.id), "same_version": True}
-    previous = stored_agent(base.id, with_raw_setup=True, include_stale=True)
-    current = stored_agent(version.id, with_raw_setup=True, include_stale=True)
+    previous = stored_document(base)
+    current = document if document is not None else stored_document(version)
     if previous is None or current is None:
         return {
             "status": UNMEASURED,

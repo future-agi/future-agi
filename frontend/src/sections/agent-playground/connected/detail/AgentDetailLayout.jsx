@@ -5,7 +5,6 @@ import {
   Box,
   CircularProgress,
   IconButton,
-  Skeleton,
   Stack,
   Tab,
   Typography,

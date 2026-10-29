@@ -122,10 +122,29 @@ def _state(organization, workspace, user):
     return parse_qs(urlparse(install_url).query)["state"][0]
 
 
-def _callback(api_client, state, **params):
+def _handoff(api_client, state, **params):
+    """What GitHub's redirect hands the app: the state and the install's facts,
+    saved by nobody yet."""
     query = {"state": state, "setup_action": "install", **params}
     response = api_client.get("/integrations/github/callback/", query)
-    return parse_qs(urlparse(response["Location"]).query).get("github", [""])[0]
+    landed = parse_qs(urlparse(response["Location"]).query)
+    assert landed.get("github") == ["complete"], landed
+    return {key: values[0] for key, values in landed.items() if key != "github"}
+
+
+def _complete(client, handoff):
+    response = client.post(
+        "/integrations/github/install/complete/", handoff, format="json"
+    )
+    if response.status_code != 200:
+        return "error"
+    return response.json()["result"]["outcome"]
+
+
+def _callback(api_client, state, client=None, **params):
+    """The whole round trip: GitHub's redirect, then the signed-in user finishing
+    it; ``client`` is that user's client (the starting user by default)."""
+    return _complete(client, _handoff(api_client, state, **params))
 
 
 @pytest.mark.django_db
@@ -153,11 +172,13 @@ class TestGitHubInstall:
         assert response.status_code == 400
 
     def test_callback_saves_the_installation_the_user_can_reach(
-        self, api_client, organization, workspace, user, github
+        self, api_client, auth_client, organization, workspace, user, github
     ):
         state = _state(organization, workspace, user)
 
-        outcome = _callback(api_client, state, code="code", installation_id="42")
+        outcome = _callback(
+            api_client, state, client=auth_client, code="code", installation_id="42"
+        )
 
         assert outcome == "connected"
         connection = IntegrationConnection.no_workspace_objects.get(
@@ -173,12 +194,14 @@ class TestGitHubInstall:
         assert github.count("/applications/client-id/token") == 1
 
     def test_callback_refuses_an_installation_the_user_cannot_reach(
-        self, api_client, organization, workspace, user, github
+        self, api_client, auth_client, organization, workspace, user, github
     ):
         github.installations = ["7"]
         state = _state(organization, workspace, user)
 
-        outcome = _callback(api_client, state, code="code", installation_id="42")
+        outcome = _callback(
+            api_client, state, client=auth_client, code="code", installation_id="42"
+        )
 
         assert outcome == "error"
         assert not IntegrationConnection.no_workspace_objects.filter(
@@ -187,40 +210,59 @@ class TestGitHubInstall:
         assert github.count("/applications/client-id/token") == 1
 
     def test_callback_without_a_user_authorization_saves_nothing(
-        self, api_client, organization, workspace, user, github
+        self, api_client, auth_client, organization, workspace, user, github
     ):
         github.user_token = None
         state = _state(organization, workspace, user)
 
-        assert _callback(api_client, state, code="bad", installation_id="42") == "error"
+        assert (
+            _callback(
+                api_client, state, client=auth_client, code="bad", installation_id="42"
+            )
+            == "error"
+        )
         assert not IntegrationConnection.no_workspace_objects.exists()
 
     def test_a_requested_install_waits_for_an_owner_and_saves_nothing(
-        self, api_client, organization, workspace, user, github
+        self, api_client, auth_client, organization, workspace, user, github
     ):
         state = _state(organization, workspace, user)
 
-        assert _callback(api_client, state, setup_action="request") == "requested"
+        assert (
+            _callback(api_client, state, client=auth_client, setup_action="request")
+            == "requested"
+        )
         assert not IntegrationConnection.no_workspace_objects.exists()
         assert github.calls == []
 
     def test_a_state_is_used_once(
-        self, api_client, organization, workspace, user, github
+        self, api_client, auth_client, organization, workspace, user, github
     ):
         state = _state(organization, workspace, user)
-        _callback(api_client, state, code="code", installation_id="42")
-
-        assert _callback(api_client, state, code="code", installation_id="42") == (
-            "error"
+        _callback(
+            api_client, state, client=auth_client, code="code", installation_id="42"
         )
 
+        assert _callback(
+            api_client, state, client=auth_client, code="code", installation_id="42"
+        ) == ("error")
+
     def test_a_second_github_account_is_refused_while_one_is_connected(
-        self, api_client, organization, workspace, user, github, github_connection
+        self,
+        api_client,
+        auth_client,
+        organization,
+        workspace,
+        user,
+        github,
+        github_connection,
     ):
         github.installations = ["99"]
         state = _state(organization, workspace, user)
 
-        outcome = _callback(api_client, state, code="code", installation_id="99")
+        outcome = _callback(
+            api_client, state, client=auth_client, code="code", installation_id="99"
+        )
 
         assert outcome == "already_connected"
         assert list(
@@ -230,16 +272,62 @@ class TestGitHubInstall:
         ) == ["42"]
 
     def test_a_suspended_installation_is_saved_paused(
-        self, api_client, organization, workspace, user, github
+        self, api_client, auth_client, organization, workspace, user, github
     ):
         github.suspended_at = "2026-10-27T10:00:00Z"
         state = _state(organization, workspace, user)
 
-        _callback(api_client, state, code="code", installation_id="42")
+        _callback(
+            api_client, state, client=auth_client, code="code", installation_id="42"
+        )
 
         connection = IntegrationConnection.no_workspace_objects.get()
         assert connection.status == ConnectionStatus.PAUSED
         assert connection.status_message == github_app.SUSPENDED_MESSAGE
+
+    def test_a_forwarded_install_link_binds_nothing_for_another_user(
+        self, api_client, organization, workspace, user, github
+    ):
+        from accounts.models.organization_membership import OrganizationMembership
+        from accounts.models.user import User
+        from tfc.constants.roles import OrganizationRoles
+
+        other = User.objects.create_user(
+            email="other@futureagi.com",
+            password="testpassword123",
+            name="Other User",
+            organization=organization,
+            organization_role=OrganizationRoles.OWNER,
+        )
+        OrganizationMembership.no_workspace_objects.get_or_create(
+            user=other,
+            organization=organization,
+            defaults={"role": OrganizationRoles.OWNER},
+        )
+        state = _state(organization, workspace, user)
+        handoff = _handoff(api_client, state, code="code", installation_id="42")
+        from rest_framework.test import APIClient
+
+        theirs = APIClient()
+        theirs.force_authenticate(user=other)
+
+        response = theirs.post(
+            "/integrations/github/install/complete/", handoff, format="json"
+        )
+
+        assert response.status_code == 403, response.content
+        assert not IntegrationConnection.no_workspace_objects.exists()
+        assert github.count("/applications/client-id/token") == 0
+
+    def test_the_callback_itself_saves_nothing(
+        self, api_client, organization, workspace, user, github
+    ):
+        state = _state(organization, workspace, user)
+
+        _handoff(api_client, state, code="code", installation_id="42")
+
+        assert not IntegrationConnection.no_workspace_objects.exists()
+        assert github.calls == []
 
     def test_the_generic_create_endpoint_refuses_github(self, auth_client):
         response = auth_client.post(

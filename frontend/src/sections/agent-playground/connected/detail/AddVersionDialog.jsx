@@ -15,6 +15,7 @@ export default function AddVersionDialog({ agent, open, onClose }) {
   const { enqueueSnackbar } = useSnackbar();
   const change = useChangeVersion(agent.id);
   const [prompt, setPrompt] = useState(agent.description || "");
+  const next = `v${(agent.versionCount || 0) + 1}`;
 
   const submit = () => {
     change.mutate(
@@ -22,18 +23,15 @@ export default function AddVersionDialog({ agent, open, onClose }) {
       {
         onSuccess: (data) => {
           onClose();
-          const label = data?.version?.version_name_display || "The version";
+          const label = data.version.version_name_display;
           enqueueSnackbar(
-            data?.up_to_date
+            data.up_to_date
               ? `${label} already has this prompt`
               : `${label} created from the new prompt`,
-            { variant: data?.up_to_date ? "info" : "success" },
+            { variant: data.up_to_date ? "info" : "success" },
           );
         },
-        onError: (e) =>
-          enqueueSnackbar(errorMessage(e) || "Couldn't add the version", {
-            variant: "error",
-          }),
+        onError: (e) => enqueueSnackbar(errorMessage(e), { variant: "error" }),
       },
     );
   };
@@ -43,7 +41,7 @@ export default function AddVersionDialog({ agent, open, onClose }) {
       open={open}
       onClose={() => (change.isPending ? null : onClose())}
       closeDisabled={change.isPending}
-      title="Add a version"
+      title={`Add version ${next}`}
       content={
         <>
           <Typography
@@ -71,7 +69,7 @@ export default function AddVersionDialog({ agent, open, onClose }) {
           disabled={change.isPending || !prompt.trim()}
           onClick={submit}
         >
-          Add version
+          {`Save as ${next}`}
         </Button>
       }
     />

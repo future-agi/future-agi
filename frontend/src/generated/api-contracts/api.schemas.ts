@@ -5549,6 +5549,38 @@ export interface GitHubInstallResponseApi {
   result: GitHubInstallResultApi;
 }
 
+export interface GitHubInstallCompleteApi {
+  /**
+   * @minLength 1
+   * @maxLength 2048
+   */
+  state: string;
+  /** @maxLength 32 */
+  setup_action?: string;
+  /** @maxLength 255 */
+  code?: string;
+  /** @maxLength 32 */
+  installation_id?: string;
+}
+
+export type GitHubInstallCompleteResultApiOutcome =
+  (typeof GitHubInstallCompleteResultApiOutcome)[keyof typeof GitHubInstallCompleteResultApiOutcome];
+
+export const GitHubInstallCompleteResultApiOutcome = {
+  connected: "connected",
+  requested: "requested",
+  already_connected: "already_connected",
+} as const;
+
+export interface GitHubInstallCompleteResultApi {
+  outcome: GitHubInstallCompleteResultApiOutcome;
+}
+
+export interface GitHubInstallCompleteResponseApi {
+  status: boolean;
+  result: GitHubInstallCompleteResultApi;
+}
+
 export interface SlackInstallApi {
   connection_id?: string;
 }
@@ -16211,7 +16243,7 @@ export interface AgentVersionListResponseApi {
   readonly commit_message?: string;
   readonly is_active?: string;
   readonly is_latest?: string;
-  readonly in_production?: string;
+  readonly in_production?: boolean;
   readonly origin?: string;
   readonly preflight_status?: string;
   readonly environments_count?: number;
@@ -16788,15 +16820,18 @@ export const AgentVersionCompatibilityResponseApiStatus = {
   unmeasured: "unmeasured",
 } as const;
 
-export type AgentVersionToolChangeApiBefore = { [key: string]: string };
-
-export type AgentVersionToolChangeApiAfter = { [key: string]: string };
+export interface AgentToolSignatureApi {
+  readonly arguments?: readonly string[];
+  readonly required?: readonly string[];
+  /** @minLength 1 */
+  readonly kind?: string;
+}
 
 export interface AgentVersionToolChangeApi {
   /** @minLength 1 */
   readonly name?: string;
-  readonly before?: AgentVersionToolChangeApiBefore;
-  readonly after?: AgentVersionToolChangeApiAfter;
+  before?: AgentToolSignatureApi;
+  after?: AgentToolSignatureApi;
 }
 
 export interface AgentVersionCompatibilityResponseApi {
@@ -18242,14 +18277,86 @@ export interface HarnessAgentPolicyApi {
   version_id?: string;
 }
 
-export type HarnessAgentPolicyResponseApiAgentVersion = {
-  [key: string]: string;
-};
+export type HarnessAgentPolicyResponseApiPolicy =
+  (typeof HarnessAgentPolicyResponseApiPolicy)[keyof typeof HarnessAgentPolicyResponseApiPolicy];
+
+export const HarnessAgentPolicyResponseApiPolicy = {
+  follow: "follow",
+  pinned: "pinned",
+} as const;
+
+export type HarnessVersionApiStatus =
+  (typeof HarnessVersionApiStatus)[keyof typeof HarnessVersionApiStatus];
+
+export const HarnessVersionApiStatus = {
+  draft: "draft",
+  active: "active",
+  discarded: "discarded",
+} as const;
+
+export interface HarnessVersionPersonApi {
+  /** @minLength 1 */
+  id: string;
+  name: string;
+}
+
+/**
+ * An agent version's non-secret source facts.
+ */
+export type HarnessVersionApiSource = { [key: string]: unknown };
+
+/**
+ * An agent version's last check: check statuses and names only.
+ */
+export type HarnessVersionApiPreflightReport = { [key: string]: unknown };
+
+export interface HarnessVersionApi {
+  id: string;
+  /** @minLength 1 */
+  label: string | null;
+  status: HarnessVersionApiStatus;
+  is_default: boolean;
+  created_at: string;
+  created_by: HarnessVersionPersonApi | null;
+  /** @minLength 1 */
+  origin: string | null;
+  summary: string;
+  /** @minLength 1 */
+  hash: string | null;
+  parent_id: string | null;
+  derived_from_agent_version_id: string | null;
+  scenario_count: number | null;
+  /** An agent version's non-secret source facts. */
+  source: HarnessVersionApiSource | null;
+  /** The default agent version's prompt; null on every other item. */
+  prompt: string | null;
+  /** @minLength 1 */
+  preflight_status: string | null;
+  /** An agent version's last check: check statuses and names only. */
+  preflight_report: HarnessVersionApiPreflightReport | null;
+  preflighted_at: string | null;
+  /** When an agent version's latest check was asked for. */
+  check_started_at: string | null;
+  /** An agent version's credential names, provider keys included. */
+  credential_names: string[] | null;
+  /** The variables an agent version's source reads, when known. */
+  required_variable_names: string[] | null;
+  /**
+   * Why a passed agent version is or isn't this environment's default, as last recorded.
+   * @minLength 1
+   */
+  activation_outcome: string | null;
+  /** Whether this environment asked for an agent version. */
+  requested_here: boolean | null;
+  /** Whether an agent version can be picked for a run of this environment or made its default. */
+  pickable: boolean | null;
+  /** Whether this environment can discard an agent version. */
+  discardable: boolean | null;
+}
 
 export interface HarnessAgentPolicyResponseApi {
-  /** @minLength 1 */
-  readonly policy?: string;
-  readonly agent_version?: HarnessAgentPolicyResponseApiAgentVersion;
+  readonly policy?: HarnessAgentPolicyResponseApiPolicy;
+  agent_version?: HarnessVersionApi;
 }
 
 export type HarnessComparePairApiBand =
@@ -18356,12 +18463,6 @@ export const HarnessDraftItemApiStatus = {
   active: "active",
   discarded: "discarded",
 } as const;
-
-export interface HarnessVersionPersonApi {
-  /** @minLength 1 */
-  id: string;
-  name: string;
-}
 
 /**
  * An agent version's non-secret source facts.
@@ -18474,69 +18575,6 @@ export interface HarnessDraftSaveApi {
    * @pattern ^[A-Za-z0-9_-]+$
    */
   idempotency_key: string;
-}
-
-export type HarnessVersionApiStatus =
-  (typeof HarnessVersionApiStatus)[keyof typeof HarnessVersionApiStatus];
-
-export const HarnessVersionApiStatus = {
-  draft: "draft",
-  active: "active",
-  discarded: "discarded",
-} as const;
-
-/**
- * An agent version's non-secret source facts.
- */
-export type HarnessVersionApiSource = { [key: string]: unknown };
-
-/**
- * An agent version's last check: check statuses and names only.
- */
-export type HarnessVersionApiPreflightReport = { [key: string]: unknown };
-
-export interface HarnessVersionApi {
-  id: string;
-  /** @minLength 1 */
-  label: string | null;
-  status: HarnessVersionApiStatus;
-  is_default: boolean;
-  created_at: string;
-  created_by: HarnessVersionPersonApi | null;
-  /** @minLength 1 */
-  origin: string | null;
-  summary: string;
-  /** @minLength 1 */
-  hash: string | null;
-  parent_id: string | null;
-  derived_from_agent_version_id: string | null;
-  scenario_count: number | null;
-  /** An agent version's non-secret source facts. */
-  source: HarnessVersionApiSource | null;
-  /** The default agent version's prompt; null on every other item. */
-  prompt: string | null;
-  /** @minLength 1 */
-  preflight_status: string | null;
-  /** An agent version's last check: check statuses and names only. */
-  preflight_report: HarnessVersionApiPreflightReport | null;
-  preflighted_at: string | null;
-  /** When an agent version's latest check was asked for. */
-  check_started_at: string | null;
-  /** An agent version's credential names, provider keys included. */
-  credential_names: string[] | null;
-  /** The variables an agent version's source reads, when known. */
-  required_variable_names: string[] | null;
-  /**
-   * Why a passed agent version is or isn't this environment's default, as last recorded.
-   * @minLength 1
-   */
-  activation_outcome: string | null;
-  /** Whether this environment asked for an agent version. */
-  requested_here: boolean | null;
-  /** Whether an agent version can be picked for a run of this environment or made its default. */
-  pickable: boolean | null;
-  /** Whether this environment can discard an agent version. */
-  discardable: boolean | null;
 }
 
 /**

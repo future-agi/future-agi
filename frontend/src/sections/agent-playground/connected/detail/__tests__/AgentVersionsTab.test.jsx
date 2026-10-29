@@ -224,11 +224,15 @@ describe("AgentVersionsTab", () => {
     expect(await screen.findAllByTestId("version-entry")).toHaveLength(2);
   });
 
-  it("selects a version from the timeline", async () => {
+  it("selects a version from its label in the timeline", async () => {
     renderTab();
     const [, oldest] = await screen.findAllByTestId("version-entry");
-    fireEvent.click(oldest);
+    fireEvent.click(within(oldest).getByTestId("version-label"));
     await waitFor(() => expect(currentLocation.search).toBe("?v=v1-id"));
+    expect(within(oldest).getByTestId("version-label")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
   });
 
   it("shows skeleton rows while the first page loads", async () => {

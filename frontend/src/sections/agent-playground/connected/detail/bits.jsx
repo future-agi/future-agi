@@ -3,7 +3,7 @@ import { Box, Skeleton, Stack, Typography } from "@mui/material";
 
 // Small pieces shared by the agent detail tabs, from the designer prototype.
 
-export function Pill({ children }) {
+export function Pill({ children, tone = "neutral" }) {
   return (
     <Box
       sx={{
@@ -17,14 +17,21 @@ export function Pill({ children }) {
       }}
     >
       <Typography
-        sx={{ typography: "s2", fontWeight: 500, color: "text.secondary" }}
+        sx={{
+          typography: "s2",
+          fontWeight: 500,
+          color: tone === "primary" ? "primary.main" : "text.secondary",
+        }}
       >
         {children}
       </Typography>
     </Box>
   );
 }
-Pill.propTypes = { children: PropTypes.node };
+Pill.propTypes = {
+  children: PropTypes.node,
+  tone: PropTypes.oneOf(["neutral", "primary"]),
+};
 
 export function Card({ title, action, children, sx }) {
   return (

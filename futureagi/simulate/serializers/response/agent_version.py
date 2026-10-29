@@ -146,7 +146,7 @@ class AgentVersionListResponseSerializer(serializers.ModelSerializer):
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     is_active = serializers.ReadOnlyField()
     is_latest = serializers.ReadOnlyField()
-    in_production = serializers.ReadOnlyField(source="is_active")
+    in_production = serializers.BooleanField(source="is_active", read_only=True)
     origin = serializers.SerializerMethodField()
     preflight_status = serializers.SerializerMethodField()
     environments_count = serializers.SerializerMethodField()
@@ -197,7 +197,9 @@ class AgentVersionListResponseSerializer(serializers.ModelSerializer):
     def get_environments_count(self, obj) -> int:
         return int((self.context.get("environments_count") or {}).get(obj.id, 0))
 
-    @swagger_serializer_method(serializer_or_field=AgentVersionSourceSerializer)
+    @swagger_serializer_method(
+        serializer_or_field=AgentVersionSourceSerializer(allow_null=True)
+    )
     def get_source(self, obj) -> dict | None:
         runtime = self._runtime(obj)
         if runtime is None or not runtime.source_kind:
@@ -260,10 +262,16 @@ class AgentVersionActionResponseSerializer(serializers.Serializer):
     message = serializers.CharField(read_only=True)
 
 
+class AgentToolSignatureSerializer(serializers.Serializer):
+    arguments = serializers.ListField(child=serializers.CharField(), read_only=True)
+    required = serializers.ListField(child=serializers.CharField(), read_only=True)
+    kind = serializers.CharField(read_only=True, allow_null=True)
+
+
 class AgentVersionToolChangeSerializer(serializers.Serializer):
     name = serializers.CharField(read_only=True)
-    before = serializers.DictField(read_only=True)
-    after = serializers.DictField(read_only=True)
+    before = AgentToolSignatureSerializer(read_only=True)
+    after = AgentToolSignatureSerializer(read_only=True)
 
 
 class AgentVersionCompatibilityResponseSerializer(serializers.Serializer):

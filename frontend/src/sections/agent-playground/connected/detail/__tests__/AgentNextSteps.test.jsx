@@ -1,3 +1,4 @@
+import PropTypes from "prop-types";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   fireEvent,
@@ -46,9 +47,11 @@ vi.mock("notistack", async (importOriginal) => ({
   useSnackbar: () => ({ enqueueSnackbar }),
 }));
 
-vi.mock("react-syntax-highlighter", () => ({
-  Prism: ({ children }) => <pre>{children}</pre>,
-}));
+vi.mock("react-syntax-highlighter", () => {
+  const Prism = ({ children }) => <pre>{children}</pre>;
+  Prism.propTypes = { children: PropTypes.node };
+  return { Prism };
+});
 
 // Mirrors /tracer/project/project_sdk_code/?project_type=observe.
 const SETUP_CODE = {

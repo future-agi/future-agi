@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1104,
+  endpointCount: 1105,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -293,6 +293,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/integrations/connections/{id}/resume/": ["post"],
       "/integrations/connections/{id}/sync_now/": ["post"],
       "/integrations/github/install/": ["post"],
+      "/integrations/github/install/complete/": ["post"],
       "/integrations/slack/install/": ["post"],
       "/integrations/sync-logs/": ["get"],
       "/integrations/sync-logs/{id}/": ["get"],
@@ -1666,6 +1667,7 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/integrations/connections/{id}/resume/": ["post"],
   "/integrations/connections/{id}/sync_now/": ["post"],
   "/integrations/github/install/": ["post"],
+  "/integrations/github/install/complete/": ["post"],
   "/integrations/slack/install/": ["post"],
   "/integrations/sync-logs/": ["get"],
   "/integrations/sync-logs/{id}/": ["get"],

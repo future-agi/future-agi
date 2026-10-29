@@ -22,12 +22,11 @@ from simulate.services.harness_agent_versions import (
     POLICY_FOLLOW,
     POLICY_KEY,
     POLICY_PINNED,
-    activate_agent_version,
     create_agent_version,
     discard_agent_version,
     environment_policy,
     hand_move,
-    make_production,
+    promote_to_production,
     retry_preflight,
 )
 from simulate.services.hosted_harness import HostedHarnessError
@@ -49,6 +48,23 @@ KINDS = (KIND_SYNC, KIND_UPLOAD, KIND_CREDENTIALS, KIND_MANUAL)
 class VersionChange:
     version: AgentVersion
     created: bool
+
+
+def environment_of(
+    definition: AgentDefinition, environment_id: UUID
+) -> HostedHarnessJob:
+    """A live environment of the agent's organization, or ``environment_not_found``."""
+    environment = HostedHarnessJob.objects.filter(
+        id=environment_id,
+        organization_id=definition.organization_id,
+        environment__isnull=True,
+        deleted=False,
+    ).first()
+    if environment is None:
+        raise HostedHarnessError(
+            "environment_not_found", "environment not found", status_code=404
+        )
+    return environment
 
 
 def production_version(definition: AgentDefinition) -> AgentVersion | None:
@@ -217,22 +233,39 @@ def manual_version(
 
 
 def change_version(
-    definition: AgentDefinition, *, kind: str, user: Any = None, **body: Any
+    definition: AgentDefinition,
+    *,
+    kind: str,
+    user: Any = None,
+    archive_artifact_id: UUID | None = None,
+    secret_values: Mapping[str, str] | None = None,
+    prompt: str | None = None,
 ) -> VersionChange:
-    """One change of ``kind`` to the agent, through the version engine."""
+    """One change of ``kind`` to the agent, through the version engine. ``created``
+    is whether the call made a version: the same content again, a draft included,
+    returns the version that already stands for it."""
+    before = set(
+        AgentVersion.no_workspace_objects.filter(
+            agent_definition=definition
+        ).values_list("id", flat=True)
+    )
     if kind == KIND_SYNC:
-        return sync_version(definition, user=user)
-    if kind == KIND_UPLOAD:
-        return upload_version(
-            definition, archive_artifact_id=body["archive_artifact_id"], user=user
+        change = sync_version(definition, user=user)
+    elif kind == KIND_UPLOAD:
+        change = upload_version(
+            definition, archive_artifact_id=archive_artifact_id, user=user
         )
-    if kind == KIND_CREDENTIALS:
-        return credentials_version(
-            definition, secret_values=body["secret_values"], user=user
+    elif kind == KIND_CREDENTIALS:
+        change = credentials_version(
+            definition, secret_values=secret_values or {}, user=user
         )
-    if kind == KIND_MANUAL:
-        return manual_version(definition, prompt=body["prompt"], user=user)
-    raise HostedHarnessError("kind_unknown", f"unknown kind {kind!r}", status_code=400)
+    elif kind == KIND_MANUAL:
+        change = manual_version(definition, prompt=prompt or "", user=user)
+    else:
+        raise HostedHarnessError(
+            "kind_unknown", f"unknown kind {kind!r}", status_code=400
+        )
+    return VersionChange(change.version, change.version.id not in before)
 
 
 def set_production(version: AgentVersion) -> list[Any]:
@@ -249,11 +282,7 @@ def set_production(version: AgentVersion) -> list[Any]:
             status_code=409,
             details={"preflight_status": runtime.preflight_status},
         )
-    if runtime is None:
-        make_production(version)
-        return []
-    make_production(version)
-    return activate_agent_version(version)
+    return promote_to_production(version)
 
 
 def retry_version(version: AgentVersion) -> None:

@@ -13,7 +13,11 @@ import {
 import Iconify from "src/components/iconify";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import { useAgentDefinitionVersions } from "src/api/agent-definition/agent-definition-version";
-import { toVersion, useBuildPreflight } from "src/api/agents/agentDetail";
+import {
+  toVersion,
+  useAgentVersion,
+  useBuildPreflight,
+} from "src/api/agents/agentDetail";
 import {
   createHarnessJob,
   harnessIdempotencyKey,
@@ -21,46 +25,9 @@ import {
 import { paths } from "src/routes/paths";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { MONO } from "./format";
+import { buildFromAgentPayload, readyToBuild } from "./buildPayload";
 
-const SCHEMA_VERSION = "futureagi.harness-job.v1";
 const SCENARIO_COUNTS = [10, 25, 50, 100];
-
-// A version the dialog offers: checked, or from before versioning.
-const ready = (v) => !["pending", "failed", "discarded"].includes(v.check);
-
-// The creation request for an environment bound to the agent: the platform
-// takes the source and credential names from the version, so only the name,
-// the scope and which version to build from travel.
-export const buildFromAgentPayload = ({
-  agent,
-  version,
-  name,
-  scenarioCount,
-}) => ({
-  schema_version: SCHEMA_VERSION,
-  scenario_count: scenarioCount,
-  artifacts: { level: "standard" },
-  source:
-    version.source?.kind === "archive"
-      ? {
-          kind: "archive",
-          archive_artifact_id: version.source.archive_artifact_id,
-        }
-      : {
-          kind: "github",
-          repository: version.source?.repository,
-          ...(version.source?.ref ? { ref: version.source.ref } : {}),
-          visibility: "public",
-        },
-  agent: { connector: "auto", config: {}, secret_refs: {} },
-  metadata: {
-    name,
-    authoring_key: name,
-    agent_definition_id: agent.id,
-    agent_version_id: version.id,
-    agent_policy: "follow",
-  },
-});
 
 function Check({ check }) {
   const ok = check.status === "ok";
@@ -94,7 +61,7 @@ export default function BuildEnvironmentDialog({ agent, open, onClose }) {
       (list.data?.pages ?? [])
         .flatMap((p) => p.results ?? [])
         .map(toVersion)
-        .filter(ready),
+        .filter(readyToBuild),
     [list.data],
   );
   const [versionId, setVersionId] = useState(agent.activeVersionId || "");
@@ -102,8 +69,34 @@ export default function BuildEnvironmentDialog({ agent, open, onClose }) {
   const [scenarioCount, setScenarioCount] = useState(25);
   const [building, setBuilding] = useState(false);
   const chosen = versionId || versions[0]?.id || "";
+  // The chosen version may be past the first page of the list: its own read
+  // stands in, so an old production version still builds.
+  const detail = useAgentVersion(agent.id, chosen);
+  const listed = versions.find((v) => v.id === chosen);
+  const version =
+    listed ||
+    (detail.data && readyToBuild({ check: null })
+      ? {
+          id: detail.data.id,
+          label: detail.data.label,
+          isActive: detail.data.isActive,
+          source: detail.data.source,
+        }
+      : null);
+  const options = listed || !version ? versions : [version, ...versions];
   const preflight = useBuildPreflight(agent.id, chosen, { enabled: !!chosen });
-  const blocked = preflight.data ? !preflight.data.ok : false;
+  const blocked = !preflight.data?.ok;
+  const reason = !name.trim()
+    ? "Name it first"
+    : !version
+      ? "Pick a version to build from"
+      : preflight.isLoading
+        ? "Checking the version"
+        : preflight.isError
+          ? "Couldn't run the preflight; try again"
+          : preflight.data && !preflight.data.ok
+            ? "Fix what the preflight found first"
+            : "";
 
   const build = async () => {
     setBuilding(true);
@@ -111,7 +104,7 @@ export default function BuildEnvironmentDialog({ agent, open, onClose }) {
       const dto = await createHarnessJob(
         buildFromAgentPayload({
           agent,
-          version: versions.find((v) => v.id === chosen),
+          version,
           name: name.trim(),
           scenarioCount,
         }),
@@ -121,9 +114,7 @@ export default function BuildEnvironmentDialog({ agent, open, onClose }) {
       navigate(paths.dashboard.simulate.environments.detail(dto.job.job_id));
     } catch (e) {
       setBuilding(false);
-      enqueueSnackbar(errorMessage(e) || "Couldn't start the build", {
-        variant: "error",
-      });
+      enqueueSnackbar(errorMessage(e), { variant: "error" });
     }
   };
 
@@ -154,7 +145,7 @@ export default function BuildEnvironmentDialog({ agent, open, onClose }) {
             onChange={(e) => setVersionId(e.target.value)}
             inputProps={{ "data-testid": "build-env-version" }}
           >
-            {versions.map((v) => (
+            {options.map((v) => (
               <MenuItem key={v.id} value={v.id} sx={{ fontFamily: MONO }}>
                 {v.label}
                 {v.isActive ? " · in production" : ""}
@@ -174,6 +165,14 @@ export default function BuildEnvironmentDialog({ agent, open, onClose }) {
               </MenuItem>
             ))}
           </TextField>
+          {preflight.isLoading && (
+            <Typography
+              sx={{ typography: "s2", color: "text.secondary" }}
+              data-testid="build-env-preflight-loading"
+            >
+              Checking the version…
+            </Typography>
+          )}
           {preflight.data && (
             <Box data-testid="build-env-preflight">
               <Stack spacing={0.75}>
@@ -183,6 +182,14 @@ export default function BuildEnvironmentDialog({ agent, open, onClose }) {
               </Stack>
             </Box>
           )}
+          {reason && (
+            <Typography
+              sx={{ typography: "s2", color: "text.secondary" }}
+              data-testid="build-env-reason"
+            >
+              {reason}
+            </Typography>
+          )}
         </Stack>
       }
       action={
@@ -190,7 +197,7 @@ export default function BuildEnvironmentDialog({ agent, open, onClose }) {
           size="small"
           variant="contained"
           color="primary"
-          disabled={building || !chosen || !name.trim() || blocked}
+          disabled={building || !version || !name.trim() || blocked}
           onClick={build}
         >
           Build environment

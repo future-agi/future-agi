@@ -1,3 +1,4 @@
+import PropTypes from "prop-types";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   fireEvent,
@@ -58,9 +59,11 @@ vi.mock("src/api/project/observe-project-list", () => ({
     Promise.resolve([{ id: "p-prod", name: "Harbor production" }]),
 }));
 
-vi.mock("react-syntax-highlighter", () => ({
-  Prism: ({ children }) => <pre>{children}</pre>,
-}));
+vi.mock("react-syntax-highlighter", () => {
+  const Prism = ({ children }) => <pre>{children}</pre>;
+  Prism.propTypes = { children: PropTypes.node };
+  return { Prism };
+});
 
 const NOT_STORED = {
   statusCode: 404,

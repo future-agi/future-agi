@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1104,
+  endpointCount: 1105,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -10129,6 +10129,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
         queryParameters: {},
         responses: {
           200: {
+            $ref: "#/definitions/GitHubInstallResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/integrations/github/install/complete/": {
+      post: {
+        operationId: "integrations_github_install_complete_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/GitHubInstallComplete",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/GitHubInstallCompleteResponse",
+          },
+          400: {
+            $ref: "#/definitions/GitHubInstallResponse",
+          },
+          403: {
             $ref: "#/definitions/GitHubInstallResponse",
           },
           default: {
@@ -50149,7 +50174,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         in_production: {
           title: "In production",
-          type: "string",
+          type: "boolean",
           readOnly: true,
         },
         origin: {
@@ -63829,6 +63854,49 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    GitHubInstallComplete: {
+      required: ["state"],
+      type: "object",
+      properties: {
+        state: {
+          title: "State",
+          type: "string",
+          maxLength: 2048,
+          minLength: 1,
+        },
+        setup_action: {
+          title: "Setup action",
+          type: "string",
+          default: "",
+          maxLength: 32,
+        },
+        code: {
+          title: "Code",
+          type: "string",
+          default: "",
+          maxLength: 255,
+        },
+        installation_id: {
+          title: "Installation id",
+          type: "string",
+          default: "",
+          maxLength: 32,
+        },
+      },
+    },
+    GitHubInstallCompleteResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/GitHubInstallCompleteResult",
+        },
+      },
+    },
     GitHubInstallResponse: {
       required: ["status", "result"],
       type: "object",
@@ -64394,17 +64462,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         policy: {
           title: "Policy",
           type: "string",
+          enum: ["follow", "pinned"],
           readOnly: true,
-          minLength: 1,
         },
         agent_version: {
-          title: "Agent version",
-          type: "object",
-          additionalProperties: {
-            type: "string",
-            "x-nullable": true,
-          },
-          readOnly: true,
+          $ref: "#/definitions/HarnessVersion",
         },
       },
     },
@@ -87982,22 +88044,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
         },
         before: {
-          title: "Before",
-          type: "object",
-          additionalProperties: {
-            type: "string",
-            "x-nullable": true,
-          },
-          readOnly: true,
+          $ref: "#/definitions/AgentToolSignature",
         },
         after: {
-          title: "After",
-          type: "object",
-          additionalProperties: {
-            type: "string",
-            "x-nullable": true,
-          },
-          readOnly: true,
+          $ref: "#/definitions/AgentToolSignature",
         },
       },
     },
@@ -88031,6 +88081,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
         },
       },
+      "x-nullable": true,
     },
     AgentccRequestLogMetadataValues: {
       required: ["application", "service", "tags"],
@@ -94998,6 +95049,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    GitHubInstallCompleteResult: {
+      required: ["outcome"],
+      type: "object",
+      properties: {
+        outcome: {
+          title: "Outcome",
+          type: "string",
+          enum: ["connected", "requested", "already_connected"],
+        },
+      },
+    },
     GitHubInstallResult: {
       required: ["install_url"],
       type: "object",
@@ -95540,6 +95602,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
       },
+      "x-nullable": true,
     },
     HarnessAgentPayloadChange: {
       required: ["config"],
@@ -110116,6 +110179,34 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       "x-nullable": true,
+    },
+    AgentToolSignature: {
+      type: "object",
+      properties: {
+        arguments: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          readOnly: true,
+        },
+        required: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          readOnly: true,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
     },
     AlertOption: {
       required: ["value", "label"],

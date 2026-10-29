@@ -59,7 +59,9 @@ describe("ConnectAgentPage", () => {
     for (const name of ["GitLab", "Bitbucket", "LangGraph", "CrewAI"]) {
       expect(row(name)).toBeDisabled();
     }
-    expect(screen.getByLabelText("Coming soon", { selector: "span" })).toBeInTheDocument();
+    expect(
+      screen.getAllByLabelText("Coming soon", { selector: "span" }).length,
+    ).toBeGreaterThan(0);
   });
 
   it("shows hosted platforms as coming soon", () => {

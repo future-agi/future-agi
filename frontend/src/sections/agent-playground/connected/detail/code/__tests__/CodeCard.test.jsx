@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import CodeCard from "../CodeCard";
-import { buildTree } from "../FileTree";
+import { buildTree } from "../treeModel";
 
 const state = { tree: {}, changes: {}, files: {} };
 
@@ -13,19 +13,30 @@ vi.mock("src/api/agents/agentDetail", () => ({
     state.files[`${versionId}:${path}`] || { data: null, isLoading: false },
 }));
 
-vi.mock("@monaco-editor/react", () => ({
-  Editor: ({ path, language, value }) => (
+vi.mock("@monaco-editor/react", async () => {
+  const PropTypes = (await import("prop-types")).default;
+  const Editor = ({ path, language, value }) => (
     <pre data-testid="editor" data-path={path} data-language={language}>
       {value}
     </pre>
-  ),
-  DiffEditor: ({ original, modified }) => (
+  );
+  Editor.propTypes = {
+    path: PropTypes.string,
+    language: PropTypes.string,
+    value: PropTypes.string,
+  };
+  const DiffEditor = ({ original, modified }) => (
     <div data-testid="diff-editor">
       <pre data-testid="diff-original">{original}</pre>
       <pre data-testid="diff-modified">{modified}</pre>
     </div>
-  ),
-}));
+  );
+  DiffEditor.propTypes = {
+    original: PropTypes.string,
+    modified: PropTypes.string,
+  };
+  return { Editor, DiffEditor };
+});
 
 let currentLocation;
 const LocationProbe = () => {

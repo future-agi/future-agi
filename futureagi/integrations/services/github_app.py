@@ -343,8 +343,10 @@ def _save_connection(
 
 
 def complete_github_install(
-    *, state: str, setup_action: str, code: str, installation_id: str
+    *, state: str, setup_action: str, code: str, installation_id: str, user: Any
 ) -> InstallResult:
+    """Finish an install the signed-in ``user`` started: the state names them, and
+    only they may complete it, so a link forwarded to someone else binds nothing."""
     context = consume_state(
         state,
         salt=STATE_SALT,
@@ -352,6 +354,12 @@ def complete_github_install(
         ttl_seconds=STATE_TTL_SECONDS,
         label="GitHub",
     )
+    if str(getattr(user, "pk", "")) != str(context.get("user_id") or ""):
+        raise GitHubAppError(
+            "github_install_not_yours",
+            "This GitHub installation was started by another user.",
+            status_code=403,
+        )
     user_model = get_user_model()
     try:
         user = user_model.objects.get(pk=context["user_id"])

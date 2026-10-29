@@ -3,6 +3,7 @@ changed against another version, all read from the version's stored archive."""
 
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
+from rest_framework import serializers
 from rest_framework.response import Response
 
 from simulate.serializers.response.agent_version import (
@@ -11,7 +12,7 @@ from simulate.serializers.response.agent_version import (
     AgentCodeTreeResponseSerializer,
 )
 from simulate.services import agent_code
-from simulate.views.agent_versions import _AgentVersionView
+from simulate.views.agent_versions import _AgentVersionView, query_data
 from tfc.utils.api_serializers import ApiErrorWithDetailsResponseSerializer
 
 _PATH = openapi.Parameter(
@@ -20,6 +21,14 @@ _PATH = openapi.Parameter(
 _AGAINST = openapi.Parameter(
     "against", openapi.IN_QUERY, type=openapi.TYPE_STRING, required=False
 )
+
+
+class PathQuerySerializer(serializers.Serializer):
+    path = serializers.CharField(max_length=4096, allow_blank=True)
+
+
+class AgainstQuerySerializer(serializers.Serializer):
+    against = serializers.UUIDField(required=False)
 
 
 class AgentCodeTreeView(_AgentVersionView):
@@ -53,7 +62,9 @@ class AgentCodeFileView(_AgentVersionView):
     def get(self, request, agent_id, version_id, *args, **kwargs):
         agent = self._agent(request, agent_id)
         version = self._version(agent, version_id)
-        body = agent_code.read_file(version, request.query_params.get("path", ""))
+        body = agent_code.read_file(
+            version, query_data(PathQuerySerializer, request)["path"]
+        )
         return Response(AgentCodeFileResponseSerializer(body).data)
 
 
@@ -71,7 +82,7 @@ class AgentCodeChangesView(_AgentVersionView):
     def get(self, request, agent_id, version_id, *args, **kwargs):
         agent = self._agent(request, agent_id)
         version = self._version(agent, version_id)
-        against_id = request.query_params.get("against")
+        against_id = query_data(AgainstQuerySerializer, request).get("against")
         against = (
             self._version(agent, against_id)
             if against_id

@@ -3,27 +3,7 @@ import React, { useMemo, useState } from "react";
 import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { MONO } from "../format";
-
-// The tree, built from flat paths: folders first, then files, both by name.
-export const buildTree = (files, subfolder) => {
-  const root = { name: "", folders: new Map(), files: [] };
-  const prefix = subfolder ? `${subfolder}/` : "";
-  files.forEach((file) => {
-    const relative = file.path.startsWith(prefix)
-      ? file.path.slice(prefix.length)
-      : file.path;
-    const parts = relative.split("/");
-    let node = root;
-    parts.slice(0, -1).forEach((part) => {
-      if (!node.folders.has(part)) {
-        node.folders.set(part, { name: part, folders: new Map(), files: [] });
-      }
-      node = node.folders.get(part);
-    });
-    node.files.push({ ...file, name: parts[parts.length - 1] });
-  });
-  return root;
-};
+import { buildTree, foldersOf } from "./treeModel";
 
 const STATUS_TONE = {
   added: "success.main",
@@ -31,8 +11,16 @@ const STATUS_TONE = {
   removed: "error.main",
 };
 
-function Folder({ node, depth, selected, changes, onSelect, openByDefault }) {
-  const [open, setOpen] = useState(openByDefault);
+function Folder({
+  node,
+  depth,
+  selected,
+  changes,
+  onSelect,
+  openByDefault,
+  openFolders,
+}) {
+  const [open, setOpen] = useState(openByDefault || openFolders.has(node.path));
   const folders = [...node.folders.values()].sort((a, b) =>
     a.name.localeCompare(b.name),
   );
@@ -86,6 +74,7 @@ function Folder({ node, depth, selected, changes, onSelect, openByDefault }) {
               changes={changes}
               onSelect={onSelect}
               openByDefault={false}
+              openFolders={openFolders}
             />
           ))}
           {files.map((file) => {
@@ -160,6 +149,7 @@ Folder.propTypes = {
   changes: PropTypes.object.isRequired,
   onSelect: PropTypes.func.isRequired,
   openByDefault: PropTypes.bool.isRequired,
+  openFolders: PropTypes.instanceOf(Set).isRequired,
 };
 
 /** The files of a version as a folder tree; changed files carry a dot. */
@@ -171,6 +161,10 @@ export default function FileTree({
   onSelect,
 }) {
   const tree = useMemo(() => buildTree(files, subfolder), [files, subfolder]);
+  const openFolders = useMemo(
+    () => foldersOf(selected, subfolder),
+    [selected, subfolder],
+  );
   return (
     <Box data-testid="file-tree" sx={{ overflowY: "auto", minHeight: 0 }}>
       <Folder
@@ -180,6 +174,7 @@ export default function FileTree({
         changes={changes}
         onSelect={onSelect}
         openByDefault
+        openFolders={openFolders}
       />
     </Box>
   );

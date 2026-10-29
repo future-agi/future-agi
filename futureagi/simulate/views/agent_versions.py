@@ -2,12 +2,12 @@
 production, retry and discard."""
 
 from drf_yasg.utils import swagger_auto_schema
-from rest_framework import status
+from rest_framework import serializers, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from simulate.models import AgentDefinition, AgentVersion, HostedHarnessJob
+from simulate.models import AgentDefinition, AgentVersion
 from simulate.serializers.requests.agent_version import (
     AgentVersionChangeRequestSerializer,
 )
@@ -26,6 +26,27 @@ from tfc.utils.api_serializers import (
     ApiErrorWithDetailsResponseSerializer,
     EmptyRequestSerializer,
 )
+
+
+class EnvironmentQuerySerializer(serializers.Serializer):
+    environment_id = serializers.UUIDField()
+
+
+class VersionQuerySerializer(serializers.Serializer):
+    version_id = serializers.UUIDField(required=False)
+
+
+def query_data(serializer_class, request):
+    """The declared query params, validated; a bad one is a 400, never a 500."""
+    serializer = serializer_class(data=request.query_params)
+    if not serializer.is_valid():
+        raise HostedHarnessError(
+            "query_invalid",
+            "invalid query parameters",
+            status_code=400,
+            details=serializer.errors,
+        )
+    return serializer.validated_data
 
 
 class _AgentVersionView(APIView):
@@ -166,21 +187,10 @@ class AgentVersionCompatibilityView(_AgentVersionView):
     def get(self, request, agent_id, version_id, *args, **kwargs):
         agent = self._agent(request, agent_id)
         version = self._version(agent, version_id)
-        environment_id = request.query_params.get("environment_id")
-        if not environment_id:
-            raise HostedHarnessError(
-                "environment_id_required", "environment_id is required", status_code=400
-            )
-        environment = HostedHarnessJob.objects.filter(
-            id=environment_id,
-            organization=agent.organization,
-            environment__isnull=True,
-            deleted=False,
-        ).first()
-        if environment is None:
-            raise HostedHarnessError(
-                "environment_not_found", "environment not found", status_code=404
-            )
+        environment_id = query_data(EnvironmentQuerySerializer, request)[
+            "environment_id"
+        ]
+        environment = agent_versions.environment_of(agent, environment_id)
         body = {"environment_id": str(environment.id), "version_id": str(version.id)}
         body.update(environment_compatibility(environment, version))
         return Response(AgentVersionCompatibilityResponseSerializer(body).data)
@@ -197,7 +207,7 @@ class AgentBuildPreflightView(_AgentVersionView):
     )
     def get(self, request, agent_id, *args, **kwargs):
         agent = self._agent(request, agent_id)
-        version_id = request.query_params.get("version_id")
+        version_id = query_data(VersionQuerySerializer, request).get("version_id")
         version = self._version(agent, version_id) if version_id else None
         return Response(
             AgentBuildPreflightResponseSerializer(

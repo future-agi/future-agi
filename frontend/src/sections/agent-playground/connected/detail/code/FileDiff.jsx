@@ -3,7 +3,7 @@ import React from "react";
 import { Box, Skeleton, Typography } from "@mui/material";
 import { DiffEditor } from "@monaco-editor/react";
 import { useCodeFile } from "src/api/agents/agentDetail";
-import { EDITOR_OPTIONS, editorTheme } from "./FileViewer";
+import { EDITOR_OPTIONS, editorTheme } from "./editorOptions";
 
 // A side that is missing (the file was added or removed) diffs against empty.
 const text = (file) => (file && file.kind === "text" ? file.content : "");

@@ -117,20 +117,79 @@ def _callback_redirect(outcome: str) -> HttpResponseRedirect:
 
 
 def github_install_callback(request: HttpRequest) -> HttpResponseRedirect:
+    """GitHub's redirect after the install. Nothing is saved here: the request
+    carries no session, so the app finishes it from the signed-in user."""
     state = request.GET.get("state", "")
     if not state:
         return _callback_redirect("error")
-    try:
-        result = complete_github_install(
-            state=state,
-            setup_action=request.GET.get("setup_action", ""),
-            code=request.GET.get("code", ""),
-            installation_id=request.GET.get("installation_id", ""),
-        )
-    except (ValueError, SourceHostError, IntegrityError):
-        logger.warning("github_install_callback_failed", exc_info=True)
-        return _callback_redirect("error")
-    return _callback_redirect(result.outcome)
+    app_url = settings.APP_BASE_URL or settings.BASE_URL
+    handoff = {
+        "github": "complete",
+        "state": state,
+        "setup_action": request.GET.get("setup_action", ""),
+        "code": request.GET.get("code", ""),
+        "installation_id": request.GET.get("installation_id", ""),
+    }
+    return HttpResponseRedirect(
+        f"{app_url.rstrip('/')}/dashboard/settings/integrations?"
+        f"{urlencode({key: value for key, value in handoff.items() if value})}"
+    )
+
+
+class GitHubInstallCompleteSerializer(StrictInputSerializer):
+    state = serializers.CharField(max_length=2048)
+    setup_action = serializers.CharField(
+        max_length=32, required=False, allow_blank=True, default=""
+    )
+    code = serializers.CharField(
+        max_length=255, required=False, allow_blank=True, default=""
+    )
+    installation_id = serializers.CharField(
+        max_length=32, required=False, allow_blank=True, default=""
+    )
+
+
+class GitHubInstallCompleteResultSerializer(serializers.Serializer):
+    outcome = serializers.ChoiceField(
+        choices=("connected", "requested", "already_connected")
+    )
+
+
+class GitHubInstallCompleteResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = GitHubInstallCompleteResultSerializer()
+
+
+class GitHubInstallCompleteView(APIView):
+    """The signed-in user finishes the install GitHub redirected them back from."""
+
+    permission_classes = [IsAuthenticated]
+
+    @validated_request(
+        GitHubInstallCompleteSerializer,
+        responses={
+            200: GitHubInstallCompleteResponseSerializer,
+            400: GitHubInstallResponseSerializer,
+            403: GitHubInstallResponseSerializer,
+        },
+    )
+    def post(self, request):
+        data = request.validated_data
+        try:
+            result = complete_github_install(
+                state=data["state"],
+                setup_action=data.get("setup_action", ""),
+                code=data.get("code", ""),
+                installation_id=data.get("installation_id", ""),
+                user=request.user,
+            )
+        except SourceHostError as exc:
+            logger.warning("github_install_complete_refused", code=exc.code)
+            return _error(str(exc), exc.status_code)
+        except (ValueError, IntegrityError) as exc:
+            logger.warning("github_install_complete_failed", exc_info=True)
+            return _error(str(exc), 400)
+        return Response({"status": True, "result": {"outcome": result.outcome}})
 
 
 def _source_connection(

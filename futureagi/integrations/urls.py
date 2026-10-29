@@ -2,6 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from integrations.views.github import (
+    GitHubInstallCompleteView,
     GitHubInstallView,
     SourceBranchesView,
     SourceRepositoriesView,
@@ -33,6 +34,11 @@ urlpatterns = [
         "github/install/",
         GitHubInstallView.as_view(),
         name="integrations-github-install",
+    ),
+    path(
+        "github/install/complete/",
+        GitHubInstallCompleteView.as_view(),
+        name="integrations-github-install-complete",
     ),
     path(
         "github/callback/", github_install_callback, name="integrations-github-callback"

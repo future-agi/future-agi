@@ -164,6 +164,20 @@ export default function CodeCard({ agentId, versionId, versionLabel }) {
                 againstId={againstId}
                 path={selected}
               />
+            ) : selected && file.isError ? (
+              <Typography
+                sx={{ p: 2, typography: "s2", color: "text.secondary" }}
+                data-testid="file-viewer-error"
+              >
+                Could not load this file.
+              </Typography>
+            ) : selected && !file.isLoading && !file.data ? (
+              <Typography
+                sx={{ p: 2, typography: "s2", color: "text.secondary" }}
+                data-testid="file-viewer-missing"
+              >
+                This file is not in this version.
+              </Typography>
             ) : (
               <FileViewer
                 file={selected ? file.data : null}

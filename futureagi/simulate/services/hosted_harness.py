@@ -37,20 +37,20 @@ from simulate.services.alk_simulate_ingestion import (
     provision_alk_sim_run_test,
     resolved_agent_version,
 )
-from tracer.services.observability_switch import (
-    ObservabilityRefused,
-    refusal_body,
-    set_agent_observability,
-)
-from simulate.services.scoring_status import (
-    TRANSPORT_RUN_STATUSES,
-    settle_run_after_commit,
-)
 from simulate.services.canonical_json import (  # noqa: F401 - re-exported
     _json_value,
     _rfc3339,
     canonical_digest,
     canonical_json_bytes,
+)
+from simulate.services.scoring_status import (
+    TRANSPORT_RUN_STATUSES,
+    settle_run_after_commit,
+)
+from tracer.services.observability_switch import (
+    ObservabilityRefused,
+    refusal_body,
+    set_agent_observability,
 )
 
 _CAPABILITY_SCHEMA_VERSION = "futureagi.harness-capabilities.v1"
@@ -1651,9 +1651,10 @@ def platform_set_failure(attempt: HostedHarnessAttempt) -> dict[str, Any] | None
     """A failure the platform put on the attempt itself, which the guest's later
     terminal event or exit code must not replace."""
     failure = attempt.terminal_failure
-    if isinstance(failure, dict) and (failure.get("details") or {}).get(
-        "set_by"
-    ) == "platform":
+    if (
+        isinstance(failure, dict)
+        and (failure.get("details") or {}).get("set_by") == "platform"
+    ):
         return failure
     return None
 
@@ -1677,7 +1678,8 @@ def _check_subfolder_echo(
     attempt: HostedHarnessAttempt, payload: dict[str, Any]
 ) -> None:
     """A build that named a folder must hear the harness used it; an older harness
-    that built the repository root instead is an infrastructure failure, not a result."""
+    that built the repository root instead is an infrastructure failure, not a result.
+    """
     job = attempt.job
     expected = str((job.payload.get("source") or {}).get("subfolder") or "")
     sent = payload.get("agent")
@@ -2021,6 +2023,8 @@ def provision_scenarios(
     attempt: HostedHarnessAttempt, payload: dict[str, Any]
 ) -> dict[str, Any]:
     job = attempt.job
+    # Before any transaction: the failure it records must survive the raise.
+    _check_subfolder_echo(attempt, payload)
     # Enforce exactly scenario_count unique personas.
     persona_keys = [p["scenario_key"] for p in payload["personas"]]
     if len(persona_keys) != len(set(persona_keys)):
@@ -2244,7 +2248,6 @@ def provision_scenarios(
                 for persona, row in zip(payload["personas"], dataset_rows, strict=True)
             ]
         _record_target_agent_facts(locked, agent_definition, payload)
-        _check_subfolder_echo(attempt, payload)
         stored = _store_authored_agent(locked, agent_definition, payload)
         _turn_on_observability(locked, agent_definition, payload, stored)
         from simulate.services.harness_agent_versions import fill_agent_pin

@@ -805,6 +805,10 @@ def create_agent_version(
             parent_runtime = legacy_side_row(env, parent)
         parent_row = _own_provider_row(getattr(parent, "id", None))
         legacy_parent = parent_runtime is not None and legacy_runtime(parent_runtime)
+        if legacy_parent and env is None:
+            # A legacy row's credentials live in an environment's refs; with no
+            # environment to read them from the new version would drop them.
+            raise _agent_versions_unavailable()
         # A legacy row is shared: the asking environment's own facts are the parent's.
         parent_facts = effective_runtime(env, parent_runtime)
         replaced_names: set[str] = set()
@@ -2192,25 +2196,32 @@ def _activate_production(
     """A connected agent's passed version becomes production; environments following
     production are moved to it as if they had asked, pinned ones are offered it."""
     from simulate.services.agent_compatibility import (
-        NEW_RULE,
-        NEW_TOOL,
-        TOOL_REMOVED_OR_CHANGED,
+        CLEAN,
+        UNMEASURED,
         environment_compatibility,
+        stored_document,
     )
     from simulate.services.harness_versioning.nudges import schedule_environment_nudge
 
     make_production(version)
-    following, pinned, major = [], [], []
+    document = stored_document(version)
+    following, pinned, offered = [], [], {}
     for environment in bound_environments(version.agent_definition_id):
         if environment_policy(environment) != POLICY_FOLLOW:
             pinned.append(str(environment.id))
             continue
-        fit = environment_compatibility(environment, version)
-        if fit["status"] in (NEW_TOOL, TOOL_REMOVED_OR_CHANGED, NEW_RULE):
-            # Its world would not answer the new tools: offered, never applied.
-            major.append(str(environment.id))
-        else:
+        fit = environment_compatibility(environment, version, document=document)
+        # Only a change read as compatible moves a follower; a major change, and
+        # one that can't be judged yet, is offered and never applied. A world
+        # never built has nothing the move could break.
+        if fit["status"] == CLEAN or (
+            fit["status"] == UNMEASURED and fit.get("reason") == "environment_not_built"
+        ):
             following.append(str(environment.id))
+        else:
+            offered[str(environment.id)] = (
+                "unmeasured" if fit["status"] == UNMEASURED else "major_change"
+            )
     if following:
         asked_at = timezone.now().isoformat()
         stored = runtime.agent_payload or {}
@@ -2225,13 +2236,21 @@ def _activate_production(
             },
             updated_at=timezone.now(),
         )
-    _record_activation(
-        version.id,
-        {**dict.fromkeys(pinned, "pinned"), **dict.fromkeys(major, "major_change")},
-    )
-    for environment_id in [*pinned, *major]:
+    _record_activation(version.id, {**dict.fromkeys(pinned, "pinned"), **offered})
+    for environment_id in [*pinned, *offered]:
         schedule_environment_nudge(environment_id, version.id, default_moved=False)
     return _activate(version, following)
+
+
+def promote_to_production(version: AgentVersion) -> list[Any]:
+    """Make a connected agent's checked version production by hand, whether or not
+    it was production before: followers move again, so a return to an earlier
+    version carries them back. Returns the environments moved."""
+    runtime = _side_row(version.id)
+    if runtime is None:
+        make_production(version)
+        return []
+    return _activate_production(version, runtime)
 
 
 def mirror_default_status(version: AgentVersion) -> None:
@@ -2374,7 +2393,7 @@ def check_creation_credentials(
 
     detected, required_files, scanned = (
         source_analysis
-        if isinstance(source_analysis, (tuple, list)) and len(source_analysis) == 3
+        if isinstance(source_analysis, tuple | list) and len(source_analysis) == 3
         else ([], [], 0)
     )
     scan = {

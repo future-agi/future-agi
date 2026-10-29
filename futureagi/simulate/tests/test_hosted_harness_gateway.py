@@ -38,12 +38,12 @@ from simulate.services.hosted_harness_gateway import (
     _SIMULATOR_SECRETS_PATH,
     HostedHarnessGateway,
     HostedSourceAcquirer,
+    _add_scoped_guest_pin_policy,
     _authoring_archive_for,
     _authoring_ttl_seconds,
     _connector_egress_domains,
     _execution_ttl_seconds,
     _known_simulator_egress_inputs,
-    _add_scoped_guest_pin_policy,
     _normalize_egress_domains,
     _platform_simulator_material,
     _provider_egress_domains,
@@ -1884,7 +1884,9 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         client.sandbox.process.session_request.command.encode()
     )
     assert "--await-harness" in client.sandbox.process.session_request.command
-    assert job.conversation.messages.get().content.startswith("Build the test environment")
+    assert job.conversation.messages.get().content.startswith(
+        "Build the test environment"
+    )
     assert "; fi &&" in client.sandbox.process.session_request.command
     # Authoring and call execution are distinct bounded phases. The sandbox must survive the
     # former rather than using only the 10-minute call-runtime budget plus two minutes.
@@ -1915,7 +1917,9 @@ def test_a_fresh_build_runs_the_staged_pipeline_when_the_builder_session_is_off(
         "endpoint": "https://agent.example.com",
         "visibility": "public",
     }
-    job, _ = create_hosted_job(organization, payload, idempotency_key="launch-gateway-staged")
+    job, _ = create_hosted_job(
+        organization, payload, idempotency_key="launch-gateway-staged"
+    )
     client = _Daytona()
     gateway = object.__new__(HostedHarnessGateway)
     gateway.client = client
@@ -1947,8 +1951,9 @@ def test_a_fresh_build_runs_the_staged_pipeline_when_the_builder_session_is_off(
     assert attempt.state == HostedHarnessAttempt.State.RUNNING
     command = client.sandbox.process.session_request.command
     assert "--await-harness" not in command and "--adjustments" in command
-    assert not job.conversation.messages.filter(content__startswith="Build the test environment").exists()
-
+    assert not job.conversation.messages.filter(
+        content__startswith="Build the test environment"
+    ).exists()
 
 
 def _launch_and_read_job_json(
@@ -2174,7 +2179,9 @@ def test_adjustment_goes_to_the_stage_the_chat_names(organization, settings, tmp
         "endpoint": "https://agent.example.com",
         "visibility": "public",
     }
-    job, _ = create_hosted_job(organization, payload, idempotency_key="adjust-named-stage")
+    job, _ = create_hosted_job(
+        organization, payload, idempotency_key="adjust-named-stage"
+    )
     client = _Daytona()
     gateway = object.__new__(HostedHarnessGateway)
     gateway.client = client
@@ -2200,7 +2207,9 @@ def test_adjustment_goes_to_the_stage_the_chat_names(organization, settings, tmp
         },
     )
 
-    assert adjusted.payload["metadata"]["adjustments"][-1]["target_stage"] == "environment"
+    assert (
+        adjusted.payload["metadata"]["adjustments"][-1]["target_stage"] == "environment"
+    )
 
 
 @pytest.mark.django_db
@@ -2819,6 +2828,16 @@ def _refusal(**overrides):
         ),
         (
             _refusal(code="source_unreachable", retryable=True),
+            "source_unreachable",
+            False,
+        ),
+        (
+            _refusal(
+                domain="infrastructure",
+                stage="acquiring_source",
+                code="source_unreachable",
+                retryable=True,
+            ),
             "source_unreachable",
             True,
         ),

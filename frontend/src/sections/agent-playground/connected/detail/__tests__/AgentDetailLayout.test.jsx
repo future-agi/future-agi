@@ -180,10 +180,9 @@ describe("AgentDetailLayout", () => {
       ),
     );
     await waitFor(() =>
-      expect(enqueueSnackbar).toHaveBeenCalledWith(
-        "v2 is already at the branch's head",
-        { variant: "info" },
-      ),
+      expect(enqueueSnackbar).toHaveBeenCalledWith("v2 is already up to date", {
+        variant: "info",
+      }),
     );
   });
 

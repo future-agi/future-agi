@@ -9,6 +9,7 @@ import io
 import posixpath
 import tarfile
 from dataclasses import dataclass
+from functools import cached_property, partial
 from typing import Any
 
 import structlog
@@ -26,6 +27,8 @@ logger = structlog.get_logger(__name__)
 
 MAX_FILE_BYTES = 1024 * 1024
 MAX_TREE_ENTRIES = 5000
+# How much of a member decides text from binary; a 1 MiB cap is applied by size.
+_SNIFF_BYTES = 64 * 1024
 _ROOT = "source/"
 _CACHE_SECONDS = 24 * 3600
 _LANGUAGES = {
@@ -68,9 +71,19 @@ class Entry:
 
 @dataclass(frozen=True)
 class VersionCode:
-    archive: bytes
-    sha256: str
+    """A version's code: where it lives (an identity known before any download),
+    the folder the agent is in, and a loader for the bytes, read at most once."""
+
+    identity: str
     subfolder: str
+    load: Any
+
+    @cached_property
+    def archive(self) -> bytes:
+        archive = self.load()
+        if archive is None:
+            raise _unavailable()
+        return archive
 
 
 def _runtime(version: AgentVersion) -> HarnessAgentVersionRuntime | None:
@@ -121,27 +134,32 @@ def version_code(version: AgentVersion) -> VersionCode:
         raise _no_code()
     source = runtime.source or {}
     kind = runtime.source_kind
+    subfolder = str(source.get("subfolder") or "").strip("/")
+    organization_id = version.organization_id
     if kind == HarnessAgentVersionRuntime.SourceKind.GITHUB:
-        repository = str(source.get("repository") or "")
-        commit = str(source.get("commit_sha") or "")
+        repository = str(source.get("repository") or "").lower()
+        commit = str(source.get("commit_sha") or "").lower()
         if not repository or not commit:
             raise _no_code()
-        archive = stored_commit_archive(
-            organization_id=version.organization_id,
-            repository=repository,
-            commit_sha=commit,
+        return VersionCode(
+            identity=f"github:{organization_id}:{repository}:{commit}",
+            subfolder=subfolder,
+            load=lambda: stored_commit_archive(
+                organization_id=organization_id,
+                repository=repository,
+                commit_sha=commit,
+            ),
         )
-    elif kind == HarnessAgentVersionRuntime.SourceKind.ARCHIVE:
+    if kind == HarnessAgentVersionRuntime.SourceKind.ARCHIVE:
         artifact = str(source.get("archive_artifact_id") or "")
         if not artifact:
             raise _no_code()
-        archive = _read_object(_source_object_key(version.organization_id, artifact))
-    else:
-        raise _no_code()
-    if archive is None:
-        raise _unavailable()
-    subfolder = str(source.get("subfolder") or "").strip("/")
-    return VersionCode(archive, hashlib.sha256(archive).hexdigest(), subfolder)
+        return VersionCode(
+            identity=f"archive:{organization_id}:{artifact}",
+            subfolder=subfolder,
+            load=lambda: _read_object(_source_object_key(organization_id, artifact)),
+        )
+    raise _no_code()
 
 
 def safe_path(raw: str) -> str:
@@ -162,22 +180,29 @@ def safe_path(raw: str) -> str:
     return candidate
 
 
-def _kind(data: bytes, size: int) -> str:
+def _kind(head: bytes, size: int) -> str:
     if size > MAX_FILE_BYTES:
         return KIND_TOO_LARGE
-    if b"\x00" in data:
+    if b"\x00" in head:
         return KIND_BINARY
     try:
-        data.decode("utf-8")
+        head.decode("utf-8")
     except UnicodeDecodeError:
-        return KIND_BINARY
+        # A multi-byte character cut at the sniff boundary is still text.
+        if len(head) < _SNIFF_BYTES:
+            return KIND_BINARY
+        try:
+            head[:-4].decode("utf-8")
+        except UnicodeDecodeError:
+            return KIND_BINARY
     return KIND_TEXT
 
 
 def archive_index(code: VersionCode) -> dict[str, Entry]:
-    """Every regular file under ``source/``, by path relative to it; cached by the
-    archive's content for its life."""
-    key = f"agent-code:index:{code.sha256}"
+    """Every regular file under ``source/``, by path relative to it. Cached by the
+    archive's identity, which is known before any download, so a tree or a diff
+    on a known archive never touches storage; the bytes are read once per miss."""
+    key = f"agent-code:index:{code.identity}"
     cached = cache.get(key)
     if cached is not None:
         return {path: Entry(**entry) for path, entry in cached.items()}
@@ -192,12 +217,15 @@ def archive_index(code: VersionCode) -> dict[str, Entry]:
             handle = tar.extractfile(member)
             if handle is None:
                 continue
-            data = handle.read()
+            head = handle.read(_SNIFF_BYTES)
+            digest = hashlib.sha256(head)
+            for chunk in iter(partial(handle.read, 1 << 20), b""):
+                digest.update(chunk)
             entries[path] = Entry(
                 path=path,
                 size=member.size,
-                kind=_kind(data, member.size),
-                sha256=hashlib.sha256(data).hexdigest(),
+                kind=_kind(head, member.size),
+                sha256=digest.hexdigest(),
             )
     cache.set(
         key, {path: entry.__dict__ for path, entry in entries.items()}, _CACHE_SECONDS
@@ -276,7 +304,7 @@ def changes(version: AgentVersion, against: AgentVersion | None) -> dict[str, An
         if exc.code != "no_code":
             raise
         return {"against": str(against.id), "files": [], "unavailable": "no_code"}
-    key = f"agent-code:changes:{base.sha256}:{code.sha256}:{code.subfolder}"
+    key = f"agent-code:changes:{base.identity}:{code.identity}:{code.subfolder}"
     cached = cache.get(key)
     if cached is not None:
         return {"against": str(against.id), "files": cached}

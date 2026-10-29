@@ -17,6 +17,7 @@ import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { sourceLabel } from "../connectedAgentLabels";
 import AddVersionDialog from "./AddVersionDialog";
+import { newVersionAction } from "./newVersionAction";
 import AgentMoreMenu from "./AgentMoreMenu";
 import { LineSkeleton, Pill } from "./bits";
 import { MONO, ago } from "./format";
@@ -26,52 +27,28 @@ const environmentsText = (count) => {
   return `${count} environment${count === 1 ? "" : "s"}`;
 };
 
-// How a new version arrives from each source. Sync reads the branch head (or
-// the provider) and Add version takes an edited prompt; an upload's flow is
-// not wired yet, so that button says what it will do and stays disabled.
-export const newVersionAction = (source) => {
-  if (source === "archive") {
-    return {
-      label: "Upload new version",
-      icon: "solar:cloud-upload-linear",
-      kind: null,
-    };
-  }
-  if (source === "github" || source === "vapi" || source === "retell") {
-    return { label: "Sync", icon: "solar:refresh-linear", kind: "sync" };
-  }
-  return {
-    label: "Add version",
-    icon: "solar:add-circle-linear",
-    kind: "manual",
-  };
-};
-
 function NewVersionButton({ agent }) {
   const { enqueueSnackbar } = useSnackbar();
   const { role } = useAuthContext();
   const canEdit = !!RolePermission.SIMULATION_AGENT[PERMISSIONS.UPDATE][role];
   const change = useChangeVersion(agent.id);
   const [adding, setAdding] = useState(false);
-  const next = newVersionAction(agent.source);
+  const next = newVersionAction(agent);
 
   const sync = () =>
     change.mutate(
       { kind: "sync" },
       {
         onSuccess: (data) => {
-          const label = data?.version?.version_name_display || "The version";
+          const label = data.version.version_name_display;
           enqueueSnackbar(
-            data?.up_to_date
-              ? `${label} is already at the branch's head`
-              : `${label} created from the branch's head; it is being checked`,
-            { variant: data?.up_to_date ? "info" : "success" },
+            data.up_to_date
+              ? `${label} is already up to date`
+              : `${label} created; it is being checked`,
+            { variant: data.up_to_date ? "info" : "success" },
           );
         },
-        onError: (e) =>
-          enqueueSnackbar(errorMessage(e) || "Couldn't sync", {
-            variant: "error",
-          }),
+        onError: (e) => enqueueSnackbar(errorMessage(e), { variant: "error" }),
       },
     );
 

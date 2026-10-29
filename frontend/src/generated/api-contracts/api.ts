@@ -569,6 +569,8 @@ import type {
   GenerateScenarioApi,
   GetAnnotationLabelsResponseApi,
   GetTraceAnnotationValuesResponseApi,
+  GitHubInstallCompleteApi,
+  GitHubInstallCompleteResponseApi,
   GitHubInstallResponseApi,
   GraphCreateApi,
   GraphDetailApi,
@@ -22054,6 +22056,64 @@ export const integrationsGithubInstallCreate = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(integrationEmptyRequestApi),
+    },
+  );
+};
+
+export type integrationsGithubInstallCompleteCreateResponse200 = {
+  data: GitHubInstallCompleteResponseApi;
+  status: 200;
+};
+
+export type integrationsGithubInstallCompleteCreateResponse400 = {
+  data: GitHubInstallResponseApi;
+  status: 400;
+};
+
+export type integrationsGithubInstallCompleteCreateResponse403 = {
+  data: GitHubInstallResponseApi;
+  status: 403;
+};
+
+export type integrationsGithubInstallCompleteCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403>;
+};
+
+export type integrationsGithubInstallCompleteCreateResponseSuccess =
+  integrationsGithubInstallCompleteCreateResponse200 & {
+    headers: Headers;
+  };
+export type integrationsGithubInstallCompleteCreateResponseError = (
+  | integrationsGithubInstallCompleteCreateResponse400
+  | integrationsGithubInstallCompleteCreateResponse403
+  | integrationsGithubInstallCompleteCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type integrationsGithubInstallCompleteCreateResponse =
+  | integrationsGithubInstallCompleteCreateResponseSuccess
+  | integrationsGithubInstallCompleteCreateResponseError;
+
+export const getIntegrationsGithubInstallCompleteCreateUrl = () => {
+  return `/integrations/github/install/complete/`;
+};
+
+/**
+ * The signed-in user finishes the install GitHub redirected them back from.
+ */
+export const integrationsGithubInstallCompleteCreate = async (
+  gitHubInstallCompleteApi: GitHubInstallCompleteApi,
+  options?: RequestInit,
+): Promise<integrationsGithubInstallCompleteCreateResponse> => {
+  return apiMutator<integrationsGithubInstallCompleteCreateResponse>(
+    getIntegrationsGithubInstallCompleteCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(gitHubInstallCompleteApi),
     },
   );
 };

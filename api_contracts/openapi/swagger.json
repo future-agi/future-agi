@@ -17882,6 +17882,54 @@
             },
             "parameters": []
         },
+        "/integrations/github/install/complete/": {
+            "post": {
+                "operationId": "integrations_github_install_complete_create",
+                "description": "The signed-in user finishes the install GitHub redirected them back from.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/GitHubInstallComplete"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GitHubInstallCompleteResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GitHubInstallResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GitHubInstallResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "integrations"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
         "/integrations/slack/install/": {
             "post": {
                 "operationId": "integrations_slack_install_create",
@@ -96196,6 +96244,71 @@
                 }
             }
         },
+        "GitHubInstallComplete": {
+            "required": [
+                "state"
+            ],
+            "type": "object",
+            "properties": {
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "maxLength": 2048,
+                    "minLength": 1
+                },
+                "setup_action": {
+                    "title": "Setup action",
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 32
+                },
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 255
+                },
+                "installation_id": {
+                    "title": "Installation id",
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 32
+                }
+            }
+        },
+        "GitHubInstallCompleteResult": {
+            "required": [
+                "outcome"
+            ],
+            "type": "object",
+            "properties": {
+                "outcome": {
+                    "title": "Outcome",
+                    "type": "string",
+                    "enum": [
+                        "connected",
+                        "requested",
+                        "already_connected"
+                    ]
+                }
+            }
+        },
+        "GitHubInstallCompleteResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/GitHubInstallCompleteResult"
+                }
+            }
+        },
         "SlackInstall": {
             "type": "object",
             "properties": {
@@ -123034,7 +123147,8 @@
                     "type": "string",
                     "minLength": 1
                 }
-            }
+            },
+            "x-nullable": true
         },
         "AgentVersionListResponse": {
             "type": "object",
@@ -123131,7 +123245,7 @@
                 },
                 "in_production": {
                     "title": "In production",
-                    "type": "string",
+                    "type": "boolean",
                     "readOnly": true
                 },
                 "origin": {
@@ -124383,6 +124497,34 @@
                 }
             }
         },
+        "AgentToolSignature": {
+            "type": "object",
+            "properties": {
+                "arguments": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "readOnly": true
+                },
+                "required": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "readOnly": true
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
         "AgentVersionToolChange": {
             "type": "object",
             "properties": {
@@ -124393,22 +124535,10 @@
                     "minLength": 1
                 },
                 "before": {
-                    "title": "Before",
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string",
-                        "x-nullable": true
-                    },
-                    "readOnly": true
+                    "$ref": "#/definitions/AgentToolSignature"
                 },
                 "after": {
-                    "title": "After",
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string",
-                        "x-nullable": true
-                    },
-                    "readOnly": true
+                    "$ref": "#/definitions/AgentToolSignature"
                 }
             }
         },
@@ -128002,23 +128132,216 @@
                 }
             }
         },
+        "HarnessVersionPerson": {
+            "required": [
+                "id",
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string"
+                }
+            },
+            "x-nullable": true
+        },
+        "HarnessVersion": {
+            "required": [
+                "id",
+                "label",
+                "status",
+                "is_default",
+                "created_at",
+                "created_by",
+                "origin",
+                "summary",
+                "hash",
+                "parent_id",
+                "derived_from_agent_version_id",
+                "scenario_count",
+                "source",
+                "prompt",
+                "preflight_status",
+                "preflight_report",
+                "preflighted_at",
+                "check_started_at",
+                "credential_names",
+                "required_variable_names",
+                "activation_outcome",
+                "requested_here",
+                "pickable",
+                "discardable"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "draft",
+                        "active",
+                        "discarded"
+                    ]
+                },
+                "is_default": {
+                    "title": "Is default",
+                    "type": "boolean"
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "created_by": {
+                    "$ref": "#/definitions/HarnessVersionPerson"
+                },
+                "origin": {
+                    "title": "Origin",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "summary": {
+                    "title": "Summary",
+                    "type": "string"
+                },
+                "hash": {
+                    "title": "Hash",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "parent_id": {
+                    "title": "Parent id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "derived_from_agent_version_id": {
+                    "title": "Derived from agent version id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "scenario_count": {
+                    "title": "Scenario count",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "source": {
+                    "title": "Source",
+                    "description": "An agent version's non-secret source facts.",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "prompt": {
+                    "title": "Prompt",
+                    "description": "The default agent version's prompt; null on every other item.",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "preflight_status": {
+                    "title": "Preflight status",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "preflight_report": {
+                    "title": "Preflight report",
+                    "description": "An agent version's last check: check statuses and names only.",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "preflighted_at": {
+                    "title": "Preflighted at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "check_started_at": {
+                    "title": "Check started at",
+                    "description": "When an agent version's latest check was asked for.",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "credential_names": {
+                    "description": "An agent version's credential names, provider keys included.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "x-nullable": true
+                },
+                "required_variable_names": {
+                    "description": "The variables an agent version's source reads, when known.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "x-nullable": true
+                },
+                "activation_outcome": {
+                    "title": "Activation outcome",
+                    "description": "Why a passed agent version is or isn't this environment's default, as last recorded.",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "requested_here": {
+                    "title": "Requested here",
+                    "description": "Whether this environment asked for an agent version.",
+                    "type": "boolean",
+                    "x-nullable": true
+                },
+                "pickable": {
+                    "title": "Pickable",
+                    "description": "Whether an agent version can be picked for a run of this environment or made its default.",
+                    "type": "boolean",
+                    "x-nullable": true
+                },
+                "discardable": {
+                    "title": "Discardable",
+                    "description": "Whether this environment can discard an agent version.",
+                    "type": "boolean",
+                    "x-nullable": true
+                }
+            },
+            "x-nullable": true
+        },
         "HarnessAgentPolicyResponse": {
             "type": "object",
             "properties": {
                 "policy": {
                     "title": "Policy",
                     "type": "string",
-                    "readOnly": true,
-                    "minLength": 1
+                    "enum": [
+                        "follow",
+                        "pinned"
+                    ],
+                    "readOnly": true
                 },
                 "agent_version": {
-                    "title": "Agent version",
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string",
-                        "x-nullable": true
-                    },
-                    "readOnly": true
+                    "$ref": "#/definitions/HarnessVersion"
                 }
             }
         },
@@ -128310,25 +128633,6 @@
                     "$ref": "#/definitions/HarnessCompareVersions"
                 }
             }
-        },
-        "HarnessVersionPerson": {
-            "required": [
-                "id",
-                "name"
-            ],
-            "type": "object",
-            "properties": {
-                "id": {
-                    "title": "Id",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "name": {
-                    "title": "Name",
-                    "type": "string"
-                }
-            },
-            "x-nullable": true
         },
         "HarnessDraftItem": {
             "required": [
@@ -128626,182 +128930,6 @@
                     "pattern": "^[A-Za-z0-9_-]+$",
                     "maxLength": 128,
                     "minLength": 1
-                }
-            }
-        },
-        "HarnessVersion": {
-            "required": [
-                "id",
-                "label",
-                "status",
-                "is_default",
-                "created_at",
-                "created_by",
-                "origin",
-                "summary",
-                "hash",
-                "parent_id",
-                "derived_from_agent_version_id",
-                "scenario_count",
-                "source",
-                "prompt",
-                "preflight_status",
-                "preflight_report",
-                "preflighted_at",
-                "check_started_at",
-                "credential_names",
-                "required_variable_names",
-                "activation_outcome",
-                "requested_here",
-                "pickable",
-                "discardable"
-            ],
-            "type": "object",
-            "properties": {
-                "id": {
-                    "title": "Id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "label": {
-                    "title": "Label",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "status": {
-                    "title": "Status",
-                    "type": "string",
-                    "enum": [
-                        "draft",
-                        "active",
-                        "discarded"
-                    ]
-                },
-                "is_default": {
-                    "title": "Is default",
-                    "type": "boolean"
-                },
-                "created_at": {
-                    "title": "Created at",
-                    "type": "string",
-                    "format": "date-time"
-                },
-                "created_by": {
-                    "$ref": "#/definitions/HarnessVersionPerson"
-                },
-                "origin": {
-                    "title": "Origin",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "summary": {
-                    "title": "Summary",
-                    "type": "string"
-                },
-                "hash": {
-                    "title": "Hash",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "parent_id": {
-                    "title": "Parent id",
-                    "type": "string",
-                    "format": "uuid",
-                    "x-nullable": true
-                },
-                "derived_from_agent_version_id": {
-                    "title": "Derived from agent version id",
-                    "type": "string",
-                    "format": "uuid",
-                    "x-nullable": true
-                },
-                "scenario_count": {
-                    "title": "Scenario count",
-                    "type": "integer",
-                    "x-nullable": true
-                },
-                "source": {
-                    "title": "Source",
-                    "description": "An agent version's non-secret source facts.",
-                    "type": "object",
-                    "x-nullable": true
-                },
-                "prompt": {
-                    "title": "Prompt",
-                    "description": "The default agent version's prompt; null on every other item.",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "preflight_status": {
-                    "title": "Preflight status",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "preflight_report": {
-                    "title": "Preflight report",
-                    "description": "An agent version's last check: check statuses and names only.",
-                    "type": "object",
-                    "x-nullable": true
-                },
-                "preflighted_at": {
-                    "title": "Preflighted at",
-                    "type": "string",
-                    "format": "date-time",
-                    "x-nullable": true
-                },
-                "check_started_at": {
-                    "title": "Check started at",
-                    "description": "When an agent version's latest check was asked for.",
-                    "type": "string",
-                    "format": "date-time",
-                    "x-nullable": true
-                },
-                "credential_names": {
-                    "description": "An agent version's credential names, provider keys included.",
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "minLength": 1
-                    },
-                    "x-nullable": true
-                },
-                "required_variable_names": {
-                    "description": "The variables an agent version's source reads, when known.",
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "minLength": 1
-                    },
-                    "x-nullable": true
-                },
-                "activation_outcome": {
-                    "title": "Activation outcome",
-                    "description": "Why a passed agent version is or isn't this environment's default, as last recorded.",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "requested_here": {
-                    "title": "Requested here",
-                    "description": "Whether this environment asked for an agent version.",
-                    "type": "boolean",
-                    "x-nullable": true
-                },
-                "pickable": {
-                    "title": "Pickable",
-                    "description": "Whether an agent version can be picked for a run of this environment or made its default.",
-                    "type": "boolean",
-                    "x-nullable": true
-                },
-                "discardable": {
-                    "title": "Discardable",
-                    "description": "Whether this environment can discard an agent version.",
-                    "type": "boolean",
-                    "x-nullable": true
                 }
             }
         },

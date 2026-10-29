@@ -2,7 +2,14 @@ import PropTypes from "prop-types";
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useSnackbar } from "notistack";
-import { Box, Button, Skeleton, Stack, Typography } from "@mui/material";
+import {
+  Box,
+  Button,
+  Skeleton,
+  Stack,
+  Tooltip,
+  Typography,
+} from "@mui/material";
 import {
   useAgentEnvironments,
   useSetEnvironmentPolicy,
@@ -14,6 +21,7 @@ import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import EmptyState from "src/sections/simulate/environments/components/EmptyState";
 import StatusPill from "src/sections/simulate/environments/components/StatusPill";
 import BuildEnvironmentDialog from "./BuildEnvironmentDialog";
+import { isBehind, policyLabel } from "./environmentPolicy";
 import { Card, LineSkeleton, Row } from "./bits";
 import { MONO, ago, rateTone } from "./format";
 import { isRunning, pairLabel } from "./runCells";
@@ -23,28 +31,6 @@ const COLUMNS = ["Environment", "Testing", "Last result", "Status", ""];
 const TEMPLATE =
   "minmax(0, 1.4fr) minmax(0, 0.6fr) minmax(0, 1.8fr) minmax(0, 1.3fr) 180px";
 const SKELETON_ROWS = 3;
-
-// The production version, when it has moved past the one this environment
-// is pinned to; null when the environment tests the latest in production.
-export const productionAhead = (env, agent) => {
-  const pin = env.agentVersion;
-  const production = agent?.activeVersionNumber ?? null;
-  if (!pin || production == null || production <= pin.number) return null;
-  return production;
-};
-
-// What the environment does when production moves: follows it, or stays on
-// its pin; "behind" when pinned and production has moved past it.
-export const policyLabel = (env, agent) => {
-  const ahead = productionAhead(env, agent);
-  if (env.policy === "pinned") {
-    const pin = env.agentVersion
-      ? `pinned v${env.agentVersion.number}`
-      : "pinned";
-    return ahead != null ? `${pin} · v${ahead} in production` : pin;
-  }
-  return "follows production";
-};
 
 function LastResult({ env }) {
   const run = env.lastRun;
@@ -77,20 +63,36 @@ function LastResult({ env }) {
 
 LastResult.propTypes = { env: PropTypes.object.isRequired };
 
-function BuildEnvironmentButton({ agent, canEdit }) {
+function BuildEnvironmentButton({ agent, canEdit, primary = false }) {
   const [open, setOpen] = useState(false);
   const isCode = agent?.agentKind === "source";
+  const reason = !agent
+    ? ""
+    : !isCode
+      ? "Only a code agent can be built into an environment here"
+      : !canEdit
+        ? "You need the Member role to build an environment"
+        : "";
+  const button = (
+    <Button
+      size="small"
+      variant={primary ? "contained" : "outlined"}
+      color={primary ? "primary" : "inherit"}
+      disabled={!agent || !!reason}
+      onClick={() => setOpen(true)}
+    >
+      Build environment
+    </Button>
+  );
   return (
     <>
-      <Button
-        size="small"
-        variant="outlined"
-        color="inherit"
-        disabled={!agent || !isCode || !canEdit}
-        onClick={() => setOpen(true)}
-      >
-        Build environment
-      </Button>
+      {reason ? (
+        <Tooltip arrow title={reason}>
+          <span>{button}</span>
+        </Tooltip>
+      ) : (
+        button
+      )}
       {open && agent && (
         <BuildEnvironmentDialog
           agent={agent}
@@ -105,6 +107,7 @@ function BuildEnvironmentButton({ agent, canEdit }) {
 BuildEnvironmentButton.propTypes = {
   agent: PropTypes.object,
   canEdit: PropTypes.bool,
+  primary: PropTypes.bool,
 };
 
 /** Environments: every environment testing this agent and how it last did. */
@@ -124,25 +127,15 @@ export default function AgentEnvironmentsTab() {
   const open = (env) =>
     navigate(paths.dashboard.simulate.environments.detail(env.id));
 
-  const changePolicy = (env, policy) =>
+  const defaultToProduction = (env) =>
     setPolicy.mutate(
-      {
-        environmentId: env.id,
-        policy,
-        versionId: policy === "pinned" ? env.agentVersion?.id : undefined,
-      },
+      { environmentId: env.id, policy: "follow" },
       {
         onSuccess: () =>
-          enqueueSnackbar(
-            policy === "pinned"
-              ? `${env.name} stays on v${env.agentVersion?.number}`
-              : `${env.name} follows production`,
-            { variant: "success" },
-          ),
-        onError: (e) =>
-          enqueueSnackbar(errorMessage(e) || "Couldn't change the policy", {
-            variant: "error",
+          enqueueSnackbar(`${env.name} now tests what's in production`, {
+            variant: "success",
           }),
+        onError: (e) => enqueueSnackbar(errorMessage(e), { variant: "error" }),
       },
     );
 
@@ -152,7 +145,9 @@ export default function AgentEnvironmentsTab() {
         icon="solar:box-linear"
         title="Not used in any environment yet"
         body="An environment gives this agent a world to act in: tools, seeded data, rules and scenarios to run."
-        action={<BuildEnvironmentButton agent={agent} canEdit={canEdit} />}
+        action={
+          <BuildEnvironmentButton agent={agent} canEdit={canEdit} primary />
+        }
       />
     );
   }
@@ -201,13 +196,11 @@ export default function AgentEnvironmentsTab() {
       <>
         <Row header cells={COLUMNS} template={TEMPLATE} />
         {envs.map((env) => {
-          const ahead = productionAhead(env, agent);
-          const pinned = env.policy === "pinned";
+          const behind = isBehind(env, agent);
           return (
             <Row
               key={env.id}
               template={TEMPLATE}
-              onClick={() => open(env)}
               cells={[
                 <Box
                   component="span"
@@ -253,7 +246,8 @@ export default function AgentEnvironmentsTab() {
                     component="span"
                     data-testid={`policy-${env.id}`}
                     sx={{
-                      color: "text.secondary",
+                      color: behind ? "text.primary" : "text.secondary",
+                      fontWeight: behind ? 600 : 400,
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                     }}
@@ -267,34 +261,22 @@ export default function AgentEnvironmentsTab() {
                   justifyContent="flex-end"
                   spacing={0.75}
                 >
-                  {canEdit && env.agentVersion && (
+                  {canEdit && behind && (
                     <Button
                       size="small"
                       variant="outlined"
                       color="inherit"
                       disabled={setPolicy.isPending}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        changePolicy(env, pinned ? "follow" : "pinned");
-                      }}
-                      onKeyDown={(e) => e.stopPropagation()}
+                      onClick={() => defaultToProduction(env)}
                     >
-                      {pinned
-                        ? ahead != null
-                          ? "Default to production"
-                          : "Follow production"
-                        : "Pin"}
+                      Default to production
                     </Button>
                   )}
                   <Button
                     size="small"
                     variant="outlined"
                     color="inherit"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      open(env);
-                    }}
-                    onKeyDown={(e) => e.stopPropagation()}
+                    onClick={() => open(env)}
                   >
                     Open
                   </Button>
@@ -318,7 +300,8 @@ export default function AgentEnvironmentsTab() {
               noWrap
               sx={{ typography: "s2", color: "text.secondary" }}
             >
-              Each environment follows production or stays on its pin
+              Each environment tests the version in production unless its
+              default says otherwise
             </Typography>
             <BuildEnvironmentButton agent={agent} canEdit={canEdit} />
           </Stack>

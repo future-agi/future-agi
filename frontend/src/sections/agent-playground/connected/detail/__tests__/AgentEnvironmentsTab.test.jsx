@@ -3,10 +3,8 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { toRun } from "src/api/agents/agentDetail";
 import { ENVIRONMENT_RUN } from "src/api/agents/_fixtures/agentDetail";
-import AgentEnvironmentsTab, {
-  policyLabel,
-  productionAhead,
-} from "../AgentEnvironmentsTab";
+import AgentEnvironmentsTab from "../AgentEnvironmentsTab";
+import { policyLabel, productionAhead } from "../environmentPolicy";
 
 const envState = { current: {} };
 const envCalls = [];
@@ -154,10 +152,10 @@ describe("AgentEnvironmentsTab", () => {
     };
     renderTab();
     expect(screen.getByTestId("policy-e5391b8a")).toHaveTextContent(
-      "pinned v3 · v5 in production",
+      "Default v3 · v5 in production",
     );
     expect(screen.getByTestId("policy-e9999999")).toHaveTextContent(
-      "follows production",
+      "Default: production",
     );
   });
 
@@ -169,7 +167,7 @@ describe("AgentEnvironmentsTab", () => {
     };
     renderTab();
     expect(screen.getByTestId("policy-e5391b8a")).toHaveTextContent(
-      /^pinned v3$/,
+      /^Default v3$/,
     );
   });
 
@@ -205,14 +203,6 @@ describe("AgentEnvironmentsTab", () => {
     );
   });
 
-  it("opens the environment from its row", () => {
-    renderTab();
-    fireEvent.click(screen.getByText("ride-voice-agent"));
-    expect(currentLocation.pathname).toBe(
-      "/dashboard/simulate/environments/e5391b8a",
-    );
-  });
-
   it("opens the environment from its Open button", () => {
     renderTab();
     fireEvent.click(screen.getAllByRole("button", { name: "Open" })[1]);
@@ -236,7 +226,7 @@ describe("AgentEnvironmentsTab", () => {
     ).toBeEnabled();
   });
 
-  it("says whether each environment follows production or stays pinned", () => {
+  it("says what each environment runs by default, in the design's words", () => {
     envState.current = {
       isLoading: false,
       isError: false,
@@ -252,20 +242,20 @@ describe("AgentEnvironmentsTab", () => {
     };
     renderTab();
     expect(screen.getByTestId("policy-e5391b8a")).toHaveTextContent(
-      "follows production",
+      "Default: production",
     );
     expect(screen.getByTestId("policy-e7777777")).toHaveTextContent(
-      "pinned v1 · v3 in production",
+      "Default v1 · v3 in production",
     );
     expect(
       policyLabel(
         { policy: "pinned", agentVersion: { number: 3 } },
         { activeVersionNumber: 3 },
       ),
-    ).toBe("pinned v3");
+    ).toBe("Default v3");
   });
 
-  it("pins a following environment and moves a pinned one back to production", () => {
+  it("offers Default to production only to a pinned environment that is behind", () => {
     envState.current = {
       isLoading: false,
       isError: false,
@@ -280,16 +270,14 @@ describe("AgentEnvironmentsTab", () => {
       ],
     };
     renderTab();
-    fireEvent.click(screen.getByRole("button", { name: "Pin" }));
-    expect(policyMutate).toHaveBeenCalledWith(
-      { environmentId: "e5391b8a", policy: "pinned", versionId: "93956ae6" },
-      expect.any(Object),
-    );
+    expect(
+      screen.getAllByRole("button", { name: "Default to production" }),
+    ).toHaveLength(1);
     fireEvent.click(
       screen.getByRole("button", { name: "Default to production" }),
     );
     expect(policyMutate).toHaveBeenCalledWith(
-      { environmentId: "e7777777", policy: "follow", versionId: undefined },
+      { environmentId: "e7777777", policy: "follow" },
       expect.any(Object),
     );
     expect(currentLocation.pathname).toBe(
@@ -297,10 +285,24 @@ describe("AgentEnvironmentsTab", () => {
     );
   });
 
-  it("hides the policy actions from a viewer", () => {
+  it("hides Default to production from a viewer", () => {
     auth.role = "workspace_viewer";
+    envState.current = {
+      isLoading: false,
+      isError: false,
+      data: [
+        {
+          ...UNTESTED,
+          id: "e7777777",
+          agentVersion: { id: "v1", number: 1 },
+          policy: "pinned",
+        },
+      ],
+    };
     renderTab();
-    expect(screen.queryByRole("button", { name: "Pin" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Default to production" }),
+    ).toBeNull();
   });
 
   it("holds the table's shape with skeleton rows while it loads", () => {

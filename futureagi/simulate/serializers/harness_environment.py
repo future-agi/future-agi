@@ -668,8 +668,8 @@ class HarnessAgentPolicySerializer(serializers.Serializer):
 
 
 class HarnessAgentPolicyResponseSerializer(serializers.Serializer):
-    policy = serializers.CharField(read_only=True)
-    agent_version = serializers.DictField(read_only=True)
+    policy = serializers.ChoiceField(choices=("follow", "pinned"), read_only=True)
+    agent_version = HarnessVersionSerializer(read_only=True, allow_null=True)
 
 
 class HarnessVersionsSerializer(serializers.Serializer):

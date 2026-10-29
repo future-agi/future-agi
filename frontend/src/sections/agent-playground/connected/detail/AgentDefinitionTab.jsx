@@ -2,7 +2,7 @@ import PropTypes from "prop-types";
 import React, { useState } from "react";
 import { format } from "date-fns";
 import { Link as RouterLink } from "react-router-dom";
-import { Box, Button, Link, Skeleton, Stack, Typography } from "@mui/material";
+import { Box, Button, Link, Stack, Typography } from "@mui/material";
 import {
   useAgentEnvironments,
   useAgentVersion,

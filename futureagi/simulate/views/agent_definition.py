@@ -249,10 +249,10 @@ class AgentDefinitionView(APIView):
                     organization=getattr(request, "organization", None)
                     or request.user.organization,
                 )
+                counts = environment_counts(list(agents.values_list("id", flat=True)))
                 for agent in agents:
-                    refusal = tested_agent_refusal(agent)
-                    if refusal:
-                        return self._gm.bad_request(refusal)
+                    if counts.get(agent.id):
+                        return self._gm.bad_request(tested_agent_refusal(agent))
                 updated_agents = agents.update(deleted=True, deleted_at=timezone.now())
 
                 updated_versions = AgentVersion.objects.filter(
