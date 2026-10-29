@@ -766,9 +766,7 @@ const LogsTab = ({ gatewayId }) => {
   const logList = Array.isArray(logs) ? logs : logs?.results || [];
 
   if (isLoading) {
-    return (
-      <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />
-    );
+    return <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />;
   }
 
   return (
@@ -814,9 +812,11 @@ const LogsTab = ({ gatewayId }) => {
                     color={
                       log.status_code === 246
                         ? "warning"
-                        : log.status_code === 446
+                        : log.status_code >= 400 && log.status_code < 600
                           ? "error"
-                          : "default"
+                          : log.status_code >= 200 && log.status_code < 300
+                            ? "success"
+                            : "default"
                     }
                     size="small"
                   />
