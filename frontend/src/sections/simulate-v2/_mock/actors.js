@@ -40,6 +40,19 @@ export const BEHAVIOURS = [
   { id: "custom", label: "Custom — described in what they do" },
 ];
 
+/*
+  Who an actor is (team, 29 Oct 2026): managers, coworkers, other companies'
+  AI agents and the agent's own sub-agents are all actors. People and
+  external agents are simulated; sub-agents are your agent's real workers —
+  listed with the cast because they act in the same world, never simulated.
+*/
+export const ACTOR_KINDS = [
+  { id: "person", label: "Person", note: "Simulated — a manager, a coworker, a family member" },
+  { id: "external-agent", label: "External agent", note: "Simulated — another company's AI agent the agent deals with" },
+  { id: "sub-agent", label: "Sub-agent", note: "Real — one of your agent's own workers, from its definition" },
+];
+export const actorKindOf = (a) => ACTOR_KINDS.find((k) => k.id === (a?.kind || "person")) || ACTOR_KINDS[0];
+
 /* What happens when an actor someone is waiting on doesn't answer in time. */
 export const FALLBACKS = [
   { id: "silent", label: "Stays silent", line: "the request is left unanswered" },
@@ -187,6 +200,45 @@ export const ACTOR_LIBRARY = [
     usedBy: 3,
     owner: "you",
   },
+  {
+    id: "act-partner-booking-bot",
+    kind: "external-agent",
+    name: "Partner's booking bot",
+    goal: "Get the earliest slot for its own customer, whoever else is waiting.",
+    blurb: "Another company's AI agent that contacts yours over chat to book on its customer's behalf — fast, polite and relentless about its own priority.",
+    tests: "Whether the agent applies the same rules to another bot as to a person, and doesn't let it jump the queue.",
+    entry: "present",
+    pressure: "competing",
+    modalities: ["chat", "voice"],
+    traits: ["machine-fast", "persistent", "never tires"],
+    canApprove: false,
+    knowledge: ["Its customer's booking reference and preferred times"],
+    version: "v1",
+    versions: [{ label: "v1", createdAt: iso(2), note: "First draft." }],
+    usedBy: 0,
+    owner: "system",
+  },
+  {
+    id: "act-vendor-support-bot",
+    kind: "external-agent",
+    name: "Vendor's support bot",
+    goal: "Close its own ticket quickly, with as little commitment as possible.",
+    blurb: "The supplier's AI support agent your agent has to work with to fix an order — answers in templates and deflects anything off-script.",
+    tests: "Whether the agent gets a real answer from another agent and tells the caller the truth about what was agreed.",
+    entry: "contacted",
+    trigger: "The agent contacts the supplier about a delivery or refund",
+    pressure: "gatekeeper",
+    modalities: ["chat"],
+    traits: ["templated", "deflects", "slow to escalate"],
+    canApprove: false,
+    knowledge: ["The supplier's order record — not the caller's account"],
+    timeoutMin: 4,
+    fallback: "silent",
+    version: "v1",
+    versions: [{ label: "v1", createdAt: iso(2), note: "First draft." }],
+    usedBy: 0,
+    owner: "system",
+  },
 ];
 
 /** Sensible default cast for an environment, by modality fit. */
@@ -214,7 +266,7 @@ export const actorsOf = (env, envState) => envState?.actors || castFor(env);
 export const ACTOR_EDIT_FIELDS = [
   "name", "goal", "blurb", "tests", "pressure", "entry", "traits", "modalities",
   /* Roadmap actors.md: activation, knowledge, permissions, behaviour. */
-  "activatedBy", "trigger", "timeoutMin", "fallback", "knowledge", "sources", "tools", "canApprove", "approvalScope", "behaviour",
+  "activatedBy", "trigger", "timeoutMin", "fallback", "knowledge", "sources", "tools", "canApprove", "approvalScope", "behaviour", "kind",
 ];
 
 export const actorEditsOf = (envState) => envState?.actorEdits || {};
@@ -295,23 +347,46 @@ export const createActorPatch = (env, envState, fields) => {
   };
 };
 
+/** Who starts the conversation: the scenario's caller, or one of the cast. */
+export const primaryActorOf = (envState) => envState?.primaryActor || "caller";
+
+/** The agent's own workers as actors — real, from its definition, read-only. */
+export const subAgentActorsOf = (members = []) =>
+  members.map((m) => ({
+    id: `worker-${m.id}`,
+    kind: "sub-agent",
+    name: m.name,
+    goal: m.role || "Handles what the coordinator hands it",
+    real: true,
+  }));
+
 /**
- * Who can reach whom: the caller and every present actor are in the
- * conversation; an activated actor is reached through whoever activates it
- * (another actor, or the agent). A chain that comes back on itself is a
- * trigger loop — named, so it can't run forever.
+ * Who can reach whom. Whoever is primary starts the conversation (the
+ * caller unless an actor was made primary); present actors are in it; an
+ * activated actor is reached through whoever activates it (another actor,
+ * or the agent); sub-agents are reached by the agent handing work over. All
+ * of them act on one world, shared from the start. A chain that comes back
+ * on itself is a trigger loop — named, so it can't run forever.
  *   { edges: [{ from, to, label }], loops: [[names]] }
  */
-export const relationsOf = (cast) => {
+export const relationsOf = (cast, { primary = "caller", workers = [] } = {}) => {
   const byId = new Map(cast.map((a) => [a.id, a]));
-  const edges = [{ from: "Caller", to: "Agent", label: "starts the conversation" }];
+  const lead = primary !== "caller" && byId.get(primary);
+  const edges = lead
+    ? [
+        { from: lead.name, to: "Agent", label: "starts the conversation · primary" },
+        { from: "Caller", to: "Agent", label: "in the conversation" },
+      ]
+    : [{ from: "Caller", to: "Agent", label: "starts the conversation · primary" }];
   cast.forEach((a) => {
+    if (lead && a.id === lead.id) return;
     if (a.activatedBy && byId.has(a.activatedBy))
       edges.push({ from: byId.get(a.activatedBy).name, to: a.name, label: a.trigger || "activates them" });
     else if (a.entry === "contacted" || (a.entry === "joins" && a.trigger))
       edges.push({ from: "Agent", to: a.name, label: a.trigger || "contacts them" });
     else edges.push({ from: a.name, to: "Agent", label: getEntry(a.entry).label.toLowerCase() });
   });
+  workers.forEach((w) => edges.push({ from: "Agent", to: w.name, label: "hands work to its sub-agent" }));
   const loops = [];
   cast.forEach((a) => {
     const seen = [a.id];

@@ -15,7 +15,7 @@ import Iconify from "src/components/iconify";
   a notice without it (a quality review that's ready) is listed but quiet.
   Every action closes the list first, then runs.
 */
-export default function NeedsReviewMenu({ notices }) {
+export default function NeedsReviewMenu({ notices, compact = false }) {
   const [anchor, setAnchor] = useState(null);
   if (!notices.length) return null;
   const count = notices.filter((n) => n.attention).length;
@@ -39,7 +39,13 @@ export default function NeedsReviewMenu({ notices }) {
           bgcolor: anchor ? "action.selected" : "transparent",
         }}
       >
-        {count ? "Needs review" : "Quality review"}
+        {compact
+          ? count
+            ? "Review"
+            : "Quality"
+          : count
+            ? "Needs review"
+            : "Quality review"}
         {count > 0 && (
           <Box
             component="span"
@@ -154,4 +160,7 @@ export default function NeedsReviewMenu({ notices }) {
     </>
   );
 }
-NeedsReviewMenu.propTypes = { notices: PropTypes.array.isRequired };
+NeedsReviewMenu.propTypes = {
+  compact: PropTypes.bool,
+  notices: PropTypes.array.isRequired,
+};

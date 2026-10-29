@@ -56,10 +56,13 @@ export const approvalOf = ({ env, envState, task }) => {
     ? cast.find((a) => a.id === approver.activatedBy)
     : null;
 
+  /* Whoever is primary opens the conversation — the caller unless an actor was made primary. */
+  const lead =
+    cast.find((x) => x.id === envState?.primaryActor)?.name || "Caller";
   const events = [
     {
       at: 0,
-      who: "Caller",
+      who: lead,
       kind: "ask",
       text: `Asked for something only ${approver.name} can approve (${approver.approvalScope || "above the limit"}).`,
     },

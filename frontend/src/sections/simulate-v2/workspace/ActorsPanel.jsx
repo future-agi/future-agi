@@ -15,12 +15,14 @@ import {
   Chip,
   Switch,
   FormControlLabel,
+  Menu,
 } from "@mui/material";
 import CopyCommandButton from "../components/CopyCommandButton";
 import { enqueueSnackbar } from "notistack";
 import { personaFor } from "../_mock/scenarios";
 import { stampNewBatch } from "../_mock/addScenarios";
 import { asProposal } from "../_mock/scenarioSources";
+import { membersOf } from "../_mock/improvementPolicy";
 import SideDrawer from "../components/SideDrawer";
 import { textTone } from "../components/textTone";
 import Iconify from "src/components/iconify";
@@ -41,6 +43,10 @@ import {
   relationsOf,
   actorContextOf,
   actorCli,
+  ACTOR_KINDS,
+  actorKindOf,
+  primaryActorOf,
+  subAgentActorsOf,
   actorEditPatch,
   resetActorPatch,
 } from "../_mock/actors";
@@ -99,7 +105,25 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
       patch(createActorPatch(env, envState, fields));
     setEditing(null);
   };
-  const relations = useMemo(() => relationsOf(inCast), [inCast]);
+  /* The agent's own sub-agents act in the same world — listed, never simulated. */
+  const workers = useMemo(
+    () => subAgentActorsOf(membersOf(envState?.agent)),
+    [envState?.agent],
+  );
+  const primary = primaryActorOf(envState);
+  const relations = useMemo(
+    () => relationsOf(inCast, { primary, workers }),
+    [inCast, primary, workers],
+  );
+  const [libAnchor, setLibAnchor] = useState(null);
+  const notInCast = ACTOR_LIBRARY.filter((a) => !cast.includes(a.id));
+  const addExisting = (a) => {
+    setLibAnchor(null);
+    patch({
+      actors: [...cast, a.id],
+      ...envChangePatch(envState, "actors", `Added ${a.name}`),
+    });
+  };
   /*
     The branches an approver opens (roadmap actors.md): approves, rejects,
     doesn't answer, and someone without the authority says "approved". The
@@ -181,6 +205,46 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
           </Typography>
         </Box>
         <CopyCommandButton command={actorCli.list(env)} />
+        {!locked && notInCast.length > 0 && (
+          <>
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={(e) => setLibAnchor(e.currentTarget)}
+              endIcon={
+                <Iconify icon="solar:alt-arrow-down-linear" width={14} />
+              }
+              sx={{
+                flexShrink: 0,
+                color: "text.primary",
+                borderColor: "divider",
+              }}
+            >
+              Add existing
+            </Button>
+            <Menu
+              anchorEl={libAnchor}
+              open={!!libAnchor}
+              onClose={() => setLibAnchor(null)}
+              slotProps={{ paper: { sx: { width: 340 } } }}
+            >
+              {notInCast.map((a) => (
+                <MenuItem
+                  key={a.id}
+                  onClick={() => addExisting(a)}
+                  sx={{ display: "block", whiteSpace: "normal" }}
+                >
+                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                    {a.name}
+                  </Typography>
+                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                    {`${actorKindOf(a).label} · ${a.goal}`}
+                  </Typography>
+                </MenuItem>
+              ))}
+            </Menu>
+          </>
+        )}
         {!locked && (
           <Button
             variant="contained"
@@ -188,6 +252,7 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
             size="small"
             onClick={() =>
               setEditing({
+                kind: "person",
                 entry: "present",
                 pressure: "competing",
                 name: "",
@@ -294,12 +359,77 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
             ))}
           </Stack>
         )}
+        {workers.length > 0 && (
+          <Box sx={{ borderTop: "1px solid", borderColor: "divider" }}>
+            <Typography
+              sx={{
+                typography: "s3",
+                color: "text.tertiary",
+                px: 2.5,
+                pt: 1.25,
+                pb: 0.5,
+              }}
+            >
+              {`Your agent's sub-agents (${workers.length}) — real, from its definition; they act in the same world and are never simulated`}
+            </Typography>
+            {workers.map((w) => (
+              <Stack
+                key={w.id}
+                direction="row"
+                spacing={1.5}
+                alignItems="center"
+                sx={{ px: 2.5, py: 1 }}
+              >
+                <Iconify
+                  icon="solar:cpu-bolt-linear"
+                  width={16}
+                  sx={{ color: "text.secondary", flexShrink: 0 }}
+                />
+                <Typography sx={{ typography: "s2_1", fontWeight: 500 }}>
+                  {w.name}
+                </Typography>
+                <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                  {`· Sub-agent · ${w.goal}`}
+                </Typography>
+              </Stack>
+            ))}
+          </Box>
+        )}
       </SectionCard>
 
       {inCast.length > 0 && (
         <SectionCard
           title="How they connect"
-          subtitle="Who can reach whom in a run — an activated actor only hears what the request carries, never the hidden scenario."
+          action={
+            <TextField
+              select
+              size="small"
+              label="Who starts the conversation"
+              value={primary}
+              disabled={locked}
+              onChange={(e) =>
+                patch({
+                  primaryActor: e.target.value,
+                  ...envChangePatch(
+                    envState,
+                    "actors",
+                    `${e.target.value === "caller" ? "The caller" : inCast.find((a) => a.id === e.target.value)?.name} starts the conversation`,
+                  ),
+                })
+              }
+              sx={{ width: 260 }}
+            >
+              <MenuItem value="caller" sx={{ typography: "s2" }}>
+                The caller (the scenario&apos;s persona)
+              </MenuItem>
+              {inCast.map((a) => (
+                <MenuItem key={a.id} value={a.id} sx={{ typography: "s2" }}>
+                  {a.name}
+                </MenuItem>
+              ))}
+            </TextField>
+          }
+          subtitle="Who can reach whom in a run. Everyone acts on one shared world from the start; an activated actor only hears what the request carries, never the hidden scenario."
           sx={{ mb: 2 }}
         >
           <Box>
@@ -417,6 +547,13 @@ function ActorRow({ actor, action, onEdit, onReset, onBranches }) {
             >
               · {actor.version}
             </Typography>
+            {actor.kind === "external-agent" && (
+              <Typography
+                sx={{ typography: "s3", color: "text.tertiary", flexShrink: 0 }}
+              >
+                · External agent
+              </Typography>
+            )}
             {actor.owner === "system" && (
               <Typography
                 sx={{ typography: "s3", color: "text.tertiary", flexShrink: 0 }}
@@ -646,6 +783,7 @@ Label.propTypes = { children: PropTypes.node };
 /* ── create / edit ───────────────────────────────────────────────────────── */
 
 const formOf = (actor) => ({
+  kind: actor?.kind || "person",
   name: actor?.name || "",
   goal: actor?.goal || "",
   blurb: actor?.blurb || "",
@@ -780,6 +918,25 @@ function ActorForm({
       </Stack>
 
       <Stack spacing={2.25} sx={{ p: 2.5, flex: 1, overflowY: "auto" }}>
+        <TextField
+          select
+          size="small"
+          label="Kind"
+          value={form.kind}
+          onChange={set("kind")}
+          fullWidth
+        >
+          {ACTOR_KINDS.filter((k) => k.id !== "sub-agent").map((k) => (
+            <MenuItem key={k.id} value={k.id} sx={{ display: "block" }}>
+              <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                {k.label}
+              </Typography>
+              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                {k.note}
+              </Typography>
+            </MenuItem>
+          ))}
+        </TextField>
         <TextField
           size="small"
           label="Name"

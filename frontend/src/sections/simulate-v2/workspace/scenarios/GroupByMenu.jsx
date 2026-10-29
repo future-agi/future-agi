@@ -8,7 +8,12 @@ import Iconify from "src/components/iconify";
   The table is the only layout, and "by sub-goal" is a grouping, so there is
   nothing else to choose.
 */
-export default function GroupByMenu({ value, onChange, options }) {
+export default function GroupByMenu({
+  value,
+  onChange,
+  options,
+  compact = false,
+}) {
   const [anchor, setAnchor] = useState(null);
   const current = options.find((o) => o.id === value) || options[0];
   return (
@@ -27,12 +32,15 @@ export default function GroupByMenu({ value, onChange, options }) {
           bgcolor: anchor ? "action.selected" : "transparent",
         }}
       >
-        <Box
-          component="span"
-          sx={{ color: "text.secondary", fontWeight: 500, mr: 0.5 }}
-        >
-          Group by
-        </Box>
+        {/* Tight toolbar: the current grouping alone — its icon says it's a grouping. */}
+        {!compact && (
+          <Box
+            component="span"
+            sx={{ color: "text.secondary", fontWeight: 500, mr: 0.5 }}
+          >
+            Group by
+          </Box>
+        )}
         {current.label}
       </Button>
       <Menu
@@ -73,6 +81,7 @@ export default function GroupByMenu({ value, onChange, options }) {
   );
 }
 GroupByMenu.propTypes = {
+  compact: PropTypes.bool,
   value: PropTypes.string,
   onChange: PropTypes.func.isRequired,
   options: PropTypes.array.isRequired,

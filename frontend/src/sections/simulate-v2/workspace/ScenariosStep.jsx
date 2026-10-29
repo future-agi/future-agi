@@ -1,6 +1,7 @@
 import PropTypes from "prop-types";
 import {
   Fragment,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -239,6 +240,25 @@ export default function ScenariosStep({
   const [headEl, headRef] = useState(null);
   const [sentinelEl, headSentinel] = useState(null);
   const [headH, setHeadH] = useState(0);
+  /*
+    The toolbar gives way as it narrows (builder chat open, a small screen):
+    full → labels shorten and Tags & groups / Coverage become icons →
+    Tags & groups, Coverage and History fold into ⋯. Search, Filter, Group
+    by, Needs review and Add scenarios always stay in the row.
+  */
+  const [barW, setBarW] = useState(1200);
+  const barObserver = useRef(null);
+  const barRef = useCallback((el) => {
+    barObserver.current?.disconnect();
+    if (!el) return;
+    barObserver.current = new ResizeObserver(([e]) =>
+      setBarW(e.contentRect.width),
+    );
+    barObserver.current.observe(el);
+  }, []);
+  /* Steps sized to what each one actually needs, search at a readable width. */
+  const barFit = barW >= 1000 ? "full" : barW >= 860 ? "compact" : "narrow";
+  const [moreAnchor, setMoreAnchor] = useState(null);
   const [headStuck, setHeadStuck] = useState(false);
   useEffect(() => {
     if (!headEl || typeof ResizeObserver === "undefined") return undefined;
@@ -820,7 +840,8 @@ export default function ScenariosStep({
   };
   /* One bulk operation on exactly the selected scenarios, after its confirm. */
   const runBulk = (kind, value) => {
-    const ids = selectedIds;
+    const ids = bulk?.ids || [];
+    const rowsSel = bulk?.rows || [];
     const n = ids.length;
     const say = (m) => enqueueSnackbar(m, { variant: "success" });
     if (kind === "tag") {
@@ -830,13 +851,13 @@ export default function ScenariosStep({
       patch(groupPatch(envState, ids, value));
       say(`${n} scenario${n === 1 ? "" : "s"} in ${value}.`);
     } else if (kind === "duplicate") {
-      const { copies, ...p } = duplicatePatch(envState, selectedRows);
+      const { copies, ...p } = duplicatePatch(envState, rowsSel);
       patch(p);
       say(
         `${copies.length} draft cop${copies.length === 1 ? "y" : "ies"} made — review them as proposals.`,
       );
     } else if (kind === "validate") {
-      const res = validateRows(selectedRows, env, envLabel);
+      const res = validateRows(rowsSel, env, envLabel);
       patch(validatePatch(envState, res));
       const bad = res.filter((x) => !x.result.pass).length;
       say(
@@ -852,7 +873,7 @@ export default function ScenariosStep({
         `Promoted ${n} to regression — their checks are frozen and they're must-pass.`,
       );
     } else if (kind === "export") {
-      const blob = new Blob([exportScenarios(selectedRows)], {
+      const blob = new Blob([exportScenarios(rowsSel)], {
         type: "application/json",
       });
       const a = document.createElement("a");
@@ -1423,7 +1444,18 @@ export default function ScenariosStep({
               <Box data-scenarios-safe="selection-bar">
                 <SelectionBar
                   count={selectedIds.length}
-                  onBulk={ro ? null : setBulk}
+                  onBulk={
+                    ro
+                      ? null
+                      : (kind) =>
+                          /* The exact scenarios, frozen when the dialog opens —
+                             a click inside it can't change what it acts on. */
+                          setBulk({
+                            kind,
+                            ids: selectedIds,
+                            rows: selectedRows,
+                          })
+                  }
                   matching={{
                     count: shown.length,
                     onSelectAll: () =>
@@ -1458,6 +1490,7 @@ export default function ScenariosStep({
               </Box>
             ) : (
               <Stack
+                ref={barRef}
                 direction="row"
                 alignItems="center"
                 sx={{ gap: 1, minHeight: 30 }}
@@ -1467,7 +1500,9 @@ export default function ScenariosStep({
                     size="small"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Search scenarios…"
+                    placeholder={
+                      barFit === "narrow" ? "Search…" : "Search scenarios…"
+                    }
                     InputProps={{
                       /* Same 30px as the buttons beside it. */
                       sx: {
@@ -1488,7 +1523,12 @@ export default function ScenariosStep({
                         </Box>
                       ),
                     }}
-                    sx={{ minWidth: 180, maxWidth: 280, flex: 1 }}
+                    /* Search keeps a readable width — the toolbar folds its
+                       other controls before it squeezes this. */
+                    sx={{
+                      width: barFit === "narrow" ? 160 : 220,
+                      flexShrink: 0,
+                    }}
                   />
                 )}
                 {mode === "scenarios" && (
@@ -1534,20 +1574,41 @@ export default function ScenariosStep({
                       value={groupBy}
                       onChange={setGroupBy}
                       options={SCENARIO_GROUPINGS}
+                      compact={barFit !== "full"}
                     />
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      onClick={() => setOrgOpen(true)}
-                      startIcon={<Iconify icon="solar:tag-linear" width={14} />}
-                      sx={{
-                        flexShrink: 0,
-                        color: "text.primary",
-                        borderColor: "divider",
-                      }}
-                    >
-                      Tags &amp; groups
-                    </Button>
+                    {barFit === "full" ? (
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        onClick={() => setOrgOpen(true)}
+                        startIcon={
+                          <Iconify icon="solar:tag-linear" width={14} />
+                        }
+                        sx={{
+                          flexShrink: 0,
+                          color: "text.primary",
+                          borderColor: "divider",
+                        }}
+                      >
+                        Tags &amp; groups
+                      </Button>
+                    ) : barFit === "compact" ? (
+                      <Tooltip arrow title="Tags & groups">
+                        <IconButton
+                          size="small"
+                          aria-label="Tags & groups"
+                          onClick={() => setOrgOpen(true)}
+                          sx={{
+                            flexShrink: 0,
+                            border: "1px solid",
+                            borderColor: "divider",
+                            color: "text.primary",
+                          }}
+                        >
+                          <Iconify icon="solar:tag-linear" width={16} />
+                        </IconButton>
+                      </Tooltip>
+                    ) : null}
                   </>
                 ) : (
                   <Button
@@ -1571,67 +1632,137 @@ export default function ScenariosStep({
                 )}
                 {mode === "scenarios" && (
                   <>
-                    {/* Coverage — the three numbers on hover, the full breakdown
+                    {barFit !== "narrow" && (
+                      <>
+                        {/* Coverage — the three numbers on hover, the full breakdown
                     (axes, forced overlays, pairwise grid) in the drawer. */}
-                    <Tooltip
-                      arrow
-                      title={
-                        coverage
-                          ? `Axes ${coverage.axes} · Pairs ${coverage.pairs} · Forced ${coverage.forced}`
-                          : ""
-                      }
-                    >
-                      <Button
-                        size="small"
-                        variant="outlined"
-                        onClick={() => setCoverageOpen(true)}
-                        startIcon={
-                          <Iconify
-                            icon="solar:chart-square-linear"
-                            width={14}
-                          />
-                        }
-                        sx={{
-                          flexShrink: 0,
-                          color: "text.primary",
-                          borderColor: coverageOpen
-                            ? "text.primary"
-                            : "divider",
-                          bgcolor: coverageOpen
-                            ? "action.selected"
-                            : "transparent",
-                        }}
-                      >
-                        Coverage
-                      </Button>
-                    </Tooltip>
-                    {/* How the suite grew — the history drawer, as an icon. */}
-                    <Tooltip
-                      arrow
-                      title={
-                        historyOpen
-                          ? "Close history"
-                          : "History — how the suite grew"
-                      }
-                    >
-                      <IconButton
-                        size="small"
-                        aria-label="History"
-                        onClick={() => setHistoryOpen((v) => !v)}
-                        sx={{
-                          flexShrink: 0,
-                          border: "1px solid",
-                          borderColor: historyOpen ? "text.primary" : "divider",
-                          color: "text.primary",
-                          bgcolor: historyOpen
-                            ? "action.selected"
-                            : "transparent",
-                        }}
-                      >
-                        <Iconify icon="solar:history-linear" width={16} />
-                      </IconButton>
-                    </Tooltip>
-                    <NeedsReviewMenu notices={notices} />
+                        <Tooltip
+                          arrow
+                          title={
+                            coverage
+                              ? `Coverage — axes ${coverage.axes} · pairs ${coverage.pairs} · forced ${coverage.forced}`
+                              : "Coverage"
+                          }
+                        >
+                          <IconButton
+                            size="small"
+                            aria-label="Coverage"
+                            onClick={() => setCoverageOpen(true)}
+                            sx={{
+                              flexShrink: 0,
+                              border: "1px solid",
+                              borderColor: coverageOpen
+                                ? "text.primary"
+                                : "divider",
+                              color: "text.primary",
+                              bgcolor: coverageOpen
+                                ? "action.selected"
+                                : "transparent",
+                            }}
+                          >
+                            <Iconify
+                              icon="solar:chart-square-linear"
+                              width={16}
+                            />
+                          </IconButton>
+                        </Tooltip>
+                        {/* How the suite grew — the history drawer, as an icon. */}
+                        <Tooltip
+                          arrow
+                          title={
+                            historyOpen
+                              ? "Close history"
+                              : "History — how the suite grew"
+                          }
+                        >
+                          <IconButton
+                            size="small"
+                            aria-label="History"
+                            onClick={() => setHistoryOpen((v) => !v)}
+                            sx={{
+                              flexShrink: 0,
+                              border: "1px solid",
+                              borderColor: historyOpen
+                                ? "text.primary"
+                                : "divider",
+                              color: "text.primary",
+                              bgcolor: historyOpen
+                                ? "action.selected"
+                                : "transparent",
+                            }}
+                          >
+                            <Iconify icon="solar:history-linear" width={16} />
+                          </IconButton>
+                        </Tooltip>
+                      </>
+                    )}
+                    {barFit === "narrow" && (
+                      <>
+                        <Tooltip
+                          arrow
+                          title="More — tags & groups, coverage, history"
+                        >
+                          <IconButton
+                            size="small"
+                            aria-label="More"
+                            onClick={(e) => setMoreAnchor(e.currentTarget)}
+                            sx={{
+                              flexShrink: 0,
+                              border: "1px solid",
+                              borderColor: moreAnchor
+                                ? "text.primary"
+                                : "divider",
+                              color: "text.primary",
+                            }}
+                          >
+                            <Iconify icon="solar:menu-dots-bold" width={16} />
+                          </IconButton>
+                        </Tooltip>
+                        <Menu
+                          anchorEl={moreAnchor}
+                          open={!!moreAnchor}
+                          onClose={() => setMoreAnchor(null)}
+                        >
+                          {[
+                            [
+                              "Tags & groups",
+                              "solar:tag-linear",
+                              () => setOrgOpen(true),
+                            ],
+                            [
+                              "Coverage",
+                              "solar:chart-square-linear",
+                              () => setCoverageOpen(true),
+                            ],
+                            [
+                              historyOpen ? "Close history" : "History",
+                              "solar:history-linear",
+                              () => setHistoryOpen((v) => !v),
+                            ],
+                          ].map(([label, icon, act]) => (
+                            <MenuItem
+                              key={label}
+                              onClick={() => {
+                                setMoreAnchor(null);
+                                act();
+                              }}
+                              sx={{ typography: "s2", gap: 1 }}
+                            >
+                              <Iconify
+                                icon={icon}
+                                width={16}
+                                sx={{ color: "text.secondary" }}
+                              />
+                              {label}
+                            </MenuItem>
+                          ))}
+                        </Menu>
+                      </>
+                    )}
+                    <NeedsReviewMenu
+                      notices={notices}
+                      compact={barFit !== "full"}
+                    />
                   </>
                 )}
                 <Box sx={{ flex: 1 }} />
@@ -1659,7 +1790,7 @@ export default function ScenariosStep({
                           }),
                         }}
                       >
-                        Add scenarios
+                        {barFit === "narrow" ? "Add" : "Add scenarios"}
                       </Button>
                     </span>
                   </Tooltip>
@@ -1905,8 +2036,8 @@ export default function ScenariosStep({
                   />
                   {bulk && (
                     <BulkOrgDialog
-                      kind={bulk}
-                      ids={selectedIds}
+                      kind={bulk.kind}
+                      ids={bulk.ids}
                       env={env}
                       envState={envState}
                       onClose={() => setBulk(null)}
