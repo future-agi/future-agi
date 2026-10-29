@@ -767,6 +767,10 @@ describe("useRunDetail", () => {
           completed_at: "2026-01-14T09:22:00.000Z",
           selected_scenario_keys: ["scenario-a", "scenario-b"],
           trials: 3,
+          pinned_agent_version: { id: "a4", label: "v4" },
+          environment_version: { id: "e2", label: "v2" },
+          suite_version: { id: "s3", label: "v3" },
+          agent_differs: true,
           summary: {
             total: 12,
             measured: 12,
@@ -797,6 +801,19 @@ describe("useRunDetail", () => {
       "scenario-b",
     ]);
     expect(result.current.identity.trials).toBe(3);
+    expect(result.current.identity.pinnedAgentVersion).toEqual({
+      id: "a4",
+      label: "v4",
+    });
+    expect(result.current.identity.environmentVersion).toEqual({
+      id: "e2",
+      label: "v2",
+    });
+    expect(result.current.identity.suiteVersion).toEqual({
+      id: "s3",
+      label: "v3",
+    });
+    expect(result.current.identity.agentDiffers).toBe(true);
     expect(result.current.stats.total).toBe(12);
     expect(result.current.stats.passRate).toBe(74);
     expect(axios.get).toHaveBeenCalledWith(

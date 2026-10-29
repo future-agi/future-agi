@@ -92,6 +92,35 @@ class HostedHarnessJob(BaseModel):
         blank=True,
         related_name="hosted_harness_job",
     )
+    # Defaults on an environment job; frozen pins on a run job.
+    agent_version = models.ForeignKey(
+        "simulate.AgentVersion",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    environment_version = models.ForeignKey(
+        "simulate.HarnessEnvironmentVersion",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    suite_version = models.ForeignKey(
+        "simulate.HarnessSuiteVersion",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    assembled_bundle = models.ForeignKey(
+        "simulate.HarnessAssembledBundle",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
 
     class Meta:
         db_table = "simulate_hosted_harness_job"
@@ -666,6 +695,14 @@ class HostedHarnessConversationLease(BaseModel):
         blank=True,
     )
     control_only = models.BooleanField(default=False)
+    # The agent version whose source this lease's sandbox holds.
+    agent_version = models.ForeignKey(
+        "simulate.AgentVersion",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
     provider_ref = models.CharField(max_length=255)
     state = models.CharField(
         max_length=16, choices=State.choices, default=State.STARTING

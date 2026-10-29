@@ -122,6 +122,13 @@ describe("scenarioFromApi", () => {
   it("tolerates a persona-less row", () => {
     expect(scenarioFromApi({ id: "x" }).persona).toBeNull();
   });
+
+  it("carries what the unsaved changes do to the row, and nothing without them", () => {
+    expect(
+      scenarioFromApi({ id: "x", draft_change: "added" }).draftChange,
+    ).toBe("added");
+    expect(scenarioFromApi({ id: "x" }).draftChange).toBeNull();
+  });
 });
 
 describe("queryScenarioFixture — pagination", () => {

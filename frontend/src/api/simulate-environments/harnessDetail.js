@@ -183,12 +183,6 @@ export function harnessDetailToEnvironment(detail) {
 
   const agentConnector =
     settings.agent?.connector || overview.agent_type || "auto";
-  const version = {
-    label: "v1",
-    note: "First run of this environment.",
-    createdAt: overview.last_updated || overview.created_at,
-  };
-
   const envState = {
     agent: {
       typeId: agentConnector,
@@ -200,10 +194,6 @@ export function harnessDetailToEnvironment(detail) {
     scenarioSource: "harness",
     evals: selectedEvals || [],
     runs: [],
-    agentVersions: [version],
-    envVersions: [version],
-    activeAgentVersion: "v1",
-    activeEnvVersion: "v1",
   };
 
   return { env, world: derivedWorld, envState, overview, contract, detail };

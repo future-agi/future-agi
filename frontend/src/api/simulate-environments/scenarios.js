@@ -150,6 +150,8 @@ export const scenarioFromApi = (row = {}) => {
     status: row.status,
     callExecutionId: row.call_execution_id ?? null,
     group: row.group,
+    // "added" | "changed" | "unchanged" while the list shows unsaved changes.
+    draftChange: row.draft_change ?? null,
     _raw: row,
   };
 };

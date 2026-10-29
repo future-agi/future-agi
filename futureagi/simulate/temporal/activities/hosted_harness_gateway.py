@@ -1,109 +1,17 @@
 from __future__ import annotations
 
-import asyncio
-
 from django.utils import timezone
 from temporalio import activity
 
 from simulate.temporal.activities.hosted_runner import _run_db
 from simulate.temporal.types.hosted_harness_gateway import (
     HostedHarnessAttemptInput,
-    HostedHarnessAuthoringOutput,
     HostedHarnessGatewayInput,
     HostedHarnessLaunchFailureInput,
     HostedHarnessLaunchOutput,
     HostedHarnessLaunchRecoveryOutput,
     HostedHarnessPollOutput,
 )
-
-
-@activity.defn(name="author_hosted_harness_job")
-async def author_hosted_harness_job(
-    input: HostedHarnessGatewayInput,
-) -> HostedHarnessAuthoringOutput:
-    """Author the frozen bundle in a managed sandbox before execution launch.
-
-    Contract/environment/scenario generation is model-heavy, so it runs in a throwaway sandbox
-    (authoring credentials only) rather than on the control-plane worker. A job that already
-    carries ``authoring_object_key`` is treated as authored and skipped.
-    """
-    from simulate.models import HostedHarnessJob
-    from simulate.services.hosted_harness import HostedHarnessError
-    from simulate.services.hosted_harness_gateway import (
-        HostedHarnessGateway,
-        store_authoring_archive,
-    )
-
-    def _prepare() -> bool:
-        job = HostedHarnessJob.no_workspace_objects.select_related("organization").get(
-            id=input.job_id
-        )
-        metadata = (job.payload or {}).get("metadata") or {}
-        if metadata.get("authoring_object_key"):
-            return True
-        job.current_stage = "understanding_agent"
-        job.state = HostedHarnessJob.State.ADMITTED
-        job.save(update_fields=["current_stage", "state", "updated_at"])
-        return False
-
-    def _author_and_store() -> None:
-        job = HostedHarnessJob.no_workspace_objects.select_related("organization").get(
-            id=input.job_id
-        )
-        body = HostedHarnessGateway().author(job)
-        store_authoring_archive(job, body)
-
-    def _failed(code: str, detail: str) -> None:
-        job = HostedHarnessJob.no_workspace_objects.get(id=input.job_id)
-        job.state = HostedHarnessJob.State.FAILED
-        job.current_stage = "failed"
-        job.failure = {
-            # Missing credentials are the user's environment to fix, not a simulator fault.
-            "domain": "environment"
-            if code == "provider_credentials_missing"
-            else "simulator",
-            "stage": "authoring",
-            "code": code,
-            "message": detail[:1000],
-        }
-        job.terminal_at = timezone.now()
-        job.save(
-            update_fields=[
-                "state",
-                "current_stage",
-                "failure",
-                "terminal_at",
-                "updated_at",
-            ]
-        )
-
-    def _touch_authoring_heartbeat() -> None:
-        HostedHarnessJob.no_workspace_objects.filter(id=input.job_id).update(
-            updated_at=timezone.now()
-        )
-
-    try:
-        cached = await _run_db(_prepare)
-        if cached:
-            return HostedHarnessAuthoringOutput(ready=True, state="admitted")
-        # The sandbox authoring run blocks for minutes with no streamed output; keep the
-        # Temporal activity alive with periodic heartbeats until it settles.
-        task = asyncio.ensure_future(_run_db(_author_and_store))
-        while not task.done():
-            try:
-                await asyncio.wait_for(asyncio.shield(task), timeout=20)
-            except TimeoutError:
-                activity.heartbeat("ALK authoring in sandbox is active")
-                await _run_db(_touch_authoring_heartbeat)
-        await task
-        return HostedHarnessAuthoringOutput(ready=True, state="admitted")
-    except Exception as exc:
-        detail = str(exc) or type(exc).__name__
-        code = exc.code if isinstance(exc, HostedHarnessError) else "authoring_failed"
-        await _run_db(_failed, code, detail)
-        return HostedHarnessAuthoringOutput(
-            ready=False, state="failed", detail=detail[:1000]
-        )
 
 
 @activity.defn(name="launch_hosted_harness_job")

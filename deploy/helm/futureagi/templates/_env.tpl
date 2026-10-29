@@ -339,6 +339,10 @@ pod's 1Gi emptyDir with the dead-letter file. */ -}}
       "FI_OBSERVED_CATALOG_MAX_SPOOL_BYTES" "268435456"
       "GOMEMLIMIT" $v.fiCollector.goMemLimit
 -}}
+{{- /* Ingest limits: unset (0) leaves the collector's own defaults. */ -}}
+{{- range $key, $name := dict "ingestBudgetMiB" "FI_INGEST_BUDGET_MIB" "maxBodyMiB" "FI_OTLP_MAX_BODY_MIB" "grpcMaxRecvMiB" "FI_GRPC_MAX_RECV_MIB" "maxConnections" "FI_OTLP_MAX_CONNECTIONS" -}}
+{{- with get $v.fiCollector $key -}}{{- $_ := set $plain $name (toString .) -}}{{- end -}}
+{{- end -}}
 {{- if eq $observedMode "direct" -}}
 {{- $_ := set $plain "FI_OBSERVED_CATALOG_CH_URL" (get $plain "FI_CH_URL") -}}
 {{- $_ := set $plain "FI_OBSERVED_CATALOG_CH_DATABASE" $v.clickhouse.propertyCatalogDatabase -}}

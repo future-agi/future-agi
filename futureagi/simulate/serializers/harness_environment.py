@@ -2,9 +2,17 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
+from simulate.models import HarnessNudge
+from simulate.serializers.harness_job import (
+    TARGET_SYSTEM_PROMPT_MAX_CHARS,
+    HarnessRunPinnedVersionsSerializer,
+    HarnessRunWarningSerializer,
+    phone_number_error,
+)
 from simulate.serializers.requests.run_test_evals import (
     EvalConfigUpdateRequestSerializer,
 )
+from simulate.serializers.response.run_test import RunVersionLabelSerializer
 from simulate.services.harness_environment import (
     AGENT_TYPE_CHAT,
     AGENT_TYPE_VOICE,
@@ -15,6 +23,7 @@ from simulate.services.harness_environment import (
     STATUS_FAILED,
     STATUS_RUNNING,
 )
+from tfc.utils.api_serializers import StrictInputSerializer
 
 
 class HarnessEnvironmentListQuerySerializer(serializers.Serializer):
@@ -534,3 +543,470 @@ class HarnessEnvironmentDetailSerializer(serializers.Serializer):
     scenarios = HarnessEnvironmentScenarioSerializer(many=True)
     evaluations = HarnessEnvironmentEvaluationsSerializer()
     settings = HarnessEnvironmentSettingsSerializer()
+
+
+class HarnessVersionPersonSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    name = serializers.CharField(allow_blank=True)
+
+
+class HarnessVersionSerializer(serializers.Serializer):
+    """One agent, environment or suite version, as the version lists show it."""
+
+    id = serializers.UUIDField()
+    label = serializers.CharField(allow_null=True)
+    status = serializers.ChoiceField(choices=("draft", "active", "discarded"))
+    is_default = serializers.BooleanField()
+    created_at = serializers.DateTimeField()
+    created_by = HarnessVersionPersonSerializer(allow_null=True)
+    origin = serializers.CharField(allow_null=True)
+    summary = serializers.CharField(allow_blank=True)
+    hash = serializers.CharField(allow_null=True)
+    parent_id = serializers.UUIDField(allow_null=True)
+    derived_from_agent_version_id = serializers.UUIDField(allow_null=True)
+    scenario_count = serializers.IntegerField(allow_null=True)
+    source = serializers.JSONField(
+        allow_null=True, help_text="An agent version's non-secret source facts."
+    )
+    prompt = serializers.CharField(
+        allow_null=True,
+        allow_blank=True,
+        help_text="The default agent version's prompt; null on every other item.",
+    )
+    preflight_status = serializers.CharField(allow_null=True)
+    preflight_report = serializers.JSONField(
+        allow_null=True,
+        help_text="An agent version's last check: check statuses and names only.",
+    )
+    preflighted_at = serializers.DateTimeField(allow_null=True)
+    check_started_at = serializers.DateTimeField(
+        allow_null=True,
+        help_text="When an agent version's latest check was asked for.",
+    )
+    credential_names = serializers.ListField(
+        child=serializers.CharField(),
+        allow_null=True,
+        help_text="An agent version's credential names, provider keys included.",
+    )
+    required_variable_names = serializers.ListField(
+        child=serializers.CharField(),
+        allow_null=True,
+        help_text="The variables an agent version's source reads, when known.",
+    )
+    activation_outcome = serializers.CharField(
+        allow_null=True,
+        help_text=(
+            "Why a passed agent version is or isn't this environment's default, as"
+            " last recorded."
+        ),
+    )
+    requested_here = serializers.BooleanField(
+        allow_null=True,
+        help_text="Whether this environment asked for an agent version.",
+    )
+    pickable = serializers.BooleanField(
+        allow_null=True,
+        help_text=(
+            "Whether an agent version can be picked for a run of this environment"
+            " or made its default."
+        ),
+    )
+    discardable = serializers.BooleanField(
+        allow_null=True,
+        help_text="Whether this environment can discard an agent version.",
+    )
+
+
+class HarnessAgentCredentialsResponseSerializer(serializers.Serializer):
+    """The agent version a credential change made; its check runs next."""
+
+    agent_version = HarnessVersionSerializer()
+
+
+class HarnessAgentConfigChangeSerializer(StrictInputSerializer):
+    phone_number = serializers.CharField(max_length=512, required=False)
+    agent_name = serializers.CharField(max_length=512, required=False)
+    target_speaks_first = serializers.BooleanField(required=False)
+
+    def validate_phone_number(self, value):
+        error = phone_number_error(value)
+        if error:
+            raise serializers.ValidationError(error)
+        return value.strip()
+
+
+class HarnessAgentPayloadChangeSerializer(StrictInputSerializer):
+    config = HarnessAgentConfigChangeSerializer()
+
+
+class HarnessAgentVersionCreateSerializer(serializers.Serializer):
+    """One change to an environment's agent: a new upload, or its prompt and settings."""
+
+    archive_artifact_id = serializers.UUIDField(
+        required=False, help_text="A folder uploaded through source-upload."
+    )
+    prompt = serializers.CharField(
+        required=False,
+        max_length=TARGET_SYSTEM_PROMPT_MAX_CHARS,
+        trim_whitespace=True,
+        allow_blank=False,
+    )
+    agent_payload = HarnessAgentPayloadChangeSerializer(required=False)
+
+    def validate(self, attrs):
+        given = [name for name in self.fields if name in attrs]
+        if not given:
+            raise serializers.ValidationError(
+                "Give archive_artifact_id, prompt or agent_payload."
+            )
+        if "archive_artifact_id" in attrs and len(given) > 1:
+            raise serializers.ValidationError(
+                {"archive_artifact_id": "An upload is a change of its own."}
+            )
+        if "agent_payload" in attrs and not attrs["agent_payload"]["config"]:
+            raise serializers.ValidationError({"agent_payload": "Nothing to change."})
+        return attrs
+
+
+class HarnessVersionsSerializer(serializers.Serializer):
+    """Every version of an environment's three pieces, newest first."""
+
+    agent = HarnessVersionSerializer(many=True)
+    environment = HarnessVersionSerializer(many=True)
+    suite = HarnessVersionSerializer(many=True)
+
+
+class HarnessDraftItemSerializer(HarnessVersionSerializer):
+    """An unsaved draft of the environment or the suite, as the Save bar shows it."""
+
+    stale = serializers.BooleanField(
+        help_text="Whether the default moved since the draft started; Save refuses it."
+    )
+    revision = serializers.IntegerField(help_text="Bumped on every edit to the draft.")
+    last_edited_by = HarnessVersionPersonSerializer(allow_null=True)
+    updated_at = serializers.DateTimeField()
+    parent_label = serializers.CharField(
+        allow_null=True, help_text="The version the draft started from."
+    )
+    default_label = serializers.CharField(
+        allow_null=True, help_text="The piece's default now."
+    )
+    changes = serializers.DictField(
+        child=serializers.IntegerField(),
+        help_text=(
+            "Counts against the parent: added, removed and changed for the suite;"
+            " tools, rules, sub_goals and world_files for the environment."
+        ),
+    )
+
+
+class HarnessDraftsSerializer(serializers.Serializer):
+    """The environment's open drafts, and drafts an update set aside."""
+
+    environment = HarnessDraftItemSerializer(allow_null=True)
+    suite = HarnessDraftItemSerializer(allow_null=True)
+    set_aside = HarnessDraftItemSerializer(many=True)
+
+
+class HarnessDraftSaveItemSerializer(StrictInputSerializer):
+    piece = serializers.ChoiceField(choices=("environment", "suite"))
+    expected_parent_id = serializers.UUIDField(
+        allow_null=True, help_text="The draft's parent the caller saw."
+    )
+    expected_revision = serializers.IntegerField(
+        required=False, min_value=0, help_text="The draft's revision the caller saw."
+    )
+
+
+class HarnessDraftSaveSerializer(serializers.Serializer):
+    drafts = HarnessDraftSaveItemSerializer(many=True, min_length=1, max_length=2)
+    idempotency_key = serializers.RegexField(
+        r"^[A-Za-z0-9_-]+$",
+        max_length=128,
+        help_text="Repeating a Save with the same key repeats its answer.",
+    )
+
+    def validate_drafts(self, value):
+        pieces = [one["piece"] for one in value]
+        if len(set(pieces)) != len(pieces):
+            raise serializers.ValidationError("Each piece may be saved once.")
+        return value
+
+
+class HarnessDraftSaveResponseSerializer(serializers.Serializer):
+    saved = serializers.DictField(
+        child=HarnessVersionSerializer(),
+        help_text="Each saved piece's new default version, by piece.",
+    )
+    versions = HarnessVersionsSerializer()
+
+
+class HarnessDefaultMoveSerializer(serializers.Serializer):
+    expected_default_id = serializers.UUIDField(
+        allow_null=True,
+        help_text="The default the caller saw; a newer default refuses the move.",
+    )
+
+
+class HarnessVersionDiffQuerySerializer(serializers.Serializer):
+    against = serializers.UUIDField(required=False)
+
+
+class HarnessVersionDiffSerializer(serializers.Serializer):
+    """What changed, against the version's parent or the one named by ``against``."""
+
+    summary = serializers.CharField(allow_blank=True)
+    diff = serializers.JSONField(allow_null=True)
+    includes_draft_edits = serializers.BooleanField(
+        required=False,
+        help_text="A rebuild made someone's unsaved edits live with this version.",
+    )
+    snapshot_diff = serializers.JSONField(
+        required=False,
+        allow_null=True,
+        help_text="Those unsaved edits, against the default they started from.",
+    )
+
+
+class HarnessRunPlanQuerySerializer(serializers.Serializer):
+    agent_version_id = serializers.UUIDField(required=False)
+    environment_version_id = serializers.UUIDField(required=False)
+    suite_version_id = serializers.UUIDField(required=False)
+
+
+class HarnessRunPlanSerializer(serializers.Serializer):
+    """What a run of the picked versions would use and should be warned about."""
+
+    versions = HarnessRunPinnedVersionsSerializer()
+    warnings = HarnessRunWarningSerializer(many=True)
+    bundle_cached = serializers.BooleanField(
+        allow_null=True,
+        help_text=(
+            "Whether the run replays a cached bundle (true) or prepares one (false);"
+            " null when it runs without one, as the defaults do before their bundle"
+            " is cached."
+        ),
+    )
+
+
+class HarnessCompareQuerySerializer(serializers.Serializer):
+    execution_id = serializers.UUIDField()
+    against_execution_id = serializers.UUIDField(
+        required=False,
+        help_text="The run to compare against; the previous completed run if absent.",
+    )
+
+
+class HarnessCompareSideSerializer(serializers.Serializer):
+    passed = serializers.IntegerField()
+    trials = serializers.IntegerField(help_text="Trials a verdict was reached on.")
+    undecided = serializers.IntegerField(
+        help_text="Trials that ran to an end but a sub-goal check was undecided."
+    )
+    pass_rate = serializers.FloatField(allow_null=True)
+    eval_pass_rate = serializers.FloatField(
+        allow_null=True, help_text="Context only; never decides the verdict."
+    )
+
+
+class HarnessCompareIntervalSerializer(serializers.Serializer):
+    low = serializers.FloatField()
+    high = serializers.FloatField()
+
+
+class HarnessComparePairSerializer(serializers.Serializer):
+    scenario_key = serializers.CharField()
+    scenario = serializers.CharField()
+    band = serializers.ChoiceField(
+        choices=("paired", "criteria_changed", "new", "not_applicable")
+    )
+    verdict = serializers.ChoiceField(
+        choices=("improved", "regressed", "no_meaningful_change", "inconclusive"),
+        allow_null=True,
+    )
+    difference = serializers.FloatField(
+        allow_null=True, help_text="Pass-rate change in percentage points."
+    )
+    interval = HarnessCompareIntervalSerializer(
+        allow_null=True, help_text="Newcombe 95% interval of the difference."
+    )
+    current = HarnessCompareSideSerializer(allow_null=True)
+    against = HarnessCompareSideSerializer(allow_null=True)
+    changed_sub_goals = serializers.ListField(child=serializers.CharField())
+    reason = serializers.CharField(allow_null=True)
+    removed_in = RunVersionLabelSerializer(allow_null=True)
+
+
+class HarnessCompareSummarySerializer(serializers.Serializer):
+    paired = serializers.IntegerField()
+    improved = serializers.IntegerField()
+    regressed = serializers.IntegerField()
+    no_meaningful_change = serializers.IntegerField()
+    inconclusive = serializers.IntegerField()
+    criteria_changed = serializers.IntegerField()
+    new = serializers.IntegerField()
+    not_applicable = serializers.IntegerField()
+    current_pass_rate = serializers.FloatField(allow_null=True)
+    against_pass_rate = serializers.FloatField(allow_null=True)
+    margin = serializers.FloatField()
+
+
+class HarnessCompareVersionsSerializer(serializers.Serializer):
+    current = HarnessRunPinnedVersionsSerializer()
+    against = HarnessRunPinnedVersionsSerializer(allow_null=True)
+
+
+class HarnessCompareSerializer(serializers.Serializer):
+    """Two runs of one environment, scenario by scenario."""
+
+    execution_id = serializers.UUIDField()
+    against_execution_id = serializers.UUIDField(allow_null=True)
+    pairs = HarnessComparePairSerializer(many=True)
+    summary = HarnessCompareSummarySerializer()
+    versions = HarnessCompareVersionsSerializer()
+
+
+class HarnessSuiteMemberSerializer(serializers.Serializer):
+    scenario_key = serializers.CharField()
+    number = serializers.IntegerField()
+    name = serializers.CharField(allow_blank=True)
+    use_case = serializers.CharField(allow_blank=True)
+
+
+NUDGE_STATES = tuple(HarnessNudge.State.values)
+
+
+class HarnessNudgeFileSerializer(serializers.Serializer):
+    path = serializers.CharField()
+    status = serializers.ChoiceField(
+        choices=("added", "removed", "modified", "renamed", "copied")
+    )
+    previous_path = serializers.CharField(allow_null=True)
+    additions = serializers.IntegerField(allow_null=True)
+    deletions = serializers.IntegerField(allow_null=True)
+    has_patch = serializers.BooleanField()
+    patch_omitted = serializers.CharField(
+        allow_null=True,
+        help_text=(
+            "Why the file's patch isn't kept: secret_path, too_large, binary, budget"
+            " or redaction_unavailable."
+        ),
+    )
+
+
+class HarnessNudgeVariablesSerializer(serializers.Serializer):
+    """Variable names only; never a value."""
+
+    added = serializers.ListField(child=serializers.CharField())
+    removed = serializers.ListField(child=serializers.CharField())
+    changed = serializers.ListField(child=serializers.CharField())
+    unknown = serializers.ListField(
+        child=serializers.CharField(),
+        help_text="Names whose values couldn't be read, so they may have changed.",
+    )
+
+
+class HarnessNudgeFactsSerializer(serializers.Serializer):
+    """What changed: an environment nudge's agent facts, or a suite nudge's environment
+    diff. Names, paths, statuses and counts; never a value or a patch."""
+
+    source = serializers.JSONField(
+        required=False,
+        help_text="The agent source's kind, whether it changed, and its from/to ids.",
+    )
+    changed_files = HarnessNudgeFileSerializer(many=True, required=False)
+    files_total = serializers.IntegerField(required=False, allow_null=True)
+    files_truncated = serializers.BooleanField(required=False)
+    reversed = serializers.BooleanField(
+        required=False, help_text="A roll back to an earlier commit."
+    )
+    files_unavailable = serializers.CharField(
+        required=False,
+        allow_null=True,
+        help_text=(
+            "Why the file changes aren't listed: private_repository, no_commit,"
+            " repository_changed, not_linear, rate_limited, github_error,"
+            " archive_missing, archive_unreadable or archive_too_large."
+        ),
+    )
+    prompt_changed = serializers.BooleanField(required=False)
+    variables = HarnessNudgeVariablesSerializer(required=False)
+    settings_changed = serializers.ListField(
+        child=serializers.CharField(), required=False
+    )
+    agent_default_moved = serializers.BooleanField(
+        required=False,
+        help_text="Whether the agent version is already this environment's default.",
+    )
+    environment_diff = serializers.JSONField(required=False, allow_null=True)
+    environment_summary = serializers.CharField(required=False, allow_blank=True)
+    from_environment_version_id = serializers.UUIDField(required=False, allow_null=True)
+
+
+class HarnessNudgeReplacementSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    trigger_label = serializers.CharField(allow_null=True)
+
+
+class HarnessNudgeProblemSerializer(serializers.Serializer):
+    item = serializers.CharField(allow_blank=True)
+    kind = serializers.CharField(allow_blank=True)
+    message = serializers.CharField(allow_blank=True)
+    in_your_unsaved_edits = serializers.BooleanField()
+
+
+class HarnessNudgeErrorSerializer(serializers.Serializer):
+    code = serializers.CharField(
+        help_text=(
+            "stopped_by_user, stopped_by_newer, environment_deleted, checks_failed,"
+            " no_report, not_runnable, turn_failed, turn_interrupted,"
+            " rebuild_not_started, rebuild_stuck, landing_failed, or a refused save's"
+            " code."
+        )
+    )
+    message = serializers.CharField(required=False)
+    problems = HarnessNudgeProblemSerializer(many=True, required=False)
+
+
+class HarnessNudgeSerializer(serializers.Serializer):
+    """An offer to rebuild the environment or its suite after a change."""
+
+    id = serializers.UUIDField()
+    target = serializers.ChoiceField(choices=HarnessNudge.Target.values)
+    state = serializers.ChoiceField(choices=NUDGE_STATES)
+    facts = HarnessNudgeFactsSerializer()
+    trigger_agent_version = RunVersionLabelSerializer(allow_null=True)
+    base_agent_version = RunVersionLabelSerializer(allow_null=True)
+    base_environment_version = RunVersionLabelSerializer(allow_null=True)
+    base_suite_version = RunVersionLabelSerializer(allow_null=True)
+    result_environment_version = RunVersionLabelSerializer(allow_null=True)
+    result_suite_version = RunVersionLabelSerializer(allow_null=True)
+    summary = serializers.JSONField(allow_null=True)
+    error = HarnessNudgeErrorSerializer(allow_null=True)
+    closed_at = serializers.DateTimeField(allow_null=True)
+    queued_behind_input = serializers.BooleanField()
+    can_stop = serializers.BooleanField()
+    replaced_by = HarnessNudgeReplacementSerializer(allow_null=True)
+    card_message_id = serializers.UUIDField(
+        allow_null=True, help_text="The nudge's card in the environment's chat."
+    )
+    answered_by = HarnessVersionPersonSerializer(allow_null=True)
+    answered_at = serializers.DateTimeField(allow_null=True)
+    created_at = serializers.DateTimeField()
+
+
+class HarnessNudgeListQuerySerializer(serializers.Serializer):
+    state = serializers.CharField(
+        required=False, help_text="Comma-separated nudge states to list."
+    )
+
+    def validate_state(self, value):
+        states = [one.strip() for one in value.split(",") if one.strip()]
+        unknown = sorted(set(states) - set(NUDGE_STATES))
+        if unknown:
+            raise serializers.ValidationError(f"Unknown state: {', '.join(unknown)}")
+        return states
+
+
+class HarnessNudgeAnswerSerializer(serializers.Serializer):
+    answer = serializers.ChoiceField(choices=("yes", "no"))

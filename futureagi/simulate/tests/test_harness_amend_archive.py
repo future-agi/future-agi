@@ -449,3 +449,66 @@ def test_dropping_a_scenario_that_has_run_keeps_its_row_for_the_history(
         )
     ) == sorted(_key(name) for name in NAMES[:2])
     assert HostedHarnessScenario.all_objects.filter(job=environment).count() == 2
+
+
+@pytest.fixture
+def storage(monkeypatch):
+    from simulate.tests.test_hosted_harness_conversation import _Storage
+    from tfc.utils import storage_client
+
+    fake = _Storage()
+    monkeypatch.setattr(storage_client, "_client", fake)
+    return fake
+
+
+@pytest.mark.django_db
+def test_an_unversioned_amend_writes_a_new_object_and_keeps_a_pending_extend(
+    user, workspace, storage, settings
+):
+    from simulate.services.harness_versioning import archives
+    from simulate.services.hosted_harness_gateway import (
+        authoring_content_digest,
+        rewrite_authoring_scenarios,
+    )
+
+    settings.HARNESS_VERSIONING_ENABLED = False
+    environment = _run_environment(user, workspace, "amend-unversioned")
+    old_key = environment.payload["metadata"]["authoring_object_key"]
+    original = _archive()
+    storage.objects[old_key] = original
+    payload = dict(environment.payload)
+    payload["metadata"] = {
+        **payload["metadata"],
+        "authoring_mode": "extend",
+        "scenario_extend": {"count": 1},
+    }
+    HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+        payload=payload
+    )
+
+    returned = rewrite_authoring_scenarios(
+        environment, _suite(explain_pin={"background_noise": "street"})
+    )
+
+    environment.refresh_from_db()
+    metadata = environment.payload["metadata"]
+    new_key = metadata["authoring_object_key"]
+    assert storage.objects[old_key] == original
+    assert returned == new_key != old_key
+    rewritten = storage.objects[new_key]
+    assert new_key == archives.pair_key(
+        environment.organization_id, environment.id, rewritten
+    )
+    assert metadata["authoring_revision"] == authoring_content_digest(rewritten)
+    assert metadata["authoring_mode"] == "extend"
+    assert metadata["scenario_extend"] == {"count": 1}
+    assert environment.environment_version_id is None
+
+    run, _ = create_selected_harness_run(
+        environment,
+        scenario_keys=[_key(NAMES[0])],
+        trials=1,
+        idempotency_key="after-amend",
+    )
+
+    assert run.payload["metadata"]["authoring_object_key"] == new_key

@@ -9,6 +9,7 @@ from contextlib import ExitStack, contextmanager
 from datetime import timedelta
 from functools import wraps
 from types import SimpleNamespace
+from typing import Any
 from urllib.parse import urlencode
 
 import structlog
@@ -151,6 +152,7 @@ from simulate.services.harness_evals import (
     is_regrading_a_finished_harness_run,
     runnable_eval_config_ids,
 )
+from simulate.services.harness_versioning.read import run_version_labels
 from simulate.services.harness_run_evals import stamp_eval_queued
 from simulate.services.run_regrade import (
     RegradeAlreadyRunning,
@@ -5522,6 +5524,41 @@ def _covered_scenario_count(run_test) -> int:
     return len(covered)
 
 
+def _version_labels(labels: dict[str, Any], execution_id: Any) -> dict[str, Any]:
+    """A run's pinned versions; null before versioning."""
+    held = labels.get(str(execution_id)) or {}
+    return {
+        "environment_version": held.get("environment_version"),
+        "suite_version": held.get("suite_version"),
+        "pinned_agent_version": held.get("agent_version"),
+        "agent_differs": bool(held.get("agent_differs")),
+    }
+
+
+def _execution_summaries(request, run_test, status_filter: str) -> Response:
+    """A page of the run test's executions, newest first, as id, status and pins."""
+    executions = (
+        TestExecution.objects.filter(run_test=run_test, deleted=False)
+        .only("id", "status", "created_at")
+        .order_by("-created_at")
+    )
+    if status_filter:
+        executions = executions.filter(status=status_filter)
+    paginator = ExtendedPageNumberPagination()
+    page = paginator.paginate_queryset(executions, request)
+    labels = run_version_labels([execution.id for execution in page])
+    return paginator.get_paginated_response(
+        [
+            {
+                "id": str(execution.id),
+                "status": execution.status.title(),
+                **_version_labels(labels, execution.id),
+            }
+            for execution in page
+        ]
+    )
+
+
 class RunTestExecutionsView(APIView):
     """
     API View to get test execution data for a specific run test with search and pagination
@@ -5544,6 +5581,8 @@ class RunTestExecutionsView(APIView):
         - status: filter by execution status
         - limit: number of items per page (default: 10)
         - page: page number (default: 1)
+        - summary: when true, each item carries only id, status and the pinned
+          versions, without reading the calls; search does not apply
         """
         try:
             # Get the organization of the logged-in user
@@ -5566,6 +5605,8 @@ class RunTestExecutionsView(APIView):
             # Get query parameters
             search_query = request.query_params.get("search", "").strip()
             status_filter = request.query_params.get("status", "").strip()
+            if request.query_params.get("summary", "").lower() in ("1", "true"):
+                return _execution_summaries(request, run_test, status_filter)
 
             # Get test executions for this run test with annotations to avoid N+1 queries
             # Use annotations to calculate call metrics in a single query
@@ -5726,6 +5767,9 @@ class RunTestExecutionsView(APIView):
 
             # Prepare response data using annotated values
             execution_data = []
+            version_labels = run_version_labels(
+                [test_execution.id for test_execution in result_page]
+            )
 
             for test_execution in result_page:
                 # Use annotated values instead of querying
@@ -5932,6 +5976,7 @@ class RunTestExecutionsView(APIView):
                             if test_execution.id in hosted_jobs
                             else None
                         ),
+                        **_version_labels(version_labels, test_execution.id),
                     }
                 )
 
@@ -6832,6 +6877,12 @@ def _latest_repository_harness_execution(run_test):
     return None
 
 
+# Refusals of a rerun with changed credentials, answered as the harness states them.
+_CREDENTIALS_RERUN_REFUSALS = frozenset(
+    {"agent_preflight_failed", "credential_blob_too_large", "version_not_runnable"}
+)
+
+
 def _dispatch_repository_harness_rerun(
     test_execution, *, environment_values: dict[str, str]
 ) -> dict:
@@ -7068,6 +7119,16 @@ class CallExecutionRerunView(APIView):
                         ),
                     )
                 except Exception as dispatch_error:
+                    from simulate.services.hosted_harness import HostedHarnessError
+
+                    if (
+                        isinstance(dispatch_error, HostedHarnessError)
+                        and dispatch_error.code in _CREDENTIALS_RERUN_REFUSALS
+                    ):
+                        return Response(
+                            dispatch_error.as_dict(),
+                            status=dispatch_error.status_code,
+                        )
                     logger.exception(
                         "repository_harness_rerun_dispatch_failed",
                         test_execution_id=str(test_execution.id),

@@ -33,7 +33,12 @@ from django.db.models import (
     Value,
     When,
 )
-from django.db.models.fields.json import HasKey, KeyTextTransform, KeyTransform
+from django.db.models.fields.json import (
+    DataContains,
+    HasKey,
+    KeyTextTransform,
+    KeyTransform,
+)
 from django.db.models.functions import (
     Cast,
     Coalesce,
@@ -48,13 +53,19 @@ from django.db.models.lookups import (
     GreaterThan,
     GreaterThanOrEqual,
     In,
+    IsNull,
     LessThan,
     LessThanOrEqual,
 )
 from django.db.models.sql.datastructures import BaseTable
 
 from model_hub.models.develop_dataset import Cell
-from simulate.models import CallExecution, SimulateEvalConfig, TestExecution
+from simulate.models import (
+    CallExecution,
+    HarnessSuiteMember,
+    SimulateEvalConfig,
+    TestExecution,
+)
 from simulate.models.hosted_harness import HostedHarnessJob, HostedHarnessScenario
 from simulate.semantics import SupportedProviders
 from simulate.services.harness_scenarios import GROUP_BY as SCENARIO_GROUP_BY
@@ -174,6 +185,72 @@ def _authored_level(field: str):
     return KeyTextTransform(tail, head)
 
 
+def _member_level(field: str, *, text: bool = True):
+    """The same value read from a suite member's ``content`` document."""
+    head, _, tail = field.partition(".")
+    transform = KeyTextTransform if text else KeyTransform
+    if not tail:
+        return transform(head, "content")
+    return transform(tail, KeyTransform(head, "content"))
+
+
+def _member_first(
+    member: QuerySet | None,
+    member_value: Any,
+    authored: QuerySet,
+    output_field: Any,
+    *,
+    empty: Any = None,
+) -> tuple[Any, ...]:
+    """A pinned run's suite member value, else the authored scenario's.
+
+    The member is authoritative: when a pinned run has one, a value it lacks reads
+    empty rather than the identity row's newer one. Without pinned runs the member read
+    is left out, so the query is unchanged.
+    """
+
+    def first(rows: QuerySet) -> Any:
+        value = Subquery(rows[:1], output_field=output_field)
+        return NullIf(value, empty) if empty is not None else value
+
+    if member is None:
+        return (first(authored),)
+    return (
+        first(member.values(level=member_value)),
+        Case(When(~Exists(member), then=first(authored)), output_field=output_field),
+    )
+
+
+def _member_json(field: str):
+    """A member ``content`` value as JSON, NULL when it is absent or JSON null."""
+    return Case(
+        When(
+            ~Q(IsNull(_member_level(field), True)),
+            then=_member_level(field, text=False),
+        ),
+        output_field=JSONField(),
+    )
+
+
+def _member_scenario_key():
+    """The call's scenario key, else its linked scenario's: the scan's rule too."""
+    linked = (
+        HostedHarnessScenario.all_objects.filter(
+            call_execution_id=OuterRef(OuterRef("pk"))
+        )
+        .order_by("-created_at")
+        .values("scenario_key")[:1]
+    )
+    return Coalesce(
+        NullIf(
+            KeyTextTransform("harness_scenario_key", OuterRef("call_metadata")),
+            Value(""),
+        ),
+        Subquery(linked, output_field=CharField()),
+        output_field=CharField(),
+    )
+
+
 def _group_q(group_by: str, key: str) -> Q:
     field = GROUP_FIELDS[group_by]
     if group_by not in LIST_AXES:
@@ -206,14 +283,44 @@ _NO_RESULT_SUB_GOALS = (
 ) & (Q(call_metadata__sub_goals__isnull=True) | Q(call_metadata__sub_goals=[]))
 
 
-def _authored_sub_goal_q(value: Any) -> Q:
+def _member_sub_goals() -> Subquery:
+    """The sub-goals of a call's scenario in the suite version its run was pinned to.
+
+    Self-contained, so it also works on unannotated call querysets. NULL when the call
+    has no member; an empty list when its member lists none.
+    """
+    pinned_suite = (
+        HostedHarnessJob.no_workspace_objects.filter(
+            test_execution_id=OuterRef(OuterRef("test_execution_id")),
+            suite_version__isnull=False,
+        )
+        .order_by("-created_at")
+        .values("suite_version_id")[:1]
+    )
+    member = HarnessSuiteMember.no_workspace_objects.filter(
+        suite_version_id=Subquery(pinned_suite),
+        scenario_key=_member_scenario_key(),
+    ).values(
+        level=Coalesce(
+            _member_json("sub_goals"),
+            Value([], output_field=JSONField()),
+            output_field=JSONField(),
+        )
+    )[
+        :1
+    ]
+    return Subquery(member, output_field=JSONField())
+
+
+def _authored_sub_goal_q(value: Any, *, pinned: bool = False) -> Q:
     """Match a call whose linked scenario lists ``value`` as a sub-goal.
 
-    A trial's source scenario wins over a registration, as in the rows.
+    A trial's source scenario wins over a registration, as in the rows. With pinned
+    runs in view, the pinned suite's member wins over both.
     """
     execution = "hosted_harness_execution__source_scenario__sub_goals"
     registration = "hosted_registration__sub_goals"
-    return (
+    authored = (
         Q(**{f"{execution}__contains": [value]})
         | Q(**{f"{execution}__contains": [{"name": value}]})
         | (
@@ -224,11 +331,20 @@ def _authored_sub_goal_q(value: Any) -> Q:
             )
         )
     )
+    if not pinned:
+        return authored
+    member = _member_sub_goals()
+    return (
+        Q(DataContains(member, Value([value], output_field=JSONField())))
+        | Q(DataContains(member, Value([{"name": value}], output_field=JSONField())))
+        | (Q(IsNull(member, True)) & authored)
+    )
 
 
-def _authored_sub_goals_expression():
+def _authored_sub_goals_expression(*, pinned: bool = False):
     empty = Value([], output_field=JSONField())
     return Coalesce(
+        *([_member_sub_goals()] if pinned else []),
         NullIf(F("hosted_harness_execution__source_scenario__sub_goals"), empty),
         NullIf(F("hosted_registration__sub_goals"), empty),
         output_field=JSONField(),
@@ -673,14 +789,30 @@ def run_calls_queryset(
     # scanned the job table for every call.
     own_run = Q(pk__in=[])
     own_environment = Q(pk__in=[])
-    run_jobs = HostedHarnessJob.all_objects.filter(
-        test_execution_id__in=run_ids
-    ).values_list("test_execution_id", "id", "environment_id")
-    for run_id, job_id, environment_id in run_jobs:
+    # A run pinned to a suite version shows that version's scenario content. A run
+    # has one job; a deleted one pins nothing, as everywhere else that reads the pin.
+    pinned_suites: dict[Any, Any] = {}
+    # Oldest first, so the newest pinned job wins.
+    run_jobs = (
+        HostedHarnessJob.all_objects.filter(test_execution_id__in=run_ids)
+        .order_by("created_at", "id")
+        .values_list(
+            "test_execution_id", "id", "environment_id", "suite_version_id", "deleted"
+        )
+    )
+    for run_id, job_id, environment_id, suite_version_id, deleted in run_jobs:
         this_run = Exact(OuterRef("test_execution_id"), Value(run_id))
         own_run |= Q(this_run, job_id=job_id)
         if environment_id:
             own_environment |= Q(this_run, job_id=environment_id)
+        if suite_version_id and not deleted:
+            pinned_suites[run_id] = suite_version_id
+    pinned_suite = Q(pk__in=[])
+    for run_id, suite_version_id in pinned_suites.items():
+        pinned_suite |= Q(
+            Exact(OuterRef("test_execution_id"), Value(run_id)),
+            suite_version_id=suite_version_id,
+        )
     authored = (
         HostedHarnessScenario.all_objects.filter(
             Q(call_execution_id=OuterRef("pk"))
@@ -699,15 +831,35 @@ def run_calls_queryset(
     queryset = _read_large_json_once(
         CallExecution.objects.filter(execution_filter), run_ids
     ).annotate(result_scenario_key=_json_text("call_metadata", "harness_scenario_key"))
+    member = None
+    if pinned_suites:
+        queryset = queryset.alias(
+            result_pinned_suite=Value(True),
+            result_member_key=Coalesce(
+                NullIf(F("result_scenario_key"), Value("")),
+                Subquery(
+                    HostedHarnessScenario.all_objects.filter(
+                        call_execution_id=OuterRef("pk")
+                    )
+                    .order_by("-created_at")
+                    .values("scenario_key")[:1],
+                    output_field=CharField(),
+                ),
+                output_field=CharField(),
+            ),
+        )
+        member = HarnessSuiteMember.no_workspace_objects.filter(
+            pinned_suite, scenario_key=OuterRef("result_member_key")
+        )
     queryset = queryset.annotate(
         **{
             GROUP_FIELDS[axis]: Coalesce(
-                NullIf(
-                    Subquery(
-                        authored.values(level=_authored_level(field))[:1],
-                        output_field=TextField(),
-                    ),
-                    Value(""),
+                *_member_first(
+                    member,
+                    _member_level(field),
+                    authored.values(level=_authored_level(field)),
+                    TextField(),
+                    empty=Value(""),
                 ),
                 Value(UNGROUPED),
                 output_field=CharField(),
@@ -717,9 +869,11 @@ def run_calls_queryset(
         },
         **{
             GROUP_FIELDS[axis]: Coalesce(
-                Subquery(
-                    authored.values(SCENARIO_GROUP_BY[axis])[:1],
-                    output_field=JSONField(),
+                *_member_first(
+                    member,
+                    _member_json(SCENARIO_GROUP_BY[axis]),
+                    authored.values(SCENARIO_GROUP_BY[axis]),
+                    JSONField(),
                 ),
                 Value([], output_field=JSONField()),
                 output_field=JSONField(),
@@ -735,9 +889,12 @@ def run_calls_queryset(
         ),
         # Twin: the goal fallbacks in run_results_v3_scan.scan_call_values; change both.
         result_goal=Coalesce(
-            NullIf(
-                Subquery(authored.values("use_case")[:1], output_field=TextField()),
-                Value(""),
+            *_member_first(
+                member,
+                _member_level("use_case"),
+                authored.values("use_case"),
+                TextField(),
+                empty=Value(""),
             ),
             _json_text("call_metadata", "use_case"),
             _json_text("call_metadata", "goal"),
@@ -851,7 +1008,7 @@ def run_call_rows_queryset(queryset: QuerySet) -> QuerySet:
     )
 
 
-def _sub_goal_q(values: list[str]) -> Q:
+def _sub_goal_q(values: list[str], *, pinned: bool = False) -> Q:
     sub_goal_query = Q(pk__in=[])
     for value in values:
         sub_goal_query |= Q(
@@ -859,7 +1016,9 @@ def _sub_goal_q(values: list[str]) -> Q:
         )
         sub_goal_query |= Q(call_metadata__sub_goals__contains=[value])
         sub_goal_query |= Q(call_metadata__sub_goals__contains=[{"name": value}])
-        sub_goal_query |= _NO_RESULT_SUB_GOALS & _authored_sub_goal_q(value)
+        sub_goal_query |= _NO_RESULT_SUB_GOALS & _authored_sub_goal_q(
+            value, pinned=pinned
+        )
     return sub_goal_query
 
 
@@ -915,14 +1074,15 @@ def apply_run_call_query(queryset: QuerySet, query: dict[str, Any]) -> QuerySet:
         from simulate.services.run_dashboard_v3 import annotate_goal_outcome
 
         queryset = annotate_goal_outcome(queryset).filter(dashboard_goal__in=values)
+    pinned = "result_pinned_suite" in queryset.query.annotations
     if values := filters.get("sub_goal"):
-        queryset = queryset.filter(_sub_goal_q(values))
+        queryset = queryset.filter(_sub_goal_q(values, pinned=pinned))
     if values := filters.get("sub_goal_not"):
         # NOT EXISTS, so a call whose sub-goal JSON is NULL still counts as "not".
         queryset = queryset.filter(
             ~Exists(
                 CallExecution._base_manager.filter(
-                    _sub_goal_q(values), pk=OuterRef("pk")
+                    _sub_goal_q(values, pinned=pinned), pk=OuterRef("pk")
                 )
             )
         )
@@ -1015,7 +1175,7 @@ def _summary_from_values(values: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _result_sub_goals_expression() -> Coalesce:
+def _result_sub_goals_expression(*, pinned: bool = False) -> Coalesce:
     """A call's own sub-goals, else its authored scenario's, as the rows show."""
     empty = Value([], output_field=JSONField())
     return Coalesce(
@@ -1023,7 +1183,7 @@ def _result_sub_goals_expression() -> Coalesce:
             _json_value("call_metadata", "hosted_harness_receipt", "sub_goals"), empty
         ),
         NullIf(_json_value("call_metadata", "sub_goals"), empty),
-        _authored_sub_goals_expression(),
+        _authored_sub_goals_expression(pinned=pinned),
         empty,
         output_field=JSONField(),
     )
@@ -1067,10 +1227,14 @@ def _value_facets(
 
 
 def _sub_goal_facet(calls: QuerySet) -> list[dict[str, Any]]:
+    pinned = HostedHarnessJob.no_workspace_objects.filter(
+        test_execution_id__in=calls.order_by().values("test_execution_id"),
+        suite_version__isnull=False,
+    ).exists()
     sub_goals = Counter()
     metadata_rows = (
         calls.order_by()
-        .annotate(result_sub_goals=_result_sub_goals_expression())
+        .annotate(result_sub_goals=_result_sub_goals_expression(pinned=pinned))
         .values_list("result_sub_goals", flat=True)
         .iterator(chunk_size=2000)
     )
@@ -1173,29 +1337,64 @@ def _breakdown_run_calls(queryset: QuerySet, field: str) -> list[dict[str, Any]]
 
 
 def build_run_comparison(
-    execution: TestExecution, queryset: QuerySet
+    execution: TestExecution,
+    queryset: QuerySet,
+    *,
+    against: TestExecution | None = None,
+    with_pairs: bool = False,
 ) -> dict[str, Any]:
-    """Compare scenario verdicts with the immediately preceding completed run.
+    """Compare scenario verdicts with ``against``, else the immediately preceding
+    completed run.
 
     Only scenarios evaluated in both runs participate. A scenario passes when every
     evaluated trial passed; any evaluated failure makes it failing. Infrastructure
     errors and unevaluated trials do not invent a verdict.
-    """
 
-    def verdicts(calls: QuerySet) -> tuple[dict[str, bool], dict[str, str]]:
+    ``with_pairs`` also judges each scenario on its pass rate over trials, where a
+    trial passes when all its sub-goal checks held (see ``run_compare``), and adds
+    ``pairs``, ``summary`` and ``versions``.
+    """
+    from simulate.services import run_compare
+
+    def verdicts(
+        calls: QuerySet,
+    ) -> tuple[dict[str, bool], dict[str, str], dict[str, run_compare.ScenarioTrials]]:
         counts: dict[str, list[int]] = defaultdict(lambda: [0, 0])
         labels: dict[str, str] = {}
-        for scenario_key, scenario_label, outcome in (
-            calls.order_by()
-            .values_list("result_scenario_key", "result_scenario", "result_outcome")
-            .iterator(chunk_size=2000)
-        ):
+        trials: dict[str, run_compare.ScenarioTrials] = {}
+        fields = ["result_scenario_key", "result_scenario", "result_outcome"]
+        calls = calls.order_by()
+        if with_pairs:
+            calls = calls.annotate(
+                result_receipt_sub_goals=_json_value(
+                    "call_metadata", "hosted_harness_receipt", "sub_goals"
+                ),
+                result_harness_status=_json_text(
+                    "call_metadata", "harness_outcome_status"
+                ),
+            )
+            fields += [
+                "result_eval_outcome",
+                "result_receipt_sub_goals",
+                "result_harness_status",
+            ]
+        for scenario_key, scenario_label, outcome, *trial in calls.values_list(
+            *fields
+        ).iterator(chunk_size=2000):
             key = str(scenario_key)
             labels[key] = str(scenario_label or key)
             if outcome == "passed":
                 counts[key][0] += 1
             elif outcome == "failed":
                 counts[key][1] += 1
+            if trial:
+                eval_outcome, sub_goals, harness_status = trial
+                trials.setdefault(key, run_compare.ScenarioTrials(labels[key])).add(
+                    sub_goals if isinstance(sub_goals, list) else None,
+                    harness_status,
+                    outcome,
+                    eval_outcome,
+                )
         return (
             {
                 scenario: failed == 0
@@ -1203,9 +1402,10 @@ def build_run_comparison(
                 if passed or failed
             },
             labels,
+            trials,
         )
 
-    previous = (
+    previous = against or (
         TestExecution.objects.filter(
             run_test=execution.run_test,
             status=TestExecution.ExecutionStatus.COMPLETED,
@@ -1215,17 +1415,31 @@ def build_run_comparison(
         .first()
     )
     if previous is None:
-        return {
+        comparison: dict[str, Any] = {
             "available": False,
             "previous_execution_id": None,
             "shared_scenarios": 0,
             "newly_passing": [],
             "newly_failing": [],
         }
-    current_verdicts, current_labels = verdicts(queryset)
-    previous_verdicts, _ = verdicts(run_calls_queryset(previous))
+        if with_pairs:
+            current_trials = verdicts(queryset)[2]
+            pairs, summary = run_compare.scenario_pairs(current_trials, {})
+            comparison.update(
+                pairs=pairs,
+                summary=summary,
+                versions={
+                    "current": run_compare.run_versions([execution.id])[
+                        str(execution.id)
+                    ],
+                    "against": None,
+                },
+            )
+        return comparison
+    current_verdicts, current_labels, current_trials = verdicts(queryset)
+    previous_verdicts, _, previous_trials = verdicts(run_calls_queryset(previous))
     shared = sorted(current_verdicts.keys() & previous_verdicts.keys())
-    return {
+    comparison = {
         "available": True,
         "previous_execution_id": str(previous.id),
         "shared_scenarios": len(shared),
@@ -1239,6 +1453,70 @@ def build_run_comparison(
             for scenario in shared
             if not current_verdicts[scenario] and previous_verdicts[scenario]
         ],
+    }
+    if with_pairs:
+        comparison.update(
+            _run_pairs(execution, previous, current_trials, previous_trials)
+        )
+    return comparison
+
+
+def _run_pairs(
+    execution: TestExecution,
+    previous: TestExecution,
+    current_trials: dict[str, Any],
+    previous_trials: dict[str, Any],
+) -> dict[str, Any]:
+    """The pairs of two runs, with the bands read from their suite versions."""
+    from simulate.services import run_compare
+
+    versions = run_compare.run_versions([execution.id, previous.id])
+    current_versions = versions[str(execution.id)]
+    previous_versions = versions[str(previous.id)]
+    environments = [
+        (one["environment"] or {}).get("id")
+        for one in (current_versions, previous_versions)
+    ]
+    digests = (
+        run_compare.sub_goal_digests(environments)
+        if all(environments) and environments[0] != environments[1]
+        else {}
+    )
+    current_suite, previous_suite = (
+        (pinned["suite"] or {}).get("id")
+        for pinned in (current_versions, previous_versions)
+    )
+    # Bands read from the older run to the newer, whichever one is compared against:
+    # by suite lineage, as a rerun or a picked version can pin an older suite, else
+    # by when the runs were made.
+    against_is_newer = run_compare.suite_is_newer(previous_suite, current_suite)
+    if against_is_newer is None:
+        against_is_newer = previous.created_at > execution.created_at
+    newer, older = (
+        (previous_trials, current_trials)
+        if against_is_newer
+        else (current_trials, previous_trials)
+    )
+    newer_suite, older_suite = (
+        (previous_suite, current_suite)
+        if against_is_newer
+        else (current_suite, previous_suite)
+    )
+    pairs, summary = run_compare.scenario_pairs(
+        current_trials,
+        previous_trials,
+        digests=digests.get(environments[0]),
+        against_digests=digests.get(environments[1]),
+        removed=run_compare.removed_keys(
+            older_suite, newer_suite, older.keys() - newer.keys()
+        ),
+        not_run=run_compare.suite_members(older_suite, newer.keys() - older.keys()),
+        against_is_newer=against_is_newer,
+    )
+    return {
+        "pairs": pairs,
+        "summary": summary,
+        "versions": {"current": current_versions, "against": previous_versions},
     }
 
 

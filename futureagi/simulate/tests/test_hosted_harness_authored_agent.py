@@ -28,7 +28,14 @@ def definition(db, organization, workspace):
 
 
 def _job(kind):
-    return SimpleNamespace(id=uuid.uuid4(), payload={"source": {"kind": kind}})
+    return SimpleNamespace(
+        id=uuid.uuid4(),
+        payload={"source": {"kind": kind}},
+        agent_version=None,
+        agent_version_id=None,
+        environment_id=None,
+        environment_version_id=None,
+    )
 
 
 def _sent(agent=None):
@@ -168,3 +175,21 @@ def test_a_provision_posted_with_an_agent_stores_it_through_the_url(organization
     agent = AgentDefinition.objects.get(id=job.run_test.agent_definition_id)
     version = AgentVersion.objects.get(agent_definition=agent)
     assert stored_agent(version.id)["name"] == "harbor_hotels"
+
+
+@pytest.mark.django_db
+def test_a_pinned_job_stores_the_agent_on_its_pinned_version(definition):
+    pinned = definition.create_version(
+        description="p", commit_message="v1", status="active"
+    )
+    newer = definition.create_version(
+        description="p2", commit_message="v2", status="active"
+    )
+    job = SimpleNamespace(
+        id=uuid.uuid4(), payload={"source": {"kind": "github"}}, agent_version=pinned
+    )
+
+    hosted_harness._store_authored_agent(job, definition, _sent())
+
+    assert stored_agent(pinned.id)["kind"] == "source"
+    assert stored_agent(newer.id) is None

@@ -38,6 +38,7 @@ vi.mock("../evals/EvalsStep", () => ({
   default: ({ grading }) => <div>{`evals-body:grading=${grading}`}</div>,
 }));
 vi.mock("../runs/summary/RunsSummary", () => ({ default: () => <div>runs-body</div> }));
+vi.mock("../versions/VersionsPanel", () => ({ default: () => <div>versions-body</div> }));
 
 // The real runs hook by default; the loading cases override it.
 vi.mock("src/api/simulate-environments/runs", async (importOriginal) => {
@@ -385,3 +386,26 @@ describe("useWorkspaceTab", () => {
     expect(screen.getByTestId("param")).toHaveTextContent("runs");
   });
 });
+
+describe("Versions tab", () => {
+  it("is hidden while versioning is off", () => {
+    renderPanels();
+    expect(screen.queryByRole("tab", { name: /Versions/ })).toBeNull();
+  });
+
+  it("is shown and renders the versions body when versioning is on", () => {
+    renderPanels({
+      env: { ...ENV, versioning: { enabled: true, nudges_enabled: false } },
+      tab: "versions",
+    });
+    expect(screen.getByRole("tab", { name: /Versions/ })).toBeInTheDocument();
+    expect(screen.getByText("versions-body")).toBeInTheDocument();
+  });
+
+  it("falls back to the Overview when versions is deep-linked with versioning off", () => {
+    renderPanels({ tab: "versions" });
+    expect(screen.queryByText("versions-body")).toBeNull();
+    expect(screen.getByText(/overview-body/)).toBeInTheDocument();
+  });
+});
+

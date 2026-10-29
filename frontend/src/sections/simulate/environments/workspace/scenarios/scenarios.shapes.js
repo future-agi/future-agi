@@ -48,6 +48,8 @@ export const SCENARIO_SHAPE = PropTypes.shape({
     PropTypes.arrayOf(PropTypes.string),
   ]),
   branchCategory: PropTypes.string,
+  // What the unsaved changes do to the row, while the list shows them.
+  draftChange: PropTypes.oneOf(["added", "changed", "unchanged"]),
 });
 
 export const USE_CASE_SHAPE = PropTypes.shape({

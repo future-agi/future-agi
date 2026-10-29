@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { enqueueSnackbar } from "notistack";
 import { Alert, Box, Button, Stack } from "@mui/material";
 import {
@@ -27,6 +27,7 @@ import {
   runSimulationTarget,
 } from "src/api/simulate-environments/runs";
 import { listAllScenarioKeys } from "src/api/simulate-environments/scenarioSelection";
+import { environmentVersionsKey } from "src/api/simulate-environments/versions";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import { LoadingScreen } from "src/components/loading-screen";
 import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
@@ -43,8 +44,11 @@ import BuildingStage from "../buildEnvironment/building/BuildingStage";
 import WorkspaceHeader from "./WorkspaceHeader";
 import SystemBanners from "./SystemBanners";
 import VersionBar from "./VersionBar";
+import DraftBar from "./drafts/DraftBar";
 import TemplateLockBanner from "./TemplateLockBanner";
 import WorkspacePanels from "./WorkspacePanels";
+import RunDialog from "./run/RunDialog";
+import { inlineRunError } from "./run/runErrors";
 import useWorkspaceTab from "./helpers/useWorkspaceTab";
 import { gapsByTab, counts } from "./helpers/workspaceGaps";
 import { forkEnvironment as buildFork } from "./helpers/forkEnvironment";
@@ -83,7 +87,8 @@ function refusalReason(refusal) {
 export default function EnvironmentWorkspace() {
   const navigate = useNavigate();
   const { envId } = useParams();
-  const { env, source, bootstrapState, notFound, error, refetch } = useEnvironment(envId);
+  const { env, source, bootstrapState, notFound, error, refetch, chatSaving } =
+    useEnvironment(envId);
   // A real (backed) env's applied evals live on the environment detail
   // (evaluations.selected), not
   // the client store — so the Evaluations tab count + the "no evals" gap must
@@ -116,13 +121,24 @@ export default function EnvironmentWorkspace() {
   const selection = useScenarioSelection();
   const queryClient = useQueryClient();
   const pendingSubmission = useRef(null);
+  // The run awaiting its version picks: { ids, trials, initialPicks }.
+  const [runDialog, setRunDialog] = useState(null);
   const runMutation = useMutation({
     meta: { errorHandled: true },
-    mutationFn: async ({ ids, trials }) => {
+    // `resolved` is every version the dialog resolved, defaults included; only
+    // the changed `picks` are sent.
+    mutationFn: async ({ ids, trials, picks, resolved }) => {
       // Run-all reads the keys from the server list: the bootstrap
       // `envState.scenarios` is seeded once and keeps a key an amend dropped.
       const scenarioIds = ids === undefined ? await listAllScenarioKeys(env.id) : ids;
-      const selection = JSON.stringify([env.id, scenarioIds, trials || 1]);
+      const selection = JSON.stringify([
+        env.id,
+        scenarioIds,
+        trials || 1,
+        resolved?.agent ?? picks?.agent ?? null,
+        resolved?.environment ?? picks?.environment ?? null,
+        resolved?.suite ?? picks?.suite ?? null,
+      ]);
       if (pendingSubmission.current?.selection !== selection) {
         pendingSubmission.current = {
           selection,
@@ -134,10 +150,12 @@ export default function EnvironmentWorkspace() {
         scenarioIds,
         trials || 1,
         pendingSubmission.current.key,
+        picks,
       );
     },
     onSuccess: (run) => {
       pendingSubmission.current = null;
+      setRunDialog(null);
       refreshAfterRunStart(queryClient, env.id, run.run_test_id);
       navigate(
         paths.dashboard.simulate.environments.execution(
@@ -147,21 +165,51 @@ export default function EnvironmentWorkspace() {
         ),
       );
     },
-    onError: (error) => {
+    onError: (error, { picks }) => {
       if (error?.statusCode >= 400 && error.statusCode < 500) {
         pendingSubmission.current = null;
       }
+      // The defaults moved since the dialog read them; show the current ones.
+      if (error?.error === "idempotency_key_reused") {
+        queryClient.invalidateQueries({
+          queryKey: environmentVersionsKey(env.id),
+        });
+      }
+      // The open run dialog explains its own refusals.
+      if (picks !== undefined && inlineRunError(error)) return;
       handleCreditError(error);
       enqueueSnackbar(errorMessage(error), { variant: "error" });
     },
   });
-  const startRun = (ids, trials) => {
+  // With versioning on, a run first asks which versions to use; a re-run
+  // pre-selects the versions it ran with.
+  const startRun = (ids, trials, { initialPicks } = {}) => {
     if (source !== "harness") {
       navigate(runSimulationTarget(env));
       return;
     }
+    if (env?.versioning?.enabled) {
+      runMutation.reset();
+      setRunDialog({ ids, trials, initialPicks });
+      return;
+    }
     runMutation.mutate({ ids, trials });
   };
+  const runDialogEl = runDialog && (
+    <RunDialog
+      open
+      env={env}
+      scenarioIds={runDialog.ids}
+      trials={runDialog.trials || 1}
+      initialPicks={runDialog.initialPicks}
+      onClose={() => setRunDialog(null)}
+      onSubmit={(picks, ids, resolved) =>
+        runMutation.mutate({ ids, trials: runDialog.trials, picks, resolved })
+      }
+      submitting={runMutation.isPending}
+      error={runMutation.error}
+    />
+  );
 
   // While the job is still deriving, this page IS the build experience: the same
   // milestone poll the /build page used, now keyed off the resolved env id. The
@@ -283,7 +331,6 @@ export default function EnvironmentWorkspace() {
         <WorkspaceHeader
           env={env}
           envState={envState}
-          patch={patch}
           canRun={false}
           runBlockedReason={buildFailed ? WORKSPACE_COPY.failedTooltip : WORKSPACE_COPY.buildingTooltip}
           locked
@@ -319,17 +366,21 @@ export default function EnvironmentWorkspace() {
             alone doesn't say whether a backend exists, so `backed` (same
             `source === "harness"` test WorkspacePanels/EvalsStep use) rides
             along the same context route, so RunDetail can gate the real API
-            picker on it. */}
-        <Outlet
-          context={{
-            env,
-            envState,
-            backed,
-            onStartRun: startRun,
-            runStarting: runMutation.isPending,
-            creditBanner,
-          }}
-        />
+            picker on it. Its own Suspense lets the dialog close while the
+            lazy run page loads. */}
+        <Suspense fallback={<LoadingScreen />}>
+          <Outlet
+            context={{
+              env,
+              envState,
+              backed,
+              onStartRun: startRun,
+              runStarting: runMutation.isPending,
+              creditBanner,
+            }}
+          />
+        </Suspense>
+        {runDialogEl}
       </Box>
     );
   }
@@ -435,7 +486,6 @@ export default function EnvironmentWorkspace() {
       <WorkspaceHeader
         env={displayEnv}
         envState={envState}
-        patch={patch}
         canRun={runnable && !runMutation.isPending && !detailBlock}
         runBlockedReason={detailBlock || blockedReason(envState, env, backed, runMutation.isPending)}
         locked={locked}
@@ -447,8 +497,16 @@ export default function EnvironmentWorkspace() {
       {creditBanner}
       {refusalLine}
 
-      <SystemBanners env={env} envState={envState} patch={patch} />
+      <SystemBanners env={env} />
       {!detailLoading && !detailFailed && <VersionBar env={env} envState={envState} />}
+      <DraftBar
+        env={env}
+        busy={Boolean(chat.running || chat.draftsBlocked || chatSaving)}
+        rebuilding={chat.rebuildHold}
+        onViewChanges={(piece, id) =>
+          setTab("versions", { version: `${piece}:${id}` })
+        }
+      />
 
       {/* A template-seeded env is read-only until forked — the banner states the
           lock and offers the fork. */}
@@ -456,14 +514,18 @@ export default function EnvironmentWorkspace() {
 
       <Box sx={{ flex: 1, minHeight: 0 }}>
         <ChatSplitPane
-          busy={chat.running || chat.inFlight || chat.waiting}
+          busy={
+            chat.running || chat.inFlight || chat.waiting || chat.nudgePending
+          }
           chat={({ collapse, open, collapseRef }) => (
             <BuilderConsole
               turns={chat.turns}
               running={chat.running}
               onSend={chat.send}
               onStop={chat.stop}
-              canStop={chat.inFlight}
+              canStop={chat.canStop}
+              working={chat.working}
+              stopping={chat.stopping}
               frozen={!envLive || chat.frozen}
               frozenReason={!envLive ? CONSOLE_COPY.frozen : chat.frozenReason}
               onCollapse={collapse}
@@ -510,6 +572,7 @@ export default function EnvironmentWorkspace() {
           )}
         </ChatSplitPane>
       </Box>
+      {runDialogEl}
     </Box>
   );
 }

@@ -26,6 +26,23 @@ class HarnessIngressProxyRequestSerializer(serializers.Serializer):
     def to_internal_value(self, data):
         return {"payload": data}
 
+
+class HarnessGitHubPushRepositorySerializer(serializers.Serializer):
+    id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    full_name = serializers.CharField(max_length=256)
+    default_branch = serializers.CharField(
+        max_length=256, required=False, allow_blank=True, allow_null=True
+    )
+
+
+class HarnessGitHubPushSerializer(serializers.Serializer):
+    """The fields of a GitHub push event the webhook reads; the rest is ignored."""
+
+    ref = serializers.CharField(max_length=512)
+    deleted = serializers.BooleanField(required=False, default=False)
+    repository = HarnessGitHubPushRepositorySerializer()
+
+
 def _reject_non_finite(value: float) -> None:
     # FloatField min/max never reject NaN/inf: every comparison with NaN is
     # False, so a `score: NaN` slips past bounds and canonicalizes into

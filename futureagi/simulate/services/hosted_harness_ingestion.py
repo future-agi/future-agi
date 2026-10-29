@@ -912,10 +912,16 @@ def _apply_receipt_to_call(
         metadata.pop("harness_grading_error", None)
     else:
         metadata["harness_grading_status"] = "failed"
+        failure = body.get("failure") or {}
         metadata["harness_grading_error"] = (
             "Required evaluation coverage was incomplete "
             f"({coverage['executed']}/{coverage['expected']} executed). "
-            "This is a grading failure, not an agent failure."
+            + (
+                "The trial ended with "
+                f"{failure.get('code') or failure.get('message')}."
+                if failure
+                else "This is a grading failure, not an agent failure."
+            )
         )
     update_fields = [
         "status",

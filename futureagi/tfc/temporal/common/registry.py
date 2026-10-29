@@ -30,6 +30,8 @@ TEMPORAL_ACTIVITY_MODULES = [
     "tfc.temporal.agent_prompt_optimiser.eval_activities",
     # Background tasks (post-registration, huggingface, etc.)
     "tfc.temporal.background_tasks.activities",
+    # agentcc gateway alert emails
+    "agentcc.services.email_sender",
     # model_hub tasks
     "model_hub.tasks.run_prompt",
     "model_hub.tasks.experiment_runner",
@@ -733,7 +735,6 @@ def _ensure_activities_registered() -> None:
     # native voice queues.
     try:
         from simulate.temporal.activities.hosted_harness_gateway import (
-            author_hosted_harness_job,
             cancel_hosted_harness_attempt,
             launch_hosted_harness_job,
             poll_hosted_harness_attempt,
@@ -752,14 +753,13 @@ def _ensure_activities_registered() -> None:
                 build_runner_job,
                 run_hosted_sdk_job,
                 finalize_hosted_execution,
-                author_hosted_harness_job,
                 launch_hosted_harness_job,
                 record_hosted_harness_launch_failure,
                 poll_hosted_harness_attempt,
                 cancel_hosted_harness_attempt,
             ],
         )
-        log.info("registered_hosted_runner_activities", count=8)
+        log.info("registered_hosted_runner_activities", count=7)
     except ImportError as e:
         log.warning("could_not_load_hosted_runner_activities", error=str(e))
 

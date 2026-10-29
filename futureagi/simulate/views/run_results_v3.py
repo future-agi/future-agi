@@ -24,8 +24,10 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from simulate.models import CallExecution, TestExecution
+from simulate.serializers.response.run_test import RunVersionLabelSerializer
 from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
+from simulate.services.harness_versioning.read import run_version_labels
 from simulate.services.harness_evals import runnable_eval_config_ids
 from simulate.services.run_dashboard_v3 import GOAL_OUTCOMES
 from simulate.services.run_results_v3 import (
@@ -238,6 +240,11 @@ class RunExecutionSerializer(serializers.Serializer):
     completed_at = serializers.DateTimeField(allow_null=True)
     ordinal = serializers.IntegerField()
     agent_version = serializers.CharField(allow_null=True)
+    environment_version = RunVersionLabelSerializer(allow_null=True, required=False)
+    suite_version = RunVersionLabelSerializer(allow_null=True, required=False)
+    # ``agent_version`` is the version's name; this is the run's agent pin.
+    pinned_agent_version = RunVersionLabelSerializer(allow_null=True, required=False)
+    agent_differs = serializers.BooleanField(required=False, default=False)
     selected_scenario_keys = serializers.ListField(
         child=serializers.CharField(), required=False, default=list
     )
@@ -598,6 +605,7 @@ def _execution_payload(
     execution: TestExecution, summary: dict[str, Any]
 ) -> dict[str, Any]:
     version = execution.agent_version or execution.run_test.agent_version
+    pinned = run_version_labels([execution.id]).get(str(execution.id)) or {}
     ordinal = TestExecution.objects.filter(
         run_test=execution.run_test, created_at__lte=execution.created_at
     ).count()
@@ -610,6 +618,10 @@ def _execution_payload(
         "completed_at": execution.completed_at,
         "ordinal": ordinal,
         "agent_version": getattr(version, "version_name", None),
+        "environment_version": pinned.get("environment_version"),
+        "suite_version": pinned.get("suite_version"),
+        "pinned_agent_version": pinned.get("agent_version"),
+        "agent_differs": bool(pinned.get("agent_differs")),
         "agent_type": (
             execution.agent_definition.agent_type
             if execution.agent_definition

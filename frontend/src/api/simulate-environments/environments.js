@@ -227,9 +227,10 @@ export function useAddRunEvaluation() {
 
 // Create the real harness job for a build. The draft is mapped to the same
 // schema-valid body the preflight used (`draftToPreflightPayload`) — per the
-// contract, a create body equals its validated preflight body. Only the
-// server-minted job id is returned; the raw draft is never echoed back, since
-// it can carry source details that would then sit in the mutation cache.
+// contract, a create body equals its validated preflight body. The credential
+// values the preflight checked ride along write-only as `credential_values`.
+// Only the server-minted job id is returned; the raw draft is never echoed back,
+// since it can carry source details that would then sit in the mutation cache.
 //
 // A draft that cannot be built for real (`{ skipped }`) keeps the client-minted
 // id, so the mock building path is unchanged for those sources.
@@ -239,7 +240,9 @@ export function useBuildEnvironment() {
     // The caller surfaces the failure itself (a snackbar on the build page), so
     // opt out of the global mutation-error toast to avoid a double message.
     meta: { errorHandled: true },
-    mutationFn: async (draft) => {
+    // Its variables hold credential values: drop them once nothing observes it.
+    gcTime: 0,
+    mutationFn: async ({ draft, credentialValues, idempotencyKey } = {}) => {
       const built = draftToPreflightPayload(draft);
       if (built.skipped) {
         return {
@@ -247,9 +250,12 @@ export function useBuildEnvironment() {
           skipped: built.skipped,
         };
       }
+      if (credentialValues && Object.keys(credentialValues).length) {
+        built.payload.credential_values = credentialValues;
+      }
       const dto = await createHarnessJob(
         built.payload,
-        harnessIdempotencyKey(),
+        idempotencyKey || harnessIdempotencyKey(),
       );
       return { envId: dto.job.job_id };
     },
@@ -275,9 +281,11 @@ export function useBuildEnvironment() {
 // uses: the key `agent.secret_refs` is built under, the name the launch check
 // scans for, and what the sandbox reads before writing the 0600 file and
 // exporting the standard variable itself. So: upload under the plain name, then
-// keep whatever the reply calls it.
-export function useUploadSecretFile() {
+// keep whatever the reply calls it. `options` go to the mutation, e.g.
+// `gcTime: 0` so a caller's reset() drops the File from the cache at once.
+export function useUploadSecretFile(options = {}) {
   return useMutation({
+    ...options,
     meta: { errorHandled: true },
     mutationFn: async ({
       file,

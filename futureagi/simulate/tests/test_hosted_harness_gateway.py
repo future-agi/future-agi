@@ -56,6 +56,7 @@ from simulate.services.hosted_harness_gateway import (
     detect_source_connectors,
     detect_source_credentials,
     guest_failure_cause,
+    guest_job_document,
     pack_authoring_archive,
     prepare_dispatch_payload,
     resolve_authored_connector,
@@ -282,6 +283,13 @@ def test_caller_barge_in_rate_comes_from_platform_configuration(monkeypatch):
     monkeypatch.setenv("HARNESS_CALLER_BARGE_IN_RATE", "0.2")
     values = _platform_simulator_material()
     assert values["HARNESS_CALLER_BARGE_IN_RATE"] == "0.2"
+
+
+def test_authoring_duration_cap_reaches_the_sandbox(monkeypatch):
+    monkeypatch.setenv("ALK_HARNESS", "gemini")
+    monkeypatch.setenv("ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS", "5400")
+    values = _platform_simulator_material()
+    assert values["ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS"] == "5400"
 
 
 def test_a_deployment_catalogue_overrides_the_platform_clips(monkeypatch, tmp_path):
@@ -1110,6 +1118,72 @@ def test_dispatch_payload_uses_platform_livekit_url_for_provider_voice(connector
     assert "must-not-be-copied" not in json.dumps(dispatched)
 
 
+# ALK's HarnessJob refuses any non-empty value under a secret-looking key.
+_ALK_SECRET_NAMES = {
+    "api_key",
+    "api_secret",
+    "authorization",
+    "credential",
+    "credentials",
+    "password",
+    "private_key",
+    "secret",
+    "token",
+}
+
+
+def _alk_secret_paths(value, path=()):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            current = (*path, str(key))
+            normalized = str(key).lower().replace("-", "_")
+            if normalized in _ALK_SECRET_NAMES and item not in (None, "", {}, []):
+                yield ".".join(current)
+            yield from _alk_secret_paths(item, current)
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            yield from _alk_secret_paths(item, (*path, str(index)))
+
+
+def _chat_state_payload():
+    return {
+        "agent": {"connector": "auto", "config": {}},
+        "metadata": {
+            "authoring_revision": "rev-1",
+            "conversation_checkpoints": {
+                "conv-1": {"digest": "d", "draft_basis": {"token": "abc123"}}
+            },
+            "draft_saves": {"key-1": {"pieces": {}, "at": "2026-10-18"}},
+        },
+    }
+
+
+def test_guest_job_document_drops_server_only_chat_state():
+    payload = _chat_state_payload()
+
+    document = guest_job_document(payload)
+
+    assert document["metadata"] == {"authoring_revision": "rev-1"}
+    assert list(_alk_secret_paths(document)) == []
+    assert "conversation_checkpoints" in payload["metadata"]
+    assert "draft_saves" in payload["metadata"]
+
+
+def test_dispatch_and_certify_jobs_pass_alk_secret_check_with_chat_state():
+    from simulate.services.harness_versioning.assembly import certify_job_payload
+
+    payload = _chat_state_payload()
+
+    dispatched = prepare_dispatch_payload(payload, {})
+    certify = certify_job_payload(dispatched, 3)
+
+    for document in (dispatched, certify):
+        assert "conversation_checkpoints" not in document["metadata"]
+        assert "draft_saves" not in document["metadata"]
+        assert list(_alk_secret_paths(document)) == []
+    assert payload == _chat_state_payload()
+
+
 @pytest.mark.django_db
 def test_gateway_clones_exact_commit_without_archiving_git_credentials(
     organization, monkeypatch
@@ -1770,6 +1844,7 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         "AGENTCC_API_KEY": "harness-virtual-key",
         "SIMULATOR_STT_PROVIDER": "deepgram",
         "HARNESS_SUB_ACTORS": "1",
+        "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS": "3600",
     }
     monkeypatch.setattr(
         "simulate.services.hosted_harness_gateway._platform_simulator_material",
@@ -1785,6 +1860,8 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
 
     assert attempt.state == HostedHarnessAttempt.State.RUNNING
     assert attempt.provider_ref == "sandbox-1"
+    exports = client.sandbox.process.session_request.env
+    assert exports["ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS"] == "3600"
     assert (
         client.params.cpu_units,
         client.params.memory_mb,
@@ -2891,6 +2968,50 @@ def test_fresh_lease_starts_chat_once_for_concurrent_messages(
     assert "hosted_chat_entrypoint" in client.sandbox.process.session_request.command
     assert client.sandbox.process.session_request.env["HARNESS_SUB_ACTORS"] == "1"
     assert client.deleted is False
+
+
+@pytest.mark.django_db
+def test_chat_sandbox_job_document_omits_server_only_chat_state(
+    organization, monkeypatch
+):
+    from simulate.services.hosted_harness_conversation import ensure_conversation
+
+    job, _ = create_hosted_job(organization, _payload(), idempotency_key="chat-doc")
+    job.payload = {
+        **job.payload,
+        "metadata": {
+            **(job.payload.get("metadata") or {}),
+            **_chat_state_payload()["metadata"],
+        },
+    }
+    # A finished job's chat gets a sandbox of its own, sent the job document.
+    job.state = HostedHarnessJob.State.FAILED
+    job.current_stage = "failed"
+    job.save(update_fields=["payload", "state", "current_stage", "updated_at"])
+    conversation = ensure_conversation(job)
+    client = _Daytona()
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = client
+    for name, value in (
+        ("load_workspace_archive", lambda _conversation: None),
+        ("_authoring_archive_for", lambda _job: None),
+        ("_platform_simulator_material", lambda: {}),
+        ("_resolved_egress_domains", lambda *_args: {"platform.example"}),
+    ):
+        monkeypatch.setattr(f"simulate.services.hosted_harness_gateway.{name}", value)
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        lambda *_: (b"source", None),
+    )
+
+    gateway.ensure_conversation_runtime(
+        job, conversation=conversation, endpoint_base_url="https://platform.example"
+    )
+
+    document = json.loads(client.sandbox.fs.uploads["/work/job.json"])
+    assert "conversation_checkpoints" not in document["metadata"]
+    assert "draft_saves" not in document["metadata"]
+    assert list(_alk_secret_paths(document)) == []
 
 
 @pytest.mark.django_db

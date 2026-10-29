@@ -1,24 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 
-// Echo the requested aliases back as opaque refs so the merge is observable.
-vi.mock("src/api/harness/harness", () => ({
-  storeHarnessSecretValues: vi.fn(),
-}));
-
-const { storeHarnessSecretValues } = await import("src/api/harness/harness");
 const { prepareSourceForBuild, redactSource } = await import(
   "../prepareSourceForBuild"
 );
-
-beforeEach(() => {
-  storeHarnessSecretValues.mockReset();
-  // Return one ref per requested alias, prefixed so it can't be mistaken for raw.
-  storeHarnessSecretValues.mockImplementation(async (values) => ({
-    secret_refs: Object.fromEntries(
-      Object.keys(values).map((alias) => [alias, `ref://${alias}`]),
-    ),
-  }));
-});
 
 describe("redactSource", () => {
   it("strips plaintext apiKey, apiSecret and envText but keeps opaque fields", () => {
@@ -37,6 +21,12 @@ describe("redactSource", () => {
     expect(safe.secretFiles).toEqual([{ name: "f", secret_ref: "sref-1" }]);
   });
 
+  it("keeps a connected agent's id", () => {
+    expect(
+      redactSource({ apiKey: "sk-secret", agentDefinitionId: "def-1" }),
+    ).toEqual({ agentDefinitionId: "def-1" });
+  });
+
   it("tolerates a null/undefined source", () => {
     expect(redactSource(undefined)).toEqual({});
     expect(redactSource(null)).toEqual({});
@@ -44,68 +34,67 @@ describe("redactSource", () => {
 });
 
 describe("prepareSourceForBuild", () => {
-  it("exchanges a hosted provider's apiKey for its fixed alias and redacts the raw key", async () => {
+  it("maps a hosted provider's apiKey to its fixed alias and redacts the raw key", async () => {
     const { draft, credentialValues } = await prepareSourceForBuild({
       kind: "platform",
       provider: "vapi",
       agentId: "asst_x",
       apiKey: "sk-live-123",
     });
-    expect(storeHarnessSecretValues).toHaveBeenCalledWith({ VAPI_API_KEY: "sk-live-123" });
-    expect(draft.secret_refs).toEqual({ VAPI_API_KEY: "ref://VAPI_API_KEY" });
+    expect("secret_refs" in draft).toBe(false);
     expect(draft.apiKey).toBeUndefined();
-    // The raw value rides alongside for the live probe (credential_values).
     expect(credentialValues).toEqual({ VAPI_API_KEY: "sk-live-123" });
   });
 
-  it("exchanges pasted .env assignments, one alias per line", async () => {
+  it("takes pasted .env assignments, one alias per line, and drops blank ones", async () => {
     const { draft, credentialValues } = await prepareSourceForBuild({
       kind: "repo",
       value: "acme/bot",
-      envText: "OPENAI_API_KEY=sk-1\nSTRIPE_KEY=rk-2",
-    });
-    expect(storeHarnessSecretValues).toHaveBeenCalledWith({
-      OPENAI_API_KEY: "sk-1",
-      STRIPE_KEY: "rk-2",
-    });
-    expect(draft.secret_refs).toEqual({
-      OPENAI_API_KEY: "ref://OPENAI_API_KEY",
-      STRIPE_KEY: "ref://STRIPE_KEY",
+      envText: "OPENAI_API_KEY=sk-1\nSTRIPE_KEY=rk-2\nEMPTY=",
     });
     expect(draft.envText).toBeUndefined();
     expect(credentialValues).toEqual({ OPENAI_API_KEY: "sk-1", STRIPE_KEY: "rk-2" });
   });
 
-  it("merges a provider key and .env values into one exchange", async () => {
-    const { draft, credentialValues } = await prepareSourceForBuild({
+  it("merges a provider key and .env values", async () => {
+    const { credentialValues } = await prepareSourceForBuild({
       kind: "platform",
       provider: "retell",
       agentId: "ag_1",
       apiKey: "key-r",
       envText: "EXTRA=e1",
     });
-    expect(storeHarnessSecretValues).toHaveBeenCalledWith({
-      RETELL_API_KEY: "key-r",
-      EXTRA: "e1",
-    });
-    expect(Object.keys(draft.secret_refs)).toEqual(
-      expect.arrayContaining(["RETELL_API_KEY", "EXTRA"]),
-    );
     expect(credentialValues).toEqual({ RETELL_API_KEY: "key-r", EXTRA: "e1" });
   });
 
-  it("does not exchange when there is nothing to exchange", async () => {
+  it("keeps only the staged credential files as refs", async () => {
+    const fileRef = { manager: "platform-vault", key: "harness-google-adc-1" };
+    const { draft, credentialValues } = await prepareSourceForBuild({
+      kind: "repo",
+      value: "acme/bot",
+      envText: "OPENAI_API_KEY=sk-1",
+      secretFiles: [
+        { environment_name: "GOOGLE_APPLICATION_CREDENTIALS_JSON", secret_ref: fileRef },
+      ],
+    });
+    expect(draft.secret_refs).toEqual({
+      GOOGLE_APPLICATION_CREDENTIALS_JSON: fileRef,
+    });
+    expect(JSON.stringify(draft)).not.toContain("sk-1");
+    expect(credentialValues).toEqual({ OPENAI_API_KEY: "sk-1" });
+  });
+
+  it("has nothing to send when there are no credentials", async () => {
     const { draft, credentialValues } = await prepareSourceForBuild({
       kind: "repo",
       value: "acme/bot",
       envText: null,
     });
-    expect(storeHarnessSecretValues).not.toHaveBeenCalled();
     expect("secret_refs" in draft).toBe(false);
     expect(credentialValues).toEqual({});
   });
 
-  it("exchanges the livekit key and secret and redacts both", async () => {
+  it("takes the livekit key and secret and redacts both", async () => {
     const { draft, credentialValues } = await prepareSourceForBuild({
       kind: "platform",
       provider: "livekit",
@@ -113,14 +102,6 @@ describe("prepareSourceForBuild", () => {
       apiKey: " lk-key ",
       apiSecret: " lk-secret ",
       livekitUrl: "wss://demo.livekit.cloud",
-    });
-    expect(storeHarnessSecretValues).toHaveBeenCalledWith({
-      LIVEKIT_API_KEY: "lk-key",
-      LIVEKIT_API_SECRET: "lk-secret",
-    });
-    expect(draft.secret_refs).toEqual({
-      LIVEKIT_API_KEY: "ref://LIVEKIT_API_KEY",
-      LIVEKIT_API_SECRET: "ref://LIVEKIT_API_SECRET",
     });
     expect(draft.apiKey).toBeUndefined();
     expect(draft.apiSecret).toBeUndefined();
