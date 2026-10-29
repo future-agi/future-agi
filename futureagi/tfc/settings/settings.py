@@ -813,6 +813,15 @@ EVAL_TASK_SWEEP_RECOVER_FAILED = os.getenv(
     "EVAL_TASK_SWEEP_RECOVER_FAILED", "false"
 ).lower() in ("true", "1", "yes")
 
+# Let the hourly stale-work recovery (``recover-stale-work``) close abandoned
+# eval cells and usage rows. Default OFF: the schedule then only logs what it
+# would close and what it leaves alone, per source and organization, so a
+# backlog is reviewed before anything changes. Every deploy re-registers the
+# schedules and clears a pause; this setting is the switch that survives it.
+STALE_WORK_RECOVERY_APPLY = os.getenv(
+    "STALE_WORK_RECOVERY_APPLY", "false"
+).lower() in ("true", "1", "yes")
+
 # Run code evals inside the worker when the code-executor service cannot be
 # reached (DNS failure, connection refused, no route). Default OFF: code evals
 # then fail with "Code executor unavailable". Only for self-hosted installs that

@@ -52,6 +52,13 @@ MODEL_HUB_SCHEDULES: list[ScheduleConfig] = [
         description="Recover run prompts stuck in RUNNING status",
     ),
     ScheduleConfig(
+        schedule_id="recover-stale-work",
+        activity_name="recover_stale_work_activity",
+        interval_seconds=3600,
+        queue="default",
+        description="Close eval cells and usage rows abandoned mid-run",
+    ),
+    ScheduleConfig(
         schedule_id="annotation-automation-rules",
         activity_name="evaluate_due_automation_rules",
         interval_seconds=3600,  # Due checker for hourly/daily/weekly/monthly rules
