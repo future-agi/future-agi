@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -17,6 +18,7 @@ import {
   Tooltip,
   Tab,
   IconButton,
+  Divider,
   Menu,
   MenuItem,
   Popover,
@@ -85,7 +87,12 @@ import {
   currentEnvVersion,
   environmentVersions,
   scenariosInSet,
+  pendingEnvChanges,
+  saveEnvChangesPatch,
+  envChangeLabel,
 } from "../_mock/versions";
+import { pendingCostOf } from "../_mock/envVersionKinds";
+import { ConfirmDialog } from "src/components/custom-dialog";
 import {
   defaultRunCap,
   estimateRunPlan,
@@ -93,6 +100,16 @@ import {
   versionOptionsOf,
 } from "../_mock/pricing";
 import RunPlanDialog from "./RunPlanDialog";
+import AnalyticsPanel from "./AnalyticsPanel";
+import { useRoleGates } from "../_mock/previewRole";
+import {
+  teammateSaveOf,
+  keepTheirsPatch,
+  saveBothPatch,
+} from "../_mock/teammateSave";
+import SaveClashDialog from "./SaveClashDialog";
+import ActorsPanel from "./ActorsPanel";
+import VersionHistoryMenu from "./VersionHistory";
 import { envOf } from "../_mock/runGroup";
 import { RUN_PLAN_PARAMS, runPlanRequestOf } from "../_mock/runPlanLink";
 import { withPinnedWorld, worldToolsFor } from "../_mock/toolFit";
@@ -149,8 +166,9 @@ import { clickable, focusRing } from "../components/clickable";
 */
 const TABS = [
   { id: "overview", label: "Overview", icon: "solar:widget-5-linear" },
-  { id: "world", label: "World", icon: "solar:globe-linear" },
+  { id: "world", label: "World & tools", icon: "solar:globe-linear" },
   { id: "contract", label: "Contract", icon: "solar:document-text-linear" },
+  { id: "actors", label: "Actors", icon: "solar:users-group-rounded-linear" },
   {
     id: "scenarios",
     label: "Scenarios",
@@ -169,6 +187,8 @@ const TABS = [
     icon: "solar:play-circle-linear",
     badge: "runs",
   },
+  { id: "analytics", label: "Analytics", icon: "solar:chart-2-linear" },
+  { id: "history", label: "History", icon: "solar:history-linear" },
   { id: "settings", label: "Settings", icon: "solar:settings-linear" },
 ];
 
@@ -189,6 +209,12 @@ const tabHintOf = (id, env) =>
     evals:
       "Sub-goals decide pass or fail. Mark an evaluation required to let it fail a conversation; the rest score it.",
     runs: "Every simulation of this environment and how it scored. Select two or more runs to compare them scenario by scenario.",
+    actors:
+      "The other people in a conversation — a manager, a colleague — each with their own goal. They aren't the agent's own workers, and they aren't the caller.",
+    analytics:
+      "Trends across this environment's runs — by agent version, scenario source and outcome.",
+    history:
+      "Every environment version and agent version, newest first. Roll back makes the next version from an older one; nothing is deleted.",
     settings: "How this environment is built and how runs behave inside it.",
   })[id] || "";
 
@@ -259,7 +285,21 @@ export default function EnvironmentWorkspace() {
   const env =
     getEnvironment(envId) || state.myEnvironments.find((e) => e.id === envId);
 
-  const { envState, patch, canRun } = useEnvState(envId);
+  const { envState, patch: storePatch, canRun } = useEnvState(envId);
+  /* Roles: a viewer looks at everything but changes nothing — an edit says
+     why it didn't happen instead of landing. */
+  const gates = useRoleGates();
+  const { enqueueSnackbar: notifyRole } = useSnackbar();
+  const patch = useCallback(
+    (p) =>
+      gates.canEdit
+        ? storePatch(p)
+        : notifyRole(gates.editReason, {
+            variant: "info",
+            preventDuplicate: true,
+          }),
+    [gates.canEdit, gates.editReason, storePatch, notifyRole],
+  );
   /* Locked = a catalogue template opened as-is. A copy adopted with "Use
      this template" carries `templateId` and is the user's own — editable. */
   const isSeededTemplate = !!envState.seededFromTemplate && !env?.templateId;
@@ -358,9 +398,15 @@ export default function EnvironmentWorkspace() {
   /* Three samples by default — the fewest where a scenario can be flaky
      ("passed twice, failed once") rather than a coin flip read as a verdict. */
   /* …or the environment's own default, set in Settings → Simulation defaults. */
-  const [codeOpen, setCodeOpen] = useState(false);
+  /* The code drawer, open on a tab: "cli" from Run from code, "train" or
+     "package" from the ⋯ menu. */
+  const [codeOpen, setCodeOpen] = useState(null);
   /* The run plan a Run button opened: { scenarioIds, trials, also }. */
   const [runPlanReq, setRunPlanReq] = useState(null);
+  /* A run asked for while edits are unsaved: which version it runs on. */
+  const [draftAsk, setDraftAsk] = useState(null);
+  /* A save asked for after a teammate saved first: { after } to run next. */
+  const [clashReq, setClashReq] = useState(null);
   /* ?price=missing shows the held state a missing rate puts a run in. */
   const [searchParams, setSearchParams] = useSearchParams();
   const missingRate = searchParams.get("price") === "missing";
@@ -661,8 +707,21 @@ export default function EnvironmentWorkspace() {
      carries a selection. */
   /* Every Run opens the run plan first — scope, estimate and limit are
      confirmed before anything starts. */
-  const runNow = (scenarioIds, trials, { also } = {}) =>
-    checkRunFit(() => setRunPlanReq({ scenarioIds, trials, also }));
+  /* Saving: straight through, unless a teammate saved this environment
+     while these edits were being made — then both changes are shown first. */
+  const clash = teammateSaveOf(env, envState);
+  const requestSave = (after) => {
+    if (clash) return setClashReq({ after: after || null });
+    patch(saveEnvChangesPatch(env, envState));
+    return after?.();
+  };
+  /* Runs always use a saved version; with edits unsaved, the person picks —
+     the saved one, or save the edits first — never half-finished edits. */
+  const runNow = (scenarioIds, trials, { also, saved } = {}) => {
+    if (!saved && !isSeededTemplate && pendingEnvChanges(envState).length)
+      return setDraftAsk({ scenarioIds, trials, also });
+    return checkRunFit(() => setRunPlanReq({ scenarioIds, trials, also }));
+  };
   const startPlannedRun = ({ attempts, versions, candidate, cap, alertAt }) => {
     const req = runPlanReq;
     setRunPlanReq(null);
@@ -752,6 +811,7 @@ export default function EnvironmentWorkspace() {
   const firstBlockingGap = allGaps.find((g) => g.status === "blocking");
   const runBlockedReason = (() => {
     /* An older version is read-only — runs go on the version in use. */
+    if (!gates.canRun) return gates.runReason;
     if (viewingOlder) return "Back to current to run";
     if (!readiness.ready) return readiness.reason;
     if (firstBlockingGap) return `${firstBlockingGap.title} — see Needs input`;
@@ -763,7 +823,11 @@ export default function EnvironmentWorkspace() {
     return "";
   })();
   const runEnabled =
-    canRun && runnable > 0 && !firstBlockingGap && !viewingOlder;
+    canRun &&
+    gates.canRun &&
+    runnable > 0 &&
+    !firstBlockingGap &&
+    !viewingOlder;
 
   /*
     The one thing standing between this environment and a run, as a banner
@@ -1716,24 +1780,6 @@ export default function EnvironmentWorkspace() {
               spacing={1}
               sx={{ flexShrink: 0 }}
             >
-              {/* Run from code — the same run from the CLI, Python, CI or
-                  the developer's own agent (MCP). */}
-              <Tooltip arrow title="Run from code: CLI, Python, CI or MCP">
-                <Button
-                  size="small"
-                  variant="outlined"
-                  aria-label="Run from code"
-                  onClick={() => setCodeOpen(true)}
-                  startIcon={<Iconify icon="solar:code-linear" width={16} />}
-                  sx={{
-                    whiteSpace: "nowrap",
-                    minWidth: 0,
-                    ...(!wide && { "& .MuiButton-startIcon": { mx: 0 } }),
-                  }}
-                >
-                  {wide && "Code"}
-                </Button>
-              </Tooltip>
               {/* Needs input — the count of what's open; red only when
                   something blocks the run. */}
               <Tooltip
@@ -1891,7 +1937,7 @@ export default function EnvironmentWorkspace() {
                         body: "The same run from your terminal, Python or CI — copy the command with these scenarios, repeats and limit.",
                         onClick: () => {
                           setRunMenu(null);
-                          setCodeOpen(true);
+                          setCodeOpen("cli");
                         },
                       },
                     ];
@@ -2133,8 +2179,53 @@ export default function EnvironmentWorkspace() {
               onClose={() => setActionsAnchor(null)}
               anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
               transformOrigin={{ vertical: "top", horizontal: "right" }}
-              slotProps={{ paper: { sx: { minWidth: 200, mt: 0.5 } } }}
+              slotProps={{ paper: { sx: { width: 300, mt: 0.5 } } }}
             >
+              {[
+                {
+                  id: "package",
+                  icon: "solar:box-linear",
+                  title: "Package this world",
+                  body: "Publish it privately so another agent can run the same tasks.",
+                },
+                {
+                  id: "train",
+                  icon: "solar:graph-up-linear",
+                  title: "Train on this world",
+                  body: "One training run, then tested on cases it never saw.",
+                },
+              ].map((m) => (
+                <MenuItem
+                  key={m.id}
+                  onClick={() => {
+                    setActionsAnchor(null);
+                    setCodeOpen(m.id);
+                  }}
+                  sx={{
+                    gap: 1,
+                    py: 1,
+                    alignItems: "flex-start",
+                    whiteSpace: "normal",
+                  }}
+                >
+                  <Iconify
+                    icon={m.icon}
+                    width={16}
+                    sx={{ flexShrink: 0, mt: "2px", color: "text.secondary" }}
+                  />
+                  <Box>
+                    <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                      {m.title}
+                    </Typography>
+                    <Typography
+                      sx={{ typography: "s3", color: "text.tertiary" }}
+                    >
+                      {m.body}
+                    </Typography>
+                  </Box>
+                </MenuItem>
+              ))}
+              <Divider sx={{ my: 0.5 }} />
               <MenuItem
                 onClick={() => {
                   setConfirmDelete(env);
@@ -2161,6 +2252,131 @@ export default function EnvironmentWorkspace() {
           env={confirmDelete}
           onCancel={() => setConfirmDelete(null)}
           onConfirm={deleteEnvironment}
+        />
+        {(() => {
+          const pending = pendingEnvChanges(envState);
+          const cost = pendingCostOf(env, envState);
+          const savedLabel =
+            currentEnvSnapshot(env, envState)?.label ||
+            currentEnvVersion(env, envState)?.label;
+          const choose = (saveFirst) => {
+            const req = draftAsk;
+            setDraftAsk(null);
+            if (!req) return;
+            const run = () =>
+              runNow(req.scenarioIds, req.trials, {
+                also: req.also,
+                saved: true,
+              });
+            if (saveFirst) requestSave(run);
+            else run();
+          };
+          return (
+            <ConfirmDialog
+              open={!!draftAsk}
+              onClose={() => setDraftAsk(null)}
+              title="Which version should this run use?"
+              content={
+                <Stack spacing={1.25}>
+                  <Typography
+                    sx={{ typography: "s2", color: "text.secondary" }}
+                  >
+                    {`Runs use a saved version. You have ${pending.length} unsaved edit${pending.length === 1 ? "" : "s"} since environment ${savedLabel}:`}
+                  </Typography>
+                  <Box
+                    sx={{
+                      border: "1px solid",
+                      borderColor: "divider",
+                      borderRadius: 1,
+                      maxHeight: 180,
+                      overflowY: "auto",
+                    }}
+                  >
+                    {pending.map((c, i) => (
+                      <Stack
+                        key={`${c.kind}-${c.at || i}`}
+                        direction="row"
+                        spacing={1.25}
+                        sx={{
+                          px: 1.25,
+                          py: 0.75,
+                          "& + &": {
+                            borderTop: "1px solid",
+                            borderColor: "divider",
+                          },
+                        }}
+                      >
+                        <Typography
+                          sx={{
+                            typography: "s3",
+                            color: "text.tertiary",
+                            width: 96,
+                            flexShrink: 0,
+                          }}
+                        >
+                          {envChangeLabel(c.kind)}
+                        </Typography>
+                        <Typography sx={{ typography: "s3", flex: 1 }}>
+                          {c.detail || envChangeLabel(c.kind)}
+                        </Typography>
+                      </Stack>
+                    ))}
+                  </Box>
+                  {cost?.comparability && (
+                    <Typography
+                      sx={{ typography: "s3", color: "text.tertiary" }}
+                    >
+                      {`Saving makes environment ${cost.label}. ${cost.comparability}`}
+                    </Typography>
+                  )}
+                </Stack>
+              }
+              action={
+                <>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={() => choose(false)}
+                    sx={{ color: "text.primary", borderColor: "divider" }}
+                  >
+                    {`Run environment ${savedLabel}`}
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="contained"
+                    color="primary"
+                    onClick={() => choose(true)}
+                  >
+                    {`Save as ${cost?.label || "new version"} and run`}
+                  </Button>
+                </>
+              }
+            />
+          );
+        })()}
+        <SaveClashDialog
+          open={!!clashReq && !!clash}
+          save={clash}
+          envState={envState}
+          onClose={() => setClashReq(null)}
+          onKeepTheirs={() => {
+            const after = clashReq?.after;
+            setClashReq(null);
+            patch(keepTheirsPatch(env, envState, clash));
+            after?.();
+          }}
+          onSaveBoth={(pick) => {
+            const after = clashReq?.after;
+            setClashReq(null);
+            patch(saveBothPatch(env, envState, clash, pick));
+            after?.();
+          }}
+          onSaveCopy={() => {
+            setClashReq(null);
+            /* The copy takes your edits; this environment takes theirs. */
+            forkEnvironment();
+            patch(keepTheirsPatch(env, envState, clash));
+          }}
         />
         <RunPlanDialog
           open={!!runPlanReq}
@@ -2198,11 +2414,12 @@ export default function EnvironmentWorkspace() {
           }
         />
         <RunFromCodeDrawer
-          open={codeOpen}
+          open={!!codeOpen}
+          initialTab={codeOpen || "cli"}
           budget={defaultRunCap(codeEstimate)}
           estimate={codeEstimate}
           trainEvals={(envState.evals || []).map(resolveEval).filter(Boolean)}
-          onClose={() => setCodeOpen(false)}
+          onClose={() => setCodeOpen(null)}
           env={env}
           agentName={currentAgentVersion(envState)?.label}
           repeats={Number(headerTrials) || 3}
@@ -2375,6 +2592,8 @@ export default function EnvironmentWorkspace() {
         envState={envState}
         patch={patch}
         locked={isSeededTemplate}
+        onOpenHistory={() => go("history")}
+        onSave={() => requestSave()}
       />
       {nextStep && (
         <Box sx={{ px: 3, pt: 1.5 }}>
@@ -2559,6 +2778,23 @@ export default function EnvironmentWorkspace() {
                 onGo={go}
                 locked={isSeededTemplate || !!viewingOlder}
                 onFork={forkEnvironment}
+              />
+            ) : panel === "actors" ? (
+              <ActorsPanel
+                env={worldEnv}
+                envState={envState}
+                patch={patch}
+                locked={isSeededTemplate || !!viewingOlder}
+              />
+            ) : panel === "analytics" ? (
+              <AnalyticsPanel env={worldEnv} envState={envState} />
+            ) : panel === "history" ? (
+              <VersionHistoryMenu
+                page
+                env={worldEnv}
+                envState={envState}
+                patch={patch}
+                readOnly={isSeededTemplate}
               />
             ) : panel === "settings" ? (
               <SettingsPanel

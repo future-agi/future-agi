@@ -160,10 +160,31 @@ export const applyPendingTools = (tools, envState) => pendingEnvChanges(envState
 export const isEnvDraft = (envState) => !(envState?.runs || []).some((r) => !r.synthetic)
   && (envState?.envVersions || []).length <= 1 && !pendingEnvChanges(envState).length;
 
-/** Patch fragment that records one edit — `{}` while no run pins the version. */
+/** Patch fragment that records one edit — `{}` while no run pins the version.
+    The first edit after a save also keeps the world's settings as they were
+    (`draftBase`), which is what Discard puts back. */
 export const envChangePatch = (envState, kind, detail) => (pinnedByRun(envState)
-  ? { unsavedEnvChanges: [...pendingEnvChanges(envState), { kind, detail, at: new Date().toISOString() }] }
+  ? {
+    unsavedEnvChanges: [...pendingEnvChanges(envState), { kind, detail, at: new Date().toISOString() }],
+    ...(!pendingEnvChanges(envState).length && { draftBase: worldConfigOf(envState) }),
+  }
   : {});
+
+/**
+ * Throw the unsaved edits away: the world's settings go back to how they
+ * were saved, and tool additions/removals (which live only in the edit list)
+ * go with the list. Null when there's nothing to go back to — a draft begun
+ * before settings were kept, on a version that didn't keep them either.
+ */
+export const discardEnvChangesPatch = (env, envState) => {
+  const base = envState?.draftBase || currentEnvVersion(env, envState)?.config;
+  if (!pendingEnvChanges(envState).length || !base) return null;
+  return {
+    ...Object.fromEntries(WORLD_CONFIG_KEYS.map((k) => [k, base[k]])),
+    unsavedEnvChanges: [],
+    draftBase: undefined,
+  };
+};
 
 /** Save the pending edits as the next version, which runs then use. */
 export const saveEnvChangesPatch = (env, envState) => {
@@ -171,7 +192,7 @@ export const saveEnvChangesPatch = (env, envState) => {
     ? envState.envVersions
     : [...environmentVersions(env, envState)].reverse();
   const minted = nextEnvVersion(env, envState);
-  return { envVersions: [...list, minted], activeEnvVersion: minted.label, unsavedEnvChanges: [] };
+  return { envVersions: [...list, minted], activeEnvVersion: minted.label, unsavedEnvChanges: [], draftBase: undefined };
 };
 
 /** The next environment version, given what already exists. */

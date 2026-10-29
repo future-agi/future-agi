@@ -5,6 +5,8 @@ import {
   Button,
   Avatar,
   Divider,
+  Menu,
+  MenuItem,
 } from "@mui/material";
 import React, { useEffect, useRef, useState } from "react";
 import SVGColor from "src/components/svg-color";
@@ -26,6 +28,11 @@ import { ConfirmDialog } from "src/components/custom-dialog";
 import { useLocation, useNavigate } from "react-router";
 import AllActionForm from "src/pages/dashboard/settings/UserManagementV2/AllActionForm";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
+import {
+  ROLES,
+  roleLabel,
+  usePreviewRole,
+} from "src/sections/simulate-v2/_mock/previewRole";
 
 // --- Section header with optional + button -----------------------------------
 
@@ -213,6 +220,10 @@ const WorkspaceSwitcher = ({ collapsed }) => {
   const [themePopperAnchorEl, setThemePopperAnchorEl] = useState(null);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [inviteUser, setInviteUser] = useState(false);
+  /* Preview the product as a member or viewer sees it (admin only). */
+  const previewRole = usePreviewRole((st) => st.role);
+  const setPreviewRole = usePreviewRole((st) => st.setRole);
+  const [roleAnchor, setRoleAnchor] = useState(null);
   const anchorEl = useRef(null);
   const wsPopperTimeoutRef = useRef(null);
   const orgPopperTimeoutRef = useRef(null);
@@ -448,6 +459,62 @@ const WorkspaceSwitcher = ({ collapsed }) => {
           }}
         />
 
+        {/* Preview as a role */}
+        <MenuRow
+          icon={
+            <Iconify
+              icon="solar:eye-linear"
+              sx={{ width: 16, height: 16, color: "text.secondary" }}
+            />
+          }
+          title={
+            previewRole === "admin"
+              ? "Preview as a role"
+              : `Previewing as ${roleLabel(previewRole)}`
+          }
+          hasSubmenu
+          onClick={(e) => setRoleAnchor(e.currentTarget)}
+        />
+        <Menu
+          anchorEl={roleAnchor}
+          open={!!roleAnchor}
+          onClose={() => setRoleAnchor(null)}
+          anchorOrigin={{ vertical: "top", horizontal: "right" }}
+          transformOrigin={{ vertical: "top", horizontal: "left" }}
+          slotProps={{ paper: { sx: { width: 280, p: 0.5 } } }}
+        >
+          {ROLES.map((r) => (
+            <MenuItem
+              key={r.id}
+              selected={r.id === previewRole}
+              onClick={() => {
+                setPreviewRole(r.id);
+                setRoleAnchor(null);
+                setOpen(false);
+              }}
+              sx={{ alignItems: "flex-start", gap: 1, whiteSpace: "normal" }}
+            >
+              <Iconify
+                icon={
+                  r.id === previewRole
+                    ? "solar:check-circle-bold"
+                    : "solar:circle-linear"
+                }
+                width={16}
+                sx={{ mt: "2px", flexShrink: 0, color: "text.secondary" }}
+              />
+              <Box>
+                <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                  {r.label}
+                </Typography>
+                <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                  {r.note}
+                </Typography>
+              </Box>
+            </MenuItem>
+          ))}
+        </Menu>
+
         <Divider sx={{ my: 0.5 }} />
 
         {/* ============ ORGANIZATION section ============ */}
@@ -663,6 +730,44 @@ const WorkspaceSwitcher = ({ collapsed }) => {
         showInviteLinks
       />
       <CreateOrganizationModal />
+      {/* While previewing a role, say so on every screen, with the way back. */}
+      {previewRole !== "admin" && (
+        <Box
+          sx={{
+            position: "fixed",
+            left: 16,
+            bottom: 16,
+            zIndex: (t) => t.zIndex.snackbar,
+            display: "flex",
+            alignItems: "center",
+            gap: 1,
+            pl: 1.5,
+            pr: 0.5,
+            py: 0.5,
+            borderRadius: "8px",
+            border: "1px solid",
+            borderColor: "divider",
+            bgcolor: "background.paper",
+            boxShadow: (t) => t.customShadows?.z8,
+          }}
+        >
+          <Iconify
+            icon="solar:eye-linear"
+            width={16}
+            sx={{ color: "text.secondary" }}
+          />
+          <Typography sx={{ typography: "s2" }}>
+            {`Previewing as ${roleLabel(previewRole)}`}
+          </Typography>
+          <Button
+            size="small"
+            onClick={() => setPreviewRole("admin")}
+            sx={{ color: "text.secondary" }}
+          >
+            Back to admin
+          </Button>
+        </Box>
+      )}
     </Box>
   );
 };

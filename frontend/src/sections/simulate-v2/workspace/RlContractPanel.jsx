@@ -25,7 +25,6 @@ import {
 import { rulesOf, subGoalCatalogOf, displayEnvLabel } from "../_mock/envModel";
 import { environmentVersions } from "../_mock/versions";
 import { ruleCoverageOf } from "../_mock/subGoalCatalog";
-import ActorsPanel from "./ActorsPanel";
 import { firstSnapshotOfWorld, nextSnapshotLabel } from "../_mock/envSnapshot";
 import BuildStreamNote from "../environments/BuildStreamNote";
 import ToolArgsGrid from "./ToolArgsGrid";
@@ -427,20 +426,7 @@ export default function RlContractPanel({
             </Stack>
           </SectionCard>
 
-          {/*
-        Actors — third parties with competing goals (a colleague who wants
-        pizza, an angry passenger). They're distinct from personas (who the
-        agent serves) and don't live on any other tab, so they stay here as
-        part of "who else acts in this environment".
-      */}
-          {patch && (
-            <ActorsPanel
-              env={env}
-              envState={envState}
-              patch={patch}
-              locked={locked}
-            />
-          )}
+          {/* Actors have their own tab now (roadmap: Environment → Actors). */}
         </>
       )}
 

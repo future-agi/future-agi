@@ -41,6 +41,7 @@ import { settleAbandonedRuns } from "./_mock/runGroup";
 import { useScheduledImprovements } from "./_mock/scheduledImprovements";
 import useFixFinishedNotices from "./errorFeed/useFixFinishedNotices";
 import { uniqueEnvName } from "./_mock/envNames";
+import { usePreviewRole } from "./_mock/previewRole";
 
 /*
   Versioned: the seeded first-run environments only reach anyone whose browser
@@ -122,8 +123,8 @@ const initialState = {
   workspaceSettings: { productionScenarios: true },
 };
 
-/* The signed-in user's workspace role — mock: the current user is an admin. */
-const WORKSPACE_ROLE = "admin";
+/* The signed-in user's workspace role — mock: an admin, who can preview the
+   product as a member or viewer from the workspace menu (previewRole.js). */
 
 /*
   A first visit lands on an empty "My environments", which hides the workspace,
@@ -839,7 +840,8 @@ export function useWorkspaceSettings() {
   const store = useContext(SimStoreContext);
   const settings = store?.state?.workspaceSettings || initialState.workspaceSettings;
   const dispatch = store?.dispatch;
-  const isAdmin = WORKSPACE_ROLE === "admin";
+  const role = usePreviewRole((s) => s.role);
+  const isAdmin = role === "admin";
   const set = useCallback(
     (key, value) => { if (dispatch && isAdmin) dispatch({ type: "setWorkspaceSetting", key, value }); },
     [dispatch, isAdmin],
@@ -848,7 +850,7 @@ export function useWorkspaceSettings() {
     settings,
     set,
     isAdmin,
-    role: WORKSPACE_ROLE,
+    role,
     readOnlyReason: isAdmin ? null : "Only a workspace admin can change this.",
   };
 }

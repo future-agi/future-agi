@@ -63,11 +63,13 @@ const checkLine = (v, check) => {
  */
 export default function VersionHistoryMenu({
   anchor,
-  onClose,
+  onClose = () => {},
   env,
   envState,
   patch,
   readOnly = false,
+  /* The environment's History tab: the same history as a page, not a menu. */
+  page = false,
 }) {
   const snapshots = snapshotHistoryOf(env, envState);
   /* A released improvement's note drops its "not live until released" tail —
@@ -132,30 +134,10 @@ export default function VersionHistoryMenu({
     snapshots.find((v) => v.current)?.parts.env !==
       snapshots.find((v) => v.latest)?.parts.env;
 
-  return (
+  const body = (
     <>
-      <Menu
-        anchorEl={anchor}
-        open={!!anchor}
-        onClose={onClose}
-        anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
-        transformOrigin={{ vertical: "top", horizontal: "left" }}
-        slotProps={{
-          paper: {
-            sx: {
-              width: 460,
-              maxWidth: "calc(100vw - 32px)",
-              maxHeight: "72vh",
-              mt: 0.5,
-              p: 0.75,
-              borderRadius: "8px",
-              border: "1px solid",
-              borderColor: "divider",
-            },
-          },
-          list: { sx: { p: 0 } },
-        }}
-      >
+      {/* On the History tab the tab names the page. */}
+      {!page && (
         <Box sx={{ px: 1.25, pt: 0.75, pb: 1 }}>
           <Typography
             sx={{
@@ -175,238 +157,269 @@ export default function VersionHistoryMenu({
             credentials is the next version. An agent change never is.
           </Typography>
         </Box>
+      )}
 
-        {/* ── environment ── */}
-        <Section
-          title="Environment"
-          note={`${snapshots.length} version${snapshots.length === 1 ? "" : "s"}`}
-        />
-        <Stack spacing={0.25}>
-          {snapshots.map((v) => {
-            const isActive = v.current;
-            const isViewed = v.worldHead && v.parts.env === viewAs;
-            const expanded = open === v.label;
-            const offer = v.worldHead && !isActive;
-            /* "Use latest" puts the pointer back on the newest world; every other
+      {/* ── environment ── */}
+      <Section
+        title="Environment"
+        note={`${snapshots.length} version${snapshots.length === 1 ? "" : "s"}`}
+      />
+      <Stack spacing={0.25}>
+        {snapshots.map((v) => {
+          const isActive = v.current;
+          const isViewed = v.worldHead && v.parts.env === viewAs;
+          const expanded = open === v.label;
+          const offer = v.worldHead && !isActive;
+          /* "Use latest" puts the pointer back on the newest world; every other
              older version can be rolled back to. */
-            const useLatest = v.latest && onOlder;
-            return (
-              <Box
-                key={v.label}
+          const useLatest = v.latest && onOlder;
+          return (
+            <Box
+              key={v.label}
+              sx={{
+                borderRadius: 1,
+                border: "1px solid",
+                borderColor: isActive
+                  ? "status.discovery.border"
+                  : "transparent",
+                bgcolor: isActive ? "status.discovery.bg" : "transparent",
+              }}
+            >
+              <Stack
+                direction="row"
+                spacing={1.25}
+                alignItems="flex-start"
+                {...clickable(() => setOpen(expanded ? null : v.label), {
+                  expanded,
+                })}
                 sx={{
+                  ...focusRing,
+                  px: 1.25,
+                  py: 1,
+                  cursor: "pointer",
                   borderRadius: 1,
-                  border: "1px solid",
-                  borderColor: isActive
-                    ? "status.discovery.border"
-                    : "transparent",
-                  bgcolor: isActive ? "status.discovery.bg" : "transparent",
+                  "&:hover": {
+                    bgcolor: isActive ? undefined : "action.hover",
+                  },
                 }}
               >
-                <Stack
-                  direction="row"
-                  spacing={1.25}
-                  alignItems="flex-start"
-                  {...clickable(() => setOpen(expanded ? null : v.label), {
-                    expanded,
-                  })}
+                <Iconify
+                  icon={
+                    isActive ? "solar:check-circle-bold" : "solar:circle-linear"
+                  }
+                  width={16}
                   sx={{
-                    ...focusRing,
-                    px: 1.25,
-                    py: 1,
-                    cursor: "pointer",
-                    borderRadius: 1,
-                    "&:hover": {
-                      bgcolor: isActive ? undefined : "action.hover",
-                    },
+                    color: isActive ? "primary.main" : "text.disabled",
+                    flexShrink: 0,
+                    mt: "1px",
                   }}
-                >
-                  <Iconify
-                    icon={
-                      isActive
-                        ? "solar:check-circle-bold"
-                        : "solar:circle-linear"
-                    }
-                    width={16}
-                    sx={{
-                      color: isActive ? "primary.main" : "text.disabled",
-                      flexShrink: 0,
-                      mt: "1px",
-                    }}
-                  />
-                  <Box flex={1} minWidth={0}>
-                    <Stack
-                      direction="row"
-                      alignItems="center"
-                      spacing={0.625}
-                      flexWrap="wrap"
-                      rowGap={0.375}
+                />
+                <Box flex={1} minWidth={0}>
+                  <Stack
+                    direction="row"
+                    alignItems="center"
+                    spacing={0.625}
+                    flexWrap="wrap"
+                    rowGap={0.375}
+                  >
+                    <Typography
+                      sx={{
+                        typography: "s2",
+                        fontWeight: 600,
+                        fontFamily: MONO,
+                      }}
                     >
-                      <Typography
-                        sx={{
-                          typography: "s2",
-                          fontWeight: 600,
-                          fontFamily: MONO,
-                        }}
-                      >
-                        {v.label}
-                      </Typography>
-                      {v.latest && <Badge label="latest" />}
-                      {isActive && <Badge label="active" tone="discovery" />}
-                      {isViewed && <Badge label="viewing" />}
-                      <Box flex={1} />
-                      {/* Roll back makes the next version from this one's world and
+                      {v.label}
+                    </Typography>
+                    {v.latest && <Badge label="latest" />}
+                    {isActive && <Badge label="active" tone="discovery" />}
+                    {isViewed && <Badge label="viewing" />}
+                    <Box flex={1} />
+                    {/* Roll back makes the next version from this one's world and
                         contract — the dialog says what moves before it does. */}
-                      {!isActive && canSwitch && (
-                        <Tooltip
-                          arrow
-                          title={
-                            useLatest
-                              ? "Runs use the latest world again."
-                              : `Make the next version with everything as in ${v.label} — world, scenarios, sub-goals, evaluations and caller. Nothing is deleted.`
-                          }
-                        >
-                          <Button
-                            size="small"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (useLatest)
-                                patch({ activeEnvVersion: v.parts.env });
-                              else setRollbackTo(v.label);
-                              onClose();
-                            }}
-                            sx={{ color: "text.secondary", minWidth: 0 }}
-                          >
-                            {useLatest ? "Use latest" : "Roll back"}
-                          </Button>
-                        </Tooltip>
-                      )}
-                      {offer && !isViewed && (
+                    {!isActive && canSwitch && (
+                      <Tooltip
+                        arrow
+                        title={
+                          useLatest
+                            ? "Runs use the latest world again."
+                            : `Make the next version with everything as in ${v.label} — world, scenarios, sub-goals, evaluations and caller. Nothing is deleted.`
+                        }
+                      >
                         <Button
                           size="small"
                           onClick={(e) => {
                             e.stopPropagation();
-                            setViewAs(v.parts.env);
+                            if (useLatest)
+                              patch({ activeEnvVersion: v.parts.env });
+                            else setRollbackTo(v.label);
                             onClose();
                           }}
                           sx={{ color: "text.secondary", minWidth: 0 }}
                         >
-                          View
+                          {useLatest ? "Use latest" : "Roll back"}
                         </Button>
-                      )}
-                      <Iconify
-                        icon={
-                          expanded
-                            ? "solar:alt-arrow-up-linear"
-                            : "solar:alt-arrow-down-linear"
-                        }
-                        width={12}
-                        sx={{ color: "text.disabled" }}
-                      />
-                    </Stack>
-                    <Typography
-                      sx={{
-                        typography: "s3",
-                        color: "text.secondary",
-                        mt: 0.25,
-                      }}
-                    >
-                      {v.summary}
-                    </Typography>
-                    <Typography
-                      sx={{
-                        typography: "s3",
-                        color: "text.tertiary",
-                        mt: 0.25,
-                        fontVariantNumeric: "tabular-nums",
-                      }}
-                    >
-                      {[
-                        v.kinds.map((k) => SNAPSHOT_KIND_LABEL[k]).join(" + "),
-                        runs(v.runs),
-                        v.at && ago(v.at),
-                      ]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </Typography>
-                  </Box>
-                </Stack>
-                {expanded && (
-                  <Box sx={{ pl: 4.75, pr: 1.25, pb: 1 }}>
-                    {v.details.map((d, i) => (
-                      <Box key={`${d.part}-${d.label}-${i}`}>
-                        <Typography
-                          sx={{
-                            typography: "s3",
-                            color: "text.tertiary",
-                            mt: 0.25,
-                          }}
+                      </Tooltip>
+                    )}
+                    {offer && !isViewed && (
+                      <Button
+                        size="small"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setViewAs(v.parts.env);
+                          onClose();
+                        }}
+                        sx={{ color: "text.secondary", minWidth: 0 }}
+                      >
+                        View
+                      </Button>
+                    )}
+                    <Iconify
+                      icon={
+                        expanded
+                          ? "solar:alt-arrow-up-linear"
+                          : "solar:alt-arrow-down-linear"
+                      }
+                      width={12}
+                      sx={{ color: "text.disabled" }}
+                    />
+                  </Stack>
+                  <Typography
+                    sx={{
+                      typography: "s3",
+                      color: "text.secondary",
+                      mt: 0.25,
+                    }}
+                  >
+                    {v.summary}
+                  </Typography>
+                  <Typography
+                    sx={{
+                      typography: "s3",
+                      color: "text.tertiary",
+                      mt: 0.25,
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    {[
+                      v.kinds.map((k) => SNAPSHOT_KIND_LABEL[k]).join(" + "),
+                      runs(v.runs),
+                      v.at && ago(v.at),
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </Typography>
+                </Box>
+              </Stack>
+              {expanded && (
+                <Box sx={{ pl: 4.75, pr: 1.25, pb: 1 }}>
+                  {v.details.map((d, i) => (
+                    <Box key={`${d.part}-${d.label}-${i}`}>
+                      <Typography
+                        sx={{
+                          typography: "s3",
+                          color: "text.tertiary",
+                          mt: 0.25,
+                        }}
+                      >
+                        <Box
+                          component="span"
+                          sx={{ color: "text.secondary", fontWeight: 600 }}
                         >
-                          <Box
-                            component="span"
-                            sx={{ color: "text.secondary", fontWeight: 600 }}
-                          >
-                            {PART_NAME[d.part] || d.part}
-                          </Box>
-                          {d.text ? ` — ${d.text}` : ""}
-                        </Typography>
-                        {/* The words that changed, not just a count of them. */}
-                        {d.part === "env" && (
-                          <ContractWording
-                            items={contractWordingIn(env, envState, d.label)}
-                          />
-                        )}
-                      </Box>
-                    ))}
-                  </Box>
-                )}
-              </Box>
-            );
-          })}
-        </Stack>
+                          {PART_NAME[d.part] || d.part}
+                        </Box>
+                        {d.text ? ` — ${d.text}` : ""}
+                      </Typography>
+                      {/* The words that changed, not just a count of them. */}
+                      {d.part === "env" && (
+                        <ContractWording
+                          items={contractWordingIn(env, envState, d.label)}
+                        />
+                      )}
+                    </Box>
+                  ))}
+                </Box>
+              )}
+            </Box>
+          );
+        })}
+      </Stack>
 
-        {/* ── agent ── */}
-        <Section
-          title="Agent"
-          note={
-            agents.length
-              ? def === "production"
-                ? `Default: production (${nm(production)})`
-                : `Default: ${nm(def)} · ${nm(production)} is in production`
-              : "The test subject — every change is a new version"
-          }
-        />
-        {agents.length ? (
-          agentRows.map((r) =>
-            r.type === "default" ? (
-              <Line
-                key={`default-${r.c.at}`}
-                label="Default"
-                summary={`Changed from ${nm(defaultName(r.c.from))} to ${nm(defaultName(r.c.to))}${r.c.production && r.c.to !== "production" ? ` · ${nm(r.c.production)} was in production` : ""}`}
-                meta={`${r.c.by || "You"} · ${ago(r.c.at)}`}
-              />
-            ) : (
-              <Line
-                key={r.row.label}
-                label={`Agent ${nm(r.row.label)}`}
-                badges={[
-                  r.row.label === activeAgent && {
-                    label: "testing",
-                    tone: "discovery",
-                  },
-                ].filter(Boolean)}
-                summary={
-                  r.check
-                    ? `${String(r.row.summary || "").replace(/\.?\s*$/, ".")} ${r.check}.`
-                    : r.row.summary
-                }
-                meta={`${runs(r.row.runs)} · ${ago(r.row.at)}`}
-              />
-            ),
-          )
-        ) : (
-          <Empty text="No agent connected yet." />
-        )}
-      </Menu>
+      {/* ── agent ── */}
+      <Section
+        title="Agent"
+        note={
+          agents.length
+            ? def === "production"
+              ? `Default: production (${nm(production)})`
+              : `Default: ${nm(def)} · ${nm(production)} is in production`
+            : "The test subject — every change is a new version"
+        }
+      />
+      {agents.length ? (
+        agentRows.map((r) =>
+          r.type === "default" ? (
+            <Line
+              key={`default-${r.c.at}`}
+              label="Default"
+              summary={`Changed from ${nm(defaultName(r.c.from))} to ${nm(defaultName(r.c.to))}${r.c.production && r.c.to !== "production" ? ` · ${nm(r.c.production)} was in production` : ""}`}
+              meta={`${r.c.by || "You"} · ${ago(r.c.at)}`}
+            />
+          ) : (
+            <Line
+              key={r.row.label}
+              label={`Agent ${nm(r.row.label)}`}
+              badges={[
+                r.row.label === activeAgent && {
+                  label: "testing",
+                  tone: "discovery",
+                },
+              ].filter(Boolean)}
+              summary={
+                r.check
+                  ? `${String(r.row.summary || "").replace(/\.?\s*$/, ".")} ${r.check}.`
+                  : r.row.summary
+              }
+              meta={`${runs(r.row.runs)} · ${ago(r.row.at)}`}
+            />
+          ),
+        )
+      ) : (
+        <Empty text="No agent connected yet." />
+      )}
+    </>
+  );
+
+  return (
+    <>
+      {page ? (
+        <Box sx={{ p: 2, maxWidth: 760 }}>{body}</Box>
+      ) : (
+        <Menu
+          anchorEl={anchor}
+          open={!!anchor}
+          onClose={onClose}
+          anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
+          transformOrigin={{ vertical: "top", horizontal: "left" }}
+          slotProps={{
+            paper: {
+              sx: {
+                width: 460,
+                maxWidth: "calc(100vw - 32px)",
+                maxHeight: "72vh",
+                mt: 0.5,
+                p: 0.75,
+                borderRadius: "8px",
+                border: "1px solid",
+                borderColor: "divider",
+              },
+            },
+            list: { sx: { p: 0 } },
+          }}
+        >
+          {body}
+        </Menu>
+      )}
       {patch && (
         <RollbackDialog
           open={!!rollbackTo}
@@ -423,11 +436,12 @@ export default function VersionHistoryMenu({
 
 VersionHistoryMenu.propTypes = {
   anchor: PropTypes.object,
-  onClose: PropTypes.func.isRequired,
+  onClose: PropTypes.func,
   env: PropTypes.object.isRequired,
   envState: PropTypes.object.isRequired,
   patch: PropTypes.func,
   readOnly: PropTypes.bool,
+  page: PropTypes.bool,
 };
 
 const WORDING_TONE = { added: "status.success.fg" };

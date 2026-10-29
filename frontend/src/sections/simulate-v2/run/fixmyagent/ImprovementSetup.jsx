@@ -1,5 +1,7 @@
 import PropTypes from "prop-types";
 import { useEffect, useMemo, useState } from "react";
+import { enqueueSnackbar } from "notistack";
+import { useRoleGates } from "../../_mock/previewRole";
 import {
   Checkbox,
   Box,
@@ -215,6 +217,7 @@ export default function ImprovementSetup({
     setEdits({});
   }, [preset?.agentKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const gates = useRoleGates();
   const agentLimits = useMemo(
     () => limitsOf(state, preset?.agentKey),
     [state, preset?.agentKey],
@@ -489,6 +492,8 @@ export default function ImprovementSetup({
   );
 
   const start = () => {
+    if (!gates.canRun)
+      return enqueueSnackbar(gates.runReason, { variant: "info" });
     /* Re-read the agent first; a change made outside Future AGI is saved as
        a version and becomes the baseline — measured on that version, so the
        baseline's version and its scores are the same version's. */

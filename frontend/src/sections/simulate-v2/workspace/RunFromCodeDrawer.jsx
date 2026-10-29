@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import PropTypes from "prop-types";
 import { Link as RouterLink } from "react-router-dom";
 import { paths } from "src/routes/paths";
@@ -119,6 +119,8 @@ const EXIT_CODES = [
 export default function RunFromCodeDrawer({
   open,
   onClose,
+  /* The tab it opens on — Package and Train come from the ⋯ menu. */
+  initialTab = "cli",
   env,
   agentName,
   repeats = 3,
@@ -138,7 +140,10 @@ export default function RunFromCodeDrawer({
   /* The environment's evals, resolved — the held-out evaluation's judges. */
   trainEvals = [],
 }) {
-  const [tab, setTab] = useState("cli");
+  const [tab, setTab] = useState(initialTab);
+  useEffect(() => {
+    if (open) setTab(initialTab);
+  }, [open, initialTab]);
   const [mode, setMode] = useState("hosted");
   const local = mode !== "hosted";
   const id = env?.id || "env_…";
@@ -786,6 +791,7 @@ await client.worlds.publish("./my-world", { visibility: "workspace", version: "1
 }
 
 RunFromCodeDrawer.propTypes = {
+  initialTab: PropTypes.string,
   budget: PropTypes.number,
   estimate: PropTypes.object,
   trainEvals: PropTypes.array,

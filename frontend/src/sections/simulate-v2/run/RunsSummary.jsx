@@ -1892,10 +1892,11 @@ const runStatus = (r) => {
   if (r?.kind === "trial") return "Completed";
   /* The spending limit (or the person) stopped new scenarios starting. */
   if (r?.finishedAt && r?.budget?.stoppedBy)
-    return r.budget.stoppedBy === "stopped" ? "Stopped" : "At limit";
-  /* Unfinished for over a day: timed out, an infrastructure failure. */
+    return r.budget.stoppedBy === "stopped" ? "Cancelled" : "At limit";
+  /* Unfinished for over a day: it ran past its deadline — an infrastructure
+     outcome, not an agent failure. */
   if ((raw === "running" || raw === "queued") && !r.finishedAt && staleSince(r))
-    return "Failed";
+    return "Timed out";
   if (raw === "queued") return "Queued";
   if (raw === "pending") return "Pending";
   if (raw === "running" && !r.finishedAt) return "Running";
@@ -1913,7 +1914,7 @@ const RUN_CHIP_STYLES = {
   Queued: statusStyles.Running,
   /* Stopped by the spending limit: amber, like the limit everywhere else. */
   "At limit": statusStyles.Inactive,
-  Stopped: statusStyles.Cancelled,
+  "Timed out": statusStyles.Failed,
 };
 
 /**

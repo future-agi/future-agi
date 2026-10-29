@@ -1,5 +1,7 @@
 import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
+import { enqueueSnackbar } from "notistack";
+import { useRoleGates } from "../_mock/previewRole";
 import {
   Box,
   Button,
@@ -110,6 +112,7 @@ export default function BuildEnvironmentDialog({
   defaultParallel = null,
 }) {
   const creditBalance = useCreditBalance();
+  const gates = useRoleGates();
   const [name, setName] = useState("");
   const envs = useOptionalSimStore()?.state?.myEnvironments || [];
   const [version, setVersion] = useState(defaultVersion);
@@ -392,7 +395,15 @@ export default function BuildEnvironmentDialog({
         )}
         {/* The same build from code — what Build environment would start. */}
         <CopyCommandButton
-          command={`agent-learn env build ${(name.trim() || `${agent?.name || "my"} environment`).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")} \\\n  --agent "${agent?.name || "my-agent"}@${version}" \\\n  --request "Test it with ${count} scenarios" --budget 100`}
+          command={`agent-learn env build ${(
+            name.trim() || `${agent?.name || "my"} environment`
+          )
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(
+              /^-|-$/g,
+              "",
+            )} \\\n  --agent "${agent?.name || "my-agent"}@${version}" \\\n  --request "Test it with ${count} scenarios" --budget 100`}
         />
         <Button size="small" onClick={onClose} sx={{ color: "text.secondary" }}>
           Cancel
@@ -403,7 +414,9 @@ export default function BuildEnvironmentDialog({
           color="primary"
           disabled={!!blocked}
           onClick={() =>
-            onBuild({ name: name.trim(), version, count, parallel: worlds })
+            gates.canRun
+              ? onBuild({ name: name.trim(), version, count, parallel: worlds })
+              : enqueueSnackbar(gates.runReason, { variant: "info" })
           }
         >
           Build environment

@@ -3,6 +3,7 @@ import IssueReturnBanner from "../errorFeed/IssueReturnBanner";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { useSnackbar } from "notistack";
+import { useRoleGates } from "../_mock/previewRole";
 import {
   useLocation,
   useNavigate,
@@ -560,20 +561,25 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
         ?.ordinal ?? "—";
     return `${older.length} scenario${older.length === 1 ? "" : "s"} played ${older.length === 1 ? "its" : "their"} text as it was in run ${ordinal}`;
   })();
+  const gates = useRoleGates();
   const rerun = (ids, { mode = "now", agent = null } = {}) =>
-    checkRunFit(() => {
-      /* Through the run plan, like every run: scope, estimate and limit. */
-      const snap = mode === "snapshot" && canSnapshot;
-      navigate(
-        runPlanHref(envId, {
-          only: ids || [],
-          trials: sourceRun?.repeats || 3,
-          agent: snap ? agent || sourceRun.agentVersion : agent || undefined,
-          snapshot: snap ? sourceRun.id : undefined,
-          envVersion: snap ? sourceRun.envVersion : undefined,
-        }),
-      );
-    });
+    !gates.canRun
+      ? enqueueSnackbar(gates.runReason, { variant: "info" })
+      : checkRunFit(() => {
+          /* Through the run plan, like every run: scope, estimate and limit. */
+          const snap = mode === "snapshot" && canSnapshot;
+          navigate(
+            runPlanHref(envId, {
+              only: ids || [],
+              trials: sourceRun?.repeats || 3,
+              agent: snap
+                ? agent || sourceRun.agentVersion
+                : agent || undefined,
+              snapshot: snap ? sourceRun.id : undefined,
+              envVersion: snap ? sourceRun.envVersion : undefined,
+            }),
+          );
+        });
   const [runRerunAnchor, setRunRerunAnchor] = useState(null);
   /* The scenarios that didn't pass — what "Re-run N failing" replays. */
   /* A fix's first run debugs only what isn't the issue's — the fix already

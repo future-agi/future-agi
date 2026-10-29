@@ -41,7 +41,9 @@ export default function SourceBadge({
 }) {
   /* The environment lets an improvement-made scenario link to its improvement. */
   const link = sourceLinkOf(scenario, { env, envState });
-  const linked = !!(link.to || link.chat);
+  /* A production conversation links back to its trace in Observe. */
+  const to = link.to || link.observe?.to || null;
+  const linked = !!(to || link.chat);
 
   const title = (
     <Stack spacing={0.375} sx={{ py: 0.25, maxWidth: 320 }}>
@@ -86,11 +88,13 @@ export default function SourceBadge({
         <Typography sx={{ typography: "s3", color: "inherit", opacity: 0.7 }}>
           {link.chat
             ? "Click to open the chat."
-            : link.source.id === "error-feed"
-              ? "Click to open the issue."
-              : link.source.id === "improvement"
-                ? "Click to open the improvement."
-                : "Click to open the run."}
+            : !link.to && link.observe
+              ? "Click to open the trace."
+              : link.source.id === "error-feed"
+                ? "Click to open the issue."
+                : link.source.id === "improvement"
+                  ? "Click to open the improvement."
+                  : "Click to open the run."}
         </Typography>
       )}
     </Stack>
@@ -146,8 +150,8 @@ export default function SourceBadge({
 
   /* Rows open on click — the badge's own click must not. */
   const stop = (e) => e.stopPropagation();
-  const routeProps = link.to
-    ? { component: RouterLink, to: link.to, onClick: stop }
+  const routeProps = to
+    ? { component: RouterLink, to, onClick: stop }
     : {
         component: "button",
         type: "button",

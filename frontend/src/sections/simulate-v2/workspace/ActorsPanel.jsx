@@ -92,10 +92,8 @@ export default function ActorsPanel({ env, envState, patch, locked = false }) {
         spacing={2}
         sx={{ mb: 2 }}
       >
+        {/* No heading — the Actors tab names the page. */}
         <Box flex={1}>
-          <Typography sx={{ typography: "m2", fontWeight: 600 }}>
-            Actors
-          </Typography>
           <Typography
             sx={{ typography: "s2", color: "text.secondary", maxWidth: 780 }}
           >
