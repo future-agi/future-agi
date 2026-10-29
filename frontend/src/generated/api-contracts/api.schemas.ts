@@ -16951,6 +16951,7 @@ export const AgentFixRunApiState = {
 
 export interface AgentFixRequestApi {
   target_scenario_keys: string[];
+  held_back_scenario_keys?: string[];
   failing_sub_goals: string[];
   surfaces: string[];
   locked_paths: string[];

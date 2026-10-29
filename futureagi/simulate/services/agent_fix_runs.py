@@ -1,5 +1,8 @@
 """Start, stop and close "Fix my agent" runs, and make a candidate the default."""
 
+from collections import Counter
+from collections.abc import Mapping
+from hashlib import sha256
 from typing import Any
 
 import structlog
@@ -12,7 +15,10 @@ from simulate.models import (
     HostedHarnessJob,
 )
 from simulate.pydantic_schemas.agent_fix import FixRequest, Surface
-from simulate.selectors.agent_fix import FINISHED_RUN_STATES, failing_sub_goals
+from simulate.selectors.agent_fix import (
+    FINISHED_RUN_STATES,
+    failing_sub_goals_by_scenario,
+)
 from simulate.services.agent_fix_agents import agent_kind
 from simulate.services.harness_agent_versions import discard_agent_version
 from simulate.services.harness_usage import require_agent_fix_usage
@@ -27,6 +33,31 @@ from simulate.temporal.client import (
 )
 
 logger = structlog.get_logger(__name__)
+
+
+# A third of the failing cases are held back, once there are enough for a third to tell.
+HELD_BACK_SHARE = 3
+HELD_BACK_MIN_CASES = 6
+
+
+def split_held_back(seed: str, failing: Mapping[str, list[str]]) -> list[str]:
+    """The failing cases the worker never sees, so the verdict can prove the fix holds beyond
+    the cases it was made on: one in three, picked by a stable hash of ``seed`` and the key,
+    and never the last case left to search on for a failing sub-goal. None below six."""
+    cases = [key for key, names in failing.items() if names]
+    if len(cases) < HELD_BACK_MIN_CASES:
+        return []
+    searched = Counter(name for key in cases for name in failing[key])
+    held: list[str] = []
+    for key in sorted(
+        cases, key=lambda key: sha256(f"{seed}:{key}".encode()).hexdigest()
+    ):
+        if len(held) == len(cases) // HELD_BACK_SHARE:
+            break
+        if all(searched[name] > 1 for name in failing[key]):
+            held.append(key)
+            searched.subtract(failing[key])
+    return held
 
 
 def launch_fix_run(
@@ -63,7 +94,10 @@ def launch_fix_run(
             f"these scenarios were not in the run: {', '.join(unknown)}",
             status_code=400,
         )
-    failing = failing_sub_goals(source_run, target_scenario_keys)
+    by_scenario = failing_sub_goals_by_scenario(source_run, target_scenario_keys)
+    failing = list(
+        dict.fromkeys(name for names in by_scenario.values() for name in names)
+    )
     if not failing:
         raise HostedHarnessError(
             "fix_targets_passed",
@@ -72,6 +106,7 @@ def launch_fix_run(
         )
     request = FixRequest(
         target_scenario_keys=target_scenario_keys,
+        held_back_scenario_keys=split_held_back(str(source_run.id), by_scenario),
         failing_sub_goals=failing,
         surfaces=surfaces,
         locked_paths=locked_paths,

@@ -87411,6 +87411,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             minLength: 1,
           },
         },
+        held_back_scenario_keys: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          default: [],
+        },
         failing_sub_goals: {
           type: "array",
           items: {

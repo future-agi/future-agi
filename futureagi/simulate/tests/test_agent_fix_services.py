@@ -42,6 +42,7 @@ from simulate.services.agent_fix_runs import (
     launch_fix_run,
     make_candidate_default,
     request_stop,
+    split_held_back,
 )
 from simulate.services.harness_versioning.versions import record_authoring
 from simulate.services.hosted_harness import (
@@ -259,7 +260,50 @@ def _move_default_suite(environment, user):
     environment.refresh_from_db()
 
 
+class TestHeldBackSplit:
+    def test_too_few_failing_cases_hold_none_back(self):
+        failing = {f"s{i}": ["refunded"] for i in range(5)}
+
+        assert split_held_back("run", failing) == []
+
+    def test_a_third_of_the_failing_cases_are_held_back_the_same_way_each_time(self):
+        failing = {f"s{i}": ["refunded"] for i in range(9)}
+
+        held = split_held_back("run", failing)
+
+        assert len(held) == 3
+        assert set(held) <= set(failing)
+        assert split_held_back("run", failing) == held
+
+    def test_the_last_case_of_a_failing_sub_goal_stays_to_search_on(self):
+        # Only s5 fails apologised: holding it back would leave the worker nothing to fix it on.
+        failing = {f"s{i}": ["refunded"] for i in range(5)} | {"s5": ["apologised"]}
+
+        for seed in ("a", "b", "c", "d", "e", "f"):
+            held = split_held_back(seed, failing)
+            assert len(held) == 2
+            assert "s5" not in held
+
+    def test_cases_that_passed_are_neither_held_back_nor_counted(self):
+        failing = {f"s{i}": ["refunded"] for i in range(5)} | {"clean": []}
+
+        assert split_held_back("run", failing) == []
+
+
 class TestLaunch:
+    def test_the_split_reaches_the_request_and_the_engine(self, source_run, user):
+        with patch(
+            "simulate.services.agent_fix_runs.split_held_back", return_value=[KEYS[0]]
+        ) as split:
+            fix_run = _launch(source_run, user)
+
+        assert split.call_args.args == (
+            str(source_run.id),
+            {KEYS[0]: ["refunded"]},
+        )
+        assert fix_run.request["held_back_scenario_keys"] == [KEYS[0]]
+        assert engine_brief(fix_run).request.held_back_scenario_keys == [KEYS[0]]
+
     def test_proves_the_fix_on_the_targets_failed_sub_goals_and_starts_on_commit(
         self, source_run, user, temporal, django_capture_on_commit_callbacks
     ):

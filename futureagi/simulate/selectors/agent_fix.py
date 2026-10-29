@@ -208,24 +208,34 @@ def _transcripts(call_ids: Iterable[Any]) -> dict[Any, str]:
     }
 
 
-def failing_sub_goals(
+def failing_sub_goals_by_scenario(
     source_run: HostedHarnessJob, scenario_keys: list[str]
-) -> list[str]:
-    """The sub-goals that did not hold on the given scenarios of a finished run."""
+) -> dict[str, list[str]]:
+    """The sub-goals that did not hold on each of the given scenarios of a finished run, in
+    the order the scenarios are given; a scenario where everything held maps to []."""
     executions = HostedHarnessExecution.no_workspace_objects.filter(
         job=source_run, source_scenario__scenario_key__in=scenario_keys
-    ).select_related("call_execution")
-    failing: list[str] = []
+    ).select_related("call_execution", "source_scenario")
+    failing: dict[str, list[str]] = {key: [] for key in scenario_keys}
     for execution in executions:
         receipt = (execution.call_execution.call_metadata or {}).get(
             "hosted_harness_receipt"
         )
         if not isinstance(receipt, Mapping):
             continue
+        names = failing[execution.source_scenario.scenario_key]
         for name, held in judged_sub_goals(receipt).items():
-            if held is False and name not in failing:
-                failing.append(name)
+            if held is False and name not in names:
+                names.append(name)
     return failing
+
+
+def failing_sub_goals(
+    source_run: HostedHarnessJob, scenario_keys: list[str]
+) -> list[str]:
+    """The sub-goals that did not hold on the given scenarios of a finished run."""
+    by_scenario = failing_sub_goals_by_scenario(source_run, scenario_keys)
+    return list(dict.fromkeys(name for names in by_scenario.values() for name in names))
 
 
 def with_spend(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:

@@ -33,6 +33,9 @@ class FixRequest(BaseModel):
     """What the user asked for. Stored on the run as it was asked."""
 
     target_scenario_keys: list[str] = Field(min_length=1, max_length=200)
+    # The failing cases among the targets that the worker never sees: the verdict proves the
+    # fix holds on them. Chosen at launch; empty when there are too few to split.
+    held_back_scenario_keys: list[str] = Field(default_factory=list)
     # The sub-goals that failed on the targets; the engine proves the fix on them.
     failing_sub_goals: list[str] = Field(min_length=1)
     surfaces: list[Surface] = Field(min_length=1)

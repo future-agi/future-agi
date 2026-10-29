@@ -34297,6 +34297,9 @@ export const SimulateApiAgentFixRunsListQueryParams = zod.object({
 
 export const simulateApiAgentFixRunsListResponseStageMax = 32;
 
+export const simulateApiAgentFixRunsListResponseRequestHeldBackScenarioKeysDefault =
+  [];
+
 export const simulateApiAgentFixRunsListResponseCandidatesItemAttemptMin = 0;
 export const simulateApiAgentFixRunsListResponseCandidatesItemAttemptMax = 32767;
 
@@ -34327,6 +34330,11 @@ export const SimulateApiAgentFixRunsListResponseItem = zod.object({
     .optional(),
   request: zod.object({
     target_scenario_keys: zod.array(zod.string().min(1)),
+    held_back_scenario_keys: zod
+      .array(zod.string().min(1))
+      .default(
+        simulateApiAgentFixRunsListResponseRequestHeldBackScenarioKeysDefault,
+      ),
     failing_sub_goals: zod.array(zod.string().min(1)),
     surfaces: zod.array(zod.string().min(1)),
     locked_paths: zod.array(zod.string().min(1)),
@@ -34456,6 +34464,9 @@ export const SimulateApiAgentFixRunsReadParams = zod.object({
 
 export const simulateApiAgentFixRunsReadResponseStageMax = 32;
 
+export const simulateApiAgentFixRunsReadResponseRequestHeldBackScenarioKeysDefault =
+  [];
+
 export const simulateApiAgentFixRunsReadResponseCandidatesItemAttemptMin = 0;
 export const simulateApiAgentFixRunsReadResponseCandidatesItemAttemptMax = 32767;
 
@@ -34486,6 +34497,11 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
     .optional(),
   request: zod.object({
     target_scenario_keys: zod.array(zod.string().min(1)),
+    held_back_scenario_keys: zod
+      .array(zod.string().min(1))
+      .default(
+        simulateApiAgentFixRunsReadResponseRequestHeldBackScenarioKeysDefault,
+      ),
     failing_sub_goals: zod.array(zod.string().min(1)),
     surfaces: zod.array(zod.string().min(1)),
     locked_paths: zod.array(zod.string().min(1)),
@@ -34594,6 +34610,9 @@ export const SimulateApiAgentFixRunsStopBody = zod.object({});
 
 export const simulateApiAgentFixRunsStopResponseStageMax = 32;
 
+export const simulateApiAgentFixRunsStopResponseRequestHeldBackScenarioKeysDefault =
+  [];
+
 export const simulateApiAgentFixRunsStopResponseCandidatesItemAttemptMin = 0;
 export const simulateApiAgentFixRunsStopResponseCandidatesItemAttemptMax = 32767;
 
@@ -34624,6 +34643,11 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
     .optional(),
   request: zod.object({
     target_scenario_keys: zod.array(zod.string().min(1)),
+    held_back_scenario_keys: zod
+      .array(zod.string().min(1))
+      .default(
+        simulateApiAgentFixRunsStopResponseRequestHeldBackScenarioKeysDefault,
+      ),
     failing_sub_goals: zod.array(zod.string().min(1)),
     surfaces: zod.array(zod.string().min(1)),
     locked_paths: zod.array(zod.string().min(1)),

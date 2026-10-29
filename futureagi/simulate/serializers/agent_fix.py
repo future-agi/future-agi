@@ -35,6 +35,10 @@ class AgentFixListQuerySerializer(serializers.Serializer):
 
 class AgentFixRequestSerializer(serializers.Serializer):
     target_scenario_keys = serializers.ListField(child=serializers.CharField())
+    # The targets the worker never sees; a fix started before the split has none.
+    held_back_scenario_keys = serializers.ListField(
+        child=serializers.CharField(), default=list
+    )
     failing_sub_goals = serializers.ListField(child=serializers.CharField())
     surfaces = serializers.ListField(child=serializers.CharField())
     locked_paths = serializers.ListField(child=serializers.CharField())
