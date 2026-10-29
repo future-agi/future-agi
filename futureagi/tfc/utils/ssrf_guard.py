@@ -191,6 +191,7 @@ def safe_fetch(
     timeout: float = _DEFAULT_TIMEOUT_SECONDS,
     max_bytes: int = _DEFAULT_MAX_BODY_BYTES,
     headers: dict = None,
+    strict_redirect_origins: bool = False,
 ) -> SsrfResponse:
     """Fetch `url` with SSRF protection.
 
@@ -201,6 +202,15 @@ def safe_fetch(
     current_url = url
     caller_headers = headers or {}
     origin_host = urlparse(url).hostname
+    origin = None
+    if strict_redirect_origins:
+        parsed_origin = urlparse(url)
+        origin = (
+            parsed_origin.scheme,
+            (parsed_origin.hostname or "").lower(),
+            parsed_origin.port
+            or (443 if parsed_origin.scheme == "https" else 80),
+        )
     for _ in range(_MAX_REDIRECTS):
         parsed = urlparse(current_url)
         if parsed.scheme not in ("http", "https"):
@@ -220,13 +230,32 @@ def safe_fetch(
         default_port = 443 if parsed.scheme == "https" else 80
         host_header = host if port == default_port else f"{host}:{port}"
 
-        # Strip sensitive headers on cross-origin hops so a redirect to
-        # attacker.com does not leak Authorization/Cookie/etc.
+        # Document Links opt into full origin comparison.  The historic
+        # hostname-only rule stays as the default for unrelated consumers.
         hop_headers = dict(caller_headers)
-        if host != origin_host:
-            for sensitive in ("Authorization", "Cookie", "Proxy-Authorization"):
-                hop_headers.pop(sensitive, None)
-                hop_headers.pop(sensitive.lower(), None)
+        current_origin = (
+            parsed.scheme,
+            host.lower(),
+            port,
+        )
+        if (strict_redirect_origins and current_origin != origin) or (
+            not strict_redirect_origins and host != origin_host
+        ):
+            if strict_redirect_origins:
+                # HTTP field names are case-insensitive.  Keep the legacy
+                # behavior below for unrelated callers, but make the Link
+                # path complete even if a caller supplied unusual casing.
+                for header_name in tuple(hop_headers):
+                    if header_name.lower() in {
+                        "authorization",
+                        "cookie",
+                        "proxy-authorization",
+                    }:
+                        hop_headers.pop(header_name)
+            else:
+                for sensitive in ("Authorization", "Cookie", "Proxy-Authorization"):
+                    hop_headers.pop(sensitive, None)
+                    hop_headers.pop(sensitive.lower(), None)
 
         pool = _open_pinned_pool(parsed.scheme, pinned_ip, host, port, timeout)
         response = None
@@ -243,9 +272,18 @@ def safe_fetch(
                 location = response.headers.get("Location")
                 if not location:
                     raise ValueError("Redirect with no Location header.")
-                current_url = urljoin(current_url, location)
-                if not is_valid_url(current_url):
+                redirect_url = urljoin(current_url, location)
+                if not is_valid_url(redirect_url):
                     raise SsrfBlocked("Redirect target is not a valid URL.")
+                if (
+                    strict_redirect_origins
+                    and parsed.scheme == "https"
+                    and urlparse(redirect_url).scheme == "http"
+                ):
+                    raise ValueError(
+                        "HTTPS document links may not redirect to HTTP."
+                    )
+                current_url = redirect_url
                 continue
 
             content = b""
