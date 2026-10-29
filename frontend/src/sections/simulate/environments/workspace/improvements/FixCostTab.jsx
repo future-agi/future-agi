@@ -5,14 +5,14 @@ import { formatCredits } from "./fixRunView";
 
 const num = { fontVariantNumeric: "tabular-nums" };
 
-// The design's credit strip, contract fields only: what was spent, what is
-// reserved for check runs not yet billed, the two together, and the budget.
+// The design's credit strip, contract fields only and nothing computed: what
+// was spent, what is committed (spent plus holds for unbilled check runs), and
+// the budget.
 export default function FixCostTab({ fix }) {
   const spent = fix.spent_credits ?? 0;
   const committed = fix.committed_credits ?? spent;
   const cells = [
     { label: "Spent", value: spent },
-    { label: "Reserved", value: Math.max(0, committed - spent) },
     { label: "Committed", value: committed },
     { label: "Budget", value: fix.request?.budget_credits },
   ];
@@ -30,7 +30,7 @@ export default function FixCostTab({ fix }) {
           display: "grid",
           gridTemplateColumns: {
             xs: "repeat(2, minmax(0, 1fr))",
-            md: "repeat(4, minmax(0, 1fr))",
+            md: "repeat(3, minmax(0, 1fr))",
           },
           border: "1px solid",
           borderColor: "divider",
@@ -59,7 +59,7 @@ export default function FixCostTab({ fix }) {
       <Typography
         sx={{ typography: "s3", color: "text.subtitle", px: 0.5, pt: 1 }}
       >
-        {`Budget ${formatCredits(fix.request?.budget_credits)} · spent is the engine's model calls and finished check runs, as billed; reserved is a worst-case hold for each check run not yet billed`}
+        {`Spent is the engine's model calls and finished check runs, as billed. Committed adds a worst-case hold for each check run not yet billed.`}
       </Typography>
     </Box>
   );

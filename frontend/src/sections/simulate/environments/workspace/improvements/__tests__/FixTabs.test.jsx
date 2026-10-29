@@ -52,11 +52,12 @@ describe("Changes tab", () => {
 });
 
 describe("Cost tab", () => {
-  it("shows spent, reserved, committed and the budget side by side", () => {
+  it("shows spent, committed and the budget side by side, nothing computed", () => {
     render(<FixCostTab fix={byId("fix-ready-archive")} />);
     const cell = (label) => within(screen.getByTestId(`cost-${label}`));
     expect(cell("Spent").getByText("412 credits")).toBeInTheDocument();
-    expect(cell("Reserved").getByText("108 credits")).toBeInTheDocument();
+    expect(screen.queryByTestId("cost-Reserved")).toBeNull();
+    expect(screen.queryByText("108 credits")).toBeNull();
     expect(cell("Committed").getByText("520 credits")).toBeInTheDocument();
     expect(cell("Budget").getByText("1,500 credits")).toBeInTheDocument();
   });
