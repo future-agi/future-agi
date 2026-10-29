@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { Children, useState } from "react";
 import { Box, Button, Menu, Stack, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import {
@@ -417,7 +417,7 @@ export default function VersionHistoryMenu({
             list: { sx: { p: 0 } },
           }}
         >
-          {body}
+          {Children.toArray(body.props.children)}
         </Menu>
       )}
       {patch && (

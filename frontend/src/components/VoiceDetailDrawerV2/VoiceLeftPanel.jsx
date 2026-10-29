@@ -14,6 +14,7 @@ const TABS = {
   CHECKLIST: "checklist",
   GRAPH: "graph",
   HANDOFFS: "handoffs",
+  APPROVALS: "approvals",
 };
 
 const PATH_VIEW_MODE = {
@@ -83,8 +84,15 @@ const VoiceLeftPanel = ({ data, scenarioId, embedded = false }) => {
         value: TABS.HANDOFFS,
         icon: "solar:users-group-two-rounded-linear",
       });
+    /* An approval in the conversation — request, wait, decision (simulate only). */
+    if (isSimulate && data?.simApprovals)
+      t.push({
+        label: "Approvals",
+        value: TABS.APPROVALS,
+        icon: "solar:check-read-linear",
+      });
     return t;
-  }, [showPathTabs, isSimulate, data?.simHandoffs]);
+  }, [showPathTabs, isSimulate, data?.simHandoffs, data?.simApprovals]);
 
   const isTranscriptTab = currentTab === TABS.TRANSCRIPT;
   const isPathTab = currentTab === TABS.CHECKLIST || currentTab === TABS.GRAPH;
@@ -187,6 +195,9 @@ const VoiceLeftPanel = ({ data, scenarioId, embedded = false }) => {
             </ShowComponent>
             <ShowComponent condition={currentTab === TABS.HANDOFFS}>
               {data?.simHandoffs}
+            </ShowComponent>
+            <ShowComponent condition={currentTab === TABS.APPROVALS}>
+              {data?.simApprovals}
             </ShowComponent>
             <ShowComponent condition={isPathTab && showPathTabs}>
               <PathAnalysisView

@@ -38,7 +38,7 @@ export const tierOf = (id) => TIERS.find((t) => t.id === id) || TIERS[2];
 export const FAULT_PRESETS = {
   none: { label: "Clean", faults: null },
   realistic: { label: "Realistic", faults: { timeoutPct: 5, errorPct: 3, rateLimitPct: 0, latencyMs: 400, malformedPct: 0 } },
-  adversarial: { label: "Adversarial", faults: { timeoutPct: 20, errorPct: 10, rateLimitPct: 10, latencyMs: 1500, malformedPct: 5 } },
+  adversarial: { label: "Adversarial", faults: { timeoutPct: 20, errorPct: 10, rateLimitPct: 10, latencyMs: 1500, malformedPct: 5, permissionPct: 5, duplicatePct: 5, afterCommitPct: 5 } },
 };
 
 const WRITES = /^(book|create|reschedule|update|cancel|delete|send|post|upsert|issue|generate|charge|refund|transfer|escalate|submit)/i;
@@ -182,12 +182,22 @@ export const toolEnvPin = (env, envState) => {
 
 /* ── additions: presets, live safety, run inputs, edits ──────────────────── */
 
+/* Roadmap actors.md "Failure profiles": permission denied, missing record,
+   timeout, rate limit, malformed response, duplicate event, stale read and
+   partial failure — and a timeout before commit apart from one after it,
+   because only the second leaves a write the retry has to reuse. */
 export const FAULT_FIELDS = [
-  { key: "timeoutPct", label: "Timeout", unit: "%", max: 100 },
+  { key: "timeoutPct", label: "Timeout before commit", unit: "%", max: 100 },
+  { key: "afterCommitPct", label: "Timeout after commit", unit: "%", max: 100 },
   { key: "errorPct", label: "5xx error", unit: "%", max: 100 },
   { key: "rateLimitPct", label: "Rate-limited", unit: "%", max: 100 },
-  { key: "latencyMs", label: "Extra latency", unit: "ms", max: 10000 },
+  { key: "permissionPct", label: "Permission denied", unit: "%", max: 100 },
+  { key: "missingPct", label: "Missing record", unit: "%", max: 100 },
+  { key: "duplicatePct", label: "Duplicate delivery", unit: "%", max: 100 },
+  { key: "stalePct", label: "Stale read", unit: "%", max: 100 },
+  { key: "partialPct", label: "Partial failure", unit: "%", max: 100 },
   { key: "malformedPct", label: "Malformed", unit: "%", max: 100 },
+  { key: "latencyMs", label: "Extra latency", unit: "ms", max: 10000 },
 ];
 
 const sameFaults = (a, b) => FAULT_FIELDS.every((f) => Number(a?.[f.key] || 0) === Number(b?.[f.key] || 0));
@@ -202,10 +212,7 @@ export const faultPresetOf = (faults) => {
 export const faultLine = (faults) => {
   if (faultPresetOf(faults) === "none") return "No faults";
   return [
-    faults.timeoutPct ? `${faults.timeoutPct}% timeout` : null,
-    faults.errorPct ? `${faults.errorPct}% 5xx` : null,
-    faults.rateLimitPct ? `${faults.rateLimitPct}% rate-limited` : null,
-    faults.malformedPct ? `${faults.malformedPct}% malformed` : null,
+    ...FAULT_FIELDS.filter((f) => f.unit === "%" && Number(faults[f.key])).map((f) => `${faults[f.key]}% ${f.label.toLowerCase()}`),
     faults.latencyMs ? `+${faults.latencyMs}ms` : null,
   ].filter(Boolean).join(" · ");
 };

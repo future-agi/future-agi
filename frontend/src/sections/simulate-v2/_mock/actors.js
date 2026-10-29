@@ -28,6 +28,23 @@ export const ENTRY_KINDS = [
   { id: "present", label: "Present from the start", blurb: "In the room, on the call, in the thread from turn one." },
   { id: "joins", label: "Joins partway", blurb: "Enters when the run reaches a trigger — an escalation, a threshold." },
   { id: "interrupts", label: "Interrupts", blurb: "Cuts in unprompted, at a moment the agent did not choose." },
+  { id: "contacted", label: "When the agent contacts them", blurb: "Reached only if the agent asks — an approval, a transfer, a callback." },
+  { id: "scheduled", label: "At a set moment", blurb: "Arrives at a fixed turn, whatever the agent does." },
+];
+
+/* How they behave once in — tone and patience, on top of the goal. */
+export const BEHAVIOURS = [
+  { id: "cooperative", label: "Cooperative" },
+  { id: "impatient", label: "Impatient" },
+  { id: "confused", label: "Confused" },
+  { id: "custom", label: "Custom — described in what they do" },
+];
+
+/* What happens when an actor someone is waiting on doesn't answer in time. */
+export const FALLBACKS = [
+  { id: "silent", label: "Stays silent", line: "the request is left unanswered" },
+  { id: "reject", label: "Says no", line: "the request is refused" },
+  { id: "escalate", label: "Passes it up", line: "it goes to whoever activates them" },
 ];
 
 /** What kind of pressure the actor applies. Drives what a failure looks like. */
@@ -52,6 +69,8 @@ export const ACTOR_LIBRARY = [
     pressure: "competing",
     modalities: ["voice", "chat"],
     traits: ["talks over", "plausible", "persistent"],
+    canApprove: false,
+    knowledge: ["The user's plan, and their own preference"],
     version: "v2",
     versions: [
       { label: "v2", createdAt: iso(4), note: "Now repeats the counter-proposal after the agent ignores it once." },
@@ -70,6 +89,12 @@ export const ACTOR_LIBRARY = [
     pressure: "authority",
     modalities: ["voice", "chat"],
     traits: ["brisk", "wants the summary first"],
+    trigger: "The agent escalates or asks for an exception",
+    canApprove: true,
+    approvalScope: "Refunds and discounts up to the policy cap",
+    timeoutMin: 3,
+    fallback: "silent",
+    knowledge: ["The policy and its exceptions", "Only what the agent's handover says about the case"],
     version: "v2",
     versions: [
       { label: "v2", createdAt: iso(6), note: "Now refuses the handover if no summary is given." },
@@ -88,6 +113,13 @@ export const ACTOR_LIBRARY = [
     pressure: "gatekeeper",
     modalities: ["voice", "chat"],
     traits: ["procedural", "slow to answer"],
+    activatedBy: "act-supervisor",
+    trigger: "The supervisor sends on a request above the refund cap",
+    canApprove: true,
+    approvalScope: "Anything above the refund cap",
+    timeoutMin: 5,
+    fallback: "reject",
+    knowledge: ["The order and its payment history"],
     version: "v1",
     versions: [{ label: "v1", createdAt: iso(15), note: "Approves 60% of the time." }],
     usedBy: 3,
@@ -103,6 +135,8 @@ export const ACTOR_LIBRARY = [
     pressure: "extraction",
     modalities: ["voice"],
     traits: ["helpful", "not authorised", "never has the security answers"],
+    canApprove: false,
+    knowledge: ["The account holder's name and address — never the security answers"],
     version: "v1",
     versions: [{ label: "v1", createdAt: iso(9), note: "First draft." }],
     usedBy: 2,
@@ -177,7 +211,11 @@ export const actorsOf = (env, envState) => envState?.actors || castFor(env);
  * read: the panel, the contract and the run. It lives on the environment, not
  * on a version, so it carries into every version saved after it.
  */
-export const ACTOR_EDIT_FIELDS = ["name", "goal", "blurb", "tests", "pressure", "entry", "traits", "modalities"];
+export const ACTOR_EDIT_FIELDS = [
+  "name", "goal", "blurb", "tests", "pressure", "entry", "traits", "modalities",
+  /* Roadmap actors.md: activation, knowledge, permissions, behaviour. */
+  "activatedBy", "trigger", "timeoutMin", "fallback", "knowledge", "sources", "tools", "canApprove", "approvalScope", "behaviour",
+];
 
 export const actorEditsOf = (envState) => envState?.actorEdits || {};
 
@@ -186,6 +224,9 @@ export const actorEditsOf = (envState) => envState?.actorEdits || {};
  * actor with the environment's edits on top, marked `edited`.
  */
 export const getActor = (id, envState) => {
+  /* One made for this environment ("Create actor") is its own record. */
+  const own = (envState?.customActors || []).find((a) => a.id === id);
+  if (own) return own;
   const base = ACTOR_LIBRARY.find((a) => a.id === id);
   if (!base) return undefined;
   const edit = envState?.actorEdits?.[id];
@@ -207,6 +248,12 @@ const changedFields = (base, fields) => Object.fromEntries(ACTOR_EDIT_FIELDS
  * (a minor environment version) once a run has pinned the current one.
  */
 export const actorEditPatch = (envState, id, fields) => {
+  const own = (envState?.customActors || []).find((a) => a.id === id);
+  if (own)
+    return {
+      customActors: envState.customActors.map((a) => (a.id === id ? { ...a, ...fields, editedAt: new Date().toISOString() } : a)),
+      ...envChangePatch(envState, "actors", `Edited ${fields.name || own.name}`),
+    };
   const base = ACTOR_LIBRARY.find((a) => a.id === id);
   if (!base) return {};
   const diff = changedFields(base, fields);
@@ -225,3 +272,80 @@ export const resetActorPatch = (envState, id) => {
 };
 export const getPressure = (id) => PRESSURE_KINDS.find((p) => p.id === id) || PRESSURE_KINDS[0];
 export const getEntry = (id) => ENTRY_KINDS.find((e) => e.id === id) || ENTRY_KINDS[0];
+
+/**
+ * Create an actor for this environment ("Create actor") and add it to the
+ * cast — its own record, version v1, made by you.
+ */
+export const createActorPatch = (env, envState, fields) => {
+  const id = `act-own-${String(fields.name || "actor").toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${Date.now().toString(36)}`;
+  const actor = {
+    ...fields,
+    id,
+    version: "v1",
+    versions: [{ label: "v1", createdAt: new Date().toISOString(), note: "Created for this environment." }],
+    usedBy: 0,
+    owner: "you",
+    custom: true,
+  };
+  return {
+    customActors: [...(envState?.customActors || []), actor],
+    actors: [...actorsOf(env, envState), id],
+    ...envChangePatch(envState, "actors", `Added ${actor.name}`),
+  };
+};
+
+/**
+ * Who can reach whom: the caller and every present actor are in the
+ * conversation; an activated actor is reached through whoever activates it
+ * (another actor, or the agent). A chain that comes back on itself is a
+ * trigger loop — named, so it can't run forever.
+ *   { edges: [{ from, to, label }], loops: [[names]] }
+ */
+export const relationsOf = (cast) => {
+  const byId = new Map(cast.map((a) => [a.id, a]));
+  const edges = [{ from: "Caller", to: "Agent", label: "starts the conversation" }];
+  cast.forEach((a) => {
+    if (a.activatedBy && byId.has(a.activatedBy))
+      edges.push({ from: byId.get(a.activatedBy).name, to: a.name, label: a.trigger || "activates them" });
+    else if (a.entry === "contacted" || (a.entry === "joins" && a.trigger))
+      edges.push({ from: "Agent", to: a.name, label: a.trigger || "contacts them" });
+    else edges.push({ from: a.name, to: "Agent", label: getEntry(a.entry).label.toLowerCase() });
+  });
+  const loops = [];
+  cast.forEach((a) => {
+    const seen = [a.id];
+    let cur = a.activatedBy && byId.get(a.activatedBy);
+    while (cur) {
+      if (seen.includes(cur.id)) {
+        if (cur.id === a.id) loops.push(seen.map((id) => byId.get(id).name));
+        break;
+      }
+      seen.push(cur.id);
+      cur = cur.activatedBy && byId.get(cur.activatedBy);
+    }
+  });
+  return { edges, loops: loops.slice(0, 1) };
+};
+
+/**
+ * What an actor sees before a run: the facts it's given, the sources it may
+ * read (an evaluator-only reference never — it would hand over the answer),
+ * the tools it may act through, and whether it can approve.
+ */
+export const actorContextOf = (actor, envState) => {
+  const sources = (envState?.sources || []).filter((s) => (actor.sources || []).includes(s.id));
+  return {
+    facts: actor.knowledge || [],
+    sources: sources.map((s) => ({ name: s.name, allowed: s.visibility !== "evaluator" })),
+    tools: actor.tools || [],
+    canApprove: !!actor.canApprove,
+    approvalScope: actor.approvalScope || "",
+  };
+};
+
+/* The commands a developer would type — roadmap CLI names. */
+export const actorCli = {
+  list: (env) => `agent-learn actor list --environment ${env?.id || "<env>"}`,
+  set: (env, a) => `agent-learn actor set --environment ${env?.id || "<env>"} --file ./actors/${String(a?.name || "actor").toLowerCase().replace(/[^a-z0-9]+/g, "-")}.yaml`,
+};

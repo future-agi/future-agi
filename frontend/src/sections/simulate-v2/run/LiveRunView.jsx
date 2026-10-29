@@ -92,6 +92,7 @@ import { currentUser } from "../_mock/scenarioProvenance";
 import { monthUsage } from "../_mock/usageLedger";
 import { clickable, focusRing } from "../components/clickable";
 import { scenarioTitle } from "../_mock/scenarios";
+import { approvalOf } from "../_mock/approvals";
 
 // Flaky counts and results read as neutral words — amber never colours text.
 const FLAKY = "text.primary";
@@ -1856,6 +1857,50 @@ function LiveRun() {
         onAnswer={answer}
         onOpen={() => blocked && setFocusId(blocked.taskId)}
       />
+
+      {/* ── conversations waiting for an approver ── */}
+      {(() => {
+        const waiting = tasks.filter(
+          (t) =>
+            t.status !== "notStarted" &&
+            approvalOf({ env, envState, task: t })?.pending,
+        );
+        if (!waiting.length) return null;
+        const first = approvalOf({ env, envState, task: waiting[0] });
+        return (
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1.25}
+            sx={{
+              mx: 2,
+              mb: 1,
+              px: 1.5,
+              py: 1,
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: "8px",
+            }}
+          >
+            <Iconify
+              icon="solar:clock-circle-linear"
+              width={16}
+              sx={{ color: "text.secondary", flexShrink: 0 }}
+            />
+            <Typography sx={{ typography: "s2", flex: 1 }}>
+              {`Waiting for approval · ${waiting.length} conversation${waiting.length === 1 ? "" : "s"} — ${first.approver.name} answers within ${first.approver.timeoutMin || 3} min, or decide as them from the conversation.`}
+            </Typography>
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={() => setFocusId(waiting[0].id)}
+              sx={{ color: "text.primary", borderColor: "divider" }}
+            >
+              Open
+            </Button>
+          </Stack>
+        );
+      })()}
 
       {/* ── three columns ── */}
       <Box sx={{ display: "flex", flex: 1, minHeight: 0 }}>

@@ -53,7 +53,7 @@ const topCount = (values) => {
 /* ── root failure ───────────────────────────────────────────────────────── */
 
 /* "times out", "returns a 5xx"… — an injected fault, said plainly. */
-const FAULT_SAID = { timeout: "times out", error: "returns an error", rate_limited: "is rate-limited", malformed: "returns a malformed response", slow: "is slow" };
+const FAULT_SAID = { timeout: "times out", error: "returns an error", rate_limited: "is rate-limited", malformed: "returns a malformed response", slow: "is slow", after_commit: "commits, then times out before answering", permission: "denies permission", missing: "finds no such record", duplicate: "delivers an event twice", stale: "returns an out-of-date read", partial: "only partly succeeds" };
 
 const rootOf = (t, sub) => {
   /* Lost to an injected fault: the fault is the trigger, not recovering is

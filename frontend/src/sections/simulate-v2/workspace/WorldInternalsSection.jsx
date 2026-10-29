@@ -52,6 +52,8 @@ import SecretRefField from "../agents/connect/SecretRefField";
 import { SecretRefText } from "./SecretRefControls";
 import { useSimStore } from "../store";
 import { clickable, focusRing } from "../components/clickable";
+import ToolTryPanel from "./ToolTryPanel";
+import CopyCommandButton from "../components/CopyCommandButton";
 
 /**
  * World internals on the World tab.
@@ -418,23 +420,27 @@ function ToolImplsCard({ env, tools, envState, patch, onAddMcp, onRemove }) {
         </>
       }
       action={
-        patch &&
-        onAddMcp && (
-          <Button
-            size="small"
-            variant="outlined"
-            onClick={onAddMcp}
-            startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
-            sx={{
-              color: "text.primary",
-              borderColor: "divider",
-              flexShrink: 0,
-              whiteSpace: "nowrap",
-            }}
-          >
-            Add tools
-          </Button>
-        )
+        <Stack direction="row" spacing={1} alignItems="center">
+          <CopyCommandButton
+            command={`agent-learn tool list --environment ${env?.id || "<env>"}`}
+          />
+          {patch && onAddMcp && (
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={onAddMcp}
+              startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
+              sx={{
+                color: "text.primary",
+                borderColor: "divider",
+                flexShrink: 0,
+                whiteSpace: "nowrap",
+              }}
+            >
+              Add tools
+            </Button>
+          )}
+        </Stack>
       }
     >
       <Stack
@@ -603,6 +609,7 @@ function ToolImplsCard({ env, tools, envState, patch, onAddMcp, onRemove }) {
               )}
               <Collapse in={open} unmountOnExit>
                 <ToolArgs tool={tool} envState={envState} />
+                <ToolTryPanel tool={tool} env={env} envState={envState} />
                 <CodeBlock file={impl.file} code={impl.code} />
                 {tool.via?.kind === "mcp" && onRemove && (
                   <Stack

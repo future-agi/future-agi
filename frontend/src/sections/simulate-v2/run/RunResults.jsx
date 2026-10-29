@@ -97,6 +97,8 @@ import ShareMenu from "./ShareMenu";
 import CopyIdButton from "../components/CopyIdButton";
 import CopyCommandButton from "../components/CopyCommandButton";
 import HandoffTimeline from "./HandoffTimeline";
+import ApprovalTimeline from "./ApprovalTimeline";
+import { approvalOf } from "../_mock/approvals";
 import ImprovementRunStrip from "./ImprovementRunStrip";
 
 import { SHOW_INSIGHTS } from "../_mock/featureFlags";
@@ -2752,6 +2754,13 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                      drawer's Status chip — "Failed · agent". */
                       data={{
                         /* A multi-agent app: its handoffs, as their own tab. */
+                        simApprovals: approvalOf({
+                          env,
+                          envState,
+                          task: openTask,
+                        }) ? (
+                          <ApprovalTimeline env={env} task={openTask} />
+                        ) : null,
                         simHandoffs:
                           membersOf(envState?.agent).length > 1 ? (
                             <HandoffTimeline

@@ -1318,11 +1318,9 @@ const hasFaults = (toolFaults) =>
   Object.values(toolFaults).some(
     (f) =>
       f &&
-      (f.timeoutPct ||
-        f.errorPct ||
-        f.rateLimitPct ||
-        f.malformedPct ||
-        f.latencyMs),
+      Object.entries(f).some(
+        ([k, v]) => /Pct$|latencyMs/.test(k) && Number(v),
+      ),
   );
 
 /*
@@ -1354,6 +1352,32 @@ const RECOVERY = {
     ["waited", 0.85],
     ["failed", 0.15],
   ],
+  /* The write landed but its answer didn't: a good agent looks it up and
+     reuses it; a bad one writes it twice. */
+  after_commit: [
+    ["reused", 0.5],
+    ["failed", 0.5],
+  ],
+  permission: [
+    ["escalated", 0.6],
+    ["failed", 0.4],
+  ],
+  missing: [
+    ["asked", 0.6],
+    ["failed", 0.4],
+  ],
+  duplicate: [
+    ["ignored", 0.7],
+    ["failed", 0.3],
+  ],
+  stale: [
+    ["retried", 0.5],
+    ["failed", 0.5],
+  ],
+  partial: [
+    ["retried", 0.4],
+    ["failed", 0.6],
+  ],
 };
 const FAIL_SHARE = Object.fromEntries(
   Object.entries(RECOVERY).map(([k, rows]) => [
@@ -1368,6 +1392,12 @@ const KIND_LABEL = {
   rate_limited: "was rate-limited",
   malformed: "returned a malformed response",
   slow: "answered slowly",
+  after_commit: "committed, then timed out before answering",
+  permission: "was denied permission",
+  missing: "found no such record",
+  duplicate: "delivered the same event twice",
+  stale: "returned an out-of-date read",
+  partial: "only partly succeeded",
 };
 
 /** Which fault, if any, one call draws — by its share of the profile. */
@@ -1378,6 +1408,12 @@ const drawKind = (f, u) => {
     ["error", f.errorPct],
     ["rate_limited", f.rateLimitPct],
     ["malformed", f.malformedPct],
+    ["after_commit", f.afterCommitPct],
+    ["permission", f.permissionPct],
+    ["missing", f.missingPct],
+    ["duplicate", f.duplicatePct],
+    ["stale", f.stalePct],
+    ["partial", f.partialPct],
   ];
   for (let i = 0; i < order.length; i += 1) {
     cum += Number(order[i][1] || 0) / 100;
@@ -1399,6 +1435,18 @@ const faultNote = (name, kind, outcome, stage, wrote) => {
     return `${what}; the agent handed ${party} to a person instead of guessing.`;
   if (outcome === "waited")
     return `${what}; the agent held ${party} and carried on.`;
+  if (outcome === "reused")
+    return `${what}; the agent looked it up, found the write had landed and reused it — no second one.`;
+  if (outcome === "asked")
+    return `${what}; the agent asked ${party} to check the details instead of inventing them.`;
+  if (outcome === "ignored")
+    return `${what}; the agent recognised the repeat and applied it once.`;
+  if (kind === "after_commit")
+    return `${what}; the agent retried and made a second one — two now exist.`;
+  if (kind === "duplicate")
+    return `${what}; the agent applied it twice.`;
+  if (kind === "stale")
+    return `${what}; the agent acted on the old value.`;
   if (kind === "malformed")
     return `${what}; the agent read it as valid and acted on bad data.`;
   if (kind === "slow") return `${what}; ${party} gave up before it came back.`;
@@ -1460,7 +1508,13 @@ function sampleFaultFails({ seed, sc, k, callLog, toolFaults }) {
       (Number(f.timeoutPct || 0) * FAIL_SHARE.timeout +
         Number(f.errorPct || 0) * FAIL_SHARE.error +
         Number(f.rateLimitPct || 0) * FAIL_SHARE.rate_limited +
-        Number(f.malformedPct || 0) * FAIL_SHARE.malformed) /
+        Number(f.malformedPct || 0) * FAIL_SHARE.malformed +
+        Number(f.afterCommitPct || 0) * FAIL_SHARE.after_commit +
+        Number(f.permissionPct || 0) * FAIL_SHARE.permission +
+        Number(f.missingPct || 0) * FAIL_SHARE.missing +
+        Number(f.duplicatePct || 0) * FAIL_SHARE.duplicate +
+        Number(f.stalePct || 0) * FAIL_SHARE.stale +
+        Number(f.partialPct || 0) * FAIL_SHARE.partial) /
         100 +
       (Number(f.latencyMs || 0) >= 1000 ? 0.5 * FAIL_SHARE.slow : 0);
     return unit(`${seed}:${sc.id}:${c.id}:k${k}`) < pFail;

@@ -27,6 +27,7 @@ import { envLabelOf } from "../_mock/envVersionKinds";
 import { firstSnapshotOfWorld } from "../_mock/envSnapshot";
 import BuildStreamNote from "../environments/BuildStreamNote";
 import SourcesSection from "./data/SourcesSection";
+import IdentityMapCard from "./IdentityMapCard";
 
 /**
  * The world — the data and tool answers a run executes against.
@@ -405,6 +406,9 @@ export default function WorldPanel({
         <Box sx={{ mb: 2 }}>
           <TwinSandboxSection env={env} envState={envState} />
         </Box>
+      )}
+      {!inBuild && envState?.twinBacking && (
+        <IdentityMapCard envState={envState} />
       )}
       {/* The graph is one more view of the same tools — folded until asked for. */}
       {!inBuild &&

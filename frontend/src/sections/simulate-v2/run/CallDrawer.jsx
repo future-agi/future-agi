@@ -30,6 +30,8 @@ import { STALE_LABEL, verdictLineOf } from "../_mock/runCauses";
 import { textTone } from "../components/textTone";
 import { clickable, focusRing } from "../components/clickable";
 import HandoffTimeline from "./HandoffTimeline";
+import ApprovalTimeline from "./ApprovalTimeline";
+import { approvalOf } from "../_mock/approvals";
 import { membersOf } from "../_mock/improvementPolicy";
 
 /**
@@ -290,6 +292,9 @@ export default function CallDrawer({
               {membersOf(envState?.agent).length > 1 && (
                 <Tab value="handoffs" label="Handoffs" />
               )}
+              {env && approvalOf({ env, envState, task }) && (
+                <Tab value="approvals" label="Approvals" />
+              )}
               {envState?.twinBacking && (
                 <Tab value="twin" label="World state" />
               )}
@@ -302,6 +307,9 @@ export default function CallDrawer({
           <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
             {pane === "handoffs" && (
               <HandoffTimeline agent={envState?.agent} task={task} />
+            )}
+            {pane === "approvals" && env && (
+              <ApprovalTimeline env={env} task={task} />
             )}
             {/* A run that produced actions rather than speech gets the actions,
                 and — where the surface has one — the screen they happened on. */}
