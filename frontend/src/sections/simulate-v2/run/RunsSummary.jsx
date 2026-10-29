@@ -20,6 +20,7 @@ import {
   Checkbox,
   Popover,
   Tooltip,
+  ButtonBase,
   IconButton,
   Menu,
   MenuItem,
@@ -55,7 +56,6 @@ import { runCreditsOf } from "../_mock/usageLedger";
 import { resolveEval } from "../_mock/evals";
 import { useConnectedAgents, useEnvState } from "../store";
 import { improvementRowsOf } from "../improvements/improvementRows";
-import StatusPill from "../improvements/ImprovementStatusPill";
 import { neutralCheckboxSx } from "../components/primitives";
 import { Head, MetricCell, ScoreCell } from "./RunsTableCells";
 import { compactTokens } from "./runsTableFormat";
@@ -201,11 +201,9 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
   }, [summaries, trials, envState.optimizations]);
 
   /*
-    What the list shows: the runs of the agent, and each improvement as one
-    row. An improvement's trials are the agent with a change it may never
-    ship, scored on its target scenarios only — listed one by one they'd
-    read as the agent's history and bury the runs someone started. The row
-    says what it tried and how it went, and opens the improvement.
+    What the list shows: the runs of the agent only. An improvement lives on
+    the run it started from (that run's Improvements tab) — interleaved here
+    they buried the runs someone started. Each run says how many it has.
   */
   const { agents, state: simState } = useConnectedAgents();
   const improvementRows = useMemo(() => {
@@ -240,9 +238,21 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
           !isCandidateRun(r, envState) ||
           improvementOf(r, envState)?.role === "baseline",
       ),
-      ...improvementRows,
     ].sort((a, b) => when(a) - when(b));
-  }, [mergedRaw, improvementRows, envState]);
+  }, [mergedRaw, envState]);
+  /* The improvements started from each run, newest first. */
+  const improvementsByRun = useMemo(() => {
+    const m = new Map();
+    improvementRows.forEach((x) => {
+      const id = x.row.fromRunId;
+      if (id) m.set(id, [x.row, ...(m.get(id) || [])]);
+    });
+    return m;
+  }, [improvementRows]);
+  const openImprovements = (r) =>
+    navigate(
+      `${paths.dashboard.simulate.simulationRun(env.id, r.id)}?tab=improvements`,
+    );
 
   /* Newest first for display — the run someone just finished is the top row. */
   const rows = useMemo(() => [...listed].reverse(), [listed]);
@@ -852,98 +862,6 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                       ? null
                       : previousRunOf(finishedRuns, r, versionOf);
 
-                /* An improvement, as one row: what it tried and how it went. */
-                if (r.kind === "improvement") {
-                  const x = r.row;
-                  return (
-                    <Box
-                      key={r.id}
-                      {...clickable(() => navigate(x.href), { role: "link" })}
-                      sx={{
-                        display: "grid",
-                        gridTemplateColumns: grid.template,
-                        alignItems: "center",
-                        columnGap: 0,
-                        pl: 1.5,
-                        minHeight: 40,
-                        cursor: "pointer",
-                        borderLeft: "2px solid",
-                        borderColor: "transparent",
-                        "&:hover": { bgcolor: "action.hover" },
-                        ...focusRing,
-                      }}
-                    >
-                      <Box />
-                      <Stack
-                        direction="row"
-                        alignItems="center"
-                        spacing={1.25}
-                        sx={{
-                          gridColumn: "2 / -1",
-                          minWidth: 0,
-                          py: 0.875,
-                          pr: 1.5,
-                        }}
-                      >
-                        <Box
-                          sx={{
-                            minWidth: 26,
-                            height: 22,
-                            borderRadius: "4px",
-                            flexShrink: 0,
-                            display: "grid",
-                            placeItems: "center",
-                            color: "text.secondary",
-                            bgcolor: "background.neutral",
-                          }}
-                        >
-                          <Iconify
-                            icon={
-                              x.issueId ? "fagi:fix" : "solar:graph-up-linear"
-                            }
-                            width={14}
-                          />
-                        </Box>
-                        <Typography
-                          noWrap
-                          sx={{
-                            typography: "s2",
-                            fontWeight: 500,
-                            flexShrink: 0,
-                          }}
-                        >
-                          {x.name}
-                        </Typography>
-                        <Typography
-                          noWrap
-                          sx={{
-                            typography: "s2",
-                            color: "text.tertiary",
-                            minWidth: 0,
-                          }}
-                        >
-                          {[
-                            x.issueId ? `fix for ${x.issueId}` : null,
-                            `${r.trials} ${r.trials === 1 ? "trial" : "trials"}`,
-                            r.best != null
-                              ? `best ${r.best}% on its target scenarios`
-                              : null,
-                          ]
-                            .filter(Boolean)
-                            .join(" · ")}
-                        </Typography>
-                        <StatusPill ending={x.status} headline={x.headline} />
-                        <Box sx={{ flex: 1 }} />
-                        <Iconify
-                          icon="solar:alt-arrow-right-linear"
-                          width={14}
-                          sx={{ color: "text.tertiary", flexShrink: 0 }}
-                        />
-                      </Stack>
-                    </Box>
-                  );
-                }
-
                 if (r.kind === "queued-demo") {
                   return (
                     <Box
@@ -1213,7 +1131,11 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                         </Stack>
                       </Stack>
 
-                      <StatusCell status={runStatus(r)} />
+                      <StatusCell
+                        status={runStatus(r)}
+                        improvements={improvementsByRun.get(r.id)}
+                        onOpenImprovements={() => openImprovements(r)}
+                      />
                       {scenarioCell(r, against)}
                       <MetricCell
                         anchor
@@ -1581,7 +1503,11 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                       />
                     </Stack>
 
-                    <StatusCell status={runStatus(r)} />
+                    <StatusCell
+                      status={runStatus(r)}
+                      improvements={improvementsByRun.get(r.id)}
+                      onOpenImprovements={() => openImprovements(r)}
+                    />
                     {scenarioCell(r, against)}
                     <MetricCell
                       anchor
@@ -1881,7 +1807,7 @@ RunsSummary.propTypes = {
    already say that. Same soft chip and colours as the legacy runs table
    (BaseStatusCellRenderer + shared statusStyles), so status reads the same
    everywhere in the product. */
-const STATUS_COL = 96;
+const STATUS_COL = 128;
 
 const QUEUED_ID = "demo-queued";
 
@@ -1999,9 +1925,19 @@ RunRowMenu.propTypes = {
   onDelete: PropTypes.func,
 };
 
-function StatusCell({ status }) {
+function StatusCell({ status, improvements, onOpenImprovements }) {
+  const n = improvements?.length || 0;
+  const latest = improvements?.[0];
   return (
-    <Box sx={{ display: "flex", alignItems: "center", minWidth: 0, pr: 1 }}>
+    <Box
+      sx={{
+        display: "flex",
+        alignItems: "center",
+        gap: 0.75,
+        minWidth: 0,
+        pr: 1,
+      }}
+    >
       <Chip
         variant="soft"
         label={status}
@@ -2011,10 +1947,43 @@ function StatusCell({ status }) {
           ...RUN_CHIP_STYLES[status],
         }}
       />
+      {/* Improvements started from this run — they open on its own tab. */}
+      {n > 0 && (
+        <Tooltip
+          arrow
+          title={`${n} ${n === 1 ? "improvement" : "improvements"} from this run${latest?.status?.label ? ` · latest ${latest.status.label.toLowerCase()}` : ""}. Opens the run's Improvements tab.`}
+        >
+          <ButtonBase
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenImprovements();
+            }}
+            aria-label={`${n} improvements from this run`}
+            sx={{
+              gap: 0.375,
+              px: 0.5,
+              height: 22,
+              borderRadius: "4px",
+              typography: "s3",
+              fontVariantNumeric: "tabular-nums",
+              color: "text.secondary",
+              flexShrink: 0,
+              "&:hover": { bgcolor: "action.hover", color: "text.primary" },
+            }}
+          >
+            <Iconify icon="solar:graph-up-linear" width={14} />
+            {n}
+          </ButtonBase>
+        </Tooltip>
+      )}
     </Box>
   );
 }
-StatusCell.propTypes = { status: PropTypes.string };
+StatusCell.propTypes = {
+  status: PropTypes.string,
+  improvements: PropTypes.array,
+  onOpenImprovements: PropTypes.func,
+};
 
 /* A run's env pairing and timestamp — the part of its name that gives way,
    with an ellipsis and the full text on hover, when the column is narrow. */

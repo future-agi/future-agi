@@ -45,7 +45,9 @@ const HEADER_HEIGHT = 40;
  *
  * With `agent` it's the agent page's Improvements tab: only that agent's.
  */
-export default function ImprovementSourcesList({ agent }) {
+export default function ImprovementSourcesList({ agent, run }) {
+  const runEnvId = run?.envId;
+  const runId = run?.runId;
   const navigate = useNavigate();
   const location = useLocation();
   const { state, dispatch } = useSimStore();
@@ -72,9 +74,15 @@ export default function ImprovementSourcesList({ agent }) {
   }, [anyRunning]);
 
   const rows = useMemo(() => {
-    const mine = agent
-      ? improvements.filter((r) => r.agentKey === agent.key)
-      : improvements;
+    /* A run's tab lists what was started from that run — Debug failures,
+       a goal's first measure, an issue's reproduce run. */
+    const mine = runId
+      ? improvements.filter(
+          (r) => r.envId === runEnvId && r.fromRunId === runId,
+        )
+      : agent
+        ? improvements.filter((r) => r.agentKey === agent.key)
+        : improvements;
     const envRows = mine.map((r) => {
       const env = (state.myEnvironments || []).find((e) => e.id === r.envId);
       const record = (state.byEnv?.[r.envId]?.optimizations || []).find(
@@ -112,7 +120,15 @@ export default function ImprovementSourcesList({ agent }) {
           (Date.parse(b.createdAt || 0) || 0) -
           (Date.parse(a.createdAt || 0) || 0),
       );
-  }, [improvements, agent, agents, state.myEnvironments, state.byEnv]);
+  }, [
+    improvements,
+    agent,
+    runEnvId,
+    runId,
+    agents,
+    state.myEnvironments,
+    state.byEnv,
+  ]);
 
   const filterFields = useMemo(() => {
     const choicesOf = (pick) =>
@@ -170,7 +186,7 @@ export default function ImprovementSourcesList({ agent }) {
   /* Level 2 comes back here — this page, or the agent's Improvements tab. */
   const back = {
     to: `${location.pathname}${location.search}`,
-    label: agent ? agent.name : "Improvements",
+    label: run ? run.label : agent ? agent.name : "Improvements",
   };
   const openRow = (r) => navigate(r.href, { state: { back } });
 
@@ -268,7 +284,7 @@ export default function ImprovementSourcesList({ agent }) {
     },
     /* The PRD's columns: which agent, how it ended, what it proved, what it
        shipped and what it cost. The runs it tried live on its own page. */
-    ...(agent
+    ...(agent || run
       ? []
       : [
           {
@@ -403,7 +419,7 @@ export default function ImprovementSourcesList({ agent }) {
     },
   ];
 
-  const embedded = !!agent;
+  const embedded = !!agent || !!run;
   return (
     <Box
       sx={
@@ -485,14 +501,11 @@ export default function ImprovementSourcesList({ agent }) {
             New improvement
           </Button>
         )}
-        <NewImprovement
-          open={newOpen}
-          onClose={() => setNewOpen(false)}
-        />
+        <NewImprovement open={newOpen} onClose={() => setNewOpen(false)} />
       </Stack>
 
       {/* Acceptance rate, time to proposal, fix survival — over what's listed. */}
-      <ImprovementMetricsStrip rows={rows} />
+      {!run && <ImprovementMetricsStrip rows={rows} />}
 
       <ObjectFilterPanel
         anchorEl={filterAnchorEl}
@@ -583,9 +596,11 @@ export default function ImprovementSourcesList({ agent }) {
           emptyMessage={
             query || activeFilterCount
               ? "Nothing matches."
-              : agent
-                ? `${agent.name} hasn't been improved yet. Start one from Debug failures on a finished run, or Fix on an Error Feed issue.`
-                : "No improvements yet. Start one with New improvement, from Debug failures on a finished run, or with Fix on an Error Feed issue."
+              : run
+                ? `Nothing has been improved from ${run.label} yet. Debug failures starts one from its failing scenarios.`
+                : agent
+                  ? `${agent.name} hasn't been improved yet. Start one from Debug failures on a finished run, or Fix on an Error Feed issue.`
+                  : "No improvements yet. Start one with New improvement, from Debug failures on a finished run, or with Fix on an Error Feed issue."
           }
         />
       </Box>
@@ -640,7 +655,14 @@ export default function ImprovementSourcesList({ agent }) {
   );
 }
 
-ImprovementSourcesList.propTypes = { agent: PropTypes.object };
+ImprovementSourcesList.propTypes = {
+  agent: PropTypes.object,
+  run: PropTypes.shape({
+    envId: PropTypes.string,
+    runId: PropTypes.string,
+    label: PropTypes.string,
+  }),
+};
 
 /* A column header that says what the column means on hover. */
 function HeaderTip({ label, tip }) {

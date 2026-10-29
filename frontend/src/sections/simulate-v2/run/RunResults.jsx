@@ -74,6 +74,7 @@ import { IssueRunOrigin } from "../errorFeed/FixRunNote";
 import RunGroupBar from "./RunGroupBar";
 import InsightsTab from "./InsightsTab";
 import CostTab from "./CostTab";
+import ImprovementSourcesList from "../improvements/ImprovementSourcesList";
 import CostStrip from "./CostStrip";
 import { TraceSheet } from "./TraceWaterfall";
 import { runTracingOf, runIssueImprovement } from "../errorFeed/runIssueFix";
@@ -411,6 +412,11 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
   */
   const summaries = runSummaries(env, envState);
   const identity = summaries.find((r) => r.id === runId);
+  /* Improvements started from this run live on its own tab, not on the
+     environment's run list. */
+  const improvedFrom = (envState.optimizations || []).filter(
+    (o) => o.fromRunId === runId,
+  ).length;
 
   /*
     Trial detection. A trial id is `${OPT-XXXXX}-t${n}`. When someone lands
@@ -1877,6 +1883,12 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
             <Tab value="tasks" label={`Scenarios (${stats.total})`} />
             <Tab value="analytics" label="Analytics" />
             <Tab value="cost" label="Cost" />
+            <Tab
+              value="improvements"
+              label={
+                improvedFrom ? `Improvements (${improvedFrom})` : "Improvements"
+              }
+            />
           </CustomTabs>
 
           {/* Wraps both tab bodies so it survives a tab switch: errors thrown
@@ -2296,6 +2308,18 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                 onOpenFix={(optId) => {
                   setFixOptId(optId);
                   setFixOpen(true);
+                }}
+              />
+            )}
+
+            {tab === "improvements" && (
+              <ImprovementSourcesList
+                run={{
+                  envId: env.id,
+                  runId,
+                  label: identity?.ordinal
+                    ? `Run ${identity.ordinal}`
+                    : "this run",
                 }}
               />
             )}
