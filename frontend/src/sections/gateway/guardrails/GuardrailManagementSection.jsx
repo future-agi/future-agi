@@ -748,7 +748,6 @@ const LogsTab = ({ gatewayId }) => {
     queryKey: ["agentcc-guardrail-logs", gatewayId],
     queryFn: async () => {
       const qs = createQueryString({
-        gateway_id: gatewayId,
         guardrail_triggered: true,
         limit: 50,
       });
@@ -766,9 +765,7 @@ const LogsTab = ({ gatewayId }) => {
   const logList = Array.isArray(logs) ? logs : logs?.results || [];
 
   if (isLoading) {
-    return (
-      <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />
-    );
+    return <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />;
   }
 
   return (

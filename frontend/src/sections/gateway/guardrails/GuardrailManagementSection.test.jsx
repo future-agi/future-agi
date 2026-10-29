@@ -1,6 +1,9 @@
 import React from "react";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "src/utils/test-utils";
+import axiosInstance from "src/utils/axios";
+import { validateContractedRequestConfig } from "src/api/contracts/openapi-contract";
 import GuardrailManagementSection from "./GuardrailManagementSection";
 
 let mockOrgConfigReturn = {
@@ -8,11 +11,13 @@ let mockOrgConfigReturn = {
   isLoading: false,
 };
 
+let mockTab;
+
 vi.mock("react-router-dom", async () => {
   const actual = await vi.importActual("react-router-dom");
   return {
     ...actual,
-    useParams: () => ({ tab: undefined }),
+    useParams: () => ({ tab: mockTab }),
     useNavigate: () => vi.fn(),
   };
 });
@@ -52,6 +57,49 @@ describe("GuardrailManagementSection", () => {
       data: null,
       isLoading: false,
     };
+    mockTab = undefined;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("lists guardrail-triggered requests with a query the API contract accepts", async () => {
+    mockTab = "logs";
+    const get = vi.spyOn(axiosInstance, "get").mockResolvedValue({
+      data: {
+        count: 1,
+        results: [
+          {
+            id: "log-1",
+            request_id: "req-blocked-1",
+            started_at: "2026-10-28T19:46:17Z",
+            model: "gpt-4o-mini",
+            status_code: 403,
+            guardrail_triggered: true,
+            error_message: "Request blocked by guardrail: keyword-blocklist",
+          },
+        ],
+      },
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <GuardrailManagementSection />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("gpt-4o-mini")).toBeInTheDocument();
+    const [url] = get.mock.calls[0];
+    expect(url).toContain("guardrail_triggered=true");
+    // Outside production builds the axios contract guard rejects undeclared
+    // query params before the request is sent, so the tab stayed empty.
+    expect(
+      validateContractedRequestConfig({ url, method: "get" }),
+    ).toMatchObject({ ok: true });
   });
 
   it("derives the overview type label from the guardrail name", () => {
