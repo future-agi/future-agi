@@ -922,8 +922,8 @@ weekly drift job will fail on it. See `cmd/model-watch/README.md`.
 Fixtures only show what someone recorded. `internal/providers/contractspec`
 checks every adapter against the provider's **official machine-readable
 spec**: OpenAI and Anthropic OpenAPI, Gemini and Vertex discovery, Bedrock
-Smithy, Cohere, Azure 2024-10-21, Groq, Together and OpenRouter. It does this
-offline, with no credentials and no model calls.
+Smithy, Cohere, Azure 2024-10-21, Groq, Together, OpenRouter and xAI. It does
+this offline, with no credentials and no model calls.
 
 - **Committed subsets.** `contractspec/subsets/<provider>/<root>.json` holds
   the flattened contract of each response, stream and error body an adapter
@@ -960,7 +960,7 @@ offline, with no credentials and no model calls.
   stream event, kind change or newly-nullable field, and opens or updates one
   `Provider spec drift: <provider>` issue per provider.
 - **Providers without a fetchable spec** are Perplexity, Fireworks, Cerebras,
-  Mistral, xAI, DeepSeek and DeepInfra. They are listed in
+  Mistral, DeepSeek and DeepInfra. They are listed in
   `contractspec/subsets/unfetchable.json` with the reason. Where a Stainless or
   Speakeasy spec hash is published, it is tracked as a change signal.
 
