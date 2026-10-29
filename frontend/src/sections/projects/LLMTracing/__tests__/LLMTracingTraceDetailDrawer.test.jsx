@@ -102,4 +102,41 @@ describe("LLMTracingTraceDetailDrawer project pin", () => {
       filters,
     });
   });
+
+  it("opened from a project's trace list, sends no run with the read", () => {
+    mocks.params = { observeId: "project-route" };
+    mocks.store.traceDetailDrawerOpen = {
+      traceId: "trace-1",
+      projectId: "project-route",
+      filters: [],
+    };
+
+    render(<LLMTracingTraceDetailDrawer />);
+
+    expect(lastDrawerProps().testExecutionId).toBeUndefined();
+  });
+
+  it("opened from a call, hands the run to the read and keeps it while stepping", () => {
+    mocks.store.traceDetailDrawerOpen = {
+      traceId: "trace-1",
+      projectId: "hidden-project",
+      testExecutionId: "run-1",
+    };
+    mocks.store.visibleTraces = [
+      { traceId: "trace-1", projectId: "hidden-project" },
+      { traceId: "trace-2", projectId: "hidden-project" },
+    ];
+
+    render(<LLMTracingTraceDetailDrawer />);
+
+    const props = lastDrawerProps();
+    expect(props.testExecutionId).toBe("run-1");
+    act(() => props.onNext());
+    expect(mocks.store.setTraceDetailDrawerOpen).toHaveBeenLastCalledWith({
+      traceId: "trace-2",
+      projectId: "hidden-project",
+      testExecutionId: "run-1",
+      filters: [],
+    });
+  });
 });

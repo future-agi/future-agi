@@ -182,7 +182,7 @@ def test_configured_verdict_query_compiles_without_database():
     config.eval_template.choice_scores = {"good": 1.0, "bad": 0.0}
     with (
         patch(
-            "simulate.services.run_results_v3_queries.SimulateEvalConfig.objects.filter"
+            "simulate.services.run_results_v3_scoring.SimulateEvalConfig.objects.filter"
         ) as filtered,
         patch(
             "simulate.services.run_results_v3_queries.HostedHarnessJob.all_objects.filter"
@@ -190,7 +190,7 @@ def test_configured_verdict_query_compiles_without_database():
     ):
         filtered.return_value.select_related.return_value = [config]
         jobs.return_value.values_list.return_value = []
-        queryset = run_calls_queryset(SimpleNamespace(run_test=None), [uuid.uuid4()])
+        queryset = run_calls_queryset(SimpleNamespace(run_test_id=None), [uuid.uuid4()])
 
     sql = str(queryset.query)
     assert "result_scenario_key" in sql

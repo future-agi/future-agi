@@ -1,13 +1,15 @@
 import PropTypes from "prop-types";
-import { Box, Stack, Typography, Tooltip } from "@mui/material";
+import { Box, Stack, Typography } from "@mui/material";
+import CustomTooltip from "src/components/tooltip";
 import { BUILD_TONES } from "../buildEnvironment/buildTones";
 import { WORKSPACE_COPY } from "./workspace.constants";
 
 // A tab's label: its name, an optional item count, and — when the tab owns a
 // blocking setup gap — a soft-tinted count badge whose tooltip lists what is
 // still missing. The count is hidden while the builder is streaming (the parent
-// passes a null count), and a zero count never shows a badge.
-export default function WorkspaceTabLabel({ label, count, gaps }) {
+// passes a null count), and a zero count never shows a badge. The tab's hint,
+// what the tab is for, leads the same tooltip so the panel needs no heading.
+export default function WorkspaceTabLabel({ label, count, gaps, hint }) {
   const hasGaps = gaps && gaps.length > 0;
 
   const content = (
@@ -40,26 +42,35 @@ export default function WorkspaceTabLabel({ label, count, gaps }) {
     </Stack>
   );
 
-  if (!hasGaps) return content;
-
   return (
-    <Tooltip
+    <CustomTooltip
+      show={hasGaps || !!hint}
+      // The hint describes the tab; without this a rich title would become
+      // the tab's accessible name while it shows.
+      describeChild
       arrow
+      size="small"
+      enterDelay={hasGaps ? 100 : 400}
       title={
-        <Box>
-          <Typography sx={{ typography: "s3", fontWeight: "fontWeightBold", mb: 0.375 }}>
-            {WORKSPACE_COPY.gaps.tooltip}
-          </Typography>
-          {gaps.map((gap) => (
-            <Typography key={gap.id} sx={{ typography: "s3", opacity: 0.9 }}>
-              · {gap.title}
-            </Typography>
-          ))}
+        <Box sx={{ maxWidth: 280 }}>
+          {hint && <Typography sx={{ typography: "s3" }}>{hint}</Typography>}
+          {hasGaps && (
+            <Box sx={{ mt: hint ? 1 : 0 }}>
+              <Typography sx={{ typography: "s3", fontWeight: "fontWeightBold", mb: 0.375 }}>
+                {WORKSPACE_COPY.gaps.tooltip}
+              </Typography>
+              {gaps.map((gap) => (
+                <Typography key={gap.id} sx={{ typography: "s3", opacity: 0.9 }}>
+                  · {gap.title}
+                </Typography>
+              ))}
+            </Box>
+          )}
         </Box>
       }
     >
       {content}
-    </Tooltip>
+    </CustomTooltip>
   );
 }
 
@@ -69,4 +80,5 @@ WorkspaceTabLabel.propTypes = {
   gaps: PropTypes.arrayOf(
     PropTypes.shape({ id: PropTypes.string, title: PropTypes.string }),
   ),
+  hint: PropTypes.string,
 };

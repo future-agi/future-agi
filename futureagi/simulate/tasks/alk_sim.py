@@ -15,13 +15,23 @@ from __future__ import annotations
 
 import structlog
 from django.db import close_old_connections, transaction
+from django.utils import timezone
 
 from simulate.constants.csat_score_prompt import CSAT_SCORE_PROMPT
 from simulate.models import CallExecution
+from simulate.services.scoring_status import (
+    CSAT_STAMP_KEY,
+    REASON_CSAT_NO_EVIDENCE,
+    settle_run,
+)
+from tfc.logging.temporal import try_activity_info
 from tfc.temporal.drop_in import temporal_activity
 from tfc.utils.storage_client import server_reachable_url
 
 logger = structlog.get_logger(__name__)
+
+# Retries of the CSAT activity after its first attempt.
+CSAT_MAX_RETRIES = 2
 
 _CSAT_RULE_PROMPT = (
     CSAT_SCORE_PROMPT["criteria"] + "\n\n## Inputs\n\n<output>{{output}}</output>"
@@ -31,7 +41,7 @@ _CSAT_CHOICES = list(CSAT_SCORE_PROMPT["choices"])
 
 @temporal_activity(
     time_limit=600,
-    max_retries=2,
+    max_retries=CSAT_MAX_RETRIES,
     queue="tasks_xl",
 )
 def calculate_alk_voice_csat_score(call_execution_id: str) -> None:
@@ -50,6 +60,15 @@ def calculate_alk_voice_csat_score(call_execution_id: str) -> None:
     existing_csat = (call.conversation_metrics_data or {}).get("csat_score")
     if existing_csat is not None:
         _set_csat_state(call, "completed")
+        settle_run(call.test_execution_id)
+        return
+
+    # Nothing to score is an answer, not a failure: no retry and no generic
+    # error for a call with neither a recording nor a transcript.
+    if not call.recording_url and not _build_transcript_text(call):
+        _set_csat_state(call, "skipped", REASON_CSAT_NO_EVIDENCE)
+        logger.info("alk_csat_skipped_no_evidence", call_execution_id=str(call.id))
+        settle_run(call.test_execution_id)
         return
 
     _set_csat_state(call, "running")
@@ -60,8 +79,15 @@ def calculate_alk_voice_csat_score(call_execution_id: str) -> None:
         if csat_score is None:
             raise RuntimeError("CSAT scorer returned no result for available evidence")
     except Exception as exc:
-        _set_csat_state(call, "failed", str(exc))
         logger.exception("alk_csat_failed", call_execution_id=str(call.id))
+        if not _is_last_attempt():
+            # Temporal runs this again, seconds from now unless its queue is
+            # backed up. CSAT stays `running`, so its run keeps waiting for
+            # the attempt that can still score it instead of completing on a
+            # failure that is not final yet.
+            raise
+        _set_csat_state(call, "failed", str(exc))
+        settle_run(call.test_execution_id)
         raise
 
     metrics = dict(call.conversation_metrics_data or {})
@@ -75,11 +101,28 @@ def calculate_alk_voice_csat_score(call_execution_id: str) -> None:
         update_fields.append("overall_score")
     call.save(update_fields=update_fields)
     _set_csat_state(call, "completed")
+    settle_run(call.test_execution_id)
     logger.info(
         "alk_csat_scored",
         call_execution_id=str(call.id),
         csat_score=csat_score,
     )
+
+
+def _is_last_attempt() -> bool:
+    """Whether Temporal will not run the CSAT activity again after this attempt.
+
+    Called outside an activity (a direct call, a test) nothing retries it.
+    Inside one, the attempt number is compared with the retry policy the
+    server reports, or with this task's own when it reports none. A policy
+    with no limit always has another attempt.
+    """
+    info = try_activity_info()
+    if info is None:
+        return True
+    policy = info.retry_policy
+    limit = CSAT_MAX_RETRIES + 1 if policy is None else policy.maximum_attempts
+    return limit > 0 and info.attempt >= limit
 
 
 def _score_from_recording(call: CallExecution) -> float | None:
@@ -185,6 +228,9 @@ def _set_csat_state(
         locked = CallExecution.objects.select_for_update().get(id=call.id)
         metadata = dict(locked.call_metadata or {})
         metadata["csat_status"] = status
+        if status == "running":
+            # The CSAT job clock runs from the start of this attempt.
+            metadata[CSAT_STAMP_KEY] = timezone.now().isoformat()
         if error:
             metadata["csat_error"] = error[:2000]
         else:

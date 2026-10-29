@@ -397,6 +397,9 @@ class ExperimentFeedbackSubmitV2View(APIView):
 
             row_dict["feedback_comment"] = feedback.explanation
             row_dict["feedback_value"] = feedback.value
+            # Stable identity so a retune tombstones the prior vector for
+            # this Feedback record instead of orphaning it.
+            row_dict["feedback_id"] = str(feedback.id)
 
             # Embed feedback for RAG few-shot
             futureagi_eval = (

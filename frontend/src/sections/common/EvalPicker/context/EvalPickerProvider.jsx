@@ -61,6 +61,7 @@ const EvalPickerProvider = ({
   addedEvalAction = null,
   // Opt-in: refuse to add an eval that has no inputs to map.
   requireInputs = false,
+  hideCompositeCreate = false,
 }) => {
   const [step, setStep] = useState(initialEval ? "config" : "list");
   const [selectedEval, setSelectedEvalState] = useState(
@@ -132,6 +133,7 @@ const EvalPickerProvider = ({
         addedEvals,
         addedEvalAction,
         requireInputs,
+        hideCompositeCreate,
       }}
     >
       {children}
@@ -176,6 +178,7 @@ EvalPickerProvider.propTypes = {
     show: PropTypes.func,
   }),
   requireInputs: PropTypes.bool,
+  hideCompositeCreate: PropTypes.bool,
 };
 
 export default EvalPickerProvider;

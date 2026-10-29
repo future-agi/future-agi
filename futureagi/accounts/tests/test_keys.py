@@ -660,6 +660,88 @@ class TestGenerateSecretKeyValidation:
 
 @pytest.mark.integration
 @pytest.mark.api
+class TestIngestKeysStayOffTheKeysPage:
+    """Sandbox ingest keys belong to the platform: never listed, never made here."""
+
+    def test_list_leaves_out_ingest_keys(
+        self, auth_client, user, organization, workspace
+    ):
+        from accounts.models.user import OrgApiKey
+
+        # All three sit in the client's own workspace, which the list is
+        # filtered to; the ingest key is created last so it would sort first.
+        system = OrgApiKey.objects.create(
+            name="listed-system-key",
+            organization=organization,
+            workspace=workspace,
+            type="system",
+        )
+        listed = OrgApiKey.objects.create(
+            name="listed-user-key",
+            organization=organization,
+            workspace=workspace,
+            type="user",
+            user=user,
+        )
+        ingest = OrgApiKey.objects.create(
+            name=f"simulation_export_key {uuid.uuid4()}",
+            organization=organization,
+            workspace=workspace,
+            type="ingest",
+            user=None,
+            simulation_agent_id=uuid.uuid4(),
+        )
+
+        response = auth_client.get(f"{SECRET_KEYS_URL}?page_size=2")
+
+        assert response.status_code == status.HTTP_200_OK
+        rows = _rows(response)
+        assert {row["id"] for row in rows} == {str(system.id), str(listed.id)}
+        assert str(ingest.id) not in {row["id"] for row in rows}
+        assert {row["type"] for row in rows} == {"system", "user"}
+        assert _metadata(response)["total_rows"] == 2
+        assert _metadata(response)["total_pages"] == 1
+
+        by_name = auth_client.get(f"{SECRET_KEYS_URL}?search=simulation_export_key")
+        assert _rows(by_name) == []
+        assert _metadata(by_name)["total_rows"] == 0
+
+    def test_generate_secret_key_refuses_an_ingest_type(
+        self, auth_client, organization
+    ):
+        from accounts.models.user import OrgApiKey
+
+        before = OrgApiKey.all_objects.filter(organization=organization).count()
+
+        response = auth_client.post(
+            "/accounts/key/generate_secret_key/",
+            {"key_name": "Smuggled Ingest Key", "type": "ingest"},
+            format="json",
+        )
+
+        _assert_unknown_field(response, "type")
+        assert OrgApiKey.all_objects.filter(organization=organization).count() == before
+        assert not OrgApiKey.all_objects.filter(name="Smuggled Ingest Key").exists()
+
+    def test_generate_secret_key_creates_a_user_key(self, auth_client, user):
+        from accounts.models.user import OrgApiKey
+
+        response = auth_client.post(
+            "/accounts/key/generate_secret_key/",
+            {"key_name": "Plain User Key"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        key_id = response.json()["result"]["key_id"]
+        key = OrgApiKey.no_workspace_objects.get(id=key_id)
+        assert key.type == "user"
+        assert key.user_id == user.id
+        assert key.simulation_agent_id is None
+
+
+@pytest.mark.integration
+@pytest.mark.api
 class TestEnableDisableKeyStates:
     """Tests for enable/disable key state transitions."""
 

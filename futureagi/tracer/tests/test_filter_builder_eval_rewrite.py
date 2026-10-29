@@ -377,14 +377,21 @@ class TestEvalScoreCompilation:
         assert "output_float IS NOT NULL" in where
         assert "NOT IN (" in where
 
-    def test_score_is_not_null_checks_presence(self, monkeypatch):
+    @pytest.mark.parametrize("eval_count_mode", [False, True])
+    def test_score_is_not_null_checks_presence(self, monkeypatch, eval_count_mode):
         eval_id, _ = _patch_eval(monkeypatch, "SCORE")
         where, _ = _translate(
-            ClickHouseFilterBuilder, _eval_filter(eval_id, "is_not_null")
+            ClickHouseFilterBuilder,
+            _eval_filter(eval_id, "is_not_null"),
+            eval_count_mode=eval_count_mode,
         )
         assert "output_float IS NOT NULL" in where
         assert "trace_id IN (" in where
-        assert "NOT IN" not in where
+        assert ("latest_eval.completed_rank = 1" in where) is eval_count_mode
+        if eval_count_mode:
+            assert where.index("latest_eval.completed_rank = 1") < where.index(
+                "output_float IS NOT NULL"
+            )
 
 
 # ===========================================================================
@@ -458,17 +465,28 @@ class TestEvalChoiceCompilation:
         assert "output_str = " in where
         assert "yes" in params.values()
 
-    def test_multi_value_choice_or_join_is_wrapped_in_parens(self, monkeypatch):
+    @pytest.mark.parametrize("eval_count_mode", [False, True])
+    def test_multi_value_choice_or_join_is_wrapped_in_parens(
+        self, monkeypatch, eval_count_mode
+    ):
         # Precedence fix: the OR-join across values is wrapped so the
         # config/deleted/error guards scope ALL values, not just the first.
         eval_id, _ = _patch_eval(monkeypatch, "CHOICE")
         where, _ = _translate(
-            ClickHouseFilterBuilder, _eval_filter(eval_id, "in", ["a", "b", "c"])
+            ClickHouseFilterBuilder,
+            _eval_filter(eval_id, "in", ["a", "b", "c"]),
+            eval_count_mode=eval_count_mode,
         )
         assert " OR " in where
-        # The combined membership block sits inside the AND-guarded subquery,
-        # so the guards precede a parenthesised OR group.
-        assert "AND error = 0 AND ((" in where
+        # Each mode applies the error guard to the whole OR group. In count
+        # mode completion is tested before rank, and rank before membership.
+        assert "AND error = 0 AND ((has(" in where
+        assert ("latest_eval.completed_rank = 1" in where) is eval_count_mode
+        if eval_count_mode:
+            assert "physical_eval.error = 0" in where
+            assert where.index("latest_eval.completed_rank = 1") < where.index(
+                "AND error = 0 AND ((has("
+            )
         # Three membership checks OR-joined.
         assert where.count("has(") == 3
 

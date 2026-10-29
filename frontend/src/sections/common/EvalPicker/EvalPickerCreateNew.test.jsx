@@ -293,3 +293,26 @@ describe("EvalPickerCreateNew — requireInputs", () => {
     );
   });
 });
+
+describe("EvalPickerCreateNew — composite mode", () => {
+  it("offers composite by default", () => {
+    renderWithSource("simulation");
+    expect(screen.getByRole("tab", { name: "Composite" })).toBeInTheDocument();
+  });
+
+  it("still offers composite when the list is only locked to single evals", () => {
+    // The composite builder's child picker locks its list this way and must
+    // keep its create options unchanged.
+    renderWithSource("simulation", {
+      lockedFilters: { template_type: ["single"] },
+    });
+    expect(screen.getByRole("tab", { name: "Composite" })).toBeInTheDocument();
+  });
+
+  it("hides composite when the host asks it to", () => {
+    renderWithSource("simulation", { hideCompositeCreate: true });
+    expect(screen.queryByRole("tab", { name: "Composite" })).toBeNull();
+    expect(screen.queryByRole("tab", { name: "Single" })).toBeNull();
+    expect(screen.getByText("Eval details")).toBeInTheDocument();
+  });
+});

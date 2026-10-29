@@ -13,6 +13,7 @@ const presentColumnConfig = (column) => ({
   annotationLabelType: column.annotation_label_type,
   choicesMap: column.choices_map,
   evalTemplateId: column.eval_template_id,
+  targetType: column.target_type,
   sourceField: column.source_field,
   parentEvalId: column.parent_eval_id,
 });

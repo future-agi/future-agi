@@ -11,7 +11,7 @@ const ManageTeam = () => {
   const { data, isPending } = useQuery({
     queryFn: () => axios.get(endpoints.settings.teams.getMemberList),
     queryKey: ["member-list"],
-    select: (d) => d.data,
+    select: (d) => d.data?.result?.results ?? [],
   });
 
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);

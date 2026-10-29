@@ -70,7 +70,7 @@ vi.mock("src/routes/hooks", () => ({
   useParams: () => ({ observeId: "project-1" }),
 }));
 vi.mock("src/routes/hooks/use-url-state", () => ({
-  useUrlState: () => ["day", vi.fn()],
+  useUrlState: () => ["day", vi.fn(), vi.fn()],
 }));
 vi.mock("src/auth/hooks", () => ({
   useAuthContext: () => ({ role: "viewer" }),

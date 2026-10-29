@@ -34,6 +34,13 @@ def _validate_uuid(value):
         return False
 
 
+def _saml_scope_allows(request, organization_id):
+    """Keep SAML sessions inside their signing organization before any write."""
+
+    auth_scope = getattr(request, "auth_scope", None)
+    return auth_scope is None or str(auth_scope.org_id) == str(organization_id)
+
+
 class OrganizationSelectionView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
@@ -50,6 +57,11 @@ class OrganizationSelectionView(APIView):
         """Select an organization for the current session."""
         try:
             organization_id = request.validated_data["organization_id"]
+
+            if not _saml_scope_allows(request, organization_id):
+                return self._gm.forbidden_response(
+                    "You don't have access to this organization"
+                )
 
             try:
                 selected_org = Organization.objects.get(id=organization_id)
@@ -94,6 +106,31 @@ class OrganizationSelectionView(APIView):
         """Get all organizations the user has access to."""
         try:
             user = request.user
+            auth_scope = getattr(request, "auth_scope", None)
+            if auth_scope is not None:
+                org = getattr(
+                    request, "organization", None
+                ) or Organization.objects.get(id=auth_scope.org_id)
+                membership = resolve_org_membership(user, org)
+                return self._gm.success_response(
+                    {
+                        "organizations": [
+                            {
+                                "id": str(org.id),
+                                "name": org.name,
+                                "display_name": org.display_name,
+                                "role": membership.role
+                                if membership
+                                else user.organization_role,
+                                "level": membership.level_or_legacy
+                                if membership
+                                else None,
+                                "is_selected": True,
+                            }
+                        ],
+                        "total_count": 1,
+                    }
+                )
             # Use the org resolved by middleware (respects X-Organization-Id
             # header) so the frontend sees the correct "selected" state.
             current_org = getattr(request, "organization", None)
@@ -184,6 +221,11 @@ class SwitchOrganizationView(APIView):
         """
         try:
             organization_id = request.validated_data["organization_id"]
+
+            if not _saml_scope_allows(request, organization_id):
+                return self._gm.forbidden_response(
+                    "You don't have access to this organization"
+                )
 
             try:
                 selected_org = Organization.objects.get(id=organization_id)

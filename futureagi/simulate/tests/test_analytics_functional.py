@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 from django.core.cache import cache
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from rest_framework import status
 
@@ -783,9 +785,7 @@ class TestRunResultsV3Views:
         assert response.status_code == 200
         body = response.json()
         assert len(body["scenario_risk"]) == 2
-        assert {item["scenario"] for item in body["scenario_risk"]} == {
-            scenario.name
-        }
+        assert {item["scenario"] for item in body["scenario_risk"]} == {scenario.name}
         assert len({item["scenario_key"] for item in body["scenario_risk"]}) == 2
         assert len({item["scenario_key"] for item in body["reliability"]["rows"]}) == 2
 
@@ -1272,6 +1272,132 @@ class TestRunResultsV3Views:
         assert row["outcome"] == "error"
         assert row["harness_outcome_status"] == "error"
         assert row["execution_status"] == "completed"
+
+    def test_calls_rows_expose_scoring_states(
+        self, auth_client, test_execution, scenario
+    ):
+        """Each documented example row comes out of the stored state behind it:
+        still scoring, timed out, and nothing to score."""
+        from simulate.services.harness_run_evals import EVAL_QUEUED_KEY
+        from simulate.services.scoring_status import (
+            CSAT_STAMP_KEY,
+            REASON_CSAT_NO_EVIDENCE,
+            REASON_CSAT_TIMED_OUT_NOT_STARTED,
+            REASON_EVAL_TIMED_OUT_RUNNING,
+        )
+
+        template = EvalTemplate.objects.create(
+            name="Scoring states",
+            config={"output": "Pass/Fail"},
+            organization=test_execution.run_test.organization,
+        )
+        tone, resolution = (
+            SimulateEvalConfig.objects.create(
+                name=name,
+                eval_template=template,
+                run_test=test_execution.run_test,
+                mapping={"conversation": "transcript"},
+            )
+            for name in ("Tone", "Resolution")
+        )
+        now = timezone.now()
+        closed = {"eval_started": True, "eval_completed": True}
+
+        def _call(call_metadata, eval_outputs):
+            return CallExecution.objects.create(
+                test_execution=test_execution,
+                scenario=scenario,
+                status="completed",
+                completed_at=now,
+                call_metadata=call_metadata,
+                eval_outputs=eval_outputs,
+            )
+
+        scoring = _call(
+            {
+                "eval_started": True,
+                EVAL_QUEUED_KEY: {str(tone.id): now.isoformat()},
+                "csat_status": "pending",
+                CSAT_STAMP_KEY: now.isoformat(),
+            },
+            {},
+        )
+        timed_out = _call(
+            {
+                **closed,
+                "csat_status": "timed_out",
+                "csat_error": REASON_CSAT_TIMED_OUT_NOT_STARTED,
+            },
+            {
+                str(resolution.id): {
+                    "output": None,
+                    "reason": REASON_EVAL_TIMED_OUT_RUNNING,
+                    "output_type": None,
+                    "name": "Resolution",
+                    "status": "timed_out",
+                    "timestamp": now.isoformat(),
+                }
+            },
+        )
+        nothing = _call(
+            {**closed, "csat_status": "skipped", "csat_error": REASON_CSAT_NO_EVIDENCE},
+            {},
+        )
+
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        rows = {row["id"]: row for row in response.json()["results"]}
+
+        def _scoring(call):
+            row = rows[str(call.id)]
+            return {
+                key: row[key]
+                for key in (
+                    "scoring_status",
+                    "csat_status",
+                    "csat_reason",
+                    "evaluations",
+                )
+            }
+
+        empty = {"type": "", "value": None, "score": None, "passed": None}
+        assert _scoring(scoring) == {
+            "scoring_status": "pending",
+            "csat_status": "pending",
+            "csat_reason": None,
+            "evaluations": [
+                {
+                    "id": str(tone.id),
+                    "name": "Tone",
+                    **empty,
+                    "reason": "",
+                    "status": "pending",
+                }
+            ],
+        }
+        assert _scoring(timed_out) == {
+            "scoring_status": "timed_out",
+            "csat_status": "timed_out",
+            "csat_reason": REASON_CSAT_TIMED_OUT_NOT_STARTED,
+            "evaluations": [
+                {
+                    "id": str(resolution.id),
+                    "name": "Resolution",
+                    **empty,
+                    "reason": REASON_EVAL_TIMED_OUT_RUNNING,
+                    "status": "timed_out",
+                }
+            ],
+        }
+        assert _scoring(nothing) == {
+            "scoring_status": "not_applicable",
+            "csat_status": "skipped",
+            "csat_reason": REASON_CSAT_NO_EVIDENCE,
+            "evaluations": [],
+        }
 
     def test_persona_is_not_a_grouping_option(
         self, auth_client, test_execution, analytics_call_executions
@@ -1919,7 +2045,12 @@ class TestRunResultsV3Views:
         return template, config
 
     def test_an_eval_binding_edit_without_updated_at_refreshes_the_cached_page(
-        self, auth_client, organization, run_test, test_execution, analytics_call_executions
+        self,
+        auth_client,
+        organization,
+        run_test,
+        test_execution,
+        analytics_call_executions,
     ):
         _, config = self._threshold_eval(
             organization, run_test, analytics_call_executions
@@ -1935,7 +2066,12 @@ class TestRunResultsV3Views:
         assert (after["passed"], after["failed"]) == (0, 1)
 
     def test_an_eval_template_edit_refreshes_the_cached_page(
-        self, auth_client, organization, run_test, test_execution, analytics_call_executions
+        self,
+        auth_client,
+        organization,
+        run_test,
+        test_execution,
+        analytics_call_executions,
     ):
         template, _ = self._threshold_eval(
             organization, run_test, analytics_call_executions
@@ -2030,6 +2166,171 @@ class TestRunResultsV3Views:
         )
 
         assert (by_status["count"], by_goal["count"]) == (1, 0)
+
+    @staticmethod
+    def _set_harness_outcome(call, outcome):
+        CallExecution.objects.filter(pk=call.pk).update(
+            call_metadata={"harness_outcome_status": outcome}
+        )
+
+    def test_hand_off_facets_read_calls_newer_than_the_page_cache(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        first, second = analytics_call_executions[:2]
+        for call in (first, second):
+            self._set_harness_outcome(call, "passed")
+        self._calls(auth_client, test_execution)
+        # A filtered page caches the whole run's rows as well.
+        self._calls(
+            auth_client, test_execution, filters=json.dumps({"status": ["passed"]})
+        )
+        self._set_harness_outcome(second, "failed")
+
+        body = self._calls(
+            auth_client,
+            test_execution,
+            filters=json.dumps(
+                {"call_execution_id": [str(first.id).upper(), str(second.id)]}
+            ),
+        )
+
+        assert body["facets"]["status"] == [
+            {"value": "failed", "count": 1},
+            {"value": "passed", "count": 1},
+        ]
+
+    def test_facets_cache_miss_reads_calls_newer_than_the_page_cache(
+        self, auth_client, test_execution, analytics_call_executions, monkeypatch
+    ):
+        class NoFacetsCache:
+            def get(self, key):
+                return None
+
+            def set(self, key, value, timeout=None):
+                pass
+
+        monkeypatch.setattr(
+            "simulate.services.run_results_v3_queries.cache", NoFacetsCache()
+        )
+        first = analytics_call_executions[0]
+        self._set_harness_outcome(first, "passed")
+        self._calls(auth_client, test_execution)
+        self._set_harness_outcome(first, "failed")
+
+        body = self._calls(auth_client, test_execution)
+
+        statuses = {item["value"]: item["count"] for item in body["facets"]["status"]}
+        assert statuses.get("failed") == 1
+        assert "passed" not in statuses
+
+    def test_hand_off_facets_on_a_running_run_scope_mixed_case_ids(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        TestExecution.objects.filter(pk=test_execution.pk).update(
+            status=TestExecution.ExecutionStatus.RUNNING
+        )
+        failed = analytics_call_executions[3]
+
+        body = self._calls(
+            auth_client,
+            test_execution,
+            filters=json.dumps({"call_execution_id": [str(failed.id).upper()]}),
+        )
+
+        assert body["facets"]["status"] == [{"value": "error", "count": 1}]
+        assert sum(item["count"] for item in body["facets"]["goal"]) == 1
+
+    def test_warm_hand_off_facets_scan_the_calls_without_the_sql_read_model(
+        self,
+        auth_client,
+        test_execution,
+        test_execution_2,
+        analytics_call_executions,
+        scenario,
+        monkeypatch,
+    ):
+        first, second, deleted = analytics_call_executions[:3]
+        for call in (first, second):
+            self._set_harness_outcome(call, "passed")
+        CallExecution.objects.filter(pk=deleted.pk).update(deleted=True)
+        other_run = CallExecution.objects.create(
+            test_execution=test_execution_2, scenario=scenario, status="failed"
+        )
+        hand_off = json.dumps(
+            {
+                "call_execution_id": [
+                    str(first.id).upper(),
+                    str(second.id),
+                    str(other_run.id),
+                    str(deleted.id),
+                ]
+            }
+        )
+        # Caches the hand-off's rows and the whole run's rows.
+        cold = self._calls(auth_client, test_execution, filters=hand_off)
+        assert cold["facets"]["status"] == [{"value": "passed", "count": 2}]
+        self._set_harness_outcome(second, "failed")
+
+        def no_sql(*args, **kwargs):
+            raise AssertionError("facets compiled the SQL read model")
+
+        monkeypatch.setattr("simulate.views.run_results_v3.run_calls_queryset", no_sql)
+        warm = self._calls(auth_client, test_execution, filters=hand_off)
+
+        assert [row["id"] for row in warm["results"]] == [
+            row["id"] for row in cold["results"]
+        ]
+        assert warm["count"] == 2
+        assert warm["facets"]["status"] == [
+            {"value": "failed", "count": 1},
+            {"value": "passed", "count": 1},
+        ]
+        assert warm["facets"]["goal"] == cold["facets"]["goal"]
+        assert sum(item["count"] for item in warm["facets"]["goal"]) == 2
+
+    def test_scoring_configs_load_once_and_warn_only_when_a_read_scores(
+        self,
+        auth_client,
+        test_execution,
+        analytics_call_executions,
+        run_test,
+        score_template,
+        caplog,
+    ):
+        SimulateEvalConfig.objects.create(
+            name="Bad threshold",
+            eval_template=score_template,
+            run_test=run_test,
+            config={"pass_threshold": 70},
+        )
+        logger = "simulate.services.run_results_v3_scoring"
+
+        def warnings():
+            return [
+                record
+                for record in caplog.records
+                if record.name == logger and "Invalid pass_threshold" in record.message
+            ]
+
+        with (
+            caplog.at_level("WARNING", logger=logger),
+            CaptureQueriesContext(connection) as queries,
+        ):
+            # Cold and filtered: both the SQL read model and the scan score.
+            self._calls(auth_client, test_execution, search="Scenario")
+        assert len(warnings()) == 1
+        config_reads = [
+            query["sql"]
+            for query in queries.captured_queries
+            if 'FROM "simulate_eval_config"' in query["sql"]
+        ]
+        # The catalog, two page-cache keys and the one scoring load.
+        assert len(config_reads) == 4, config_reads
+
+        caplog.clear()
+        with caplog.at_level("WARNING", logger=logger):
+            self._calls(auth_client, test_execution, search="Scenario")
+        assert warnings() == []
 
     def test_groups_score_an_eval_the_catalog_has_not_listed(
         self, auth_client, test_execution, analytics_call_executions
@@ -2203,11 +2504,20 @@ class TestRunResultsV3Views:
         by_key = {row["scenario"]: row for row in reliability["rows"]}
         assert by_key["flips"]["verdict"] == "flaky"
         assert by_key["fails-then-errors"]["error"] == 1
-        interval = reliability["pass_rate_interval"]
-        # Trials of one scenario are not independent, so the range must not claim more
-        # precision than the 3 scenarios behind these 5 verdicts.
-        assert interval["low"] < 60.0 < interval["high"]
-        assert 3 <= interval["effective_n"] <= 5
+        # The errored trial is out of every denominator: (1 + 1/2 + 0) / 3.
+        assert reliability["inconclusive"] == 1
+        assert reliability["pass_hat_1"] == 50.0
+        assert reliability["k"] == 2
+        assert reliability["pass_hat_k"] == 50.0
+        assert reliability["pass_hat_k_scenarios"] == 2
+        # Three scenarios are too few for a range worth acting on.
+        assert reliability["pass_rate_interval"] is None
+        # The run header reads the same block without the full analytics payload.
+        headline = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/reliability/"
+        )
+        assert headline.status_code == status.HTTP_200_OK
+        assert headline.json() == reliability
         evaluation = next(
             row for row in body["evaluations"] if row["id"] == "policy-check"
         )
@@ -2926,6 +3236,371 @@ class TestRunResultsV3Views:
                 f"/simulate/v3/test-executions/{hidden_execution.id}/{suffix}"
             )
             assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_eval_added_after_completion_appears_on_next_load(
+        self,
+        auth_client,
+        test_execution,
+        run_test,
+        score_template,
+        eval_summary_te1_calls,
+    ):
+        """Configs added after a run completes must not wait on the cache."""
+        url = f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+        warm = auth_client.get(url)
+        assert warm.status_code == status.HTTP_200_OK
+
+        new_config = SimulateEvalConfig.objects.create(
+            name="Bonus Score", eval_template=score_template, run_test=run_test
+        )
+        call = eval_summary_te1_calls[0]
+        call.eval_outputs = {
+            **call.eval_outputs,
+            str(new_config.id): {
+                "name": "Bonus Score",
+                "output": 0.75,
+                "output_type": "score",
+            },
+        }
+        call.save(update_fields=["eval_outputs"])
+
+        response = auth_client.get(url)
+        assert response.status_code == status.HTTP_200_OK
+        body = response.json()
+        assert str(new_config.id) in {
+            column["id"] for column in body["evaluation_columns"]
+        }
+        row = next(item for item in body["results"] if item["id"] == str(call.id))
+        evaluations = {item["id"]: item for item in row["evaluations"]}
+        assert evaluations[str(new_config.id)]["score"] == 0.75
+
+    def test_catalog_lists_configs_added_or_renamed_after_a_warm_load(
+        self,
+        test_execution,
+        run_test,
+        score_template,
+        pass_fail_eval_config,
+        score_eval_config,
+    ):
+        """The CSV header and run analytics read the catalog alone, so a
+        config added or renamed after the run completed must show there,
+        newest first, before any call has an output for it."""
+        from simulate.services.run_results_v3 import build_evaluation_catalog
+
+        now = timezone.now()
+        SimulateEvalConfig.objects.filter(pk=pass_fail_eval_config.pk).update(
+            created_at=now - timedelta(minutes=2)
+        )
+        SimulateEvalConfig.objects.filter(pk=score_eval_config.pk).update(
+            created_at=now - timedelta(minutes=1)
+        )
+        warm, _ = build_evaluation_catalog(test_execution)
+        assert warm == [
+            {
+                "id": str(score_eval_config.id),
+                "name": "Accuracy Score",
+                "kind": "evaluation",
+            },
+            {
+                "id": str(pass_fail_eval_config.id),
+                "name": "Quality Gate",
+                "kind": "evaluation",
+            },
+        ]
+
+        new_config = SimulateEvalConfig.objects.create(
+            name="Bonus Score", eval_template=score_template, run_test=run_test
+        )
+        pass_fail_eval_config.name = "Quality Gate v2"
+        pass_fail_eval_config.save(update_fields=["name"])
+
+        columns, live_eval_ids = build_evaluation_catalog(test_execution)
+
+        assert columns == [
+            {"id": str(new_config.id), "name": "Bonus Score", "kind": "evaluation"},
+            {
+                "id": str(score_eval_config.id),
+                "name": "Accuracy Score",
+                "kind": "evaluation",
+            },
+            {
+                "id": str(pass_fail_eval_config.id),
+                "name": "Quality Gate v2",
+                "kind": "evaluation",
+            },
+        ]
+        assert live_eval_ids == {
+            str(new_config.id),
+            str(score_eval_config.id),
+            str(pass_fail_eval_config.id),
+        }
+
+    def test_eval_removed_after_completion_disappears_on_next_load(
+        self,
+        auth_client,
+        test_execution,
+        pass_fail_eval_config,
+        eval_summary_te1_calls,
+    ):
+        url = f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+        warm = auth_client.get(url)
+        assert str(pass_fail_eval_config.id) in {
+            column["id"] for column in warm.json()["evaluation_columns"]
+        }
+
+        pass_fail_eval_config.deleted = True
+        pass_fail_eval_config.save(update_fields=["deleted"])
+
+        response = auth_client.get(url)
+        assert response.status_code == status.HTTP_200_OK
+        assert str(pass_fail_eval_config.id) not in {
+            column["id"] for column in response.json()["evaluation_columns"]
+        }
+
+    def test_harness_columns_remain_cached_after_completion(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        call = analytics_call_executions[-1]
+        call.eval_outputs = {
+            "policy-check": {
+                "source": "harness",
+                "name": "Policy check",
+                "output": "Passed",
+                "output_type": "Pass/Fail",
+            }
+        }
+        call.save(update_fields=["eval_outputs"])
+
+        url = f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+        warm = auth_client.get(url)
+        assert warm.status_code == status.HTTP_200_OK
+        assert "policy-check" in {
+            column["id"] for column in warm.json()["evaluation_columns"]
+        }
+
+        call.eval_outputs = {}
+        call.save(update_fields=["eval_outputs"])
+
+        response = auth_client.get(url)
+        assert response.status_code == status.HTTP_200_OK
+        # Served from the harness-columns cache: the column survives even
+        # though the call no longer carries that output.
+        assert "policy-check" in {
+            column["id"] for column in response.json()["evaluation_columns"]
+        }
+
+    def test_harness_scored_config_deleted_after_warm_load_keeps_its_column(
+        self, test_execution, analytics_call_executions, score_eval_config
+    ):
+        # The catalog alone decides columns for other pages and the CSV
+        # header, so check it directly: page rows would mask a gap here.
+        from simulate.services.run_results_v3 import build_evaluation_catalog
+
+        config_id = str(score_eval_config.id)
+        call = analytics_call_executions[0]
+        call.eval_outputs = {
+            config_id: {
+                "source": "harness",
+                "name": "Accuracy Score",
+                "output": 0.7,
+                "output_type": "score",
+            }
+        }
+        call.save(update_fields=["eval_outputs"])
+
+        warm, _ = build_evaluation_catalog(test_execution)
+        assert config_id in {column["id"] for column in warm}
+
+        score_eval_config.deleted = True
+        score_eval_config.save(update_fields=["deleted"])
+
+        columns, live_eval_ids = build_evaluation_catalog(test_execution)
+        # Same as an uncached scan: the config is gone, but the harness's own
+        # result is still listed as a harness column.
+        assert config_id in {column["id"] for column in columns}
+        assert config_id not in live_eval_ids
+
+    def test_harness_output_for_live_config_id_is_deduped_with_name_precedence(
+        self, test_execution, analytics_call_executions, score_eval_config
+    ):
+        """A harness output keyed by a still-live config id must not create a
+        second column, the configured name must win over the harness name,
+        and among harness-only ids the name on the oldest call must win,
+        however recently another call was saved."""
+        from simulate.services.run_results_v3 import build_evaluation_catalog
+
+        config_id = str(score_eval_config.id)
+        calls = analytics_call_executions
+        calls[0].eval_outputs = {
+            config_id: {
+                "source": "harness",
+                "name": "Harness Name Should Lose",
+                "output": 0.7,
+                "output_type": "score",
+            },
+            "policy-check": {
+                "source": "harness",
+                "name": "Name A",
+                "output": "Passed",
+                "output_type": "Pass/Fail",
+            },
+        }
+        calls[0].save(update_fields=["eval_outputs"])
+        calls[1].eval_outputs = {
+            "policy-check": {
+                "source": "harness",
+                "name": "Name B",
+                "output": "Failed",
+                "output_type": "Pass/Fail",
+            }
+        }
+        calls[1].save(update_fields=["eval_outputs"])
+        CallExecution.objects.filter(pk=calls[1].pk).update(
+            created_at=calls[0].created_at - timedelta(minutes=1),
+            updated_at=calls[0].updated_at - timedelta(minutes=1),
+        )
+
+        columns, live_eval_ids = build_evaluation_catalog(test_execution)
+
+        assert columns == [
+            {"id": config_id, "name": "Accuracy Score", "kind": "evaluation"},
+            {"id": "policy-check", "name": "Name B", "kind": "evaluation"},
+        ]
+        assert [column["id"] for column in columns].count(config_id) == 1
+        assert live_eval_ids == {config_id}
+
+    @pytest.mark.parametrize(
+        "in_flight_status",
+        [
+            TestExecution.ExecutionStatus.RUNNING,
+            TestExecution.ExecutionStatus.EVALUATING,
+        ],
+    )
+    def test_rerun_computes_fresh_harness_columns_and_rotates_the_cache_key(
+        self, test_execution, analytics_call_executions, in_flight_status
+    ):
+        """A rerun must not surface the previous attempt's harness columns:
+        the scan must be fresh while the run is running or evaluating (an
+        evaluating rerun still carries the previous attempt's completed_at),
+        and the completed-run cache key must rotate so a new attempt is
+        never masked by the old one."""
+        from simulate.services.run_results_v3 import build_evaluation_catalog
+
+        call = analytics_call_executions[0]
+        call.eval_outputs = {
+            "attempt-a": {
+                "source": "harness",
+                "name": "Attempt A",
+                "output": "Passed",
+                "output_type": "Pass/Fail",
+            }
+        }
+        call.save(update_fields=["eval_outputs"])
+        # A whole second, so the bump below stays inside it: a key that kept
+        # only whole seconds would then fail to rotate.
+        original_completed_at = (test_execution.completed_at or timezone.now()).replace(
+            microsecond=0
+        )
+        test_execution.completed_at = original_completed_at
+        test_execution.save(update_fields=["completed_at"])
+
+        warm, _ = build_evaluation_catalog(test_execution)
+        assert {column["id"] for column in warm} == {"attempt-a"}
+
+        test_execution.status = in_flight_status
+        test_execution.save(update_fields=["status"])
+        call.eval_outputs = {
+            "attempt-b": {
+                "source": "harness",
+                "name": "Attempt B",
+                "output": "Passed",
+                "output_type": "Pass/Fail",
+            }
+        }
+        call.save(update_fields=["eval_outputs"])
+
+        while_in_flight, _ = build_evaluation_catalog(test_execution)
+        assert {column["id"] for column in while_in_flight} == {"attempt-b"}
+
+        test_execution.status = TestExecution.ExecutionStatus.COMPLETED
+        test_execution.completed_at = original_completed_at + timedelta(
+            milliseconds=300
+        )
+        test_execution.save(update_fields=["status", "completed_at"])
+
+        rerun_catalog, _ = build_evaluation_catalog(test_execution)
+        assert {column["id"] for column in rerun_catalog} == {"attempt-b"}
+
+    def test_a_value_under_the_harness_key_that_is_not_a_list_is_rescanned(
+        self, test_execution, analytics_call_executions
+    ):
+        """Whatever else sits under the harness-columns key, the table gets
+        the columns a fresh scan finds rather than an error."""
+        from django.core.cache import cache
+
+        from simulate.services.run_results_v3 import build_evaluation_catalog
+
+        call = analytics_call_executions[0]
+        call.eval_outputs = {
+            "attempt-a": {
+                "source": "harness",
+                "name": "Attempt A",
+                "output": "Passed",
+                "output_type": "Pass/Fail",
+            }
+        }
+        call.save(update_fields=["eval_outputs"])
+        test_execution.status = TestExecution.ExecutionStatus.COMPLETED
+        test_execution.completed_at = timezone.now()
+        test_execution.save(update_fields=["status", "completed_at"])
+        cache.set(
+            "simulate:v3:harness-eval-columns:v2:"
+            f"{test_execution.id}:{test_execution.completed_at.timestamp()}",
+            ([], []),
+        )
+
+        columns, _ = build_evaluation_catalog(test_execution)
+
+        assert "attempt-a" in {column["id"] for column in columns}
+
+    def test_a_sub_goal_check_keeps_its_kind_on_a_cached_load(
+        self, test_execution, analytics_call_executions
+    ):
+        """A harness column named after one of the call's receipt sub-goals is
+        a sub-goal column, on the first load and on the cached one."""
+        from simulate.services.run_results_v3 import build_evaluation_catalog
+
+        call = analytics_call_executions[0]
+        call.call_metadata = {
+            "hosted_harness_receipt": {
+                "sub_goals": [{"name": "identity_verified", "held": True}]
+            }
+        }
+        call.eval_outputs = {
+            "sub-goal-check": {
+                "source": "harness",
+                "name": "identity_verified",
+                "output": "Passed",
+                "output_type": "Pass/Fail",
+            },
+            "policy-check": {
+                "source": "harness",
+                "name": "Policy check",
+                "output": "Passed",
+                "output_type": "Pass/Fail",
+            },
+        }
+        call.save(update_fields=["call_metadata", "eval_outputs"])
+        expected = [
+            {"id": "policy-check", "name": "Policy check", "kind": "evaluation"},
+            {"id": "sub-goal-check", "name": "identity_verified", "kind": "sub_goal"},
+        ]
+
+        first, _ = build_evaluation_catalog(test_execution)
+        cached, _ = build_evaluation_catalog(test_execution)
+
+        assert first == expected
+        assert cached == expected
 
     @staticmethod
     def _harness_job(organization, workspace, **fields):

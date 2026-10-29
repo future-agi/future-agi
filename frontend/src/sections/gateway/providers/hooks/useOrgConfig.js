@@ -44,7 +44,7 @@ export function useCreateOrgConfig() {
       enqueueSnackbar("Config saved and activated", { variant: "success" });
     },
     onError: (err) => {
-      enqueueSnackbar(err?.response?.data?.message || "Failed to save config", {
+      enqueueSnackbar(err?.message || "Failed to save config", {
         variant: "error",
       });
     },
@@ -71,10 +71,9 @@ export function useActivateOrgConfig() {
       });
     },
     onError: (err) => {
-      enqueueSnackbar(
-        err?.response?.data?.message || "Failed to activate config",
-        { variant: "error" },
-      );
+      enqueueSnackbar(err?.message || "Failed to activate config", {
+        variant: "error",
+      });
     },
   });
 }

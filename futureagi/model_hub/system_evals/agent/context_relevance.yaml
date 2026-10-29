@@ -16,7 +16,8 @@ criteria: "You are evaluating whether the retrieved context is relevant to the u
   \n<context>{{context}}</context>\n\n<input>{{input}}</input>"
 eval_tags:
 - RAG
-- Retrieval Systems
+- Retrieval
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

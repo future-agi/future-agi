@@ -48,6 +48,14 @@ def test_drops_opentelemetry_child_loggers_by_prefix():
     assert before_send(event, {}) is None
 
 
+def test_drops_saml_dependency_loggers_but_keeps_saml2_auth():
+    """The pysaml2 prefix must not swallow the app's own saml2_auth loggers."""
+
+    assert before_send({"logger": "saml2.response", "message": "x"}, {}) is None
+    for name in ("saml2_auth.views", "saml2_auth.security"):
+        assert before_send({"logger": name, "message": "boom"}, {}) is not None
+
+
 def test_drops_ignored_exception_types():
     assert before_send({}, _hint(ConnectionResetError(104, "reset"))) is None
     assert before_send({}, _hint(BrokenPipeError())) is None
@@ -87,7 +95,21 @@ def test_sensitive_key_detection():
     assert _is_sensitive_key("Authorization")
     assert _is_sensitive_key("X-Api-Key")
     assert _is_sensitive_key("password")
+    assert _is_sensitive_key("environment_values")
+    assert _is_sensitive_key("credential_values")
+    # Loops over submitted values name their local for this rule.
+    assert _is_sensitive_key("secret_value")
     assert not _is_sensitive_key("user_id")
+
+
+def test_scrub_redacts_an_agent_check_payloads_values():
+    scrubbed = _scrub(
+        {"agent": {"connector": "livekit"}, "credential_values": {"K": "v"}}
+    )
+    assert scrubbed == {
+        "agent": {"connector": "livekit"},
+        "credential_values": _REDACTED,
+    }
 
 
 def test_scrub_redacts_nested_secrets():

@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 import structlog
+
 from tfc.capabilities.registry import (
     FEATURE_REGISTRY,
     FeatureDefinition,
@@ -83,7 +84,12 @@ def configure(
     cloud_plan_resolver: CloudPlanResolver | None = None,
 ) -> None:
     """Wire resolvers at application startup. Called from AppConfig.ready()."""
-    global _license_resolver, _cloud_plan_resolver, _deployment_flavor, _deployment_location, _configured
+    global \
+        _license_resolver, \
+        _cloud_plan_resolver, \
+        _deployment_flavor, \
+        _deployment_location, \
+        _configured
     _deployment_flavor = flavor
     _deployment_location = location
     _license_resolver = license_resolver

@@ -22,7 +22,6 @@ If it crashes, times out, or produces invalid output, the parent returns an erro
 import errno
 import json
 import os
-import resource
 import signal
 import socket
 import subprocess
@@ -434,6 +433,12 @@ def _set_resource_limits():
     - Closes all file descriptors except stdin/stdout/stderr
     - Clears all environment variables
     """
+    # Imported here, not at module scope: `resource` is POSIX-only, and this
+    # module is loaded at Django startup (via SETUP_ERROR_MESSAGES), so a
+    # module-level import made the whole backend unimportable where it is
+    # missing. Only the forked child ever needs it.
+    import resource
+
     # Memory limit — skip on emulated architectures (Rosetta/QEMU)
     # where even RLIMIT_DATA breaks mmap. On native Linux production,
     # Docker --memory flag or cgroups handle this at container level.
@@ -466,8 +471,7 @@ def _set_resource_limits():
     # Close all file descriptors beyond stdin/stdout/stderr
     # This prevents reading any open files from the parent process
     try:
-        import resource as _res
-        max_fd = _res.getrlimit(_res.RLIMIT_NOFILE)[0]
+        max_fd = resource.getrlimit(resource.RLIMIT_NOFILE)[0]
         for fd in range(3, min(max_fd, 1024)):
             try:
                 os.close(fd)

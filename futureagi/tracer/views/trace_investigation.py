@@ -10,6 +10,8 @@ from tfc.utils.api_errors import build_error_envelope
 from tracer.serializers.trace_investigation import (
     ClaimInvestigationsRequestSerializer,
     ClaimInvestigationsResponseSerializer,
+    ConversationEvidenceRequestSerializer,
+    ConversationEvidenceResponseSerializer,
     InvestigationControlErrorSerializer,
     PublishInvestigationRequestSerializer,
     PublishInvestigationResponseSerializer,
@@ -19,6 +21,7 @@ from tracer.serializers.trace_investigation import (
     UpdateInvestigationAttemptRequestSerializer,
     UpdateInvestigationAttemptResponseSerializer,
 )
+from tracer.services.conversation_evidence import conversation_evidence_rows
 from tracer.services.simulation_investigation import (
     SimulationInvestigationConflict,
     simulation_evidence_page,
@@ -117,6 +120,26 @@ class PublishInvestigationView(InternalInvestigationView):
     def post(self, request: Request) -> Response:
         try:
             return Response(publish_investigation(**request.validated_data))
+        except InvestigationControlError as error:
+            return _error_response(error)
+
+
+class ConversationEvidenceView(InternalInvestigationView):
+    @validated_request(
+        ConversationEvidenceRequestSerializer,
+        responses={
+            200: ConversationEvidenceResponseSerializer,
+            409: InvestigationControlErrorSerializer,
+        },
+        reject_unknown_fields=True,
+    )
+    def post(self, request: Request, attempt_id) -> Response:
+        try:
+            return Response(
+                conversation_evidence_rows(
+                    attempt_id=attempt_id, **request.validated_data
+                )
+            )
         except InvestigationControlError as error:
             return _error_response(error)
 

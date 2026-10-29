@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import pytest
 from django.db import connection
+from django.utils import timezone
 
 from simulate.models import CallExecution
 from simulate.services.run_results_v3 import _csat_score, build_call_rows
@@ -52,6 +53,8 @@ def test_call_rows_csat_requires_explicit_score(metrics, provider_score, expecte
         simulation_call_type="voice",
         started_at=None,
         completed_at=None,
+        ended_at=None,
+        created_at=timezone.now(),
         duration_seconds=1,
         customer_cost_cents=None,
         stt_cost_cents=None,
@@ -67,9 +70,15 @@ def test_call_rows_csat_requires_explicit_score(metrics, provider_score, expecte
         ) as configs,
         patch("simulate.services.run_results_v3._harness_scenarios", return_value={}),
         patch("simulate.services.run_results_v3._authored_branches", return_value={}),
+        patch(
+            "simulate.services.run_results_v3.runnable_eval_config_ids",
+            return_value=[],
+        ),
     ):
         configs.return_value.select_related.return_value = []
-        rows, _ = build_call_rows(SimpleNamespace(), [call], [], set())
+        rows, _ = build_call_rows(
+            SimpleNamespace(run_test_id=None, status="completed"), [call], [], set()
+        )
     assert rows[0]["csat"] == expected
 
 
@@ -82,10 +91,10 @@ def test_csat_helper_rejects_invalid_metrics_document(metrics):
 @pytest.mark.parametrize("metrics,provider_score,expected", CSAT_CASES)
 def test_sql_csat_requires_explicit_score(metrics, provider_score, expected):
     with patch(
-        "simulate.services.run_results_v3_queries.SimulateEvalConfig.objects.filter"
+        "simulate.services.run_results_v3_scoring.SimulateEvalConfig.objects.filter"
     ) as configs:
         configs.return_value.select_related.return_value = []
-        queryset = run_calls_queryset(SimpleNamespace(run_test=None), [])
+        queryset = run_calls_queryset(SimpleNamespace(run_test_id=None), [])
     query = queryset.query
     sql, params = query.get_compiler(connection=connection).compile(
         query.annotations["result_csat"]
@@ -119,6 +128,9 @@ def test_v3_detail_uses_explicit_csat_for_existing_score_fields(csat):
             "cost_breakdown_cents",
             "evaluations",
             "csat",
+            "scoring_status",
+            "csat_status",
+            "csat_reason",
         )
     )
     row["csat"] = csat

@@ -51,6 +51,29 @@ describe("ConsoleTurn new step kinds", () => {
     expect(screen.getByText(/working autonomously/i)).toBeInTheDocument();
   });
 
+  it("renders a Rebuild's opening line as a step kind it knows", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      render(
+        <Turn
+          turn={builder([
+            {
+              id: "l1",
+              kind: "nudge-line",
+              text: "Updating the environment for agent v3…",
+            },
+          ])}
+        />,
+      );
+      expect(
+        screen.getByText("Updating the environment for agent v3…"),
+      ).toBeInTheDocument();
+      expect(error).not.toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
+    }
+  });
+
   it("renders a markdown note", () => {
     render(<Turn turn={builder([{ id: "n1", kind: "note", markdown: true, text: "**bold** move" }])} />);
     expect(screen.getByText("bold")).toBeInTheDocument();

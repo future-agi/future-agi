@@ -993,6 +993,7 @@ ALK_HARNESS_SANDBOX_URL = os.getenv("ALK_HARNESS_SANDBOX_URL", "")
 ALK_HARNESS_SANDBOX_TOKEN = os.getenv("ALK_HARNESS_SANDBOX_TOKEN", "")
 GITHUB_APP_ID = os.getenv("GITHUB_APP_ID", "")
 GITHUB_APP_PRIVATE_KEY = os.getenv("GITHUB_APP_PRIVATE_KEY", "")
+GITHUB_APP_WEBHOOK_SECRET = os.getenv("GITHUB_APP_WEBHOOK_SECRET", "")
 ALK_HOSTED_SOURCE_MAX_BYTES = int(
     os.getenv("ALK_HOSTED_SOURCE_MAX_BYTES", str(256 * 1024 * 1024))
 )
@@ -1002,22 +1003,12 @@ ALK_HOSTED_BASE_EGRESS_DOMAINS = [
     if domain.strip()
 ]
 # Hosted simulator credentials are platform configuration, not customer job input. Values are
-# resolved only while launching the sandbox and are never persisted on HostedHarnessJob.
+# resolved only while launching the sandbox and are never persisted on HostedHarnessJob. Model
+# and speech calls go through AgentCC, so no model or speech vendor's credential is listed here.
 ALK_HOSTED_SIMULATOR_SECRET_ENV = {
     "SIMULATOR_LIVEKIT_URL": "LIVEKIT_URL",
     "SIMULATOR_LIVEKIT_API_KEY": "LIVEKIT_API_KEY",
     "SIMULATOR_LIVEKIT_API_SECRET": "LIVEKIT_API_SECRET",
-    "SIMULATOR_DEEPGRAM_API_KEY": "DEEPGRAM_API_KEY",
-    "SIMULATOR_CARTESIA_API_KEY": "CARTESIA_API_KEY",
-    "SIMULATOR_GEMINI_API_KEY": "GEMINI_API_KEY",
-    "SIMULATOR_GOOGLE_API_KEY": "GOOGLE_API_KEY",
-    "SIMULATOR_GOOGLE_APPLICATION_CREDENTIALS_JSON": (
-        "GOOGLE_APPLICATION_CREDENTIALS_JSON"
-    ),
-    "SIMULATOR_GOOGLE_CLOUD_PROJECT": "GOOGLE_CLOUD_PROJECT",
-    "SIMULATOR_GOOGLE_CLOUD_LOCATION": "GOOGLE_CLOUD_LOCATION",
-    "SIMULATOR_GOOGLE_GENAI_USE_VERTEXAI": "GOOGLE_GENAI_USE_VERTEXAI",
-    "SIMULATOR_OPENAI_API_KEY": "OPENAI_API_KEY",
     "SIMULATOR_LLM_PROVIDER": "SIMULATOR_LLM_PROVIDER",
     "SIMULATOR_LLM_MODEL": "SIMULATOR_LLM_MODEL",
     "SIMULATOR_STT_PROVIDER": "SIMULATOR_STT_PROVIDER",
@@ -1029,8 +1020,6 @@ ALK_HOSTED_SIMULATOR_SECRET_ENV = {
 # phone target. Platform configuration, never customer input, so an empty value means no phone
 # run can be started and preflight says so rather than the run failing after authoring is paid for.
 ALK_HOSTED_SIP_OUTBOUND_TRUNK_ID = os.getenv("ALK_HOSTED_SIP_OUTBOUND_TRUNK_ID", "")
-ALK_HOSTED_AUTHORING_CLAUDE_REGION = os.getenv("CLOUD_ML_REGION", "us-east5")
-ALK_HOSTED_AUTHORING_GEMINI_LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
 ALK_HOSTED_WEBRTC_EGRESS_CIDRS = [
     cidr.strip()
     for cidr in os.getenv("ALK_HOSTED_WEBRTC_EGRESS_CIDRS", "").split(",")
@@ -1065,6 +1054,15 @@ ALK_HOSTED_SANDBOX_TTL_SECONDS = int(
 # workspace checkpoint survive deletion; this is the idle window after the user's latest
 # message before a post-run chat sandbox is reclaimed, and only trades cost against latency.
 ALK_HOSTED_CHAT_TTL_SECONDS = int(os.getenv("ALK_HOSTED_CHAT_TTL_SECONDS", "1800"))
+# Off sends a fresh build through the staged authoring pipeline instead of the builder session.
+ALK_HOSTED_BUILDER_SESSION = os.getenv("ALK_HOSTED_BUILDER_SESSION", "true").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+)
+# Development only: an ALK source tree a chat sandbox runs instead of the one in its image.
+ALK_HOSTED_SOURCE_OVERLAY = os.getenv("ALK_HOSTED_SOURCE_OVERLAY", "")
 DAYTONA_API_KEY = os.getenv("DAYTONA_API_KEY", "")
 DAYTONA_API_URL = os.getenv("DAYTONA_API_URL") or None
 DAYTONA_TARGET = os.getenv("DAYTONA_TARGET") or None
@@ -1103,6 +1101,23 @@ HARNESS_PARALLELISM_ENABLED = os.getenv("HARNESS_PARALLELISM_ENABLED", "").lower
     "yes",
 )
 HARNESS_MAX_WORLD_SLOTS = int(os.getenv("HARNESS_MAX_WORLD_SLOTS", "8"))
+# Environment versioning: decides whether an environment without versions starts getting
+# them, and gates their UI. An environment that has versions always records new ones, and
+# readers decide by data (pins present or not), never by this flag.
+HARNESS_VERSIONING_ENABLED = os.getenv("HARNESS_VERSIONING_ENABLED", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+# A pinned run that misses the bundle cache certifies its own bundle; off, it runs the
+# environment's default pair as before.
+HARNESS_BUNDLE_CERTIFY_ENABLED = os.getenv(
+    "HARNESS_BUNDLE_CERTIFY_ENABLED", ""
+).lower() in ("1", "true", "yes")
+# Raising agent-change nudges; only takes effect while versioning is enabled.
+HARNESS_VERSIONING_NUDGES_ENABLED = os.getenv(
+    "HARNESS_VERSIONING_NUDGES_ENABLED", ""
+).lower() in ("1", "true", "yes")
 # Most scenarios × trials one simulation Run may submit.
 HARNESS_MAX_EXECUTIONS_PER_RUN = int(os.getenv("HARNESS_MAX_EXECUTIONS_PER_RUN", "200"))
 # Each profile is an operator-certified size/connector/snapshot combination.
@@ -1276,8 +1291,82 @@ default_next_url = f"{APP_BASE_URL}/dashboard/develop"
 get_started_url = f"{APP_BASE_URL}/dashboard/get-started"
 default_error_next_url = f"{APP_BASE_URL}/auth/jwt/login?denied=true"
 get_entity_id = f"{_ssl}{APP_URL}"
+SLACK_CLIENT_ID = os.getenv("SLACK_CLIENT_ID", "")
+SLACK_CLIENT_SECRET = os.getenv("SLACK_CLIENT_SECRET", "")
+SLACK_OAUTH_AUTHORIZE_URL = os.getenv("SLACK_OAUTH_AUTHORIZE_URL", "")
+SLACK_API_URL = os.getenv("SLACK_API_URL", "")
+SLACK_REDIRECT_URI = os.getenv(
+    "SLACK_REDIRECT_URI", f"{BASE_URL.rstrip('/')}/integrations/slack/callback/"
+)
 
 get_name_id_format = "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
+
+
+def _saml_setting(name: str, default: int, *, maximum: int | None = None) -> int:
+    """Load a SAML boundary limit and fail closed on invalid configuration."""
+
+    from django.core.exceptions import ImproperlyConfigured
+
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError as exc:
+        raise ImproperlyConfigured(f"{name} must be an integer") from exc
+    if value < 1 or (maximum is not None and value > maximum):
+        detail = f"between 1 and {maximum}" if maximum else "positive"
+        raise ImproperlyConfigured(f"{name} must be {detail}")
+    return value
+
+
+def _saml_login_enabled() -> bool:
+    """Read the SAML kill switch: on unless explicitly switched off.
+
+    Organizations already using SAML keep it after an upgrade; ``false``
+    turns every SAML step off. Anything unreadable refuses to start rather
+    than guessing which way a typo was meant.
+    """
+
+    from django.core.exceptions import ImproperlyConfigured
+
+    value = os.getenv("SAML_LOGIN_ENABLED", "").strip().lower()
+    if value in {"", "1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise ImproperlyConfigured("SAML_LOGIN_ENABLED must be true or false")
+
+
+SAML_LOGIN_ENABLED = _saml_login_enabled()
+SAML_ATTEMPT_TTL_SECONDS = _saml_setting("SAML_ATTEMPT_TTL_SECONDS", 600, maximum=600)
+SAML_CANDIDATE_TTL_SECONDS = _saml_setting(
+    "SAML_CANDIDATE_TTL_SECONDS", 60, maximum=120
+)
+SAML_MAX_RESPONSE_BYTES = _saml_setting(
+    "SAML_MAX_RESPONSE_BYTES", 65536, maximum=262144
+)
+SAML_MAX_ACS_BODY_BYTES = _saml_setting(
+    "SAML_MAX_ACS_BODY_BYTES", 131072, maximum=524288
+)
+SAML_MAX_METADATA_BYTES = _saml_setting(
+    "SAML_MAX_METADATA_BYTES", 262144, maximum=1048576
+)
+SAML_MAX_CANDIDATES_PER_ATTEMPT = _saml_setting("SAML_MAX_CANDIDATES_PER_ATTEMPT", 3)
+SAML_MAX_CANDIDATES_PER_ATTEMPT_LIFETIME = _saml_setting(
+    "SAML_MAX_CANDIDATES_PER_ATTEMPT_LIFETIME", 6
+)
+SAML_MAX_ATTEMPTS_PER_USER_PER_TTL = _saml_setting(
+    "SAML_MAX_ATTEMPTS_PER_USER_PER_TTL", 10
+)
+SAML_MAX_PENDING_COOKIES_PER_BROWSER = _saml_setting(
+    "SAML_MAX_PENDING_COOKIES_PER_BROWSER", 8
+)
+SAML_MAX_ATTEMPT_ROWS = _saml_setting("SAML_MAX_ATTEMPT_ROWS", 100000)
+SAML_MAX_CANDIDATE_ROWS = _saml_setting("SAML_MAX_CANDIDATE_ROWS", 2000)
+SAML_MAX_CANDIDATE_BYTES = _saml_setting("SAML_MAX_CANDIDATE_BYTES", 134217728)
+SAML_INLINE_CLEANUP_ROWS = _saml_setting("SAML_INLINE_CLEANUP_ROWS", 100)
+SAML_ATTEMPT_RETENTION_SECONDS = _saml_setting("SAML_ATTEMPT_RETENTION_SECONDS", 3600)
+SAML_SOCKET_REVALIDATE_SECONDS = _saml_setting(
+    "SAML_SOCKET_REVALIDATE_SECONDS", 30, maximum=120
+)
 AUTH0_DOMAIN = "accounts.google.com/o/oauth2"
 AUTH0_ALGORITHM = "RS256"
 GITHUB_API_ENDPOINT = "https://api.github.com"
@@ -1335,7 +1424,7 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 # ~160 MB at the default) while its consumer is behind or stopped; XADD trims
 # unread events beyond it. A positive integer, as fi-collector requires.
 from tfc.ee_loader import usage_event_consumer_available  # noqa: E402
-from tfc.utils.env import env_int  # noqa: E402
+from tfc.utils.env import env_datetime, env_int  # noqa: E402
 
 _usage_events = os.getenv("USAGE_EVENTS_ENABLED", "").strip().lower()
 USAGE_EVENTS_ENABLED = (
@@ -1344,6 +1433,13 @@ USAGE_EVENTS_ENABLED = (
     else usage_event_consumer_available()
 )
 USAGE_EVENTS_MAX_LEN = env_int("USAGE_EVENTS_MAX_LEN", 1_000_000, minimum=1)
+
+# Orgs created at or after this instant see only Environments in Simulate. Set it
+# to the start of the deploy that introduces the restriction, in UTC, the same
+# value in every region. Unset restricts no org (self-hosted installs).
+RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF = env_datetime(
+    "RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF"
+)
 
 # Django Channels layer. CHANNEL_LAYER_BACKEND: auto (default) | memory | redis |
 # rabbitmq. With one web process the layer lives in memory and needs no broker;

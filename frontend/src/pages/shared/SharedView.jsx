@@ -23,11 +23,19 @@ import {
 import Iconify from "src/components/iconify";
 import SharedVoiceView from "./SharedVoiceView";
 import SharedSimulationCallView from "./SharedSimulationCallView";
+import SharedErrorIssueView from "./SharedErrorIssueView";
 import { isVoiceCall, simulationCallKind } from "./sharedViewHelpers";
 
 function getSpan(entry) {
   return entry?.observation_span || entry?.observationSpan || {};
 }
+
+const SHARED_LINK_ERROR_COPY = {
+  401: "Sign in with an account that has access to view this.",
+  403: "Ask the person who shared this to add your email.",
+  404: "This link doesn't exist or the item was deleted.",
+  410: "This link was revoked or has expired.",
+};
 
 export default function SharedView() {
   const { token } = useParams();
@@ -55,6 +63,7 @@ export default function SharedView() {
     [isTrace, resourceData],
   );
   const isCallExecution = resourceType === "call_execution";
+  const isErrorIssue = resourceType === "error_feed_issue";
   // A shared call resolves to the same payload as the in-app call detail.
   const sharedCall = isCallExecution ? resourceData || null : null;
   const isChatCall =
@@ -117,8 +126,9 @@ export default function SharedView() {
 
   // Error states
   if (isError) {
-    const status = error?.response?.status;
-    const msg = error?.response?.data?.error;
+    // The axios interceptor rejects with { ...body, statusCode }, not an
+    // axios error. Server text is never shown, only fixed copy per status.
+    const status = error?.statusCode ?? error?.response?.status;
     return (
       <>
         <Helmet>
@@ -153,8 +163,7 @@ export default function SharedView() {
               {![401, 403, 404, 410].includes(status) && "Something went wrong"}
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              {msg ||
-                "This shared link may have been revoked or is no longer available."}
+              {SHARED_LINK_ERROR_COPY[status] ?? "Try again in a moment."}
             </Typography>
             {status === 401 && (
               <Typography
@@ -185,13 +194,15 @@ export default function SharedView() {
             ? `Shared Voice Call — ${resourceId?.substring(0, 8) || "..."}`
             : isChatCall
               ? `Shared Chat — ${resourceId?.substring(0, 8) || "..."}`
-              : isTrace
-                ? `Shared Trace — ${resourceId?.substring(0, 8) || "..."}`
-                : resourceType === "dashboard"
-                  ? `Shared Dashboard — ${resourceData?.name || resourceId?.substring(0, 8) || "..."}`
-                  : resourceType === "project"
-                    ? `Shared Project — ${resourceData?.name || resourceId?.substring(0, 8) || "..."}`
-                    : "Shared Resource"}
+              : isErrorIssue
+                ? `Shared Issue — ${resourceData?.issue?.row?.error?.name || resourceId || "..."}`
+                : isTrace
+                  ? `Shared Trace — ${resourceId?.substring(0, 8) || "..."}`
+                  : resourceType === "dashboard"
+                    ? `Shared Dashboard — ${resourceData?.name || resourceId?.substring(0, 8) || "..."}`
+                    : resourceType === "project"
+                      ? `Shared Project — ${resourceData?.name || resourceId?.substring(0, 8) || "..."}`
+                      : "Shared Resource"}
         </title>
       </Helmet>
 
@@ -224,11 +235,13 @@ export default function SharedView() {
                   ? "mdi:phone-outline"
                   : isChatCall
                     ? "mdi:message-text-outline"
-                    : resourceType === "dashboard"
-                      ? "mdi:view-dashboard-outline"
-                      : resourceType === "project"
-                        ? "mdi:folder-outline"
-                        : "mdi:share-variant-outline"
+                    : isErrorIssue
+                      ? "mdi:bug-outline"
+                      : resourceType === "dashboard"
+                        ? "mdi:view-dashboard-outline"
+                        : resourceType === "project"
+                          ? "mdi:folder-outline"
+                          : "mdi:share-variant-outline"
               }
               width={20}
               sx={{ color: "primary.main" }}
@@ -240,11 +253,13 @@ export default function SharedView() {
                 ? "Shared voice call"
                 : isChatCall
                   ? "Shared chat"
-                  : resourceType === "dashboard"
-                    ? "Shared dashboard"
-                    : resourceType === "project"
-                      ? "Shared project"
-                      : `Shared ${resourceType || "resource"}`}
+                  : isErrorIssue
+                    ? "Shared issue"
+                    : resourceType === "dashboard"
+                      ? "Shared dashboard"
+                      : resourceType === "project"
+                        ? "Shared project"
+                        : `Shared ${resourceType || "resource"}`}
             </Typography>
             {resourceId && (
               <Typography
@@ -254,7 +269,9 @@ export default function SharedView() {
                   color: "text.disabled",
                 }}
               >
-                {resourceId.substring(0, 12)}...
+                {resourceId.length > 12
+                  ? `${resourceId.substring(0, 12)}...`
+                  : resourceId}
               </Typography>
             )}
           </Box>
@@ -275,6 +292,8 @@ export default function SharedView() {
           >
             <CircularProgress size={32} />
           </Box>
+        ) : isErrorIssue ? (
+          <SharedErrorIssueView token={token} data={resourceData} />
         ) : isCallExecution ? (
           <SharedSimulationCallView call={sharedCall} />
         ) : isVoice ? (

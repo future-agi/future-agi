@@ -27,6 +27,7 @@ import { useTraceDrawerStore } from "./useTraceDrawerStore";
 import { formatMs } from "src/utils/utils";
 import InlineAnnotator from "src/components/InlineAnnotator";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
+import { formatCost } from "../LLMTracing/formatters";
 
 function a11yProps(index) {
   return {
@@ -288,9 +289,9 @@ const TracesDrawer = ({
                       fontWeight={"fontWeightRegular"}
                     >
                       Total Cost:{" "}
-                      {sessionMetadata?.total_cost
-                        ? `${sessionMetadata.total_cost}`
-                        : "N/A"}
+                      {sessionMetadata?.total_cost == null
+                        ? "N/A"
+                        : formatCost(sessionMetadata.total_cost)}
                     </Typography>
                   }
                   icon={

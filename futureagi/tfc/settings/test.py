@@ -22,6 +22,7 @@ os.environ.setdefault("EE_LICENSE_KEY", "test-license-key")
 # "Redis is not available" mid-test.
 os.environ.setdefault("REDIS_URL", "redis://localhost:16379/0")
 os.environ.setdefault("REDIS_LOCK_URL", "redis://localhost:16379/2")
+os.environ.setdefault("FUTURE_AGI_TELEMETRY_URL", "http://127.0.0.1:9")
 
 from .settings import *  # noqa: F403,E402
 from .settings import INSTALLED_APPS  # noqa: E402
@@ -29,6 +30,7 @@ from .settings import INSTALLED_APPS  # noqa: E402
 # Test mode indicator
 TESTING = True
 DEBUG = False
+MCP_RATE_LIMIT_ALLOW_LOCAL_FALLBACK = True
 
 # EE usage endpoint contract fixtures create APICallLog rows directly in the
 # test database. ClickHouse selector behavior has dedicated tests; endpoint
@@ -222,6 +224,7 @@ MODEL_SERVING_URL = os.environ.get(
 # Disable analytics and tracking in tests
 MIXPANEL_TOKEN = None
 SENTRY_DSN = None
+SAML_LOGIN_ENABLED = True
 
 # Test-specific feature flags
 FEATURE_FLAGS = {

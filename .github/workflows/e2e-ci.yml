@@ -200,6 +200,14 @@ jobs:
             ${{ matrix.stack == 'standalone' && format('type=registry,ref={0}:backend-slim-amd64', env.BUILD_CACHE) || '' }}
           cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}:backend,mode=max', env.CACHE_REPO) || '' }}
 
+      - name: Add E2E-only Error Feed fixtures to distributed backend image
+        if: matrix.stack == 'distributed' && env.BUILD_BACKEND == 'true'
+        run: >
+          docker build
+          --build-arg BASE_TAG="$IMAGE_TAG"
+          -t "futureagi/future-agi:$IMAGE_TAG"
+          -f e2e/stack/backend/Dockerfile .
+
       - name: Build fi-collector image from PR code
         if: env.BUILD_BACKEND == 'true'
         uses: docker/build-push-action@v5
@@ -275,7 +283,7 @@ jobs:
           if [ "$E2E_STACK" = standalone ]; then
             services=(postgres clickhouse mock-llm)
           else
-            services=(postgres clickhouse redis minio temporal mock-llm
+            services=(postgres clickhouse redis minio temporal mock-llm mock-slack
               peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker
               peerdb-flow-api peerdb-catalog peerdb-temporal peerdb-temporal-init
               peerdb-minio)
@@ -313,6 +321,18 @@ jobs:
       - name: Flow catalog is current
         working-directory: e2e
         run: yarn catalog:check
+
+      # The @saml flows start e2e/lib/saml_idp_server.py on the runner. It
+      # signs with the backend's own pysaml2 fixtures, which need pysaml2,
+      # cryptography and the xmlsec1 binary; the runner's python3 lacks pysaml2
+      # and xmlsec1. Versions match futureagi/uv.lock.
+      - name: Install the local SAML IdP's dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xmlsec1
+          python3 -m venv "$RUNNER_TEMP/saml-idp"
+          "$RUNNER_TEMP/saml-idp/bin/pip" install --quiet pysaml2==7.5.0 cryptography==46.0.5
+          echo "E2E_SAML_PYTHON=$RUNNER_TEMP/saml-idp/bin/python" >> "$GITHUB_ENV"
 
       - name: Boot the e2e stack
         run: bin/e2e up

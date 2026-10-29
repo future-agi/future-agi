@@ -1,14 +1,16 @@
 import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { extractKpis } from "src/sections/test-detail/common";
 import { normalizeEvalResult } from "src/sections/develop-detail/DataTab/common";
 import {
   ACTIVE_EXECUTION_STATUSES,
+  SCORING_STATUS,
   STOPPABLE_EXECUTION_STATUSES,
   runColor,
   runStateFor,
 } from "src/sections/simulate/environments/workspace/runs/runs.constants";
+import { fetchRunCalls, runSummaryKey } from "./runCalls";
 
 /**
  * The run/execution DETAIL data source.
@@ -31,6 +33,8 @@ import {
  * @property {?string} finishedAt   ISO finish time — GAP: the executions row
  *                                   carries no end time, so this is null.
  * @property {"passed"|"failed"|"running"|"cancelling"|"cancelled"} status  Run-level outcome.
+ * @property {?string} executionStatus  The execution's own status
+ *                                   (`completed`, `evaluating`, …).
  * @property {string} runState      Execution lifecycle shared with the runs list.
  */
 
@@ -162,19 +166,26 @@ export function buildRunStats(kpis, perf, row) {
  * The run-detail header + stats hook.
  * @param {string} runTestId   The run-test id (owns the executions list).
  * @param {string} executionId The execution row to detail.
- * @param {{ envName?: string }} [opts]
+ * @param {{ envName?: string, callsShown?: boolean }} [opts]  `callsShown`:
+ *   the calls table is (or is about to be) mounted and feeds this read.
  * @returns {{ identity: ?RunIdentity, stats: RunStats, isLoading: boolean }}
  */
-export function useRunDetail(runTestId, executionId, { envName } = {}) {
+export function useRunDetail(
+  runTestId,
+  executionId,
+  { envName, callsShown = false } = {},
+) {
+  const queryClient = useQueryClient();
   const query = useQuery({
-    queryKey: ["simulation-run-results-v3", executionId, "summary"],
-    queryFn: () =>
-      axios
-        .get(endpoints.runResultsV3.calls(executionId), {
-          params: { page: 1, page_size: 1 },
-        })
-        .then((res) => res.data),
-    enabled: !!executionId,
+    queryKey: runSummaryKey(executionId),
+    queryFn: async () => {
+      const data = await fetchRunCalls(executionId, { page: 1, page_size: 1 });
+      // A later request's snapshot landed while this one was in flight.
+      const current = queryClient.getQueryData(runSummaryKey(executionId));
+      return current?.requestedAt > data.requestedAt ? current : data;
+    },
+    // The calls table's own polls keep this fresh while it's shown.
+    enabled: !!executionId && !callsShown,
     refetchInterval: (query) =>
       ACTIVE_EXECUTION_STATUSES.has(query.state.data?.execution?.status)
         ? 3000
@@ -208,10 +219,16 @@ export function useRunDetail(runTestId, executionId, { envName } = {}) {
                   : "failed",
       runState: runStateFor(execution.status),
       stoppable: STOPPABLE_EXECUTION_STATUSES.has(execution.status),
+      // Evals can only be graded again once the execution is `completed`.
+      executionStatus: execution.status ?? null,
       scenarioIds: execution.selected_scenario_keys?.length
         ? execution.selected_scenario_keys
         : undefined,
       trials: execution.trials ?? 1,
+      pinnedAgentVersion: execution.pinned_agent_version ?? null,
+      environmentVersion: execution.environment_version ?? null,
+      suiteVersion: execution.suite_version ?? null,
+      agentDiffers: Boolean(execution.agent_differs),
     };
   }, [execution, envName, summary]);
   const stats = useMemo(
@@ -265,6 +282,9 @@ export function useRunDetail(runTestId, executionId, { envName } = {}) {
  * @property {boolean} critical    Whether the scenario is a release blocker.
  * @property {?number} csat        Per-call CSAT, on the product's 0–10 scale
  *                                 (`overall_score`); null when absent.
+ * @property {?string} scoringStatus The call's overall scoring state.
+ * @property {?string} csatStatus  CSAT's scoring state.
+ * @property {?string} csatReason  Why CSAT failed, timed out or was skipped.
  * @property {?number} turns       Turn count.
  * @property {?number} latencyMs   Mean latency, ms.
  * @property {?number} stopLatencyMs Mean stop time after interruption, ms.
@@ -415,12 +435,53 @@ export function callTranscript(raw) {
 // `normalizeEvalResult` (the same path `runCalls` uses for the table). Pending /
 // skipped / errored evals carry no verdict (`passed: null`) so they never feed
 // the failed-eval banner.
+// The `evaluations[]` statuses of an eval that has no verdict to show.
+const UNSCORED_EVAL_STATUSES = new Set([
+  SCORING_STATUS.PENDING,
+  SCORING_STATUS.FAILED,
+  SCORING_STATUS.TIMED_OUT,
+  SCORING_STATUS.SKIPPED,
+]);
+
+/**
+ * Puts each unscored eval's current state from the v3 `evaluations[]` list onto
+ * its stored `eval_metrics` row, adding the row when there is none, so the
+ * drawers can say an eval is pending, failed, timed out or skipped instead of
+ * leaving it out. A stored row can hold an earlier grade's verdict, error flag
+ * and reason, so all of those come from the current entry. Scored evals keep
+ * their stored row as is.
+ * @param {?Object} evalMetrics  `eval_metrics`, keyed by eval config id.
+ * @param {?Array} evaluations   The call's `evaluations[]`.
+ * @returns {?Object}
+ */
+export function withScoringStatus(evalMetrics, evaluations) {
+  const unscored = (Array.isArray(evaluations) ? evaluations : []).filter(
+    (e) => e?.id && UNSCORED_EVAL_STATUSES.has(e.status),
+  );
+  if (!unscored.length) return evalMetrics;
+  const merged = { ...evalMetrics };
+  unscored.forEach((e) => {
+    const stored = merged[e.id] ?? {};
+    merged[e.id] = {
+      ...stored,
+      name: stored.name || e.name,
+      status: e.status,
+      value: e.value ?? null,
+      reason: e.reason || "",
+      error: e.status === SCORING_STATUS.FAILED,
+      skipped: e.status === SCORING_STATUS.SKIPPED,
+    };
+  });
+  return merged;
+}
+
 function callEvalResult(evalId, data) {
   if (!data || typeof data !== "object") return null;
   const norm = normalizeEvalResult(data.value, data.type);
-  // Pending evals serialise as `{}` and errored ones may carry no value — both
-  // normalise to "empty" and have no cell to show.
-  if (norm.kind === "empty") return null;
+  // An empty row is shown only when it carries a scoring status that explains
+  // it; a bare `{}` (or an errored row with no value) has no cell to show.
+  if (norm.kind === "empty" && !UNSCORED_EVAL_STATUSES.has(data.status))
+    return null;
   const inertStatus =
     data.status === "pending" ||
     data.status === "skipped" ||
@@ -515,10 +576,12 @@ export function mapCallDetail(raw) {
   );
 
   const aiPct = raw.agent_talk_percentage ?? null;
-  const evalMetrics =
+  const evalMetrics = withScoringStatus(
     raw.eval_metrics && typeof raw.eval_metrics === "object"
       ? raw.eval_metrics
-      : {};
+      : {},
+    raw.evaluations,
+  );
   // A sub-goal check is the scenario's, not an eval: the evals tab skips it.
   const evalResults = Object.entries(evalMetrics)
     .filter(([, data]) => data?.kind !== "sub_goal")
@@ -572,14 +635,52 @@ export function useCallExecutionV3Detail(callExecId, enabled = true, options) {
     enabled: enabled && !!callExecId,
     staleTime: 1000 * 60 * 5,
     refetchInterval: (query) => {
-      const evalMetrics = query.state.data?.eval_metrics;
-      if (!evalMetrics || typeof evalMetrics !== "object") return false;
-      const isLocalizing = Object.values(evalMetrics).some((metric) =>
-        ["pending", "running"].includes(metric?.error_localizer_status),
+      const data = query.state.data;
+      // An eval still being scored lands while the drawer is open.
+      const isScoring = (data?.evaluations ?? []).some(
+        (evaluation) => evaluation?.status === SCORING_STATUS.PENDING,
       );
-      return isLocalizing ? 3000 : false;
+      const evalMetrics = data?.eval_metrics;
+      const isLocalizing =
+        !!evalMetrics &&
+        typeof evalMetrics === "object" &&
+        Object.values(evalMetrics).some((metric) =>
+          ["pending", "running"].includes(metric?.error_localizer_status),
+        );
+      return isScoring || isLocalizing ? 3000 : false;
     },
   });
+}
+
+const traceRow = (raw) => ({
+  traceId: raw.trace_id,
+  name: raw.name ?? null,
+  startTime: raw.start_time ?? null,
+  status: raw.status ?? null,
+  latencyMs: raw.latency_ms ?? null,
+});
+
+export function useCallTraces(executionId, callExecutionId) {
+  const query = useQuery({
+    queryKey: ["simulation-call-traces-v3", executionId, callExecutionId],
+    queryFn: async () => {
+      const response = await axios.get(
+        endpoints.runResultsV3.traces(executionId),
+        { params: { call_execution_id: callExecutionId } },
+      );
+      return response.data;
+    },
+    enabled: !!executionId && !!callExecutionId,
+  });
+  const traces = useMemo(
+    () => (query.data?.traces ?? []).map(traceRow),
+    [query.data],
+  );
+  return {
+    projectId: query.data?.project_id ?? null,
+    traces,
+    isError: query.isError,
+  };
 }
 
 /**

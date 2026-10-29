@@ -134,3 +134,71 @@ func TestSyncFromControlPlane_StatusFalse(t *testing.T) {
 		t.Errorf("expected empty store, got %d", store.Count())
 	}
 }
+
+func TestSyncFromControlPlane_KeepsLastGoodConfigOfUnbuiltOrg(t *testing.T) {
+	// org-1 is named as unbuilt: the control plane could not build its config,
+	// so the gateway must keep what it already has. org-3 is absent from both
+	// result and unbuilt_org_ids, so it was removed and must be dropped.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": true,
+			"result": map[string]interface{}{
+				"org-2": map[string]interface{}{
+					"routing": map[string]interface{}{"strategy": "least_latency"},
+				},
+			},
+			"unbuilt_org_ids": []string{"org-1", "org-new"},
+		})
+	}))
+	defer ts.Close()
+
+	store := NewStore()
+	store.Set("org-1", &OrgConfig{Routing: &RoutingConfig{Strategy: "round_robin"}})
+	store.Set("org-3", &OrgConfig{Routing: &RoutingConfig{Strategy: "round_robin"}})
+
+	if err := SyncFromControlPlane(context.Background(), ts.URL, "token", store); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	cfg1 := store.Get("org-1")
+	if cfg1 == nil || cfg1.Routing == nil || cfg1.Routing.Strategy != "round_robin" {
+		t.Fatalf("org-1 should keep its last good config, got %+v", cfg1)
+	}
+	if store.Get("org-2") == nil {
+		t.Error("org-2 should be loaded")
+	}
+	if store.Get("org-3") != nil {
+		t.Error("org-3 is absent from the response and should be removed")
+	}
+	if store.Get("org-new") != nil {
+		t.Error("an unbuilt org with no stored config should not get an entry")
+	}
+	if store.Count() != 2 {
+		t.Errorf("expected 2 orgs, got %d", store.Count())
+	}
+}
+
+func TestSyncFromControlPlane_DropsOmittedOrgWithoutUnbuiltList(t *testing.T) {
+	// A control plane that predates unbuilt_org_ids omits the field: an org
+	// absent from result is treated as removed, as before.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": true,
+			"result": map[string]interface{}{"org-2": map[string]interface{}{}},
+		})
+	}))
+	defer ts.Close()
+
+	store := NewStore()
+	store.Set("org-1", &OrgConfig{})
+
+	if err := SyncFromControlPlane(context.Background(), ts.URL, "token", store); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if store.Get("org-1") != nil {
+		t.Error("org-1 is absent from the response and should be removed")
+	}
+	if store.Get("org-2") == nil {
+		t.Error("org-2 should be loaded")
+	}
+}

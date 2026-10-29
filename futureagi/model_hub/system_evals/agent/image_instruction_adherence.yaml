@@ -17,7 +17,8 @@ criteria: "You are evaluating how accurately generated images follow the require
   \ Inputs\n\n<instruction>{{instruction}}</instruction>\n\n<images>{{images}}</images>"
 eval_tags:
 - Image
-- Output Validation
+- Multimodal
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

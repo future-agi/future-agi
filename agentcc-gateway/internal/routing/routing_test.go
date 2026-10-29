@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -2044,24 +2045,69 @@ func TestCircuitBreaker_StateChangeCallback(t *testing.T) {
 		cb.RecordFailure(serverErr())
 	}
 
-	// Wait for cooldown, transition to half-open, then close it.
+	// Wait for cooldown, which re-admits the provider: should fire (provider-1, true).
 	time.Sleep(cfg.Cooldown + 5*time.Millisecond)
 	cb.Allow() // half-open
 	for i := 0; i < cfg.SuccessThreshold; i++ {
 		cb.RecordSuccess()
 	}
-	// Should fire (provider-1, true).
+	// Closing should fire (provider-1, true) again.
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(changes) != 2 {
-		t.Fatalf("got %d state changes, want 2; changes: %+v", len(changes), changes)
+	want := []stateChange{{"provider-1", false}, {"provider-1", true}, {"provider-1", true}}
+	if len(changes) != len(want) {
+		t.Fatalf("got %d state changes, want %d; changes: %+v", len(changes), len(want), changes)
 	}
-	if changes[0].providerID != "provider-1" || changes[0].healthy != false {
-		t.Errorf("change[0] = %+v, want {provider-1, false}", changes[0])
+	for i, w := range want {
+		if changes[i] != w {
+			t.Errorf("change[%d] = %+v, want %+v", i, changes[i], w)
+		}
 	}
-	if changes[1].providerID != "provider-1" || changes[1].healthy != true {
-		t.Errorf("change[1] = %+v, want {provider-1, true}", changes[1])
+}
+
+// A provider whose circuit opened must come back into routing once the cooldown has passed.
+// While the circuit is open the router skips the provider, so if nothing re-admits it no request
+// ever reaches Allow to half-open the circuit, and the provider stays out until a restart.
+func TestFailover_CircuitBreakerReadmitsProviderAfterCooldown(t *testing.T) {
+	router := makeFailoverRouter(t, "gpt-4", "openai", "azure")
+	cbCfg := newTestCBConfig()
+	cbReg := NewCircuitBreakerRegistry(cbCfg, router.SetHealthy)
+	f := NewFailover(config.FailoverConfig{Enabled: true, MaxAttempts: 3}, router, nil, cbReg)
+
+	var openaiDown atomic.Bool
+	var openaiCalls atomic.Int64
+	openaiDown.Store(true)
+	call := func(_ context.Context, providerID, _ string) error {
+		if providerID == "openai" {
+			openaiCalls.Add(1)
+			if openaiDown.Load() {
+				return serverErr()
+			}
+		}
+		return nil
+	}
+
+	for i := 0; i < 20 && cbReg.Get("openai").State() != StateOpen; i++ {
+		f.Execute(context.Background(), "gpt-4", call)
+	}
+	if state := cbReg.Get("openai").State(); state != StateOpen {
+		t.Fatalf("openai circuit = %v after repeated failures, want open", state)
+	}
+
+	openaiDown.Store(false)
+	time.Sleep(cbCfg.Cooldown + 50*time.Millisecond)
+	before := openaiCalls.Load()
+	for i := 0; i < 10; i++ {
+		if _, err := f.Execute(context.Background(), "gpt-4", call); err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+	}
+	if openaiCalls.Load() == before {
+		t.Fatal("openai received no requests after its cooldown, so its circuit can never close")
+	}
+	if state := cbReg.Get("openai").State(); state != StateClosed {
+		t.Errorf("openai circuit = %v after recovering, want closed", state)
 	}
 }
 

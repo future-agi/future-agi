@@ -24,6 +24,22 @@ vi.mock("src/api/shared-links", () => ({
   useResolveSharedLink: mocks.useResolveSharedLink,
 }));
 
+vi.mock("src/pages/dashboard/error-feed/ErrorFeedDetailView", async () => {
+  const { useSharedIssue } = await import(
+    "src/pages/dashboard/error-feed/sharedIssueContext"
+  );
+  return {
+    default: function MockIssuePage() {
+      const shared = useSharedIssue();
+      return (
+        <div data-testid="issue-page" data-token={shared?.token}>
+          {shared?.issue?.row?.error?.name}
+        </div>
+      );
+    },
+  };
+});
+
 vi.mock("src/components/traceDetail/TraceTreeV2", () => ({
   default: () => <div>trace tree</div>,
 }));
@@ -256,4 +272,71 @@ describe("SharedView simulation call rendering", () => {
       screen.queryByRole("button", { name: /annotate|rerun|edit/i }),
     ).not.toBeInTheDocument();
   });
+});
+
+describe("SharedView Error Feed issue", () => {
+  beforeEach(() => {
+    mocks.useResolveSharedLink.mockReset();
+  });
+
+  it("renders a shared issue as the read-only issue page", () => {
+    mocks.useResolveSharedLink.mockReturnValue({
+      data: {
+        resource_type: "error_feed_issue",
+        resource_id: "E-LOCAL01",
+        data: {
+          issue: {
+            row: {
+              cluster_id: "E-LOCAL01",
+              error: { name: "Agent promises refunds", type: "Policy" },
+            },
+          },
+          overview: null,
+          traces: null,
+          trends: null,
+          sidebar: null,
+        },
+      },
+      isLoading: false,
+      isError: false,
+    });
+
+    render(<SharedView />);
+
+    const page = screen.getByTestId("issue-page");
+    expect(page).toHaveTextContent("Agent promises refunds");
+    expect(page).toHaveAttribute("data-token", "share-token");
+    expect(screen.getByText("Shared issue")).toBeInTheDocument();
+    expect(screen.getByText("E-LOCAL01")).toBeInTheDocument();
+    expect(screen.queryByText("E-LOCAL01...")).not.toBeInTheDocument();
+    expect(screen.getByText("View only")).toBeInTheDocument();
+  });
+});
+
+describe("SharedView error states", () => {
+  beforeEach(() => {
+    mocks.useResolveSharedLink.mockReset();
+  });
+
+  it.each([
+    [401, "Sign in required"],
+    [403, "Access denied"],
+    [404, "Link not found"],
+    [410, "Link expired"],
+  ])(
+    "shows the %s screen from the interceptor's status",
+    (statusCode, title) => {
+      mocks.useResolveSharedLink.mockReturnValue({
+        data: undefined,
+        isLoading: false,
+        isError: true,
+        error: { statusCode, message: "<b>server text</b>", error: "raw" },
+      });
+
+      render(<SharedView />);
+
+      expect(screen.getByText(title)).toBeInTheDocument();
+      expect(screen.queryByText(/server text|raw/)).not.toBeInTheDocument();
+    },
+  );
 });

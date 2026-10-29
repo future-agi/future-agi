@@ -123,9 +123,33 @@ describe("harnessDetailToEnvironment", () => {
     expect(env.id).toBe("0b1c");
     expect(env.name).toBe("ride-voice-agent");
     expect(env.domain).toBe("Logistics");
+    expect(env.tagline).toBe("Logistics");
     expect(env.agentType).toBe("voice");
     expect(env.surface).toBe("voice");
     expect(env.buildStatus).toBe("ready");
+  });
+
+  it("takes the channel from agent_type, not the contract's raw modality", () => {
+    // The authoring vocabulary says "text" for chat; agent_type is the
+    // backend's own voice-or-chat answer and the only one the UI knows.
+    const { env } = harnessDetailToEnvironment({
+      ...DETAIL,
+      overview: { ...DETAIL.overview, agent_type: "chat" },
+      contract: { ...DETAIL.contract, modality: "text" },
+    });
+    expect(env.surface).toBe("chat");
+  });
+
+  it("leaves the channel unset when agent_type is missing", () => {
+    const { env } = harnessDetailToEnvironment({
+      ...DETAIL,
+      overview: { ...DETAIL.overview, agent_type: undefined },
+    });
+    expect(env.surface).toBeUndefined();
+  });
+
+  it("keeps the remaining identity fields", () => {
+    const { env } = harnessDetailToEnvironment(DETAIL);
     expect(env.status).toBe(ENV_STATUS.READY);
     expect(env.platform).toMatchObject({
       runTestId: "rt-1",
@@ -159,6 +183,32 @@ describe("harnessDetailToEnvironment", () => {
     expect(env.callDirection).toBe("inbound");
     expect(env.systemPromptExcerpt).toBe("You are a support agent…");
     expect(env.evalPreset).toEqual(["cs_policy"]);
+  });
+
+  it("reads direction, source and mode from settings when the contract has no direction", () => {
+    const { env } = harnessDetailToEnvironment({
+      ...DETAIL,
+      contract: { ...DETAIL.contract, call_direction: undefined },
+      settings: {
+        ...DETAIL.settings,
+        source: { kind: "github", repository: "acme/ride-agent", ref: "main" },
+        agent: { ...DETAIL.settings?.agent, call_direction: "outbound", mode: "connect_only" },
+      },
+    });
+    expect(env.callDirection).toBe("outbound");
+    expect(env.source).toEqual({ kind: "github", repository: "acme/ride-agent", ref: "main" });
+    expect(env.agentMode).toBe("connect_only");
+  });
+
+  it("leaves direction, source and mode empty when nothing sends them", () => {
+    const { env } = harnessDetailToEnvironment({
+      ...DETAIL,
+      contract: { ...DETAIL.contract, call_direction: undefined },
+      settings: {},
+    });
+    expect(env.callDirection).toBeNull();
+    expect(env.source).toBeNull();
+    expect(env.agentMode).toBeNull();
   });
 
   it("flattens world.stores into seed tables and keeps the raw stores", () => {

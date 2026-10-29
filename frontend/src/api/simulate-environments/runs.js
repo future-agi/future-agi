@@ -10,6 +10,11 @@ import { runStateFor } from "src/sections/simulate/environments/workspace/runs/r
 import { MOCK_RUNS } from "./_fixtures/runs";
 import { harnessEnvironmentKey } from "./environment";
 
+// Grading finishes on its own, so an `Evaluating` run offers no Stop here.
+const STOPPABLE_RUN_STATUSES = STOPPABLE_STATUSES.filter(
+  (s) => s !== "Evaluating",
+);
+
 // The Runs tab's data source. For a real completed harness job the env carries
 // `platform.runTestId`, so the run history is the product's real executions
 // API; otherwise it is the client-seeded `envState.runs` (empty until the
@@ -20,10 +25,16 @@ import { harnessEnvironmentKey } from "./environment";
 // endpoint is already registered — this adds no apiPath.
 export const RUNS_PAGE_SIZE = 10;
 
-export function listRunTestExecutions(runTestId, { page, limit } = {}) {
+// `summary` reads only each run's id, status and pinned versions, not its calls.
+export function listRunTestExecutions(
+  runTestId,
+  { page, limit, summary } = {},
+) {
   return axios
     .get(endpoints.runTests.detailExecutions(runTestId), {
-      params: page ? { page, limit } : undefined,
+      params: page
+        ? { page, limit, ...(summary ? { summary: true } : {}) }
+        : undefined,
     })
     .then((res) => res.data);
 }
@@ -70,7 +81,10 @@ export function executionToRun(raw) {
     // (passed/failed), this is where the run is (queued/running/completed).
     runState: runStateFor(raw?.status) ?? status,
     // Only a run that hasn't finished and isn't already stopping can be stopped.
-    stoppable: STOPPABLE_STATUSES.includes(raw?.status),
+    stoppable: STOPPABLE_RUN_STATUSES.includes(raw?.status),
+    // Its evals are being graded. `runState` reads this as running, like a run
+    // whose calls are still going.
+    grading: raw?.status === "Evaluating",
     startedAt: raw?.start_time ?? null,
     finishedAt: raw?.completed_at ?? null,
     total,
@@ -85,6 +99,11 @@ export function executionToRun(raw) {
     scenarioIds: raw?.scenario_keys ?? [],
     trials: raw?.trials ?? 1,
     agentVersion: raw?.agent_version ?? null,
+    // The versions the run was pinned to ({id, label}), null before versioning.
+    pinnedAgentVersion: raw?.pinned_agent_version ?? null,
+    environmentVersion: raw?.environment_version ?? null,
+    suiteVersion: raw?.suite_version ?? null,
+    agentDiffers: Boolean(raw?.agent_differs),
     durationS: raw?.duration ?? null,
   };
 }

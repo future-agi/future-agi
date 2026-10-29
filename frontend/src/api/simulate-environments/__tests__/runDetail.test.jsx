@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import PropTypes from "prop-types";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   enrichTurns,
@@ -26,7 +26,11 @@ const {
   callTranscript,
   useCallDetail,
   useCallExecutionV3Detail,
+  useCallTraces,
+  withScoringStatus,
+  useRunCalls,
 } = await import("../runDetail");
+const { runSummaryKey } = await import("../runCalls");
 const { RUN_COLORS } = await import(
   "src/sections/simulate/environments/workspace/runs/runs.constants"
 );
@@ -716,6 +720,36 @@ describe("useCallDetail", () => {
     expect(query.options.refetchInterval(query)).toBe(false);
     unmount();
   });
+
+  it("polls while an eval is still being scored and stops once none is", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    const withEval = (status) => ({
+      ...callDetailPayload(),
+      evaluations: [{ id: "cfg-1", name: "Tone", value: null, status }],
+    });
+    axios.get.mockResolvedValue({ data: withEval("pending") });
+
+    const { unmount } = renderHook(
+      () => useCallExecutionV3Detail("call-scoring"),
+      { wrapper: Wrapper },
+    );
+    const queryKey = ["simulation-call-detail-v3", "call-scoring"];
+    await waitFor(() =>
+      expect(queryClient.getQueryData(queryKey)?.evaluations).toHaveLength(1),
+    );
+    const query = queryClient.getQueryCache().find({ queryKey });
+
+    expect(query.options.refetchInterval(query)).toBe(3000);
+    queryClient.setQueryData(queryKey, withEval("timed_out"));
+    expect(query.options.refetchInterval(query)).toBe(false);
+    unmount();
+  });
 });
 
 describe("useRunDetail", () => {
@@ -733,6 +767,10 @@ describe("useRunDetail", () => {
           completed_at: "2026-01-14T09:22:00.000Z",
           selected_scenario_keys: ["scenario-a", "scenario-b"],
           trials: 3,
+          pinned_agent_version: { id: "a4", label: "v4" },
+          environment_version: { id: "e2", label: "v2" },
+          suite_version: { id: "s3", label: "v3" },
+          agent_differs: true,
           summary: {
             total: 12,
             measured: 12,
@@ -763,6 +801,19 @@ describe("useRunDetail", () => {
       "scenario-b",
     ]);
     expect(result.current.identity.trials).toBe(3);
+    expect(result.current.identity.pinnedAgentVersion).toEqual({
+      id: "a4",
+      label: "v4",
+    });
+    expect(result.current.identity.environmentVersion).toEqual({
+      id: "e2",
+      label: "v2",
+    });
+    expect(result.current.identity.suiteVersion).toEqual({
+      id: "s3",
+      label: "v3",
+    });
+    expect(result.current.identity.agentDiffers).toBe(true);
     expect(result.current.stats.total).toBe(12);
     expect(result.current.stats.passRate).toBe(74);
     expect(axios.get).toHaveBeenCalledWith(
@@ -774,7 +825,7 @@ describe("useRunDetail", () => {
   it.each([
     ["Pending", "queued"],
     ["Running", "running"],
-    ["Evaluating", "running"],
+    ["Evaluating", "grading"],
     ["Completed", "finished"],
     ["Failed", "failed"],
     ["Cancelling", "cancelling"],
@@ -787,7 +838,10 @@ describe("useRunDetail", () => {
       wrapper: makeWrapper(),
     });
     await waitFor(() => expect(result.current.isLoading).toBe(false));
-    const [listRow] = mapExecutions({ results: [{ id: "ex-state", status }], count: 1 });
+    const [listRow] = mapExecutions({
+      results: [{ id: "ex-state", status }],
+      count: 1,
+    });
     expect(listRow.runState).toBe(expected);
     expect(result.current.identity.runState).toBe(listRow.runState);
   });
@@ -816,7 +870,7 @@ describe("useRunDetail", () => {
     expect(result.current.stats.failed).toBe(4);
   });
 
-  it("marks a running Run stoppable and a cancelling one not", async () => {
+  it("marks a running Run stoppable and a cancelling or grading one not", async () => {
     const identityFor = async (status) => {
       axios.get.mockResolvedValueOnce({
         data: {
@@ -838,6 +892,27 @@ describe("useRunDetail", () => {
     expect((await identityFor("pending")).stoppable).toBe(true);
     expect((await identityFor("cancelling")).stoppable).toBe(false);
     expect((await identityFor("completed")).stoppable).toBe(false);
+    expect((await identityFor("evaluating")).stoppable).toBe(false);
+  });
+
+  it("exposes the execution's own status so the page knows when it can grade again", async () => {
+    for (const status of ["completed", "evaluating"]) {
+      axios.get.mockResolvedValueOnce({
+        data: {
+          execution: {
+            id: `ex-raw-${status}`,
+            status,
+            summary: { total: 4, outcomes: {} },
+          },
+        },
+      });
+      const { result } = renderHook(
+        () => useRunDetail("rt1", `ex-raw-${status}`),
+        { wrapper: makeWrapper() },
+      );
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      expect(result.current.identity.executionStatus).toBe(status);
+    }
   });
 
   it("reports a cancelling Run as cancelling, not running", async () => {
@@ -905,5 +980,603 @@ describe("useRunDetail", () => {
     });
     expect(query.options.refetchInterval(query)).toBe(false);
     unmount();
+  });
+});
+
+describe("call detail evals carry their scoring status", () => {
+  const detail = (eval_metrics, evaluations) =>
+    mapCallDetail({
+      id: "call-s",
+      simulation_call_type: "text",
+      transcript: [],
+      recordings: {},
+      eval_metrics,
+      evaluations,
+    });
+
+  it("lists a timed-out eval the stored metrics hold as an empty row", () => {
+    const d = detail({ "cfg-a": {} }, [
+      {
+        id: "cfg-a",
+        name: "Resolution",
+        type: "",
+        value: null,
+        score: null,
+        passed: null,
+        reason: "Scoring timed out: no progress for 10 minutes.",
+        status: "timed_out",
+      },
+    ]);
+    expect(d.evalResults).toHaveLength(1);
+    expect(d.evalResults[0]).toMatchObject({
+      id: "cfg-a",
+      name: "Resolution",
+      score: null,
+      passed: null,
+      status: "timed_out",
+      reason: "Scoring timed out: no progress for 10 minutes.",
+    });
+  });
+
+  it("lists a pending eval that has no stored row yet", () => {
+    const d = detail({}, [
+      {
+        id: "cfg-b",
+        name: "Tone",
+        type: "",
+        value: null,
+        reason: "",
+        status: "pending",
+      },
+    ]);
+    expect(d.evalResults).toEqual([
+      expect.objectContaining({ id: "cfg-b", name: "Tone", status: "pending" }),
+    ]);
+  });
+
+  it("marks a failed eval as an error, with its reason", () => {
+    const d = detail({ "cfg-c": {} }, [
+      {
+        id: "cfg-c",
+        name: "Policy",
+        value: null,
+        reason: "Model quota hit",
+        status: "failed",
+      },
+    ]);
+    expect(d.evalResults[0]).toMatchObject({
+      status: "failed",
+      error: true,
+      reason: "Model quota hit",
+    });
+  });
+
+  it("leaves a scored eval's stored verdict as it is", () => {
+    const stored = {
+      name: "Policy",
+      value: "Passed",
+      type: "Pass/Fail",
+      reason: "ok",
+    };
+    const d = detail({ "cfg-d": stored }, [
+      {
+        id: "cfg-d",
+        name: "Policy",
+        value: "Passed",
+        reason: "ok",
+        status: "succeeded",
+      },
+    ]);
+    expect(d.evalResults[0]).toMatchObject({ passed: true, reason: "ok" });
+  });
+
+  it("keeps a removed, never-scored eval out when the evaluations list doesn't name it", () => {
+    const d = detail({ "cfg-gone": { removed: true } }, []);
+    expect(d.evalResults).toHaveLength(0);
+  });
+
+  it("drops an old verdict once its re-grade timed out", () => {
+    const d = detail(
+      {
+        "cfg-r": {
+          name: "Policy",
+          value: "Failed",
+          type: "Pass/Fail",
+          reason: "oversold",
+          error: false,
+          status: "completed",
+        },
+      },
+      [
+        {
+          id: "cfg-r",
+          name: "Policy",
+          value: null,
+          reason: "Scoring timed out: no progress for 10 minutes.",
+          status: "timed_out",
+        },
+      ],
+    );
+    expect(d.evalResults[0]).toMatchObject({
+      status: "timed_out",
+      score: null,
+      passed: null,
+      error: false,
+      reason: "Scoring timed out: no progress for 10 minutes.",
+    });
+  });
+
+  it("clears an old error flag and reason while the eval is re-grading", () => {
+    const d = detail(
+      {
+        "cfg-q": {
+          name: "Tone",
+          value: null,
+          reason: "Model quota hit",
+          error: true,
+          status: "failed",
+        },
+      },
+      [
+        {
+          id: "cfg-q",
+          name: "Tone",
+          value: null,
+          reason: "",
+          status: "pending",
+        },
+      ],
+    );
+    expect(d.evalResults[0]).toMatchObject({
+      status: "pending",
+      error: false,
+      reason: "",
+    });
+  });
+
+  it("returns the stored metrics untouched when there is no evaluations list", () => {
+    const metrics = { "cfg-e": { name: "x", value: 1 } };
+    expect(withScoringStatus(metrics, undefined)).toBe(metrics);
+  });
+});
+
+describe("useRunDetail fed by the calls table", () => {
+  const wholeRun = (status = "completed", passed = 9) => ({
+    id: "ex-new",
+    ordinal: 2,
+    agent_version: "v2",
+    agent_type: "VOICE",
+    status,
+    started_at: "2026-01-14T09:12:00.000Z",
+    selected_scenario_keys: ["scenario-a"],
+    trials: 2,
+    summary: {
+      total: 12,
+      measured: 12,
+      pass_rate: Math.round((passed / 12) * 100),
+      outcomes: { passed, failed: 12 - passed, error: 0, inconclusive: 0 },
+      duration: { average: 50 },
+      tokens: { total_value: 2000 },
+      cost_cents: { total_value: 120 },
+    },
+  });
+  // A table page: its top-level `summary` follows the filters, `execution`
+  // is always the whole run.
+  const tablePage = (execution, filteredTotal = 12) => ({
+    execution,
+    summary: { total: filteredTotal, outcomes: { passed: filteredTotal } },
+    results: [],
+    groups: [],
+    count: filteredTotal,
+    total_pages: 1,
+  });
+  const listQuery = (filters = {}) => ({
+    page: 1,
+    limit: 100,
+    search: "",
+    filters,
+    groupBy: "goal",
+  });
+  const isCallsRequest = ([url]) =>
+    url === endpoints.runResultsV3.calls("ex-new");
+  const callsRequests = () => axios.get.mock.calls.filter(isCallsRequest);
+  const tick = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  // Requests held open until the test answers them, by `page_size`.
+  const heldRequests = () => {
+    const pending = {};
+    axios.get.mockImplementation(
+      (url, { params }) =>
+        new Promise((resolve) => {
+          pending[params.page_size] = (execution, extra = {}) =>
+            resolve({ data: { ...tablePage(execution), ...extra } });
+        }),
+    );
+    return pending;
+  };
+
+  const setup = (
+    queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    }),
+  ) => {
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    return { queryClient, wrapper: Wrapper };
+  };
+
+  const fallbackHeader = async (execution) => {
+    axios.get.mockResolvedValueOnce({ data: { execution } });
+    const { result, unmount } = renderHook(
+      () => useRunDetail("rt1", "ex-new", { envName: "Env" }),
+      { wrapper: setup().wrapper },
+    );
+    await waitFor(() => expect(result.current.identity).not.toBeNull());
+    const { identity, stats } = result.current;
+    unmount();
+    return { identity, stats };
+  };
+
+  beforeEach(() => {
+    axios.get.mockReset();
+  });
+
+  it("sends one request with the table mounted and shows the same header", async () => {
+    const expected = await fallbackHeader(wholeRun());
+    axios.get.mockReset();
+    axios.get.mockResolvedValue({ data: tablePage(wholeRun()) });
+
+    const { result } = renderHook(
+      () => ({
+        header: useRunDetail("rt1", "ex-new", {
+          envName: "Env",
+          callsShown: true,
+        }),
+        table: useRunCalls("ex-new", listQuery()),
+      }),
+      { wrapper: setup().wrapper },
+    );
+
+    await waitFor(() => expect(result.current.header.identity).not.toBeNull());
+    expect(result.current.header.identity).toEqual(expected.identity);
+    expect(result.current.header.stats).toEqual(expected.stats);
+    expect(callsRequests()).toHaveLength(1);
+    expect(callsRequests()[0][1].params.page_size).toBe(100);
+  });
+
+  it("fetches on its own when the table isn't mounted", async () => {
+    axios.get.mockResolvedValue({ data: { execution: wholeRun() } });
+    const { result } = renderHook(() => useRunDetail("rt1", "ex-new"), {
+      wrapper: setup().wrapper,
+    });
+
+    await waitFor(() => expect(result.current.identity).not.toBeNull());
+    expect(callsRequests()).toEqual([
+      [
+        endpoints.runResultsV3.calls("ex-new"),
+        { params: { page: 1, page_size: 1 } },
+      ],
+    ]);
+  });
+
+  it("waits for the table instead of fetching while it is about to mount", () => {
+    renderHook(() => useRunDetail("rt1", "ex-new", { callsShown: true }), {
+      wrapper: setup().wrapper,
+    });
+    expect(axios.get).not.toHaveBeenCalled();
+  });
+
+  it("keeps whole-run values whatever the table filters", async () => {
+    axios.get.mockImplementation((url, { params }) =>
+      Promise.resolve({
+        data: tablePage(wholeRun(), params.filters === "{}" ? 12 : 3),
+      }),
+    );
+    const { result, rerender } = renderHook(
+      ({ filters }) => ({
+        header: useRunDetail("rt1", "ex-new", { callsShown: true }),
+        table: useRunCalls("ex-new", listQuery(filters)),
+      }),
+      { wrapper: setup().wrapper, initialProps: { filters: {} } },
+    );
+    await waitFor(() => expect(result.current.header.identity).not.toBeNull());
+    const before = result.current.header;
+
+    rerender({ filters: { status: ["failed"] } });
+    await waitFor(() => expect(result.current.table.summary?.total).toBe(3));
+    expect(result.current.header.identity).toEqual(before.identity);
+    expect(result.current.header.stats).toEqual(before.stats);
+    expect(result.current.header.stats.total).toBe(12);
+    // Both requests are the table's own.
+    expect(callsRequests().every(([, c]) => c.params.page_size === 100)).toBe(
+      true,
+    );
+  });
+
+  it("updates from the table's polls while the run is active", async () => {
+    axios.get
+      .mockResolvedValueOnce({ data: tablePage(wholeRun("running", 4)) })
+      .mockResolvedValue({ data: tablePage(wholeRun("completed", 9)) });
+    const { result } = renderHook(
+      () => ({
+        header: useRunDetail("rt1", "ex-new", { callsShown: true }),
+        table: useRunCalls("ex-new", listQuery()),
+      }),
+      { wrapper: setup().wrapper },
+    );
+    await waitFor(() =>
+      expect(result.current.header.identity?.status).toBe("running"),
+    );
+    expect(result.current.header.stats.passed).toBe(4);
+
+    await waitFor(
+      () => expect(result.current.header.identity.status).toBe("passed"),
+      { timeout: 5000 },
+    );
+    expect(result.current.header.stats.passed).toBe(9);
+    expect(callsRequests().every(([, c]) => c.params.page_size === 100)).toBe(
+      true,
+    );
+  }, 10000);
+
+  it("doesn't let an older table page overwrite a fresher header", async () => {
+    const { queryClient, wrapper } = setup();
+    const tableKey = [
+      "simulation-run-results-v3",
+      "ex-new",
+      1,
+      100,
+      "",
+      {},
+      "goal",
+    ];
+    queryClient.setQueryData(
+      tableKey,
+      {
+        ...tablePage(wholeRun("running", 4)),
+        requestedAt: Date.now() - 10_000,
+      },
+      { updatedAt: Date.now() - 10_000 },
+    );
+    queryClient.setQueryData(
+      runSummaryKey("ex-new"),
+      { execution: wholeRun("completed", 9), requestedAt: Date.now() },
+      { updatedAt: Date.now() },
+    );
+    axios.get.mockImplementation(() => new Promise(() => {}));
+
+    const { result } = renderHook(
+      () => ({
+        header: useRunDetail("rt1", "ex-new", { callsShown: true }),
+        table: useRunCalls("ex-new", listQuery()),
+      }),
+      { wrapper },
+    );
+    expect(result.current.table.summary.total).toBe(12);
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+    expect(
+      queryClient.getQueryData(runSummaryKey("ex-new")).execution.status,
+    ).toBe("completed");
+    expect(result.current.header.identity.status).toBe("passed");
+    expect(result.current.header.stats.passed).toBe(9);
+  });
+
+  it("drops a header response that lands after a newer table write", async () => {
+    let resolveHeader;
+    axios.get.mockImplementation((url, { params }) =>
+      params.page_size === 1
+        ? new Promise((resolve) => {
+            resolveHeader = resolve;
+          })
+        : Promise.resolve({ data: tablePage(wholeRun("completed", 9)) }),
+    );
+    const { result, rerender } = renderHook(
+      ({ shown }) => ({
+        header: useRunDetail("rt1", "ex-new", { callsShown: shown }),
+        table: useRunCalls("ex-new", { ...listQuery(), enabled: shown }),
+      }),
+      { wrapper: setup().wrapper, initialProps: { shown: false } },
+    );
+    await waitFor(() => expect(resolveHeader).toBeDefined());
+    await act(() => tick(5));
+
+    rerender({ shown: true });
+    await waitFor(() =>
+      expect(result.current.header.identity?.status).toBe("passed"),
+    );
+    await act(async () => {
+      resolveHeader({ data: { execution: wholeRun("running", 4) } });
+    });
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+
+    expect(result.current.header.identity.status).toBe("passed");
+    expect(result.current.header.identity.stoppable).toBe(false);
+    expect(result.current.header.stats.passed).toBe(9);
+  });
+
+  it("keeps a newer header poll over an older request that resolves later", async () => {
+    const { queryClient, wrapper } = setup();
+    const held = heldRequests();
+    const { result, rerender } = renderHook(
+      ({ shown }) => ({
+        header: useRunDetail("rt1", "ex-new", { callsShown: shown }),
+        // The debug drawer's cited-calls read.
+        drawer: useRunCalls("ex-new", {
+          limit: 500,
+          filters: { call_execution_id: ["c1"] },
+        }),
+      }),
+      { wrapper, initialProps: { shown: true } },
+    );
+    await waitFor(() => expect(held[500]).toBeDefined());
+    await act(() => tick(5));
+    rerender({ shown: false });
+    await waitFor(() => expect(held[1]).toBeDefined());
+
+    // Re-grading started between the two requests.
+    await act(async () => held[1](wholeRun("evaluating", 9)));
+    await waitFor(() =>
+      expect(result.current.header.identity?.executionStatus).toBe(
+        "evaluating",
+      ),
+    );
+    await act(async () => held[500](wholeRun("completed", 9)));
+    await act(() => tick(20));
+
+    expect(result.current.header.identity.status).toBe("running");
+    const query = queryClient
+      .getQueryCache()
+      .find({ queryKey: runSummaryKey("ex-new") });
+    expect(query.options.refetchInterval(query)).toBe(3000);
+  });
+
+  it("orders a header response landing before the table's write", async () => {
+    const held = heldRequests();
+    const { result, rerender } = renderHook(
+      ({ shown }) => ({
+        header: useRunDetail("rt1", "ex-new", { callsShown: shown }),
+        table: useRunCalls("ex-new", { ...listQuery(), enabled: shown }),
+      }),
+      { wrapper: setup().wrapper, initialProps: { shown: false } },
+    );
+    await waitFor(() => expect(held[1]).toBeDefined());
+    await act(() => tick(5));
+    rerender({ shown: true });
+    await waitFor(() => expect(held[100]).toBeDefined());
+
+    // Both land before the table's write runs.
+    await act(async () => {
+      held[100](wholeRun("completed", 9));
+      held[1](wholeRun("running", 4));
+    });
+    await act(() => tick(20));
+
+    await waitFor(
+      () => expect(result.current.header.identity.status).toBe("passed"),
+      { timeout: 3000 },
+    );
+    expect(result.current.header.identity.status).toBe("passed");
+    expect(result.current.header.stats.passed).toBe(9);
+  });
+
+  it("keeps the header without a new request when the table unmounts", async () => {
+    axios.get.mockResolvedValue({ data: tablePage(wholeRun()) });
+    const { result, rerender } = renderHook(
+      ({ shown }) => ({
+        header: useRunDetail("rt1", "ex-new", { callsShown: shown }),
+        table: useRunCalls("ex-new", { ...listQuery(), enabled: shown }),
+      }),
+      { wrapper: setup().wrapper, initialProps: { shown: true } },
+    );
+    await waitFor(() => expect(result.current.header.identity).not.toBeNull());
+    const before = result.current.header;
+
+    rerender({ shown: false });
+    expect(result.current.header.identity).toEqual(before.identity);
+    expect(result.current.header.stats).toEqual(before.stats);
+    expect(callsRequests()).toHaveLength(1);
+  });
+});
+
+describe("useCallTraces", () => {
+  beforeEach(() => {
+    axios.get.mockReset();
+  });
+
+  it("reads one call's traces of the run and maps the rows", async () => {
+    axios.get.mockResolvedValue({
+      data: {
+        project_id: "hidden-project",
+        traces: [
+          {
+            trace_id: "trace-1",
+            name: "book_ride",
+            start_time: "2026-10-14T11:08:13Z",
+            status: "OK",
+            latency_ms: 1830,
+            call_execution_id: "call-1",
+          },
+        ],
+      },
+    });
+
+    const { result } = renderHook(() => useCallTraces("exec-1", "call-1"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.projectId).toBe("hidden-project"));
+    expect(axios.get).toHaveBeenCalledWith(
+      endpoints.runResultsV3.traces("exec-1"),
+      { params: { call_execution_id: "call-1" } },
+    );
+    expect(result.current.traces).toEqual([
+      {
+        traceId: "trace-1",
+        name: "book_ride",
+        startTime: "2026-10-14T11:08:13Z",
+        status: "OK",
+        latencyMs: 1830,
+      },
+    ]);
+    expect(result.current.isError).toBe(false);
+  });
+
+  it("answers no project and no rows when the run has nothing to read", async () => {
+    axios.get.mockResolvedValue({ data: { project_id: null, traces: [] } });
+
+    const { result } = renderHook(() => useCallTraces("exec-1", "call-1"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(1));
+    expect(result.current.projectId).toBeNull();
+    expect(result.current.traces).toEqual([]);
+  });
+
+  it("reads again for the next call of the run rather than showing the last call's traces", async () => {
+    axios.get.mockImplementation((_url, { params }) =>
+      Promise.resolve({
+        data: {
+          project_id: "hidden-project",
+          traces: [
+            {
+              trace_id: `trace-of-${params.call_execution_id}`,
+              name: "turn",
+            },
+          ],
+        },
+      }),
+    );
+
+    const { result, rerender } = renderHook(
+      ({ callId }) => useCallTraces("exec-1", callId),
+      { wrapper: makeWrapper(), initialProps: { callId: "call-a" } },
+    );
+    await waitFor(() =>
+      expect(result.current.traces.map((t) => t.traceId)).toEqual([
+        "trace-of-call-a",
+      ]),
+    );
+
+    rerender({ callId: "call-b" });
+
+    await waitFor(() =>
+      expect(result.current.traces.map((t) => t.traceId)).toEqual([
+        "trace-of-call-b",
+      ]),
+    );
+    expect(axios.get).toHaveBeenCalledTimes(2);
+    expect(axios.get).toHaveBeenLastCalledWith(
+      endpoints.runResultsV3.traces("exec-1"),
+      { params: { call_execution_id: "call-b" } },
+    );
+  });
+
+  it("stays idle without a run or a call", () => {
+    renderHook(() => useCallTraces(null, "call-1"), { wrapper: makeWrapper() });
+    renderHook(() => useCallTraces("exec-1", null), { wrapper: makeWrapper() });
+
+    expect(axios.get).not.toHaveBeenCalled();
   });
 });

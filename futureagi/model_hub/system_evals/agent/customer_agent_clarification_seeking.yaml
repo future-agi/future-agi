@@ -17,7 +17,8 @@ criteria: "You are evaluating whether the agent seeks clarification when the cus
   \n## Inputs\n\n<conversation>{{conversation}}</conversation>"
 eval_tags:
 - Agents
-- Conversation
+- Voice
+offered_in_environments: true
 visible_ui: true
 permissions:
   allow_edit: false

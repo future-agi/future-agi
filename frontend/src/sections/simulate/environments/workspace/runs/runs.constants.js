@@ -4,7 +4,8 @@ import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 const RUN_STATE = {
   pending: "queued",
   running: "running",
-  evaluating: "running",
+  // Every call has ended and their evals are still grading.
+  evaluating: "grading",
   cancelling: "cancelling",
   completed: "finished",
   failed: "failed",
@@ -12,6 +13,16 @@ const RUN_STATE = {
 };
 
 export const runStateFor = (status) => RUN_STATE[status?.toLowerCase()];
+
+// An eval's or CSAT's scoring state, as the v3 calls API sends it. `error` is
+// what older payloads sent for a failed eval.
+export const SCORING_STATUS = {
+  PENDING: "pending",
+  FAILED: "failed",
+  ERROR: "error",
+  TIMED_OUT: "timed_out",
+  SKIPPED: "skipped",
+};
 
 // The statuses whose dot animates — a run in one of these phases is still
 // moving, so the chip breathes.
@@ -25,8 +36,9 @@ export const ACTIVE_EXECUTION_STATUSES = new Set([
   "evaluating",
 ]);
 
-// The subset a user can still stop — `cancelling` is already on its way out.
-export const STOPPABLE_EXECUTION_STATUSES = new Set(["pending", "running", "evaluating"]);
+// The subset a user can still stop — `cancelling` is already on its way out,
+// and grading (`evaluating`) finishes on its own.
+export const STOPPABLE_EXECUTION_STATUSES = new Set(["pending", "running"]);
 
 // Stable hook for the pulsing dot so callers (and tests) can target it without
 // depending on emotion's generated class name.

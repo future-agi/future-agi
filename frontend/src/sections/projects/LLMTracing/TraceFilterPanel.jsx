@@ -37,7 +37,7 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 import { useParams } from "react-router";
 import Iconify from "src/components/iconify";
 import BoundedCursorPaginationControl from "src/components/BoundedCursorPaginationControl";
-import CustomTooltip from "src/components/tooltip/CustomTooltip";
+import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
 import axios, { endpoints } from "src/utils/axios";
 import { SpanTypes } from "src/utils/constant";
 import {
@@ -2871,19 +2871,10 @@ function PropertyPicker({
                     "&:hover": { bgcolor: "action.hover" },
                   }}
                 >
-                  <Typography
-                    noWrap
-                    title={prop.name}
-                    sx={{
-                      fontSize: 13,
-                      flex: 1,
-                      maxWidth: 250,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
-                  >
-                    {prop.name}
-                  </Typography>
+                  <OverflowText
+                    text={prop.name}
+                    sx={{ fontSize: 13, flex: 1, maxWidth: 250 }}
+                  />
                   {prop.outputType && (
                     <Chip
                       size="small"
@@ -3022,6 +3013,29 @@ const boundExactValueSearchInput = (value, maxUtf8Bytes) =>
 
 const pickerValueKey = (value, storageType) =>
   getPickerValueIdentity(value, storageType);
+
+// A one-line label (a field name, a value) that names itself in full on hover,
+// only when the line cuts it off (the shared OverflowTooltip measures on hover).
+// Long ids have no spaces, so the tooltip may break them anywhere.
+function OverflowText({ text, sx }) {
+  return (
+    <OverflowTooltip
+      title={
+        <Box component="span" sx={{ wordBreak: "break-all" }}>
+          {text}
+        </Box>
+      }
+    >
+      <Typography noWrap sx={sx}>
+        {text}
+      </Typography>
+    </OverflowTooltip>
+  );
+}
+OverflowText.propTypes = {
+  text: PropTypes.string,
+  sx: PropTypes.object,
+};
 
 function ValuePicker({
   propertyId,
@@ -3353,21 +3367,16 @@ function ValuePicker({
             const displayLabel =
               (typeof match === "string" ? match : match?.label) ?? String(v);
             return (
-              <Typography
+              <OverflowText
                 key={pickerValueKey(v, selectedValueTypes[0])}
-                noWrap
-                title={displayLabel}
+                text={displayLabel}
                 sx={{
                   fontSize: 12,
                   color: "text.primary",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
                   minWidth: 0,
                   flex: 1,
                 }}
-              >
-                {displayLabel}
-              </Typography>
+              />
             );
           })()
         ) : (
@@ -3392,30 +3401,37 @@ function ValuePicker({
               ? `${chipLabel} (${secondaryLabel})`
               : chipLabel;
             return (
-              <Chip
+              <OverflowTooltip
                 key={pickerValueKey(v, selectedType)}
-                label={chipLabel}
-                title={chipTitle}
-                size="small"
-                onDelete={(e) => {
-                  e.stopPropagation();
-                  onChange(
-                    selectedValues.filter(
-                      (_, index) => index !== selectedIndex,
-                    ),
-                    selectedValueTypes.filter(
-                      (_, index) => index !== selectedIndex,
-                    ),
-                  );
-                }}
-                deleteIcon={<Iconify icon="mdi:close" width={10} />}
-                sx={{
-                  height: 20,
-                  fontSize: 10,
-                  maxWidth: 70,
-                  "& .MuiChip-label": { px: 0.5 },
-                }}
-              />
+                title={
+                  <Box component="span" sx={{ wordBreak: "break-all" }}>
+                    {chipTitle}
+                  </Box>
+                }
+              >
+                <Chip
+                  label={chipLabel}
+                  size="small"
+                  onDelete={(e) => {
+                    e.stopPropagation();
+                    onChange(
+                      selectedValues.filter(
+                        (_, index) => index !== selectedIndex,
+                      ),
+                      selectedValueTypes.filter(
+                        (_, index) => index !== selectedIndex,
+                      ),
+                    );
+                  }}
+                  deleteIcon={<Iconify icon="mdi:close" width={10} />}
+                  sx={{
+                    height: 20,
+                    fontSize: 10,
+                    maxWidth: 70,
+                    "& .MuiChip-label": { px: 0.5 },
+                  }}
+                />
+              </OverflowTooltip>
             );
           })
         )}
@@ -3616,25 +3632,19 @@ function ValuePicker({
                   }}
                 />
                 <Box sx={{ flex: 1, minWidth: 0 }}>
-                  <Typography
-                    noWrap
-                    title={label}
+                  <OverflowText
+                    text={label}
                     sx={{
                       fontSize: 12,
                       fontWeight: isSelected ? 600 : 400,
                       color: "text.primary",
                     }}
-                  >
-                    {label}
-                  </Typography>
+                  />
                   {secondaryLabel && (
-                    <Typography
-                      noWrap
-                      title={secondaryLabel}
+                    <OverflowText
+                      text={secondaryLabel}
                       sx={{ fontSize: 10, color: "text.secondary", mt: 0.1 }}
-                    >
-                      {secondaryLabel}
-                    </Typography>
+                    />
                   )}
                 </Box>
               </Box>
@@ -4256,47 +4266,31 @@ function FilterRow({
         mb: rowHasInvalidNumeric || rowHasInvalidMap ? 1.5 : 0,
       }}
     >
-      <CustomTooltip
-        show={!!(selectedProp?.name || filter.fieldName || filter.field)}
-        arrow
+      <Button
+        ref={(el) => el}
         size="small"
-        type="black"
-        title={selectedProp?.name || filter.fieldName || filter.field || ""}
+        variant="outlined"
+        onClick={(e) => setPickerAnchor(e.currentTarget)}
+        endIcon={<Iconify icon="mdi:chevron-down" width={14} />}
+        sx={{
+          textTransform: "none",
+          fontSize: 12,
+          height: 28,
+          flex: "1 1 150px",
+          minWidth: 0,
+          maxWidth: { xs: "100%", sm: 180 },
+          borderColor: "divider",
+          color: filter.field ? "text.primary" : "text.disabled",
+          justifyContent: "space-between",
+        }}
       >
-        <Button
-          ref={(el) => el}
-          size="small"
-          variant="outlined"
-          onClick={(e) => setPickerAnchor(e.currentTarget)}
-          endIcon={<Iconify icon="mdi:chevron-down" width={14} />}
-          sx={{
-            textTransform: "none",
-            fontSize: 12,
-            height: 28,
-            flex: "1 1 150px",
-            minWidth: 0,
-            maxWidth: { xs: "100%", sm: 180 },
-            borderColor: "divider",
-            color: filter.field ? "text.primary" : "text.disabled",
-            justifyContent: "space-between",
-          }}
-        >
-          <Typography
-            noWrap
-            sx={{
-              fontSize: 12,
-              maxWidth: "100%",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-            }}
-          >
-            {selectedProp?.name ||
-              filter.fieldName ||
-              filter.field ||
-              "Property"}
-          </Typography>
-        </Button>
-      </CustomTooltip>
+        <OverflowText
+          text={
+            selectedProp?.name || filter.fieldName || filter.field || "Property"
+          }
+          sx={{ fontSize: 12, maxWidth: "100%" }}
+        />
+      </Button>
       <PropertyPicker
         anchorEl={pickerAnchor}
         open={Boolean(pickerAnchor)}

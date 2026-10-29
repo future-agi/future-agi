@@ -26,21 +26,6 @@ const BUDGET_LEVELS = [
     label: "Hard Limit",
     description: "Absolute cap — requests are blocked when exceeded",
   },
-  {
-    value: "per_key",
-    label: "Per API Key",
-    description: "Spending limit applied to each individual API key",
-  },
-  {
-    value: "per_user",
-    label: "Per User",
-    description: "Spending limit per user across all their API keys",
-  },
-  {
-    value: "per_model",
-    label: "Per Model",
-    description: "Spending limit per model (e.g., cap expensive models)",
-  },
 ];
 
 const ACTIONS = [

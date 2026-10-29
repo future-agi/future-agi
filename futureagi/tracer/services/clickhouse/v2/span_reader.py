@@ -224,6 +224,21 @@ _LEAN_SELECT_SQL = ", ".join(
 # ReplacingMergeTree(_version, is_deleted) engine already drops deleted rows under
 # FINAL, so the predicate is redundant and only arms the resurrection bug.
 _FINAL_SKIP_INDEX_SETTINGS = {"use_skip_indexes_if_final": 1}
+
+# A read "as of" a cutoff keeps a row only when its latest version was written by
+# then: a row rewritten later has no eligible version. Both predicates must run
+# after the FINAL merge, or an earlier version comes back. So nothing may move to
+# PREWHERE, and the minmax index on ``created_at`` may not prune. The parameter is
+# UTC text with microseconds: a bound datetime loses them.
+_CUTOFF_WHERE = (
+    "created_at <= toDateTime64(%(cutoff)s, 6, 'UTC') "
+    "AND updated_at <= toDateTime64(%(cutoff)s, 6, 'UTC')"
+)
+_CUTOFF_SETTINGS = {
+    **_FINAL_SKIP_INDEX_SETTINGS,
+    "optimize_move_to_prewhere_if_final": 0,
+    "ignore_data_skipping_indices": "auto_minmax_index_created_at",
+}
 _FEED_TRACE_BATCH_SIZE = 1000
 
 # FINAL merges every part covering the queried key range, so its cost tracks the
@@ -926,6 +941,7 @@ class CHSpanReader:
         project_id: str | None = None,
         org_id: str | None = None,
         dedup_via_limit_by: bool = False,
+        cutoff: datetime | None = None,
     ) -> list[CHSpan]:
         """Parentless spans for the given traces, same shape/order as
         list_by_trace_ids. Fetches one row per root instead of every span.
@@ -935,6 +951,8 @@ class CHSpanReader:
         (a voice conversation root carries its whole raw_log in
         attributes_extra). input/output/attrs_string stay real. ``project_id``
         (optional) scopes the read to one tenant; omit for prior behavior.
+        ``cutoff`` (optional) drops a root whose latest version was written
+        after that time; see ``_CUTOFF_WHERE``.
 
         NOTE: structural root (parentless span), NOT the cluster-RCA agent's
         argMin "representative trace" — deliberately different reads.
@@ -954,6 +972,12 @@ class CHSpanReader:
         if org_id:
             where.append("org_id = %(oid)s")
             params["oid"] = str(org_id)
+        if cutoff is not None:
+            if dedup_via_limit_by:
+                # LIMIT BY would pick the newest version at or before the cutoff.
+                raise ValueError("a cutoff read needs the FINAL merge")
+            where.append(_CUTOFF_WHERE)
+            params["cutoff"] = cutoff.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")
         order_by = "ORDER BY trace_id, start_time, id"
         if dedup_via_limit_by:
             sql = _dedup_sql(" AND ".join(where), order_by, include_heavy=include_heavy)
@@ -962,7 +986,9 @@ class CHSpanReader:
             settings: dict[str, Any] = {}
         else:
             sql = f"SELECT {select} FROM spans FINAL WHERE {' AND '.join(where)} {order_by}"
-            settings = _FINAL_SKIP_INDEX_SETTINGS
+            settings = (
+                _FINAL_SKIP_INDEX_SETTINGS if cutoff is None else _CUTOFF_SETTINGS
+            )
         rows = self._client.query(sql, parameters=params, settings=settings).result_rows
         return [_row_to_chspan(r) for r in rows]
 
