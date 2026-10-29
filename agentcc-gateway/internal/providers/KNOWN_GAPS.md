@@ -13,7 +13,7 @@ Coverage by provider and endpoint is in [CONTRACT_COVERAGE.md](CONTRACT_COVERAGE
 
 ## Totals
 
-179 gap IDs, defined 896 times.
+186 gap IDs, defined 903 times.
 
 | prefix | provider | topic | IDs |
 |---|---|---|--:|
@@ -31,14 +31,17 @@ Coverage by provider and endpoint is in [CONTRACT_COVERAGE.md](CONTRACT_COVERAGE
 | `B` | Amazon Bedrock | all | 23 |
 | `K` | Cohere | all | 13 |
 | `GQ` | Groq | all | 5 |
-| `P` | Perplexity | all | 3 |
+| `P` | Perplexity | all | 4 |
 | `MI` | Mistral | all | 5 |
 | `OR` | OpenRouter | all | 8 |
-| `TG` | Together | all | 7 |
+| `TG` | Together | all | 8 |
 | `CB` | Cerebras | all | 3 |
-| `FW` | Fireworks | all | 2 |
+| `FW` | Fireworks | all | 3 |
 | `XA` | xAI | all | 7 |
-| `RP` | Replicate | all | 1 |
+| `RP` | Replicate | all | 2 |
+| `DI` | DeepInfra | all | 1 |
+| `HF` | Hugging Face | all | 1 |
+| `AN` | Anyscale | all | 1 |
 | `DG` | Deepgram | speech relay | 2 |
 | `CA` | Cartesia | speech relay | 2 |
 
@@ -228,6 +231,7 @@ Coverage by provider and endpoint is in [CONTRACT_COVERAGE.md](CONTRACT_COVERAGE
 | P1 | Perplexity's embeddings are int8 or binary vectors encoded in base64 (encoding_format base64_int8 or base64_binary; it has no float encoding, and its base64 is not OpenAI's float32): a request that asks for floats, or names no encoding as OpenAI clients may, gets a base64 string, which the canonical response passes through unconverted, so an OpenAI client cannot read the vector | openai: perplexity@pplx-embed-v1-0.6b/embeddings_default |
 | P2 | Perplexity's embedding cost (usage.cost: currency, input_cost, total_cost) is dropped: models.EmbeddingUsage has no Extra, unlike chat's models.Usage, so the client loses what Perplexity charged | openai: perplexity@pplx-embed-v1-0.6b |
 | P3 | Perplexity's Responses usage reports what its tools cost (tool_calls_details: each tool's invocations, cost_usd and token usage); applyResponsesUsage reads input, output and total tokens alone, so the tool fees Perplexity bills are not priced | server: contract_openai_responses_test.go |
+| P4 | The perplexity preset sends chat completions to https://api.perplexity.ai/v1/chat/completions, while Perplexity's official SDK and cookbook call https://api.perplexity.ai/chat/completions and use /v1 only for embeddings, responses and models; whether /v1/chat/completions is served too is unverified | providers: presets_health_test.go |
 
 ## Mistral
 
@@ -263,6 +267,7 @@ Coverage by provider and endpoint is in [CONTRACT_COVERAGE.md](CONTRACT_COVERAGE
 | TG5 | Together's embeddings answer has no usage (EmbeddingsResponse is object, model and data), so the canonical response has none and the gateway has no token count to price a Together embedding request from | openai: together@togethercomputer/m2-bert-80M-8k-retrieval/embeddings_float |
 | TG6 | ListModels calls GET /v1/models, which Together's spec no longer documents: together-py 057705f8 (2026-10-19) dropped it for /v2/supported-models and the project and organization model lists, whose shapes differ, and the last revision that had it answered a bare JSON array of ModelInfo, which ListModels' models.ModelListResponse cannot decode either, so the gateway cannot list Together's models | openai: contract_preset_together_test.go |
 | TG7 | Together's echoed prompt (prompt[]: the prompt's text and, with logprobs, its token log probabilities, returned when the request sets echo) is dropped: models.CompletionResponse has no field for it and no Extra, so a client that asks for echo gets neither, where OpenAI's completions echo the prompt inside choices[].text | openai: together@mistralai/Mixtral-8x7B-Instruct-v0.1 |
+| TG8 | The together preset still sends every request to https://api.together.xyz/v1, a host Together's current SDK has moved off (together-py 3.0.0, 2026-10-22, uses https://api.together.ai, and https://api-inference.together.ai for chat completions), so the preset depends on a legacy host Together may retire (unverified) | providers: presets_health_test.go |
 
 ## Cerebras
 
@@ -278,6 +283,7 @@ Coverage by provider and endpoint is in [CONTRACT_COVERAGE.md](CONTRACT_COVERAGE
 |---|---|---|
 | FW1 | Fireworks' finish_reason "error" (the generation failed) passes through as a non-canonical finish reason, and the request ends as a success with whatever text came before: the inbound translators fall back to a default and clients that switch on finish_reason miss the failure | openai: fireworks@accounts/fireworks/models/kimi-k2-instruct-0905/completions_finish_error |
 | FW2 | Fireworks reports Responses usage under chat's names, prompt_tokens and completion_tokens, with input_tokens and output_tokens null; applyResponsesUsage reads input_tokens and output_tokens alone, so a Fireworks Responses request is priced with no input or output tokens (total_tokens alone) | server: contract_openai_responses_test.go |
+| FW3 | Fireworks serves transcription and translation only on its audio hosts (audio-prod and audio-turbo .us-virginia-1.direct.fireworks.ai/v1/audio/...), not under the fireworks preset's https://api.fireworks.ai/inference/v1, so a transcription or translation request through the preset fails | providers: presets_health_test.go |
 
 ## xAI
 
@@ -296,6 +302,25 @@ Coverage by provider and endpoint is in [CONTRACT_COVERAGE.md](CONTRACT_COVERAGE
 | ID | loss | defined in |
 |---|---|---|
 | RP1 | Replicate's model list is a page, {next, previous, results: [Model]}, not OpenAI's {object, data}: ListModels decodes no models from it, so the gateway lists none of Replicate's models | openai: replicate@stability-ai/sdxl, replicate@stability-ai/sdxl/list_models |
+| RP2 | The replicate preset points the OpenAI adapter at Replicate's own predictions API (https://api.replicate.com/v1), which is not OpenAI-compatible: GET /v1/models is the only path the gateway calls that it serves (in its own shape, gap RP1), so chat and every other request through the preset fails | providers: presets_health_test.go |
+
+## DeepInfra
+
+| ID | loss | defined in |
+|---|---|---|
+| DI1 | The deepinfra preset sends every request below https://api.deepinfra.com/v1 (/v1/chat/completions, /v1/models), but DeepInfra serves its OpenAI-compatible API below https://api.deepinfra.com/v1/openai, so no request through the preset reaches it | providers: presets_health_test.go |
+
+## Hugging Face
+
+| ID | loss | defined in |
+|---|---|---|
+| HF1 | The huggingface preset sends requests to api-inference.huggingface.co, a host Hugging Face has retired: its OpenAI-compatible API is https://router.huggingface.co/v1 (chat completions, responses and models), so every request through the preset fails | providers: presets_health_test.go |
+
+## Anyscale
+
+| ID | loss | defined in |
+|---|---|---|
+| AN1 | The anyscale preset still targets https://api.endpoints.anyscale.com/v1, which Anyscale has likely withdrawn (unverified): its "Changes to Anyscale Endpoints API" notice ends multi-tenant access to the Endpoints API from 2024-08-01, so every request through the preset may fail | providers: presets_health_test.go |
 
 ## Deepgram
 

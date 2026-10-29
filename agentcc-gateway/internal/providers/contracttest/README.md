@@ -308,8 +308,10 @@ Allowlist semantics:
   `R`, Gemini `G` (`GR` request side), Vertex AI `V`, OpenAI `O`, Azure `A`,
   Bedrock `B`, Cohere `K`, Groq `GQ`, Perplexity `P`, Mistral `MI`,
   OpenRouter `OR`, Together `TG`, Cerebras `CB`, Fireworks `FW`, xAI `XA`,
-  Replicate `RP`, Deepgram `DG`, Cartesia `CA`. IDs are unique across
-  providers. Write a definition as
+  Replicate `RP`, DeepInfra `DI`, Hugging Face `HF`, Anyscale `AN`, Deepgram
+  `DG`, Cartesia `CA`. IDs are unique across providers. A preset whose base
+  URL or path is wrong files its gap in `TestPresetHealth`
+  (`internal/providers/presets_health_test.go`). Write a definition as
   `known gap <ID>: <reason>` (a mention without the colon is a reference,
   which must resolve to a definition); `KNOWN_GAPS.md` is generated from
   them, and `contractcoverage`'s `TestKnownGaps` fails on a malformed or

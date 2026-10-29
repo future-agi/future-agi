@@ -227,7 +227,7 @@ func (m openAIModel) model() Model {
 		mm.Capabilities = append(mm.Capabilities, "type:"+m.Type)
 	}
 	var caps map[string]bool
-	hasChatCap := false
+	mistralCaps := false
 	if len(m.Capabilities) > 0 && json.Unmarshal(m.Capabilities, &caps) == nil {
 		names := make([]string, 0, len(caps))
 		for name, on := range caps {
@@ -237,7 +237,8 @@ func (m openAIModel) model() Model {
 		}
 		sort.Strings(names)
 		mm.Capabilities = append(mm.Capabilities, names...)
-		_, hasChatCap = caps["completion_chat"]
+		// Mistral's ModelCapabilities always carries completion_chat.
+		_, mistralCaps = caps["completion_chat"]
 	}
 	switch {
 	case m.Active != nil && !*m.Active:
@@ -248,12 +249,46 @@ func (m openAIModel) model() Model {
 		mm.AutoIgnore = "shutdown announced for " + mm.Retires
 	case m.Type == "fine-tuned":
 		mm.AutoIgnore = "fine-tuned model (type: fine-tuned): specific to the organisation that owns the key"
-	case hasChatCap && !caps["completion_chat"] && !caps["ocr"]:
-		// Mistral: embeddings, moderation, classifier and transcription
-		// models. The mistral fixtures cover chat and OCR.
-		mm.AutoIgnore = "capabilities has neither completion_chat nor ocr"
+	case mistralCaps:
+		if other := mistralUnparsedOnly(caps); other != nil {
+			mm.AutoIgnore = fmt.Sprintf("capabilities name only endpoints the gateway does not parse %v: none of %s, and not an embedding model", other, strings.Join(mistralParsedCaps, ", "))
+		}
 	}
 	return mm
+}
+
+// mistralParsedCaps are the Mistral capability flags of the endpoints the
+// openai adapter parses for the mistral preset, each a contract target:
+// chat completions (and the Responses passthrough), /v1/ocr,
+// /v1/audio/transcriptions and /v1/audio/speech. Embeddings have no flag
+// (mistralai/client-python@90e300904b64c36e0630f72ef475dbab7912068e
+// src/mistralai/client/models/modelcapabilities.py): an embedding model,
+// mistral-embed or codestral-embed, sets none of the endpoint flags below.
+var mistralParsedCaps = []string{"completion_chat", "ocr", "audio_transcription", "audio_speech"}
+
+// mistralUnparsedCaps are the flags of the Mistral endpoints the gateway
+// does not serve: /v1/moderations, /v1/classifications, /v1/fim/completions
+// and the realtime transcription WebSocket.
+var mistralUnparsedCaps = []string{"moderation", "classification", "completion_fim", "audio_transcription_realtime"}
+
+// mistralUnparsedOnly returns the unparsed endpoint flags a Mistral model
+// sets when it sets no parsed one: a model for endpoints no contract case
+// can reach. It returns nil for a model of a parsed endpoint, and for one
+// with no endpoint flag at all (an embedding model, or a class Mistral has
+// no flag for yet, which is surfaced rather than hidden).
+func mistralUnparsedOnly(caps map[string]bool) []string {
+	for _, c := range mistralParsedCaps {
+		if caps[c] {
+			return nil
+		}
+	}
+	var other []string
+	for _, c := range mistralUnparsedCaps {
+		if caps[c] {
+			other = append(other, c)
+		}
+	}
+	return other
 }
 
 // ---- Anthropic ---------------------------------------------------------------

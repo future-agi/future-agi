@@ -144,7 +144,10 @@ exactly one status:
 How a listed ID is classified, in order: its explicit entry; an ignore rule;
 the provider's own metadata (`AutoIgnore`: none of the methods or endpoints
 the adapter parses (Gemini `generateContent` or `embedContent`; Cohere
-`chat`, `embed` or `rerank`; Mistral `completion_chat` or `ocr`), a Bedrock
+`chat`, `embed` or `rerank`; Mistral `completion_chat`, `ocr`,
+`audio_transcription` or `audio_speech`, and no embedding model: one whose
+flags name only `moderation`, `classification`, `completion_fim` or
+`audio_transcription_realtime`, since an embedding model sets no flag), a Bedrock
 model without text output, a fine-tune, `lifecycle` deprecated or `LEGACY`,
 an announced `shutdown_date` (Mistral `deprecation`, OpenRouter
 `expiration_date`), `active: false`, dedicated capacity only, or a Bedrock

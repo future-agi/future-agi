@@ -1,5 +1,5 @@
 {
-  "about": "Implemented provider x endpoint cells with no contract case, each with why (TestCoverageGrid in this package). kind: not_served (the upstream has no such endpoint, or the gateway never routes there), not_parsed (relayed, nothing parsed), no_upstream (answered without an upstream call), uncovered (served and parsed, no fixture yet: an accepted coverage gap). An entry whose cells gain a case, or that names a cell the adapter does not implement, fails as stale. CONTRACT_COVERAGE.md lists them.",
+  "about": "Implemented provider x endpoint cells with no contract case, each with why (TestCoverageGrid in this package). kind: not_served (the upstream has no such endpoint, or the gateway never routes there), not_parsed (relayed, nothing parsed), no_upstream (answered without an upstream call), uncovered (served and parsed, no fixture yet: an accepted coverage gap), unverifiable (whether the upstream serves it cannot be checked: every source that would say is out of reach). An entry whose cells gain a case, or that names a cell the adapter does not implement, fails as stale. CONTRACT_COVERAGE.md lists them.",
   "cells": [
     {
       "provider": "openai",
@@ -70,23 +70,6 @@
     {
       "provider": "anyscale@",
       "endpoints": [
-        "assistants",
-        "vector_stores"
-      ],
-      "kind": "not_served",
-      "reason": "OpenAI's own Assistants and Vector Stores APIs; Anyscale does not serve them."
-    },
-    {
-      "provider": "anyscale@",
-      "endpoints": [
-        "ocr"
-      ],
-      "kind": "not_served",
-      "reason": "/v1/ocr is Mistral's OCR API (pinned by mistral@mistral-ocr-latest); Anyscale has no OCR endpoint."
-    },
-    {
-      "provider": "anyscale@",
-      "endpoints": [
         "chat",
         "completions",
         "embeddings",
@@ -95,10 +78,13 @@
         "transcription",
         "translation",
         "responses",
-        "list_models"
+        "list_models",
+        "assistants",
+        "vector_stores",
+        "ocr"
       ],
-      "kind": "uncovered",
-      "reason": "No anyscale@ fixture at all: the preset points at Anyscale's public Endpoints API (api.endpoints.anyscale.com), which Anyscale moved to a private offering in 2024, and has no machine-readable spec."
+      "kind": "unverifiable",
+      "reason": "Whether Anyscale still serves api.endpoints.anyscale.com cannot be checked: the only statement on it, the \"Changes to Anyscale Endpoints API\" notice (multi-tenant access withdrawn from 2024-08-01, the API only through the hosted Anyscale Platform), is on docs.anyscale.com, which the egress proxy blocks (403), as it does api.endpoints.anyscale.com and www.anyscale.com; no GitHub source carries it (anyscale/endpoint-cookbook@25ff9da22990328128a010c3b3236b1b5ab160e5, frozen 2024-03-22, shows the old surface only). Expected verdict once reachable: not served (service withdrawn). Known gap AN1, pinned by TestPresetHealth in internal/providers."
     },
     {
       "provider": "cerebras@",
@@ -111,32 +97,18 @@
     {
       "provider": "cerebras@",
       "endpoints": [
-        "assistants",
-        "vector_stores"
-      ],
-      "kind": "not_served",
-      "reason": "OpenAI's own Assistants and Vector Stores APIs; Cerebras does not serve them."
-    },
-    {
-      "provider": "cerebras@",
-      "endpoints": [
-        "ocr"
-      ],
-      "kind": "not_served",
-      "reason": "/v1/ocr is Mistral's OCR API (pinned by mistral@mistral-ocr-latest); Cerebras has no OCR endpoint."
-    },
-    {
-      "provider": "cerebras@",
-      "endpoints": [
         "embeddings",
         "images",
         "speech",
         "transcription",
         "translation",
-        "responses"
+        "responses",
+        "assistants",
+        "vector_stores",
+        "ocr"
       ],
-      "kind": "uncovered",
-      "reason": "No cerebras@ fixture for these endpoints. The openai adapter sends each to Cerebras's base URL and its code is pinned by the openai suite's cases, but Cerebras's answers (where Cerebras serves the endpoint at all) are not."
+      "kind": "not_served",
+      "reason": "Cerebras serves /v1/chat/completions, /v1/completions and /v1/models alone: its SDKs enumerate exactly those operations (cerebras/cerebras-cloud-sdk-python@cacaf754daf384c7066e6584f06363b6f15f8599:api.md and .stats.yml configured_endpoints: 4; cerebras/cerebras-cloud-sdk-node@eb228a80a5a8a61bf0fae561845a15e3b8617a55:api.md). Medium confidence: a Stainless SDK can omit a live endpoint; inference-docs.cerebras.ai was not reachable to confirm."
     },
     {
       "provider": "deepinfra@",
@@ -149,23 +121,6 @@
     {
       "provider": "deepinfra@",
       "endpoints": [
-        "assistants",
-        "vector_stores"
-      ],
-      "kind": "not_served",
-      "reason": "OpenAI's own Assistants and Vector Stores APIs; DeepInfra does not serve them."
-    },
-    {
-      "provider": "deepinfra@",
-      "endpoints": [
-        "ocr"
-      ],
-      "kind": "not_served",
-      "reason": "/v1/ocr is Mistral's OCR API (pinned by mistral@mistral-ocr-latest); DeepInfra has no OCR endpoint."
-    },
-    {
-      "provider": "deepinfra@",
-      "endpoints": [
         "chat",
         "completions",
         "embeddings",
@@ -174,10 +129,13 @@
         "transcription",
         "translation",
         "responses",
-        "list_models"
+        "list_models",
+        "assistants",
+        "vector_stores",
+        "ocr"
       ],
-      "kind": "uncovered",
-      "reason": "No deepinfra@ fixture at all, and no machine-readable spec (contractspec/subsets/unfetchable.json); the openai adapter's code is pinned by the openai suite, DeepInfra's answers are not."
+      "kind": "not_served",
+      "reason": "Not served at the preset's path (a preset bug, not a missing capability): DeepInfra's OpenAI-compatible API is below https://api.deepinfra.com/v1/openai (deepinfra/docs@7d28995cd8c9501cb2ee663b9dd4a69b2e0d23ed, 119 occurrences, none of api.deepinfra.com/v1/{chat/completions,embeddings,models}; huggingface/huggingface.js@49a4603dd75a0dd559f61fdeff2f79bc6210c46d:packages/inference/src/providers/deepinfra.ts:42), but presets.go sends every request below /v1 (known gap DI1, pinned by TestPresetHealth in internal/providers). It serves chat, completions, embeddings, images, speech, transcription and models under /v1/openai, and no translation, responses, assistants, vector stores or OCR there. Fix: PathPrefix /v1/openai. api.deepinfra.com was not reachable for a live probe."
     },
     {
       "provider": "fireworks@",
@@ -190,30 +148,37 @@
     {
       "provider": "fireworks@",
       "endpoints": [
-        "assistants",
-        "vector_stores"
+        "images"
       ],
       "kind": "not_served",
-      "reason": "OpenAI's own Assistants and Vector Stores APIs; Fireworks does not serve them."
+      "reason": "Fireworks has no /inference/v1/images/generations: image generation is served at its own routes (PyPI fireworks-ai==0.19.20 (wheel sha256 9a89220c11138c0e9ac2e1b7f93e581e3ffcf7515511419c14e3ff1f23da8aee):fireworks/client/image.py:237 {base}/image_generation/accounts/{acct}/models/{model}; flumina/cli.py:350 /inference/v1/workflows/...), with another request and response; fw-ai-external/python-sdk@374be9a61edba68214489c866c549c43a739b63a:api.md has no images operation."
     },
     {
       "provider": "fireworks@",
       "endpoints": [
-        "ocr"
+        "speech"
       ],
       "kind": "not_served",
-      "reason": "/v1/ocr is Mistral's OCR API (pinned by mistral@mistral-ocr-latest); Fireworks has no OCR endpoint."
+      "reason": "Fireworks has no text-to-speech API: neither fw-ai-external/python-sdk@374be9a61edba68214489c866c549c43a739b63a:api.md (92 operations), PyPI fireworks-ai==0.19.20 (wheel sha256 9a89220c11138c0e9ac2e1b7f93e581e3ffcf7515511419c14e3ff1f23da8aee) (audio.py: transcribe, translate, align) nor fw-ai/cookbook@57968a2237b663be33078d2747a28463983ae134 has one. Medium confidence: docs.fireworks.ai was not reachable to confirm."
     },
     {
       "provider": "fireworks@",
       "endpoints": [
-        "images",
-        "speech",
         "transcription",
         "translation"
       ],
-      "kind": "uncovered",
-      "reason": "No fireworks@ fixture for these endpoints. The openai adapter sends each to Fireworks's base URL and its code is pinned by the openai suite's cases, but Fireworks's answers (where Fireworks serves the endpoint at all) are not."
+      "kind": "not_served",
+      "reason": "Fireworks serves audio on separate hosts (audio-prod / audio-turbo .us-virginia-1.direct.fireworks.ai/v1/audio/{transcriptions,translations}: fw-ai/cookbook@57968a2237b663be33078d2747a28463983ae134:archived/learn/audio/audio_prerecorded_speech_to_text; PyPI fireworks-ai==0.19.20 (wheel sha256 9a89220c11138c0e9ac2e1b7f93e581e3ffcf7515511419c14e3ff1f23da8aee):fireworks/client/audio.py:208,339), not under api.fireworks.ai/inference/v1, so the preset's base URL cannot reach them (known gap FW3, pinned by TestPresetHealth in internal/providers)."
+    },
+    {
+      "provider": "fireworks@",
+      "endpoints": [
+        "assistants",
+        "vector_stores",
+        "ocr"
+      ],
+      "kind": "not_served",
+      "reason": "Fireworks has none of these: no such path in fw-ai-external/python-sdk@374be9a61edba68214489c866c549c43a739b63a:api.md (92 operations), PyPI fireworks-ai==0.19.20 (wheel sha256 9a89220c11138c0e9ac2e1b7f93e581e3ffcf7515511419c14e3ff1f23da8aee) or fw-ai/cookbook@57968a2237b663be33078d2747a28463983ae134."
     },
     {
       "provider": "groq@",
@@ -246,8 +211,8 @@
         "completions",
         "images"
       ],
-      "kind": "uncovered",
-      "reason": "No groq@ fixture for these endpoints. The openai adapter sends each to Groq's base URL and its code is pinned by the openai suite's cases, but Groq's answers (where Groq serves the endpoint at all) are not. Groq's own spec is checked for chat, embeddings, transcription and the model list (contractspec subsets groq/*, TestSpecCoverage in the openai package)."
+      "kind": "not_served",
+      "reason": "Groq has no legacy completions or image generation API: its spec (groq/groq-python@55066d94acca028c3cb74e050f2711b80ade6298:scripts/mock, pinned as contractspec/subsets/groq) lists neither /openai/v1/completions nor /openai/v1/images/generations."
     },
     {
       "provider": "huggingface@",
@@ -260,23 +225,6 @@
     {
       "provider": "huggingface@",
       "endpoints": [
-        "assistants",
-        "vector_stores"
-      ],
-      "kind": "not_served",
-      "reason": "OpenAI's own Assistants and Vector Stores APIs; Hugging Face does not serve them."
-    },
-    {
-      "provider": "huggingface@",
-      "endpoints": [
-        "ocr"
-      ],
-      "kind": "not_served",
-      "reason": "/v1/ocr is Mistral's OCR API (pinned by mistral@mistral-ocr-latest); Hugging Face has no OCR endpoint."
-    },
-    {
-      "provider": "huggingface@",
-      "endpoints": [
         "chat",
         "completions",
         "embeddings",
@@ -285,10 +233,13 @@
         "transcription",
         "translation",
         "responses",
-        "list_models"
+        "list_models",
+        "assistants",
+        "vector_stores",
+        "ocr"
       ],
-      "kind": "uncovered",
-      "reason": "No huggingface@ fixture at all: the preset points at the legacy serverless Inference API (api-inference.huggingface.co); the openai adapter's code is pinned by the openai suite, Hugging Face's answers are not."
+      "kind": "not_served",
+      "reason": "Not served at the preset's host (a preset bug): api-inference.huggingface.co is retired. Hugging Face documents inference only on https://router.huggingface.co, whose OpenAI-compatible base /v1 serves chat completions, responses and models (\"chat completion tasks only\" otherwise): huggingface/hub-docs@ac26a585391edeb10db1cf4aea4d4619c9648a2d:docs/inference-providers/index.md:492-502, hub-api.md:141; hub-docs 5c8bcc23971cbb112e2cd5ba3ad6018d5dbb3f49 (2026-05-12) replaced the last api-inference examples with router URLs; huggingface/huggingface.js@49a4603dd75a0dd559f61fdeff2f79bc6210c46d:packages/inference/src/config.ts HF_ROUTER_URL. Fix: BaseURL https://router.huggingface.co, PathPrefix /v1. Known gap HF1, pinned by TestPresetHealth in internal/providers."
     },
     {
       "provider": "mistral@",
@@ -301,21 +252,28 @@
     {
       "provider": "mistral@",
       "endpoints": [
-        "assistants",
-        "vector_stores"
+        "completions"
       ],
       "kind": "not_served",
-      "reason": "OpenAI's own Assistants and Vector Stores APIs; Mistral does not serve them."
+      "reason": "Mistral has no /v1/completions: its fill-in-the-middle API is POST /v1/fim/completions, with another request (prompt and suffix) (mistralai/client-python@90e300904b64c36e0630f72ef475dbab7912068e:src/mistralai/client/fim.py; the SDK's 290 operation paths have no /v1/completions)."
     },
     {
       "provider": "mistral@",
       "endpoints": [
-        "completions",
         "images",
         "translation"
       ],
-      "kind": "uncovered",
-      "reason": "No mistral@ fixture for these endpoints. The openai adapter sends each to Mistral's base URL and its code is pinned by the openai suite's cases, but Mistral's answers (where Mistral serves the endpoint at all) are not."
+      "kind": "not_served",
+      "reason": "Mistral has no /v1/images/* and no /v1/audio/translations: none of the 290 operation paths of mistralai/client-python@90e300904b64c36e0630f72ef475dbab7912068e:src/mistralai/client/*.py."
+    },
+    {
+      "provider": "mistral@",
+      "endpoints": [
+        "assistants",
+        "vector_stores"
+      ],
+      "kind": "not_served",
+      "reason": "Mistral has no /v1/assistants, /v1/threads or /v1/vector_stores (it has /v1/agents, /v1/conversations and /v1/libraries instead): none of the 290 operation paths of mistralai/client-python@90e300904b64c36e0630f72ef475dbab7912068e:src/mistralai/client/*.py."
     },
     {
       "provider": "openrouter@",
@@ -345,11 +303,18 @@
     {
       "provider": "openrouter@",
       "endpoints": [
-        "images",
         "translation"
       ],
-      "kind": "uncovered",
-      "reason": "No openrouter@ fixture for these endpoints. The openai adapter sends each to OpenRouter's base URL and its code is pinned by the openai suite's cases, but OpenRouter's answers (where OpenRouter serves the endpoint at all) are not. OpenRouter's own spec is checked for chat, embeddings and the model list (contractspec subsets openrouter/*)."
+      "kind": "not_served",
+      "reason": "OpenRouter has /audio/speech and /audio/transcriptions only; /audio/translations has never been in its spec (OpenRouterTeam/python-sdk@752139b7d0b9a71baece3468203a358e07a341b5:.speakeasy/in.openapi.yaml, pinned as contractspec/subsets/openrouter, and its history)."
+    },
+    {
+      "provider": "openrouter@",
+      "endpoints": [
+        "images"
+      ],
+      "kind": "not_served",
+      "reason": "Not served at the gateway's path (known gap OR7): CreateImage calls /api/v1/images/generations; OpenRouter serves image generation at POST /api/v1/images (OpenRouterTeam/python-sdk@752139b7d0b9a71baece3468203a358e07a341b5:.speakeasy/in.openapi.yaml createImages). Pinned by TestContractPresetPathGaps."
     },
     {
       "provider": "perplexity@",
@@ -362,31 +327,17 @@
     {
       "provider": "perplexity@",
       "endpoints": [
-        "assistants",
-        "vector_stores"
-      ],
-      "kind": "not_served",
-      "reason": "OpenAI's own Assistants and Vector Stores APIs; Perplexity does not serve them."
-    },
-    {
-      "provider": "perplexity@",
-      "endpoints": [
-        "ocr"
-      ],
-      "kind": "not_served",
-      "reason": "/v1/ocr is Mistral's OCR API (pinned by mistral@mistral-ocr-latest); Perplexity has no OCR endpoint."
-    },
-    {
-      "provider": "perplexity@",
-      "endpoints": [
         "completions",
         "images",
         "speech",
         "transcription",
-        "translation"
+        "translation",
+        "assistants",
+        "vector_stores",
+        "ocr"
       ],
-      "kind": "uncovered",
-      "reason": "No perplexity@ fixture for these endpoints. The openai adapter sends each to Perplexity's base URL and its code is pinned by the openai suite's cases, but Perplexity's answers (where Perplexity serves the endpoint at all) are not."
+      "kind": "not_served",
+      "reason": "Perplexity serves none of these: no such path among the 32 operations of perplexityai/perplexity-py@1a79c5d3a7b1ef8c2dce17c0f0aa7e23f9bbdced:src/perplexity/generated/api.py (generated from Perplexity's OpenAPI spec)."
     },
     {
       "provider": "replicate@",
@@ -399,23 +350,6 @@
     {
       "provider": "replicate@",
       "endpoints": [
-        "assistants",
-        "vector_stores"
-      ],
-      "kind": "not_served",
-      "reason": "OpenAI's own Assistants and Vector Stores APIs; Replicate does not serve them."
-    },
-    {
-      "provider": "replicate@",
-      "endpoints": [
-        "ocr"
-      ],
-      "kind": "not_served",
-      "reason": "/v1/ocr is Mistral's OCR API (pinned by mistral@mistral-ocr-latest); Replicate has no OCR endpoint."
-    },
-    {
-      "provider": "replicate@",
-      "endpoints": [
         "chat",
         "completions",
         "embeddings",
@@ -423,10 +357,13 @@
         "speech",
         "transcription",
         "translation",
-        "responses"
+        "responses",
+        "assistants",
+        "vector_stores",
+        "ocr"
       ],
-      "kind": "uncovered",
-      "reason": "No replicate@ fixture for these endpoints: the preset points at api.replicate.com/v1, whose model list alone has a fixture (gap RP1); the openai adapter's code is pinned by the openai suite, Replicate's answers are not."
+      "kind": "not_served",
+      "reason": "Replicate is not OpenAI-compatible: the preset reaches its own predictions API, whose 37 operations (replicate/replicate-python-stainless@48e138a15eeb44be36d871ad822b5e86d3852db3:api.md and .stats.yml; npm replicate@2.0.0-alpha.74 the same) have none of these paths; huggingface/huggingface.js@49a4603dd75a0dd559f61fdeff2f79bc6210c46d:packages/inference/src/providers/replicate.ts routes it through /v1/predictions. GET /v1/models is its one shared path (gap RP1); the preset itself is known gap RP2, pinned by TestPresetHealth in internal/providers. Residual risk: a third-party page cites replicate.com/docs/topics/openai-compatibility, which was not reachable."
     },
     {
       "provider": "together@",
@@ -456,11 +393,18 @@
     {
       "provider": "together@",
       "endpoints": [
-        "responses",
+        "responses"
+      ],
+      "kind": "not_served",
+      "reason": "Together has no Responses API: its spec (togethercomputer/together-py@3428f80887121c5715f670f3cffa71b2ed482c12:scripts/mock, pinned as contractspec/subsets/together) has no /v1/responses, nor had the pre-v2 one (c55bb3003581d8be51f8eb102debf314cb3bcfe2)."
+    },
+    {
+      "provider": "together@",
+      "endpoints": [
         "list_models"
       ],
-      "kind": "uncovered",
-      "reason": "No together@ fixture for these endpoints. The openai adapter sends each to Together's base URL and its code is pinned by the openai suite's cases, but Together's answers (where Together serves the endpoint at all) are not. Together's own spec is checked for chat, embeddings and images (contractspec subsets together/*)."
+      "kind": "not_served",
+      "reason": "Not served at the gateway's path (known gap TG6): ListModels calls GET /v1/models, which Together's spec (togethercomputer/together-py@3428f80887121c5715f670f3cffa71b2ed482c12:scripts/mock) no longer documents (removed in 057705f8af4458e226b688f5ca08983a4edf4147, 2026-10-19; together-py 3.0.0, 2026-10-22); it lists models at /v2/supported-models and the project and organization model lists. Pinned by TestContractPresetPathGaps."
     },
     {
       "provider": "xai@",
@@ -473,29 +417,22 @@
     {
       "provider": "xai@",
       "endpoints": [
-        "assistants",
-        "vector_stores"
+        "speech",
+        "transcription"
       ],
       "kind": "not_served",
-      "reason": "OpenAI's own Assistants and Vector Stores APIs; xAI does not serve them."
+      "reason": "xAI serves speech and transcription at POST /v1/tts and POST /v1/stt (xai-org/xai-sdk-ts@51bfc686c74310226d601e6037fa6c2e562244f7:src/resources/voice.ts:115,137), not at /v1/audio/speech or /v1/audio/transcriptions: its spec (xai-org/xai-sdk-ts@51bfc686c74310226d601e6037fa6c2e562244f7:spec/openapi.json, pinned as contractspec/subsets/xai, 44 operations) has neither path."
     },
     {
       "provider": "xai@",
       "endpoints": [
+        "translation",
+        "assistants",
+        "vector_stores",
         "ocr"
       ],
       "kind": "not_served",
-      "reason": "/v1/ocr is Mistral's OCR API (pinned by mistral@mistral-ocr-latest); xAI has no OCR endpoint."
-    },
-    {
-      "provider": "xai@",
-      "endpoints": [
-        "speech",
-        "transcription",
-        "translation"
-      ],
-      "kind": "uncovered",
-      "reason": "No xai@ fixture for these endpoints. The openai adapter sends each to xAI's base URL and its code is pinned by the openai suite's cases, but xAI's answers (where xAI serves the endpoint at all) are not. xAI's own spec is checked for chat, completions, embeddings, images and the model list (contractspec subsets xai/*, TestSpecCoverage in the openai package)."
+      "reason": "xAI serves none of these: no such path among the 44 operations of its spec (xai-org/xai-sdk-ts@51bfc686c74310226d601e6037fa6c2e562244f7:spec/openapi.json, pinned as contractspec/subsets/xai)."
     }
   ]
 }

@@ -319,8 +319,11 @@ func TestModelJSON(t *testing.T) {
 }
 
 // TestMistralLister: Mistral's GET /v1/models carries capabilities,
-// deprecation and type. Chat and OCR models are contract targets; the rest,
-// fine-tunes and announced deprecations are ignored from that metadata.
+// deprecation and type. A model of an endpoint the mistral preset parses
+// (chat, OCR, transcription, speech, and embeddings, which have no flag) is a
+// contract target; a model whose flags name only other endpoints
+// (moderation, classifiers, FIM, realtime transcription), a fine-tune and an
+// announced deprecation are ignored from that metadata.
 func TestMistralLister(t *testing.T) {
 	f := newFakeAPI(t, "Authorization", "Bearer "+testKey, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/models" {
@@ -332,6 +335,13 @@ func TestMistralLister(t *testing.T) {
 			 "capabilities":{"completion_chat":true,"function_calling":true,"vision":true,"ocr":false},"aliases":["mistral-large-latest"],"deprecation":null,"type":"base"},
 			{"id":"mistral-ocr-2512","object":"model","owned_by":"mistralai","capabilities":{"completion_chat":false,"ocr":true},"type":"base"},
 			{"id":"mistral-embed","object":"model","owned_by":"mistralai","capabilities":{"completion_chat":false,"ocr":false},"type":"base"},
+			{"id":"codestral-embed-2505","object":"model","owned_by":"mistralai","capabilities":{"completion_chat":false,"function_calling":false,"completion_fim":false,"fine_tuning":false,"vision":false,"ocr":false,"classification":false,"moderation":false,"audio":false,"audio_transcription":false,"audio_transcription_realtime":false,"audio_speech":false},"type":"base"},
+			{"id":"voxtral-mini-2607","object":"model","owned_by":"mistralai","capabilities":{"completion_chat":false,"audio":true,"audio_transcription":true,"audio_transcription_realtime":false,"audio_speech":false},"type":"base"},
+			{"id":"voxtral-mini-tts-2607","object":"model","owned_by":"mistralai","capabilities":{"completion_chat":false,"audio":true,"audio_speech":true},"type":"base"},
+			{"id":"voxtral-small-2607","object":"model","owned_by":"mistralai","capabilities":{"completion_chat":true,"audio":true,"audio_transcription":true},"type":"base"},
+			{"id":"mistral-moderation-2411","object":"model","owned_by":"mistralai","capabilities":{"completion_chat":false,"moderation":true,"classification":true},"type":"base"},
+			{"id":"voxtral-realtime-2607","object":"model","owned_by":"mistralai","capabilities":{"completion_chat":false,"audio_transcription":false,"audio_transcription_realtime":true},"type":"base"},
+			{"id":"codestral-fim-2607","object":"model","owned_by":"mistralai","capabilities":{"completion_chat":false,"completion_fim":true},"type":"base"},
 			{"id":"open-mistral-nemo","object":"model","owned_by":"mistralai","capabilities":{"completion_chat":true},"deprecation":"2026-12-31T12:00:00Z","type":"base"},
 			{"id":"ft:open-mistral-7b:acme:abc","object":"model","owned_by":"acme","capabilities":{"completion_chat":true},"type":"fine-tuned"}]}`))
 	})
@@ -346,8 +356,27 @@ func TestMistralLister(t *testing.T) {
 	if o := m["mistral-ocr-2512"]; o.AutoIgnore != "" || ModelKind(o.ID, &o) != KindOCR {
 		t.Errorf("an OCR model is a contract target of kind ocr: %+v", o)
 	}
+	// Embeddings, transcription and speech are covered endpoints: their
+	// models are contract targets of their kind, whatever the ID says.
+	for id, kind := range map[string]string{
+		"mistral-embed":         KindEmbeddings,
+		"codestral-embed-2505":  KindEmbeddings,
+		"voxtral-mini-2607":     KindTranscription,
+		"voxtral-mini-tts-2607": KindSpeech,
+		"voxtral-small-2607":    KindChat,
+	} {
+		mm := m[id]
+		if mm.AutoIgnore != "" {
+			t.Errorf("%s must not auto-ignore: %s", id, mm.AutoIgnore)
+		}
+		if got := ModelKind(id, &mm); got != kind {
+			t.Errorf("%s: kind %s, want %s", id, got, kind)
+		}
+	}
 	for id, want := range map[string]string{
-		"mistral-embed":               "neither completion_chat nor ocr",
+		"mistral-moderation-2411":     "endpoints the gateway does not parse [moderation classification]",
+		"voxtral-realtime-2607":       "endpoints the gateway does not parse [audio_transcription_realtime]",
+		"codestral-fim-2607":          "endpoints the gateway does not parse [completion_fim]",
 		"open-mistral-nemo":           "shutdown announced for 2026-12-31",
 		"ft:open-mistral-7b:acme:abc": "fine-tuned",
 	} {

@@ -104,9 +104,14 @@ func ModelKind(id string, meta *Model) string {
 		return KindEmbeddings
 	case has("endpoint:rerank") && !has("endpoint:chat"):
 		return KindRerank
-	// Mistral: an OCR model has no chat completion.
+	// Mistral: an OCR, transcription or speech model has no chat
+	// completion (a voxtral chat model takes audio input, but chats).
 	case has("ocr") && !has("completion_chat"):
 		return KindOCR
+	case has("audio_transcription") && !has("completion_chat"):
+		return KindTranscription
+	case has("audio_speech") && !has("completion_chat"):
+		return KindSpeech
 	}
 	return k
 }

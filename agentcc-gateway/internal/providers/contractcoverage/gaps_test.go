@@ -48,6 +48,9 @@ var gapPrefixes = []struct{ Prefix, Provider, Topic string }{
 	{"FW", "Fireworks", ""},
 	{"XA", "xAI", ""},
 	{"RP", "Replicate", ""},
+	{"DI", "DeepInfra", ""},
+	{"HF", "Hugging Face", ""},
+	{"AN", "Anyscale", ""},
 	{"DG", "Deepgram", "speech relay"},
 	{"CA", "Cartesia", "speech relay"},
 }
@@ -79,9 +82,10 @@ type gapOccurrence struct {
 // gapSources scans every file that can define a gap: the JSON under each
 // adapter's testdata (meta.json, case.json, spec_allowlist*.json, speech
 // sessions; not the upstream bodies or goldens) and the provider test files'
-// string constants (internal/providers/<adapter>/*_test.go and
-// internal/server/contract_*_test.go; not the harness packages, whose tests
-// use placeholder gaps).
+// string constants (internal/providers/<adapter>/*_test.go, the providers
+// package's own *_test.go, whose preset-health table files the presets'
+// defects, and internal/server/contract_*_test.go; not the harness packages,
+// whose tests use placeholder gaps).
 func gapSources(t *testing.T) (defs []gapOccurrence, refs map[string][]string, problems []string) {
 	t.Helper()
 	refs = map[string][]string{}
@@ -143,6 +147,12 @@ func gapSources(t *testing.T) (defs []gapOccurrence, refs map[string][]string, p
 			for _, s := range goStrings(t, f) {
 				scan(s, a.Name(), filepath.Base(f), f)
 			}
+		}
+	}
+	root, _ := filepath.Glob(filepath.Join(providersDir, "*_test.go"))
+	for _, f := range root {
+		for _, s := range goStrings(t, f) {
+			scan(s, "providers", filepath.Base(f), f)
 		}
 	}
 	server, _ := filepath.Glob(filepath.Join(providersDir, "..", "server", "contract_*_test.go"))

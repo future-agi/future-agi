@@ -30,6 +30,9 @@ func TestModelKind(t *testing.T) {
 		{"command-x", &Model{Capabilities: []string{"endpoint:rerank"}}, KindRerank},
 		{"command-y", &Model{Capabilities: []string{"endpoint:embed"}}, KindEmbeddings},
 		{"pixtral-doc", &Model{Capabilities: []string{"ocr"}}, KindOCR},
+		{"voxtral-mini-2607", &Model{Capabilities: []string{"audio", "audio_transcription", "type:base"}}, KindTranscription},
+		{"voxtral-voice-1", &Model{Capabilities: []string{"audio", "audio_speech", "type:base"}}, KindSpeech},
+		{"voxtral-small-2607", &Model{Capabilities: []string{"audio", "audio_transcription", "completion_chat"}}, KindChat},
 		{"gemini-4-argon", &Model{Capabilities: []string{"generateContent", "embedContent"}}, KindChat},
 	} {
 		if got := ModelKind(tc.id, tc.meta); got != tc.want {

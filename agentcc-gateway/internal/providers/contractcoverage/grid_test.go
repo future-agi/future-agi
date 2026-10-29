@@ -381,18 +381,23 @@ const (
 	kindNotParsed  = "not_parsed"  // the gateway relays the bytes and parses nothing
 	kindNoUpstream = "no_upstream" // the adapter answers without calling upstream
 	kindUncovered  = "uncovered"   // served and parsed, no fixture yet: an accepted coverage gap
+	// kindUnverifiable: whether the upstream serves it cannot be checked,
+	// because every source that would say (its docs, its API) is out of
+	// reach; the reason names them.
+	kindUnverifiable = "unverifiable"
 )
 
-var kindMarks = map[string]string{kindNotServed: "n/s", kindNotParsed: "n/p", kindNoUpstream: "n/u", kindUncovered: "GAP"}
+var kindMarks = map[string]string{kindNotServed: "n/s", kindNotParsed: "n/p", kindNoUpstream: "n/u", kindUncovered: "GAP", kindUnverifiable: "n/v"}
 
 var kindTitles = map[string]string{
-	kindNotServed:  "not served (the upstream has no such endpoint, or the gateway never routes there)",
-	kindNotParsed:  "relayed, not parsed",
-	kindNoUpstream: "answered without an upstream call",
-	kindUncovered:  "accepted coverage gaps (served and parsed, no fixture yet)",
+	kindNotServed:    "not served (the upstream has no such endpoint, or the gateway never routes there)",
+	kindNotParsed:    "relayed, not parsed",
+	kindNoUpstream:   "answered without an upstream call",
+	kindUncovered:    "accepted coverage gaps (served and parsed, no fixture yet)",
+	kindUnverifiable: "unverifiable (whether the upstream serves it cannot be checked from a reachable source)",
 }
 
-var kindOrder = []string{kindUncovered, kindNoUpstream, kindNotParsed, kindNotServed}
+var kindOrder = []string{kindUncovered, kindUnverifiable, kindNoUpstream, kindNotParsed, kindNotServed}
 
 // Exemptions is exemptions.json.
 type Exemptions struct {
@@ -479,7 +484,7 @@ func buildGrid(rows []*row, cases []fixtureCase, mods []fixtureModel, ex Exempti
 			problems = append(problems, at+": no such provider key")
 			continue
 		case kindMarks[e.Kind] == "":
-			problems = append(problems, fmt.Sprintf("%s: kind %q, want one of %s, %s, %s, %s", at, e.Kind, kindNotServed, kindNotParsed, kindNoUpstream, kindUncovered))
+			problems = append(problems, fmt.Sprintf("%s: kind %q, want one of %s, %s, %s, %s, %s", at, e.Kind, kindNotServed, kindNotParsed, kindNoUpstream, kindUncovered, kindUnverifiable))
 		case strings.TrimSpace(e.Reason) == "":
 			problems = append(problems, at+": no reason")
 		case len(e.Endpoints) == 0:
