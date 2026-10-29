@@ -146,3 +146,34 @@ export const rejectPatch = (envState, row, reason) => ({
     { importId: row.traceImport?.id, draftId: row.id, title: row.title, sources: row.traceImport?.sourceIds, rejected: { reason, by: currentUser().name, at: new Date().toISOString() } },
   ],
 });
+
+/* ── after it joins: sources and the regression chain ───────────────────── */
+
+/**
+ * Whether a source trace can still be opened. Production traces age out of
+ * Observe and access can be withdrawn — the scenario keeps its saved,
+ * redacted evidence either way, and says which.
+ */
+export const sourceAccessOf = (trace) => {
+  if (!trace) return { id: "missing", label: "Not found", line: "This trace no longer exists in the project — the scenario keeps its saved, redacted evidence." };
+  const days = (Date.now() - Date.parse(trace.at)) / 86400000;
+  if (days > 14) return { id: "deleted", label: "Deleted", line: "Removed by the project's 14-day retention — the saved, redacted evidence is kept; the trace can't be opened." };
+  if (/T-1(0[7]|1[1])/.test(trace.traceId)) return { id: "revoked", label: "Access revoked", line: "You no longer have access to this project — the scenario keeps what was saved." };
+  return { id: "ok", label: "Available", line: "Opens in Observe" };
+};
+
+/**
+ * Trace → scenario → version → results: each finished run that included the
+ * scenario since it was added, with its verdict on it. `rebuild(run)` returns
+ * that run's tasks.
+ */
+export const regressionChainOf = (row, envState, rebuild) =>
+  (envState?.runs || [])
+    .filter((r) => r.finishedAt && (!r.scenarioIds?.length || r.scenarioIds.includes(row.id)))
+    .sort((a, b) => Date.parse(a.finishedAt) - Date.parse(b.finishedAt))
+    .slice(-4)
+    .map((r) => {
+      const t = (rebuild(r) || []).find((x) => x.id === row.id);
+      return { run: r, status: t?.status || null };
+    })
+    .filter((x) => x.status);

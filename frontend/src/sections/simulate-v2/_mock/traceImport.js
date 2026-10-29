@@ -147,3 +147,9 @@ export const traceDraftsOf = (traces, goal, env, importInfo) => {
 /** The same import from the CLI. */
 export const fromTracesCli = ({ env, ids, goal, group }) =>
   `agent-learn scenario from-traces --environment ${env?.id} ${ids.map((id) => `--trace ${id}`).join(" ")} --scope-unit trace --intent ${goal}${group ? ` --group "${group}"` : ""}`;
+
+/** Drafting cost for an import: the model reads each trace and writes its draft. */
+export const draftingCostOf = (n) => ({ low: n * 6, high: n * 11 });
+
+/** A large selection is drafted as a queue — one item at a time, cancellable. */
+export const QUEUE_FROM = 8;

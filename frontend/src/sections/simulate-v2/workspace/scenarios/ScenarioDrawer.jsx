@@ -19,6 +19,7 @@ import { stateActionOf, STATE_ACTION_LABEL } from "../../_mock/scenarioStates";
 import { ArchivePopover, StateChip } from "./ScenarioStateBits";
 import BlockerFlag from "./BlockerFlag";
 import SourceBadge from "./SourceBadge";
+import TraceSources from "./TraceSources";
 import { scenarioTitle } from "../../_mock/scenarios";
 
 /*
@@ -224,6 +225,10 @@ export default function ScenarioDrawer({
               onAction={onAction}
               locked={locked}
             />
+            {/* Made from production traces: its sources and the chain to now. */}
+            {row.traceImport && (
+              <TraceSources row={row} env={env} envState={envState} />
+            )}
           </Box>
         </Stack>
       )}

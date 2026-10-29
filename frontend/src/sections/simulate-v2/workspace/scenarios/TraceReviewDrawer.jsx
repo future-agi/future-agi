@@ -18,6 +18,7 @@ import { clickable, focusRing } from "../../components/clickable";
 import { TextLink } from "../../agents/connect/connectBits";
 import { validateRows } from "../../_mock/scenarioOrg";
 import { currentEnvVersion } from "../../_mock/versions";
+import { currentUser } from "../../_mock/scenarioProvenance";
 import {
   REDACTION_RULES,
   STATE_MODES,
@@ -637,6 +638,7 @@ export default function TraceReviewDrawer({
                       save({
                         validated: {
                           at: new Date().toISOString(),
+                          by: currentUser().name,
                           ok: res?.ok !== false,
                           evidence: STATE_MODES[review.stateMode].evidence,
                         },

@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Box,
   Stack,
@@ -15,7 +15,9 @@ import Iconify from "src/components/iconify";
 import { SectionCard } from "../../components/primitives";
 import { replayScenarioOf, asProposal } from "../../_mock/scenarioSources";
 import {
+  QUEUE_FROM,
   TRACE_GOALS,
+  draftingCostOf,
   fromTracesCli,
   productionTracesOf,
   rangeOf,
@@ -74,6 +76,56 @@ export default function ProductionReplayImport({
   const [group, setGroup] = useState("");
   const [tags, setTags] = useState("");
   const { patch } = useEnvState(env?.id);
+  /* A large import's queue: { importId, rows, done, running }. */
+  const [queue, setQueue] = useState(null);
+  useEffect(() => {
+    if (!queue?.running) return undefined;
+    if (queue.done >= queue.rows.length) {
+      setQueue((q) => ({ ...q, running: false }));
+      return undefined;
+    }
+    const t = setTimeout(
+      () => setQueue((q) => (q?.running ? { ...q, done: q.done + 1 } : q)),
+      450,
+    );
+    return () => clearTimeout(t);
+  }, [queue]);
+  /* Draft imports: a frozen selection saved to finish later. */
+  const drafts0 = envState?.traceImportDrafts || [];
+  const [draftId, setDraftId] = useState(null);
+  const saveDraft = () => {
+    const id = draftId || `dimp_${Date.now().toString(36)}`;
+    patch({
+      traceImportDrafts: [
+        ...drafts0.filter((d) => d.id !== id),
+        {
+          id,
+          at: new Date().toISOString(),
+          frozen,
+          traceIds: frozenTraces.map((t) => t.traceId),
+          goal,
+          group,
+          tags,
+        },
+      ],
+    });
+    setDraftId(null);
+    setPicked({});
+    setStep("pick");
+  };
+  const resumeDraft = (d) => {
+    setDraftId(d.id);
+    setFrozen(d.frozen);
+    setGoal(d.goal);
+    setGroup(d.group || "");
+    setTags(d.tags || "");
+    setStep("freeze");
+  };
+  const dropDraft = (id = draftId) => {
+    if (!id) return;
+    patch({ traceImportDrafts: drafts0.filter((d) => d.id !== id) });
+    setDraftId(null);
+  };
   const chosen = traces.filter((c) => picked[c.id]);
   const frozenTraces = traces.filter((t) => frozen.includes(t.id));
   const goalMeta = TRACE_GOALS.find((g) => g.id === goal);
@@ -92,6 +144,19 @@ export default function ProductionReplayImport({
     const rows = traceDraftsOf(frozenTraces, goal, env, importInfo).filter(
       (r) => !alreadyIn.has(r.id),
     );
+    /* A large selection drafts as a queue — progress, cost, cancel. */
+    if (frozenTraces.length >= QUEUE_FROM)
+      return setQueue({
+        importId: importInfo.id,
+        rows,
+        done: 0,
+        running: true,
+      });
+    return finish(rows);
+  };
+  /* Add the drafted rows, with the chosen tags and group. */
+  const finish = (rows) => {
+    dropDraft();
     /* Tags and the group are organisation: set now, kept when the drafts are approved. */
     const names = tags
       .split(",")
@@ -120,6 +185,117 @@ export default function ProductionReplayImport({
       ),
     );
   };
+
+  if (queue) {
+    const total = queue.rows.length;
+    const cost = draftingCostOf(total);
+    const finished = queue.done >= total;
+    return (
+      <SectionCard
+        sx={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}
+      >
+        <Box
+          sx={{
+            px: 2.5,
+            py: 1.25,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+            {finished
+              ? `${total} drafts ready`
+              : queue.running
+                ? `Drafting ${queue.done + 1} of ${total}…`
+                : `Cancelled — ${queue.done} of ${total} drafted`}
+          </Typography>
+          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+            {`Import ${queue.importId} · ≈ ${cost.low}–${cost.high} credits for drafting · completed drafts are kept if you cancel; a retry does only what's left, under the same import`}
+          </Typography>
+        </Box>
+        <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+          {queue.rows.map((r, i) => (
+            <Stack
+              key={r.id}
+              direction="row"
+              alignItems="center"
+              spacing={1}
+              sx={{
+                px: 2.5,
+                py: 0.75,
+                borderBottom: "1px solid",
+                borderColor: "divider",
+              }}
+            >
+              <Typography
+                noWrap
+                sx={{ typography: "s2", flex: 1, minWidth: 0 }}
+              >
+                {r.title}
+              </Typography>
+              <Typography
+                sx={{
+                  typography: "s3",
+                  color: i < queue.done ? "text.secondary" : "text.tertiary",
+                  flexShrink: 0,
+                }}
+              >
+                {i < queue.done
+                  ? "Drafted"
+                  : i === queue.done && queue.running
+                    ? "Drafting…"
+                    : queue.running
+                      ? "Queued"
+                      : "Not drafted"}
+              </Typography>
+            </Stack>
+          ))}
+        </Box>
+        <Stack
+          direction="row"
+          justifyContent="flex-end"
+          spacing={1}
+          sx={{
+            px: 2.5,
+            py: 1.25,
+            borderTop: "1px solid",
+            borderColor: "divider",
+            flexShrink: 0,
+          }}
+        >
+          {queue.running && (
+            <Button
+              size="small"
+              onClick={() => setQueue((q) => ({ ...q, running: false }))}
+              sx={{ color: "text.secondary" }}
+            >
+              Cancel
+            </Button>
+          )}
+          {!queue.running && !finished && (
+            <Button
+              size="small"
+              onClick={() => setQueue((q) => ({ ...q, running: true }))}
+              sx={{ color: "text.primary" }}
+            >
+              {`Retry the ${total - queue.done} left`}
+            </Button>
+          )}
+          {!queue.running && (
+            <Button
+              size="small"
+              variant="contained"
+              color="primary"
+              disabled={!queue.done}
+              onClick={() => finish(queue.rows.slice(0, queue.done))}
+            >
+              {`Add the ${queue.done} drafted for review`}
+            </Button>
+          )}
+        </Stack>
+      </SectionCard>
+    );
+  }
 
   if (step === "freeze")
     return (
@@ -296,6 +472,13 @@ export default function ProductionReplayImport({
             Back
           </Button>
           <Button
+            size="small"
+            onClick={saveDraft}
+            sx={{ color: "text.secondary", mr: "auto" }}
+          >
+            Save as draft import
+          </Button>
+          <Button
             variant="contained"
             color="primary"
             size="small"
@@ -387,6 +570,50 @@ export default function ProductionReplayImport({
           {`Select all ${traces.length} matching`}
         </Button>
       </Stack>
+      {/* Saved draft imports — finish them later. */}
+      {drafts0.length > 0 && (
+        <Box
+          sx={{
+            px: 2.5,
+            py: 1,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            flexShrink: 0,
+          }}
+        >
+          <Typography
+            sx={{
+              typography: "s3",
+              fontWeight: 600,
+              color: "text.tertiary",
+              mb: 0.25,
+            }}
+          >
+            Draft imports
+          </Typography>
+          {drafts0.map((d) => (
+            <Stack
+              key={d.id}
+              direction="row"
+              alignItems="center"
+              spacing={1.5}
+              sx={{ py: 0.25 }}
+            >
+              <Typography
+                noWrap
+                sx={{ typography: "s2", flex: 1, minWidth: 0 }}
+              >
+                <Box component="span" sx={{ fontFamily: MONO }}>
+                  {d.traceIds.join(", ")}
+                </Box>
+                {` · ${TRACE_GOALS.find((g) => g.id === d.goal)?.label.toLowerCase() || d.goal} · saved ${relativeTime(d.at)}`}
+              </Typography>
+              <TextLink onClick={() => resumeDraft(d)}>Resume</TextLink>
+              <TextLink onClick={() => dropDraft(d.id)}>Discard</TextLink>
+            </Stack>
+          ))}
+        </Box>
+      )}
       <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
         {traces.map((c) => (
           <ConversationRow
