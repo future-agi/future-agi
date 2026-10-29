@@ -316,6 +316,8 @@ class InsightRunSummarySerializer(serializers.Serializer):
     population_size = serializers.IntegerField()
     sample_size = serializers.IntegerField()
     analysed_count = serializers.IntegerField()
+    excluded_count = serializers.IntegerField()
+    failed_count = serializers.IntegerField()
     skipped_count = serializers.IntegerField()
     taxonomy_mode = serializers.CharField()
     distribution = serializers.ListField(child=serializers.JSONField())
@@ -369,6 +371,8 @@ class InsightRunDetailSerializer(serializers.Serializer):
     population_size = serializers.IntegerField()
     sample_size = serializers.IntegerField()
     analysed_count = serializers.IntegerField()
+    excluded_count = serializers.IntegerField()
+    failed_count = serializers.IntegerField()
     skipped_count = serializers.IntegerField()
     taxonomy_mode = serializers.CharField()
     result = serializers.JSONField()
@@ -551,6 +555,8 @@ def _run_summary(run) -> dict:
         "analysed_count": (
             run.read_count if run.status == "failed" else run.analysed_count
         ),
+        "excluded_count": run.excluded_count,
+        "failed_count": run.failed_count,
         "skipped_count": run.skipped_count,
         "taxonomy_mode": run.taxonomy_mode,
         "distribution": _distribution(run),
@@ -568,6 +574,11 @@ def _config_item(config, *, with_runs=False) -> dict:
             read_count=Count(
                 "units", filter=Q(units__status="done", units__included=True)
             ),
+            # Read, but left out by the lens; read, but failed.
+            excluded_count=Count(
+                "units", filter=Q(units__status="done", units__included=False)
+            ),
+            failed_count=Count("units", filter=Q(units__status="failed")),
         )
         .order_by("-created_at")
     )
@@ -1523,6 +1534,10 @@ class InsightRunDetailView(InsightsLicenseRequired, APIView):
                     if run.status == "failed"
                     else run.analysed_count
                 ),
+                "excluded_count": run.units.filter(
+                    status="done", included=False
+                ).count(),
+                "failed_count": run.units.filter(status="failed").count(),
                 "skipped_count": run.units.filter(status="skipped").count(),
                 "taxonomy_mode": run.taxonomy_mode,
                 "result": run.result or {},

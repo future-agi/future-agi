@@ -594,6 +594,32 @@ def test_stop_never_reaches_another_organizations_run(
 
 
 @pytest.mark.django_db
+def test_a_stopped_run_counts_what_it_read_that_the_report_leaves_out(
+    auth_client, observe_project, cancelled
+):
+    # Progress counted every unit read (done or failed); the analysed count
+    # only those the lens kept. The run and the report list give the rest,
+    # so a stopped run's page and rail account for every unit it read.
+    run_id = running_run(auth_client, observe_project)
+    units = list(InsightUnit.objects.filter(run_id=run_id).order_by("id"))
+    states = [("done", True)] * 4 + [("done", False)] * 3 + [("failed", True)] * 2
+    for unit, (state, kept) in zip(units, [*states, ("skipped", True)], strict=True):
+        unit.status, unit.included = state, kept
+    InsightUnit.objects.bulk_update(units, ["status", "included"])
+    assert auth_client.post(f"{RUNS}{run_id}/stop/").status_code == 200
+
+    counts = ("analysed_count", "excluded_count", "failed_count", "skipped_count")
+    detail = auth_client.get(f"{RUNS}{run_id}/").json()["result"]
+    assert [detail[key] for key in counts] == [4, 3, 2, 1]
+    listed = auth_client.get(CONFIGS, {"project_id": str(observe_project.id)}).json()[
+        "result"
+    ]["configs"][0]["latest_run"]
+    assert [listed[key] for key in counts] == [4, 3, 2, 1]
+    config = auth_client.get(f"{CONFIGS}{detail['config_id']}/").json()["result"]
+    assert [config["runs"][0][key] for key in counts] == [4, 3, 2, 1]
+
+
+@pytest.mark.django_db
 def test_a_run_failed_on_its_model_setup_says_so(auth_client, observe_project):
     run_id = running_run(auth_client, observe_project)
     InsightRun.objects.filter(id=run_id).update(

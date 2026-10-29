@@ -427,7 +427,8 @@ describe("InsightsView", () => {
 
     it("counts reads as they come back, and after Stop gives the page and the rail the same counts at once", async () => {
       // 18 sessions: two calls of 8 had come back when Ada pressed Stop;
-      // 11 of those 16 showed a failure.
+      // 11 of those 16 showed a failure, 4 had none and 1 couldn't be read.
+      // The banner accounts for all 16 the progress counted.
       const run = (overrides) => ({
         ...runFixture.result,
         sample_size: 18,
@@ -443,6 +444,8 @@ describe("InsightsView", () => {
         error: "Stopped by Ada.",
         error_code: "stopped",
         analysed_count: 11,
+        excluded_count: 4,
+        failed_count: 1,
         skipped_count: 0,
         progress: { ...running.progress, error_code: "stopped" },
       });
@@ -486,9 +489,11 @@ describe("InsightsView", () => {
       );
       await waitFor(
         () =>
-          expect(screen.getAllByText("11 analysed · 0 skipped")).toHaveLength(
-            2,
-          ),
+          expect(
+            screen.getAllByText(
+              "11 analysed (4 had no failure) · 1 couldn't be read · 0 skipped",
+            ),
+          ).toHaveLength(2),
         { timeout: 5000 },
       );
       expect(screen.getByText("Stopped")).toBeInTheDocument();

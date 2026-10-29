@@ -42,6 +42,7 @@ import {
   formatPercent,
   relativeTime,
   runOutcome,
+  runReadAny,
 } from "./insightsFormat";
 import { useCancellable } from "./insightsHooks";
 import {
@@ -361,11 +362,13 @@ function ReportCard({ config, selected, onOpen, onRerun, onDelete }) {
           >
             {failed.stopped
               ? "Last run stopped"
-              : run.analysed_count
+              : runReadAny(run)
                 ? "Last run failed"
                 : "Failed before analysing"}
           </Typography>
-          <Typography variant="caption">{runOutcome(run)}</Typography>
+          <Typography variant="caption">
+            {runOutcome(run, config.lens)}
+          </Typography>
           <Typography variant="caption" color="text.secondary">
             {runFailureReason(run)}
           </Typography>

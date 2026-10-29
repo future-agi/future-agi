@@ -6,8 +6,29 @@ const NUMBER = new Intl.NumberFormat("en-US");
 export const formatCount = (value) =>
   Number.isFinite(value) ? NUMBER.format(Math.round(value)) : "–";
 
-export const runOutcome = (run) =>
-  `${formatCount(run.analysed_count ?? 0)} analysed · ${formatCount(run.skipped_count ?? run.result?.skipped ?? 0)} skipped`;
+// Why the lens left a unit it read out of the report.
+export const leftOutWhy = (lens) =>
+  lens === "failures" ? "had no failure" : "not relevant to the question";
+
+// A run that ended without a report: every unit it read, whichever way that
+// went, so the counts add up to the progress it showed. "11 analysed (5 had
+// no failure) · 2 couldn't be read · 0 skipped".
+export function runOutcome(run, lens) {
+  const excluded = run.excluded_count ?? 0;
+  const failed = run.failed_count ?? 0;
+  return [
+    `${formatCount(run.analysed_count ?? 0)} analysed${excluded > 0 ? ` (${formatCount(excluded)} ${leftOutWhy(lens)})` : ""}`,
+    failed > 0 && `${formatCount(failed)} couldn't be read`,
+    `${formatCount(run.skipped_count ?? run.result?.skipped ?? 0)} skipped`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+// Whether a run read anything before it ended: a unit the lens left out was
+// read too.
+export const runReadAny = (run) =>
+  Boolean(run.analysed_count || run.excluded_count);
 
 // 0.384 -> "38%". A share that rounds to 0 but is not zero reads "<1%", so a
 // real category never looks empty.

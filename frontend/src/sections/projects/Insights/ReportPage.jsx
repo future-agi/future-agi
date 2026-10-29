@@ -57,7 +57,7 @@ import {
   useInsightsRun,
 } from "./insightsApi";
 import { buildSegments, resultTops } from "./insightsDistribution";
-import { formatCount, runOutcome } from "./insightsFormat";
+import { formatCount, runOutcome, runReadAny } from "./insightsFormat";
 import { useCancellable } from "./insightsHooks";
 import { isRunActive, lensFor, unitTitle } from "./insightsLenses";
 import { reportMetaParts } from "./insightsReport";
@@ -486,7 +486,7 @@ ReportBody.propTypes = {
 // A failed run, and what to do next: run it again when another try could
 // work, the License settings when the licence is why, nothing to click when
 // only the model settings can fix it (its reason says what to change).
-function FailedRun({ run, onRerun }) {
+function FailedRun({ run, lens, onRerun }) {
   const router = useRouter();
   const { isCloud } = useDeploymentMode();
   const canRun = useCanStartRuns();
@@ -514,11 +514,11 @@ function FailedRun({ run, onRerun }) {
       <Typography variant="subtitle2">
         {next.stopped
           ? "Stopped"
-          : run.analysed_count
+          : runReadAny(run)
             ? "This run failed"
             : "Failed before analysing"}
       </Typography>
-      <Typography variant="body2">{runOutcome(run)}</Typography>
+      <Typography variant="body2">{runOutcome(run, lens)}</Typography>
       {runFailureReason(run)}
     </Alert>
   );
@@ -526,6 +526,7 @@ function FailedRun({ run, onRerun }) {
 
 FailedRun.propTypes = {
   run: PropTypes.object.isRequired,
+  lens: PropTypes.string,
   onRerun: PropTypes.func.isRequired,
 };
 
@@ -691,7 +692,11 @@ export default function ReportPage({
   else if (active) body = <RunProgress run={run} />;
   else if (run.status === "failed")
     body = (
-      <FailedRun run={run} onRerun={() => setRerun({ rediscover: false })} />
+      <FailedRun
+        run={run}
+        lens={lens}
+        onRerun={() => setRerun({ rediscover: false })}
+      />
     );
   else
     body = (

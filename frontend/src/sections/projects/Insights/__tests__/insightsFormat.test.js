@@ -15,9 +15,37 @@ import {
   formatSpan,
   humanizeKey,
   relativeTime,
+  runOutcome,
+  runReadAny,
 } from "../insightsFormat";
 import { attributeError, facetChips } from "../insightsLenses";
 import { sessionTracesLink, unitLink } from "../insightsLinks";
+
+describe("a run that ended without a report", () => {
+  it("accounts for every unit it read", () => {
+    const run = {
+      analysed_count: 11,
+      excluded_count: 4,
+      failed_count: 1,
+      skipped_count: 2,
+    };
+    expect(runOutcome(run, "failures")).toBe(
+      "11 analysed (4 had no failure) · 1 couldn't be read · 2 skipped",
+    );
+    expect(runOutcome(run, "custom")).toBe(
+      "11 analysed (4 not relevant to the question) · 1 couldn't be read · 2 skipped",
+    );
+    expect(runOutcome({ analysed_count: 3, skipped_count: 0 })).toBe(
+      "3 analysed · 0 skipped",
+    );
+  });
+
+  it("has read something when the lens left all it read out", () => {
+    expect(runReadAny({ analysed_count: 0, excluded_count: 5 })).toBe(true);
+    expect(runReadAny({ analysed_count: 0, failed_count: 5 })).toBe(false);
+    expect(runReadAny({ analysed_count: 2 })).toBe(true);
+  });
+});
 
 describe("formatting", () => {
   it("formats counts, shares and latency", () => {

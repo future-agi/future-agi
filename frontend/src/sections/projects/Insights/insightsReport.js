@@ -1,5 +1,10 @@
 import { unitWord } from "src/sections/projects/observePopulation";
-import { formatCount, formatDayRange, humanizeKey } from "./insightsFormat";
+import {
+  formatCount,
+  formatDayRange,
+  humanizeKey,
+  leftOutWhy,
+} from "./insightsFormat";
 
 // Plain-language facts about a completed run, shared by the report header,
 // the method note and the Ask composer.
@@ -30,10 +35,8 @@ export function reportMetaParts(run, lens) {
   const parts = [
     `${formatCount(sample)} ${unitWord(unit, sample)} sampled of ${formatCount(population)}`,
   ];
-  const why =
-    lens === "failures" ? "had no failure" : "not relevant to the question";
   parts.push(
-    `${formatCount(analysed)} analysed${excluded > 0 ? ` (${formatCount(excluded)} ${why})` : ""}`,
+    `${formatCount(analysed)} analysed${excluded > 0 ? ` (${formatCount(excluded)} ${leftOutWhy(lens)})` : ""}`,
   );
   const users = result.totals?.users;
   if (unit !== "users" && Number.isFinite(users))
