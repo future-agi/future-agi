@@ -11,10 +11,10 @@ REGISTRY = registry()
 
 class StaticConstructionRegressionTests(unittest.TestCase):
     def requires_exact_source_review(self, source, suffix='py'):
-        # The gate deliberately replaced partial SQL interpretation with a
-        # stronger invariant: EVERY registered source change is blob-reviewed.
-        # Keep the adversarial constructions against that public API, rather
-        # than calling the removed heuristic parser helpers.
+        # A change that introduces a ClickHouse schema or mutation statement
+        # needs a declaration bound to its exact before/after blob hashes.
+        # Exercise these constructions through that public API, rather than
+        # calling parser internals.
         with tempfile.TemporaryDirectory(prefix='integration-source-review-') as name:
             root = Path(name)
             path = 'product/schema.' + suffix
@@ -28,7 +28,7 @@ class StaticConstructionRegressionTests(unittest.TestCase):
             def base_bytes(root, base, name):
                 return None if name == 'deploy/update/clickhouse-sources.json' else previous
             with mock.patch.object(gate, 'base_bytes', side_effect=base_bytes):
-                with self.assertRaisesRegex(gate.GateError, 'requires a reviewed declaration'):
+                with self.assertRaisesRegex(gate.GateError, 'require human-reviewed declarations'):
                     gate.check_clickhouse_changes(root, [('M', path)], 'fixture-base', sources, reviews, REGISTRY)
                 declaration = reviewed([{'table': 'clickhouse:spans', 'risk_class': 'clickhouse_change'}])
                 reviews['changes'] = [{'path': path, 'before_sha256': gate.content_sha(previous),
@@ -50,14 +50,31 @@ class StaticConstructionRegressionTests(unittest.TestCase):
                 with self.subTest(mutation=mutation, alias=alias):
                     self.requires_exact_source_review(source)
 
+    def passes_without_review(self, source, suffix='py'):
+        with tempfile.TemporaryDirectory(prefix='integration-source-review-') as name:
+            root = Path(name)
+            path = 'product/schema.' + suffix
+            target = root/path
+            target.parent.mkdir()
+            target.write_text(source)
+            sources = {'schema_version': 1, 'sources': [
+                {'pattern': 'product/**', 'reason': 'Schema source changes require exact review.'}], 'exclusions': []}
+            reviews = {'schema_version': 1, 'changes': []}
+            def base_bytes(root, base, name):
+                return None if name == 'deploy/update/clickhouse-sources.json' else b'package p\n'
+            with mock.patch.object(gate, 'base_bytes', side_effect=base_bytes):
+                self.assertEqual(gate.check_clickhouse_changes(root, [('M', path)], 'fixture-base', sources,
+                                                               reviews, REGISTRY), [])
+
     def test_go_constant_concatenation_keeps_executable_sql_together(self):
         for separator in (' + ', ' +\n', ' + /* explanation */\n'):
             source = 'package p\nfunc f() { command("ALTER TABLE spans "' + separator + '"MODIFY COLUMN latency_ms Int64;") }'
             with self.subTest(separator=separator):
                 self.requires_exact_source_review(source, 'go')
-        # Comment-only changes are intentionally reviewed too; no SQL parser
-        # inference may exempt a changed registered source blob.
-        self.requires_exact_source_review('// "ALTER TABLE spans MODIFY COLUMN x Int64;"', 'go')
+        # Amendment A9 (user decision): review is triggered by schema or
+        # mutation statements, not by every edit of a registered file, so a
+        # statement that only appears in a comment is not executable DDL.
+        self.passes_without_review('package p\n// "ALTER TABLE spans MODIFY COLUMN x Int64;"\n', 'go')
 
     def test_logging_secret_generator_text_is_not_executable_generation(self):
         with tempfile.TemporaryDirectory(prefix='integration-generator-') as name:
