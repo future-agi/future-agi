@@ -241,10 +241,9 @@ def _set_aside_rejected(fix_run: AgentFixRun) -> None:
             )
 
 
-def make_candidate_default(candidate: AgentFixCandidate, *, user: Any) -> str:
-    """Make a finished fix's winner the environment's default, on the user's word."""
-    fix_run = candidate.fix_run
-    if fix_run.state in AgentFixRun.ACTIVE_STATES:
+def require_shippable(candidate: AgentFixCandidate) -> None:
+    """Refuse to ship a candidate before its fix finished, or one the fix did not prove."""
+    if candidate.fix_run.state in AgentFixRun.ACTIVE_STATES:
         raise HostedHarnessError(
             "fix_run_active", "wait for the fix to finish", status_code=409
         )
@@ -252,9 +251,15 @@ def make_candidate_default(candidate: AgentFixCandidate, *, user: Any) -> str:
     if candidate.outcome != AgentFixCandidate.Outcome.WINNER:
         raise HostedHarnessError(
             "fix_candidate_not_proven",
-            "only the fix's winner can become the default",
+            "only the fix's winner can ship",
             status_code=422,
         )
+
+
+def make_candidate_default(candidate: AgentFixCandidate, *, user: Any) -> str:
+    """Make a finished fix's winner the environment's default, on the user's word."""
+    require_shippable(candidate)
+    fix_run = candidate.fix_run
     outcome = agent_kind(fix_run.environment).make_default(candidate, user=user)
     if outcome not in ("activated", "already_default"):
         raise HostedHarnessError(

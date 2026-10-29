@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1105,
+  endpointCount: 1106,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -27876,6 +27876,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/pull-request/":
+      {
+        post: {
+          operationId: "simulate_api_agent-fix-runs_candidates_pull_request",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/EmptyRequest",
+          },
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/AgentFixPullRequest",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
     "/simulate/api/agent-fix-runs/{id}/stop/": {
       post: {
         operationId: "simulate_api_agent-fix-runs_stop",
@@ -49367,6 +49387,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
         outcome: {
           title: "Outcome",
           type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    AgentFixPullRequest: {
+      required: ["pull_request_url"],
+      type: "object",
+      properties: {
+        pull_request_url: {
+          title: "Pull request url",
+          type: "string",
+          format: "uri",
           minLength: 1,
         },
       },
@@ -87317,6 +87349,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/AgentFixCheckRun",
           },
           readOnly: true,
+        },
+        pull_request_url: {
+          title: "Pull request url",
+          type: "string",
+          format: "uri",
+          maxLength: 512,
         },
         created_at: {
           title: "Created at",

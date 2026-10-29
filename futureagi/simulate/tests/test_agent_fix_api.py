@@ -2,7 +2,8 @@
 the run lists that leave a fix's check runs out."""
 
 import json
-from contextlib import ExitStack, contextmanager
+import subprocess
+from contextlib import ExitStack, contextmanager, nullcontext
 from datetime import timedelta
 from decimal import Decimal
 from types import SimpleNamespace
@@ -113,6 +114,12 @@ def _out_of_credits():
             limit=12,
         )
     )
+
+
+def _git(cwd, *args):
+    return subprocess.run(
+        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
+    ).stdout.strip()
 
 
 def _launch_body(source_run, **overrides):
@@ -830,6 +837,182 @@ class TestUserApi:
         )
         environment.refresh_from_db()
         assert environment.agent_version_id == before
+
+    PULL = "https://github.com/acme/agent/pull/7"
+
+    @pytest.fixture
+    def github(self, tmp_path, monkeypatch, source_run):
+        """The agent's repository, connected through the App, as a local bare repository
+        holding the commit the run checked out."""
+        work = tmp_path / "work"
+        work.mkdir()
+        _git(work, "init", "-q", "-b", "main")
+        (work / "agent.py").write_text("PROMPT = ''\n")
+        _git(work, "add", "-A")
+        _git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "base")
+        commit = _git(work, "rev-parse", "HEAD")
+        bare = tmp_path / "acme" / "agent.git"
+        _git(tmp_path, "clone", "-q", "--bare", str(work), str(bare))
+        _git(bare, "config", "uploadpack.allowAnySHA1InWant", "true")
+        monkeypatch.setattr(
+            "simulate.services.hosted_harness_gateway.GITHUB_GIT_URL",
+            f"file://{tmp_path}",
+        )
+        monkeypatch.setattr(
+            "simulate.services.agent_fix_github.GitHubAppTokenProvider.from_settings",
+            lambda: SimpleNamespace(credential=lambda _: nullcontext("app-token")),
+        )
+        runtime = HarnessAgentVersionRuntime.no_workspace_objects.get(
+            agent_version_id=source_run.agent_version_id
+        )
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(id=runtime.id).update(
+            source_kind="github",
+            source={"repository": "acme/agent", "ref": "refs/heads/main"},
+            agent_payload={
+                **(runtime.agent_payload or {}),
+                "source_access": {"visibility": "private", "installation_id": "42"},
+            },
+        )
+        payload = {
+            **source_run.payload,
+            "source": {
+                "kind": "github",
+                "repository": "acme/agent",
+                "commit_sha": commit,
+            },
+        }
+        HostedHarnessJob.no_workspace_objects.filter(id=source_run.id).update(
+            payload=payload
+        )
+        return SimpleNamespace(bare=bare, commit=commit)
+
+    def _ship(self, auth_client, fix_run, candidate, replies):
+        """POST pull-request with GitHub's API answering ``replies`` in turn."""
+        calls = []
+
+        def answer(method, url, **kwargs):
+            calls.append((method, url, kwargs))
+            status, body = replies.pop(0)
+            return SimpleNamespace(
+                status_code=status, json=lambda: body, text=json.dumps(body)
+            )
+
+        with patch(
+            "simulate.services.agent_fix_github.requests.request", side_effect=answer
+        ):
+            response = auth_client.post(
+                f"{BASE}/{fix_run.id}/candidates/{candidate.id}/pull-request/",
+                {},
+                format="json",
+            )
+        return response, calls
+
+    def test_a_github_winner_ships_as_one_pull_request(
+        self, auth_client, source_run, github
+    ):
+        fix_run, candidate = self._proven(source_run, "github")
+        branch = f"futureagi/fix-{str(fix_run.id)[:8]}-1"
+
+        first, calls = self._ship(
+            auth_client, fix_run, candidate, [(201, {"html_url": self.PULL})]
+        )
+        again, more = self._ship(auth_client, fix_run, candidate, [])
+
+        assert (first.status_code, first.json()) == (
+            200,
+            {"pull_request_url": self.PULL},
+        )
+        assert (again.json(), more) == (first.json(), [])
+        assert (
+            _git(github.bare, "show", f"{branch}:agent.py") == "PROMPT = 'refund first'"
+        )
+        assert _git(github.bare, "rev-parse", f"{branch}~1") == github.commit
+        [(method, url, sent)] = calls
+        assert (method, url) == (
+            "POST",
+            "https://api.github.com/repos/acme/agent/pulls",
+        )
+        assert (sent["json"]["head"], sent["json"]["base"]) == (branch, "main")
+        assert sent["headers"]["Authorization"] == "Bearer app-token"
+        [shown] = auth_client.get(f"{BASE}/{fix_run.id}/").json()["candidates"]
+        assert shown["pull_request_url"] == self.PULL
+
+    def test_a_pull_request_github_already_has_is_found_not_duplicated(
+        self, auth_client, source_run, github
+    ):
+        fix_run, candidate = self._proven(source_run, "github")
+        self._ship(auth_client, fix_run, candidate, [(201, {"html_url": self.PULL})])
+        branch = _git(
+            github.bare, "rev-parse", f"futureagi/fix-{str(fix_run.id)[:8]}-1"
+        )
+        # The URL was not kept: the same commit is pushed again and GitHub's PR is found.
+        AgentFixCandidate.no_workspace_objects.filter(id=candidate.id).update(
+            pull_request_url=""
+        )
+
+        response, calls = self._ship(
+            auth_client,
+            fix_run,
+            candidate,
+            [
+                (422, {"message": "A pull request already exists for acme:branch."}),
+                (200, [{"html_url": self.PULL}]),
+            ],
+        )
+
+        assert (response.status_code, response.json()) == (
+            200,
+            {"pull_request_url": self.PULL},
+        )
+        assert [method for method, _, _ in calls] == ["POST", "GET"]
+        assert (
+            calls[1][2]["params"]["head"]
+            == f"acme:futureagi/fix-{str(fix_run.id)[:8]}-1"
+        )
+        assert (
+            _git(github.bare, "rev-parse", f"futureagi/fix-{str(fix_run.id)[:8]}-1")
+            == branch
+        )
+
+    def test_a_branch_someone_changed_is_not_overwritten(
+        self, auth_client, source_run, github, tmp_path
+    ):
+        fix_run, candidate = self._proven(source_run, "github")
+        branch = f"futureagi/fix-{str(fix_run.id)[:8]}-1"
+        other = tmp_path / "other"
+        _git(tmp_path, "clone", "-q", str(github.bare), str(other))
+        (other / "agent.py").write_text("PROMPT = 'mine'\n")
+        _git(other, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "x")
+        _git(other, "push", "-q", "origin", f"HEAD:refs/heads/{branch}")
+
+        response, calls = self._ship(auth_client, fix_run, candidate, [])
+
+        assert (response.status_code, response.json()["error"], calls) == (
+            409,
+            "fix_github_branch_changed",
+            [],
+        )
+        assert _git(github.bare, "show", f"{branch}:agent.py") == "PROMPT = 'mine'"
+
+    @pytest.mark.parametrize("unconnected", ["archive", "no_installation"])
+    def test_a_pull_request_needs_a_connected_repository(
+        self, auth_client, source_run, github, unconnected
+    ):
+        fix_run, candidate = self._proven(
+            source_run, "archive" if unconnected == "archive" else "github"
+        )
+        if unconnected == "no_installation":
+            HarnessAgentVersionRuntime.no_workspace_objects.filter(
+                agent_version_id=source_run.agent_version_id
+            ).update(agent_payload={"source_access": {"visibility": "public"}})
+
+        response, calls = self._ship(auth_client, fix_run, candidate, [])
+
+        assert (response.status_code, response.json()["error"], calls) == (
+            422,
+            "fix_github_not_connected",
+            [],
+        )
 
 
 class TestCheckRunsStayOutOfTheUsersRuns:

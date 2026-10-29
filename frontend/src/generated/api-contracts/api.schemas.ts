@@ -17006,6 +17006,8 @@ export interface AgentFixCandidateApi {
   outcome?: AgentFixCandidateApiOutcome;
   verdict: AgentFixVerdictApi;
   readonly check_runs?: readonly AgentFixCheckRunApi[];
+  /** @maxLength 512 */
+  pull_request_url?: string;
   readonly created_at?: string;
 }
 
@@ -17065,6 +17067,11 @@ export interface AgentFixLaunchApi {
 export interface AgentFixMakeDefaultApi {
   /** @minLength 1 */
   outcome: string;
+}
+
+export interface AgentFixPullRequestApi {
+  /** @minLength 1 */
+  pull_request_url: string;
 }
 
 export type AgentPromptOptimiserRunListApiOptimiserType =

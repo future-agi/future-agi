@@ -50081,7 +50081,7 @@
         "/simulate/api/agent-fix-runs/": {
             "get": {
                 "operationId": "simulate_api_agent-fix-runs_list",
-                "description": "A user's \"Fix my agent\" runs: start one from a finished run, follow it, stop it,\nand make a proven candidate the environment's default.",
+                "description": "A user's \"Fix my agent\" runs: start one from a finished run, follow it, stop it,\nand ship its winner: the environment's default, or a GitHub pull request.",
                 "parameters": [
                     {
                         "name": "environment_id",
@@ -50116,7 +50116,7 @@
             },
             "post": {
                 "operationId": "simulate_api_agent-fix-runs_create",
-                "description": "A user's \"Fix my agent\" runs: start one from a finished run, follow it, stop it,\nand make a proven candidate the environment's default.",
+                "description": "A user's \"Fix my agent\" runs: start one from a finished run, follow it, stop it,\nand ship its winner: the environment's default, or a GitHub pull request.",
                 "parameters": [
                     {
                         "name": "data",
@@ -50152,7 +50152,7 @@
         "/simulate/api/agent-fix-runs/{id}/": {
             "get": {
                 "operationId": "simulate_api_agent-fix-runs_read",
-                "description": "A user's \"Fix my agent\" runs: start one from a finished run, follow it, stop it,\nand make a proven candidate the environment's default.",
+                "description": "A user's \"Fix my agent\" runs: start one from a finished run, follow it, stop it,\nand ship its winner: the environment's default, or a GitHub pull request.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -50185,7 +50185,7 @@
         "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/make-default/": {
             "post": {
                 "operationId": "simulate_api_agent-fix-runs_candidates_make_default",
-                "description": "A user's \"Fix my agent\" runs: start one from a finished run, follow it, stop it,\nand make a proven candidate the environment's default.",
+                "description": "A user's \"Fix my agent\" runs: start one from a finished run, follow it, stop it,\nand ship its winner: the environment's default, or a GitHub pull request.",
                 "parameters": [
                     {
                         "name": "data",
@@ -50266,10 +50266,59 @@
                 }
             ]
         },
+        "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/pull-request/": {
+            "post": {
+                "operationId": "simulate_api_agent-fix-runs_candidates_pull_request",
+                "description": "A GitHub agent's winner, opened once as a pull request on its repository.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/EmptyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentFixPullRequest"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "candidate_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/agent-fix-runs/{id}/stop/": {
             "post": {
                 "operationId": "simulate_api_agent-fix-runs_stop",
-                "description": "A user's \"Fix my agent\" runs: start one from a finished run, follow it, stop it,\nand make a proven candidate the environment's default.",
+                "description": "A user's \"Fix my agent\" runs: start one from a finished run, follow it, stop it,\nand ship its winner: the environment's default, or a GitHub pull request.",
                 "parameters": [
                     {
                         "name": "data",
@@ -124675,6 +124724,12 @@
                     },
                     "readOnly": true
                 },
+                "pull_request_url": {
+                    "title": "Pull request url",
+                    "type": "string",
+                    "format": "uri",
+                    "maxLength": 512
+                },
                 "created_at": {
                     "title": "Created at",
                     "type": "string",
@@ -124860,6 +124915,20 @@
                 "outcome": {
                     "title": "Outcome",
                     "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "AgentFixPullRequest": {
+            "required": [
+                "pull_request_url"
+            ],
+            "type": "object",
+            "properties": {
+                "pull_request_url": {
+                    "title": "Pull request url",
+                    "type": "string",
+                    "format": "uri",
                     "minLength": 1
                 }
             }

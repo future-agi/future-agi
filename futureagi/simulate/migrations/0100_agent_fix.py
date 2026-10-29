@@ -182,6 +182,10 @@ class Migration(migrations.Migration):
                 ),
                 ("verdict", models.JSONField(blank=True, null=True)),
                 (
+                    "pull_request_url",
+                    models.URLField(blank=True, default="", max_length=512),
+                ),
+                (
                     "agent_version",
                     models.ForeignKey(
                         on_delete=django.db.models.deletion.PROTECT,

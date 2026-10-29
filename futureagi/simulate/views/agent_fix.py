@@ -35,9 +35,11 @@ from simulate.serializers.agent_fix import (
     AgentFixLaunchSerializer,
     AgentFixListQuerySerializer,
     AgentFixMakeDefaultSerializer,
+    AgentFixPullRequestSerializer,
     AgentFixRunSerializer,
 )
 from simulate.services import agent_fix_engine, agent_fix_models
+from simulate.services.agent_fix_github import open_pull_request
 from simulate.services.agent_fix_runs import (
     launch_fix_run,
     make_candidate_default,
@@ -74,7 +76,7 @@ def _not_found():
 
 class AgentFixRunViewSet(viewsets.ViewSet):
     """A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
-    and make a proven candidate the environment's default."""
+    and ship its winner: the environment's default, or a GitHub pull request."""
 
     permission_classes = [IsAuthenticated]
 
@@ -199,6 +201,22 @@ class AgentFixRunViewSet(viewsets.ViewSet):
             return _not_found()
         outcome = make_candidate_default(candidate, user=request.user)
         return Response({"outcome": outcome})
+
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
+        responses={200: AgentFixPullRequestSerializer},
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"candidates/(?P<candidate_id>[0-9a-f-]{36})/pull-request",
+    )
+    def pull_request(self, request, pk=None, candidate_id=None):
+        """A GitHub agent's winner, opened once as a pull request on its repository."""
+        candidate = self._candidate(request, pk, candidate_id)
+        if candidate is None:
+            return _not_found()
+        return Response({"pull_request_url": open_pull_request(candidate)})
 
     @action(
         detail=True,

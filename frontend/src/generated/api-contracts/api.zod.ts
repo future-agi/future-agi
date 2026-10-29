@@ -34289,7 +34289,7 @@ export const SimulateApiAgentFixEngineV1ChatCompletionsCreateBody = zod.record(
 
 /**
  * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
-and make a proven candidate the environment's default.
+and ship its winner: the environment's default, or a GitHub pull request.
  */
 export const SimulateApiAgentFixRunsListQueryParams = zod.object({
   environment_id: zod.string().uuid(),
@@ -34305,6 +34305,8 @@ export const simulateApiAgentFixRunsListResponseCandidatesItemAttemptMax = 32767
 
 export const simulateApiAgentFixRunsListResponseCandidatesItemVerdictMustPassWithinNoiseDefault =
   [];
+
+export const simulateApiAgentFixRunsListResponseCandidatesItemPullRequestUrlMax = 512;
 
 export const SimulateApiAgentFixRunsListResponseItem = zod.object({
   id: zod.string().uuid().optional(),
@@ -34398,6 +34400,11 @@ export const SimulateApiAgentFixRunsListResponseItem = zod.object({
           }),
         )
         .optional(),
+      pull_request_url: zod
+        .string()
+        .url()
+        .max(simulateApiAgentFixRunsListResponseCandidatesItemPullRequestUrlMax)
+        .optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
     }),
   ),
@@ -34411,7 +34418,7 @@ export const SimulateApiAgentFixRunsListResponse = zod.array(
 
 /**
  * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
-and make a proven candidate the environment's default.
+and ship its winner: the environment's default, or a GitHub pull request.
  */
 export const simulateApiAgentFixRunsCreateBodyTargetScenarioKeysItemMax = 255;
 
@@ -34456,7 +34463,7 @@ export const SimulateApiAgentFixRunsCreateBody = zod.object({
 
 /**
  * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
-and make a proven candidate the environment's default.
+and ship its winner: the environment's default, or a GitHub pull request.
  */
 export const SimulateApiAgentFixRunsReadParams = zod.object({
   id: zod.string(),
@@ -34472,6 +34479,8 @@ export const simulateApiAgentFixRunsReadResponseCandidatesItemAttemptMax = 32767
 
 export const simulateApiAgentFixRunsReadResponseCandidatesItemVerdictMustPassWithinNoiseDefault =
   [];
+
+export const simulateApiAgentFixRunsReadResponseCandidatesItemPullRequestUrlMax = 512;
 
 export const SimulateApiAgentFixRunsReadResponse = zod.object({
   id: zod.string().uuid().optional(),
@@ -34565,6 +34574,11 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
           }),
         )
         .optional(),
+      pull_request_url: zod
+        .string()
+        .url()
+        .max(simulateApiAgentFixRunsReadResponseCandidatesItemPullRequestUrlMax)
+        .optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
     }),
   ),
@@ -34575,7 +34589,7 @@ export const SimulateApiAgentFixRunsReadResponse = zod.object({
 
 /**
  * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
-and make a proven candidate the environment's default.
+and ship its winner: the environment's default, or a GitHub pull request.
  */
 export const SimulateApiAgentFixRunsCandidatesMakeDefaultParams = zod.object({
   id: zod.string(),
@@ -34599,8 +34613,22 @@ export const SimulateApiAgentFixRunsCandidatesCandidatePatchParams = zod.object(
 );
 
 /**
+ * A GitHub agent's winner, opened once as a pull request on its repository.
+ */
+export const SimulateApiAgentFixRunsCandidatesPullRequestParams = zod.object({
+  id: zod.string(),
+  candidate_id: zod.string(),
+});
+
+export const SimulateApiAgentFixRunsCandidatesPullRequestBody = zod.object({});
+
+export const SimulateApiAgentFixRunsCandidatesPullRequestResponse = zod.object({
+  pull_request_url: zod.string().url().min(1),
+});
+
+/**
  * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
-and make a proven candidate the environment's default.
+and ship its winner: the environment's default, or a GitHub pull request.
  */
 export const SimulateApiAgentFixRunsStopParams = zod.object({
   id: zod.string(),
@@ -34618,6 +34646,8 @@ export const simulateApiAgentFixRunsStopResponseCandidatesItemAttemptMax = 32767
 
 export const simulateApiAgentFixRunsStopResponseCandidatesItemVerdictMustPassWithinNoiseDefault =
   [];
+
+export const simulateApiAgentFixRunsStopResponseCandidatesItemPullRequestUrlMax = 512;
 
 export const SimulateApiAgentFixRunsStopResponse = zod.object({
   id: zod.string().uuid().optional(),
@@ -34710,6 +34740,11 @@ export const SimulateApiAgentFixRunsStopResponse = zod.object({
             state: zod.string().min(1),
           }),
         )
+        .optional(),
+      pull_request_url: zod
+        .string()
+        .url()
+        .max(simulateApiAgentFixRunsStopResponseCandidatesItemPullRequestUrlMax)
         .optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
     }),

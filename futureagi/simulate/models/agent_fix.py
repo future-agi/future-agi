@@ -116,6 +116,8 @@ class AgentFixCandidate(BaseModel):
         max_length=16, choices=Outcome.choices, default=Outcome.PENDING
     )
     verdict = models.JSONField(null=True, blank=True)
+    # A GitHub agent's winner ships as a pull request on its repository, opened once.
+    pull_request_url = models.URLField(max_length=512, blank=True, default="")
 
     class Meta:
         db_table = "simulate_agent_fix_candidate"

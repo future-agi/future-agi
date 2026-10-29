@@ -91,6 +91,7 @@ import type {
   AgentFixEngineStateApi,
   AgentFixLaunchApi,
   AgentFixMakeDefaultApi,
+  AgentFixPullRequestApi,
   AgentFixRunApi,
   AgentPlaygroundErrorResponseApi,
   AgentPlaygroundGraphsExecutionsListParams,
@@ -58034,7 +58035,7 @@ export const getSimulateApiAgentFixRunsListUrl = (
 
 /**
  * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
-and make a proven candidate the environment's default.
+and ship its winner: the environment's default, or a GitHub pull request.
  */
 export const simulateApiAgentFixRunsList = async (
   params: SimulateApiAgentFixRunsListParams,
@@ -58078,7 +58079,7 @@ export const getSimulateApiAgentFixRunsCreateUrl = () => {
 
 /**
  * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
-and make a proven candidate the environment's default.
+and ship its winner: the environment's default, or a GitHub pull request.
  */
 export const simulateApiAgentFixRunsCreate = async (
   agentFixLaunchApi: AgentFixLaunchApi,
@@ -58124,7 +58125,7 @@ export const getSimulateApiAgentFixRunsReadUrl = (id: string) => {
 
 /**
  * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
-and make a proven candidate the environment's default.
+and ship its winner: the environment's default, or a GitHub pull request.
  */
 export const simulateApiAgentFixRunsRead = async (
   id: string,
@@ -58171,7 +58172,7 @@ export const getSimulateApiAgentFixRunsCandidatesMakeDefaultUrl = (
 
 /**
  * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
-and make a proven candidate the environment's default.
+and ship its winner: the environment's default, or a GitHub pull request.
  */
 export const simulateApiAgentFixRunsCandidatesMakeDefault = async (
   id: string,
@@ -58237,6 +58238,56 @@ export const simulateApiAgentFixRunsCandidatesCandidatePatch = async (
   );
 };
 
+export type simulateApiAgentFixRunsCandidatesPullRequestResponse200 = {
+  data: AgentFixPullRequestApi;
+  status: 200;
+};
+
+export type simulateApiAgentFixRunsCandidatesPullRequestResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixRunsCandidatesPullRequestResponseSuccess =
+  simulateApiAgentFixRunsCandidatesPullRequestResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiAgentFixRunsCandidatesPullRequestResponseError =
+  simulateApiAgentFixRunsCandidatesPullRequestResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiAgentFixRunsCandidatesPullRequestResponse =
+  | simulateApiAgentFixRunsCandidatesPullRequestResponseSuccess
+  | simulateApiAgentFixRunsCandidatesPullRequestResponseError;
+
+export const getSimulateApiAgentFixRunsCandidatesPullRequestUrl = (
+  id: string,
+  candidateId: string,
+) => {
+  return `/simulate/api/agent-fix-runs/${id}/candidates/${candidateId}/pull-request/`;
+};
+
+/**
+ * A GitHub agent's winner, opened once as a pull request on its repository.
+ */
+export const simulateApiAgentFixRunsCandidatesPullRequest = async (
+  id: string,
+  candidateId: string,
+  emptyRequestApi: EmptyRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixRunsCandidatesPullRequestResponse> => {
+  return apiMutator<simulateApiAgentFixRunsCandidatesPullRequestResponse>(
+    getSimulateApiAgentFixRunsCandidatesPullRequestUrl(id, candidateId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emptyRequestApi),
+    },
+  );
+};
+
 export type simulateApiAgentFixRunsStopResponse200 = {
   data: AgentFixRunApi;
   status: 200;
@@ -58266,7 +58317,7 @@ export const getSimulateApiAgentFixRunsStopUrl = (id: string) => {
 
 /**
  * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
-and make a proven candidate the environment's default.
+and ship its winner: the environment's default, or a GitHub pull request.
  */
 export const simulateApiAgentFixRunsStop = async (
   id: string,

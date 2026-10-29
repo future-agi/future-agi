@@ -110,6 +110,7 @@ class AgentFixCandidateSerializer(serializers.ModelSerializer):
             "outcome",
             "verdict",
             "check_runs",
+            "pull_request_url",
             "created_at",
         ]
 
@@ -163,6 +164,10 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
 
 class AgentFixMakeDefaultSerializer(serializers.Serializer):
     outcome = serializers.CharField()
+
+
+class AgentFixPullRequestSerializer(serializers.Serializer):
+    pull_request_url = serializers.URLField()
 
 
 # The engine's calls from its sandbox. The services take the pydantic contract
