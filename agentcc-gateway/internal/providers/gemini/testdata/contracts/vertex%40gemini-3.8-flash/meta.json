@@ -3,7 +3,7 @@
   "model": "vertex@gemini-3.8-flash",
   "source": "synthetic",
   "recorded_at": null,
-  "notes": "Synthetic: authored by hand, 2026-10-28; ai.google.dev and cloud.google.com were blocked, so field names and enums come from the machine-readable references named per case in case.json notes. Values (ids, signatures, token counts, vectors, audio, text) are invented. Naming: vertex@<model> is the gemini adapter in Vertex AI mode (base URL on aiplatform.googleapis.com, OAuth bearer token, publisher-model paths) serving publisher model <model>; the directory is that key as contracttest.ModelDir encodes it (vertex%40...). request.json carries the bare model, as the gateway sends it. The suite configures the provider as config.example.yaml does (x-gcp-project / x-gcp-location headers, so New builds .../v1beta1/projects/<p>/locations/<l>) and reaches the replay server through ProviderConfig.DialContext, so the adapter's own Vertex AI detection runs unchanged. Bodies follow the aiplatform v1beta1 discovery document, revision 20261012 (GoogleCloudAiplatformV1beta1GenerateContentResponse and its Candidate, UsageMetadata, PromptFeedback, SafetyRating). Differences from the Gemini API: createTime, usageMetadata.trafficType, promptFeedback.blockReasonMessage, no candidate index. Vertex AI configured with a base URL ending in /v1/projects/... speaks v1, whose schema differs in small ways. The recorder reaches Vertex AI with VERTEX_PROJECT and VERTEX_ACCESS_TOKEN (see contracttest/README.md); the scheduled jobs skip vertex@ models, because the access token lasts an hour, so record them locally. The error cases nothing real induces stay synthetic (recordable: false).",
+  "notes": "Synthetic: authored by hand, 2026-10-28; ai.google.dev and cloud.google.com were blocked, so field names and enums come from the machine-readable references named per case in case.json notes. Values (ids, signatures, token counts, vectors, audio, text) are invented. Naming: vertex@<model> is the gemini adapter in Vertex AI mode (base URL on aiplatform.googleapis.com, OAuth bearer token, publisher-model paths) serving publisher model <model>; the directory is that key as contracttest.ModelDir encodes it (vertex%40...). request.json carries the bare model, as the gateway sends it. The suite configures the provider as config.example.yaml does (x-gcp-project / x-gcp-location headers, so New builds .../v1beta1/projects/<p>/locations/<l>) and reaches the replay server through ProviderConfig.DialContext, so the adapter's own Vertex AI detection runs unchanged. Bodies follow the aiplatform v1beta1 discovery document, revision 20261012 (GoogleCloudAiplatformV1beta1GenerateContentResponse and its Candidate, UsageMetadata, PromptFeedback, SafetyRating). Differences from the Gemini API: createTime, usageMetadata.trafficType, promptFeedback.blockReasonMessage, no candidate index. Vertex AI configured with a base URL ending in /v1/projects/... speaks v1, whose schema differs in small ways. The recorder reaches Vertex AI with VERTEX_PROJECT and VERTEX_ACCESS_TOKEN (see contracttest/README.md); the scheduled jobs skip vertex@ models, because the access token lasts an hour, so record them locally. The error cases nothing real induces stay synthetic (recordable: false). Native passthrough cases (added 2026-10-28): genai_* and stream_genai_* drive GenerateContent / StreamGenerateContent and GenAICountTokens in Vertex AI mode, the route a google-genai client reaches through the gateway's /v1beta/models/{model}:{action} when the model resolves to a Vertex AI provider; their bodies are relayed untouched, the generateContent ones pin what the server bills (server/contract_gemini_vertex_genai_test.go replays them through the handler).",
   "allowed_unknown_fields": [
     {
       "path": "error:$.error.details",
@@ -32,6 +32,18 @@
     {
       "path": "vertex:$.usageMetadata.trafficType",
       "reason": "known gap V1: Vertex AI's usageMetadata.trafficType (ON_DEMAND, ON_DEMAND_PRIORITY, ON_DEMAND_FLEX, PROVISIONED_THROUGHPUT, ...) is dropped, so a request served from pre-paid provisioned throughput, or at the priority or flex rate, is priced as pay-as-you-go on-demand"
+    },
+    {
+      "path": "vertex_genai:$.usageMetadata.candidatesTokensDetails",
+      "reason": "known gap G13: native GenAI billing ignores the per-modality output breakdown, so audio and image output are priced as text"
+    },
+    {
+      "path": "vertex_genai:$.usageMetadata.promptTokensDetails",
+      "reason": "known gap G13: native GenAI billing ignores the per-modality prompt breakdown, so audio and image input are priced as text"
+    },
+    {
+      "path": "vertex_genai:$.usageMetadata.trafficType",
+      "reason": "known gap V1: native GenAI billing (genaifmt.ExtractUsageMetadata, applyGenAIUsage) ignores Vertex AI's usageMetadata.trafficType, so a request served from provisioned throughput, or at the priority or flex rate, is priced as pay-as-you-go on-demand"
     }
   ],
   "allowed_unknown_shapes": []

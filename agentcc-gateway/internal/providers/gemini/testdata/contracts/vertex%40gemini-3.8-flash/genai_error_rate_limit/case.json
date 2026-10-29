@@ -1,0 +1,6 @@
+{
+  "endpoint": "genai_generate",
+  "status": 429,
+  "recordable": false,
+  "notes": "Native google-genai passthrough on Vertex AI: request.json is the raw body a google-genai client sends to the gateway's /v1beta/models/{model}:{action} route; the gateway resolves the model to a provider configured for Vertex AI and doGenAIRequest / StreamGenerateContent relay it to the publisher-model URL (.../v1beta1/projects/<p>/locations/<l>/publishers/google/models/<model>:<action>), returning the upstream status and body untouched. A 429 to a non-streaming native call: relayed with its status and body. The body is Vertex AI's 429 for dynamic shared quota (RESOURCE_EXHAUSTED, no details, no retry hint), as vertex@gemini-3.8-flash/error_rate_limit. The error body is google.rpc.Status in its HTTP JSON mapping ({\"error\": {code, message, status, details}}); status names and their HTTP codes come from googleapis google/rpc/code.proto, details from google/rpc/error_details.proto and google/api/error_reason.proto (read 2026-10-28). Not recordable."
+}

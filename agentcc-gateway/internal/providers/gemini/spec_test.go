@@ -70,7 +70,9 @@ func TestSpecCoverage(t *testing.T) {
 			Roots: []contractspec.Root{
 				{
 					// The same parser as the Gemini API's: New only changes
-					// the URL and the credential for Vertex AI.
+					// the URL and the credential for Vertex AI. ChatCompletion,
+					// every alt=sse chunk of StreamChatCompletion, and
+					// CreateSpeech (extractAudioFromResponse).
 					Subset:   "vertex/generate_content",
 					Bindings: []contractspec.Binding{contractspec.Bind("$", reflect.TypeFor[geminiResponse]())},
 					Enums:    finishReasons,
@@ -96,18 +98,25 @@ func finishReasonMapped(v string) bool {
 }
 
 // specSubsetByRoot names the subset that holds each ContractEnums document
-// root. Roots without one are not compared: count_tokens (no subset),
+// root. Roots without one are not compared: count_tokens and
+// vertex_count_tokens (no subset: countTokens is relayed unread on both APIs),
 // list_models (Model in discovery has no modelStage; the recorded listing
 // does) and the error roots (discovery does not model the error envelope).
+// The native passthroughs' roots (genai, genai_embed and their vertex_
+// forms) are relayed unread but carry the same schema as the parsed roots,
+// so their enums are compared with those subsets.
 var specSubsetByRoot = map[string]string{
-	"$":              "gemini/generate_content",
-	"tts:$":          "gemini/generate_content",
-	"genai:$":        "gemini/generate_content",
-	"embed:$":        "gemini/embed_content",
-	"genai_embed:$":  "gemini/embed_content",
-	"batch_embed:$":  "gemini/batch_embed_contents",
-	"vertex:$":       "vertex/generate_content",
-	"vertex_embed:$": "vertex/embed_content",
+	"$":                    "gemini/generate_content",
+	"tts:$":                "gemini/generate_content",
+	"genai:$":              "gemini/generate_content",
+	"embed:$":              "gemini/embed_content",
+	"genai_embed:$":        "gemini/embed_content",
+	"batch_embed:$":        "gemini/batch_embed_contents",
+	"vertex:$":             "vertex/generate_content",
+	"vertex_tts:$":         "vertex/generate_content",
+	"vertex_genai:$":       "vertex/generate_content",
+	"vertex_embed:$":       "vertex/embed_content",
+	"vertex_genai_embed:$": "vertex/embed_content",
 }
 
 // TestSpecEnums checks the value sets the contract tests accept

@@ -195,9 +195,10 @@ var ContractPartKinds = map[string][]string{
 // and (usage only, see ContractEnums) the native passthrough.
 var (
 	geminiResponseRoots = []string{"$", "tts:$"}
-	vertexResponseRoots = []string{"vertex:$"}
+	vertexResponseRoots = []string{"vertex:$", "vertex_tts:$"}
 	// usageRoots also include the passthrough, which bills from usage.
 	geminiUsageRoots = []string{"$", "tts:$", "genai:$"}
+	vertexUsageRoots = []string{"vertex:$", "vertex_tts:$", "vertex_genai:$"}
 )
 
 // under prefixes each root with suffix: under([$, tts:$], ".x") = [$.x, tts:$.x].
@@ -246,12 +247,14 @@ var ContractEnums = []contracttest.EnumSpec{
 		Values: vertexSeverities},
 	{Spec: specGemini + "ModalityTokenCount.modality and " + specVertex + "ModalityTokenCount.modality (identical)",
 		Paths: append(append(
-			under(append(slices.Clone(geminiUsageRoots), vertexResponseRoots...),
+			under(append(slices.Clone(geminiUsageRoots), vertexUsageRoots...),
 				".usageMetadata.promptTokensDetails[].modality", ".usageMetadata.candidatesTokensDetails[].modality",
 				".usageMetadata.toolUsePromptTokensDetails[].modality", ".usageMetadata.cacheTokensDetails[].modality"),
 			under([]string{"embed:$", "batch_embed:$", "genai_embed:$"}, ".usageMetadata.promptTokenDetails[].modality")...),
 			"vertex_embed:$.usageMetadata.promptTokensDetails[].modality",
-			"count_tokens:$.promptTokensDetails[].modality", "count_tokens:$.cacheTokensDetails[].modality"),
+			"vertex_genai_embed:$.usageMetadata.promptTokensDetails[].modality",
+			"count_tokens:$.promptTokensDetails[].modality", "count_tokens:$.cacheTokensDetails[].modality",
+			"vertex_count_tokens:$.promptTokensDetails[].modality"),
 		Values: modalities},
 	{Spec: specGemini + "Content.role and " + specVertex + "Content.role (\"Must be either 'user' or 'model'\")",
 		Paths:  under(append(slices.Clone(geminiResponseRoots), vertexResponseRoots...), ".candidates[].content.role"),
@@ -266,7 +269,8 @@ var ContractEnums = []contracttest.EnumSpec{
 	{Spec: specGemini + "UsageMetadata.serviceTier", Paths: under(geminiUsageRoots, ".usageMetadata.serviceTier"),
 		Values: []string{"unspecified", "standard", "flex", "priority"}},
 	{Spec: specVertex + "GenerateContentResponseUsageMetadata.trafficType and UsageMetadata.trafficType",
-		Paths: append(under(vertexResponseRoots, ".usageMetadata.trafficType"), "vertex_embed:$.usageMetadata.trafficType"),
+		Paths: append(under(vertexUsageRoots, ".usageMetadata.trafficType"), "vertex_embed:$.usageMetadata.trafficType",
+			"vertex_genai_embed:$.usageMetadata.trafficType"),
 		Values: []string{"TRAFFIC_TYPE_UNSPECIFIED", "ON_DEMAND", "ON_DEMAND_PRIORITY", "ON_DEMAND_FLEX", "ON_DEMAND_OFFPEAK",
 			"PROVISIONED_THROUGHPUT"}},
 	{Spec: specGemini + "ExecutableCode.language and " + specVertex + "ExecutableCode.language (identical)",

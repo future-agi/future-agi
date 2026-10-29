@@ -31,10 +31,11 @@ import (
 //	speech              CreateSpeech (generateContent, AUDIO)  tts:$
 //	list_models         ListModels                             list_models:$
 //
-// Vertex AI documents get a vertex_ prefix (vertex_embed:$). The native
-// passthroughs relay the upstream body to a google-genai client byte for
-// byte; what the gateway reads out of it is billing, so that is what their
-// documents model.
+// Vertex AI documents get a vertex_ prefix (vertex_embed:$, vertex_genai:$,
+// vertex_tts:$); an error body keeps its root on both APIs (genai_error:$,
+// error:$). The native passthroughs relay the upstream body to a google-genai
+// client byte for byte; what the gateway reads out of it is billing, so that
+// is what their documents model.
 
 // genaiRelayed is what the gateway reads out of a native generateContent body
 // it relays (server/handlers_genai.go): usageMetadata for billing
@@ -42,7 +43,8 @@ import (
 // Everything else goes to the client unread, so it is declared raw and the
 // strict walk lists it as opaque. (Guardrails also read candidate text; that
 // is not a translation or billing path.) checkGenAIMirror keeps this type
-// honest against genaifmt.
+// honest against genaifmt. The top-level fields are both APIs':
+// modelStatus is the Gemini API's only, createTime Vertex AI's only.
 type genaiRelayed struct {
 	Candidates     json.RawMessage   `json:"candidates"`
 	PromptFeedback json.RawMessage   `json:"promptFeedback"`
@@ -50,6 +52,7 @@ type genaiRelayed struct {
 	ModelVersion   string            `json:"modelVersion"`
 	ResponseID     json.RawMessage   `json:"responseId"`
 	ModelStatus    json.RawMessage   `json:"modelStatus"`
+	CreateTime     json.RawMessage   `json:"createTime"`
 }
 
 // genaiBilledUsage is the usageMetadata genaifmt.ExtractUsageMetadata decodes.
@@ -60,8 +63,8 @@ type genaiBilledUsage struct {
 	TotalTokenCount      int `json:"totalTokenCount"`
 }
 
-// documentedUsage is every UsageMetadata count the Gemini API documents, for
-// judging what billing should have read.
+// documentedUsage is every UsageMetadata count the Gemini API and Vertex AI
+// document, for judging what billing should have read.
 type documentedUsage struct {
 	PromptTokenCount        int    `json:"promptTokenCount"`
 	CandidatesTokenCount    int    `json:"candidatesTokenCount"`
@@ -70,6 +73,8 @@ type documentedUsage struct {
 	CachedContentTokenCount int    `json:"cachedContentTokenCount"`
 	TotalTokenCount         int    `json:"totalTokenCount"`
 	ServiceTier             string `json:"serviceTier"`
+	// TrafficType is Vertex AI's: how the request was served and priced.
+	TrafficType string `json:"trafficType"`
 }
 
 // nativeResult is what a native passthrough call gave back.
@@ -591,8 +596,9 @@ func saneSurface(t testing.TB, c contracttest.Case, k fixtureKey, out caseOutput
 // saneGenAIBilling checks what the native generateContent route bills
 // against what the upstream reported: Google bills the prompt and the
 // tool-use prompt as input, the candidates and thoughts as output, cached
-// prompt tokens at a cached rate, and flex or priority requests at their
-// tier's rate.
+// prompt tokens at a cached rate, flex or priority requests at their tier's
+// rate, and on Vertex AI provisioned-throughput, priority and flex traffic
+// (usageMetadata.trafficType) other than on demand.
 func saneGenAIBilling(t testing.TB, c contracttest.Case) {
 	t.Helper()
 	billed := billGenAI(c.Body, c.IsStream)
@@ -618,6 +624,9 @@ func saneGenAIBilling(t testing.TB, c contracttest.Case) {
 	}
 	if u.ServiceTier != "" && u.ServiceTier != "standard" && u.ServiceTier != "unspecified" {
 		t.Errorf("serviceTier %q is not billed: the request is priced at the standard rate", u.ServiceTier)
+	}
+	if u.TrafficType != "" && u.TrafficType != "ON_DEMAND" && u.TrafficType != "TRAFFIC_TYPE_UNSPECIFIED" {
+		t.Errorf("trafficType %q is not billed: the request is priced as pay-as-you-go on-demand", u.TrafficType)
 	}
 }
 

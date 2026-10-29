@@ -225,6 +225,7 @@
       "fixtures": {"provider": "gemini", "prefix": "vertex@"},
       "models": [
         {"id": "gemini-3.8-flash", "status": "covered"},
+        {"id": "gemini-3.8-flash-tts", "status": "covered"},
         {"id": "gemini-embedding-2", "status": "covered"},
         {"id": "imagen-4.0-generate-001", "status": "covered"}
       ]
