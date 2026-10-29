@@ -9,10 +9,12 @@ class OpenAiPromptMessage(TypedDict):
     role: str
     content: str
 
+
 class DataPoint(TypedDict, total=False):
     """Data point for a single inference."""
 
     response: str
+
 
 class EvalResultMetric(TypedDict):
     """
@@ -21,6 +23,41 @@ class EvalResultMetric(TypedDict):
 
     id: str
     value: float
+
+
+class _EvalResultCostRequired(TypedDict):
+    total_cost: float
+    prompt_cost: float
+    completion_cost: float
+
+
+class _EvalResultCostOptional(TypedDict, total=False):
+    pricing_source: str
+
+
+class EvalResultCost(_EvalResultCostRequired, _EvalResultCostOptional):
+    """
+    Represents the LLM evaluation cost breakdown.
+    """
+
+
+class _EvalResultTokenUsageRequired(TypedDict):
+    total_tokens: int
+    prompt_tokens: int
+    completion_tokens: int
+
+
+class _EvalResultTokenUsageOptional(TypedDict, total=False):
+    cache_creation_input_tokens: int
+    cache_read_input_tokens: int
+
+
+class EvalResultTokenUsage(
+    _EvalResultTokenUsageRequired, _EvalResultTokenUsageOptional
+):
+    """
+    Represents the LLM evaluation token usage breakdown.
+    """
 
 
 class DatapointFieldAnnotation(TypedDict):
@@ -34,11 +71,7 @@ class DatapointFieldAnnotation(TypedDict):
     annotation_note: str
 
 
-class EvalResult(TypedDict):
-    """
-    Represents the LLM evaluation result.
-    """
-
+class _EvalResultRequired(TypedDict):
     name: str
     display_name: str
     data: dict
@@ -49,6 +82,17 @@ class EvalResult(TypedDict):
     metadata: str | None
     metrics: list[EvalResultMetric]
     datapoint_field_annotations: list[DatapointFieldAnnotation] | None
+
+
+class _EvalResultOptional(TypedDict, total=False):
+    cost: EvalResultCost
+    token_usage: EvalResultTokenUsage
+
+
+class EvalResult(_EvalResultRequired, _EvalResultOptional):
+    """
+    Represents the LLM evaluation result.
+    """
 
 
 @dataclass
