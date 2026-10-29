@@ -129,14 +129,7 @@ function rescoreTaskEvals(t, rescore) {
   return changed ? { ...t, evalResults } : t;
 }
 
-export default function RunResults({
-  env,
-  runId,
-  tasks,
-  stats,
-  evals,
-  seed = 7,
-}) {
+export default function RunResults({ env, runId, tasks, stats, evals }) {
   /* Per-eval-column actions (from the column menu): a set of columns the user
      deleted, and a re-score version bump per column that regenerates just that
      column's cell values (no full simulation). */
@@ -283,7 +276,6 @@ export default function RunResults({
       ? "tasks"
       : t;
   });
-  const [replaying, setReplaying] = useState(null);
   const [openTask, setOpenTask] = useState(null);
   /* Which left pane the call drawer opens on — "trace" from Insights. */
   const [openPane, setOpenPane] = useState(null);
@@ -639,9 +631,7 @@ export default function RunResults({
      failures pays only for the ones not read yet. */
   const openDebug = (ids = null) => {
     const want = ids || failingScenarioIds;
-    const read = analysisCharge
-      ? analysisCharge.ids || failingScenarioIds
-      : [];
+    const read = analysisCharge ? analysisCharge.ids || failingScenarioIds : [];
     const fresh = want.filter((id) => !read.includes(id));
     if (fresh.length) {
       patch({
@@ -1367,7 +1357,6 @@ export default function RunResults({
                           : `From ${runViaOf(sourceRun).label}`}
                       </Box>
                     </Tooltip>
-
                   </>
                 );
               })()}
@@ -1538,14 +1527,12 @@ export default function RunResults({
         {/* The run's ID — what the CLI and SDK print and take, so a run
             started in the terminal and this page are one run. */}
         {/* Started from code (CLI, Python, CI, MCP): run it again the same way. */}
-        {!trialMeta &&
-          sourceRun &&
-          runViaOf(sourceRun).label !== "Console" && (
-            <CopyCommandButton
-              command={`agent-learn rerun ${sourceRun.id}`}
-              label="Copy command"
-            />
-          )}
+        {!trialMeta && sourceRun && runViaOf(sourceRun).label !== "Console" && (
+          <CopyCommandButton
+            command={`agent-learn rerun ${sourceRun.id}`}
+            label="Copy command"
+          />
+        )}
         {!trialMeta && runId && (
           <CopyIdButton
             id={runId}
@@ -2146,7 +2133,9 @@ export default function RunResults({
                         variant={
                           selectedFailingIds.length ? "outlined" : "contained"
                         }
-                        color={selectedFailingIds.length ? "inherit" : "primary"}
+                        color={
+                          selectedFailingIds.length ? "inherit" : "primary"
+                        }
                         size="small"
                         onClick={(e) => setRerunAnchor(e.currentTarget)}
                         sx={
@@ -2330,12 +2319,6 @@ export default function RunResults({
               />
             )}
           </ErrorBoundary>
-
-          <ReplayDrawer
-            task={replaying}
-            seed={seed}
-            onClose={() => setReplaying(null)}
-          />
         </Box>
       </Box>
 
@@ -2595,7 +2578,12 @@ export default function RunResults({
             }}
           >
             <Typography
-              sx={{ typography: "s3", color: "text.tertiary", flex: 1, pl: 0.5 }}
+              sx={{
+                typography: "s3",
+                color: "text.tertiary",
+                flex: 1,
+                pl: 0.5,
+              }}
             >
               From code
             </Typography>
@@ -2842,7 +2830,6 @@ RunResults.propTypes = {
   tasks: PropTypes.array,
   stats: PropTypes.object,
   evals: PropTypes.array,
-  seed: PropTypes.number,
 };
 
 /*
@@ -3171,205 +3158,3 @@ function runFinishedLabel(run) {
   if (s < 604800) return `${Math.round(s / 86400)}d ago`;
   return `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
 }
-
-/* ── deterministic replay ────────────────────────────────────────────────── */
-
-/**
- * Replaying a failure is only useful if it actually reproduces, so this states
- * what is pinned rather than offering a bare "run again". Everything listed is
- * derived from the seed — that is the mechanism, and saying so is what makes
- * the button trustworthy.
- */
-function ReplayDrawer({ task, seed, onClose }) {
-  const PINNED = [
-    {
-      label: "World state",
-      note: "The same seeded rows, in the same state, before the agent arrives.",
-    },
-    {
-      label: "Persona turns",
-      note: "The same wording, the same order, the same moments of hesitation.",
-    },
-    {
-      label: "Actor entries",
-      note: "Anyone who joins or interrupts does so at the same point.",
-    },
-    {
-      label: "Mocked responses",
-      note: "Stubbed tools return exactly what they returned before.",
-    },
-    {
-      label: "Perturbations",
-      note: "The same noise, the same barge-ins, the same flaky call.",
-    },
-  ];
-
-  return (
-    <SideDrawer open={!!task} onClose={onClose} width={480}>
-      {task && (
-        <Stack sx={{ height: "100%" }}>
-          <Stack
-            direction="row"
-            alignItems="center"
-            spacing={2}
-            sx={{
-              px: 2.5,
-              py: 2,
-              borderBottom: "1px solid",
-              borderColor: "divider",
-            }}
-          >
-            <Box flex={1} minWidth={0}>
-              <Typography noWrap sx={{ typography: "m2", fontWeight: 600 }}>
-                Replay this scenario
-              </Typography>
-              <Typography
-                noWrap
-                sx={{ typography: "s3", color: "text.tertiary" }}
-              >
-                {task.title}
-              </Typography>
-            </Box>
-            <IconButton size="small" onClick={onClose}>
-              <Iconify
-                icon="solar:close-circle-linear"
-                width={20}
-                sx={{ color: "text.tertiary" }}
-              />
-            </IconButton>
-          </Stack>
-
-          <Stack spacing={2} sx={{ p: 2.5, flex: 1, overflowY: "auto" }}>
-            <Stack
-              direction="row"
-              alignItems="center"
-              spacing={1.25}
-              sx={{
-                p: 1.75,
-                borderRadius: "8px",
-                border: "1px solid",
-                borderColor: "divider",
-                bgcolor: "background.neutral",
-              }}
-            >
-              <Iconify
-                icon="solar:dice-linear"
-                width={16}
-                sx={{ color: "primary.main", flexShrink: 0 }}
-              />
-              <Typography sx={{ typography: "s2", flex: 1 }}>
-                Deterministic seed
-              </Typography>
-              <Typography
-                sx={{
-                  typography: "s1",
-                  fontWeight: 600,
-                  fontFamily: "ui-monospace, Menlo, monospace",
-                }}
-              >
-                {seed}
-              </Typography>
-            </Stack>
-
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              Runs this scenario again with everything held identical — same
-              failure means the agent; a pass means it was flaky.
-            </Typography>
-
-            <Stack spacing={1.25}>
-              {PINNED.map((p) => (
-                <Stack
-                  key={p.label}
-                  direction="row"
-                  spacing={1.25}
-                  alignItems="flex-start"
-                >
-                  <Iconify
-                    icon="solar:lock-keyhole-minimalistic-linear"
-                    width={14}
-                    sx={{ color: "text.tertiary", flexShrink: 0, mt: "2px" }}
-                  />
-                  <Box>
-                    <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                      {p.label}
-                    </Typography>
-                    <Typography
-                      sx={{ typography: "s3", color: "text.tertiary" }}
-                    >
-                      {p.note}
-                    </Typography>
-                  </Box>
-                </Stack>
-              ))}
-            </Stack>
-
-            <Box>
-              <Typography
-                sx={{
-                  typography: "s3",
-                  fontWeight: 600,
-                  color: "text.tertiary",
-                  textTransform: "none",
-                  letterSpacing: 0.4,
-                  mb: 0.75,
-                }}
-              >
-                Run it yourself
-              </Typography>
-              <Box
-                sx={{
-                  p: 1.25,
-                  borderRadius: 1,
-                  border: "1px solid",
-                  borderColor: "divider",
-                  bgcolor: "background.neutral",
-                  typography: "s2",
-                  fontFamily: "ui-monospace, Menlo, monospace",
-                  color: "text.secondary",
-                  overflowX: "auto",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                fai replay {task.id} --seed {seed}
-              </Box>
-            </Box>
-          </Stack>
-
-          <Stack
-            direction="row"
-            spacing={1.5}
-            sx={{
-              px: 2.5,
-              py: 2,
-              borderTop: "1px solid",
-              borderColor: "divider",
-            }}
-          >
-            <Box flex={1} />
-            <Button
-              size="small"
-              onClick={onClose}
-              sx={{ color: "text.secondary" }}
-            >
-              Cancel
-            </Button>
-            <Button
-              size="small"
-              variant="contained"
-              color="primary"
-              onClick={onClose}
-              startIcon={<Iconify icon="solar:restart-linear" width={16} />}
-            >
-              Replay on seed {seed}
-            </Button>
-          </Stack>
-        </Stack>
-      )}
-    </SideDrawer>
-  );
-}
-ReplayDrawer.propTypes = {
-  task: PropTypes.object,
-  seed: PropTypes.number,
-  onClose: PropTypes.func,
-};

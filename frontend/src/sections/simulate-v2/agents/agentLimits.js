@@ -60,10 +60,20 @@ export const surfaceAvailability = (agent) => {
   const codeConnected = kind === "repo" || kind === "upload" || !!linkedRepoOf(agent);
   return {
     prompt: { ok: true },
-    tools: { ok: kind !== "endpoint" },
+    tools: { ok: kind !== "endpoint", why: "We can only call this agent, so its tools can't be changed" },
     settings: {
       ok: kind === "platform" || kind === "builtin" || codeConnected,
       why: kind === "framework" ? "Needs the agent's code — connect its repository" : "We can only call this agent, so its settings can't be changed",
+    },
+    /* Skills: a code agent can gain a new one; others only change skills
+       they already have. */
+    skills: {
+      ok: code || !!agent?.values?.skills?.length,
+      why: "This agent has no skills — connect its code to add one",
+    },
+    memory: {
+      ok: kind === "platform" || kind === "builtin" || codeConnected,
+      why: "We can only call this agent, so its memory can't be changed",
     },
     code: { ok: code, why: "Needs the agent's code — connect it from a repository" },
     structure: {

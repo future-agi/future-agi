@@ -6,6 +6,8 @@
     instructions, opening          → prompt
     tools                          → tools
     model, speech in/out, turn-taking, knowledge, variables → settings
+    skills                         → skills
+    memory                         → memory
     structure                      → structure
     analysis, account              → never
 
@@ -28,6 +30,8 @@ export const AREA_SURFACE = {
   turnTaking: "settings",
   knowledge: "settings",
   variables: "settings",
+  skills: "skills",
+  memory: "memory",
   structure: "structure",
   analysis: null,
   account: null,

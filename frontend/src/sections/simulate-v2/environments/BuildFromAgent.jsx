@@ -42,6 +42,7 @@ import {
   runtimeTypeFor,
 } from "../_mock/builder";
 import { generatedPool } from "../_mock/scenarios";
+import { getEnvironment } from "../_mock/environments";
 import { agentPromptOf } from "../_mock/agentPrompt";
 import { agentPinPatch } from "../_mock/versions";
 import { mcpBuildStateOf } from "../_mock/worldTools";
@@ -184,6 +185,20 @@ export default function BuildFromAgent() {
      rather than just relabelling the environment. */
   const buildDone = done.includes("build");
   const scenariosDone = done.includes("scenarios");
+  /* Started from a prebuilt world: its own proven scenarios come with it
+     unchanged — the tests its sample agent runs — rather than a new set
+     written for this agent, so the two compare on the same test. */
+  const fixedWorld =
+    source?.worldSource?.kind === "template"
+      ? getEnvironment(source.worldSource.id) || null
+      : null;
+  const draftPool = () =>
+    fixedWorld
+      ? generatedPool(fixedWorld)
+      : sizeToCount(
+          generatedPool({ ...env, difficulty }),
+          source?.scenarioCount,
+        );
   /* Everything the build writes is one batch — the environment's first —
      added by whoever ran the build, at the moment it ran. Scenarios added
      afterwards arrive as batches of their own. */
@@ -192,10 +207,7 @@ export default function BuildFromAgent() {
     // No cap unless the connect form asked for a count; then exactly that many.
     () =>
       env && buildDone
-        ? sizeToCount(
-            generatedPool({ ...env, difficulty }),
-            source?.scenarioCount,
-          ).map((r) =>
+        ? draftPool().map((r) =>
             provStamp(r, {
               source: "derived",
               actor: currentUser(),
@@ -204,7 +216,16 @@ export default function BuildFromAgent() {
             }),
           )
         : [],
-    [env, buildDone, difficulty, source?.scenarioCount, builtAt, buildId],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      env,
+      buildDone,
+      difficulty,
+      source?.scenarioCount,
+      builtAt,
+      buildId,
+      fixedWorld,
+    ],
   );
   /* Scenarios land one at a time while the stage writes them, so the
      Scenarios tab fills as they are written rather than all at once at the
@@ -428,17 +449,17 @@ export default function BuildFromAgent() {
     /* The builder narrates the count this screen will actually produce — and
        the distinct sub-goals those scenarios use, the same count the
        Environments list shows. */
-    const draft = env
-      ? sizeToCount(
-          generatedPool({ ...env, difficulty }),
-          source?.scenarioCount,
-        )
-      : [];
+    const draft = env ? draftPool() : [];
     const draftCount = env ? draft.length : undefined;
     const subGoalCount = env
       ? subGoalCatalogOf(env, { scenarios: draft }).length
       : undefined;
-    const stage = builderRun(id, { ...source, draftCount, subGoalCount });
+    const stage = builderRun(id, {
+      ...source,
+      draftCount,
+      subGoalCount,
+      ...(fixedWorld && { fixedWorld: fixedWorld.name }),
+    });
     /* Writing scenarios is the stage people wait on, so it runs slower and
        drops each scenario into the table as it is written — spread across
        the stage, finishing on its last step. Each is then checked: its row

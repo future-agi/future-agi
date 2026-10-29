@@ -438,6 +438,18 @@ const STAGES = {
     /* A count set on the connect form is honoured exactly; with none the
        builder drafts across the whole use-case range. */
     const n = source?.scenarioCount || source?.draftCount || 8;
+    /* A prebuilt world's scenarios were proven when the world was made; they
+       come over as they are — never rewritten to suit the agent. */
+    if (source?.fixedWorld)
+      return {
+        title: "Taking the world's scenarios",
+        steps: [
+          think(`These are the ${source.fixedWorld} world's own ${source.draftCount ?? n} scenarios, proven when the world was made — the same tests its sample agent runs.`),
+          tool("copy", `${source.draftCount ?? n} scenarios · unchanged · same checks and reference outcomes`),
+          note("They aren't rewritten for your agent, so what counts as success stays the world's, and results compare with the sample agent's."),
+        ],
+        chips: ["use this environment →"],
+      };
     /* Each scenario is checked as it's written, not all at the end — so the
        narration reports checks as they land, and the scenario a check sends
        back (the third one written, when there are enough) is rewritten and

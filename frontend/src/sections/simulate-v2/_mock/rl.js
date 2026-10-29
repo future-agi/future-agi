@@ -7,8 +7,8 @@
  * them means an environment built to evaluate an agent can later train one
  * without being rebuilt.
  *
- * Training itself is out of scope: this emits rewards and exports rollouts,
- * and stops there.
+ * This file emits rewards and exports rollouts. Training on them is the
+ * separate `agent-learn train` path (one TRL trainer).
  */
 
 const OBSERVATION = {

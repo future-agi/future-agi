@@ -42,6 +42,7 @@ import {
   productionAgentVersion,
 } from "../../_mock/versions";
 import {
+  allowFlagOf,
   limitRows,
   optimizationId,
   OPTIMIZER_MODELS,
@@ -1169,7 +1170,7 @@ export default function ImprovementSetup({
         {/* The same experiment from code — what Start improvement would make. */}
         {main && (
           <CopyCommandButton
-            command={`agent-learn improve create --baseline ${base?.id || "<run-id>"} \\\n  --goal "${goalOf?.label || "Raise the pass rate"}" --allow prompt,config \\\n  --suite ${main.id}/target --holdout ${main.id}/holdout \\\n  --budget ${creditsForUsd(spend)} --budget-unit credits${suggestOnly ? " --suggest-only" : ""}`}
+            command={`agent-learn improve create --baseline ${base?.id || "<run-id>"} \\\n  --goal "${goalOf?.label || "Raise the pass rate"}" --allow ${allowFlagOf(limits.allowed)} \\\n  --suite ${main.id}/target --holdout ${main.id}/holdout \\\n  --budget ${creditsForUsd(spend)} --budget-unit credits${suggestOnly ? " --suggest-only" : ""}`}
           />
         )}
         <Button size="small" onClick={onClose} sx={{ color: "text.secondary" }}>

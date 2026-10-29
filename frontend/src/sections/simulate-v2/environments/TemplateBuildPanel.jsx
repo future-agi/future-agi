@@ -166,7 +166,7 @@ export default function TemplateBuildPanel({
           on={mode === "agent"}
           onClick={() => setMode("agent")}
           short="Build this world for an agent you've connected"
-          hint="Your agent is read and its tools are checked against this world, then scenarios are written and proven for it."
+          hint="Your agent is read and its tools are checked against this world. It takes the world's own proven scenarios, unchanged."
         />
       </Box>
 
@@ -323,7 +323,7 @@ export default function TemplateBuildPanel({
                   },
                   {
                     icon: "solar:play-circle-linear",
-                    text: "Scenarios are written and proven, then you run them once to see where the agent stands today.",
+                    text: `The world's ${scenarioCount} proven scenarios come over unchanged — the same tests the sample agent runs — then you run them once to see where your agent stands.`,
                   },
                 ].map((row) => (
                   <Stack

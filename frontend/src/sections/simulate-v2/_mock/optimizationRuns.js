@@ -329,6 +329,18 @@ export const SURFACES = [
     delivered: "New agent version",
   },
   {
+    id: "skills",
+    label: "Skills",
+    example: "Sharpen when the refund skill is used, or its instructions",
+    delivered: "New skill version on a new agent version",
+  },
+  {
+    id: "memory",
+    label: "Memory",
+    example: "What is kept between conversations and when it's forgotten",
+    delivered: "New agent version",
+  },
+  {
     id: "code",
     label: "Code",
     example: "Add a check before booking, fix a parser, change routing",
@@ -346,8 +358,30 @@ const SURFACE_LABEL = {
   prompt: "prompts",
   tools: "tool descriptions",
   settings: "agent settings",
+  skills: "skills",
+  memory: "memory",
   code: "code",
   structure: "structure",
+};
+/* The same surfaces as `agent-learn improve create --allow` names them. */
+const SURFACE_CLI = {
+  prompt: "prompt",
+  tools: "tools",
+  settings: "config",
+  skills: "skill",
+  memory: "memory",
+  code: "code",
+  structure: "orchestration",
+};
+export const allowFlagOf = (allowed = DEFAULT_LIMITS.allowed) => {
+  const order = SURFACES.map((x) => x.id);
+  return (
+    [...allowed]
+      .filter((a) => SURFACE_CLI[a])
+      .sort((a, b) => order.indexOf(a) - order.indexOf(b))
+      .map((a) => SURFACE_CLI[a])
+      .join(",") || "prompt"
+  );
 };
 export const allowedLabel = (allowed = DEFAULT_LIMITS.allowed) => {
   const order = SURFACES.map((x) => x.id);
