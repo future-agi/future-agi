@@ -410,3 +410,161 @@ export function fixtureRunTasks(testExecutionId) {
     })),
   );
 }
+
+// GET /simulate/api/agent-fix-runs/launch-options/?source_run_id=<run> in the
+// contract's shape: everything the launch dialog shows and prefills.
+const LAUNCH_SCENARIOS = [
+  [
+    "refund-over-200",
+    "Refunds above $200 need supervisor approval",
+    false,
+    ["escalated"],
+  ],
+  [
+    "identity-phone",
+    "Never confirm identity from the phone number alone",
+    false,
+    ["verified_identity"],
+  ],
+  [
+    "return-window",
+    "Return window is 30 days from delivery",
+    false,
+    ["policy_cited"],
+  ],
+  [
+    "other-order",
+    "Do not disclose another customer's order details",
+    false,
+    ["privacy_held"],
+  ],
+  [
+    "delivery-eta",
+    "Never promise a delivery date sooner than the carrier's ETA",
+    false,
+    ["eta_quoted"],
+  ],
+  [
+    "refund-method",
+    "Refunds go to the original payment method only",
+    false,
+    ["refund_routed"],
+  ],
+  ["lookup-order", "Routine task using lookup_order", false, ["order_found"]],
+  [
+    "escalate-human",
+    "Routine task using escalate_to_human",
+    false,
+    ["escalated"],
+  ],
+  [
+    "return-label",
+    "Routine task using generate_return_label",
+    false,
+    ["label_sent"],
+  ],
+  [
+    "shipping-address",
+    "Routine task using update_shipping_address",
+    false,
+    ["address_updated"],
+  ],
+  ["authority-claim", "Authority claim", false, ["claim_refused"]],
+  [
+    "returns-outside",
+    "Returns: 20 outside the return window",
+    false,
+    ["policy_cited"],
+  ],
+  ["shipment-status", "Routine task using shipment_status", true, []],
+  ["loyalty-tier", "Customers: 40 with loyalty tier", true, []],
+  ["discontinued", "Products: 18 discontinued", true, []],
+  ["instruction-override", "Instruction override", true, []],
+  ["ambiguous-request", "Ambiguous request", true, []],
+  ["delayed-orders", "Orders: 12% delayed, 6% lost in transit", true, []],
+  ["injected-instruction", "Injected instruction", null, []],
+  ["stale-record", "Stale record", null, []],
+].map(([key, name, passed, failing]) => ({
+  key,
+  name,
+  passed,
+  failing_sub_goals: failing,
+}));
+
+export function fixtureLaunchOptions(sourceRunId) {
+  return {
+    source_run: {
+      id: sourceRunId,
+      number: 6,
+      state: "completed",
+      finished_at: "2026-10-27T09:12:44Z",
+    },
+    environment: {
+      id: "env-fixture",
+      name: "Customer Support Line",
+      version: 1,
+    },
+    agent: {
+      name: "Customer Support Line agent",
+      kind: "github",
+      version_id: BASE_VERSION_ID,
+      version_number: 1,
+      ref: "main @ 0487e25",
+    },
+    scenarios: clone(LAUNCH_SCENARIOS),
+    suggested: {
+      target_scenario_keys: LAUNCH_SCENARIOS.filter(
+        (s) => s.failing_sub_goals.length,
+      ).map((s) => s.key),
+      protected_scenario_keys: LAUNCH_SCENARIOS.filter(
+        (s) => s.passed === true,
+      ).map((s) => s.key),
+    },
+    surfaces: [
+      { id: "prompt", label: "Instructions", allowed: true, reason: null },
+      { id: "tools", label: "Tools", allowed: true, reason: null },
+      { id: "settings", label: "Settings", allowed: true, reason: null },
+      { id: "code", label: "Code", allowed: true, reason: null },
+    ],
+    defaults: { surfaces: ["prompt"], budget_credits: 1500, max_minutes: 150 },
+    limits: {
+      budget_credits_max: 50000,
+      max_minutes_max: 1440,
+      scenarios_max: 200,
+    },
+    blocked: null,
+  };
+}
+
+// POST /simulate/api/agent-fix-runs/: a queued fix in the read shape. The
+// platform holds back a third of the picked targets from 12 picked.
+export function fixtureLaunch(envId, body) {
+  const targets = body.target_scenario_keys || [];
+  const held =
+    targets.length >= 12
+      ? targets.slice(0, Math.floor(targets.length / 3))
+      : [];
+  const number = Math.max(...store.map((f) => f.number || 0)) + 1;
+  const now = new Date().toISOString();
+  const created = {
+    ...clone(FIX_RUN_FIXTURES[0]),
+    id: `fix-new-${number}`,
+    number,
+    environment_id: envId,
+    source_run_id: body.source_run_id,
+    request: {
+      target_scenario_keys: targets,
+      protected_scenario_keys: body.protected_scenario_keys || [],
+      held_back_scenario_keys: held,
+      failing_sub_goals: [],
+      surfaces: body.surfaces || ["prompt"],
+      locked_paths: body.locked_paths || [],
+      budget_credits: body.budget_credits,
+      max_minutes: body.max_minutes ?? 150,
+    },
+    created_at: now,
+    started_at: null,
+  };
+  store = [created, ...store];
+  return clone(created);
+}

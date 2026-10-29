@@ -1776,6 +1776,8 @@ export const endpoints = {
   // fixRuns.js answers from fixtures.
   agentFixRuns: {
     list: () => apiPath("/simulate/api/agent-fix-runs/"),
+    launchOptions: () =>
+      apiPath("/simulate/api/agent-fix-runs/launch-options/"),
     detail: (id) => apiPath("/simulate/api/agent-fix-runs/{id}/", { id }),
     stop: (id) => apiPath("/simulate/api/agent-fix-runs/{id}/stop/", { id }),
     makeDefault: (id, candidateId) =>

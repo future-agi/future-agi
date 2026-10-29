@@ -13,6 +13,8 @@ import {
   FIXTURE_PULL_REQUEST_URL,
   fixtureFixRun,
   fixtureFixRuns,
+  fixtureLaunch,
+  fixtureLaunchOptions,
   fixturePatch,
   fixtureRunTasks,
   updateFixtureFixRun,
@@ -238,4 +240,43 @@ export function useFixScenarioRows(fix, candidateId) {
     run: candidate?.check_runs?.[0],
     isLoading: results.some((r) => r.isLoading),
   };
+}
+
+export const fixLaunchOptionsKey = (sourceRunId) => [
+  "agent-fix-launch-options",
+  sourceRunId,
+];
+
+export async function getLaunchOptions(sourceRunId) {
+  if (fromFixtures()) return fixtureLaunchOptions(sourceRunId);
+  const res = await axios.get(endpoints.agentFixRuns.launchOptions(), {
+    params: { source_run_id: sourceRunId },
+  });
+  return res.data;
+}
+
+// Everything the launch dialog shows and prefills, for one finished run.
+export function useFixLaunchOptions(sourceRunId, { enabled = true } = {}) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: fixLaunchOptionsKey(sourceRunId),
+    queryFn: () => getLaunchOptions(sourceRunId),
+    enabled: enabled && !!sourceRunId,
+  });
+  return { options: data, isLoading, error };
+}
+
+export async function launchFix(envId, body) {
+  if (fromFixtures()) return fixtureLaunch(envId, body);
+  const res = await axios.post(endpoints.agentFixRuns.list(), body);
+  return res.data;
+}
+
+export function useLaunchFix(envId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { errorHandled: true },
+    mutationFn: (body) => launchFix(envId, body),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: fixRunsKey(envId) }),
+  });
 }
