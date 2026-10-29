@@ -60,6 +60,16 @@ func runFake(fn func(tb *fakeTB)) *fakeTB {
 	return ft
 }
 
+// setUpdate sets the package's -update flag to v and restores it when the test
+// ends. The harness's own tests pin the flag so they behave the same whether or
+// not the package runs with -update (go test ./internal/providers/... -update).
+func setUpdate(t *testing.T, v bool) {
+	t.Helper()
+	old := *update
+	*update = v
+	t.Cleanup(func() { *update = old })
+}
+
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -369,14 +379,15 @@ func TestAssertGolden(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "sub", GoldenFile)
 	value := map[string]any{"a": 1}
 
+	setUpdate(t, false)
 	ft := runFake(func(tb *fakeTB) { AssertGolden(tb, path, value) })
 	if len(ft.errors) != 1 || !strings.Contains(ft.errors[0], "-update") {
 		t.Fatalf("missing golden: got %q", ft.errors)
 	}
 
-	*update = true
+	setUpdate(t, true)
 	ft = runFake(func(tb *fakeTB) { AssertGolden(tb, path, value) })
-	*update = false
+	setUpdate(t, false)
 	if len(ft.errors) != 0 {
 		t.Fatalf("update: %q", ft.errors)
 	}

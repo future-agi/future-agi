@@ -304,6 +304,7 @@ func writeModel(t *testing.T, root, model, clonedFrom, body string) {
 }
 
 func TestCheck_AllowlistsAndStaleness(t *testing.T) {
+	setUpdate(t, false) // the missing opaque golden must fail, not be written
 	root := t.TempDir()
 	writeModel(t, root, "acme-1", "", `{"name": 1, "tags": "x", "kind": "b"}`)
 	s := testStrict()
@@ -340,9 +341,9 @@ func TestCheck_OpaqueGolden(t *testing.T) {
 			}
 		})
 	}
-	*update = true
+	setUpdate(t, true)
 	ft := run()
-	*update = false
+	setUpdate(t, false)
 	if len(ft.errors) != 0 {
 		t.Fatalf("update: %q", ft.errors)
 	}
