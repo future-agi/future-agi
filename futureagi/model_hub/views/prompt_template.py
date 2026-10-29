@@ -3562,6 +3562,8 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 {"generation_id": generation_payload.get("generation_id")}
             )
 
+        except APIException:
+            raise
         except Exception as e:
             logger.exception(f"Error in generation of prompt: {str(e)}")
             traceback.print_exc()
@@ -3873,6 +3875,8 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 }
             )
 
+        except APIException:
+            raise
         except Exception as e:
             logger.exception(f"Error in analyzing the prompt: {str(e)}")
             traceback.print_exc()
@@ -3930,6 +3934,8 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
 
             return self._gm.success_response({"variables": variables_dict})
 
+        except APIException:
+            raise
         except Exception as e:
             logger.exception(f"Error in generating variable values: {str(e)}")
             traceback.print_exc()
