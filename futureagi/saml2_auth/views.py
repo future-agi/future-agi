@@ -79,7 +79,6 @@ from tfc.settings.settings import (
     GITHUB_CLIENT_ID,
     GITHUB_CLIENT_SECRET,
     GITHUB_OAUTH_URL,
-    GOOGLE_USERINFO_API,
     MICROSOFT_CALLBACK_URL,
     MICROSOFT_CLIENT_ID,
     MICROSOFT_CLIENT_SECRET,
@@ -772,6 +771,36 @@ class Auth0LoginView(APIView):
             return self._gm.bad_request("Not Implemented")
 
 
+def _resolve_oauth_name(decoded: dict, access_token: str, user_email) -> str:
+    """Best-effort display name for an OAuth login.
+
+    Auth0 database (email) connections frequently omit the ``name`` claim
+    but do set ``nickname`` (default: email local-part). The previous
+    fallback called Google's userinfo endpoint with the Auth0-issued token
+    — a guaranteed failure for every non-Google identity that turned each
+    email login into "Unable to process OAuth callback" (#3596). Consult
+    Auth0's own /userinfo instead, then fall back to the email local-part
+    so a missing display name can never block sign-in.
+    """
+    name = decoded.get("name") or decoded.get("nickname")
+    if name:
+        return name
+    try:
+        userinfo = requests.get(
+            f"https://{AUTH0_DOMAIN}/userinfo",
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=10,
+        )
+        if userinfo.status_code == 200:
+            body = userinfo.json()
+            name = body.get("name") or body.get("nickname")
+    except requests.RequestException:
+        name = None
+    if not name and user_email:
+        name = str(user_email).split("@")[0]
+    return name or "User"
+
+
 def resolve_sso_user(user_email, name, onboarding_token, mode):
     """Find or create the user behind a verified SSO identity.
 
@@ -863,22 +892,7 @@ class Auth0CallbackView(APIView):
                     request.validated_query_data.get("state")
                 )
 
-                name = decoded.get("name")
-                if not name:
-                    get_name_google = (
-                        f"{GOOGLE_USERINFO_API}?alt=json&access_token={access_token}"
-                    )
-                    user_info_response = requests.get(get_name_google, timeout=10)
-                    logger.info(
-                        "oauth_profile_exchange_completed",
-                        provider="google",
-                        status_code=user_info_response.status_code,
-                    )
-                    if user_info_response.status_code == 200:
-                        name = user_info_response.json().get("name")
-                    else:
-                        # return self._gm.bad_request("Unable to fetch Name")
-                        raise Exception("Unable to fetch Name")
+                name = _resolve_oauth_name(decoded, access_token, user_email)
 
                 # if not is_work_email(user_email):
                 #     # return self._gm.bad_request("Email must be a work email")
