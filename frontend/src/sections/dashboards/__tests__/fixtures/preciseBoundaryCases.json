@@ -1,0 +1,2690 @@
+[
+  {
+    "input_point": "2026-10-26T00:00:00.000001Z",
+    "boundary": "start",
+    "delta_us": -1,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2026-10-25T00:00:00.000001Z",
+      "window_end": "2026-10-26T00:00:00.000001Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2026-10-26T05:30:00+05:30",
+      "end": "2026-10-27T00:00:00.000001+00:00"
+    },
+    "serialized_range": {
+      "start": "2026-10-26T00:00:00Z",
+      "end": "2026-10-27T00:00:00.000001Z"
+    },
+    "included": true
+  },
+  {
+    "input_point": "2026-10-26T00:00:00.000001Z",
+    "boundary": "start",
+    "delta_us": 0,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2026-10-25T00:00:00.000001Z",
+      "window_end": "2026-10-26T00:00:00.000001Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2026-10-26T05:30:00.000001+05:30",
+      "end": "2026-10-27T00:00:00.000001+00:00"
+    },
+    "serialized_range": {
+      "start": "2026-10-26T00:00:00.000001Z",
+      "end": "2026-10-27T00:00:00.000001Z"
+    },
+    "included": true
+  },
+  {
+    "input_point": "2026-10-26T00:00:00.000001Z",
+    "boundary": "start",
+    "delta_us": 1,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2026-10-25T00:00:00.000001Z",
+      "window_end": "2026-10-26T00:00:00.000001Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2026-10-26T05:30:00.000002+05:30",
+      "end": "2026-10-27T00:00:00.000001+00:00"
+    },
+    "serialized_range": {
+      "start": "2026-10-26T00:00:00.000002Z",
+      "end": "2026-10-27T00:00:00.000001Z"
+    },
+    "included": false
+  },
+  {
+    "input_point": "2026-10-26T00:00:00.000001Z",
+    "boundary": "end",
+    "delta_us": -1,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2026-10-25T00:00:00.000001Z",
+      "window_end": "2026-10-26T00:00:00.000001Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2026-10-25T00:00:00.000001+00:00",
+      "end": "2026-10-26T05:30:00+05:30"
+    },
+    "serialized_range": {
+      "start": "2026-10-25T00:00:00.000001Z",
+      "end": "2026-10-26T00:00:00Z"
+    },
+    "included": false
+  },
+  {
+    "input_point": "2026-10-26T00:00:00.000001Z",
+    "boundary": "end",
+    "delta_us": 0,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2026-10-25T00:00:00.000001Z",
+      "window_end": "2026-10-26T00:00:00.000001Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2026-10-25T00:00:00.000001+00:00",
+      "end": "2026-10-26T05:30:00.000001+05:30"
+    },
+    "serialized_range": {
+      "start": "2026-10-25T00:00:00.000001Z",
+      "end": "2026-10-26T00:00:00.000001Z"
+    },
+    "included": true
+  },
+  {
+    "input_point": "2026-10-26T00:00:00.000001Z",
+    "boundary": "end",
+    "delta_us": 1,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2026-10-25T00:00:00.000001Z",
+      "window_end": "2026-10-26T00:00:00.000001Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2026-10-25T00:00:00.000001+00:00",
+      "end": "2026-10-26T05:30:00.000002+05:30"
+    },
+    "serialized_range": {
+      "start": "2026-10-25T00:00:00.000001Z",
+      "end": "2026-10-26T00:00:00.000002Z"
+    },
+    "included": true
+  },
+  {
+    "input_point": "2026-10-26T00:00:00.999999Z",
+    "boundary": "start",
+    "delta_us": -1,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2026-10-25T00:00:00.999999Z",
+      "window_end": "2026-10-26T00:00:00.999999Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2026-10-26T05:30:00.999998+05:30",
+      "end": "2026-10-27T00:00:00.999999+00:00"
+    },
+    "serialized_range": {
+      "start": "2026-10-26T00:00:00.999998Z",
+      "end": "2026-10-27T00:00:00.999999Z"
+    },
+    "included": true
+  },
+  {
+    "input_point": "2026-10-26T00:00:00.999999Z",
+    "boundary": "start",
+    "delta_us": 0,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2026-10-25T00:00:00.999999Z",
+      "window_end": "2026-10-26T00:00:00.999999Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2026-10-26T05:30:00.999999+05:30",
+      "end": "2026-10-27T00:00:00.999999+00:00"
+    },
+    "serialized_range": {
+      "start": "2026-10-26T00:00:00.999999Z",
+      "end": "2026-10-27T00:00:00.999999Z"
+    },
+    "included": true
+  },
+  {
+    "input_point": "2026-10-26T00:00:00.999999Z",
+    "boundary": "start",
+    "delta_us": 1,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2026-10-25T00:00:00.999999Z",
+      "window_end": "2026-10-26T00:00:00.999999Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2026-10-26T05:30:01+05:30",
+      "end": "2026-10-27T00:00:00.999999+00:00"
+    },
+    "serialized_range": {
+      "start": "2026-10-26T00:00:01Z",
+      "end": "2026-10-27T00:00:00.999999Z"
+    },
+    "included": false
+  },
+  {
+    "input_point": "2026-10-26T00:00:00.999999Z",
+    "boundary": "end",
+    "delta_us": -1,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2026-10-25T00:00:00.999999Z",
+      "window_end": "2026-10-26T00:00:00.999999Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2026-10-25T00:00:00.999999+00:00",
+      "end": "2026-10-26T05:30:00.999998+05:30"
+    },
+    "serialized_range": {
+      "start": "2026-10-25T00:00:00.999999Z",
+      "end": "2026-10-26T00:00:00.999998Z"
+    },
+    "included": false
+  },
+  {
+    "input_point": "2026-10-26T00:00:00.999999Z",
+    "boundary": "end",
+    "delta_us": 0,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2026-10-25T00:00:00.999999Z",
+      "window_end": "2026-10-26T00:00:00.999999Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2026-10-25T00:00:00.999999+00:00",
+      "end": "2026-10-26T05:30:00.999999+05:30"
+    },
+    "serialized_range": {
+      "start": "2026-10-25T00:00:00.999999Z",
+      "end": "2026-10-26T00:00:00.999999Z"
+    },
+    "included": true
+  },
+  {
+    "input_point": "2026-10-26T00:00:00.999999Z",
+    "boundary": "end",
+    "delta_us": 1,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2026-10-25T00:00:00.999999Z",
+      "window_end": "2026-10-26T00:00:00.999999Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2026-10-25T00:00:00.999999+00:00",
+      "end": "2026-10-26T05:30:01+05:30"
+    },
+    "serialized_range": {
+      "start": "2026-10-25T00:00:00.999999Z",
+      "end": "2026-10-26T00:00:01Z"
+    },
+    "included": true
+  },
+  {
+    "input_point": "2024-02-29T23:59:59.123456-07:00",
+    "boundary": "start",
+    "delta_us": -1,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2024-02-29T06:59:59.123456Z",
+      "window_end": "2024-03-01T06:59:59.123456Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2024-03-01T12:29:59.123455+05:30",
+      "end": "2024-03-02T06:59:59.123456+00:00"
+    },
+    "serialized_range": {
+      "start": "2024-03-01T06:59:59.123455Z",
+      "end": "2024-03-02T06:59:59.123456Z"
+    },
+    "included": true
+  },
+  {
+    "input_point": "2024-02-29T23:59:59.123456-07:00",
+    "boundary": "start",
+    "delta_us": 0,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2024-02-29T06:59:59.123456Z",
+      "window_end": "2024-03-01T06:59:59.123456Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2024-03-01T12:29:59.123456+05:30",
+      "end": "2024-03-02T06:59:59.123456+00:00"
+    },
+    "serialized_range": {
+      "start": "2024-03-01T06:59:59.123456Z",
+      "end": "2024-03-02T06:59:59.123456Z"
+    },
+    "included": true
+  },
+  {
+    "input_point": "2024-02-29T23:59:59.123456-07:00",
+    "boundary": "start",
+    "delta_us": 1,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2024-02-29T06:59:59.123456Z",
+      "window_end": "2024-03-01T06:59:59.123456Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2024-03-01T12:29:59.123457+05:30",
+      "end": "2024-03-02T06:59:59.123456+00:00"
+    },
+    "serialized_range": {
+      "start": "2024-03-01T06:59:59.123457Z",
+      "end": "2024-03-02T06:59:59.123456Z"
+    },
+    "included": false
+  },
+  {
+    "input_point": "2024-02-29T23:59:59.123456-07:00",
+    "boundary": "end",
+    "delta_us": -1,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2024-02-29T06:59:59.123456Z",
+      "window_end": "2024-03-01T06:59:59.123456Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2024-02-29T06:59:59.123456+00:00",
+      "end": "2024-03-01T12:29:59.123455+05:30"
+    },
+    "serialized_range": {
+      "start": "2024-02-29T06:59:59.123456Z",
+      "end": "2024-03-01T06:59:59.123455Z"
+    },
+    "included": false
+  },
+  {
+    "input_point": "2024-02-29T23:59:59.123456-07:00",
+    "boundary": "end",
+    "delta_us": 0,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2024-02-29T06:59:59.123456Z",
+      "window_end": "2024-03-01T06:59:59.123456Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2024-02-29T06:59:59.123456+00:00",
+      "end": "2024-03-01T12:29:59.123456+05:30"
+    },
+    "serialized_range": {
+      "start": "2024-02-29T06:59:59.123456Z",
+      "end": "2024-03-01T06:59:59.123456Z"
+    },
+    "included": true
+  },
+  {
+    "input_point": "2024-02-29T23:59:59.123456-07:00",
+    "boundary": "end",
+    "delta_us": 1,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2024-02-29T06:59:59.123456Z",
+      "window_end": "2024-03-01T06:59:59.123456Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2024-02-29T06:59:59.123456+00:00",
+      "end": "2024-03-01T12:29:59.123457+05:30"
+    },
+    "serialized_range": {
+      "start": "2024-02-29T06:59:59.123456Z",
+      "end": "2024-03-01T06:59:59.123457Z"
+    },
+    "included": true
+  },
+  {
+    "input_point": "2026-01-01T00:00:00.000001+05:45",
+    "boundary": "start",
+    "delta_us": -1,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2025-12-30T18:15:00.000001Z",
+      "window_end": "2025-12-31T18:15:00.000001Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2025-12-31T23:45:00+05:30",
+      "end": "2026-01-01T18:15:00.000001+00:00"
+    },
+    "serialized_range": {
+      "start": "2025-12-31T18:15:00Z",
+      "end": "2026-01-01T18:15:00.000001Z"
+    },
+    "included": true
+  },
+  {
+    "input_point": "2026-01-01T00:00:00.000001+05:45",
+    "boundary": "start",
+    "delta_us": 0,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2025-12-30T18:15:00.000001Z",
+      "window_end": "2025-12-31T18:15:00.000001Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2025-12-31T23:45:00.000001+05:30",
+      "end": "2026-01-01T18:15:00.000001+00:00"
+    },
+    "serialized_range": {
+      "start": "2025-12-31T18:15:00.000001Z",
+      "end": "2026-01-01T18:15:00.000001Z"
+    },
+    "included": true
+  },
+  {
+    "input_point": "2026-01-01T00:00:00.000001+05:45",
+    "boundary": "start",
+    "delta_us": 1,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2025-12-30T18:15:00.000001Z",
+      "window_end": "2025-12-31T18:15:00.000001Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2025-12-31T23:45:00.000002+05:30",
+      "end": "2026-01-01T18:15:00.000001+00:00"
+    },
+    "serialized_range": {
+      "start": "2025-12-31T18:15:00.000002Z",
+      "end": "2026-01-01T18:15:00.000001Z"
+    },
+    "included": false
+  },
+  {
+    "input_point": "2026-01-01T00:00:00.000001+05:45",
+    "boundary": "end",
+    "delta_us": -1,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2025-12-30T18:15:00.000001Z",
+      "window_end": "2025-12-31T18:15:00.000001Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2025-12-30T18:15:00.000001+00:00",
+      "end": "2025-12-31T23:45:00+05:30"
+    },
+    "serialized_range": {
+      "start": "2025-12-30T18:15:00.000001Z",
+      "end": "2025-12-31T18:15:00Z"
+    },
+    "included": false
+  },
+  {
+    "input_point": "2026-01-01T00:00:00.000001+05:45",
+    "boundary": "end",
+    "delta_us": 0,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2025-12-30T18:15:00.000001Z",
+      "window_end": "2025-12-31T18:15:00.000001Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2025-12-30T18:15:00.000001+00:00",
+      "end": "2025-12-31T23:45:00.000001+05:30"
+    },
+    "serialized_range": {
+      "start": "2025-12-30T18:15:00.000001Z",
+      "end": "2025-12-31T18:15:00.000001Z"
+    },
+    "included": true
+  },
+  {
+    "input_point": "2026-01-01T00:00:00.000001+05:45",
+    "boundary": "end",
+    "delta_us": 1,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2025-12-30T18:15:00.000001Z",
+      "window_end": "2025-12-31T18:15:00.000001Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2025-12-30T18:15:00.000001+00:00",
+      "end": "2025-12-31T23:45:00.000002+05:30"
+    },
+    "serialized_range": {
+      "start": "2025-12-30T18:15:00.000001Z",
+      "end": "2025-12-31T18:15:00.000002Z"
+    },
+    "included": true
+  },
+  {
+    "input_point": "1969-12-31T23:59:59.999999Z",
+    "boundary": "start",
+    "delta_us": -1,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "1969-12-30T23:59:59.999999Z",
+      "window_end": "1969-12-31T23:59:59.999999Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "1970-01-01T05:29:59.999998+05:30",
+      "end": "1970-01-01T23:59:59.999999+00:00"
+    },
+    "serialized_range": {
+      "start": "1969-12-31T23:59:59.999998Z",
+      "end": "1970-01-01T23:59:59.999999Z"
+    },
+    "included": true
+  },
+  {
+    "input_point": "1969-12-31T23:59:59.999999Z",
+    "boundary": "start",
+    "delta_us": 0,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "1969-12-30T23:59:59.999999Z",
+      "window_end": "1969-12-31T23:59:59.999999Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "1970-01-01T05:29:59.999999+05:30",
+      "end": "1970-01-01T23:59:59.999999+00:00"
+    },
+    "serialized_range": {
+      "start": "1969-12-31T23:59:59.999999Z",
+      "end": "1970-01-01T23:59:59.999999Z"
+    },
+    "included": true
+  },
+  {
+    "input_point": "1969-12-31T23:59:59.999999Z",
+    "boundary": "start",
+    "delta_us": 1,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "1969-12-30T23:59:59.999999Z",
+      "window_end": "1969-12-31T23:59:59.999999Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "1970-01-01T05:30:00+05:30",
+      "end": "1970-01-01T23:59:59.999999+00:00"
+    },
+    "serialized_range": {
+      "start": "1970-01-01T00:00:00Z",
+      "end": "1970-01-01T23:59:59.999999Z"
+    },
+    "included": false
+  },
+  {
+    "input_point": "1969-12-31T23:59:59.999999Z",
+    "boundary": "end",
+    "delta_us": -1,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "1969-12-30T23:59:59.999999Z",
+      "window_end": "1969-12-31T23:59:59.999999Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "1969-12-30T23:59:59.999999+00:00",
+      "end": "1970-01-01T05:29:59.999998+05:30"
+    },
+    "serialized_range": {
+      "start": "1969-12-30T23:59:59.999999Z",
+      "end": "1969-12-31T23:59:59.999998Z"
+    },
+    "included": false
+  },
+  {
+    "input_point": "1969-12-31T23:59:59.999999Z",
+    "boundary": "end",
+    "delta_us": 0,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "1969-12-30T23:59:59.999999Z",
+      "window_end": "1969-12-31T23:59:59.999999Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "1969-12-30T23:59:59.999999+00:00",
+      "end": "1970-01-01T05:29:59.999999+05:30"
+    },
+    "serialized_range": {
+      "start": "1969-12-30T23:59:59.999999Z",
+      "end": "1969-12-31T23:59:59.999999Z"
+    },
+    "included": true
+  },
+  {
+    "input_point": "1969-12-31T23:59:59.999999Z",
+    "boundary": "end",
+    "delta_us": 1,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "1969-12-30T23:59:59.999999Z",
+      "window_end": "1969-12-31T23:59:59.999999Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "1969-12-30T23:59:59.999999+00:00",
+      "end": "1970-01-01T05:30:00+05:30"
+    },
+    "serialized_range": {
+      "start": "1969-12-30T23:59:59.999999Z",
+      "end": "1970-01-01T00:00:00Z"
+    },
+    "included": true
+  },
+  {
+    "input_point": "2026-11-01T01:30:00.000001-08:00",
+    "boundary": "start",
+    "delta_us": -1,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2026-10-31T09:30:00.000001Z",
+      "window_end": "2026-11-01T09:30:00.000001Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2026-11-01T15:00:00+05:30",
+      "end": "2026-11-02T09:30:00.000001+00:00"
+    },
+    "serialized_range": {
+      "start": "2026-11-01T09:30:00Z",
+      "end": "2026-11-02T09:30:00.000001Z"
+    },
+    "included": true
+  },
+  {
+    "input_point": "2026-11-01T01:30:00.000001-08:00",
+    "boundary": "start",
+    "delta_us": 0,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2026-10-31T09:30:00.000001Z",
+      "window_end": "2026-11-01T09:30:00.000001Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2026-11-01T15:00:00.000001+05:30",
+      "end": "2026-11-02T09:30:00.000001+00:00"
+    },
+    "serialized_range": {
+      "start": "2026-11-01T09:30:00.000001Z",
+      "end": "2026-11-02T09:30:00.000001Z"
+    },
+    "included": true
+  },
+  {
+    "input_point": "2026-11-01T01:30:00.000001-08:00",
+    "boundary": "start",
+    "delta_us": 1,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2026-10-31T09:30:00.000001Z",
+      "window_end": "2026-11-01T09:30:00.000001Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2026-11-01T15:00:00.000002+05:30",
+      "end": "2026-11-02T09:30:00.000001+00:00"
+    },
+    "serialized_range": {
+      "start": "2026-11-01T09:30:00.000002Z",
+      "end": "2026-11-02T09:30:00.000001Z"
+    },
+    "included": false
+  },
+  {
+    "input_point": "2026-11-01T01:30:00.000001-08:00",
+    "boundary": "end",
+    "delta_us": -1,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2026-10-31T09:30:00.000001Z",
+      "window_end": "2026-11-01T09:30:00.000001Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2026-10-31T09:30:00.000001+00:00",
+      "end": "2026-11-01T15:00:00+05:30"
+    },
+    "serialized_range": {
+      "start": "2026-10-31T09:30:00.000001Z",
+      "end": "2026-11-01T09:30:00Z"
+    },
+    "included": false
+  },
+  {
+    "input_point": "2026-11-01T01:30:00.000001-08:00",
+    "boundary": "end",
+    "delta_us": 0,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2026-10-31T09:30:00.000001Z",
+      "window_end": "2026-11-01T09:30:00.000001Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2026-10-31T09:30:00.000001+00:00",
+      "end": "2026-11-01T15:00:00.000001+05:30"
+    },
+    "serialized_range": {
+      "start": "2026-10-31T09:30:00.000001Z",
+      "end": "2026-11-01T09:30:00.000001Z"
+    },
+    "included": true
+  },
+  {
+    "input_point": "2026-11-01T01:30:00.000001-08:00",
+    "boundary": "end",
+    "delta_us": 1,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2026-10-31T09:30:00.000001Z",
+      "window_end": "2026-11-01T09:30:00.000001Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2026-10-31T09:30:00.000001+00:00",
+      "end": "2026-11-01T15:00:00.000002+05:30"
+    },
+    "serialized_range": {
+      "start": "2026-10-31T09:30:00.000001Z",
+      "end": "2026-11-01T09:30:00.000002Z"
+    },
+    "included": true
+  },
+  {
+    "input_point": "2026-03-08T03:00:00.000001-07:00",
+    "boundary": "start",
+    "delta_us": -1,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2026-03-07T10:00:00.000001Z",
+      "window_end": "2026-03-08T10:00:00.000001Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2026-03-08T15:30:00+05:30",
+      "end": "2026-03-09T10:00:00.000001+00:00"
+    },
+    "serialized_range": {
+      "start": "2026-03-08T10:00:00Z",
+      "end": "2026-03-09T10:00:00.000001Z"
+    },
+    "included": true
+  },
+  {
+    "input_point": "2026-03-08T03:00:00.000001-07:00",
+    "boundary": "start",
+    "delta_us": 0,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2026-03-07T10:00:00.000001Z",
+      "window_end": "2026-03-08T10:00:00.000001Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2026-03-08T15:30:00.000001+05:30",
+      "end": "2026-03-09T10:00:00.000001+00:00"
+    },
+    "serialized_range": {
+      "start": "2026-03-08T10:00:00.000001Z",
+      "end": "2026-03-09T10:00:00.000001Z"
+    },
+    "included": true
+  },
+  {
+    "input_point": "2026-03-08T03:00:00.000001-07:00",
+    "boundary": "start",
+    "delta_us": 1,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2026-03-07T10:00:00.000001Z",
+      "window_end": "2026-03-08T10:00:00.000001Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2026-03-08T15:30:00.000002+05:30",
+      "end": "2026-03-09T10:00:00.000001+00:00"
+    },
+    "serialized_range": {
+      "start": "2026-03-08T10:00:00.000002Z",
+      "end": "2026-03-09T10:00:00.000001Z"
+    },
+    "included": false
+  },
+  {
+    "input_point": "2026-03-08T03:00:00.000001-07:00",
+    "boundary": "end",
+    "delta_us": -1,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2026-03-07T10:00:00.000001Z",
+      "window_end": "2026-03-08T10:00:00.000001Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2026-03-07T10:00:00.000001+00:00",
+      "end": "2026-03-08T15:30:00+05:30"
+    },
+    "serialized_range": {
+      "start": "2026-03-07T10:00:00.000001Z",
+      "end": "2026-03-08T10:00:00Z"
+    },
+    "included": false
+  },
+  {
+    "input_point": "2026-03-08T03:00:00.000001-07:00",
+    "boundary": "end",
+    "delta_us": 0,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2026-03-07T10:00:00.000001Z",
+      "window_end": "2026-03-08T10:00:00.000001Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2026-03-07T10:00:00.000001+00:00",
+      "end": "2026-03-08T15:30:00.000001+05:30"
+    },
+    "serialized_range": {
+      "start": "2026-03-07T10:00:00.000001Z",
+      "end": "2026-03-08T10:00:00.000001Z"
+    },
+    "included": true
+  },
+  {
+    "input_point": "2026-03-08T03:00:00.000001-07:00",
+    "boundary": "end",
+    "delta_us": 1,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2026-03-07T10:00:00.000001Z",
+      "window_end": "2026-03-08T10:00:00.000001Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2026-03-07T10:00:00.000001+00:00",
+      "end": "2026-03-08T15:30:00.000002+05:30"
+    },
+    "serialized_range": {
+      "start": "2026-03-07T10:00:00.000001Z",
+      "end": "2026-03-08T10:00:00.000002Z"
+    },
+    "included": true
+  },
+  {
+    "input_point": "2026-10-26T00:00:00.0000019+00:00",
+    "boundary": "start",
+    "delta_us": -1,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2026-10-25T00:00:00.000001Z",
+      "window_end": "2026-10-26T00:00:00.000001Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2026-10-26T05:30:00+05:30",
+      "end": "2026-10-27T00:00:00.000001+00:00"
+    },
+    "serialized_range": {
+      "start": "2026-10-26T00:00:00Z",
+      "end": "2026-10-27T00:00:00.000001Z"
+    },
+    "included": true
+  },
+  {
+    "input_point": "2026-10-26T00:00:00.0000019+00:00",
+    "boundary": "start",
+    "delta_us": 0,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2026-10-25T00:00:00.000001Z",
+      "window_end": "2026-10-26T00:00:00.000001Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2026-10-26T05:30:00.000001+05:30",
+      "end": "2026-10-27T00:00:00.000001+00:00"
+    },
+    "serialized_range": {
+      "start": "2026-10-26T00:00:00.000001Z",
+      "end": "2026-10-27T00:00:00.000001Z"
+    },
+    "included": true
+  },
+  {
+    "input_point": "2026-10-26T00:00:00.0000019+00:00",
+    "boundary": "start",
+    "delta_us": 1,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2026-10-25T00:00:00.000001Z",
+      "window_end": "2026-10-26T00:00:00.000001Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2026-10-26T05:30:00.000002+05:30",
+      "end": "2026-10-27T00:00:00.000001+00:00"
+    },
+    "serialized_range": {
+      "start": "2026-10-26T00:00:00.000002Z",
+      "end": "2026-10-27T00:00:00.000001Z"
+    },
+    "included": false
+  },
+  {
+    "input_point": "2026-10-26T00:00:00.0000019+00:00",
+    "boundary": "end",
+    "delta_us": -1,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2026-10-25T00:00:00.000001Z",
+      "window_end": "2026-10-26T00:00:00.000001Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2026-10-25T00:00:00.000001+00:00",
+      "end": "2026-10-26T05:30:00+05:30"
+    },
+    "serialized_range": {
+      "start": "2026-10-25T00:00:00.000001Z",
+      "end": "2026-10-26T00:00:00Z"
+    },
+    "included": false
+  },
+  {
+    "input_point": "2026-10-26T00:00:00.0000019+00:00",
+    "boundary": "end",
+    "delta_us": 0,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2026-10-25T00:00:00.000001Z",
+      "window_end": "2026-10-26T00:00:00.000001Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2026-10-25T00:00:00.000001+00:00",
+      "end": "2026-10-26T05:30:00.000001+05:30"
+    },
+    "serialized_range": {
+      "start": "2026-10-25T00:00:00.000001Z",
+      "end": "2026-10-26T00:00:00.000001Z"
+    },
+    "included": true
+  },
+  {
+    "input_point": "2026-10-26T00:00:00.0000019+00:00",
+    "boundary": "end",
+    "delta_us": 1,
+    "config": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "display_name": "Resolution",
+          "type": "derived_metric",
+          "source": "derived_metrics",
+          "derived_run_id": "00000000-0000-0000-0000-000000000003",
+          "aggregation": "avg"
+        }
+      ]
+    },
+    "saved_run": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "metric_version": 1,
+      "definition": {
+        "version": 1,
+        "formula": "ratio(resolved == 1, resolved >= 0)",
+        "inputs": [
+          {
+            "alias": "resolved",
+            "source": "span",
+            "config_hash": "",
+            "field": "attribute_number",
+            "attribute_key": "resolved",
+            "reducer": "latest"
+          }
+        ],
+        "selection_unit": "session",
+        "weighting": "none",
+        "cohort_key": "",
+        "filters": [],
+        "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "created_at": "2026-10-01T00:00:00Z"
+      },
+      "window_start": "2026-10-25T00:00:00.000001Z",
+      "window_end": "2026-10-26T00:00:00.000001Z",
+      "filters": [],
+      "result_id": "00000000-0000-0000-0000-000000000004",
+      "status": "complete"
+    },
+    "range": {
+      "start": "2026-10-25T00:00:00.000001+00:00",
+      "end": "2026-10-26T05:30:00.000002+05:30"
+    },
+    "serialized_range": {
+      "start": "2026-10-25T00:00:00.000001Z",
+      "end": "2026-10-26T00:00:00.000002Z"
+    },
+    "included": true
+  }
+]

@@ -97,6 +97,13 @@ def test_definition_validation_versioning_and_old_version_runs(
     assert historical.status_code == 202, historical.data
     assert historical.data["metric_version"] == 1
     assert historical.data["source_manifest"] is None
+    assert historical.data["definition"] == saved["definition"]
+    detail = auth_client.get(f"{RUNS}{historical.data['id']}/")
+    assert detail.status_code == 200
+    assert detail.data["definition"] == saved["definition"]
+    listing = auth_client.get(f"{ROOT}{saved['id']}/runs/")
+    assert listing.status_code == 200
+    assert listing.data["results"][0]["definition"] == saved["definition"]
 
 
 @pytest.mark.django_db

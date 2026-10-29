@@ -21,6 +21,7 @@ from tracer.models.derived_metric import (
 )
 from tracer.permissions.metrics import MetricWorkspacePermission
 from tracer.serializers.derived_metric import (
+    DerivedMetricCommittedResultPageSerializer,
     DerivedMetricCompareQuerySerializer,
     DerivedMetricComparisonSerializer,
     DerivedMetricContributorPageSerializer,
@@ -290,7 +291,7 @@ class DerivedMetricRunViewSet(MetricViewSet):
 
     @validated_request(
         query_serializer=DerivedMetricResultQuerySerializer,
-        responses={200: DerivedMetricResultPageSerializer},
+        responses={200: DerivedMetricCommittedResultPageSerializer},
     )
     @action(detail=True, methods=["get"])
     def results(self, request, pk=None):

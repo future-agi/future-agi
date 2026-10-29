@@ -61144,7 +61144,7 @@
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/DerivedMetricResultPage"
+                            "$ref": "#/definitions/DerivedMetricCommittedResultPage"
                         }
                     },
                     "default": {
@@ -73073,10 +73073,16 @@
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/UserAlertMonitor"
+                            "$ref": "#/definitions/UserAlertMonitorCreateResponse"
+                        }
+                    },
+                    "402": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/UserAlertMonitorEntitlementResponse"
                         }
                     },
                     "default": {
@@ -73089,7 +73095,8 @@
                 "tags": [
                     "tracer"
                 ],
-                "x-runtime-request-validation": true
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": []
         },
@@ -144198,6 +144205,9 @@
                         "$ref": "#/definitions/DashboardQuerySeries"
                     }
                 },
+                "derived_context": {
+                    "$ref": "#/definitions/DerivedMetricDashboardContext"
+                },
                 "series_total": {
                     "title": "Series total",
                     "type": "integer",
@@ -144746,6 +144756,9 @@
                     "title": "Metric version",
                     "type": "integer"
                 },
+                "definition": {
+                    "$ref": "#/definitions/DerivedMetricVersion"
+                },
                 "window_start": {
                     "title": "Window start",
                     "type": "string",
@@ -145255,6 +145268,7 @@
         },
         "DerivedMetricContributorPage": {
             "required": [
+                "result_id",
                 "rollup",
                 "group_key",
                 "kind",
@@ -145269,6 +145283,12 @@
             ],
             "type": "object",
             "properties": {
+                "result_id": {
+                    "title": "Result id",
+                    "description": "Committed result identity used for the value and contributor diagnostics.",
+                    "type": "string",
+                    "format": "uuid"
+                },
                 "rollup": {
                     "title": "Rollup",
                     "type": "string",
@@ -165906,6 +165926,228 @@
                         "oss",
                         "enterprise"
                     ]
+                }
+            }
+        },
+        "UserAlertMonitorCreateResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "enum": [
+                        true
+                    ]
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "ApiErrorObject": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "detail": {
+                    "title": "Detail",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
+                    }
+                }
+            }
+        },
+        "UserAlertMonitorEntitlementResponse": {
+            "required": [
+                "error",
+                "upgrade_required"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": false
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "enum": [
+                        "validation_error",
+                        "authentication_error",
+                        "payment_required",
+                        "entitlement_error",
+                        "permission_error",
+                        "not_found",
+                        "conflict",
+                        "client_error",
+                        "rate_limit",
+                        "server_error",
+                        "service_unavailable",
+                        "timeout",
+                        "api_error"
+                    ],
+                    "x-nullable": true
+                },
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "detail": {
+                    "title": "Detail",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "error": {
+                    "$ref": "#/definitions/ApiErrorObject"
+                },
+                "attr": {
+                    "title": "Attr",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "details": {
+                    "title": "Details",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        }
+                    }
+                },
+                "upgrade_required": {
+                    "title": "Upgrade required",
+                    "type": "boolean"
+                },
+                "upgrade_cta": {
+                    "title": "Upgrade cta",
+                    "type": "object",
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                }
+            }
+        },
+        "DerivedMetricSavedRunContext": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true
+                },
+                "metric_version": {
+                    "title": "Metric version",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "definition": {
+                    "$ref": "#/definitions/DerivedMetricVersion"
+                },
+                "window_start": {
+                    "title": "Window start",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                },
+                "window_end": {
+                    "title": "Window end",
+                    "type": "string",
+                    "format": "date-time",
+                    "readOnly": true
+                },
+                "filters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/DerivedMetricFilter"
+                    },
+                    "readOnly": true
+                },
+                "result_id": {
+                    "title": "Result id",
+                    "type": "string",
+                    "format": "uuid",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "queued",
+                        "running",
+                        "complete",
+                        "failed"
+                    ],
+                    "readOnly": true
+                }
+            }
+        },
+        "DerivedMetricDashboardContext": {
+            "type": "object",
+            "properties": {
+                "run": {
+                    "$ref": "#/definitions/DerivedMetricSavedRunContext"
+                },
+                "result": {
+                    "$ref": "#/definitions/DerivedMetricResult"
+                }
+            }
+        },
+        "DerivedMetricCommittedResultPage": {
+            "required": [
+                "results",
+                "next_cursor",
+                "result_id"
+            ],
+            "type": "object",
+            "properties": {
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/DerivedMetricResult"
+                    }
+                },
+                "next_cursor": {
+                    "title": "Next cursor",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "result_id": {
+                    "title": "Result id",
+                    "description": "Committed result identity used to read every row and the next cursor.",
+                    "type": "string",
+                    "format": "uuid"
                 }
             }
         }

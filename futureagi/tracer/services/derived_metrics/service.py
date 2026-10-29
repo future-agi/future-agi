@@ -605,8 +605,10 @@ def read_results(
             )
             for row in rows[:limit]
         ],
+        # Use the same identity as the predicate even if the caller's run changes.
+        "result_id": params["result_id"],
         "next_cursor": encode_result_cursor(
-            str(run.result_id), rollup, rows[limit - 1][0]
+            params["result_id"], rollup, rows[limit - 1][0]
         )
         if len(rows) > limit
         else None,

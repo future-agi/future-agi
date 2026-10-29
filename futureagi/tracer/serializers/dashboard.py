@@ -9,6 +9,7 @@ from tracer.constants.dashboard import (
     text_annotation_aggregation_error,
 )
 from tracer.models.dashboard import Dashboard, DashboardWidget
+from tracer.serializers.derived_metric import DerivedMetricDashboardContextSerializer
 from tracer.serializers.filters import (
     JsonValueField,
     StrictInputSerializer,
@@ -711,6 +712,10 @@ class DashboardQueryMetricResultSerializer(serializers.Serializer):
     aggregation = serializers.ChoiceField(choices=DASHBOARD_AGGREGATIONS)
     unit = serializers.CharField(allow_blank=True)
     series = DashboardQuerySeriesSerializer(many=True)
+    # Optional for older responses and ordinary widgets; never supplied by a draft.
+    derived_context = DerivedMetricDashboardContextSerializer(
+        read_only=True, required=False
+    )
     # Absent only on a payload an older build wrote to the exact-snapshot
     # cache; every response this build formats carries both.
     series_total = serializers.IntegerField(min_value=0, required=False)

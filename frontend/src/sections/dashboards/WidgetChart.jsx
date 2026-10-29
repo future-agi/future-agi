@@ -1,6 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
-import { Alert, Box, CircularProgress, Stack, Typography } from "@mui/material";
+import {
+  Alert,
+  Box,
+  Button,
+  CircularProgress,
+  Stack,
+  Typography,
+} from "@mui/material";
 import ChartLegend from "./ChartLegend";
 import ReactApexChart from "react-apexcharts";
 import { useTheme } from "@mui/material/styles";
@@ -31,7 +38,11 @@ import {
   seriesHasDataPoints,
 } from "./widgetUtils";
 import WidgetPieCharts from "./WidgetPieCharts";
-import { toTimeRangePayload } from "./dashboardDateRange";
+import DerivedMetricCardContext from "./DerivedMetricCardContext";
+import {
+  isPinnedWindowExcluded,
+  toTimeRangePayload,
+} from "./dashboardDateRange";
 import {
   AGGREGATION_POLLING_PAUSED_MESSAGE,
   AGGREGATION_REQUEST_TIMEOUT_MS,
@@ -155,6 +166,7 @@ export default function WidgetChart({
   globalDateRange,
   refreshRequestId = 0,
   onQuerySettled,
+  onRestoreSavedWindow,
 }) {
   const theme = useTheme();
   const queryMutation = useDashboardQuery();
@@ -645,6 +657,31 @@ export default function WidgetChart({
     );
   }
 
+  const pinnedWindowExcluded =
+    !readUnavailable &&
+    isPinnedWindowExcluded(
+      rawQueryConfig,
+      globalDateRange,
+      renderableMetrics.length === 1
+        ? renderableMetrics[0].metric.derived_context?.run
+        : undefined,
+    );
+  const emptyGuidance = pinnedWindowExcluded ? (
+    <Stack alignItems="center" gap={1}>
+      <Typography variant="body2" color="text.secondary" textAlign="center">
+        This widget pins a saved run. Its saved observation at the run’s end is
+        outside the dashboard date filter.
+      </Typography>
+      {onRestoreSavedWindow ? (
+        <Button onClick={onRestoreSavedWindow}>Restore saved window</Button>
+      ) : (
+        <Typography variant="body2" color="text.secondary">
+          Choose Default to restore the saved window.
+        </Typography>
+      )}
+    </Stack>
+  ) : null;
+
   if (!series.length) {
     return (
       <Box
@@ -665,11 +702,12 @@ export default function WidgetChart({
           retryUnavailable={retryUnavailable}
           pollingPaused={pollingPaused}
         />
-        {!readUnavailable && (
-          <Typography variant="body2" color="text.disabled">
-            No output for the selected inputs.
-          </Typography>
-        )}
+        {!readUnavailable &&
+          (emptyGuidance || (
+            <Typography variant="body2" color="text.disabled">
+              No output for the selected inputs.
+            </Typography>
+          ))}
       </Box>
     );
   }
@@ -695,9 +733,12 @@ export default function WidgetChart({
           retryUnavailable={retryUnavailable}
           pollingPaused={pollingPaused}
         />
-        <Typography variant="body2" color="text.disabled">
-          {NO_DATA_FOR_RANGE_MESSAGE}
-        </Typography>
+        {!readUnavailable &&
+          (emptyGuidance || (
+            <Typography variant="body2" color="text.disabled">
+              {NO_DATA_FOR_RANGE_MESSAGE}
+            </Typography>
+          ))}
       </Box>
     );
   }
@@ -705,6 +746,9 @@ export default function WidgetChart({
   // Metric card — also the fallback for a pie with nothing to slice by, where
   // each metric would otherwise render as a meaningless 100%-full circle.
   if (isMetricCard || (isPie && !pieHasBreakdown)) {
+    const hasPinnedMetrics = rawQueryConfig?.metrics?.some(
+      (metric) => metric.type === "derived_metric" && metric.derived_run_id,
+    );
     return (
       <Box
         ref={containerRef}
@@ -726,10 +770,32 @@ export default function WidgetChart({
           direction="row"
           gap={3}
           justifyContent="center"
-          alignItems="center"
-          sx={{ flex: 1, minHeight: 0 }}
+          alignItems={hasPinnedMetrics ? "flex-start" : "center"}
+          sx={{
+            flex: 1,
+            minHeight: 0,
+            ...(hasPinnedMetrics
+              ? { overflowY: "auto", flexWrap: "wrap", p: 1 }
+              : {}),
+          }}
         >
           {series.map((s, i) => {
+            const responseMetric = renderableMetrics[s.metricIndex]?.metric;
+            const configMetric =
+              rawQueryConfig?.metrics?.find(
+                (metric) =>
+                  responseMetric?.id &&
+                  (metric.id || metric.derived_run_id) === responseMetric.id,
+              ) ||
+              (rawQueryConfig?.metrics?.length === 1 &&
+              renderableMetrics.length === 1
+                ? rawQueryConfig.metrics[0]
+                : null);
+            const pinnedMetric =
+              configMetric?.type === "derived_metric" &&
+              configMetric.derived_run_id
+                ? configMetric
+                : null;
             const value = getSeriesScalar(s.data, s.aggregation);
             const cellConfig = s.unit
               ? { ...leftAxisFormatConfig, ...getUnitRendering(s.unit) }
@@ -744,8 +810,26 @@ export default function WidgetChart({
             const hasInterval =
               value != null && point?.ci_low != null && point?.ci_high != null;
             return (
-              <Box key={i} sx={{ textAlign: "center" }}>
-                <Typography variant="h3" sx={{ color: colorFor(s.name) }}>
+              <Box
+                key={i}
+                sx={{
+                  textAlign: "center",
+                  ...(pinnedMetric
+                    ? { minWidth: 0, width: "100%", maxWidth: 560 }
+                    : {}),
+                }}
+              >
+                <Typography
+                  variant="h3"
+                  sx={
+                    pinnedMetric
+                      ? {
+                          color: "text.primary",
+                          fontVariantNumeric: "tabular-nums",
+                        }
+                      : { color: colorFor(s.name) }
+                  }
+                >
                   {value == null ? "—" : format(value)}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
@@ -761,7 +845,12 @@ export default function WidgetChart({
                     {`95% interval ${format(point.ci_low)} – ${format(point.ci_high)}`}
                   </Typography>
                 )}
-                {value != null && point?.ci_reason && (
+                {value != null && !hasInterval && pinnedMetric && (
+                  <Typography variant="body2" color="text.secondary">
+                    Point estimate only — 95% interval unavailable.
+                  </Typography>
+                )}
+                {!pinnedMetric && value != null && point?.ci_reason && (
                   <Typography
                     variant="caption"
                     color="text.secondary"
@@ -770,6 +859,18 @@ export default function WidgetChart({
                   >
                     {`No 95% interval: ${point.ci_reason.replaceAll("_", " ")}`}
                   </Typography>
+                )}
+                {pinnedMetric && (
+                  <DerivedMetricCardContext
+                    context={
+                      responseMetric?.series?.length === 1
+                        ? responseMetric.derived_context
+                        : null
+                    }
+                    runId={pinnedMetric.derived_run_id}
+                    point={point}
+                    value={value}
+                  />
                 )}
               </Box>
             );
@@ -1631,4 +1732,5 @@ WidgetChart.propTypes = {
   }),
   refreshRequestId: PropTypes.number,
   onQuerySettled: PropTypes.func,
+  onRestoreSavedWindow: PropTypes.func,
 };

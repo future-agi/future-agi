@@ -15,6 +15,7 @@ from tracer.models.derived_metric import (
     DerivedMetricMonitorDelivery,
     DerivedMetricRun,
 )
+from tracer.serializers.derived_metric import DerivedMetricDashboardContextSerializer
 from tracer.services.clickhouse.query_builders.dashboard import DashboardQueryBuilder
 from tracer.services.derived_metrics.errors import MetricInputError
 from tracer.services.derived_metrics.queries import SCOPE_SQL, Scope
@@ -53,9 +54,11 @@ def dashboard_result(config: dict, workspace) -> dict:
                 "The saved metric run is unavailable in this dashboard scope."
             )
         points = []
+        context_result = None
         if start <= run.window_end <= end:
             results = read_results(run, include_uncertainty=True)["results"]
             if results:
+                context_result = results[0]
                 interval = results[0]["uncertainty"]
                 estimable = interval["status"] == "ok"
                 points = [
@@ -79,6 +82,18 @@ def dashboard_result(config: dict, workspace) -> dict:
                         "data": points,
                     }
                 ],
+                # Reuse the already selected immutable FK and the SAME committed
+                # row as the scalar. No additional CH/definition lookups.
+                "derived_context": DerivedMetricDashboardContextSerializer(
+                    {
+                        "run": run,
+                        **(
+                            {"result": context_result}
+                            if context_result is not None
+                            else {}
+                        ),
+                    }
+                ).data,
                 "series_total": 1,
                 "series_truncated": False,
                 "query_complete": True,

@@ -1,0 +1,214 @@
+{
+  "run": {
+    "id": "00000000-0000-0000-0000-000000000003",
+    "metric_id": "00000000-0000-0000-0000-000000000001",
+    "metric_version": 1,
+    "definition": {
+      "version": 1,
+      "formula": "ratio(resolved == 1, resolved >= 0)",
+      "inputs": [
+        {
+          "alias": "resolved",
+          "source": "span",
+          "config_hash": "",
+          "field": "attribute_number",
+          "attribute_key": "resolved",
+          "reducer": "latest"
+        }
+      ],
+      "selection_unit": "session",
+      "weighting": "none",
+      "cohort_key": "",
+      "filters": [],
+      "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "created_at": "2026-10-01T00:00:00Z"
+    },
+    "window_start": "2026-10-01T00:00:00Z",
+    "window_end": "2026-10-26T00:00:00Z",
+    "as_of": "2026-10-26T00:01:00Z",
+    "source_run_id": "",
+    "filters": [],
+    "snapshot_id": "00000000-0000-0000-0000-000000000006",
+    "result_id": "00000000-0000-0000-0000-000000000004",
+    "lease_expires_at": null,
+    "source_manifest": null,
+    "status": "complete",
+    "error": "",
+    "row_count": 0,
+    "created_at": "2026-10-26T00:01:00Z",
+    "completed_at": "2026-10-26T00:02:00Z"
+  },
+  "old_page": {
+    "results": [
+      {
+        "group_key": "",
+        "value": 0.5,
+        "numerator": 1.0,
+        "denominator": 2.0,
+        "status": "ok",
+        "unit_count": 3,
+        "valid_count": 2,
+        "missing_count": 1,
+        "invalid_probability_count": 0,
+        "uncertainty": {
+          "confidence_level": 0.95,
+          "status": "not_estimable",
+          "reason": "unstable_variance",
+          "method": "iid_units",
+          "interval": "",
+          "std_error": null,
+          "ci_low": null,
+          "ci_high": null,
+          "effective_n": 2.0,
+          "degrees_of_freedom": 1
+        }
+      }
+    ],
+    "result_id": "00000000-0000-0000-0000-000000000004",
+    "next_cursor": null
+  },
+  "new_page": {
+    "results": [
+      {
+        "group_key": "",
+        "value": 0.0,
+        "numerator": 0.0,
+        "denominator": 2.0,
+        "status": "ok",
+        "unit_count": 3,
+        "valid_count": 2,
+        "missing_count": 1,
+        "invalid_probability_count": 0,
+        "uncertainty": {
+          "confidence_level": 0.95,
+          "status": "not_estimable",
+          "reason": "unstable_variance",
+          "method": "iid_units",
+          "interval": "",
+          "std_error": null,
+          "ci_low": null,
+          "ci_high": null,
+          "effective_n": 2.0,
+          "degrees_of_freedom": 1
+        }
+      }
+    ],
+    "result_id": "00000000-0000-0000-0000-000000000005",
+    "next_cursor": null
+  },
+  "session_page": {
+    "results": [
+      {
+        "group_key": "session-a",
+        "value": 0.5,
+        "numerator": 1.0,
+        "denominator": 2.0,
+        "status": "ok",
+        "unit_count": 3,
+        "valid_count": 2,
+        "missing_count": 1,
+        "invalid_probability_count": 0,
+        "uncertainty": {
+          "confidence_level": 0.95,
+          "status": "not_estimable",
+          "reason": "unstable_variance",
+          "method": "iid_units",
+          "interval": "",
+          "std_error": null,
+          "ci_low": null,
+          "ci_high": null,
+          "effective_n": 2.0,
+          "degrees_of_freedom": 1
+        }
+      }
+    ],
+    "result_id": "00000000-0000-0000-0000-000000000004",
+    "next_cursor": "v1:00000000-0000-0000-0000-000000000004:session:c2Vzc2lvbi1h"
+  },
+  "session_next": {
+    "results": [
+      {
+        "group_key": "session-b",
+        "value": 0.5,
+        "numerator": 1.0,
+        "denominator": 2.0,
+        "status": "ok",
+        "unit_count": 3,
+        "valid_count": 2,
+        "missing_count": 1,
+        "invalid_probability_count": 0,
+        "uncertainty": {
+          "confidence_level": 0.95,
+          "status": "not_estimable",
+          "reason": "unstable_variance",
+          "method": "iid_units",
+          "interval": "",
+          "std_error": null,
+          "ci_low": null,
+          "ci_high": null,
+          "effective_n": 2.0,
+          "degrees_of_freedom": 1
+        }
+      }
+    ],
+    "result_id": "00000000-0000-0000-0000-000000000004",
+    "next_cursor": null
+  },
+  "contributors": {
+    "result_id": "00000000-0000-0000-0000-000000000004",
+    "rollup": "overall",
+    "group_key": "",
+    "kind": "ratio",
+    "selection_unit": "session",
+    "status": "ok",
+    "value": 0.5,
+    "numerator": 1.0,
+    "denominator": 2.0,
+    "results": [
+      {
+        "unit_id": "session-1",
+        "session_id": "session-1",
+        "user_id": "",
+        "cohort": "",
+        "day": "2026-10-26",
+        "probability": 1.0,
+        "weight": 1.0,
+        "numerator": 1.0,
+        "denominator": 1.0,
+        "weighted_numerator": 1.0,
+        "weighted_denominator": 1.0,
+        "influence": 0.5,
+        "trace_id": null
+      },
+      {
+        "unit_id": "session-0",
+        "session_id": "session-0",
+        "user_id": "",
+        "cohort": "",
+        "day": "2026-10-26",
+        "probability": 1.0,
+        "weight": 1.0,
+        "numerator": 0.0,
+        "denominator": 1.0,
+        "weighted_numerator": 0.0,
+        "weighted_denominator": 1.0,
+        "influence": -0.5,
+        "trace_id": null
+      }
+    ],
+    "truncated": false,
+    "diagnostics": {
+      "unit_count": 3,
+      "valid_count": 2,
+      "missing_count": 1,
+      "invalid_probability_count": 0,
+      "outside_denominator_count": 0,
+      "undefined_arithmetic_count": 0,
+      "missing_examples": ["session-missing"],
+      "invalid_probability_examples": [],
+      "missing_by_input": {
+        "resolved": 1
+      }
+    }
+  }
+}

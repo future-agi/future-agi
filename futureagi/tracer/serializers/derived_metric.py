@@ -187,6 +187,9 @@ class DerivedMetricManifestSerializer(serializers.Serializer):
 
 
 class DerivedMetricRunSerializer(serializers.ModelSerializer):
+    # The run already selects this immutable FK, including on paginated reads.
+    # Never derive historical context from the metric's current version.
+    definition = DerivedMetricVersionSerializer(read_only=True)
     metric_id = serializers.UUIDField(source="definition.metric_id")
     metric_version = serializers.IntegerField(source="definition.version")
     source_manifest = DerivedMetricManifestSerializer(allow_null=True, required=False)
@@ -198,6 +201,7 @@ class DerivedMetricRunSerializer(serializers.ModelSerializer):
             "id",
             "metric_id",
             "metric_version",
+            "definition",
             "window_start",
             "window_end",
             "as_of",
@@ -294,9 +298,44 @@ class DerivedMetricResultSerializer(serializers.Serializer):
     )
 
 
+class DerivedMetricSavedRunContextSerializer(serializers.ModelSerializer):
+    """Small read-only provenance for a dashboard's one committed observation."""
+
+    metric_version = serializers.IntegerField(
+        source="definition.version", read_only=True
+    )
+    definition = DerivedMetricVersionSerializer(read_only=True)
+    filters = DerivedMetricFilterSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = DerivedMetricRun
+        fields = [
+            "id",
+            "metric_version",
+            "definition",
+            "window_start",
+            "window_end",
+            "filters",
+            "result_id",
+            "status",
+        ]
+        read_only_fields = fields
+
+
+class DerivedMetricDashboardContextSerializer(serializers.Serializer):
+    run = DerivedMetricSavedRunContextSerializer(read_only=True)
+    result = DerivedMetricResultSerializer(read_only=True, required=False)
+
+
 class DerivedMetricResultPageSerializer(serializers.Serializer):
     results = DerivedMetricResultSerializer(many=True)
     next_cursor = serializers.CharField(allow_null=True, allow_blank=True)
+
+
+class DerivedMetricCommittedResultPageSerializer(DerivedMetricResultPageSerializer):
+    result_id = serializers.UUIDField(
+        help_text="Committed result identity used to read every row and the next cursor."
+    )
 
 
 class DerivedMetricCompareQuerySerializer(StrictInputSerializer):
@@ -387,6 +426,9 @@ class DerivedMetricContributorDiagnosticsSerializer(serializers.Serializer):
 
 
 class DerivedMetricContributorPageSerializer(serializers.Serializer):
+    result_id = serializers.UUIDField(
+        help_text="Committed result identity used for the value and contributor diagnostics."
+    )
     rollup = serializers.CharField()
     group_key = serializers.CharField(allow_blank=True)
     kind = serializers.ChoiceField(choices=["ratio", "mean", "sum", "count_if"])

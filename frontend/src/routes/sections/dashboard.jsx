@@ -10,6 +10,7 @@ import DashboardLayout from "src/layouts/dashboard";
 import { LoadingScreen } from "src/components/loading-screen";
 import { Events, getPageViewEvent, trackEvent } from "src/utils/Mixpanel";
 import HarnessToEnvironment from "../components/harness-to-environment";
+import LegacyMetricsRedirect from "../components/legacy_metrics_redirect";
 import RoleProtection from "../components/role-protection";
 import WorkspaceRoleProtection from "../components/workspace-role-protection";
 import { GatewayProvider } from "src/sections/gateway/context/GatewayContext";
@@ -1014,6 +1015,14 @@ export const dashboardRoutes = (
           element: <Evals />,
         },
         {
+          path: "metrics",
+          element: <DerivedMetricsView />,
+        },
+        {
+          path: "metrics/:metricId",
+          element: <DerivedMetricsView />,
+        },
+        {
           path: "usage",
           element: <EvalsUsage />,
         },
@@ -1671,7 +1680,7 @@ export const dashboardRoutes = (
     },
     {
       path: "derived-metrics",
-      element: <DerivedMetricsView />,
+      element: <LegacyMetricsRedirect />,
     },
     {
       path: "dashboards",

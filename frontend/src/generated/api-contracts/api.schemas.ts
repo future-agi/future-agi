@@ -25064,6 +25064,235 @@ export interface DashboardQuerySeriesApi {
   data: DashboardQuerySeriesPointApi[];
 }
 
+export type DerivedMetricInputApiSource =
+  (typeof DerivedMetricInputApiSource)[keyof typeof DerivedMetricInputApiSource];
+
+export const DerivedMetricInputApiSource = {
+  eval: "eval",
+  span: "span",
+} as const;
+
+export type DerivedMetricInputApiField =
+  (typeof DerivedMetricInputApiField)[keyof typeof DerivedMetricInputApiField];
+
+export const DerivedMetricInputApiField = {
+  latency_ms: "latency_ms",
+  cost: "cost",
+  total_tokens: "total_tokens",
+  prompt_tokens: "prompt_tokens",
+  completion_tokens: "completion_tokens",
+  attribute_number: "attribute_number",
+  attribute_bool: "attribute_bool",
+} as const;
+
+export type DerivedMetricInputApiReducer =
+  (typeof DerivedMetricInputApiReducer)[keyof typeof DerivedMetricInputApiReducer];
+
+export const DerivedMetricInputApiReducer = {
+  mean: "mean",
+  min: "min",
+  max: "max",
+  latest: "latest",
+} as const;
+
+export interface DerivedMetricInputApi {
+  /**
+   * @minLength 1
+   * @pattern ^[a-z][a-z0-9_]{0,39}$
+   */
+  alias: string;
+  source: DerivedMetricInputApiSource;
+  config_id?: string;
+  /** @pattern ^(?:[a-f0-9]{64})?$ */
+  config_hash?: string;
+  field?: DerivedMetricInputApiField;
+  /** @maxLength 160 */
+  attribute_key?: string;
+  reducer?: DerivedMetricInputApiReducer;
+}
+
+export type DerivedMetricFilterApiField =
+  (typeof DerivedMetricFilterApiField)[keyof typeof DerivedMetricFilterApiField];
+
+export const DerivedMetricFilterApiField = {
+  model: "model",
+  provider: "provider",
+  status: "status",
+  name: "name",
+  service_name: "service_name",
+} as const;
+
+export interface DerivedMetricFilterApi {
+  field: DerivedMetricFilterApiField;
+  /** @maxLength 255 */
+  value: string;
+}
+
+export interface DerivedMetricVersionApi {
+  /**
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  version: number;
+  /**
+   * @minLength 1
+   * @maxLength 2048
+   */
+  formula: string;
+  inputs: DerivedMetricInputApi[];
+  /**
+   * @minLength 1
+   * @maxLength 16
+   */
+  selection_unit: string;
+  /**
+   * @minLength 1
+   * @maxLength 32
+   */
+  weighting: string;
+  /** @maxLength 160 */
+  cohort_key?: string;
+  filters: DerivedMetricFilterApi[];
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  definition_hash: string;
+  readonly created_at?: string;
+}
+
+export type DerivedMetricSavedRunContextApiStatus =
+  (typeof DerivedMetricSavedRunContextApiStatus)[keyof typeof DerivedMetricSavedRunContextApiStatus];
+
+export const DerivedMetricSavedRunContextApiStatus = {
+  queued: "queued",
+  running: "running",
+  complete: "complete",
+  failed: "failed",
+} as const;
+
+export interface DerivedMetricSavedRunContextApi {
+  readonly id?: string;
+  readonly metric_version?: number;
+  definition?: DerivedMetricVersionApi;
+  readonly window_start?: string;
+  readonly window_end?: string;
+  readonly filters?: readonly DerivedMetricFilterApi[];
+  readonly result_id?: string;
+  readonly status?: DerivedMetricSavedRunContextApiStatus;
+}
+
+export type DerivedMetricResultApiStatus =
+  (typeof DerivedMetricResultApiStatus)[keyof typeof DerivedMetricResultApiStatus];
+
+export const DerivedMetricResultApiStatus = {
+  ok: "ok",
+  no_data: "no_data",
+  missing_inputs: "missing_inputs",
+  invalid_probability: "invalid_probability",
+  zero_denominator: "zero_denominator",
+  non_finite: "non_finite",
+} as const;
+
+/**
+ * `not_estimable` means no interval exists; `reason` says why. Never a guess.
+ */
+export type DerivedMetricUncertaintyApiStatus =
+  (typeof DerivedMetricUncertaintyApiStatus)[keyof typeof DerivedMetricUncertaintyApiStatus];
+
+export const DerivedMetricUncertaintyApiStatus = {
+  ok: "ok",
+  not_estimable: "not_estimable",
+} as const;
+
+export type DerivedMetricUncertaintyApiReason =
+  (typeof DerivedMetricUncertaintyApiReason)[keyof typeof DerivedMetricUncertaintyApiReason];
+
+export const DerivedMetricUncertaintyApiReason = {
+  "": "",
+  no_value: "no_value",
+  design_not_captured: "design_not_captured",
+  mixed_design: "mixed_design",
+  unweighted_total: "unweighted_total",
+  fewer_than_two_units: "fewer_than_two_units",
+  population_size_missing: "population_size_missing",
+  inconsistent_stratum_design: "inconsistent_stratum_design",
+  single_unit_stratum: "single_unit_stratum",
+  no_degrees_of_freedom: "no_degrees_of_freedom",
+  non_finite: "non_finite",
+  unstable_variance: "unstable_variance",
+  not_computed: "not_computed",
+} as const;
+
+/**
+ * stratified_wor_fpc: closed sampling cohorts (stratified, without replacement, finite-population corrected). poisson: live sampling policies. iid_units: unweighted ratios and means, a model-based interval treating units as independent draws. Covers sampling error only, not evaluator error.
+ */
+export type DerivedMetricUncertaintyApiMethod =
+  (typeof DerivedMetricUncertaintyApiMethod)[keyof typeof DerivedMetricUncertaintyApiMethod];
+
+export const DerivedMetricUncertaintyApiMethod = {
+  "": "",
+  stratified_wor_fpc: "stratified_wor_fpc",
+  poisson: "poisson",
+  iid_units: "iid_units",
+} as const;
+
+/**
+ * wilson: rates (a 0/1 numerator within a 0/1 denominator), Wilson score interval at the design-effective sample size. wald_t: value +/- t * SE.
+ */
+export type DerivedMetricUncertaintyApiInterval =
+  (typeof DerivedMetricUncertaintyApiInterval)[keyof typeof DerivedMetricUncertaintyApiInterval];
+
+export const DerivedMetricUncertaintyApiInterval = {
+  "": "",
+  wilson: "wilson",
+  wald_t: "wald_t",
+} as const;
+
+/**
+ * Present on previews, and on persisted results when include_uncertainty=true.
+ */
+export interface DerivedMetricUncertaintyApi {
+  /** Always 0.95 (two-sided). */
+  confidence_level: number;
+  /** `not_estimable` means no interval exists; `reason` says why. Never a guess. */
+  status: DerivedMetricUncertaintyApiStatus;
+  reason: DerivedMetricUncertaintyApiReason;
+  /** stratified_wor_fpc: closed sampling cohorts (stratified, without replacement, finite-population corrected). poisson: live sampling policies. iid_units: unweighted ratios and means, a model-based interval treating units as independent draws. Covers sampling error only, not evaluator error. */
+  method: DerivedMetricUncertaintyApiMethod;
+  /** wilson: rates (a 0/1 numerator within a 0/1 denominator), Wilson score interval at the design-effective sample size. wald_t: value +/- t * SE. */
+  interval: DerivedMetricUncertaintyApiInterval;
+  std_error: number;
+  ci_low: number;
+  ci_high: number;
+  /** Kish effective sample size of the valid units. */
+  effective_n: number;
+  /** @minimum 1 */
+  degrees_of_freedom: number;
+}
+
+export interface DerivedMetricResultApi {
+  group_key: string;
+  value: number;
+  numerator: number;
+  denominator: number;
+  status: DerivedMetricResultApiStatus;
+  /** @minimum 0 */
+  unit_count: number;
+  /** @minimum 0 */
+  valid_count: number;
+  /** @minimum 0 */
+  missing_count: number;
+  /** @minimum 0 */
+  invalid_probability_count: number;
+  uncertainty?: DerivedMetricUncertaintyApi;
+}
+
+export interface DerivedMetricDashboardContextApi {
+  run?: DerivedMetricSavedRunContextApi;
+  result?: DerivedMetricResultApi;
+}
+
 export type DashboardQueryMetricResultApiQueryStatus =
   (typeof DashboardQueryMetricResultApiQueryStatus)[keyof typeof DashboardQueryMetricResultApiQueryStatus];
 
@@ -25100,6 +25329,7 @@ export interface DashboardQueryMetricResultApi {
   aggregation: DashboardQueryMetricResultApiAggregation;
   unit: string;
   series: DashboardQuerySeriesApi[];
+  derived_context?: DerivedMetricDashboardContextApi;
   /** @minimum 0 */
   series_total?: number;
   series_truncated?: boolean;
@@ -25331,23 +25561,6 @@ export const DerivedMetricRunApiStatus = {
   failed: "failed",
 } as const;
 
-export type DerivedMetricFilterApiField =
-  (typeof DerivedMetricFilterApiField)[keyof typeof DerivedMetricFilterApiField];
-
-export const DerivedMetricFilterApiField = {
-  model: "model",
-  provider: "provider",
-  status: "status",
-  name: "name",
-  service_name: "service_name",
-} as const;
-
-export interface DerivedMetricFilterApi {
-  field: DerivedMetricFilterApiField;
-  /** @maxLength 255 */
-  value: string;
-}
-
 export interface DerivedMetricManifestApi {
   sampling_scope: string;
   schema_version: number;
@@ -25365,6 +25578,7 @@ export interface DerivedMetricRunApi {
   readonly id?: string;
   metric_id: string;
   metric_version: number;
+  definition?: DerivedMetricVersionApi;
   window_start: string;
   window_end: string;
   as_of: string;
@@ -25385,112 +25599,6 @@ export interface DerivedMetricRunApi {
   row_count?: number;
   readonly created_at?: string;
   completed_at?: string;
-}
-
-export type DerivedMetricResultApiStatus =
-  (typeof DerivedMetricResultApiStatus)[keyof typeof DerivedMetricResultApiStatus];
-
-export const DerivedMetricResultApiStatus = {
-  ok: "ok",
-  no_data: "no_data",
-  missing_inputs: "missing_inputs",
-  invalid_probability: "invalid_probability",
-  zero_denominator: "zero_denominator",
-  non_finite: "non_finite",
-} as const;
-
-/**
- * `not_estimable` means no interval exists; `reason` says why. Never a guess.
- */
-export type DerivedMetricUncertaintyApiStatus =
-  (typeof DerivedMetricUncertaintyApiStatus)[keyof typeof DerivedMetricUncertaintyApiStatus];
-
-export const DerivedMetricUncertaintyApiStatus = {
-  ok: "ok",
-  not_estimable: "not_estimable",
-} as const;
-
-export type DerivedMetricUncertaintyApiReason =
-  (typeof DerivedMetricUncertaintyApiReason)[keyof typeof DerivedMetricUncertaintyApiReason];
-
-export const DerivedMetricUncertaintyApiReason = {
-  "": "",
-  no_value: "no_value",
-  design_not_captured: "design_not_captured",
-  mixed_design: "mixed_design",
-  unweighted_total: "unweighted_total",
-  fewer_than_two_units: "fewer_than_two_units",
-  population_size_missing: "population_size_missing",
-  inconsistent_stratum_design: "inconsistent_stratum_design",
-  single_unit_stratum: "single_unit_stratum",
-  no_degrees_of_freedom: "no_degrees_of_freedom",
-  non_finite: "non_finite",
-  unstable_variance: "unstable_variance",
-  not_computed: "not_computed",
-} as const;
-
-/**
- * stratified_wor_fpc: closed sampling cohorts (stratified, without replacement, finite-population corrected). poisson: live sampling policies. iid_units: unweighted ratios and means, a model-based interval treating units as independent draws. Covers sampling error only, not evaluator error.
- */
-export type DerivedMetricUncertaintyApiMethod =
-  (typeof DerivedMetricUncertaintyApiMethod)[keyof typeof DerivedMetricUncertaintyApiMethod];
-
-export const DerivedMetricUncertaintyApiMethod = {
-  "": "",
-  stratified_wor_fpc: "stratified_wor_fpc",
-  poisson: "poisson",
-  iid_units: "iid_units",
-} as const;
-
-/**
- * wilson: rates (a 0/1 numerator within a 0/1 denominator), Wilson score interval at the design-effective sample size. wald_t: value +/- t * SE.
- */
-export type DerivedMetricUncertaintyApiInterval =
-  (typeof DerivedMetricUncertaintyApiInterval)[keyof typeof DerivedMetricUncertaintyApiInterval];
-
-export const DerivedMetricUncertaintyApiInterval = {
-  "": "",
-  wilson: "wilson",
-  wald_t: "wald_t",
-} as const;
-
-/**
- * Present on previews, and on persisted results when include_uncertainty=true.
- */
-export interface DerivedMetricUncertaintyApi {
-  /** Always 0.95 (two-sided). */
-  confidence_level: number;
-  /** `not_estimable` means no interval exists; `reason` says why. Never a guess. */
-  status: DerivedMetricUncertaintyApiStatus;
-  reason: DerivedMetricUncertaintyApiReason;
-  /** stratified_wor_fpc: closed sampling cohorts (stratified, without replacement, finite-population corrected). poisson: live sampling policies. iid_units: unweighted ratios and means, a model-based interval treating units as independent draws. Covers sampling error only, not evaluator error. */
-  method: DerivedMetricUncertaintyApiMethod;
-  /** wilson: rates (a 0/1 numerator within a 0/1 denominator), Wilson score interval at the design-effective sample size. wald_t: value +/- t * SE. */
-  interval: DerivedMetricUncertaintyApiInterval;
-  std_error: number;
-  ci_low: number;
-  ci_high: number;
-  /** Kish effective sample size of the valid units. */
-  effective_n: number;
-  /** @minimum 1 */
-  degrees_of_freedom: number;
-}
-
-export interface DerivedMetricResultApi {
-  group_key: string;
-  value: number;
-  numerator: number;
-  denominator: number;
-  status: DerivedMetricResultApiStatus;
-  /** @minimum 0 */
-  unit_count: number;
-  /** @minimum 0 */
-  valid_count: number;
-  /** @minimum 0 */
-  missing_count: number;
-  /** @minimum 0 */
-  invalid_probability_count: number;
-  uncertainty?: DerivedMetricUncertaintyApi;
 }
 
 export type DerivedMetricDeltaUncertaintyApiStatus =
@@ -25598,6 +25706,8 @@ export interface DerivedMetricContributorDiagnosticsApi {
 }
 
 export interface DerivedMetricContributorPageApi {
+  /** Committed result identity used for the value and contributor diagnostics. */
+  result_id: string;
   /** @minLength 1 */
   rollup: string;
   group_key: string;
@@ -25618,89 +25728,11 @@ export interface DerivedMetricRecomputeApi {
   confirm?: boolean;
 }
 
-export interface DerivedMetricResultPageApi {
+export interface DerivedMetricCommittedResultPageApi {
   results: DerivedMetricResultApi[];
   next_cursor: string;
-}
-
-export type DerivedMetricInputApiSource =
-  (typeof DerivedMetricInputApiSource)[keyof typeof DerivedMetricInputApiSource];
-
-export const DerivedMetricInputApiSource = {
-  eval: "eval",
-  span: "span",
-} as const;
-
-export type DerivedMetricInputApiField =
-  (typeof DerivedMetricInputApiField)[keyof typeof DerivedMetricInputApiField];
-
-export const DerivedMetricInputApiField = {
-  latency_ms: "latency_ms",
-  cost: "cost",
-  total_tokens: "total_tokens",
-  prompt_tokens: "prompt_tokens",
-  completion_tokens: "completion_tokens",
-  attribute_number: "attribute_number",
-  attribute_bool: "attribute_bool",
-} as const;
-
-export type DerivedMetricInputApiReducer =
-  (typeof DerivedMetricInputApiReducer)[keyof typeof DerivedMetricInputApiReducer];
-
-export const DerivedMetricInputApiReducer = {
-  mean: "mean",
-  min: "min",
-  max: "max",
-  latest: "latest",
-} as const;
-
-export interface DerivedMetricInputApi {
-  /**
-   * @minLength 1
-   * @pattern ^[a-z][a-z0-9_]{0,39}$
-   */
-  alias: string;
-  source: DerivedMetricInputApiSource;
-  config_id?: string;
-  /** @pattern ^(?:[a-f0-9]{64})?$ */
-  config_hash?: string;
-  field?: DerivedMetricInputApiField;
-  /** @maxLength 160 */
-  attribute_key?: string;
-  reducer?: DerivedMetricInputApiReducer;
-}
-
-export interface DerivedMetricVersionApi {
-  /**
-   * @minimum 0
-   * @maximum 2147483647
-   */
-  version: number;
-  /**
-   * @minLength 1
-   * @maxLength 2048
-   */
-  formula: string;
-  inputs: DerivedMetricInputApi[];
-  /**
-   * @minLength 1
-   * @maxLength 16
-   */
-  selection_unit: string;
-  /**
-   * @minLength 1
-   * @maxLength 32
-   */
-  weighting: string;
-  /** @maxLength 160 */
-  cohort_key?: string;
-  filters: DerivedMetricFilterApi[];
-  /**
-   * @minLength 1
-   * @maxLength 64
-   */
-  definition_hash: string;
-  readonly created_at?: string;
+  /** Committed result identity used to read every row and the next cursor. */
+  result_id: string;
 }
 
 export interface DerivedMetricApi {
@@ -25808,6 +25840,11 @@ export interface DerivedMetricRunRequestApi {
    * @maxLength 100
    */
   idempotency_key: string;
+}
+
+export interface DerivedMetricResultPageApi {
+  results: DerivedMetricResultApi[];
+  next_cursor: string;
 }
 
 export interface DerivedMetricRunsApi {
@@ -32272,6 +32309,67 @@ export interface UserAlertMonitorApi {
   organization: string;
   workspace?: string;
   created_by?: string;
+}
+
+export interface UserAlertMonitorCreateResponseApi {
+  status: true;
+  /** @minLength 1 */
+  result: string;
+}
+
+export type UserAlertMonitorEntitlementResponseApiType =
+  (typeof UserAlertMonitorEntitlementResponseApiType)[keyof typeof UserAlertMonitorEntitlementResponseApiType];
+
+export const UserAlertMonitorEntitlementResponseApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type UserAlertMonitorEntitlementResponseApiDetails = {
+  [key: string]: string[];
+};
+
+/**
+ * Any valid JSON value.
+ */
+export type UserAlertMonitorEntitlementResponseApiUpgradeCta = {
+  [key: string]: unknown;
+};
+
+export type ApiErrorObjectApiDetail = {
+  [key: string]: { [key: string]: unknown };
+};
+
+export interface ApiErrorObjectApi {
+  code?: string;
+  message?: string;
+  detail?: ApiErrorObjectApiDetail;
+}
+
+export interface UserAlertMonitorEntitlementResponseApi {
+  status?: boolean;
+  type?: UserAlertMonitorEntitlementResponseApiType;
+  code?: string;
+  detail?: string;
+  result?: string;
+  message?: string;
+  error: ApiErrorObjectApi;
+  attr?: string;
+  details?: UserAlertMonitorEntitlementResponseApiDetails;
+  upgrade_required: boolean;
+  /** Any valid JSON value. */
+  upgrade_cta?: UserAlertMonitorEntitlementResponseApiUpgradeCta;
 }
 
 export interface UserAlertMonitorBulkMuteRequestApi {

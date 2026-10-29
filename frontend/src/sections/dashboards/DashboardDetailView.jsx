@@ -33,6 +33,7 @@ import {
 import { LoadingScreen } from "src/components/loading-screen";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { paths } from "src/routes/paths";
+import { metricDashboardDescription } from "../derived-metrics/metric_dashboard_description";
 import {
   useDashboardDetail,
   useUpdateDashboard,
@@ -492,6 +493,7 @@ function DraggableWidgetCard({
   isReadOnly,
   refreshRequestId,
   onQuerySettled,
+  onRestoreSavedWindow,
 }) {
   const theme = useTheme();
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
@@ -668,6 +670,7 @@ function DraggableWidgetCard({
                 globalDateRange={globalDateRange}
                 refreshRequestId={refreshRequestId}
                 onQuerySettled={onQuerySettled}
+                onRestoreSavedWindow={onRestoreSavedWindow}
               />
             )}
           </Box>
@@ -690,6 +693,7 @@ DraggableWidgetCard.propTypes = {
   isReadOnly: PropTypes.bool,
   refreshRequestId: PropTypes.number,
   onQuerySettled: PropTypes.func,
+  onRestoreSavedWindow: PropTypes.func,
 };
 
 // ---------------------------------------------------------------------------
@@ -1441,7 +1445,7 @@ export default function DashboardDetailView() {
           }}
         />
         <InlineEdit
-          value={dashboard.description}
+          value={metricDashboardDescription(dashboard.description)}
           onSave={handleDescSave}
           placeholder="+ Add description..."
           multiline
@@ -1610,6 +1614,7 @@ export default function DashboardDetailView() {
                               isReadOnly={isReadOnly}
                               refreshRequestId={refreshRequestId}
                               onQuerySettled={handleWidgetQuerySettled}
+                              onRestoreSavedWindow={() => setDatePreset(null)}
                             />
 
                             {/* Resize handle between adjacent widgets */}

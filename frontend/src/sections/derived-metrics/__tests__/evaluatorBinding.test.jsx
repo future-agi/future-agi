@@ -50,8 +50,10 @@ const evalForm = () => {
   const form = initialForm();
   form.project_id = PROJECT;
   form.weighting = "inverse_probability";
-  form.inputs = form.inputs.map((input) => ({
-    ...input,
+  // This is an existing two-input definition, independent of new-metric defaults.
+  form.inputs = ["resolved", "escalated"].map((alias) => ({
+    alias,
+    reducer: "latest",
     source: "eval",
     config_id: "",
     config_hash: "",
@@ -236,15 +238,17 @@ describe("evaluator picker", () => {
     bound.inputs[0] = { ...bound.inputs[0], ...evaluatorBinding(RESOLVED) };
     render(<Harness initial={bound} onForm={(form) => (latest = form)} />);
     await waitFor(() => expect(mocks.get).toHaveBeenCalled());
-    // Without a listed name the control shows the bound id, never a blank value,
-    // and the binding itself is untouched.
-    expect(screen.getByLabelText("Input 1 evaluator")).toHaveValue(RESOLVED.id);
+    // If name lookup is unavailable, explain the saved binding rather than
+    // showing a bare UUID. Its exact ID/hash still round-trip unchanged.
+    expect(screen.getByLabelText("Input 1 evaluator")).toHaveValue(
+      "Saved evaluator (name unavailable; binding preserved)",
+    );
     fireEvent.mouseDown(screen.getByLabelText("Input 1 evaluator"));
     await waitFor(() =>
       expect(
         screen.getAllByRole("option").map((option) => option.textContent),
       ).toEqual([
-        `${RESOLVED.id}definition 11111111`,
+        "Saved evaluator (name unavailable; binding preserved)definition 11111111",
         "Escalation evaluatordefinition 22222222",
       ]),
     );
@@ -262,7 +266,7 @@ describe("evaluator picker", () => {
     fireEvent.mouseDown(screen.getByLabelText("Input 1 evaluator"));
     const options = await screen.findAllByRole("option");
     expect(options[0]).toHaveTextContent(
-      `${ESCALATED.id}legacy unversioned results`,
+      "Saved evaluator (name unavailable; binding preserved)legacy unversioned results",
     );
   });
 

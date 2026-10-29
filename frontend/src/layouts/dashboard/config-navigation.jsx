@@ -193,11 +193,6 @@ export function useNavData() {
             },
           },
           {
-            title: "Derived metrics",
-            path: paths.dashboard.derivedMetrics,
-            icon: ICONS.data,
-          },
-          {
             title: "Dashboards",
             path: paths.dashboard.dashboards.root,
             icon: ICONS.data,

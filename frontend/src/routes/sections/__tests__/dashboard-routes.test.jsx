@@ -2,6 +2,7 @@ import { Navigate, matchRoutes } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 
 import HarnessToEnvironment from "../../components/harness-to-environment";
+import LegacyMetricsRedirect from "../../components/legacy_metrics_redirect";
 import { dashboardRoutes } from "../dashboard";
 
 function findChildRoute(route, path) {
@@ -151,6 +152,37 @@ describe.each([
   it("an old harness job link opens that environment", () => {
     const route = leafRoute(user, `${SIMULATE}/harness/job-1`);
     expect(route.element.type).toBe(HarnessToEnvironment);
+  });
+});
+
+describe("metrics are Evals siblings, not evaluator types", () => {
+  it.each([
+    ["/dashboard/evaluations/metrics", "metrics"],
+    [
+      "/dashboard/evaluations/metrics/44444444-4444-4444-8444-444444444444?run=55555555-5555-4555-8555-555555555555",
+      "metrics/:metricId",
+    ],
+    ["/dashboard/evaluations/create", "create"],
+    ["/dashboard/evaluations/create/draft-id", "create/:draftId"],
+    ["/dashboard/evaluations/existing-evaluator", ":evalId"],
+    ["/dashboard/evaluations/usage", "usage"],
+    ["/dashboard/evaluations/groups", "groups"],
+    ["/dashboard/evaluations/groups/group-id", "groups/:id"],
+    [
+      "/dashboard/tasks/create?projectId=p&returnTo=%2Fdashboard%2Fobserve",
+      "create",
+    ],
+    ["/dashboard/tasks/task-id", ":taskId"],
+  ])("%s retains its static/detail destination", (url, path) => {
+    expect(leafRoute(WITHOUT_FLAG, url).path).toBe(path);
+  });
+  it("keeps the legacy route as the search/hash-preserving redirect", () => {
+    expect(
+      leafRoute(
+        WITHOUT_FLAG,
+        "/dashboard/derived-metrics?metric=x#saved-run-results",
+      ).element.type,
+    ).toBe(LegacyMetricsRedirect);
   });
 });
 

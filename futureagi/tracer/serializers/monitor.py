@@ -3,6 +3,11 @@ import json
 from rest_framework import serializers
 
 from accounts.serializers.user import UserSerializer
+from tfc.utils.api_serializers import (
+    ApiErrorObjectSerializer,
+    ApiErrorResponseSerializer,
+)
+from tfc.utils.serializer_fields import JsonValueField
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.monitor import (
     AlertTypeChoices,
@@ -22,6 +27,21 @@ from tracer.serializers.filters import (
 from tracer.utils.monitor import uses_choice_threshold
 
 OBSERVATION_SPAN_TYPES = [t[0] for t in ObservationSpan.OBSERVATION_SPAN_TYPES]
+
+
+class UserAlertMonitorCreateResponseSerializer(serializers.Serializer):
+    """The existing HTTP 200 GeneralMethods string-result envelope, not a model."""
+
+    status = serializers.ChoiceField(choices=[True])
+    result = serializers.CharField()
+
+
+class UserAlertMonitorEntitlementResponseSerializer(ApiErrorResponseSerializer):
+    """FeatureUnavailable as emitted by custom_exception_handler before creation."""
+
+    error = ApiErrorObjectSerializer()
+    upgrade_required = serializers.BooleanField()
+    upgrade_cta = JsonValueField(required=False)
 
 
 class UserAlertMonitorListQuerySerializer(serializers.Serializer):

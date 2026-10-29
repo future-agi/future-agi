@@ -18,6 +18,11 @@ import {
 } from "@mui/material";
 import axios, { endpoints } from "src/utils/axios";
 import { contributorLink } from "./contributorLinks";
+import {
+  hasResultIdentity,
+  verifyResultIdentity,
+  ResultIdentityError,
+} from "./useCommittedMetricResults";
 
 const number = (value) =>
   value == null
@@ -33,8 +38,10 @@ export default function MetricContributors({
   projectId,
   rollup,
   groups,
+  expanded,
 }) {
-  const [open, setOpen] = useState(false);
+  const [localOpen, setOpen] = useState(false);
+  const open = expanded ?? localOpen;
   const [group, setGroup] = useState(groups[0]?.group_key ?? "");
   const query = useQuery({
     queryKey: ["metric-contributors", scope, runId, resultId, rollup, group],
@@ -42,19 +49,30 @@ export default function MetricContributors({
       open &&
       Boolean(resultId) &&
       groups.some((row) => row.group_key === group),
-    queryFn: async ({ signal }) =>
-      (
-        await axios.get(endpoints.derivedMetrics.contributors(runId), {
-          signal,
-          params: { rollup, group_key: group, limit: 20 },
-        })
-      ).data,
+    queryFn: async ({ signal }) => {
+      const page = verifyResultIdentity(
+        (
+          await axios.get(endpoints.derivedMetrics.contributors(runId), {
+            signal,
+            params: { rollup, group_key: group, limit: 20 },
+          })
+        ).data,
+        resultId,
+      );
+      if (page.rollup !== rollup || page.group_key !== group)
+        throw new ResultIdentityError(false);
+      return page;
+    },
+    retry: (count, error) =>
+      !(error instanceof ResultIdentityError) && count < 1,
   });
   return (
     <Stack spacing={1}>
-      <Button sx={{ alignSelf: "flex-start" }} onClick={() => setOpen(!open)}>
-        {open ? "Hide contributors" : "Inspect contributors"}
-      </Button>
+      {expanded === undefined && (
+        <Button sx={{ alignSelf: "flex-start" }} onClick={() => setOpen(!open)}>
+          {open ? "Hide contributors" : "Inspect contributors"}
+        </Button>
+      )}
       {open && (
         <>
           <Typography variant="body2" color="text.secondary">
@@ -66,6 +84,8 @@ export default function MetricContributors({
             select
             label="Contributor group"
             value={group}
+            SelectProps={{ displayEmpty: true }}
+            InputLabelProps={{ shrink: true }}
             onChange={(event) => setGroup(event.target.value)}
           >
             {groups.map((row) => (
@@ -80,13 +100,14 @@ export default function MetricContributors({
           )}
           {query.isError && (
             <Alert severity="error">
-              Contributors could not be loaded.{" "}
+              Contributors could not be verified for this committed result.
+              Refresh run status if the run changed.{" "}
               <Button onClick={() => query.refetch()}>
                 Retry contributors
               </Button>
             </Alert>
           )}
-          {query.data && (
+          {hasResultIdentity(query.data, resultId) && (
             <>
               <Typography variant="body2">
                 {query.data.diagnostics.valid_count} valid ·{" "}
@@ -171,6 +192,7 @@ export default function MetricContributors({
 }
 
 MetricContributors.propTypes = {
+  expanded: PropTypes.bool,
   scope: PropTypes.string.isRequired,
   runId: PropTypes.string.isRequired,
   resultId: PropTypes.string.isRequired,

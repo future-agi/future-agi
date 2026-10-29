@@ -1,0 +1,121 @@
+{
+  "config": {
+    "project_ids": ["00000000-0000-0000-0000-000000000002"],
+    "time_range": {
+      "custom_start": "2026-10-01T00:00:00+00:00",
+      "custom_end": "2026-10-26T00:00:00+00:00"
+    },
+    "granularity": "day",
+    "filters": [],
+    "breakdowns": [],
+    "metrics": [
+      {
+        "id": "00000000-0000-0000-0000-000000000003",
+        "name": "Resolution",
+        "display_name": "Resolution",
+        "type": "derived_metric",
+        "source": "derived_metrics",
+        "derived_run_id": "00000000-0000-0000-0000-000000000003",
+        "aggregation": "avg"
+      }
+    ]
+  },
+  "response": {
+    "status": true,
+    "result": {
+      "metrics": [
+        {
+          "id": "00000000-0000-0000-0000-000000000003",
+          "name": "Resolution",
+          "aggregation": "avg",
+          "unit": "",
+          "series": [
+            {
+              "name": "Resolution",
+              "data": [
+                {
+                  "timestamp": "2026-10-26T00:00:00+00:00",
+                  "value": 0.5,
+                  "ci_low": null,
+                  "ci_high": null,
+                  "ci_reason": "unstable_variance"
+                }
+              ]
+            }
+          ],
+          "derived_context": {
+            "run": {
+              "id": "00000000-0000-0000-0000-000000000003",
+              "metric_version": 1,
+              "definition": {
+                "version": 1,
+                "formula": "ratio(resolved == 1, resolved >= 0)",
+                "inputs": [
+                  {
+                    "alias": "resolved",
+                    "source": "span",
+                    "config_hash": "",
+                    "field": "attribute_number",
+                    "attribute_key": "resolved",
+                    "reducer": "latest"
+                  }
+                ],
+                "selection_unit": "session",
+                "weighting": "none",
+                "cohort_key": "",
+                "filters": [],
+                "definition_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "created_at": "2026-10-01T00:00:00Z"
+              },
+              "window_start": "2026-10-01T00:00:00Z",
+              "window_end": "2026-10-26T00:00:00Z",
+              "filters": [],
+              "result_id": "00000000-0000-0000-0000-000000000004",
+              "status": "complete"
+            },
+            "result": {
+              "group_key": "",
+              "value": 0.5,
+              "numerator": 1.0,
+              "denominator": 2.0,
+              "status": "ok",
+              "unit_count": 3,
+              "valid_count": 2,
+              "missing_count": 1,
+              "invalid_probability_count": 0,
+              "uncertainty": {
+                "confidence_level": 0.95,
+                "status": "not_estimable",
+                "reason": "unstable_variance",
+                "method": "iid_units",
+                "interval": "",
+                "std_error": null,
+                "ci_low": null,
+                "ci_high": null,
+                "effective_n": 2.0,
+                "degrees_of_freedom": 1
+              }
+            }
+          },
+          "series_total": 1,
+          "series_truncated": false,
+          "query_complete": true,
+          "query_exact": true,
+          "query_sampled": false,
+          "query_status": "complete",
+          "query_provenance": "materialized_rollup"
+        }
+      ],
+      "time_range": {
+        "start": "2026-10-01T00:00:00+00:00",
+        "end": "2026-10-26T00:00:00+00:00"
+      },
+      "granularity": "day",
+      "query_complete": true,
+      "query_status": "complete",
+      "query_exact": true,
+      "query_sampled": false,
+      "query_provenance": "materialized_rollup"
+    }
+  }
+}

@@ -50549,6 +50549,40 @@ export const TracerDashboardQueryBody = zod.object({
 });
 
 export const tracerDashboardQueryResponseStatusDefault = true;
+export const tracerDashboardQueryResponseResultMetricsItemDerivedContextRunDefinitionVersionMin = 0;
+export const tracerDashboardQueryResponseResultMetricsItemDerivedContextRunDefinitionVersionMax = 2147483647;
+
+export const tracerDashboardQueryResponseResultMetricsItemDerivedContextRunDefinitionFormulaMax = 2048;
+
+export const tracerDashboardQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemAliasRegExp =
+  new RegExp("^[a-z][a-z0-9_]{0,39}$");
+export const tracerDashboardQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemConfigHashDefault = ``;
+export const tracerDashboardQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemConfigHashRegExp =
+  new RegExp("^(?:[a-f0-9]{64})?$");
+export const tracerDashboardQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemAttributeKeyDefault = ``;
+export const tracerDashboardQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemAttributeKeyMax = 160;
+
+export const tracerDashboardQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemReducerDefault = `latest`;
+export const tracerDashboardQueryResponseResultMetricsItemDerivedContextRunDefinitionSelectionUnitMax = 16;
+
+export const tracerDashboardQueryResponseResultMetricsItemDerivedContextRunDefinitionWeightingMax = 32;
+
+export const tracerDashboardQueryResponseResultMetricsItemDerivedContextRunDefinitionCohortKeyMax = 160;
+
+export const tracerDashboardQueryResponseResultMetricsItemDerivedContextRunDefinitionFiltersItemValueMax = 255;
+
+export const tracerDashboardQueryResponseResultMetricsItemDerivedContextRunDefinitionDefinitionHashMax = 64;
+
+export const tracerDashboardQueryResponseResultMetricsItemDerivedContextRunFiltersItemValueMax = 255;
+
+export const tracerDashboardQueryResponseResultMetricsItemDerivedContextResultUnitCountMin = 0;
+
+export const tracerDashboardQueryResponseResultMetricsItemDerivedContextResultValidCountMin = 0;
+
+export const tracerDashboardQueryResponseResultMetricsItemDerivedContextResultMissingCountMin = 0;
+
+export const tracerDashboardQueryResponseResultMetricsItemDerivedContextResultInvalidProbabilityCountMin = 0;
+
 export const tracerDashboardQueryResponseResultMetricsItemSeriesTotalMin = 0;
 
 export const tracerDashboardQueryResponseResultQueryCountMin = 0;
@@ -50604,6 +50638,234 @@ export const TracerDashboardQueryResponse = zod.object({
             ),
           }),
         ),
+        derived_context: zod
+          .object({
+            run: zod
+              .object({
+                id: zod.string().uuid().optional(),
+                metric_version: zod.number().optional(),
+                definition: zod
+                  .object({
+                    version: zod
+                      .number()
+                      .min(
+                        tracerDashboardQueryResponseResultMetricsItemDerivedContextRunDefinitionVersionMin,
+                      )
+                      .max(
+                        tracerDashboardQueryResponseResultMetricsItemDerivedContextRunDefinitionVersionMax,
+                      ),
+                    formula: zod
+                      .string()
+                      .min(1)
+                      .max(
+                        tracerDashboardQueryResponseResultMetricsItemDerivedContextRunDefinitionFormulaMax,
+                      ),
+                    inputs: zod.array(
+                      zod.object({
+                        alias: zod
+                          .string()
+                          .min(1)
+                          .regex(
+                            tracerDashboardQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemAliasRegExp,
+                          ),
+                        source: zod.enum(["eval", "span"]),
+                        config_id: zod.string().uuid().optional(),
+                        config_hash: zod
+                          .string()
+                          .regex(
+                            tracerDashboardQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemConfigHashRegExp,
+                          )
+                          .default(
+                            tracerDashboardQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemConfigHashDefault,
+                          ),
+                        field: zod
+                          .enum([
+                            "latency_ms",
+                            "cost",
+                            "total_tokens",
+                            "prompt_tokens",
+                            "completion_tokens",
+                            "attribute_number",
+                            "attribute_bool",
+                          ])
+                          .optional(),
+                        attribute_key: zod
+                          .string()
+                          .max(
+                            tracerDashboardQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemAttributeKeyMax,
+                          )
+                          .default(
+                            tracerDashboardQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemAttributeKeyDefault,
+                          ),
+                        reducer: zod
+                          .enum(["mean", "min", "max", "latest"])
+                          .default(
+                            tracerDashboardQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemReducerDefault,
+                          ),
+                      }),
+                    ),
+                    selection_unit: zod
+                      .string()
+                      .min(1)
+                      .max(
+                        tracerDashboardQueryResponseResultMetricsItemDerivedContextRunDefinitionSelectionUnitMax,
+                      ),
+                    weighting: zod
+                      .string()
+                      .min(1)
+                      .max(
+                        tracerDashboardQueryResponseResultMetricsItemDerivedContextRunDefinitionWeightingMax,
+                      ),
+                    cohort_key: zod
+                      .string()
+                      .max(
+                        tracerDashboardQueryResponseResultMetricsItemDerivedContextRunDefinitionCohortKeyMax,
+                      )
+                      .optional(),
+                    filters: zod.array(
+                      zod.object({
+                        field: zod.enum([
+                          "model",
+                          "provider",
+                          "status",
+                          "name",
+                          "service_name",
+                        ]),
+                        value: zod
+                          .string()
+                          .max(
+                            tracerDashboardQueryResponseResultMetricsItemDerivedContextRunDefinitionFiltersItemValueMax,
+                          ),
+                      }),
+                    ),
+                    definition_hash: zod
+                      .string()
+                      .min(1)
+                      .max(
+                        tracerDashboardQueryResponseResultMetricsItemDerivedContextRunDefinitionDefinitionHashMax,
+                      ),
+                    created_at: zod
+                      .string()
+                      .datetime({ offset: true })
+                      .optional(),
+                  })
+                  .optional(),
+                window_start: zod
+                  .string()
+                  .datetime({ offset: true })
+                  .optional(),
+                window_end: zod.string().datetime({ offset: true }).optional(),
+                filters: zod
+                  .array(
+                    zod.object({
+                      field: zod.enum([
+                        "model",
+                        "provider",
+                        "status",
+                        "name",
+                        "service_name",
+                      ]),
+                      value: zod
+                        .string()
+                        .max(
+                          tracerDashboardQueryResponseResultMetricsItemDerivedContextRunFiltersItemValueMax,
+                        ),
+                    }),
+                  )
+                  .optional(),
+                result_id: zod.string().uuid().optional(),
+                status: zod
+                  .enum(["queued", "running", "complete", "failed"])
+                  .optional(),
+              })
+              .optional(),
+            result: zod
+              .object({
+                group_key: zod.string(),
+                value: zod.number(),
+                numerator: zod.number(),
+                denominator: zod.number(),
+                status: zod.enum([
+                  "ok",
+                  "no_data",
+                  "missing_inputs",
+                  "invalid_probability",
+                  "zero_denominator",
+                  "non_finite",
+                ]),
+                unit_count: zod
+                  .number()
+                  .min(
+                    tracerDashboardQueryResponseResultMetricsItemDerivedContextResultUnitCountMin,
+                  ),
+                valid_count: zod
+                  .number()
+                  .min(
+                    tracerDashboardQueryResponseResultMetricsItemDerivedContextResultValidCountMin,
+                  ),
+                missing_count: zod
+                  .number()
+                  .min(
+                    tracerDashboardQueryResponseResultMetricsItemDerivedContextResultMissingCountMin,
+                  ),
+                invalid_probability_count: zod
+                  .number()
+                  .min(
+                    tracerDashboardQueryResponseResultMetricsItemDerivedContextResultInvalidProbabilityCountMin,
+                  ),
+                uncertainty: zod
+                  .object({
+                    confidence_level: zod
+                      .number()
+                      .describe("Always 0.95 (two-sided)."),
+                    status: zod
+                      .enum(["ok", "not_estimable"])
+                      .describe(
+                        "`not_estimable` means no interval exists; `reason` says why. Never a guess.",
+                      ),
+                    reason: zod.enum([
+                      "",
+                      "no_value",
+                      "design_not_captured",
+                      "mixed_design",
+                      "unweighted_total",
+                      "fewer_than_two_units",
+                      "population_size_missing",
+                      "inconsistent_stratum_design",
+                      "single_unit_stratum",
+                      "no_degrees_of_freedom",
+                      "non_finite",
+                      "unstable_variance",
+                      "not_computed",
+                    ]),
+                    method: zod
+                      .enum(["", "stratified_wor_fpc", "poisson", "iid_units"])
+                      .describe(
+                        "stratified_wor_fpc: closed sampling cohorts (stratified, without replacement, finite-population corrected). poisson: live sampling policies. iid_units: unweighted ratios and means, a model-based interval treating units as independent draws. Covers sampling error only, not evaluator error.",
+                      ),
+                    interval: zod
+                      .enum(["", "wilson", "wald_t"])
+                      .describe(
+                        "wilson: rates (a 0/1 numerator within a 0/1 denominator), Wilson score interval at the design-effective sample size. wald_t: value +/- t * SE.",
+                      ),
+                    std_error: zod.number(),
+                    ci_low: zod.number(),
+                    ci_high: zod.number(),
+                    effective_n: zod
+                      .number()
+                      .describe(
+                        "Kish effective sample size of the valid units.",
+                      ),
+                    degrees_of_freedom: zod.number().min(1),
+                  })
+                  .optional()
+                  .describe(
+                    "Present on previews, and on persisted results when include_uncertainty=true.",
+                  ),
+              })
+              .optional(),
+          })
+          .optional(),
         series_total: zod
           .number()
           .min(tracerDashboardQueryResponseResultMetricsItemSeriesTotalMin)
@@ -51400,6 +51662,40 @@ export const TracerDashboardWidgetsPreviewQueryBody = zod.object({
 });
 
 export const tracerDashboardWidgetsPreviewQueryResponseStatusDefault = true;
+export const tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextRunDefinitionVersionMin = 0;
+export const tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextRunDefinitionVersionMax = 2147483647;
+
+export const tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextRunDefinitionFormulaMax = 2048;
+
+export const tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemAliasRegExp =
+  new RegExp("^[a-z][a-z0-9_]{0,39}$");
+export const tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemConfigHashDefault = ``;
+export const tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemConfigHashRegExp =
+  new RegExp("^(?:[a-f0-9]{64})?$");
+export const tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemAttributeKeyDefault = ``;
+export const tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemAttributeKeyMax = 160;
+
+export const tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemReducerDefault = `latest`;
+export const tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextRunDefinitionSelectionUnitMax = 16;
+
+export const tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextRunDefinitionWeightingMax = 32;
+
+export const tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextRunDefinitionCohortKeyMax = 160;
+
+export const tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextRunDefinitionFiltersItemValueMax = 255;
+
+export const tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextRunDefinitionDefinitionHashMax = 64;
+
+export const tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextRunFiltersItemValueMax = 255;
+
+export const tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextResultUnitCountMin = 0;
+
+export const tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextResultValidCountMin = 0;
+
+export const tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextResultMissingCountMin = 0;
+
+export const tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextResultInvalidProbabilityCountMin = 0;
+
 export const tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemSeriesTotalMin = 0;
 
 export const tracerDashboardWidgetsPreviewQueryResponseResultQueryCountMin = 0;
@@ -51457,6 +51753,234 @@ export const TracerDashboardWidgetsPreviewQueryResponse = zod.object({
             ),
           }),
         ),
+        derived_context: zod
+          .object({
+            run: zod
+              .object({
+                id: zod.string().uuid().optional(),
+                metric_version: zod.number().optional(),
+                definition: zod
+                  .object({
+                    version: zod
+                      .number()
+                      .min(
+                        tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextRunDefinitionVersionMin,
+                      )
+                      .max(
+                        tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextRunDefinitionVersionMax,
+                      ),
+                    formula: zod
+                      .string()
+                      .min(1)
+                      .max(
+                        tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextRunDefinitionFormulaMax,
+                      ),
+                    inputs: zod.array(
+                      zod.object({
+                        alias: zod
+                          .string()
+                          .min(1)
+                          .regex(
+                            tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemAliasRegExp,
+                          ),
+                        source: zod.enum(["eval", "span"]),
+                        config_id: zod.string().uuid().optional(),
+                        config_hash: zod
+                          .string()
+                          .regex(
+                            tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemConfigHashRegExp,
+                          )
+                          .default(
+                            tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemConfigHashDefault,
+                          ),
+                        field: zod
+                          .enum([
+                            "latency_ms",
+                            "cost",
+                            "total_tokens",
+                            "prompt_tokens",
+                            "completion_tokens",
+                            "attribute_number",
+                            "attribute_bool",
+                          ])
+                          .optional(),
+                        attribute_key: zod
+                          .string()
+                          .max(
+                            tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemAttributeKeyMax,
+                          )
+                          .default(
+                            tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemAttributeKeyDefault,
+                          ),
+                        reducer: zod
+                          .enum(["mean", "min", "max", "latest"])
+                          .default(
+                            tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemReducerDefault,
+                          ),
+                      }),
+                    ),
+                    selection_unit: zod
+                      .string()
+                      .min(1)
+                      .max(
+                        tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextRunDefinitionSelectionUnitMax,
+                      ),
+                    weighting: zod
+                      .string()
+                      .min(1)
+                      .max(
+                        tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextRunDefinitionWeightingMax,
+                      ),
+                    cohort_key: zod
+                      .string()
+                      .max(
+                        tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextRunDefinitionCohortKeyMax,
+                      )
+                      .optional(),
+                    filters: zod.array(
+                      zod.object({
+                        field: zod.enum([
+                          "model",
+                          "provider",
+                          "status",
+                          "name",
+                          "service_name",
+                        ]),
+                        value: zod
+                          .string()
+                          .max(
+                            tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextRunDefinitionFiltersItemValueMax,
+                          ),
+                      }),
+                    ),
+                    definition_hash: zod
+                      .string()
+                      .min(1)
+                      .max(
+                        tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextRunDefinitionDefinitionHashMax,
+                      ),
+                    created_at: zod
+                      .string()
+                      .datetime({ offset: true })
+                      .optional(),
+                  })
+                  .optional(),
+                window_start: zod
+                  .string()
+                  .datetime({ offset: true })
+                  .optional(),
+                window_end: zod.string().datetime({ offset: true }).optional(),
+                filters: zod
+                  .array(
+                    zod.object({
+                      field: zod.enum([
+                        "model",
+                        "provider",
+                        "status",
+                        "name",
+                        "service_name",
+                      ]),
+                      value: zod
+                        .string()
+                        .max(
+                          tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextRunFiltersItemValueMax,
+                        ),
+                    }),
+                  )
+                  .optional(),
+                result_id: zod.string().uuid().optional(),
+                status: zod
+                  .enum(["queued", "running", "complete", "failed"])
+                  .optional(),
+              })
+              .optional(),
+            result: zod
+              .object({
+                group_key: zod.string(),
+                value: zod.number(),
+                numerator: zod.number(),
+                denominator: zod.number(),
+                status: zod.enum([
+                  "ok",
+                  "no_data",
+                  "missing_inputs",
+                  "invalid_probability",
+                  "zero_denominator",
+                  "non_finite",
+                ]),
+                unit_count: zod
+                  .number()
+                  .min(
+                    tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextResultUnitCountMin,
+                  ),
+                valid_count: zod
+                  .number()
+                  .min(
+                    tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextResultValidCountMin,
+                  ),
+                missing_count: zod
+                  .number()
+                  .min(
+                    tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextResultMissingCountMin,
+                  ),
+                invalid_probability_count: zod
+                  .number()
+                  .min(
+                    tracerDashboardWidgetsPreviewQueryResponseResultMetricsItemDerivedContextResultInvalidProbabilityCountMin,
+                  ),
+                uncertainty: zod
+                  .object({
+                    confidence_level: zod
+                      .number()
+                      .describe("Always 0.95 (two-sided)."),
+                    status: zod
+                      .enum(["ok", "not_estimable"])
+                      .describe(
+                        "`not_estimable` means no interval exists; `reason` says why. Never a guess.",
+                      ),
+                    reason: zod.enum([
+                      "",
+                      "no_value",
+                      "design_not_captured",
+                      "mixed_design",
+                      "unweighted_total",
+                      "fewer_than_two_units",
+                      "population_size_missing",
+                      "inconsistent_stratum_design",
+                      "single_unit_stratum",
+                      "no_degrees_of_freedom",
+                      "non_finite",
+                      "unstable_variance",
+                      "not_computed",
+                    ]),
+                    method: zod
+                      .enum(["", "stratified_wor_fpc", "poisson", "iid_units"])
+                      .describe(
+                        "stratified_wor_fpc: closed sampling cohorts (stratified, without replacement, finite-population corrected). poisson: live sampling policies. iid_units: unweighted ratios and means, a model-based interval treating units as independent draws. Covers sampling error only, not evaluator error.",
+                      ),
+                    interval: zod
+                      .enum(["", "wilson", "wald_t"])
+                      .describe(
+                        "wilson: rates (a 0/1 numerator within a 0/1 denominator), Wilson score interval at the design-effective sample size. wald_t: value +/- t * SE.",
+                      ),
+                    std_error: zod.number(),
+                    ci_low: zod.number(),
+                    ci_high: zod.number(),
+                    effective_n: zod
+                      .number()
+                      .describe(
+                        "Kish effective sample size of the valid units.",
+                      ),
+                    degrees_of_freedom: zod.number().min(1),
+                  })
+                  .optional()
+                  .describe(
+                    "Present on previews, and on persisted results when include_uncertainty=true.",
+                  ),
+              })
+              .optional(),
+          })
+          .optional(),
         series_total: zod
           .number()
           .min(
@@ -51972,6 +52496,40 @@ export const TracerDashboardWidgetsExecuteQueryBody = zod.object({
 });
 
 export const tracerDashboardWidgetsExecuteQueryResponseStatusDefault = true;
+export const tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextRunDefinitionVersionMin = 0;
+export const tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextRunDefinitionVersionMax = 2147483647;
+
+export const tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextRunDefinitionFormulaMax = 2048;
+
+export const tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemAliasRegExp =
+  new RegExp("^[a-z][a-z0-9_]{0,39}$");
+export const tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemConfigHashDefault = ``;
+export const tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemConfigHashRegExp =
+  new RegExp("^(?:[a-f0-9]{64})?$");
+export const tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemAttributeKeyDefault = ``;
+export const tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemAttributeKeyMax = 160;
+
+export const tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemReducerDefault = `latest`;
+export const tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextRunDefinitionSelectionUnitMax = 16;
+
+export const tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextRunDefinitionWeightingMax = 32;
+
+export const tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextRunDefinitionCohortKeyMax = 160;
+
+export const tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextRunDefinitionFiltersItemValueMax = 255;
+
+export const tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextRunDefinitionDefinitionHashMax = 64;
+
+export const tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextRunFiltersItemValueMax = 255;
+
+export const tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextResultUnitCountMin = 0;
+
+export const tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextResultValidCountMin = 0;
+
+export const tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextResultMissingCountMin = 0;
+
+export const tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextResultInvalidProbabilityCountMin = 0;
+
 export const tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemSeriesTotalMin = 0;
 
 export const tracerDashboardWidgetsExecuteQueryResponseResultQueryCountMin = 0;
@@ -52029,6 +52587,234 @@ export const TracerDashboardWidgetsExecuteQueryResponse = zod.object({
             ),
           }),
         ),
+        derived_context: zod
+          .object({
+            run: zod
+              .object({
+                id: zod.string().uuid().optional(),
+                metric_version: zod.number().optional(),
+                definition: zod
+                  .object({
+                    version: zod
+                      .number()
+                      .min(
+                        tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextRunDefinitionVersionMin,
+                      )
+                      .max(
+                        tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextRunDefinitionVersionMax,
+                      ),
+                    formula: zod
+                      .string()
+                      .min(1)
+                      .max(
+                        tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextRunDefinitionFormulaMax,
+                      ),
+                    inputs: zod.array(
+                      zod.object({
+                        alias: zod
+                          .string()
+                          .min(1)
+                          .regex(
+                            tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemAliasRegExp,
+                          ),
+                        source: zod.enum(["eval", "span"]),
+                        config_id: zod.string().uuid().optional(),
+                        config_hash: zod
+                          .string()
+                          .regex(
+                            tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemConfigHashRegExp,
+                          )
+                          .default(
+                            tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemConfigHashDefault,
+                          ),
+                        field: zod
+                          .enum([
+                            "latency_ms",
+                            "cost",
+                            "total_tokens",
+                            "prompt_tokens",
+                            "completion_tokens",
+                            "attribute_number",
+                            "attribute_bool",
+                          ])
+                          .optional(),
+                        attribute_key: zod
+                          .string()
+                          .max(
+                            tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemAttributeKeyMax,
+                          )
+                          .default(
+                            tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemAttributeKeyDefault,
+                          ),
+                        reducer: zod
+                          .enum(["mean", "min", "max", "latest"])
+                          .default(
+                            tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextRunDefinitionInputsItemReducerDefault,
+                          ),
+                      }),
+                    ),
+                    selection_unit: zod
+                      .string()
+                      .min(1)
+                      .max(
+                        tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextRunDefinitionSelectionUnitMax,
+                      ),
+                    weighting: zod
+                      .string()
+                      .min(1)
+                      .max(
+                        tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextRunDefinitionWeightingMax,
+                      ),
+                    cohort_key: zod
+                      .string()
+                      .max(
+                        tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextRunDefinitionCohortKeyMax,
+                      )
+                      .optional(),
+                    filters: zod.array(
+                      zod.object({
+                        field: zod.enum([
+                          "model",
+                          "provider",
+                          "status",
+                          "name",
+                          "service_name",
+                        ]),
+                        value: zod
+                          .string()
+                          .max(
+                            tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextRunDefinitionFiltersItemValueMax,
+                          ),
+                      }),
+                    ),
+                    definition_hash: zod
+                      .string()
+                      .min(1)
+                      .max(
+                        tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextRunDefinitionDefinitionHashMax,
+                      ),
+                    created_at: zod
+                      .string()
+                      .datetime({ offset: true })
+                      .optional(),
+                  })
+                  .optional(),
+                window_start: zod
+                  .string()
+                  .datetime({ offset: true })
+                  .optional(),
+                window_end: zod.string().datetime({ offset: true }).optional(),
+                filters: zod
+                  .array(
+                    zod.object({
+                      field: zod.enum([
+                        "model",
+                        "provider",
+                        "status",
+                        "name",
+                        "service_name",
+                      ]),
+                      value: zod
+                        .string()
+                        .max(
+                          tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextRunFiltersItemValueMax,
+                        ),
+                    }),
+                  )
+                  .optional(),
+                result_id: zod.string().uuid().optional(),
+                status: zod
+                  .enum(["queued", "running", "complete", "failed"])
+                  .optional(),
+              })
+              .optional(),
+            result: zod
+              .object({
+                group_key: zod.string(),
+                value: zod.number(),
+                numerator: zod.number(),
+                denominator: zod.number(),
+                status: zod.enum([
+                  "ok",
+                  "no_data",
+                  "missing_inputs",
+                  "invalid_probability",
+                  "zero_denominator",
+                  "non_finite",
+                ]),
+                unit_count: zod
+                  .number()
+                  .min(
+                    tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextResultUnitCountMin,
+                  ),
+                valid_count: zod
+                  .number()
+                  .min(
+                    tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextResultValidCountMin,
+                  ),
+                missing_count: zod
+                  .number()
+                  .min(
+                    tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextResultMissingCountMin,
+                  ),
+                invalid_probability_count: zod
+                  .number()
+                  .min(
+                    tracerDashboardWidgetsExecuteQueryResponseResultMetricsItemDerivedContextResultInvalidProbabilityCountMin,
+                  ),
+                uncertainty: zod
+                  .object({
+                    confidence_level: zod
+                      .number()
+                      .describe("Always 0.95 (two-sided)."),
+                    status: zod
+                      .enum(["ok", "not_estimable"])
+                      .describe(
+                        "`not_estimable` means no interval exists; `reason` says why. Never a guess.",
+                      ),
+                    reason: zod.enum([
+                      "",
+                      "no_value",
+                      "design_not_captured",
+                      "mixed_design",
+                      "unweighted_total",
+                      "fewer_than_two_units",
+                      "population_size_missing",
+                      "inconsistent_stratum_design",
+                      "single_unit_stratum",
+                      "no_degrees_of_freedom",
+                      "non_finite",
+                      "unstable_variance",
+                      "not_computed",
+                    ]),
+                    method: zod
+                      .enum(["", "stratified_wor_fpc", "poisson", "iid_units"])
+                      .describe(
+                        "stratified_wor_fpc: closed sampling cohorts (stratified, without replacement, finite-population corrected). poisson: live sampling policies. iid_units: unweighted ratios and means, a model-based interval treating units as independent draws. Covers sampling error only, not evaluator error.",
+                      ),
+                    interval: zod
+                      .enum(["", "wilson", "wald_t"])
+                      .describe(
+                        "wilson: rates (a 0/1 numerator within a 0/1 denominator), Wilson score interval at the design-effective sample size. wald_t: value +/- t * SE.",
+                      ),
+                    std_error: zod.number(),
+                    ci_low: zod.number(),
+                    ci_high: zod.number(),
+                    effective_n: zod
+                      .number()
+                      .describe(
+                        "Kish effective sample size of the valid units.",
+                      ),
+                    degrees_of_freedom: zod.number().min(1),
+                  })
+                  .optional()
+                  .describe(
+                    "Present on previews, and on persisted results when include_uncertainty=true.",
+                  ),
+              })
+              .optional(),
+          })
+          .optional(),
         series_total: zod
           .number()
           .min(
@@ -52727,6 +53513,30 @@ export const TracerDerivedMetricRunsReadParams = zod.object({
   id: zod.string(),
 });
 
+export const tracerDerivedMetricRunsReadResponseDefinitionVersionMin = 0;
+export const tracerDerivedMetricRunsReadResponseDefinitionVersionMax = 2147483647;
+
+export const tracerDerivedMetricRunsReadResponseDefinitionFormulaMax = 2048;
+
+export const tracerDerivedMetricRunsReadResponseDefinitionInputsItemAliasRegExp =
+  new RegExp("^[a-z][a-z0-9_]{0,39}$");
+export const tracerDerivedMetricRunsReadResponseDefinitionInputsItemConfigHashDefault = ``;
+export const tracerDerivedMetricRunsReadResponseDefinitionInputsItemConfigHashRegExp =
+  new RegExp("^(?:[a-f0-9]{64})?$");
+export const tracerDerivedMetricRunsReadResponseDefinitionInputsItemAttributeKeyDefault = ``;
+export const tracerDerivedMetricRunsReadResponseDefinitionInputsItemAttributeKeyMax = 160;
+
+export const tracerDerivedMetricRunsReadResponseDefinitionInputsItemReducerDefault = `latest`;
+export const tracerDerivedMetricRunsReadResponseDefinitionSelectionUnitMax = 16;
+
+export const tracerDerivedMetricRunsReadResponseDefinitionWeightingMax = 32;
+
+export const tracerDerivedMetricRunsReadResponseDefinitionCohortKeyMax = 160;
+
+export const tracerDerivedMetricRunsReadResponseDefinitionFiltersItemValueMax = 255;
+
+export const tracerDerivedMetricRunsReadResponseDefinitionDefinitionHashMax = 64;
+
 export const tracerDerivedMetricRunsReadResponseSourceRunIdMax = 255;
 
 export const tracerDerivedMetricRunsReadResponseFiltersItemValueMax = 255;
@@ -52740,6 +53550,95 @@ export const TracerDerivedMetricRunsReadResponse = zod.object({
   id: zod.string().uuid().optional(),
   metric_id: zod.string().uuid(),
   metric_version: zod.number(),
+  definition: zod
+    .object({
+      version: zod
+        .number()
+        .min(tracerDerivedMetricRunsReadResponseDefinitionVersionMin)
+        .max(tracerDerivedMetricRunsReadResponseDefinitionVersionMax),
+      formula: zod
+        .string()
+        .min(1)
+        .max(tracerDerivedMetricRunsReadResponseDefinitionFormulaMax),
+      inputs: zod.array(
+        zod.object({
+          alias: zod
+            .string()
+            .min(1)
+            .regex(
+              tracerDerivedMetricRunsReadResponseDefinitionInputsItemAliasRegExp,
+            ),
+          source: zod.enum(["eval", "span"]),
+          config_id: zod.string().uuid().optional(),
+          config_hash: zod
+            .string()
+            .regex(
+              tracerDerivedMetricRunsReadResponseDefinitionInputsItemConfigHashRegExp,
+            )
+            .default(
+              tracerDerivedMetricRunsReadResponseDefinitionInputsItemConfigHashDefault,
+            ),
+          field: zod
+            .enum([
+              "latency_ms",
+              "cost",
+              "total_tokens",
+              "prompt_tokens",
+              "completion_tokens",
+              "attribute_number",
+              "attribute_bool",
+            ])
+            .optional(),
+          attribute_key: zod
+            .string()
+            .max(
+              tracerDerivedMetricRunsReadResponseDefinitionInputsItemAttributeKeyMax,
+            )
+            .default(
+              tracerDerivedMetricRunsReadResponseDefinitionInputsItemAttributeKeyDefault,
+            ),
+          reducer: zod
+            .enum(["mean", "min", "max", "latest"])
+            .default(
+              tracerDerivedMetricRunsReadResponseDefinitionInputsItemReducerDefault,
+            ),
+        }),
+      ),
+      selection_unit: zod
+        .string()
+        .min(1)
+        .max(tracerDerivedMetricRunsReadResponseDefinitionSelectionUnitMax),
+      weighting: zod
+        .string()
+        .min(1)
+        .max(tracerDerivedMetricRunsReadResponseDefinitionWeightingMax),
+      cohort_key: zod
+        .string()
+        .max(tracerDerivedMetricRunsReadResponseDefinitionCohortKeyMax)
+        .optional(),
+      filters: zod.array(
+        zod.object({
+          field: zod.enum([
+            "model",
+            "provider",
+            "status",
+            "name",
+            "service_name",
+          ]),
+          value: zod
+            .string()
+            .max(
+              tracerDerivedMetricRunsReadResponseDefinitionFiltersItemValueMax,
+            ),
+        }),
+      ),
+      definition_hash: zod
+        .string()
+        .min(1)
+        .max(tracerDerivedMetricRunsReadResponseDefinitionDefinitionHashMax),
+      created_at: zod.string().datetime({ offset: true }).optional(),
+    })
+    .optional(),
   window_start: zod.string().datetime({ offset: true }),
   window_end: zod.string().datetime({ offset: true }),
   as_of: zod.string().datetime({ offset: true }),
@@ -53015,6 +53914,12 @@ export const tracerDerivedMetricRunsContributorsResponseDiagnosticsUndefinedArit
 export const tracerDerivedMetricRunsContributorsResponseDiagnosticsMissingByInputMinOne = 0;
 
 export const TracerDerivedMetricRunsContributorsResponse = zod.object({
+  result_id: zod
+    .string()
+    .uuid()
+    .describe(
+      "Committed result identity used for the value and contributor diagnostics.",
+    ),
   rollup: zod.string().min(1),
   group_key: zod.string(),
   kind: zod.enum(["ratio", "mean", "sum", "count_if"]),
@@ -53229,6 +54134,12 @@ export const TracerDerivedMetricRunsResultsResponse = zod.object({
     }),
   ),
   next_cursor: zod.string(),
+  result_id: zod
+    .string()
+    .uuid()
+    .describe(
+      "Committed result identity used to read every row and the next cursor.",
+    ),
 });
 
 export const tracerDerivedMetricsListQueryLimitDefault = 30;
@@ -54164,6 +55075,30 @@ export const TracerDerivedMetricsRunsReadQueryParams = zod.object({
   before: zod.string().uuid().optional(),
 });
 
+export const tracerDerivedMetricsRunsReadResponseResultsItemDefinitionVersionMin = 0;
+export const tracerDerivedMetricsRunsReadResponseResultsItemDefinitionVersionMax = 2147483647;
+
+export const tracerDerivedMetricsRunsReadResponseResultsItemDefinitionFormulaMax = 2048;
+
+export const tracerDerivedMetricsRunsReadResponseResultsItemDefinitionInputsItemAliasRegExp =
+  new RegExp("^[a-z][a-z0-9_]{0,39}$");
+export const tracerDerivedMetricsRunsReadResponseResultsItemDefinitionInputsItemConfigHashDefault = ``;
+export const tracerDerivedMetricsRunsReadResponseResultsItemDefinitionInputsItemConfigHashRegExp =
+  new RegExp("^(?:[a-f0-9]{64})?$");
+export const tracerDerivedMetricsRunsReadResponseResultsItemDefinitionInputsItemAttributeKeyDefault = ``;
+export const tracerDerivedMetricsRunsReadResponseResultsItemDefinitionInputsItemAttributeKeyMax = 160;
+
+export const tracerDerivedMetricsRunsReadResponseResultsItemDefinitionInputsItemReducerDefault = `latest`;
+export const tracerDerivedMetricsRunsReadResponseResultsItemDefinitionSelectionUnitMax = 16;
+
+export const tracerDerivedMetricsRunsReadResponseResultsItemDefinitionWeightingMax = 32;
+
+export const tracerDerivedMetricsRunsReadResponseResultsItemDefinitionCohortKeyMax = 160;
+
+export const tracerDerivedMetricsRunsReadResponseResultsItemDefinitionFiltersItemValueMax = 255;
+
+export const tracerDerivedMetricsRunsReadResponseResultsItemDefinitionDefinitionHashMax = 64;
+
 export const tracerDerivedMetricsRunsReadResponseResultsItemSourceRunIdMax = 255;
 
 export const tracerDerivedMetricsRunsReadResponseResultsItemFiltersItemValueMax = 255;
@@ -54179,6 +55114,109 @@ export const TracerDerivedMetricsRunsReadResponse = zod.object({
       id: zod.string().uuid().optional(),
       metric_id: zod.string().uuid(),
       metric_version: zod.number(),
+      definition: zod
+        .object({
+          version: zod
+            .number()
+            .min(
+              tracerDerivedMetricsRunsReadResponseResultsItemDefinitionVersionMin,
+            )
+            .max(
+              tracerDerivedMetricsRunsReadResponseResultsItemDefinitionVersionMax,
+            ),
+          formula: zod
+            .string()
+            .min(1)
+            .max(
+              tracerDerivedMetricsRunsReadResponseResultsItemDefinitionFormulaMax,
+            ),
+          inputs: zod.array(
+            zod.object({
+              alias: zod
+                .string()
+                .min(1)
+                .regex(
+                  tracerDerivedMetricsRunsReadResponseResultsItemDefinitionInputsItemAliasRegExp,
+                ),
+              source: zod.enum(["eval", "span"]),
+              config_id: zod.string().uuid().optional(),
+              config_hash: zod
+                .string()
+                .regex(
+                  tracerDerivedMetricsRunsReadResponseResultsItemDefinitionInputsItemConfigHashRegExp,
+                )
+                .default(
+                  tracerDerivedMetricsRunsReadResponseResultsItemDefinitionInputsItemConfigHashDefault,
+                ),
+              field: zod
+                .enum([
+                  "latency_ms",
+                  "cost",
+                  "total_tokens",
+                  "prompt_tokens",
+                  "completion_tokens",
+                  "attribute_number",
+                  "attribute_bool",
+                ])
+                .optional(),
+              attribute_key: zod
+                .string()
+                .max(
+                  tracerDerivedMetricsRunsReadResponseResultsItemDefinitionInputsItemAttributeKeyMax,
+                )
+                .default(
+                  tracerDerivedMetricsRunsReadResponseResultsItemDefinitionInputsItemAttributeKeyDefault,
+                ),
+              reducer: zod
+                .enum(["mean", "min", "max", "latest"])
+                .default(
+                  tracerDerivedMetricsRunsReadResponseResultsItemDefinitionInputsItemReducerDefault,
+                ),
+            }),
+          ),
+          selection_unit: zod
+            .string()
+            .min(1)
+            .max(
+              tracerDerivedMetricsRunsReadResponseResultsItemDefinitionSelectionUnitMax,
+            ),
+          weighting: zod
+            .string()
+            .min(1)
+            .max(
+              tracerDerivedMetricsRunsReadResponseResultsItemDefinitionWeightingMax,
+            ),
+          cohort_key: zod
+            .string()
+            .max(
+              tracerDerivedMetricsRunsReadResponseResultsItemDefinitionCohortKeyMax,
+            )
+            .optional(),
+          filters: zod.array(
+            zod.object({
+              field: zod.enum([
+                "model",
+                "provider",
+                "status",
+                "name",
+                "service_name",
+              ]),
+              value: zod
+                .string()
+                .max(
+                  tracerDerivedMetricsRunsReadResponseResultsItemDefinitionFiltersItemValueMax,
+                ),
+            }),
+          ),
+          definition_hash: zod
+            .string()
+            .min(1)
+            .max(
+              tracerDerivedMetricsRunsReadResponseResultsItemDefinitionDefinitionHashMax,
+            ),
+          created_at: zod.string().datetime({ offset: true }).optional(),
+        })
+        .optional(),
       window_start: zod.string().datetime({ offset: true }),
       window_end: zod.string().datetime({ offset: true }),
       as_of: zod.string().datetime({ offset: true }),
@@ -74005,6 +75043,11 @@ export const TracerUserAlertsCreateBody = zod.object({
   organization: zod.string().uuid(),
   workspace: zod.string().uuid().optional(),
   created_by: zod.string().uuid().optional(),
+});
+
+export const TracerUserAlertsCreateResponse = zod.object({
+  status: zod.literal(true),
+  result: zod.string().min(1),
 });
 
 export const tracerUserAlertsBulkMuteBodyIdsDefault = [];

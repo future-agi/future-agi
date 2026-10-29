@@ -186,6 +186,7 @@ def read_contributors(
         alias: diagnostics.pop(f"missing_{alias}") for alias in formula.required
     }
     return {
+        "result_id": params["result_id"],
         "rollup": rollup,
         "group_key": group_key,
         "kind": formula.kind,

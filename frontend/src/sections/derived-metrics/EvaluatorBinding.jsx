@@ -2,6 +2,7 @@ import PropTypes from "prop-types";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
+  Alert,
   Autocomplete,
   Box,
   Button,
@@ -14,6 +15,7 @@ import {
 import axios, { endpoints } from "src/utils/axios";
 import { useDebounce } from "src/hooks/use-debounce";
 import { evaluatorBinding, evaluatorDrift } from "./metricForm";
+import useMetricEvaluatorNames from "./use_metric_evaluator_names";
 
 const LIST_LIMIT = 50;
 
@@ -34,6 +36,7 @@ export default function EvaluatorBinding({
   input,
   projectId,
   disabled,
+  readOnly,
   onBind,
   onField,
 }) {
@@ -56,12 +59,13 @@ export default function EvaluatorBinding({
   });
   const rows = listing.data?.results ?? [];
   const listed = rows.find((row) => row.id === input.config_id);
+  const names = useMetricEvaluatorNames(projectId, [input], "", rows);
   // The bound evaluator stays an option even when the current search filters it
   // out of the list, so the control never shows a value it cannot resolve.
   const selected = input.config_id
     ? listed ?? {
         id: input.config_id,
-        name: "",
+        name: names[input.config_id],
         config_hash: input.config_hash,
       }
     : null;
@@ -79,21 +83,27 @@ export default function EvaluatorBinding({
   return (
     <Stack spacing={1} sx={{ width: "100%" }}>
       <Autocomplete
+        readOnly={readOnly}
         size="small"
         fullWidth
         disabled={disabled || !projectId}
         loading={listing.isFetching}
+        noOptionsText="No saved project evaluators match. Configure an evaluator in a task first; this metric does not create or execute evaluators."
         options={options}
         value={selected}
         // The server filters by name; client filtering would hide the match.
         filterOptions={(all) => all}
         isOptionEqualToValue={sameEvaluator}
-        getOptionLabel={(option) => option.name || option.id}
+        getOptionLabel={(option) =>
+          option.name || "Saved evaluator (name unavailable; binding preserved)"
+        }
         onInputChange={(_, value, reason) => {
           if (reason === "input") setText(value);
           if (reason === "clear") setText("");
         }}
-        onChange={(_, evaluator) => onBind(evaluatorBinding(evaluator))}
+        onChange={(_, evaluator) => {
+          if (!disabled && !readOnly) onBind(evaluatorBinding(evaluator));
+        }}
         renderOption={(liProps, option) => {
           // MUI passes `key` inside the props; it must not be spread into JSX.
           const { key, ...optionProps } = liProps;
@@ -101,7 +111,8 @@ export default function EvaluatorBinding({
             <li {...optionProps} key={option.id || key}>
               <Box>
                 <Typography variant="body2">
-                  {option.name || option.id}
+                  {option.name ||
+                    "Saved evaluator (name unavailable; binding preserved)"}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
                   {definitionLabel(option.config_hash)}
@@ -115,12 +126,12 @@ export default function EvaluatorBinding({
         )}
       />
       {drifted && (
-        <Typography variant="caption" color="warning.main" role="note">
+        <Alert severity="warning" role="note">
           This evaluator&apos;s definition changed after the input was bound.
           New results are stored under a different hash, so this input still
           reads only the older results. Select the evaluator again to follow its
           current definition.
-        </Typography>
+        </Alert>
       )}
       <Button
         size="small"
@@ -139,7 +150,10 @@ export default function EvaluatorBinding({
             label={`Input ${index + 1} evaluator ID`}
             value={input.config_id || ""}
             disabled={disabled}
-            onChange={(e) => onField("config_id", e.target.value)}
+            InputProps={{ readOnly }}
+            onChange={(e) => {
+              if (!disabled && !readOnly) onField("config_id", e.target.value);
+            }}
           />
           <TextField
             fullWidth
@@ -147,7 +161,11 @@ export default function EvaluatorBinding({
             label={`Input ${index + 1} evaluator hash`}
             value={input.config_hash || ""}
             disabled={disabled}
-            onChange={(e) => onField("config_hash", e.target.value)}
+            InputProps={{ readOnly }}
+            onChange={(e) => {
+              if (!disabled && !readOnly)
+                onField("config_hash", e.target.value);
+            }}
             helperText="Exact persisted config_hash. Empty selects legacy unversioned results only; sampled results always carry a hash."
           />
         </Stack>
@@ -161,6 +179,7 @@ EvaluatorBinding.propTypes = {
   input: PropTypes.object.isRequired,
   projectId: PropTypes.string,
   disabled: PropTypes.bool,
+  readOnly: PropTypes.bool,
   onBind: PropTypes.func.isRequired,
   onField: PropTypes.func.isRequired,
 };

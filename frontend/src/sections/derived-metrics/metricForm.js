@@ -11,11 +11,8 @@ export const initialForm = () => ({
   project_id: "",
   name: "",
   description: "",
-  formula: "ratio(resolved == 1 and escalated == 0, resolved >= 0)",
-  inputs: [
-    { ...newInput("resolved"), attribute_key: "resolved" },
-    { ...newInput("escalated"), attribute_key: "escalated" },
-  ],
+  formula: "mean(value)",
+  inputs: [{ ...newInput(), field: "latency_ms" }],
   selection_unit: "session",
   weighting: "none",
   cohort_key: "",

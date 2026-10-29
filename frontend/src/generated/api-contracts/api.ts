@@ -398,6 +398,7 @@ import type {
   DeploymentRegistrationApi,
   DeploymentRegistrationResponseApi,
   DerivedMetricApi,
+  DerivedMetricCommittedResultPageApi,
   DerivedMetricComparisonApi,
   DerivedMetricContributorPageApi,
   DerivedMetricEvaluatorPageApi,
@@ -1501,8 +1502,10 @@ import type {
   UsageWorkspaceUsageSummaryListParams,
   UserAlertMonitorApi,
   UserAlertMonitorBulkMuteRequestApi,
+  UserAlertMonitorCreateResponseApi,
   UserAlertMonitorDuplicateApi,
   UserAlertMonitorDuplicateResponseApi,
+  UserAlertMonitorEntitlementResponseApi,
   UserAlertMonitorGraphResponseApi,
   UserAlertMonitorListResponseApi,
   UserAlertMonitorLogApi,
@@ -70755,7 +70758,7 @@ export const tracerDerivedMetricRunsRecompute = async (
 };
 
 export type tracerDerivedMetricRunsResultsResponse200 = {
-  data: DerivedMetricResultPageApi;
+  data: DerivedMetricCommittedResultPageApi;
   status: 200;
 };
 
@@ -83976,24 +83979,31 @@ export const tracerUserAlertsList = async (
   );
 };
 
-export type tracerUserAlertsCreateResponse201 = {
-  data: UserAlertMonitorApi;
-  status: 201;
+export type tracerUserAlertsCreateResponse200 = {
+  data: UserAlertMonitorCreateResponseApi;
+  status: 200;
+};
+
+export type tracerUserAlertsCreateResponse402 = {
+  data: UserAlertMonitorEntitlementResponseApi;
+  status: 402;
 };
 
 export type tracerUserAlertsCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201>;
+  status: Exclude<HTTPStatusCodes, 200 | 402>;
 };
 
 export type tracerUserAlertsCreateResponseSuccess =
-  tracerUserAlertsCreateResponse201 & {
+  tracerUserAlertsCreateResponse200 & {
     headers: Headers;
   };
-export type tracerUserAlertsCreateResponseError =
-  tracerUserAlertsCreateResponseDefault & {
-    headers: Headers;
-  };
+export type tracerUserAlertsCreateResponseError = (
+  | tracerUserAlertsCreateResponse402
+  | tracerUserAlertsCreateResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type tracerUserAlertsCreateResponse =
   | tracerUserAlertsCreateResponseSuccess

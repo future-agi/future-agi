@@ -164,7 +164,7 @@ describe("derived metric form contract", () => {
     };
     const request = metricRequestBody(form, null);
     expect(request.inputs[0]).toEqual({
-      alias: "resolved",
+      alias: "value",
       source: "eval",
       config_id: "config-id",
       config_hash: "b".repeat(64),

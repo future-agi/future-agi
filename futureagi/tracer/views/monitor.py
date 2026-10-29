@@ -32,9 +32,11 @@ from tracer.models.project import Project
 from tracer.permissions.metrics import MonitorWritePermission
 from tracer.serializers.monitor import (
     UserAlertMonitorBulkMuteRequestSerializer,
+    UserAlertMonitorCreateResponseSerializer,
     UserAlertMonitorDetailSerializer,
     UserAlertMonitorDuplicateResponseSerializer,
     UserAlertMonitorDuplicateSerializer,
+    UserAlertMonitorEntitlementResponseSerializer,
     UserAlertMonitorGraphResponseSerializer,
     UserAlertMonitorListQuerySerializer,
     UserAlertMonitorListResponseSerializer,
@@ -539,6 +541,10 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     @validated_request(
         request_serializer=UserAlertMonitorSerializer,
         strict_request_validation=False,
+        responses={
+            200: UserAlertMonitorCreateResponseSerializer,
+            402: UserAlertMonitorEntitlementResponseSerializer,
+        },
     )
     def create(self, request, *args, **kwargs):
         from tfc.ee_gating import EEResource, check_ee_can_create

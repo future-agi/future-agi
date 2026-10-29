@@ -58,6 +58,7 @@ export const paths = {
     tasks: `${ROOTS.DASHBOARD}/tasks`,
     users: `${ROOTS.DASHBOARD}/users`,
     evals: `${ROOTS.DASHBOARD}/evaluations`,
+    evalMetrics: `${ROOTS.DASHBOARD}/evaluations/metrics`,
     docs: `${ROOTS.DASHBOARD}/docs`,
     sync: `${ROOTS.DASHBOARD}/sync`,
     develop: `${ROOTS.DASHBOARD}/develop`,

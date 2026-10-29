@@ -16,6 +16,9 @@ vi.mock("src/utils/axios", () => ({
 it("keeps drill-down optional, bounded, and scoped in its query", async () => {
   get.mockResolvedValue({
     data: {
+      result_id: "00000000-0000-0000-0000-000000000004",
+      rollup: "overall",
+      group_key: "",
       diagnostics: {
         valid_count: 1,
         missing_count: 2,
@@ -46,7 +49,7 @@ it("keeps drill-down optional, bounded, and scoped in its query", async () => {
       <MetricContributors
         scope="org:workspace"
         runId="run"
-        resultId="attempt"
+        resultId="00000000-0000-0000-0000-000000000004"
         projectId="project"
         rollup="overall"
         groups={[{ group_key: "" }]}
