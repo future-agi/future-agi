@@ -3,7 +3,7 @@ from channels.db import database_sync_to_async
 from django.db import close_old_connections
 
 from accounts.models import Organization
-
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 from tfc.ee_stub import _ee_stub
 
 try:
@@ -12,10 +12,12 @@ except ImportError:
     PromptGenerator = _ee_stub("PromptGenerator")
 
 logger = structlog.get_logger(__name__)
-from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 
 try:
-    from ee.usage.utils.usage_entries import count_text_tokens, log_and_deduct_cost_for_api_request
+    from ee.usage.utils.usage_entries import (
+        count_text_tokens,
+        log_and_deduct_cost_for_api_request,
+    )
 except ImportError:
     count_text_tokens = None
     log_and_deduct_cost_for_api_request = None
@@ -65,7 +67,9 @@ async def generate_prompt_async(
 
         # Create a call_log_row for tracking
         call_log_row = None
-        config = {"input_tokens": (count_text_tokens(description) if count_text_tokens else 0)}
+        config = {
+            "input_tokens": (count_text_tokens(description) if count_text_tokens else 0)
+        }
         if log_and_deduct_cost_for_api_request is not None:
             call_log_row = await database_sync_to_async(
                 log_and_deduct_cost_for_api_request
@@ -120,33 +124,39 @@ async def generate_prompt_async(
             try:
                 from ee.usage.utils.event_properties import llm_usage_properties
             except ImportError:
-                llm_usage_properties = lambda obj: {}
+
+                def llm_usage_properties(obj):
+                    return {}
 
             actual_cost = 0
             if hasattr(prompt_generator, "llm") and prompt_generator.llm:
                 actual_cost = getattr(prompt_generator.llm, "cost", {}).get(
                     "total_cost", 0
                 )
-            if BillingConfig is not None:
-
-                credits = BillingConfig.get().calculate_ai_credits(actual_cost)
-
-            if emit is not None and UsageEvent is not None and BillingEventType is not None:
-
-
-                emit(
-                UsageEvent(
-                    org_id=str(organization_id),
-                    event_type=BillingEventType.AI_PROMPT_CREATION,
-                    amount=credits,
-                    properties={
-                        "source": "run_prompt_gen",
-                        "source_id": str(generation_id),
-                        "raw_cost_usd": str(actual_cost),
-                        **llm_usage_properties(prompt_generator),
-                    },
-                )
+            credits = (
+                BillingConfig.get().calculate_ai_credits(actual_cost)
+                if BillingConfig is not None
+                else 0
             )
+
+            if (
+                emit is not None
+                and UsageEvent is not None
+                and BillingEventType is not None
+            ):
+                emit(
+                    UsageEvent(
+                        org_id=str(organization_id),
+                        event_type=BillingEventType.AI_PROMPT_CREATION,
+                        amount=credits,
+                        properties={
+                            "source": "run_prompt_gen",
+                            "source_id": str(generation_id),
+                            "raw_cost_usd": str(actual_cost),
+                            **llm_usage_properties(prompt_generator),
+                        },
+                    )
+                )
         except Exception:
             pass
 
