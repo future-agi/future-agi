@@ -120,7 +120,8 @@ const gaming = ({ tasks, measured, env, baseline }) => {
   const signals = [];
 
   /* Said, not done: the transcript claims an outcome no tool call supports. */
-  const claims = tasks.filter((t) => t.callLog?.unsupportedClaim);
+  /* Not once a tool-call re-grade has caught it — it fails for what it is now. */
+  const claims = tasks.filter((t) => t.callLog?.unsupportedClaim && !t.regraded?.toolCalls);
   if (claims.length) {
     signals.push({
       id: "unsupported-claim",

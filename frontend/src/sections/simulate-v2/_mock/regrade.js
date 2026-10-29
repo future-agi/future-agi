@@ -16,6 +16,7 @@
 import { hashSeed } from "./runStream";
 import { evalVersionOf, subGoalCatalogOf } from "./envModel";
 import { estimateRegrade } from "./metering";
+import { TOOL_CALL_JUDGE_ID } from "./evals";
 
 const at = (s) => Date.parse(s || 0) || 0;
 const shortName = (name) => String(name || "sub-goal").replace(/^(Holds the line: |Calls )/, "").split(/\s+/).slice(0, 3).join(" ").toLowerCase();
@@ -65,6 +66,8 @@ export const regradeOf = ({ env, envState, run, evals = [] }) => {
     subGoals,
     evalFrom,
     evalTo: evalChanged ? evalTo : null,
+    /* Tool call evaluation is among the evals now: claims are read against the calls. */
+    toolCalls: evals.some((e) => e?.id === TOOL_CALL_JUDGE_ID),
     scenarioIds,
     calls,
     credits,
@@ -78,6 +81,7 @@ export const regradeRecordOf = (offer) => ({
   evalVersion: offer.evalTo || null,
   scenarioIds: offer.scenarioIds,
   label: offer.label.replace(/^Re-grade with /, ""),
+  ...(offer.toolCalls && { toolCalls: true }),
   credits: offer.credits,
   at: new Date().toISOString(),
 });
@@ -90,6 +94,43 @@ export const regradeRecordOf = (offer) => ({
 export const withRegrade = (tasks = [], run) => {
   const rg = run?.regradedWith;
   if (!rg) return tasks;
+  /*
+    Re-graded with tool call evaluation (Debug failures → Fix Task success):
+    every pass whose claim no tool call backs — or that skipped a tool the
+    scenario requires — fails now. The conversations aren't re-run; the
+    recorded calls are read against what was said.
+  */
+  if (rg.toolCalls) {
+    return tasks.map((t) => {
+      const hollow = t.status === "passed" && (t.callLog?.missing || []).length > 0;
+      const said = !!t.callLog?.unsupportedClaim;
+      if (!(said || hollow) || t.status === "unmeasured" || t.measured === false) return t;
+      const reason = said
+        ? "Fails under tool call evaluation — the claim has no tool call behind it."
+        : "Fails under tool call evaluation — a tool the scenario requires was never called.";
+      /* Every check that passed it on the words alone fails it now. */
+      const flipped = (t.evalResults || []).filter((e) => e.passed).length;
+      const evalResults = [
+        ...(t.evalResults || []).map((e) => (e.passed ? { ...e, passed: false, score: Math.min(e.score ?? 1, 0.3), reason } : e)),
+        { id: "tool_call_check", name: "Tool call evaluation", passed: false, score: 0, reason },
+      ];
+      const n = Math.max(1, t.samples?.length || t.repeats || 1);
+      const wasFailed = t.status === "failed";
+      return {
+        ...t,
+        evalResults,
+        ...(!wasFailed && {
+          status: "failed",
+          verdict: "failed",
+          samples: Array.from({ length: n }, () => "failed"),
+          passes: 0,
+          passShare: 0,
+        }),
+        /* changed = the verdict itself moved (pass or flaky → fail). */
+        regraded: { with: rg.label, changed: !wasFailed, from: t.status, toolCalls: true, ...(flipped && { checksFlipped: flipped }) },
+      };
+    });
+  }
   const touched = new Set(rg.scenarioIds || []);
   return tasks.map((t) => {
     if (!touched.has(t.id) || t.status === "unmeasured" || t.measured === false || t.cheat || t.canary) return t;

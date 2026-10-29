@@ -30,7 +30,9 @@ export const agentValueOf = (limits, key) => {
 /* The keys this improvement set differently from the agent. */
 export const changedKeysOf = (limits, edits = {}) =>
   Object.keys(edits).filter(
-    (k) => edits[k] != null && edits[k] !== agentValueOf(limits, k),
+    (k) =>
+      edits[k] != null &&
+      JSON.stringify(edits[k]) !== JSON.stringify(agentValueOf(limits, k)),
   );
 
 /* The agent's constraints with this improvement's edits applied. */
@@ -43,6 +45,9 @@ export const withEdits = (limits, edits = {}) => ({
   ...(edits.latencyCeiling != null && {
     latencyCeiling: edits.latencyCeiling,
   }),
+  /* What it may change and the files it must never edit, set in place. */
+  ...(edits.allowed && { allowed: edits.allowed }),
+  ...(edits.protected && { protected: edits.protected }),
   budget: {
     ...limits.budget,
     ...(edits.dollars != null && { dollars: edits.dollars }),

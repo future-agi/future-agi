@@ -75,6 +75,7 @@ import RunGroupBar from "./RunGroupBar";
 import InsightsTab from "./InsightsTab";
 import CostTab from "./CostTab";
 import NextStepBanner from "../workspace/NextStepBanner";
+import { isReferenceRun, sampleCompareOf } from "../_mock/referenceRuns";
 import ImprovementSourcesList from "../improvements/ImprovementSourcesList";
 import CostStrip from "./CostStrip";
 import { TraceSheet } from "./TraceWaterfall";
@@ -1740,6 +1741,73 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
         )}
       </Stack>
 
+      {/* ── a ready world's sample agent: its runs are Reference; yours
+          compare with them only on the cases both ran ── */}
+      {(() => {
+        const raw = (envState?.runs || []).find((r) => r.id === runId);
+        if (!raw || !raw.finishedAt) return null;
+        if (isReferenceRun(raw, envState)) {
+          const stillSample = !!envState?.agent?.sample;
+          const firstFail =
+            tasks.find((t) => !t.pulled && statusBucket(t) === "failing") ||
+            null;
+          return (
+            <Box sx={{ px: 2, pt: 1.5, flexShrink: 0 }}>
+              <NextStepBanner
+                tone="info"
+                title="Reference run — the sample agent."
+                line={
+                  stillSample
+                    ? "Graded the same as any agent; its failures stay visible. Connect your agent to run these cases with yours."
+                    : "Run by the sample agent before your agent took its place. Your runs compare with it on the cases both ran."
+                }
+                {...(stillSample && {
+                  actionLabel: "Connect my agent",
+                  onAction: () =>
+                    navigate(
+                      `${paths.dashboard.simulate.environmentDetail(env.id)}?connect=agent`,
+                    ),
+                })}
+                {...(firstFail && {
+                  secondaryLabel: "Open a failed conversation",
+                  onSecondary: () => {
+                    setTab("tasks");
+                    openTrace(firstFail);
+                  },
+                })}
+              />
+            </Box>
+          );
+        }
+        const cmp = sampleCompareOf(envState, runId);
+        if (!cmp || !cmp.shared.length) return null;
+        const left = cmp.onlyMine.length + cmp.onlyRef.length;
+        return (
+          <Box sx={{ px: 2, pt: 1.5, flexShrink: 0 }}>
+            <NextStepBanner
+              tone="info"
+              title={`Compare with the sample on ${cmp.shared.length} shared case${cmp.shared.length === 1 ? "" : "s"}.`}
+              line={[
+                left
+                  ? `${left} case${left === 1 ? "" : "s"} only one of the two ran ${left === 1 ? "is" : "are"} left out.`
+                  : null,
+                cmp.changed
+                  ? `The world changed since the sample ran (${cmp.changed.from} → ${cmp.changed.to}), so its result isn't the same test.`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              actionLabel="Compare"
+              onAction={() =>
+                navigate(
+                  `${paths.dashboard.simulate.simulationCompare(env.id)}?runs=${cmp.ref.id},${runId}`,
+                )
+              }
+            />
+          </Box>
+        );
+      })()}
+
       {/* ── came to improve: the environment was built from New improvement,
           and nothing has been improved in it yet ── */}
       {envState?.improveIntent &&
@@ -1875,6 +1943,14 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                   .replace(/^./, (c) => c.toUpperCase())}
                 {`. Re-grade it so its scores use the repaired test — the stored traces and end-states, read again: ${regrade.scenarioIds.length} scenarios, no new calls. What that changes is the test's, not the agent's.`}
               </>
+            ) : sourceRun.regradedWith.toolCalls ? (
+              /* Tool call evaluation: what it caught, said plainly. */
+              (() => {
+                const caught = tasks.filter(
+                  (t) => t.regraded?.toolCalls,
+                ).length;
+                return `Re-graded with tool call evaluation · ${caught} ${caught === 1 ? "scenario's" : "scenarios'"} claims had no tool call behind them and now fail${regradedChanged ? ` · ${regradedChanged} ${regradedChanged === 1 ? "verdict" : "verdicts"} turned from pass to fail` : ""}. The recorded calls were read again — no new run.`;
+              })()
             ) : (
               `Re-graded with ${sourceRun.regradedWith.label} · ${regradedChanged} ${regradedChanged === 1 ? "verdict" : "verdicts"} changed under the repaired test — the test's change, not the agent's.`
             )}

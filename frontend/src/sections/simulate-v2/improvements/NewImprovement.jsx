@@ -79,14 +79,14 @@ export default function NewImprovement({ open, onClose, initialAgentId = null })
   /* Picked, but nowhere to score it yet. */
   const needsEnv = !!picked && !env;
 
-  const start = ({ name, model, writerModel, envIds, goal, budget, limits, seed, lineage, reread, textSearch, optimizerId, base, today, depth }) => {
+  const start = ({ name, model, writerModel, envIds, goal, budget, limits, seed, lineage, reread, textSearch, optimizerId, base, today, depth, pick }) => {
     const es = state.byEnv[env.id];
     /* Measuring today is a real run of the environment, recorded first. */
     if (today) commit({ type: "recordRun", envId: env.id, run: today });
     const from = base || baseRunOf(env, es, productionAgentVersion(es)?.label) || baseRunOf(env, es);
     if (!from?.tasks) return;
     const record = buildImprovement({
-      env, es, tasks: from.tasks, seed, state, reread, textSearch, optimizerId,
+      env, es, tasks: from.tasks, seed, state, reread, textSearch, optimizerId, pick,
       fromRunId: from.id,
       baseAgentVersion: from.agentVersion || null,
       trigger: { kind: "goal", goal: goal ? { id: goal.id, label: goal.label, ...(goal.group && { group: goal.group }), ...(goal.reliability && { reliability: goal.reliability }) } : undefined },

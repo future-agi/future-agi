@@ -218,11 +218,14 @@ export default function FixMyAgentDrawer({
     base,
     today,
     depth,
+    pick,
   }) => {
     /* An outside change re-read at Start is measured first, on that version
        — recorded as a run, and part of what the improvement spends. */
     if (today) commit({ type: "recordRun", envId: env.id, run: today });
     const record = buildImprovement({
+      /* Edit plan's cases to fix and to protect, when the person changed them. */
+      pick,
       reread,
       textSearch,
       targetMember,

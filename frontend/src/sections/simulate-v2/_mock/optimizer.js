@@ -928,14 +928,28 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
     improvement. Older records search on target plus the rest, as before.
   */
   const split = issueSplit || splitScenarios(scope.tasks, `${env?.id || seed}-split`, scope.holdable);
-  const { held } = split;
   /* An issue that reproduced nowhere (Continue anyway) still aims at its own scenarios. */
-  const train = !rsi ? split.train
+  const train0 = !rsi ? split.train
     : split.target.length || !issueFix ? split.target
-      : scope.tasks.filter((t) => t.fromIssue && !held.includes(t));
+      : scope.tasks.filter((t) => t.fromIssue && !split.held.includes(t));
+  /*
+    The person's own pick (Edit plan → Cases to fix / Cases to protect):
+    the targets and held-back cases narrow to the ones chosen to fix, and
+    the protected set is exactly the ones chosen to protect. Without a pick,
+    the suggestion stands.
+  */
+  const casePick = cfg.pick || null;
+  const fixing = casePick?.fix ? new Set(casePick.fix) : null;
+  const train = fixing ? train0.filter((t) => fixing.has(t.id)) : train0;
+  const held = fixing ? split.held.filter((t) => fixing.has(t.id)) : split.held;
+  const fixPool = new Set([...train0, ...split.held].map((t) => t.id));
   const inSets = new Set([...train, ...held].map((t) => t.id));
   /* From the whole suite when the search kept a slice of it (voice). */
-  const mustPassSet = rsi ? (cfg.mustPassPool || scope.tasks).filter((t) => !inSets.has(t.id) && mustPass(t)) : [];
+  const protectPool = rsi ? (cfg.mustPassPool || scope.tasks).filter((t) => !fixPool.has(t.id)) : [];
+  const protecting = casePick?.protect ? new Set(casePick.protect) : null;
+  const mustPassSet = rsi
+    ? protectPool.filter((t) => !inSets.has(t.id) && (protecting ? protecting.has(t.id) : mustPass(t)))
+    : [];
   const trainMeasured = train.filter((t) => t.status !== "unmeasured");
   const heldMeasured = held.filter((t) => t.status !== "unmeasured");
   const mustPassMeasured = mustPassSet.filter((t) => t.status !== "unmeasured");
@@ -1411,6 +1425,19 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
     base,
     train,
     held,
+    /* What Edit plan can pick from, with today's suggestion as the default. */
+    pickable: rsi
+      ? {
+          fix: [...train0, ...split.held].map((t) => ({
+            id: t.id, title: t.title, status: t.status,
+            held: split.held.includes(t), suggested: true,
+          })),
+          protect: protectPool.map((t) => ({
+            id: t.id, title: t.title, status: t.status,
+            suggested: mustPass(t), flakyToday: !!flakyToday(t),
+          })),
+        }
+      : null,
     trainMeasured: trainMeasured.length,
     trainMeasuredTasks: trainMeasured.map((t) => ({
       id: t.id, title: t.title, critical: !!t.critical,

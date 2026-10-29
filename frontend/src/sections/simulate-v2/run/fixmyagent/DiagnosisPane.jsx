@@ -35,6 +35,12 @@ import { decidingMoment } from "../../_mock/comparison";
 import { runIdentityOf } from "../../_mock/runIdentity";
 import { scenarioTitle } from "../../_mock/scenarios";
 import { checkToFix } from "../../_mock/omega";
+import { enqueueSnackbar } from "notistack";
+import { getEval, TOOL_CALL_JUDGE_ID } from "../../_mock/evals";
+import { worldToolsFor } from "../../_mock/toolFit";
+import { estimateRegrade } from "../../_mock/metering";
+import { evalVersionOf } from "../../_mock/envModel";
+import { useAppliedEvals } from "../../workspace/evals/useAppliedEvals";
 
 /**
  * What is wrong, and what to change about it.
@@ -340,29 +346,90 @@ export default function DiagnosisPane({
             ? "that skipped a step the scenario requires"
             : "where the agent claimed an action it never took"
         }`;
-  const fixLabel = !toFix?.check
-    ? toFix
-      ? "Fix the score"
-      : "Fix the checks"
-    : `Fix ${toFix.check.name}`;
-  const fixChecks = env?.id
-    ? () => {
-        onClose?.();
-        const base = paths.dashboard.simulate.environmentDetail(env.id);
-        if (toFix && !toFix.check) return navigate(`${base}/contract`);
-        navigate(`${base}/evals`, {
-          state: toFix?.check && {
-            fixCheck: {
-              evalId: toFix.check.id,
-              name: toFix.check.name,
-              count: toFix.check.count,
-              signal: toFix.signal,
-              runLabel,
+  /*
+    The check that passed claims nobody did is fixed here, in place: tool
+    call evaluation is turned on for the environment and this run is
+    re-graded against the calls it already recorded — no new run, a few
+    grader credits, seconds — and the diagnosis reads the corrected verdicts.
+    Anything else (the score's efficiency term, a check that needs editing)
+    still opens the environment.
+  */
+  const { add: addEvals, appliedIds } = useAppliedEvals(envState, patch);
+  const toolEval = getEval(TOOL_CALL_JUDGE_ID);
+  const regradeHere =
+    !!toFix?.check &&
+    !!toolEval &&
+    !!patch &&
+    !!runId &&
+    !appliedIds.has(TOOL_CALL_JUDGE_ID) &&
+    worldToolsFor(env, envState).length > 0;
+  const regradeCredits = regradeHere
+    ? Math.round(
+        estimateRegrade({
+          calls: tasks.reduce(
+            (n, t) => n + Math.max(1, t.samples?.length || t.repeats || 1),
+            0,
+          ),
+          evals: [toolEval],
+        }),
+      )
+    : 0;
+  const regradeInPlace = () => {
+    addEvals([toolEval]);
+    patch({
+      runs: (envState?.runs || []).map((r) =>
+        r.id === runId
+          ? {
+              ...r,
+              regradedWith: {
+                label: "tool call evaluation",
+                toolCalls: true,
+                /* Graded under the evals as they are once the check is added
+                   (one more eval change), so no second re-grade is offered. */
+                evalVersion: evalVersionOf({
+                  ...envState,
+                  evalChanges: [...(envState?.evalChanges || []), {}],
+                }),
+                scenarioIds: tasks.map((t) => t.id),
+                credits: regradeCredits,
+                at: new Date().toISOString(),
+              },
+            }
+          : r,
+      ),
+    });
+    enqueueSnackbar(
+      `Tool call evaluation is on, and ${runLabel} was re-graded against its recorded tool calls — no new run.`,
+      { variant: "success" },
+    );
+  };
+  const fixLabel = regradeHere
+    ? `Turn on tool-call checks and re-grade ${runLabel} · ≈ ${regradeCredits.toLocaleString()} credits`
+    : !toFix?.check
+      ? toFix
+        ? "Fix the score"
+        : "Fix the checks"
+      : `Fix ${toFix.check.name}`;
+  const fixChecks = regradeHere
+    ? regradeInPlace
+    : env?.id
+      ? () => {
+          onClose?.();
+          const base = paths.dashboard.simulate.environmentDetail(env.id);
+          if (toFix && !toFix.check) return navigate(`${base}/contract`);
+          navigate(`${base}/evals`, {
+            state: toFix?.check && {
+              fixCheck: {
+                evalId: toFix.check.id,
+                name: toFix.check.name,
+                count: toFix.check.count,
+                signal: toFix.signal,
+                runLabel,
+              },
             },
-          },
-        });
-      }
-    : null;
+          });
+        }
+      : null;
 
   const sorted = useMemo(
     () =>

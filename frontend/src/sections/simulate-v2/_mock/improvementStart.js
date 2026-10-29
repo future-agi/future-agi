@@ -382,6 +382,8 @@ export const planSearch = ({
   state,
   regressionEnvIds,
   diagnosis = null,
+  /* Edit plan's pick: { fix: [ids], protect: [ids] } — null keeps the suggestion. */
+  pick = null,
 }) => {
   const eng = engine
     ? engineConfig({
@@ -411,6 +413,7 @@ export const planSearch = ({
       ...(eng || {}),
       ...(eng && goal && { goal }),
       ...(eng && diagnosis?.mechanism && { frame: diagnosis.mechanism }),
+      ...(eng && pick && { pick }),
       allowed: limits.allowed,
       protected: limits.protected,
       /* Model switches are candidates only when the agent names approved models. */
@@ -609,6 +612,7 @@ export const buildImprovement = ({
   reread: given,
   compatCheck = COMPAT_CHECK,
   optimizerId,
+  pick = null,
 }) => {
   const records = es?.optimizations || [];
   const issue = issueFocusOf(trigger);
@@ -623,7 +627,7 @@ export const buildImprovement = ({
   /* A fix's diagnosis frames where the search starts (new improvements). */
   const diagnosis = extra?.snapshot?.diagnosis || null;
   const engineArgs = engine
-    ? { goal, optimizerId, state, regressionEnvIds, diagnosis }
+    ? { goal, optimizerId, state, regressionEnvIds, diagnosis, pick }
     : { optimizerId };
   /* Re-read the agent first, so the baseline always matches production. A
      caller with the connected agent re-reads it and saves any version found;
