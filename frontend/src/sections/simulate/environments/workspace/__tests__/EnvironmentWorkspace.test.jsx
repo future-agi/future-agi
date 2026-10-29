@@ -354,6 +354,25 @@ describe("EnvironmentWorkspace route shell", () => {
     expect(screen.getAllByRole("status").length).toBeGreaterThan(0);
   });
 
+  it("counts scenarios from the environment detail, not the seeded job list", async () => {
+    // The job poll seeds no scenarios; the detail says the suite has 3.
+    getHarnessJob.mockResolvedValue({ ...COMPLETED_JOB, scenarios: [] });
+    const base = axios.get.getMockImplementation();
+    axios.get.mockImplementation((url) =>
+      /\/harness-environments\/job-done\/$/.test(url)
+        ? Promise.resolve({
+            data: { ...DETAIL_NOT_AUTHORED, overview: { id: "job-done", scenario_count: 3 } },
+          })
+        : base(url),
+    );
+
+    renderWorkspace("/dashboard/simulate/environments/job-done");
+
+    const runButton = await screen.findByRole("button", { name: /Run simulation/ });
+    await waitFor(() => expect(runButton).toBeEnabled());
+    expect(await screen.findByRole("tab", { name: /Scenarios\s*3/ })).toBeInTheDocument();
+  });
+
   it("resolves a harness job: Run enabled, runs listed, row opens the detail", async () => {
     getHarnessJob.mockResolvedValue(COMPLETED_JOB);
     const user = userEvent.setup();
