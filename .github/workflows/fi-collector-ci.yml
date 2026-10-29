@@ -18,6 +18,7 @@ on:
       - "futureagi/tracer/services/clickhouse/tests/test_oss_*.py"
       - "futureagi/tracer/services/clickhouse/v2/observed_catalog/**"
       - ".github/workflows/fi-collector-ci.yml"
+      - ".github/actions/release-pr-metadata/**"
   push:
     branches: [dev, main]
     paths:
@@ -35,6 +36,7 @@ on:
       - "futureagi/tracer/services/clickhouse/tests/test_oss_*.py"
       - "futureagi/tracer/services/clickhouse/v2/observed_catalog/**"
       - ".github/workflows/fi-collector-ci.yml"
+      - ".github/actions/release-pr-metadata/**"
   merge_group:
   workflow_dispatch:
 
@@ -42,7 +44,22 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      release_only: ${{ steps.release.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: release
+        uses: ./.github/actions/release-pr-metadata
+
   collector:
+    needs: changes
+    if: needs.changes.outputs.release_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -59,6 +76,8 @@ jobs:
         run: go build ./cmd/fi-collector ./cmd/fi-property-catalog-consumer ./cmd/fi-observed-catalog-backfill
 
   integration:
+    needs: changes
+    if: needs.changes.outputs.release_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -165,6 +184,8 @@ jobs:
           retention-days: 7
 
   replicated:
+    needs: changes
+    if: needs.changes.outputs.release_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -194,6 +215,8 @@ jobs:
             -p "$OBS_TEST_PROJECT" down --volumes --remove-orphans --timeout 10
 
   compose:
+    needs: changes
+    if: needs.changes.outputs.release_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
