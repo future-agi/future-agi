@@ -1,6 +1,7 @@
 import React, {
   useCallback,
   useEffect,
+  useImperativeHandle,
   useMemo,
   useRef,
   useState,
@@ -74,14 +75,11 @@ const userRowIdentity = (row) => {
   return id ? `${row?.project_id || ""}:${id}` : null;
 };
 
-const UsersGrid = React.memo(
-  ({
-    hasActiveFilter,
-    setHasData,
-    setIsLoading,
-    setSearchState,
-    cellHeight,
-  }) => {
+const UsersGrid = React.forwardRef(
+  (
+    { hasActiveFilter, setHasData, setIsLoading, setSearchState, cellHeight },
+    ref,
+  ) => {
     const theme = useTheme();
     const gridThemeParams = useMemo(
       () => getUsersGridThemeParams(theme),
@@ -160,8 +158,18 @@ const UsersGrid = React.memo(
 
     const navigate = useNavigate();
 
+    const refreshRows = useCallback(() => {
+      withLiveGridApi(gridApiRef.current?.api, (api) => {
+        cursorPagination.current.reset();
+        setContinuationNotice(null);
+        api.paginationGoToFirstPage?.();
+        api.refreshServerSide?.({ purge: false });
+      });
+    }, [setContinuationNotice]);
+    useImperativeHandle(ref, () => ({ refresh: refreshRows }), [refreshRows]);
+
     useEffect(() => {
-      const refreshRows = () => {
+      const autoRefresh = () => {
         const currentPage =
           Number(gridApiRef.current?.api?.paginationGetCurrentPage?.()) + 1;
         if (Number.isSafeInteger(currentPage) && currentPage > 1) {
@@ -169,14 +177,12 @@ const UsersGrid = React.memo(
           return;
         }
         if (hasActiveListReads()) return;
-        withLiveGridApi(gridApiRef.current?.api, (api) =>
-          api.refreshServerSide?.({ purge: false }),
-        );
+        refreshRows();
       };
-      window.addEventListener(OBSERVE_LIST_REFRESH_EVENT, refreshRows);
+      window.addEventListener(OBSERVE_LIST_REFRESH_EVENT, autoRefresh);
       return () =>
-        window.removeEventListener(OBSERVE_LIST_REFRESH_EVENT, refreshRows);
-    }, [hasActiveListReads]);
+        window.removeEventListener(OBSERVE_LIST_REFRESH_EVENT, autoRefresh);
+    }, [hasActiveListReads, refreshRows]);
 
     useEffect(() => {
       const initial = getUsersColumnConfig({ includeProject });
@@ -908,4 +914,4 @@ UsersGrid.propTypes = {
   cellHeight: PropTypes.string,
 };
 
-export default UsersGrid;
+export default React.memo(UsersGrid);
