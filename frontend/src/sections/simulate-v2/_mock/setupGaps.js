@@ -822,6 +822,18 @@ export const runReadiness = (envState, env = null) => {
       reason:
         "Let us call your live agent for tests first — it's reached at a URL we can't copy, so a run drives the real one",
     };
+  /* Its last connection check found a tool still reaching production: the
+     controlled cases can't run until it's pointed at the test world or
+     observed only (roadmap connect.md, Week 1). */
+  const prodTools = envState.agent?.values?.connectionTest?.productionTools || [];
+  if (prodTools.length)
+    return {
+      ready: false,
+      step: "overview",
+      href: agentHref,
+      gap: "gap_production_tool",
+      reason: `${prodTools[0]} still reaches production — point it at the test world or observe it only, on the agent's Connections tab`,
+    };
   /* A Live agent runs in the customer's account with real tools — every way
      to start a run (header, table row, Runs tab, run page) waits for consent. */
   if (needsLiveConsent(envState.agent))

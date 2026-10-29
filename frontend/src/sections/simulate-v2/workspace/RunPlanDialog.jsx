@@ -33,6 +33,7 @@ import {
   rangeLabel,
   usdRange,
 } from "../_mock/pricing";
+import { membersOf } from "../_mock/improvementPolicy";
 
 /*
   The run plan: what a run will do and what it can cost, confirmed before
@@ -506,6 +507,18 @@ export default function RunPlanDialog({
                     muted
                   />
                 ))}
+                {/* A multi-agent app: each worker's own model calls, in the
+                    estimate as unknown — never zero. */}
+                {membersOf(envState?.agent).length > 1 &&
+                  membersOf(envState?.agent).map((m) => (
+                    <Row
+                      key={`member-${m.id}`}
+                      label={`${m.name} (not in the total)`}
+                      detail={`${m.model || "its model"} on your account · shares this run's limit`}
+                      value="Unknown"
+                      muted
+                    />
+                  ))}
                 <Row
                   label="Warn me at"
                   detail="Continue, lower the limit or stop"

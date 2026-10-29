@@ -13,6 +13,7 @@ const TABS = {
   TRANSCRIPT: "transcript",
   CHECKLIST: "checklist",
   GRAPH: "graph",
+  HANDOFFS: "handoffs",
 };
 
 const PATH_VIEW_MODE = {
@@ -74,8 +75,16 @@ const VoiceLeftPanel = ({ data, scenarioId, embedded = false }) => {
         icon: "solar:graph-linear",
       });
     }
+    /* A multi-agent app in a simulation: its coordinator's handoffs, when
+       the caller passes them (simulate only). */
+    if (isSimulate && data?.simHandoffs)
+      t.push({
+        label: "Handoffs",
+        value: TABS.HANDOFFS,
+        icon: "solar:users-group-two-rounded-linear",
+      });
     return t;
-  }, [showPathTabs]);
+  }, [showPathTabs, isSimulate, data?.simHandoffs]);
 
   const isTranscriptTab = currentTab === TABS.TRANSCRIPT;
   const isPathTab = currentTab === TABS.CHECKLIST || currentTab === TABS.GRAPH;
@@ -175,6 +184,9 @@ const VoiceLeftPanel = ({ data, scenarioId, embedded = false }) => {
                   </Box>
                 </ShowComponent>
               </Stack>
+            </ShowComponent>
+            <ShowComponent condition={currentTab === TABS.HANDOFFS}>
+              {data?.simHandoffs}
             </ShowComponent>
             <ShowComponent condition={isPathTab && showPathTabs}>
               <PathAnalysisView

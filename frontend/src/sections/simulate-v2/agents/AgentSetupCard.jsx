@@ -33,6 +33,10 @@ import { showsSetup, testedInLine } from "./agentViewUtils";
 import AgentFoundReview from "./AgentFoundReview";
 import SendTracesSetup, { FirstTraceWait } from "./connect/SendTracesSetup";
 import { isCodeAgent, needsFoundCheck } from "./foundFacts";
+import {
+  checksConnection,
+  connectionStateOf,
+} from "../_mock/connectionCheck";
 
 /**
  * Next steps — what a newly connected agent is for, as two equal ways
@@ -290,6 +294,21 @@ export default function AgentSetupCard({
           />
         </Box>
       ),
+    },
+    /* The connection check: it starts, replies, keeps the conversation, its
+       tools reach the test world, it cancels — a draft until it passes. */
+    checksConnection(agent) && {
+      id: "connection",
+      done: connectionStateOf(agent).state === "ready",
+      title: "Test the connection",
+      body:
+        connectionStateOf(agent).state === "ready"
+          ? `Every check passed — ${connectionStateOf(agent).line.replace(/^Tested /, "tested ").replace(/\.$/, "")}.`
+          : "Confirm how we start it and talk to it, then check it starts, replies, keeps the conversation, reaches the test world's tools and cancels.",
+      action: {
+        label: connectionStateOf(agent).state === "ready" ? "Review" : "Test",
+        onClick: () => onTab("connections"),
+      },
     },
     agentNeedsRuntime(agent) && {
       id: "runtime",

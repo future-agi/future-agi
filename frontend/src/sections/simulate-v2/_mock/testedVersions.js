@@ -1,0 +1,103 @@
+/*
+  The agent families and versions the connection paths are tested against
+  (roadmap connect.md, Week 2 stretch): what was tested, the evidence, and
+  what isn't covered. Untested means untested — never shown as supported.
+*/
+export const TESTED_VERSIONS = [
+  {
+    family: "Python service",
+    how: "HTTP",
+    versions: "FastAPI 0.115 · Flask 3.0",
+    status: "Supported",
+    evidence: "Reference refund app passed the returns world",
+    limits: "Streaming replies not mapped yet",
+  },
+  {
+    family: "Node service",
+    how: "HTTP",
+    versions: "Express 4.21 · Fastify 5.1",
+    status: "Supported",
+    evidence: "Same seeded task as the Python app",
+    limits: "—",
+  },
+  {
+    family: "LangGraph",
+    how: "Process",
+    versions: "langgraph 0.2.x",
+    status: "Supported",
+    evidence: "Start, turns, tools and cancel checked",
+    limits: "Checkpointer memory isn't restored between trials",
+  },
+  {
+    family: "OpenAI Agents SDK",
+    how: "Process",
+    versions: "openai-agents 0.0.x",
+    status: "Supported",
+    evidence: "Handoffs observed from its trace events",
+    limits: "—",
+  },
+  {
+    family: "CrewAI",
+    how: "Process",
+    versions: "crewai 0.80",
+    status: "Partial",
+    evidence: "Turns and tools",
+    limits: "Delegation only from crew callbacks; some steps unmeasured",
+  },
+  {
+    family: "Coordinator + two workers",
+    how: "Process",
+    versions: "Reference returns app v1",
+    status: "Partial",
+    evidence: "Delegation and return events, worker-attributed tools",
+    limits: "Sequential, one level; no parallel workers",
+  },
+  {
+    family: "Async task (A2A)",
+    how: "Job ID",
+    versions: "Reference adapter 0.1",
+    status: "Untested",
+    evidence: "—",
+    limits: "Stretch — not certified yet",
+  },
+  {
+    family: "Coding agent CLI",
+    how: "Repository task",
+    versions: "Claude Code 1.x · Codex CLI",
+    status: "Partial",
+    evidence: "Patch and verifier output captured",
+    limits: "Hidden verifier kept outside its workspace; no resume",
+  },
+  {
+    family: "LiveKit voice",
+    how: "Audio or text",
+    versions: "livekit-agents 0.12",
+    status: "Partial",
+    evidence: "Text rehearsal and audio session",
+    limits: "Interruption timing only in audio mode",
+  },
+  {
+    family: "Vapi",
+    how: "Platform",
+    versions: "API 2025-10",
+    status: "Supported",
+    evidence: "Test copy, transfers observed",
+    limits: "Transfers and end call run for real",
+  },
+  {
+    family: "Retell",
+    how: "Platform",
+    versions: "API v2",
+    status: "Supported",
+    evidence: "Pinned draft, node changes observed",
+    limits: "Unpinned drafts can drift",
+  },
+  {
+    family: "Browser agent",
+    how: "Browser",
+    versions: "—",
+    status: "Untested",
+    evidence: "—",
+    limits: "Not in this release",
+  },
+];

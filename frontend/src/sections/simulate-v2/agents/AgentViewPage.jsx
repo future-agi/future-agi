@@ -105,6 +105,8 @@ import { ActionText, DemoLabel, InfoTip, QuietTag } from "./AgentBits";
 import { clickable, focusRing } from "../components/clickable";
 import { EmptyState } from "../components/primitives";
 import SettingsSection from "./SettingsSection";
+import ConnectionCheckSection from "./ConnectionCheckSection";
+import { checksConnection, connectionStateOf } from "../_mock/connectionCheck";
 import { IdentityCard, SourceCard } from "./AgentProfileCards";
 import {
   PLATFORM_KEY_SCOPE,
@@ -713,6 +715,26 @@ export default function AgentViewPage() {
                 </Box>
               </Tooltip>
             )}
+            {/* Draft until its connection check passes; Needs attention when
+                something it relied on lapsed after a good test. */}
+            {checksConnection(agent) &&
+              (agent.values?.setupStartedAt || agent.values?.connectionTest) &&
+              (() => {
+                const c = connectionStateOf(agent);
+                return (
+                  <Tooltip arrow title={c.line}>
+                    <Box
+                      component="span"
+                      sx={{ cursor: "pointer" }}
+                      onClick={() => setQuery({ tab: "connections" })}
+                    >
+                      <QuietTag tone={c.state === "attention" ? "error" : undefined}>
+                        {c.label}
+                      </QuietTag>
+                    </Box>
+                  </Tooltip>
+                );
+              })()}
             {agent.sample && (
               <Tooltip
                 arrow
@@ -1809,6 +1831,9 @@ function ConnectionTab({
         : source.label;
   return (
     <Stack minWidth={0}>
+      {checksConnection(agent) && (
+        <ConnectionCheckSection agent={agent} onSaveValues={onSaveValues} />
+      )}
       <SettingsSection
         title="How we reach it"
         sub={

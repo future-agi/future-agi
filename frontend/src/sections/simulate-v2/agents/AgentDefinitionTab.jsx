@@ -15,6 +15,7 @@ import {
 import { MONO } from "./agentViewUtils";
 import { mcpServersOfAgent } from "../_mock/mcpServers";
 import { ActionText, KvRow, PanelCard } from "./AgentBits";
+import { delegationEvidenceOf } from "../_mock/handoffs";
 
 /**
  * Definition — a read-only view of the agent record (RSI PRD, "What Agents
@@ -197,6 +198,7 @@ export default function AgentDefinitionTab({
           areas={memberAreas}
           protectedIds={protectedMembers || []}
           onConstraints={() => onTab("constraints")}
+          evidence={delegationEvidenceOf(agent)}
         />
       )}
 

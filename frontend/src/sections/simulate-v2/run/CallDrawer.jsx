@@ -29,6 +29,8 @@ import { VERDICT_CAUSES } from "../_mock/decoupled";
 import { STALE_LABEL, verdictLineOf } from "../_mock/runCauses";
 import { textTone } from "../components/textTone";
 import { clickable, focusRing } from "../components/clickable";
+import HandoffTimeline from "./HandoffTimeline";
+import { membersOf } from "../_mock/improvementPolicy";
 
 /**
  * One call, in full.
@@ -285,6 +287,9 @@ export default function CallDrawer({
               <Tab value="checklist" label="Checklist" />
               <Tab value="graph" label="Graph" />
               <Tab value="trace" label="Trace" />
+              {membersOf(envState?.agent).length > 1 && (
+                <Tab value="handoffs" label="Handoffs" />
+              )}
               {envState?.twinBacking && (
                 <Tab value="twin" label="World state" />
               )}
@@ -295,6 +300,9 @@ export default function CallDrawer({
           </Box>
 
           <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+            {pane === "handoffs" && (
+              <HandoffTimeline agent={envState?.agent} task={task} />
+            )}
             {/* A run that produced actions rather than speech gets the actions,
                 and — where the surface has one — the screen they happened on. */}
             {pane === "transcript" && !conversational && (

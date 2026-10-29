@@ -28,6 +28,8 @@ export default function AgentMembersCard({
   areas = [],
   protectedIds = [],
   onConstraints,
+  /* delegationEvidenceOf(agent): whether runs observe each member's part. */
+  evidence = null,
 }) {
   const [open, setOpen] = useState(
     () => new Set((members || []).slice(0, 1).map((m) => m.id)),
@@ -46,6 +48,20 @@ export default function AgentMembersCard({
       title={`Members · ${members.length}`}
       note="One agent · one version history"
     >
+      {/* What a run can know about them, and what each may touch in the
+          test world (roadmap connect.md, Week 2). */}
+      {evidence && (
+        <Stack spacing={0.5} sx={{ px: 2, py: 1.25 }}>
+          <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+            {`Declared by ${evidence.source === "provider" ? "its platform" : evidence.source === "instrumented" ? "its code" : "you"}. ${evidence.line}`}
+          </Typography>
+          <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+            Each member may use only its own tools, answered by the test world.
+            Hidden grading material — reference answers, the end state a check
+            expects — is kept from every member and the simulated callers.
+          </Typography>
+        </Stack>
+      )}
       {members.map((m, i) => {
         const on = open.has(m.id);
         const locked = protectedIds.includes(m.id);
@@ -253,6 +269,7 @@ export default function AgentMembersCard({
   );
 }
 AgentMembersCard.propTypes = {
+  evidence: PropTypes.object,
   members: PropTypes.array,
   areas: PropTypes.array,
   protectedIds: PropTypes.array,

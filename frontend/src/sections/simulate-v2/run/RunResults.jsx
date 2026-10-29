@@ -85,6 +85,7 @@ import { runReportOf } from "../_mock/runReport";
 import RunSummaryChip, { ProofKindChip } from "./RunSummaryChip";
 import { runViaOf, ciOf } from "../_mock/runVia";
 import { memberResultsOf } from "../_mock/memberAttribution";
+import { delegationEvidenceOf } from "../_mock/handoffs";
 import StatusBadge from "src/components/status-badge/StatusBadge";
 import { causeOf, outcomeOfCause } from "../_mock/decoupled";
 import { regradeOf, regradeRecordOf } from "../_mock/regrade";
@@ -92,6 +93,8 @@ import { agentVersions } from "../_mock/versions";
 import { scenarioAtVersion } from "../_mock/decoupled";
 import MeteredText from "./RunRecord";
 import ShareMenu from "./ShareMenu";
+import CopyIdButton from "../components/CopyIdButton";
+import HandoffTimeline from "./HandoffTimeline";
 import ImprovementRunStrip from "./ImprovementRunStrip";
 
 import { SHOW_INSIGHTS } from "../_mock/featureFlags";
@@ -1530,6 +1533,15 @@ export default function RunResults({
             )}
           </Button>
         </Tooltip>
+        {/* The run's ID — what the CLI and SDK print and take, so a run
+            started in the terminal and this page are one run. */}
+        {!trialMeta && runId && (
+          <CopyIdButton
+            id={runId}
+            what="run ID"
+            usedBy="agent-learn results / rerun / compare take it"
+          />
+        )}
         {/* Share replaces the old Export: a read-only link, or the report as PDF. */}
         {/* An improvement's run is shared from its improvement, not on its own. */}
         {identity && !trialMeta && (
@@ -2191,7 +2203,9 @@ export default function RunResults({
                       fontVariantNumeric: "tabular-nums",
                     }}
                   >
-                    {`${entryMember.member.name} handed on ${memberResult.handoffs} of ${memberResult.total} conversations. Each one counts for the member it ended with.`}
+                    {delegationEvidenceOf(envState?.agent).observed
+                      ? `From delegation events: ${entryMember.member.name} handed on ${memberResult.handoffs} of ${memberResult.total} conversations. Each one counts for the member it ended with.`
+                      : `Declared, not observed — ${envState?.agent?.name || "this agent"} sends no delegation events, so these groups follow its declared members and aren't per-member results. Only the overall result counts.`}
                   </Typography>
                 )}
                 {groupableShown.length === 0 ? (
@@ -2702,6 +2716,14 @@ export default function RunResults({
                       /* The verdict and its cause (§4.10.10) ride in the real
                      drawer's Status chip — "Failed · agent". */
                       data={{
+                        /* A multi-agent app: its handoffs, as their own tab. */
+                        simHandoffs:
+                          membersOf(envState?.agent).length > 1 ? (
+                            <HandoffTimeline
+                              agent={envState?.agent}
+                              task={openTask}
+                            />
+                          ) : null,
                         ...taskToVoiceData(openTask, {
                           env,
                           voice: true,
