@@ -1,10 +1,18 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Box, CircularProgress, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import { useQueryClient } from "@tanstack/react-query";
 import { AgentGraph } from "src/components/AgentGraph";
 import { START_ID, END_ID } from "src/components/AgentGraph/layoutUtils";
 import NodeOutputDetail from "../AgentBuilder/RunAgentPanel/NodeOutputDetail";
+import NodeOutputListView from "../AgentBuilder/RunAgentPanel/NodeOutputListView";
+import { mapExecutionNodesToTree } from "../AgentBuilder/RunAgentPanel/common";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
 import { useGetExecutionDetail } from "src/api/agent-playground/agent-playground";
 import useResolvedExecution from "../hooks/useResolvedExecution";
@@ -19,6 +27,10 @@ export default function ExecutionDetailView({ graphId, executionId }) {
   } = useGetExecutionDetail(graphId, executionId);
 
   const [selectedNodeId, setSelectedNodeId] = useState(null);
+  const stepNodes = useMemo(
+    () => mapExecutionNodesToTree(executionData?.nodes),
+    [executionData?.nodes],
+  );
 
   // Invalidate executions list and node details when polling reaches terminal status
   const prevStatusRef = useRef(null);
@@ -171,14 +183,28 @@ export default function ExecutionDetailView({ graphId, executionId }) {
 
   return (
     <ResizablePanels
-      initialLeftWidth={50}
+      initialLeftWidth={60}
       minLeftWidth={15}
       maxLeftWidth={80}
       leftPanel={
-        <AgentGraph
-          executionData={executionData}
-          onNodeClick={handleGraphNodeClick}
-          selectedNodeId={selectedNodeId}
+        <ResizablePanels
+          initialLeftWidth={38}
+          minLeftWidth={25}
+          maxLeftWidth={55}
+          leftPanel={
+            <NodeOutputListView
+              nodes={stepNodes}
+              selectedNodeId={selectedNodeId}
+              onNodeSelect={setSelectedNodeId}
+            />
+          }
+          rightPanel={
+            <AgentGraph
+              executionData={executionData}
+              onNodeClick={handleGraphNodeClick}
+              selectedNodeId={selectedNodeId}
+            />
+          }
         />
       }
       rightPanel={
