@@ -291,7 +291,8 @@ def is_work_email(email):
     return not is_disposable_email_domain(domain)
 
 
-def first_signup(data, mode=None, telemetry_source="web"):
+@transaction.atomic
+def first_signup(data, mode=None, telemetry_source="web", *, seed_demo_data=True):
     if not data.get("email"):
         raise Exception("Email not provided")
 
@@ -389,16 +390,18 @@ def first_signup(data, mode=None, telemetry_source="web"):
                     key_id, org_id
                 )
             )
-        # Demo data is needed for every signup, including user-set passwords.
-        # Dispatch only after the worker can see the committed account.
-        # Installers can create the owner before Temporal starts. Log a failed
-        # dispatch without reporting the already-created account as a failure.
-        transaction.on_commit(
-            lambda user_id=user.id, password=generated_password: (
-                process_post_registration(user_id, password)
-            ),
-            robust=True,
-        )
+        # The intent and account commit together. Only the E2E image's explicit
+        # clean-actor endpoint opts out; public signup always uses the default.
+        if seed_demo_data:
+            from accounts.models.demo_seed import DemoSeedRequest
+
+            DemoSeedRequest.objects.create(user=user, organization=organization)
+            transaction.on_commit(
+                lambda user_id=user.id, password=generated_password: (
+                    process_post_registration(user_id, password)
+                ),
+                robust=True,
+            )
 
         transaction.on_commit(
             lambda user_id=user.id, source=telemetry_source: _fire_deployment_telemetry_registration(
@@ -813,7 +816,7 @@ def record_hubspot_login(user):
         return None
 
 
-def _run_post_registration(user_id, generated_password):
+def _run_post_registration(user_id, generated_password, organization_id=None):
     """Process post-registration steps in a separate thread"""
     user = User.objects.get(id=user_id)
     if user:
@@ -827,15 +830,18 @@ def _run_post_registration(user_id, generated_password):
             updated, err = send_hubspot_notification(user)
             send_slack_notification(user, updated=updated, err=err)
 
-        org = get_user_organization(user)
-        if org:
-            from accounts.user_onboard import (
-                create_demo_traces_and_spans,
-                upload_demo_dataset,
-            )
+        org = get_user_organization(user) if organization_id is None else None
+        org_id = organization_id or (org.id if org else None)
+        if org_id is None:
+            return
+        from accounts.demo_seeding import seed_pending_demo_data
+        from accounts.models.demo_seed import DemoSeedRequest
 
-            upload_demo_dataset(org.id, str(user.id))
-            create_demo_traces_and_spans(str(org.id))
+        # Also accept workflows dispatched by older app versions.
+        DemoSeedRequest.objects.get_or_create(
+            organization_id=org_id, defaults={"user": user}
+        )
+        seed_pending_demo_data(org_id)
 
 
 def existing_member_access_will_change(
@@ -874,14 +880,29 @@ def existing_member_access_will_change(
 
 
 # TODO: use async views to replace this code. its wrong
-def process_post_registration(user_id, generated_password):
-    """Process post-registration steps using Temporal"""
+def process_post_registration(user_id, generated_password, organization_id=None):
+    """Best-effort fast path; the persisted seed request is recovered on a schedule."""
+    from temporalio.common import WorkflowIDConflictPolicy
+
     # Import the activity to register it
     import tfc.temporal.background_tasks.activities  # noqa: F401
+    from accounts.models.demo_seed import DemoSeedRequest
     from tfc.temporal.drop_in import start_activity
 
+    if organization_id is None:
+        organization = get_user_organization(User.objects.get(id=user_id))
+        organization_id = organization.id if organization else None
+    # Marketplace / additional-org onboarding also needs a durable intent.
+    if organization_id is not None:
+        DemoSeedRequest.objects.get_or_create(
+            organization_id=organization_id, defaults={"user_id": user_id}
+        )
     start_activity(
         "run_post_registration_activity",
         args=(user_id, generated_password),
+        kwargs={"organization_id": str(organization_id)} if organization_id else {},
         queue="default",
+        task_id=f"post-registration-{organization_id or user_id}",
+        id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+        dispatch_timeout_seconds=2,
     )

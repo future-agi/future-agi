@@ -238,7 +238,7 @@
 ### AUTH-E2E-004 — fresh signup seeds demo traces visible in Observe
 
 **Goal:** A new user signs up with their own password and can inspect the seeded demo trace in Observe  
-**Spec:** `flows/auth/signup-demo-traces.spec.ts:27`  
+**Spec:** `flows/auth/signup-demo-traces.spec.ts:28`  
 **Tags:** —
 
 **User steps:**

@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from django.utils import timezone
+from temporalio.common import WorkflowIDConflictPolicy
 
 from accounts.user_onboard import _write_demo_trace_to_clickhouse
 from tracer.models.observation_span import ObservationSpan
@@ -48,7 +49,13 @@ def test_publishes_demo_trace_session_and_spans_with_matching_ids(
     demo_trace, monkeypatch
 ):
     monkeypatch.setenv("CH25_TRACE_DUAL_WRITE", "true")
+    from tracer.services.clickhouse.v2.adapter import CH_INSERT_COLUMNS
+
     client = MagicMock()
+    client.query.return_value.result_rows = []
+    client.query.return_value.named_results.return_value = [
+        {"name": name, "type": "String"} for name in [*CH_INSERT_COLUMNS, "trace_name"]
+    ]
     with patch("clickhouse_connect.get_client") as connect:
         connect.return_value.__enter__.return_value = client
         _write_demo_trace_to_clickhouse(*demo_trace)
@@ -70,6 +77,11 @@ def test_publishes_demo_trace_session_and_spans_with_matching_ids(
     assert written_span["trace_id"] == str(trace.id)
     assert written_span["trace_session_id"] == str(trace.session_id)
     assert written_span["project_id"] == str(trace.project_id)
+    assert written_span["trace_name"] == trace.name
+    assert client.insert.call_args.kwargs["settings"] == {
+        "insert_allow_materialized_columns": 1,
+        "async_insert": 0,
+    }
     assert written_span["input"] == '{"question": "sales"}'
     assert written_span["output"] == '{"answer": "42"}'
     assert written_span["attrs_bool"] == {"demo": 1}
@@ -107,4 +119,6 @@ def test_publication_dispatch_is_gated_and_uses_a_stable_trace_id(monkeypatch):
             args=("trace-123",),
             queue="default",
             task_id="publish-demo-trace-trace-123",
+            id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+            dispatch_timeout_seconds=2,
         )

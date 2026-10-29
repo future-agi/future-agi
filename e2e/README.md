@@ -326,11 +326,14 @@ test(
 
 ### Fixtures (`lib/fixtures.ts`)
 
-- **`actor`** — _worker-scoped_. Signs up a brand-new user on a brand-new org
+- **`actor`** — _worker-scoped_. Provisions a clean account through the test-image-only
+  `/accounts/e2e/clean-signup/` endpoint (no demo rows or pending seed request).
+  The public `/accounts/signup/` still seeds demos and is exercised by AUTH-E2E-004.
+  Creates a brand-new user on a brand-new org
   (`e2e-w<workerIndex>-<runId>@futureagi.com`), logs in, resolves the organization and default
-  workspace, and mints the org API/secret key pair. The `futureagi.com` domain is deliberate: it is
-  the signup path's reCAPTCHA special case, the belt to the `localhost` Host suspenders. One org per
-  worker is what makes full parallelism safe without truncating anything. It carries
+  workspace, and mints the org API/secret key pair. The `futureagi.com` domain keeps
+  organization naming consistent. One org per worker makes full parallelism safe
+  without truncating anything. It carries
   `actor.api` — an `ApiClient` already sending `Authorization`, `X-Organization-Id` and
   `X-Workspace-Id`. Both stacks set `RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF` to
   2026-10-01T00:00:00Z, so once the Simulate restriction (#3502) is in, this org is a new
