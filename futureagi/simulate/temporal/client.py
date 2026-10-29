@@ -654,3 +654,24 @@ async def _cancel_hosted_harness_gateway_workflow_async(job_id: str) -> None:
     client = await get_client()
     handle = client.get_workflow_handle(f"hosted-harness-{job_id}")
     await handle.signal("cancel")
+
+
+def hosted_harness_gateway_workflow_running(job_id: str) -> bool:
+    return async_to_sync(_hosted_harness_gateway_workflow_running_async)(job_id)
+
+
+async def _hosted_harness_gateway_workflow_running_async(job_id: str) -> bool:
+    from temporalio.client import WorkflowExecutionStatus
+    from temporalio.service import RPCError, RPCStatusCode
+
+    from tfc.temporal.common.client import get_client
+
+    client = await get_client()
+    handle = client.get_workflow_handle(f"hosted-harness-{job_id}")
+    try:
+        description = await handle.describe()
+    except RPCError as exc:
+        if exc.status == RPCStatusCode.NOT_FOUND:
+            return False
+        raise
+    return description.status == WorkflowExecutionStatus.RUNNING

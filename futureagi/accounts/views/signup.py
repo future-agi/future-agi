@@ -53,7 +53,12 @@ from accounts.serializers.contracts import (
 )
 from accounts.serializers.user import UpdateUserSerializer
 from accounts.services.token_service import issue_tokens
-from accounts.utils import WorkEmailRequired, build_password_reset_link, first_signup
+from accounts.utils import (
+    WorkEmailRequired,
+    build_password_reset_link,
+    first_signup,
+    refresh_pending_invite_expiration,
+)
 from accounts.views.workspace_management import clear_user_redis_cache
 from analytics.utils import (
     MixpanelEvents,
@@ -901,6 +906,12 @@ def resend_invitation_emails(request):
 
             if user:
                 logger.info(f"Resending invitation email to {user.email}")
+
+                # Refresh the matching OrganizationInvite's expiry too, so
+                # this bulk path behaves the same as the other resend
+                # endpoints (#2437).
+                refresh_pending_invite_expiration(organization, user.email)
+
                 # Generate a token
                 token = default_token_generator.make_token(user)
 

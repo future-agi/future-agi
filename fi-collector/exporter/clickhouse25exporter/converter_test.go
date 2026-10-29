@@ -802,11 +802,12 @@ func TestResolveObservationType(t *testing.T) {
 }
 
 type stubPricer struct {
-	cost      float64
-	ok        bool
-	calls     int
-	lastOrg   string
-	lastModel string
+	cost            float64
+	ok              bool
+	calls           int
+	openRouterCalls int
+	lastOrg         string
+	lastModel       string
 }
 
 func (s *stubPricer) TokenCost(ctx context.Context, orgID, model string, p, c int32) (float64, bool) {
@@ -814,6 +815,11 @@ func (s *stubPricer) TokenCost(ctx context.Context, orgID, model string, p, c in
 	s.lastOrg = orgID
 	s.lastModel = model
 	return s.cost, s.ok
+}
+
+func (s *stubPricer) OpenRouterTokenCost(ctx context.Context, orgID, model string, p, c int32) (float64, bool) {
+	s.openRouterCalls++
+	return s.TokenCost(ctx, orgID, model, p, c)
 }
 
 // makeLLMSpanOrgID is the org UUID stamped by makeLLMSpan's resource attrs —

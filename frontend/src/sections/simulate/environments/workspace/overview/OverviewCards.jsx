@@ -2,7 +2,6 @@ import PropTypes from "prop-types";
 import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography, Button } from "@mui/material";
 import Iconify from "src/components/iconify";
-import CustomTooltip from "src/components/tooltip";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 import SectionCard from "../../components/SectionCard";
 import MockBadge from "../../components/MockBadge";
@@ -13,7 +12,7 @@ const MONO = "ui-monospace, Menlo, monospace";
 // Tools declared by the connected agent, with the arguments each really takes.
 // Before an agent connects the world has no tool inventory, so a slim empty row
 // stands in — its "Connect agent" affordance is deferred (there is no agent tab
-// yet), so it renders disabled behind the coming-soon tooltip.
+// yet), so it renders disabled.
 export function ToolsCard({ env, agentConnected }) {
   const tools = env.tools || [];
   return (
@@ -28,16 +27,12 @@ export function ToolsCard({ env, agentConnected }) {
             <Typography sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}>{OVERVIEW_COPY.noToolsTitle}</Typography>
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{OVERVIEW_COPY.noToolsBody}</Typography>
           </Box>
-          <CustomTooltip show size="small" title={OVERVIEW_COPY.agentVersionsSoon} arrow>
-            <span>
-              <Button
-                size="small" variant="outlined" disabled aria-label={OVERVIEW_COPY.connectAgent}
-                sx={{ typography: "s2", fontWeight: "fontWeightBold", color: "text.primary", borderColor: "divider" }}
-              >
-                {OVERVIEW_COPY.connectAgent}
-              </Button>
-            </span>
-          </CustomTooltip>
+          <Button
+            size="small" variant="outlined" disabled aria-label={OVERVIEW_COPY.connectAgent}
+            sx={{ typography: "s2", fontWeight: "fontWeightBold", color: "text.primary", borderColor: "divider" }}
+          >
+            {OVERVIEW_COPY.connectAgent}
+          </Button>
         </Stack>
       ) : (
         <Stack

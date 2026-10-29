@@ -314,7 +314,14 @@ class DjangoAPIExecutor:
 
         unwrap = tool.response.get("unwrap")
         if unwrap and isinstance(data, dict) and unwrap in data:
-            return data[unwrap]
+            data = data[unwrap]
+        for dotted in tool.response.get("omit", []):
+            *parents, leaf = dotted.split(".")
+            target = data
+            for key in parents:
+                target = target.get(key) if isinstance(target, dict) else None
+            if isinstance(target, dict):
+                target.pop(leaf, None)
         return data
 
 

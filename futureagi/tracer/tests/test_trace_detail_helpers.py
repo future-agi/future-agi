@@ -8,6 +8,8 @@ nested span tree the helper consumes via ``_tree`` (the same shape the handlers
 build), so the totals/graph are validated against the production code path.
 """
 
+import pytest
+
 from tracer.services.clickhouse.query_builders.trace_detail import (
     compute_trace_summary_and_graph,
 )
@@ -127,7 +129,8 @@ class TestTraceSummaryComputation:
         assert result["total_spans"] == 3
         assert result["total_duration_ms"] == 2000  # root span latency
         assert result["total_tokens"] == 900
-        assert result["total_cost"] == 0.009
+        # Costs retain Float64 subprecision rather than rounding to six places.
+        assert result["total_cost"] == pytest.approx(0.009, rel=1e-12, abs=1e-18)
         assert result["error_count"] == 1
         assert result["span_type_counts"] == {"chain": 1, "llm": 1, "tool": 1}
 

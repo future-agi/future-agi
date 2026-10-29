@@ -17,7 +17,10 @@ import (
 
 type handoffRoundTripper func(*http.Request) (*http.Response, error)
 
-func (f handoffRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+func (f handoffRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	defer r.Body.Close() // synchronous fixture; delayed body ownership is tested in chwriter
+	return f(r)
+}
 
 type handoffReadError struct{ err error }
 

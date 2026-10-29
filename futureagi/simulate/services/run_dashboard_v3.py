@@ -384,7 +384,6 @@ def build_run_dashboard(
     summary: dict,
     evaluations: list,
     risk: list,
-    reliability: dict | None = None,
     comparison: dict | None = None,
 ) -> dict[str, Any]:
     total = summary["total"]
@@ -488,20 +487,15 @@ def build_run_dashboard(
 
     is_voice = noun == "call"
     outcomes = summary["outcomes"]
-    interval = (reliability or {}).get("pass_rate_interval")
     metric(
         "pass_rate",
         f"{noun.capitalize()}s passed",
         summary["pass_rate"],
         "percent",
         summary["measured"],
-        (
-            f"Passed every eval, out of evaluated {noun}s. 95% range "
-            f"{interval['low']:.0f}–{interval['high']:.0f}% across "
-            f"{interval['clusters']} scenarios."
-            if interval
-            else f"Passed every eval, out of evaluated {noun}s. Errored {noun}s are excluded."
-        ),
+        # pass^1's range belongs to the run header: this rate pools trials, so
+        # the range need not bracket it.
+        f"Passed every eval, out of evaluated {noun}s. Errored {noun}s are excluded.",
     )
     metric("total", f"Total {noun}s", total, measured=total)
     metric(

@@ -27,6 +27,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -37,6 +38,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"golang.org/x/sync/semaphore"
 )
 
 // Config is what the operator supplies via YAML or env. Field tags map to
@@ -94,6 +97,33 @@ type Writer struct {
 	stats  Stats
 	rng    *rand.Rand
 	rngMu  sync.Mutex // rng isn't safe for concurrent use
+	// maxInsertBytes, when positive, splits a span batch into inserts of
+	// about this many bytes (SetMaxInsertBytes).
+	maxInsertBytes int
+	// inserts, when set, caps the span inserts in flight across every Insert
+	// call, and lets one batch's inserts run at once (SetMaxConcurrentInserts).
+	inserts *semaphore.Weighted
+}
+
+// SetMaxInsertBytes makes Insert send a batch as several inserts of about n
+// bytes of JSON each (a single row larger than n is sent on its own), so that
+// encoding a batch holds one insert's body at a time rather than the whole
+// batch's. 0, the default, sends each batch as one insert. Call it before the
+// writer is used.
+func (w *Writer) SetMaxInsertBytes(n int) { w.maxInsertBytes = max(n, 0) }
+
+// SetMaxConcurrentInserts lets up to n span inserts run at once, across all
+// Insert calls: a batch split by SetMaxInsertBytes sends its inserts without
+// waiting for the one before, while it encodes the next. Insert still returns
+// only when every insert of its batch has ended. Each caller then holds at
+// most one body it is encoding, and n bodies are in flight in all. 0 or 1,
+// the default, sends one insert at a time per Insert call. Call it before
+// the writer is used.
+func (w *Writer) SetMaxConcurrentInserts(n int) {
+	w.inserts = nil
+	if n > 1 {
+		w.inserts = semaphore.NewWeighted(int64(n))
+	}
 }
 
 // New constructs a Writer and validates the config. The file path of the
@@ -152,18 +182,43 @@ func New(cfg Config) (*Writer, error) {
 	}, nil
 }
 
-// Insert serialises `rows` to a single JSONEachRow request body and POSTs
-// with retry/backoff into the writer's PINNED table (cfg.Table — `spans`).
-// Returns nil only on a complete, exception-free HTTP 200 response. Explicit
-// AsyncInsert still means acceptance, not commit confirmation. Dead-lettered
-// batches return an error, including ambiguous inserts needing reconciliation.
+// Insert serialises `rows` to JSONEachRow request bodies (one, or several of
+// about SetMaxInsertBytes bytes each) and POSTs each with retry/backoff into
+// the writer's PINNED table (cfg.Table — `spans`). Returns nil only when every
+// insert got a complete, exception-free HTTP 200 response. Explicit
+// AsyncInsert still means acceptance, not commit confirmation. An insert that
+// fails dead-letters its own rows; Insert then returns an error, including
+// for ambiguous inserts needing reconciliation, after sending the rest.
 //
 // Caller owns `rows`. We do NOT mutate the slice; row maps are also not
 // mutated. Returning quickly on transient CH outages with successful
 // dead-letter is preferable to blocking the receiver loop indefinitely.
 func (w *Writer) Insert(ctx context.Context, rows []map[string]any) error {
 	// Hot path: use the pre-built URL (no per-batch string-concat).
-	return w.insert(ctx, w.url, rows)
+	return w.insert(ctx, w.url, rows, nil)
+}
+
+// InsertConfirmed has Insert's retry/dead-letter semantics, and additionally
+// reports the exact input positions whose chunks completed synchronously with
+// an exception-free response. Failed, unsent, ambiguous and async-accepted rows
+// are false. An error does not invalidate confirmed sibling chunks. The slice
+// is complete only on return, after all started inserts have finished; callers
+// must retain their row leases through any sidecar handoff that follows.
+func (w *Writer) InsertConfirmed(ctx context.Context, rows []map[string]any) ([]bool, error) {
+	confirmed := make([]bool, len(rows))
+	err := w.insert(ctx, w.url, rows, confirmed)
+	return confirmed, err
+}
+
+// confirm marks disjoint chunk positions. Concurrent chunks never share a
+// position, and insertConcurrently waits before publishing the result.
+func (w *Writer) confirm(confirmed []bool, start, end int) {
+	if confirmed == nil || w.cfg.AsyncInsert {
+		return
+	}
+	for i := start; i < end; i++ {
+		confirmed[i] = true
+	}
 }
 
 // InsertBestEffort inserts `rows` into a NON-pinned table (the CURATED
@@ -207,22 +262,162 @@ func (w *Writer) InsertBestEffort(ctx context.Context, table string, rows []map[
 	return err
 }
 
-// insert is the body behind Insert (the pinned span hot path): encode → POST
-// with retry/backoff → dead-letter on exhaustion. `url` selects the target
-// table. The curated path uses InsertBestEffort instead — single POST, no
-// retry, no dead-letter — so it deliberately does NOT share this.
-func (w *Writer) insert(ctx context.Context, url string, rows []map[string]any) error {
+// insert is the body behind Insert (the pinned span hot path): encode →
+// POST with retry/backoff → dead-letter on exhaustion, one chunk of about
+// maxInsertBytes at a time. `url` selects the target table. The curated path
+// uses InsertBestEffort instead — single POST, no retry, no dead-letter — so
+// it deliberately does NOT share this.
+func (w *Writer) insert(ctx context.Context, url string, rows []map[string]any, confirmed []bool) error {
 	if len(rows) == 0 {
 		return nil
 	}
-
-	body, err := encodeBatch(rows)
-	if err != nil {
-		return fmt.Errorf("chwriter: encode: %w", err)
+	if w.inserts != nil {
+		return w.insertConcurrently(ctx, url, rows, confirmed)
 	}
+	limit := w.maxInsertBytes
+	// Estimate ~512 B/row so we avoid 5+ buffer-grow re-allocs; with chunks,
+	// a chunk's worth.
+	size := len(rows) * 512
+	if limit > 0 {
+		size = min(size, limit+limit/8)
+	}
+	var buf bytes.Buffer
+	buf.Grow(size)
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false) // CH treats &, <, > as plain text; escaping bloats
+	var firstErr error
+	start := 0
+	for i, r := range rows {
+		if err := enc.Encode(r); err != nil {
+			err = fmt.Errorf("chwriter: encode: row %d: %w", i, err)
+			return errors.Join(firstErr, err)
+		}
+		if i == len(rows)-1 || (limit > 0 && buf.Len() >= limit) {
+			unavailable, err := w.insertChunk(ctx, url, buf.Bytes(), rows[start:i+1])
+			if err == nil {
+				w.confirm(confirmed, start, i+1)
+			}
+			if err != nil && firstErr == nil {
+				firstErr = err
+			}
+			if unavailable && i < len(rows)-1 {
+				// ClickHouse did not take this insert after every retry
+				// (or the drain was cancelled): each remaining insert
+				// would wait as long. Dead-letter the rest of the batch
+				// now, so the drain ends and its rows' memory is freed.
+				return errors.Join(firstErr, w.deadLetterUnsent(rows[i+1:]))
+			}
+			// A new buffer, not Reset: when ClickHouse answers before it has
+			// read a whole body, the HTTP transport may still be reading
+			// that body after Do returns.
+			buf = bytes.Buffer{}
+			if i < len(rows)-1 {
+				buf.Grow(size)
+			}
+			start = i + 1
+		}
+	}
+	return firstErr
+}
 
+// insertConcurrently is insert with SetMaxConcurrentInserts: each insert of
+// the batch is sent as soon as it is encoded and a slot is free, while the
+// next is encoded. As in insert, once an insert gives up because ClickHouse
+// is unavailable, the rows not sent yet are dead-lettered at once; inserts
+// already in flight finish on their own (each dead-letters its own rows if it
+// fails). It returns only when every insert it started has ended.
+func (w *Writer) insertConcurrently(ctx context.Context, url string, rows []map[string]any, confirmed []bool) error {
+	limit := w.maxInsertBytes
+	size := len(rows) * 512
+	if limit > 0 {
+		size = min(size, limit+limit/8)
+	}
+	var (
+		wg          sync.WaitGroup
+		mu          sync.Mutex
+		firstErr    error
+		unavailable atomic.Bool
+	)
+	fail := func(err error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	defer wg.Wait()
+	var buf bytes.Buffer
+	buf.Grow(size)
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	start := 0
+	for i, r := range rows {
+		if err := enc.Encode(r); err != nil {
+			wg.Wait()
+			mu.Lock()
+			defer mu.Unlock()
+			return errors.Join(firstErr, fmt.Errorf("chwriter: encode: row %d: %w", i, err))
+		}
+		if i < len(rows)-1 && (limit <= 0 || buf.Len() < limit) {
+			continue
+		}
+		part := rows[start : i+1]
+		if unavailable.Load() || w.inserts.Acquire(ctx, 1) != nil {
+			// ClickHouse did not take an earlier insert of the batch after
+			// every retry, or the drain was cancelled: dead-letter what is
+			// left, this insert's rows included, so the drain ends.
+			wg.Wait()
+			mu.Lock()
+			defer mu.Unlock()
+			return errors.Join(firstErr, w.deadLetterUnsent(rows[start:]))
+		}
+		body := buf.Bytes()
+		first, end := start, i+1
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer w.inserts.Release(1)
+			gaveUp, err := w.insertChunk(ctx, url, body, part)
+			if err != nil {
+				fail(err)
+			} else {
+				w.confirm(confirmed, first, end)
+			}
+			if gaveUp {
+				unavailable.Store(true)
+			}
+		}()
+		// A new buffer: the one just sent is in flight.
+		buf = bytes.Buffer{}
+		if i < len(rows)-1 {
+			buf.Grow(size)
+		}
+		start = i + 1
+	}
+	wg.Wait()
+	mu.Lock()
+	defer mu.Unlock()
+	return firstErr
+}
+
+// deadLetterUnsent dead-letters rows that were never sent.
+func (w *Writer) deadLetterUnsent(rows []map[string]any) error {
+	if err := w.appendDeadLetter(rows); err != nil {
+		return fmt.Errorf("chwriter: dead-letter write failed for %d unsent rows: %w", len(rows), err)
+	}
+	atomic.AddUint64(&w.stats.BatchesFailed, 1)
+	atomic.AddUint64(&w.stats.RowsDeadLettered, uint64(len(rows)))
+	return fmt.Errorf("chwriter: %d rows dead-lettered unsent: an earlier insert of the batch could not reach ClickHouse", len(rows))
+}
+
+// insertChunk POSTs one insert body with retry/backoff and dead-letters its
+// rows if it cannot be confirmed. unavailable reports that it gave up
+// because ClickHouse kept failing (transport errors, 429 or 5xx) or the
+// context ended, not because of this body.
+func (w *Writer) insertChunk(ctx context.Context, url string, body []byte, rows []map[string]any) (unavailable bool, err error) {
 	var lastErr error
 	attempts := 0
+	unavailable = true
 	for attempt := 0; attempt <= w.cfg.MaxRetries; attempt++ {
 		if attempt > 0 {
 			atomic.AddUint64(&w.stats.BatchesRetried, 1)
@@ -236,19 +431,21 @@ func (w *Writer) insert(ctx context.Context, url string, rows []map[string]any) 
 		if err == nil && status == http.StatusOK {
 			atomic.AddUint64(&w.stats.BatchesInserted, 1)
 			atomic.AddUint64(&w.stats.RowsInserted, uint64(len(rows)))
-			return nil
+			return false, nil
 		}
 		lastErr = err
 		if status == http.StatusOK {
 			// A late exception or incomplete response does not prove that no
 			// rows committed. Preserve the batch, but never add a source replay.
 			lastErr = fmt.Errorf("chwriter: insert not confirmed; reconcile canonical source before replay: %w", err)
+			unavailable = false
 			break
 		}
 		// 4xx (except 429) is non-retryable — schema or data bug. Dead-letter
 		// immediately so we don't loop on a guaranteed failure.
 		if status >= 400 && status < 500 && status != http.StatusTooManyRequests {
 			lastErr = fmt.Errorf("chwriter: non-retryable status %d: %w", status, err)
+			unavailable = false
 			break
 		}
 	}
@@ -256,11 +453,11 @@ func (w *Writer) insert(ctx context.Context, url string, rows []map[string]any) 
 	// Exhausted retries — persist verbatim and surface error so the caller
 	// (and any /healthz reader) sees the failure.
 	if dlErr := w.appendDeadLetter(rows); dlErr != nil {
-		return fmt.Errorf("chwriter: terminal failure and dead-letter write failed: %v (original: %w)", dlErr, lastErr)
+		return unavailable, fmt.Errorf("chwriter: terminal failure and dead-letter write failed: %v (original: %w)", dlErr, lastErr)
 	}
 	atomic.AddUint64(&w.stats.BatchesFailed, 1)
 	atomic.AddUint64(&w.stats.RowsDeadLettered, uint64(len(rows)))
-	return fmt.Errorf("chwriter: batch dead-lettered after %d attempts: %w", attempts, lastErr)
+	return unavailable, fmt.Errorf("chwriter: batch dead-lettered after %d attempts: %w", attempts, lastErr)
 }
 
 // insertURL builds an INSERT URL for an arbitrary table, mirroring the
@@ -281,6 +478,8 @@ func (w *Writer) insertURL(table string) string {
 // transport/confirmation error. Preserve the status on response failures so
 // insert can distinguish an unconfirmed 200 from existing retryable failures.
 func (w *Writer) doRequest(ctx context.Context, url string, body []byte) (int, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return 0, err
@@ -290,6 +489,13 @@ func (w *Writer) doRequest(ctx context.Context, url string, body []byte) (int, e
 	}
 	req.Header.Set("Content-Type", "application/x-ndjson")
 	req.Header.Set("X-ClickHouse-Format", "JSONEachRow")
+	waitForBodies := trackRequestBodies(req)
+	defer func() {
+		// An early response can finish before the upload. Stop outstanding
+		// transport work, then retain ownership until every body is closed.
+		cancel()
+		waitForBodies()
+	}()
 
 	resp, err := w.client.Do(req)
 	if err != nil {

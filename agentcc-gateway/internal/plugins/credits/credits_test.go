@@ -280,3 +280,28 @@ func TestCreditsPlugin_NilKeyStore(t *testing.T) {
 		t.Errorf("expected Continue when keyStore nil, got %d (ProcessResponse)", res.Action)
 	}
 }
+
+// A call that cannot spend, such as a delete, is not refused for a balance
+// that has run out.
+func TestCreditsPlugin_NoSpendCallIsNotRefused(t *testing.T) {
+	ks := newKeyStore()
+	p := New(true, ks)
+	managed := findKey(ks, "managed")
+	if managed == nil {
+		t.Fatal("expected to find managed key")
+	}
+	managed.DeductMicros(auth.USDToMicros(10.0))
+
+	control := makeRC(managed.ID, "managed")
+	defer control.Release()
+	if res := p.ProcessRequest(context.Background(), control); res.Error == nil {
+		t.Fatal("control: a call that can spend should be refused")
+	}
+
+	rc := makeRC(managed.ID, "managed")
+	defer rc.Release()
+	rc.Flags.NoSpend = true
+	if res := p.ProcessRequest(context.Background(), rc); res.Error != nil {
+		t.Fatalf("a call that cannot spend was refused: %v", res.Error.Message)
+	}
+}

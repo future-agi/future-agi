@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
+# Set on a command by the server; a client never sends them.
+_SERVER_PAYLOAD_KEYS = frozenset({"command_kind", "nudge_id", "origin"})
+
 
 class HarnessConversationMessageCreateSerializer(serializers.Serializer):
     content = serializers.CharField(max_length=20_000, trim_whitespace=False)
@@ -30,6 +33,17 @@ class HarnessConversationMessageCreateSerializer(serializers.Serializer):
         if kind == "user_message" and reply_to is not None:
             raise serializers.ValidationError(
                 {"reply_to": "A new message cannot answer a blocking question."}
+            )
+        payload = attrs.get("payload")
+        if isinstance(payload, dict) and any(
+            key in _SERVER_PAYLOAD_KEYS or str(key).startswith("_") for key in payload
+        ):
+            raise serializers.ValidationError(
+                {"payload": "These keys are set by the server only."}
+            )
+        if attrs["client_request_id"].startswith("nudge-"):
+            raise serializers.ValidationError(
+                {"client_request_id": "This prefix is reserved."}
             )
         return attrs
 
@@ -285,3 +299,7 @@ class HarnessConversationOverviewSerializer(serializers.Serializer):
     recent_runs = serializers.ListField(child=serializers.DictField())
     build_changes = serializers.ListField(child=serializers.DictField())
     earlier_messages = serializers.ListField(child=serializers.DictField())
+    drafts = serializers.DictField(
+        required=False,
+        help_text="The unsaved changes by piece, where the environment has drafts.",
+    )

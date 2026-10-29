@@ -11,6 +11,9 @@ export const runAnalyticsKey = (executionId) => [
   "simulation-run-analytics-v3",
   executionId,
 ];
+// Every run comparison: a change to either run's evals changes it, so the
+// whole prefix is refreshed (after a re-grade, once grading finishes).
+export const compareRunsKeyPrefix = ["harness-run-compare"];
 // Every call drawer's detail. Each is keyed by its call alone, and a
 // re-grade touches every call of the run, so the whole prefix is refreshed.
 export const callDetailKeyPrefix = ["simulation-call-detail-v3"];

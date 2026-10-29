@@ -232,7 +232,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
       "The provider's own judgement as reported; it never replaces your evals",
     sentiment:
       "As reported by the provider; the platform does not compute sentiment",
-    reliability: `${reliability.scenarios ?? 0} scenarios × ${reliability.trials ?? 0} trial${reliability.trials === 1 ? "" : "s"}${interval ? ` · pass rate 95% range ${format(interval.low, "percent")}–${format(interval.high, "percent")}` : ""}`,
+    reliability: `${reliability.scenarios ?? 0} scenarios × ${reliability.trials ?? 0} trial${reliability.trials === 1 ? "" : "s"}${interval ? ` · pass^1 95% range ${format(interval.low, "percent")}–${format(interval.high, "percent")}` : ""}`,
     evaluations: `${evalSummary.graders} evals · ${evalSummary.passed} of ${evalSummary.measured} evaluated calls passed every eval (${format(evalSummary.pass_rate, "percent")})${evalSummary.errored_checks ? ` · ${evalSummary.errored_checks} checks could not run` : ""}`,
     csat: "Scorer CSAT on a 0–10 scale; a provider success flag is never mixed in",
     response_time:
@@ -275,10 +275,6 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
   const costPerPass = metricsByKey.cost_per_pass;
   const comparison = dashboard.comparison;
   const health = dashboard.run_health;
-  const passMargin =
-    interval && passRate?.value != null
-      ? Math.max(passRate.value - interval.low, interval.high - passRate.value)
-      : null;
   const metricTile = (key, label, coverage, unit) => {
     const metric = metricsByKey[key];
     if (!metric) return null;
@@ -331,7 +327,9 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
       label: "Calls passed",
       value: format(passRate?.value, "percent"),
       reported: passRate?.value != null,
-      detail: passMargin == null ? null : `±${number(passMargin)} pts`,
+      // No range here: pass^1's range brackets the scenario average, which this
+      // pooled rate need not sit inside.
+      detail: null,
       coverage: `${passRate?.measured ?? 0} / ${passRate?.total ?? 0} evaluated`,
       note: passRate?.note,
     },
@@ -428,7 +426,8 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
           onOpen={id === "goal_outcome" ? onOpenCalls : undefined}
         />
       );
-    if (id === "reliability") return <Reliability data={reliability} />;
+    if (id === "reliability")
+      return <Reliability data={reliability} onOpenCalls={onOpenCalls} />;
     if (id === "csat" || id === "response_time")
       return (
         <DashboardHistogram
@@ -894,7 +893,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
 }
 AnalyticsDashboard.propTypes = RunAnalytics.propTypes;
 
-function Reliability({ data }) {
+function Reliability({ data, onOpenCalls }) {
   if (!data?.scenarios) return <NoMeasurement />;
   const tiles = [
     ["Passed every trial", data.consistent_pass, data.scenarios],
@@ -929,14 +928,22 @@ function Reliability({ data }) {
             <TableRow>
               <TableCell>Scenario</TableCell>
               <TableCell>Result</TableCell>
-              <TableCell align="right">Passed / evaluated</TableCell>
-              <TableCell align="right">Evaluated / total trials</TableCell>
-              <TableCell align="right">Error</TableCell>
+              <TableCell align="right">Trials</TableCell>
+              <TableCell align="right">Inconclusive</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {data.rows.map((row) => (
-              <TableRow key={row.scenario_key || row.scenario}>
+              <TableRow
+                key={row.scenario_key || row.scenario}
+                hover={!!onOpenCalls}
+                onClick={
+                  onOpenCalls && row.call_ids?.length
+                    ? () => onOpenCalls({ callExecutionId: row.call_ids })
+                    : undefined
+                }
+                sx={onOpenCalls ? { cursor: "pointer" } : undefined}
+              >
                 <TableCell>{row.scenario}</TableCell>
                 <TableCell
                   sx={{
@@ -950,13 +957,15 @@ function Reliability({ data }) {
                 >
                   {VERDICTS[row.verdict]}
                 </TableCell>
+                {/* Inconclusive trials sit outside the denominator. */}
                 <TableCell align="right">
-                  {row.passed} / {row.evaluated}
+                  {row.evaluated
+                    ? `${row.passed}/${row.evaluated} trials passed`
+                    : "No conclusive trial"}
                 </TableCell>
                 <TableCell align="right">
-                  {row.evaluated} / {row.runs}
+                  {row.error + row.inconclusive}
                 </TableCell>
-                <TableCell align="right">{row.error}</TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -965,4 +974,4 @@ function Reliability({ data }) {
     </>
   );
 }
-Reliability.propTypes = { data: PropTypes.object };
+Reliability.propTypes = { data: PropTypes.object, onOpenCalls: PropTypes.func };

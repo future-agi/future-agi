@@ -219,9 +219,10 @@ func (a *Authenticator) RouteSimulation(
 		name, projectID = project.Name, project.ID
 		resolved := map[string]string{name: projectID}
 		result.SetProjectsInWorkspace(result.WorkspaceID, resolved)
-		// A false answer means the cache entry was replaced meanwhile; this
-		// request's own result already holds the name, and the stamp reads it.
-		a.cache.addProjectsScoped(cacheKey, result.OrgID, result.WorkspaceID, resolved)
+		// A false answer means the cache entry expired or was replaced
+		// meanwhile; the stamp then refuses the request as retryable, and the
+		// retry authenticates again.
+		a.cache.addProjectsScoped(cacheKey, result, resolved)
 	}
 
 	for i := 0; i < rss.Len(); i++ {
@@ -238,7 +239,7 @@ func (a *Authenticator) RouteSimulation(
 // forget drops a cached key result.
 func (a *Authenticator) forget(cacheKey string) {
 	if a.cache != nil && cacheKey != "" {
-		a.cache.m.Delete(cacheKey)
+		a.cache.invalidateKey(cacheKey)
 	}
 }
 

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/genaifmt"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers"
+	"github.com/futureagi/agentcc-gateway/internal/streaming"
 	"github.com/futureagi/agentcc-gateway/internal/translation"
 	geminitrans "github.com/futureagi/agentcc-gateway/internal/translation/gemini"
 )
@@ -159,7 +161,12 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		if action == "embedContent" {
 			call = func(ctx context.Context) ([]byte, int, error) {
-				return gp.EmbedContent(ctx, model, body, googleHeaders)
+				respBody, status, err := gp.EmbedContent(ctx, model, body, googleHeaders)
+				if err == nil && status < http.StatusBadRequest {
+					// Only an embedding that was made is billed.
+					rc.Metadata["input_characters"] = strconv.Itoa(genaifmt.EmbedInputCharacters(body))
+				}
+				return respBody, status, err
 			}
 		}
 		h.handleGenAINativeOnly(ctx, w, rc, call)
@@ -168,6 +175,7 @@ func (h *Handlers) GenAIHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Fast path: provider natively speaks GenAI.
 	if gp, ok := provider.(providers.GenAINativeProvider); ok {
+		rc.GuardrailRequest = guardrailRequest("google", body)
 		switch action {
 		case "generateContent":
 			h.handleGenAINonStream(ctx, w, rc, gp, model, body, googleHeaders)
@@ -226,6 +234,7 @@ func (h *Handlers) handleGenAINonStream(ctx context.Context, w http.ResponseWrit
 		}
 		if statusCode < 400 {
 			applyGenAIUsage(rc, respBody)
+			rc.GuardrailResponse = assistantText(genaiResponseText(respBody))
 		}
 		return nil
 	})
@@ -317,13 +326,46 @@ func (h *Handlers) handleGenAIStream(ctx context.Context, w http.ResponseWriter,
 	}
 	flusher.Flush()
 
-	// Relay SSE stream from GenAI to client.
-	buf := make([]byte, 32*1024)
+	// With metadata asked for, the latest chunk is held back to carry it.
+	var holder *lastEventHolder
+	if wantsStreamMetadata(rc) {
+		holder = &lastEventHolder{}
+	}
+
+	// fail ends a stream that stopped early, telling the client why unless
+	// the client is the one that left.
+	fail := func(err error) {
+		if holder != nil {
+			writeAndFlush(w, flusher, holder.flush(nil))
+		}
+		if apiErr := streamEndError(ctx, err); apiErr != nil {
+			writeGenAIStreamError(w, flusher, rc, apiErr)
+		}
+		finalize(ctx.Err() != nil)
+	}
+
+	// Relay the stream one event at a time, each as it arrived, so a failure
+	// is reported after a whole event rather than inside one.
+	events := streaming.NewEventReader(stream)
 	for {
-		n, readErr := stream.Read(buf)
-		if n > 0 {
-			usage.Write(buf[:n])
-			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+		ev, readErr := events.Next()
+		usage.Write(ev.Raw)
+		if readErr != nil && readErr != io.EOF {
+			// The event the error cut off is not forwarded: run into the error
+			// chunk, it would hide that chunk from the client's parser.
+			slog.Warn("error reading genai stream", "request_id", rc.RequestID, "error", readErr)
+			fail(readErr)
+			return
+		}
+		if apiErr := genaiStreamError(ev.Raw); apiErr != nil {
+			rc.AddError(apiErr)
+		}
+		out := ev.Raw
+		if holder != nil {
+			out = holder.push(ev)
+		}
+		if len(out) > 0 {
+			if _, writeErr := w.Write(out); writeErr != nil {
 				slog.Warn("error writing genai stream", "request_id", rc.RequestID, "error", writeErr)
 				// Client gone, tokens still spent — detach from its context.
 				finalize(true)
@@ -331,21 +373,54 @@ func (h *Handlers) handleGenAIStream(ctx context.Context, w http.ResponseWriter,
 			}
 			flusher.Flush()
 		}
-		if readErr != nil {
-			if readErr != io.EOF {
-				slog.Warn("error reading genai stream", "request_id", rc.RequestID, "error", readErr)
-			}
+		switch {
+		case readErr == io.EOF:
 			finalize(false)
+			if holder != nil {
+				writeAndFlush(w, flusher, holder.flush(streamMetadata(rc)))
+			}
 			return
-		}
-
-		select {
-		case <-ctx.Done():
-			finalize(true)
+		case ctx.Err() != nil:
+			fail(ctx.Err())
 			return
-		default:
 		}
 	}
+}
+
+// writeAndFlush sends bytes a stream has already committed to, if there are
+// any. A failed write needs no handling here: the client is gone, and the
+// caller is ending the stream either way.
+func writeAndFlush(w io.Writer, flusher http.Flusher, out []byte) {
+	if len(out) == 0 {
+		return
+	}
+	if _, err := w.Write(out); err == nil {
+		flusher.Flush()
+	}
+}
+
+// writeGenAIStreamError reports a failure inside a stream that has already
+// answered 200, and records it, so the request is logged as the failure it was.
+func writeGenAIStreamError(w http.ResponseWriter, flusher http.Flusher, rc *models.RequestContext, apiErr *models.APIError) {
+	rc.AddError(apiErr)
+	if _, err := w.Write(genaifmt.StreamErrorEvent(apiErr)); err == nil {
+		flusher.Flush()
+	}
+}
+
+// genaiStreamError is the failure a GenAI stream event reports, or nil. A
+// GenAI stream has no error event; a failing upstream, or the translator,
+// sends an error object in place of a chunk.
+func genaiStreamError(raw []byte) *models.APIError {
+	if !bytes.Contains(raw, []byte(`"error"`)) {
+		return nil
+	}
+	ev, _ := streaming.NewEventReader(bytes.NewReader(raw)).Next()
+	data := bytes.TrimSpace(ev.Data())
+	if !bytes.HasPrefix(data, []byte(`{"error"`)) {
+		return nil
+	}
+	return upstreamStreamError(data)
 }
 
 // applyGenAIUsage lifts usageMetadata onto rc. rc.Response is populated because
@@ -417,6 +492,10 @@ func (h *Handlers) handleGenAINativeOnly(ctx context.Context, w http.ResponseWri
 	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
 		var callErr error
 		respBody, statusCode, callErr = call(ctx)
+		if callErr == nil && statusCode >= http.StatusBadRequest {
+			// Relayed as sent, and logged as the failure it is.
+			rc.AddError(models.ErrUpstreamProvider(statusCode, fmt.Sprintf("genai error (HTTP %d)", statusCode)))
+		}
 		return callErr
 	}); err != nil {
 		writeGenAIErrorFromError(w, err)
@@ -454,7 +533,7 @@ func (h *Handlers) handleGenAINonStreamViaCanonical(
 	var canonicalResp *models.ChatCompletionResponse
 	err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
 		var callErr error
-		canonicalResp, callErr = provider.ChatCompletion(ctx, canonicalReq)
+		canonicalResp, callErr = translatedChatCompletion(ctx, provider, canonicalReq)
 		if callErr != nil {
 			return callErr
 		}
@@ -550,7 +629,7 @@ func (h *Handlers) handleGenAIStreamViaCanonical(
 	var errCh <-chan error
 
 	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
-		rawChunkCh, errCh = provider.StreamChatCompletion(ctx, canonicalReq)
+		rawChunkCh, errCh = translatedStreamChatCompletion(ctx, provider, canonicalReq)
 		return nil
 	}); err != nil {
 		writeGenAIErrorFromError(w, err)
@@ -598,16 +677,43 @@ func (h *Handlers) handleGenAIStreamViaCanonical(
 	}
 	flusher.Flush()
 
+	// With metadata asked for, the latest chunk is held back to carry it.
+	// release sends it as it came, before an error ends the stream.
+	var holder *lastEventHolder
+	if wantsStreamMetadata(rc) {
+		holder = &lastEventHolder{}
+	}
+	release := func() {
+		if holder != nil {
+			writeAndFlush(w, flusher, holder.flush(nil))
+		}
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
+			release()
+			if apiErr := streamEndError(ctx, ctx.Err()); apiErr != nil {
+				writeGenAIStreamError(w, flusher, rc, apiErr)
+			}
 			finalize(true)
 			return
 
 		case event, ok := <-eventCh:
 			if !ok {
+				// break, not continue: the check after the select is what
+				// ends the stream once every channel has closed.
 				eventCh = nil
-				continue
+				break
+			}
+			if apiErr := genaiStreamError(event); apiErr != nil {
+				rc.AddError(apiErr)
+			}
+			if holder != nil {
+				ev, _ := streaming.NewEventReader(bytes.NewReader(event)).Next()
+				if event = holder.push(ev); len(event) == 0 {
+					break
+				}
 			}
 			if _, writeErr := w.Write(event); writeErr != nil {
 				slog.Warn("error writing translated genai stream", "request_id", rc.RequestID, "error", writeErr)
@@ -621,10 +727,12 @@ func (h *Handlers) handleGenAIStreamViaCanonical(
 				// Error channel closed. Keep draining eventCh — final events
 				// (finishReason payload, usageMetadata) may still be buffered.
 				translatorErrCh = nil
-				continue
+				break
 			}
 			if err != nil {
 				slog.Warn("translator stream error", "request_id", rc.RequestID, "error", err)
+				release()
+				writeGenAIStreamError(w, flusher, rc, models.ErrUpstreamProvider(0, "translating the stream: "+err.Error()))
 				finalize(false)
 				return
 			}
@@ -632,17 +740,34 @@ func (h *Handlers) handleGenAIStreamViaCanonical(
 		case err, ok := <-errCh:
 			if !ok {
 				errCh = nil
-				continue
+				break
 			}
 			if err != nil {
 				slog.Warn("provider stream error", "request_id", rc.RequestID, "error", err)
+				release()
+				if apiErr := streamEndError(ctx, err); apiErr != nil {
+					writeGenAIStreamError(w, flusher, rc, apiErr)
+				}
 				finalize(false)
 				return
 			}
 		}
 
 		if eventCh == nil && errCh == nil && translatorErrCh == nil {
+			// Every channel closed. The deadline closes them too, and the
+			// providers report nothing once it has passed.
+			if apiErr, finished := closedStreamError(ctx, nil); !finished {
+				release()
+				if apiErr != nil {
+					writeGenAIStreamError(w, flusher, rc, apiErr)
+				}
+				finalize(ctx.Err() != nil)
+				return
+			}
 			finalize(false)
+			if holder != nil {
+				writeAndFlush(w, flusher, holder.flush(streamMetadata(rc)))
+			}
 			return
 		}
 	}

@@ -1591,6 +1591,24 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
             row="tracer.EndUser",
         ),
     },
+    "tracer.services.clickhouse.v2.query_builders.observe_usage": {
+        "ObserveUsageFilterBuilderV2._build_system_metric_condition": filed(
+            BY_ID_ALONE,
+            why=(
+                "Observe usage residual requires the authorized project's finite "
+                "candidate trace IDs; project/trace tuple membership isolates "
+                "same-ID traces across an authorized project set"
+            ),
+        ),
+        "ObserveTraceListQueryBuilderV2.build_usage_sorted_query": filed(
+            PROJECT_SET,
+            why=(
+                "exact usage sorting of the Observe list requires its one "
+                "authorized project and finite root time window; the view's "
+                "memory, read-byte and wall budgets remain fail-closed"
+            ),
+        ),
+    },
     "tracer.services.clickhouse.v2.query_builders.session_detail": {
         "_LIVE_SESSION_SPANS": filed(BY_ID_ALONE, why="session detail by session id"),
     },
@@ -1633,6 +1651,7 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "_TraceListQueryBuilderV2Core.build_span_attributes_query": _STATEMENT_BY_IDS,
         "_TraceListQueryBuilderV2Core.build_user_id_query": _STATEMENT_BY_IDS,
         "_TraceRootReplayV2._root_replay_query": _STATEMENT_BY_IDS,
+        "_TraceRootReplayV2._trace_rollup_join_sql": _STATEMENT_BY_IDS,
     },
     "tracer.services.clickhouse.v2.query_builders.user_time_series": {
         "UserDetailTimeSeriesQueryBuilderV2.build": _SESSION_OR_USER,

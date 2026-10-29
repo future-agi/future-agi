@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status, viewsets
@@ -41,11 +43,14 @@ from simulate.services.hosted_harness_conversation import (
     pending_commands,
     promote_latest_checkpoint,
     publish_conversation_workspace,
+    report_checkpoint_rejection,
     start_conversation_run,
     store_workspace_archive,
 )
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
+
+logger = logging.getLogger(__name__)
 
 
 class HostedHarnessConversationViewSet(viewsets.ViewSet):
@@ -142,9 +147,21 @@ class HostedHarnessConversationViewSet(viewsets.ViewSet):
     @swagger_auto_schema(responses={202: HarnessConversationRunStatusSerializer})
     def rerun(self, request, pk=None):
         from simulate.services.harness_provider import get_harness_provider
+        from simulate.services.harness_versioning.drafts import drafts_apply
 
-        promote_latest_checkpoint(self._conversation)
         job = self._conversation.job
+        try:
+            promote_latest_checkpoint(self._conversation)
+        except HostedHarnessError as exc:
+            # The run uses the saved versions; a refused draft write must not block it.
+            if not drafts_apply(job.environment or job) or exc.code not in {
+                "draft_changed",
+                "scenario_key_retired",
+                "scenario_key_taken",
+            }:
+                raise
+            logger.info("harness_rerun_promote_refused code=%s", exc.code)
+            report_checkpoint_rejection(str(self._conversation.id), exc.message)
         try:
             get_harness_provider().rerun_saved(
                 str(job.id),

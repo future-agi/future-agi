@@ -393,3 +393,14 @@ class _AsyncIterMock:
         if not self._items:
             raise StopAsyncIteration
         return self._items.pop(0)
+
+
+def test_the_github_head_poll_is_scheduled_every_ten_minutes():
+    from tfc.temporal.schedules.simulate import SIMULATE_SCHEDULES
+
+    [schedule] = [
+        item for item in SIMULATE_SCHEDULES if item.schedule_id == "harness-github-poll"
+    ]
+    assert schedule.activity_name == "poll_harness_github_heads"
+    assert schedule.interval_seconds == 600
+    assert schedule.queue == "default"

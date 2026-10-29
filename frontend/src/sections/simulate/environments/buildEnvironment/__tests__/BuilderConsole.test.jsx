@@ -62,6 +62,34 @@ describe("BuilderConsole", () => {
     expect(screen.getByPlaceholderText(CONSOLE_COPY.placeholder)).not.toBeDisabled();
   });
 
+  it("offers Stop without the working cue for work that only waits", () => {
+    render(
+      <BuilderConsole
+        turns={[{ id: "u1", role: "user", text: "hey" }]}
+        running={false}
+        canStop
+        working={false}
+        onStop={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(CONSOLE_COPY.idle)).toBeInTheDocument();
+    expect(screen.queryByText(CONSOLE_COPY.workingDot)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
+  });
+
+  it("disables Stop while a Stop is on its way", () => {
+    render(
+      <BuilderConsole
+        turns={[{ id: "u1", role: "user", text: "hey" }]}
+        running={false}
+        canStop
+        stopping
+        onStop={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();
+  });
+
   it("shows no collapse button unless onCollapse is given", () => {
     render(<BuilderConsole turns={[]} running={false} />);
     expect(screen.queryByRole("button", { name: CONSOLE_COPY.collapse })).not.toBeInTheDocument();

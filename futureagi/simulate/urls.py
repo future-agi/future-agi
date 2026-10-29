@@ -104,6 +104,7 @@ from .views.agent_version import (
 )
 from .views.alk_simulate_ingestion import ALKSimulateIngestionViewSet
 from .views.harness_environment import HarnessEnvironmentViewSet
+from .views.harness_github_webhook import HarnessGitHubWebhookView
 from .views.harness_job import HarnessJobViewSet
 from .views.hosted_harness import (
     HostedHarnessAttemptViewSet,
@@ -126,6 +127,7 @@ from .views.run_results_v3 import (
     RunAnalyticsV3View,
     RunCallsV3View,
     RunExportV3View,
+    RunReliabilityV3View,
     RunTracesV3View,
 )
 from .views.scenarios import EditScenarioPromptsView
@@ -189,6 +191,11 @@ urlpatterns = [
         name="v3-test-execution-analytics",
     ),
     path(
+        "v3/test-executions/<uuid:test_execution_id>/reliability/",
+        RunReliabilityV3View.as_view(),
+        name="v3-test-execution-reliability",
+    ),
+    path(
         "v3/test-executions/<uuid:test_execution_id>/export/",
         RunExportV3View.as_view(),
         name="v3-test-execution-export",
@@ -202,6 +209,11 @@ urlpatterns = [
         "api/harness/ingress/<str:token>/<path:target_path>",
         HostedHarnessIngressProxyView.as_view(),
         name="hosted-harness-ingress-proxy-path",
+    ),
+    path(
+        "api/harness/github/webhook/",
+        HarnessGitHubWebhookView.as_view(),
+        name="hosted-harness-github-webhook",
     ),
     # Persona duplicate endpoint with custom URL pattern
     path(

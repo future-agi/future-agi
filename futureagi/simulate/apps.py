@@ -13,4 +13,4 @@ class SimulateConfig(AppConfig):
         """
         # Only start the service if we're in a web server context
         # (not during management commands like migrate, collectstatic, etc.)
-        pass
+        from simulate import signals  # noqa: F401

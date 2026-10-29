@@ -110,6 +110,8 @@ export default function PanelSourceRepo() {
           fullWidth
         />
       </Stack>
+      {/* TODO: hide Private once creation knows versioning is on: it then refuses
+          private repositories (github_private_unsupported, shown on Build). */}
       <Box>
         <Label>Visibility</Label>
         <Box sx={{ display: "grid", gap: 0.75, gridTemplateColumns: "1fr 1fr", mt: 0.75 }}>

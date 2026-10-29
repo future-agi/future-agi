@@ -2,6 +2,7 @@ package tokenizer
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
@@ -142,5 +143,21 @@ func TestEstimateStringTokens(t *testing.T) {
 		if tokens < tt.minToken || tokens > tt.maxToken {
 			t.Errorf("estimateStringTokens(%q) = %d, want [%d, %d]", tt.input, tokens, tt.minToken, tt.maxToken)
 		}
+	}
+}
+
+// An inline image is often a megabyte of base64. Counted as text it put a
+// prompt at hundreds of thousands of tokens, more than any context window.
+func TestEstimateTokens_MediaPartsCountAFixedAmount(t *testing.T) {
+	image := `data:image/jpeg;base64,` + strings.Repeat("A", 1<<20)
+	content, _ := json.Marshal([]map[string]any{
+		{"type": "text", "text": "What is in this picture?"},
+		{"type": "image_url", "image_url": map[string]string{"url": image}},
+	})
+	got := EstimateTokens([]models.Message{{Role: "user", Content: content}})
+
+	want := 3 + estimateStringTokens("user") + estimateStringTokens("What is in this picture?") + MediaPartTokens + 3
+	if got != want {
+		t.Errorf("EstimateTokens = %d, want %d", got, want)
 	}
 }

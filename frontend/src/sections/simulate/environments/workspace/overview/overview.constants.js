@@ -3,9 +3,6 @@ import { getPacks, getRows } from "src/api/simulate-environments/_fixtures/scena
 
 // Every copy string the Overview surface renders.
 export const OVERVIEW_COPY = {
-  // "Attach agent" (no agent yet) stays deferred behind this tooltip; "Manage
-  // versions" is now live and opens the AgentsPanel drawer.
-  agentVersionsSoon: "Agent versions land with the next phase",
   manageVersionsSubtitle: "Manage the agent versions running against this environment",
   facts: {
     channel: "Channel",
@@ -144,10 +141,6 @@ export const ENV_STATE_SHAPE = PropTypes.shape({
       endpoint: PropTypes.string,
     }),
   }),
-  agentVersions: PropTypes.arrayOf(
-    PropTypes.shape({ label: PropTypes.string, note: PropTypes.string })
-  ),
-  activeAgentVersion: PropTypes.string,
   scenarios: PropTypes.arrayOf(
     PropTypes.shape({
       persona: PropTypes.shape({ slug: PropTypes.string, name: PropTypes.string }),
@@ -155,11 +148,6 @@ export const ENV_STATE_SHAPE = PropTypes.shape({
   ),
   evals: PropTypes.arrayOf(PropTypes.shape({ id: PropTypes.string })),
   runs: PropTypes.arrayOf(PropTypes.shape({ id: PropTypes.string })),
-  // The env version the world was last re-derived against a given agent, plus
-  // the version history the refresh banner appends to.
-  envDerivedForAgent: PropTypes.string,
-  envVersions: PropTypes.arrayOf(PropTypes.shape({ label: PropTypes.string })),
-  activeEnvVersion: PropTypes.string,
   // A keyed map of tool name → the effect the reader confirmed for it.
   toolResolutions: PropTypes.objectOf(PropTypes.string),
 });
@@ -187,15 +175,6 @@ export const packStatsFor = (env) => {
 // is not reported yet, so nothing is derived.
 export const ruleRowsFor = (env) =>
   (env?.rules || []).map((subject, i) => ({ id: `rule-${i}`, subject }));
-
-// The "agent moved ahead" refresh banner copy.
-export const REFRESH_COPY = {
-  title: (label) => `Agent ${label} is newer than this environment`,
-  body: (label) =>
-    `Optional: re-derive the world against ${label}, or keep running the current one.`,
-  action: "Refresh environment",
-  note: (label) => `Re-derived against agent ${label}`,
-};
 
 // The getting-started checklist copy. Steps are static prose; the counts and
 // env name are folded in at render.

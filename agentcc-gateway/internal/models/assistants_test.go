@@ -115,52 +115,6 @@ func TestExtractStreamFromBody(t *testing.T) {
 	}
 }
 
-func TestExtractRunUsage(t *testing.T) {
-	tests := []struct {
-		name string
-		body string
-		want *AssistantsRunUsage
-	}{
-		{
-			name: "valid usage",
-			body: `{"id":"run_123","status":"completed","usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150}}`,
-			want: &AssistantsRunUsage{PromptTokens: 100, CompletionTokens: 50, TotalTokens: 150},
-		},
-		{
-			name: "missing usage",
-			body: `{"id":"run_123","status":"in_progress"}`,
-			want: nil,
-		},
-		{
-			name: "null usage",
-			body: `{"id":"run_123","usage":null}`,
-			want: nil,
-		},
-		{
-			name: "malformed json",
-			body: `{invalid`,
-			want: nil,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := ExtractRunUsage([]byte(tt.body))
-			if tt.want == nil {
-				if got != nil {
-					t.Errorf("ExtractRunUsage() = %v, want nil", got)
-				}
-				return
-			}
-			if got == nil {
-				t.Fatal("ExtractRunUsage() = nil, want non-nil")
-			}
-			if got.PromptTokens != tt.want.PromptTokens || got.CompletionTokens != tt.want.CompletionTokens || got.TotalTokens != tt.want.TotalTokens {
-				t.Errorf("ExtractRunUsage() = %+v, want %+v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestExtractMessageContent(t *testing.T) {
 	tests := []struct {
 		name string

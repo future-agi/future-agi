@@ -608,7 +608,7 @@ func TestStampFindsTheRoutedNameInTheKeyMap(t *testing.T) {
 	}
 }
 
-func TestStampFindsTheRoutedNameInTheRequestsOwnResult(t *testing.T) {
+func TestStampRefusesARoutedRequestWhoseKeyIsNoLongerCached(t *testing.T) {
 	cases := map[string]func(a *Authenticator, result *ResolveResult){
 		// The key's cache entry is gone, as when it expires between the read
 		// and the routing.
@@ -633,23 +633,25 @@ func TestStampFindsTheRoutedNameInTheRequestsOwnResult(t *testing.T) {
 			if err != nil || out.Hidden != routeHiddenID {
 				t.Fatalf("route: %+v, %v", out, err)
 			}
-			// The stamp reads the same result, so the spans stay with the
-			// hidden project instead of being dropped or stored under a
-			// project made from the reserved name.
+			if id, ok := result.GetProjectInWorkspace(routeWorkspace, routeHiddenKey); !ok || id != routeHiddenID {
+				t.Errorf("the request's result maps the hidden name to %q, %v", id, ok)
+			}
+			// Project resolution needs the key's live authentication, as for
+			// any key: the request is refused as retryable, and the retry
+			// authenticates again. Its spans are neither dropped, nor stamped,
+			// nor stored under a project made from the reserved name.
 			dropped, err := StampResourceAttrs(context.Background(), a, "ck", traces, result)
-			if err != nil || dropped != 0 {
-				t.Fatalf("stamp dropped %d, err = %v", dropped, err)
+			var changed *ProjectAuthChangedError
+			if !errors.Is(err, ErrProjectResolutionUnavailable) || !errors.As(err, &changed) || dropped != 0 {
+				t.Fatalf("stamp dropped %d, err = %v; want a retryable authentication change", dropped, err)
 			}
 			if traces.SpanCount() != before {
 				t.Fatalf("spans = %d, want %d", traces.SpanCount(), before)
 			}
 			for i := 0; i < traces.ResourceSpans().Len(); i++ {
-				if got, _ := resourceStr(t, traces, i, "fi.project_id"); got != routeHiddenID {
-					t.Errorf("resource %d fi.project_id = %q", i, got)
+				if got, ok := resourceStr(t, traces, i, "fi.project_id"); ok {
+					t.Errorf("resource %d fi.project_id = %q on a refused request", i, got)
 				}
-			}
-			if id, ok := result.GetProjectInWorkspace(routeWorkspace, routeHiddenKey); !ok || id != routeHiddenID {
-				t.Errorf("the request's result maps the hidden name to %q, %v", id, ok)
 			}
 		})
 	}

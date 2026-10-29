@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"encoding/json"
+	"net/http"
 	"strings"
 	"time"
 
@@ -94,7 +95,10 @@ func (s *streamState) parseSSELine(eventType, data string) (*models.StreamChunk,
 	case "ping":
 		return nil, false, nil
 	case "error":
-		return nil, false, nil
+		// The upstream failed mid-stream. Returned as an APIError so the read
+		// loop ends the stream with it; skipped, the stream would read as a
+		// finished one.
+		return nil, false, parseAnthropicError(http.StatusBadGateway, []byte(data))
 	}
 
 	return nil, false, nil

@@ -7,11 +7,14 @@ from email.mime.text import MIMEText
 import requests
 
 from integrations.services.credentials import CredentialManager
+from tfc.temporal.drop_in import temporal_activity
 
 logger = logging.getLogger(__name__)
 
 
-def send_alert_email(alert, event_type, context=None, recipient_override=None):
+def send_alert_email(
+    alert, event_type, context=None, recipient_override=None, check_cooldown=True
+):
     """Send an alert email using the configured provider.
 
     Args:
@@ -19,6 +22,7 @@ def send_alert_email(alert, event_type, context=None, recipient_override=None):
         event_type: The event type string that triggered this alert.
         context: Optional dict with event-specific details.
         recipient_override: Optional single email address for test sends.
+        check_cooldown: False when the caller has already started the cooldown.
 
     Returns:
         dict with success status and any error message.
@@ -36,7 +40,7 @@ def send_alert_email(alert, event_type, context=None, recipient_override=None):
             return {"success": False, "error": "Invalid provider configuration."}
 
     # Check cooldown
-    if not recipient_override and alert.last_triggered_at:
+    if check_cooldown and not recipient_override and alert.last_triggered_at:
         elapsed = (datetime.now(timezone.utc) - alert.last_triggered_at).total_seconds()
         if elapsed < alert.cooldown_minutes * 60:
             return {"success": False, "error": "Alert is in cooldown period."}
@@ -199,3 +203,28 @@ def _send_via_smtp(config, recipients, subject, body):
                 server.quit()
             except Exception:
                 pass
+
+
+@temporal_activity(max_retries=0, time_limit=120, queue="default")
+def send_alert_email_activity(alert_id, event_type, context):
+    """Send one alert email off the request path.
+
+    Log ingestion started the alert's cooldown when it fired, so this sends
+    without checking it again, and a provider that fails is not retried until
+    the cooldown ends.
+    """
+    from agentcc.models import AgentccEmailAlert
+
+    alert = AgentccEmailAlert.no_workspace_objects.filter(
+        id=alert_id, is_active=True, deleted=False
+    ).first()
+    if alert is None:
+        return
+    result = send_alert_email(alert, event_type, context, check_cooldown=False)
+    if not result.get("success"):
+        logger.warning(
+            "Alert email %s for %s not sent: %s",
+            alert_id,
+            event_type,
+            result.get("error"),
+        )

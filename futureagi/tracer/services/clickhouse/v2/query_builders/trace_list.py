@@ -43,11 +43,65 @@ from tracer.services.clickhouse.query_builders.trace_list import (
     TraceListQueryBuilder,
     _unix_microseconds,
 )
+from tracer.services.clickhouse.query_builders.trace_usage import usage_aggregate_sql
 from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExceeded
 from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
 from tracer.services.clickhouse.v2.query_builders.filters import (
     ClickHouseFilterBuilderV2,
 )
+
+# Columns the trace-list content replay adds when it carries the trace
+# rollup (``build_content_query(..., include_trace_rollup=True)``).
+TRACE_ROLLUP_COLUMNS: tuple[str, ...] = (
+    "trace_rollup_present",
+    "trace_rollup_cost",
+    "trace_rollup_total_tokens",
+    "trace_rollup_prompt_tokens",
+    "trace_rollup_completion_tokens",
+    "first_llm_model",
+    "first_llm_provider",
+    "first_llm_input",
+    "first_llm_output",
+)
+
+
+def _blank_content(value: Any) -> bool:
+    return value is None or (isinstance(value, str) and value.strip() == "")
+
+
+def apply_trace_rollup(row: dict[str, Any], rollup: Mapping[str, Any]) -> None:
+    """Fill one trace-list row from its trace rollup, in place.
+
+    Tokens and cost become the whole-trace sums whenever the rollup is
+    present. Input/output fall back to the first LLM span's content only when
+    the root has neither, so a root with content renders exactly as before;
+    model and provider fall back the same way. A row without a rollup (the
+    content replay was built without one) is left untouched.
+    """
+
+    if not rollup.get("trace_rollup_present"):
+        return
+    for column, key in (
+        ("cost", "trace_rollup_cost"),
+        ("total_tokens", "trace_rollup_total_tokens"),
+        ("prompt_tokens", "trace_rollup_prompt_tokens"),
+        ("completion_tokens", "trace_rollup_completion_tokens"),
+    ):
+        value = rollup.get(key)
+        if value is not None:
+            row[column] = value
+    if _blank_content(row.get("input")) and _blank_content(row.get("output")):
+        llm_input = rollup.get("first_llm_input")
+        llm_output = rollup.get("first_llm_output")
+        if not (_blank_content(llm_input) and _blank_content(llm_output)):
+            row["input"] = llm_input or ""
+            row["output"] = llm_output or ""
+    for column, key in (
+        ("model", "first_llm_model"),
+        ("provider", "first_llm_provider"),
+    ):
+        if _blank_content(row.get(column)) and not _blank_content(rollup.get(key)):
+            row[column] = rollup[key]
 
 
 @dataclass(frozen=True)
@@ -428,10 +482,164 @@ class _TraceRootReplayV2:
     def _root_replay_content_join_sql(self) -> str:
         return self._trace_tags_join_sql()
 
+    def _trace_rollup_join_sql(self, prefix: str) -> str:
+        """Join each page trace's whole-trace rollup onto its replayed root.
+
+        A trace list row reads its root span, but a trace's usage and, for
+        some senders, its content live on child spans: OpenRouter Broadcast
+        sends an empty root, the generation span with tokens/cost/content, and
+        Provider Attempt spans; traceAI agent roots carry no tokens either.
+        This adds, per page ``(project, trace)``:
+
+        * ``trace_rollup_*``: cost and token sums over every live span, the
+          totals the trace and session detail views already show;
+        * ``first_llm_model`` / ``first_llm_provider``: from the earliest LLM
+          span that has one;
+        * ``first_llm_input`` / ``first_llm_output``: the content of the
+          earliest LLM span with content, read only for traces whose root has
+          none.
+
+        Membership is the exact page ``(project, trace)`` identities with no
+        date window (children can start after the root's day), like the
+        trace-detail read; each span is its latest live physical version.
+        The span pass reads light columns only (``input_length`` and
+        ``output_length`` are materialized) and keeps one content key per
+        trace. Its rows are materialized once as a scalar array, and content
+        is then read by exact physical key for at most one span per page
+        trace, so the bytes read never grow with a trace's LLM fan-out.
+        """
+
+        identities = f"%({prefix}_rollup_trace_identities)s"
+        project_filter = self.project_filter_sql()
+        span_key = (
+            "project_id, observation_type, service_name, "
+            "toStartOfHour(start_time), trace_id, id"
+        )
+        return f"""
+        LEFT ANY JOIN (
+            WITH
+            (
+                SELECT groupArray(tuple(
+                    project_id, trace_id,
+                    rollup_cost, rollup_total_tokens,
+                    rollup_prompt_tokens, rollup_completion_tokens,
+                    rollup_first_llm_model, rollup_first_llm_provider,
+                    rollup_first_llm_key, rollup_root_has_content
+                ))
+                FROM (
+                    SELECT
+                        project_id,
+                        trace_id,
+                        {usage_aggregate_sql(prefix="latest_")},
+                        usage_cost AS rollup_cost,
+                        usage_total_tokens AS rollup_total_tokens,
+                        usage_prompt_tokens AS rollup_prompt_tokens,
+                        usage_completion_tokens AS rollup_completion_tokens,
+                        argMinIf(latest_model,
+                            tuple(latest_start_time, id, observation_type, service_name),
+                            observation_type = 'llm' AND latest_model != '')
+                            AS rollup_first_llm_model,
+                        argMinIf(latest_provider,
+                            tuple(latest_start_time, id, observation_type, service_name),
+                            observation_type = 'llm' AND latest_provider != '')
+                            AS rollup_first_llm_provider,
+                        argMinIf(
+                            tuple(project_id, observation_type, service_name,
+                                  start_hour, trace_id, id),
+                            tuple(latest_start_time, id, observation_type, service_name),
+                            observation_type = 'llm'
+                                AND (latest_input_length > 0 OR latest_output_length > 0)
+                        ) AS rollup_first_llm_key,
+                        countIf(
+                            (latest_parent_span_id IS NULL OR latest_parent_span_id = '')
+                            AND (latest_input_length > 0 OR latest_output_length > 0)
+                        ) > 0 AS rollup_root_has_content
+                    FROM (
+                        SELECT
+                            project_id,
+                            trace_id,
+                            id,
+                            observation_type,
+                            service_name,
+                            toStartOfHour(start_time) AS start_hour,
+                            argMax(tuple(start_time, cost, total_tokens, prompt_tokens,
+                                completion_tokens, model, provider, input_length,
+                                output_length, parent_span_id, is_deleted, name), _version)
+                                AS latest_span,
+                            id AS latest_id,
+                            observation_type AS latest_observation_type,
+                            latest_span.1 AS latest_start_time,
+                            latest_span.2 AS latest_cost,
+                            latest_span.3 AS latest_total_tokens,
+                            latest_span.4 AS latest_prompt_tokens,
+                            latest_span.5 AS latest_completion_tokens,
+                            latest_span.6 AS latest_model,
+                            latest_span.7 AS latest_provider,
+                            latest_span.8 AS latest_input_length,
+                            latest_span.9 AS latest_output_length,
+                            latest_span.10 AS latest_parent_span_id,
+                            latest_span.11 AS latest_is_deleted,
+                            latest_span.12 AS latest_name
+                        FROM {self.TABLE}
+                        PREWHERE (toString(project_id), trace_id) IN {identities}
+                          AND {project_filter}
+                        GROUP BY {span_key}
+                    ) AS latest_trace_spans
+                    WHERE latest_is_deleted = 0
+                    GROUP BY project_id, trace_id
+                )
+            ) AS trace_rollup_rows,
+            (
+                SELECT tuple(groupArray(content_key), groupArray(latest_content))
+                FROM (
+                    SELECT
+                        tuple({span_key}) AS content_key,
+                        argMax(tuple(input, output), _version) AS latest_content
+                    FROM {self.TABLE}
+                    PREWHERE {project_filter}
+                      AND observation_type = 'llm'
+                      AND (toString(project_id), trace_id) IN {identities}
+                      AND ({span_key}) IN (
+                          SELECT tupleElement(rollup_row, 9)
+                          FROM (SELECT arrayJoin(trace_rollup_rows) AS rollup_row)
+                          WHERE NOT tupleElement(rollup_row, 10)
+                      )
+                    GROUP BY {span_key}
+                )
+            ) AS first_llm_contents
+            SELECT
+                tupleElement(rollup_row, 1) AS trace_rollup_project_id,
+                tupleElement(rollup_row, 2) AS trace_rollup_trace_id,
+                toUInt8(1) AS trace_rollup_present,
+                tupleElement(rollup_row, 3) AS trace_rollup_cost,
+                tupleElement(rollup_row, 4) AS trace_rollup_total_tokens,
+                tupleElement(rollup_row, 5) AS trace_rollup_prompt_tokens,
+                tupleElement(rollup_row, 6) AS trace_rollup_completion_tokens,
+                tupleElement(rollup_row, 7) AS first_llm_model,
+                tupleElement(rollup_row, 8) AS first_llm_provider,
+                arrayElement(
+                    tupleElement(first_llm_contents, 2),
+                    indexOf(tupleElement(first_llm_contents, 1),
+                            tupleElement(rollup_row, 9))
+                ) AS first_llm_content,
+                tupleElement(first_llm_content, 1) AS first_llm_input,
+                tupleElement(first_llm_content, 2) AS first_llm_output
+            FROM (SELECT arrayJoin(trace_rollup_rows) AS rollup_row)
+        ) AS trace_rollup
+          ON latest_physical_roots.project_id = trace_rollup.trace_rollup_project_id
+         AND latest_physical_roots.trace_id = trace_rollup.trace_rollup_trace_id
+        """
+
     def _root_replay_query(
-        self, identities: list[tuple], *, content: bool
+        self, identities: list[tuple], *, content: bool, trace_rollup: bool = False
     ) -> tuple[str, dict[str, Any]]:
-        """Replay the finite page by immutable coordinates, with no time/version prefilter."""
+        """Replay the finite page by immutable coordinates, with no time/version prefilter.
+
+        ``trace_rollup`` (content replay only) also joins each page trace's
+        whole-trace rollup; see ``_trace_rollup_join_sql``.
+        """
+        if trace_rollup and not content:
+            raise ValueError("trace rollup rides on the content replay only")
         if not identities:
             return "", {}
         if len(identities) > 512 or len(
@@ -522,6 +730,14 @@ class _TraceRootReplayV2:
         ]
         if content:
             selected.extend(self._root_replay_content_extra_select())
+            if trace_rollup:
+                selected.extend(TRACE_ROLLUP_COLUMNS)
+                params[f"{prefix}_rollup_trace_identities"] = tuple(
+                    dict.fromkeys(
+                        (str(project), str(trace))
+                        for project, trace, *_rest in identities
+                    )
+                )
         else:
             selected.append("_root_observation_type AS observation_type")
         project_version = ""
@@ -552,6 +768,7 @@ class _TraceRootReplayV2:
             ) AS replayed_root_versions
         ) AS latest_physical_roots
         {self._root_replay_content_join_sql() if content else ""}
+        {self._trace_rollup_join_sql(prefix) if trace_rollup else ""}
         WHERE latest_is_deleted = 0
           AND (latest_parent_span_id IS NULL OR latest_parent_span_id = '')
           {project_version}
@@ -568,7 +785,11 @@ class _TraceRootReplayV2:
         )
 
     def build_content_query(
-        self, trace_ids: list[str], *, root_identities: list[tuple] | None = None
+        self,
+        trace_ids: list[str],
+        *,
+        root_identities: list[tuple] | None = None,
+        include_trace_rollup: bool = False,
     ) -> tuple[str, dict[str, Any]]:
         if not trace_ids:
             return "", {}
@@ -606,7 +827,9 @@ class _TraceRootReplayV2:
         identities = self.content_root_identities_for_rows(rows)
         if {identity[1] for identity in identities} != set(map(str, trace_ids)):
             raise ValueError("v2 content replay identity escaped requested traces")
-        return self._root_replay_query(identities, content=True)
+        return self._root_replay_query(
+            identities, content=True, trace_rollup=include_trace_rollup
+        )
 
 
 class _TraceListQueryBuilderV2Core(_TraceRootReplayV2, TraceListQueryBuilder):
@@ -2492,5 +2715,7 @@ class TraceListQueryBuilderV2(V2RewriteMixin, _TraceListQueryBuilderV2Core):
 
 
 __all__ = [
+    "TRACE_ROLLUP_COLUMNS",
     "TraceListQueryBuilderV2",
+    "apply_trace_rollup",
 ]

@@ -47,7 +47,7 @@ func (p *Plugin) ShouldSkipOnCacheHit() bool { return true } // No credits deduc
 
 // ProcessRequest checks credit balance for managed keys.
 func (p *Plugin) ProcessRequest(_ context.Context, rc *models.RequestContext) pipeline.PluginResult {
-	if !p.enabled || p.keyStore == nil {
+	if !p.enabled || p.keyStore == nil || rc.Flags.NoSpend {
 		return pipeline.ResultContinue()
 	}
 	if rc.Metadata["key_type"] != "managed" {

@@ -280,7 +280,10 @@ def public_list(route):
                 )
             elif "SELECT count() AS total" in sql:
                 phase, rows = "count", [{"total": 1}]
-            elif "sum(total_tokens) AS total_tokens" in sql:
+            elif (
+                "candidate_session_ids" in params
+                and "session_attribute_number_list" in sql
+            ):
                 # One statement carries the aggregates, the messages and the
                 # root attribute payloads the page used to read three times.
                 assert "AS first_message" in sql

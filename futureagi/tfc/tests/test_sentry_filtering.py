@@ -95,7 +95,21 @@ def test_sensitive_key_detection():
     assert _is_sensitive_key("Authorization")
     assert _is_sensitive_key("X-Api-Key")
     assert _is_sensitive_key("password")
+    assert _is_sensitive_key("environment_values")
+    assert _is_sensitive_key("credential_values")
+    # Loops over submitted values name their local for this rule.
+    assert _is_sensitive_key("secret_value")
     assert not _is_sensitive_key("user_id")
+
+
+def test_scrub_redacts_an_agent_check_payloads_values():
+    scrubbed = _scrub(
+        {"agent": {"connector": "livekit"}, "credential_values": {"K": "v"}}
+    )
+    assert scrubbed == {
+        "agent": {"connector": "livekit"},
+        "credential_values": _REDACTED,
+    }
 
 
 def test_scrub_redacts_nested_secrets():

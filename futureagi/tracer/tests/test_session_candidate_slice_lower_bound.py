@@ -193,7 +193,7 @@ class _HydratingAggregateEqualsServer(_AggregateEqualsServer):
     """The counterexample, also answering the page's hydration statement."""
 
     def execute_ch_query(self, query, params, *, timeout_ms, settings):
-        if "sum(cost) AS total_cost" in query:
+        if "sum(cost) AS root_total_cost" in query:
             self.calls.append(("hydrate", params))
             return SimpleNamespace(
                 data=[

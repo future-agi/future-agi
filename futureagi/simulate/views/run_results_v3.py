@@ -24,8 +24,10 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from simulate.models import CallExecution, TestExecution
+from simulate.serializers.response.run_test import RunVersionLabelSerializer
 from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
+from simulate.services.harness_versioning.read import run_version_labels
 from simulate.services.harness_evals import runnable_eval_config_ids
 from simulate.services.run_dashboard_v3 import GOAL_OUTCOMES
 from simulate.services.run_results_v3 import (
@@ -44,6 +46,7 @@ from simulate.services.run_results_v3_queries import (
     GROUP_FIELDS,
     apply_run_call_query,
     build_run_analytics,
+    build_run_reliability,
     run_call_facets,
     run_call_rows_queryset,
     run_calls_queryset,
@@ -235,6 +238,11 @@ class RunExecutionSerializer(serializers.Serializer):
     completed_at = serializers.DateTimeField(allow_null=True)
     ordinal = serializers.IntegerField()
     agent_version = serializers.CharField(allow_null=True)
+    environment_version = RunVersionLabelSerializer(allow_null=True, required=False)
+    suite_version = RunVersionLabelSerializer(allow_null=True, required=False)
+    # ``agent_version`` is the version's name; this is the run's agent pin.
+    pinned_agent_version = RunVersionLabelSerializer(allow_null=True, required=False)
+    agent_differs = serializers.BooleanField(required=False, default=False)
     selected_scenario_keys = serializers.ListField(
         child=serializers.CharField(), required=False, default=list
     )
@@ -411,8 +419,8 @@ class ReliabilityIntervalSerializer(serializers.Serializer):
     low = serializers.FloatField()
     high = serializers.FloatField()
     effective_n = serializers.FloatField()
+    scenarios = serializers.IntegerField()
     evaluated = serializers.IntegerField()
-    clusters = serializers.IntegerField()
 
 
 class ReliabilityRowSerializer(OutcomeCountsSerializer):
@@ -424,6 +432,7 @@ class ReliabilityRowSerializer(OutcomeCountsSerializer):
     verdict = serializers.ChoiceField(
         choices=["passed", "failed", "flaky", "not_evaluated"]
     )
+    call_ids = serializers.ListField(child=serializers.CharField())
 
 
 class ReliabilitySerializer(serializers.Serializer):
@@ -434,6 +443,15 @@ class ReliabilitySerializer(serializers.Serializer):
     repeated = serializers.IntegerField()
     flaky = serializers.IntegerField()
     flip_rate = serializers.FloatField(allow_null=True)
+    k = serializers.IntegerField(allow_null=True)
+    inconclusive = serializers.IntegerField()
+    pass_hat_1 = serializers.FloatField(allow_null=True)
+    pass_hat_k = serializers.FloatField(allow_null=True)
+    pass_hat_k_scenarios = serializers.IntegerField()
+    pass_hat_k_passed = serializers.IntegerField()
+    pass_hat_k_excluded = serializers.IntegerField()
+    trials_passed = serializers.IntegerField()
+    trials_evaluated = serializers.IntegerField()
     pass_rate_interval = ReliabilityIntervalSerializer(allow_null=True)
     rows = ReliabilityRowSerializer(many=True)
 
@@ -580,6 +598,7 @@ def _execution_payload(
     execution: TestExecution, summary: dict[str, Any]
 ) -> dict[str, Any]:
     version = execution.agent_version or execution.run_test.agent_version
+    pinned = run_version_labels([execution.id]).get(str(execution.id)) or {}
     ordinal = TestExecution.objects.filter(
         run_test=execution.run_test, created_at__lte=execution.created_at
     ).count()
@@ -592,6 +611,10 @@ def _execution_payload(
         "completed_at": execution.completed_at,
         "ordinal": ordinal,
         "agent_version": getattr(version, "version_name", None),
+        "environment_version": pinned.get("environment_version"),
+        "suite_version": pinned.get("suite_version"),
+        "pinned_agent_version": pinned.get("agent_version"),
+        "agent_differs": bool(pinned.get("agent_differs")),
         "agent_type": (
             execution.agent_definition.agent_type
             if execution.agent_definition
@@ -852,6 +875,20 @@ class RunAnalyticsV3View(APIView):
     def get(self, request, test_execution_id, *args, **kwargs):
         execution = _execution_for_request(request, test_execution_id)
         return Response(build_run_analytics(execution))
+
+
+class RunReliabilityV3View(APIView):
+    """The reliability block alone, for the run header."""
+
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        responses={200: ReliabilitySerializer},
+        operation_id="simulate_v3_test_execution_reliability",
+    )
+    def get(self, request, test_execution_id, *args, **kwargs):
+        execution = _execution_for_request(request, test_execution_id)
+        return Response(build_run_reliability(execution))
 
 
 class _CsvEcho:

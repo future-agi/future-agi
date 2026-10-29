@@ -129,6 +129,37 @@ def _json_schema(schema: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _response_policy(
+    entry: dict[str, Any], operation: dict[str, Any], contract: dict[str, Any]
+) -> dict[str, Any]:
+    """Shape the MCP result without changing the REST response.
+
+    ``omit`` drops fields an agent does not need and that would push the result
+    past the MCP size limit. Each dotted path must exist in the contract's 200
+    schema, so renaming the field fails generation instead of letting it back in.
+    """
+    response = {"unwrap": "result", **(entry.get("response") or {})}
+    omit = response.get("omit", [])
+    if set(response) - {"unwrap", "omit"} or not isinstance(omit, list):
+        raise ToolGenerationError(f"Invalid response policy for {entry['name']}")
+    root = operation.get("responses", {}).get("200", {}).get("schema", {})
+    for dotted in omit:
+        if not isinstance(dotted, str) or not dotted:
+            raise ToolGenerationError(f"Invalid response policy for {entry['name']}")
+        schema = root
+        unwrap = [response["unwrap"]] if response["unwrap"] else []
+        for key in unwrap + dotted.split("."):
+            properties = _dereference_root_schema(schema, contract).get(
+                "properties", {}
+            )
+            if key not in properties:
+                raise ToolGenerationError(
+                    f"Response field to omit not found for {entry['name']}: {dotted}"
+                )
+            schema = properties[key]
+    return response
+
+
 def _resolve_parameter(
     parameter: dict[str, Any], contract: dict[str, Any]
 ) -> dict[str, Any]:
@@ -374,7 +405,7 @@ def generate_tool_manifest(contract_path: Path, catalog_path: Path) -> dict[str,
                     "path": path,
                     "parameters": request_mapping,
                 },
-                "response": entry.get("response") or {"unwrap": "result"},
+                "response": _response_policy(entry, operation, contract),
                 "source": {"operationId": operation.get("operationId")},
             }
         )

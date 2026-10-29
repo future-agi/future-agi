@@ -10,7 +10,7 @@
 //
 // The return shape { turns, running, send } is unchanged so BuilderConsole and
 // BuildingStage stay untouched; `frozen`, `frozenReason` and `stop` are additive.
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 
 import {
@@ -24,9 +24,19 @@ import {
 } from "src/sections/simulate/environments/buildEnvironment/console/scenarioSelectionBus";
 import { harnessJobQuery } from "./environment";
 import {
+  isVersioningDisabled,
+  nudgesKey,
+  refreshFollowers,
+  useDrafts,
+  useNudges,
+} from "./versions";
+import { useNudgeActions } from "./nudgeActions";
+import {
   projectConversation,
   conversationInFlight,
   conversationWaiting,
+  draftsBlocked,
+  turnAwaitingAnswer,
 } from "./conversationProjection";
 
 const NO_WORKSPACE =
@@ -154,7 +164,7 @@ export function useWorkspaceChat(env, { source } = {}) {
     [mutate],
   );
 
-  const stop = useCallback(() => {
+  const interrupt = useCallback(() => {
     const id = jobIdRef.current;
     if (!id) return;
     const requestId = harnessIdempotencyKey();
@@ -173,11 +183,129 @@ export function useWorkspaceChat(env, { source } = {}) {
     });
   }, [mutate]);
 
+  // The nudges the chat's system cards show; the same answer serves both
+  // the card and the Agents panel.
+  const versioningEnabled = Boolean(env?.versioning?.enabled);
+  const nudgesEnabled = env?.versioning?.nudges_enabled !== false;
+  const nudgesQuery = useNudges(jobId, {
+    enabled: Boolean(jobId) && versioningEnabled,
+  });
+  // A failed poll keeps the last list; only versioning switched off drops it.
+  const nudges =
+    versioningEnabled &&
+    nudgesQuery.data &&
+    !isVersioningDisabled(nudgesQuery.error)
+      ? nudgesQuery.data
+      : null;
+  const nudgeActions = useNudgeActions(jobId);
+  const {
+    rebuild: rebuildNudge,
+    skip: skipNudge,
+    stop: stopNudgeById,
+    reset: resetNudgeActions,
+    flagsFor,
+  } = nudgeActions;
+  // The rebuild card notes the piece's open draft.
+  const { data: drafts } = useDrafts(jobId, {
+    enabled: Boolean(jobId) && versioningEnabled,
+  });
+
+  // The queued or running rebuild. Stop in the composer stops it while it
+  // runs; an interrupt would only reach the builder as its next command.
+  const active = nudges?.active || null;
+  const activeId = active?.id;
+  const activeRunning = active?.state === "running";
+  const inFlight = conversationInFlight(conversation);
+  // A turn paused on a question is not working, so Stop goes to the rebuild.
+  const awaiting = turnAwaitingAnswer(conversation);
+  // Its builder message for this attempt was sent: the turn in flight is the
+  // rebuild's. An earlier attempt's message stays in the chat.
+  // TODO: match on the nudge's command_message_id once the item exposes it.
+  const dispatched = Boolean(
+    activeId &&
+      (conversation?.messages || []).some(
+        (m) =>
+          m.payload?.command_kind === "nudge" &&
+          m.payload?.nudge_id === activeId &&
+          new Date(m.created_at) >= new Date(active.answeredAt),
+      ),
+  );
+  // Stop goes to the rebuild unless a turn of its own is working ahead of it,
+  // including an answered question's turn.
+  const stopsRebuild =
+    Boolean(activeId) && (activeRunning || dispatched || awaiting || !inFlight);
+  const stop = useCallback(() => {
+    if (stopsRebuild) stopNudgeById(activeId);
+    else interrupt();
+  }, [stopsRebuild, activeId, stopNudgeById, interrupt]);
+
+  // A card whose nudge isn't listed yet asks for the list again; a nudge
+  // without its card, or one whose state moved, asks for the conversation
+  // again, since the job poll stops at a terminal stage. Each once.
+  const askedForNudge = useRef(new Set());
+  const askedForCard = useRef(new Set());
+  const seenStates = useRef({});
+  useEffect(() => {
+    if (!nudges || !conversation) return;
+    const messages = Array.isArray(conversation.messages)
+      ? conversation.messages
+      : [];
+    const cards = new Set(
+      messages
+        .filter((m) => m.role === "system" && m.payload?.nudge_id)
+        .map((m) => m.payload.nudge_id),
+    );
+    const unlisted = [...cards].filter(
+      (id) => !nudges.byId[id] && !askedForNudge.current.has(id),
+    );
+    if (unlisted.length) {
+      unlisted.forEach((id) => askedForNudge.current.add(id));
+      queryClient.invalidateQueries({ queryKey: nudgesKey(jobId) });
+    }
+    let refetchJob = false;
+    let moved = false;
+    nudges.list.forEach((nudge) => {
+      const before = seenStates.current[nudge.id];
+      if (before !== undefined && before !== nudge.state) moved = true;
+      seenStates.current[nudge.id] = nudge.state;
+      if (!cards.has(nudge.id) && !askedForCard.current.has(nudge.id)) {
+        askedForCard.current.add(nudge.id);
+        refetchJob = true;
+      }
+    });
+    // A state change moves what follows the defaults and the drafts too.
+    if (moved) refreshFollowers(queryClient, jobId);
+    else if (refetchJob) {
+      queryClient.invalidateQueries({ queryKey: ["harness-job", jobId] });
+    }
+  }, [nudges, conversation, jobId, queryClient]);
+
   const turns = useMemo(() => {
     const projected = projectConversation(conversation);
     // Attach the reply callback to open `ask` steps (the projector stays pure).
     // A resolved question renders its summary from props, so it needs no handler.
     return projected.map((turn) => {
+      if (turn.role === "system" && turn.kind === "nudge") {
+        if (!nudges) return turn;
+        const nudge = nudges.byId[turn.nudgeId];
+        const flags = flagsFor(turn.nudgeId);
+        return {
+          ...turn,
+          nudge,
+          nudgesEnabled,
+          draft: nudge ? drafts?.[nudge.target] || null : null,
+          onRebuild: () => rebuildNudge(turn.nudgeId),
+          onSkipNudge: () => skipNudge(turn.nudgeId),
+          onStopNudge: () => stopNudgeById(turn.nudgeId),
+          answering: flags.answering,
+          rebuilding: flags.rebuilding,
+          stopping: flags.stopping,
+          skipped: flags.settled,
+          // Focused once: a remounted card leaves focus where it is.
+          onSkippedFocused: resetNudgeActions,
+          error: flags.error,
+        };
+      }
       if (
         turn.role !== "builder" ||
         !turn.steps?.some((s) => s.kind === "ask" && !s.resolved)
@@ -196,7 +324,18 @@ export function useWorkspaceChat(env, { source } = {}) {
         ),
       };
     });
-  }, [conversation, send]);
+  }, [
+    conversation,
+    send,
+    nudges,
+    nudgesEnabled,
+    drafts,
+    rebuildNudge,
+    skipNudge,
+    stopNudgeById,
+    flagsFor,
+    resetNudgeActions,
+  ]);
 
   // Retry a failed send by replaying its original variables (same payload, same
   // client_request_id) rather than composing a fresh send from current state.
@@ -269,10 +408,23 @@ export function useWorkspaceChat(env, { source } = {}) {
     stop,
     frozen,
     frozenReason,
-    inFlight: conversationInFlight(conversation),
+    inFlight,
+    // Stop interrupts the turn, or stops the queued or running rebuild.
+    canStop: inFlight || Boolean(active),
+    // The working indicator: a turn in flight or a running rebuild, not one
+    // that only waits.
+    working: (inFlight && !awaiting) || activeRunning,
+    // A Stop for the rebuild is on its way.
+    stopping: nudgeActions.stopping,
+    // A queued or running rebuild holds the drafts' Save and Discard.
+    rebuildHold: Boolean(active),
     // A question or confirmation is open and the user can still answer it. A
     // frozen chat (job ended without a saved workspace, conversation retired)
     // can keep an open question on the backend, but there is nothing to do.
     waiting: !frozen && conversationWaiting(conversation),
+    // The chat holds Save (see draftsBlocked).
+    draftsBlocked: draftsBlocked(conversation),
+    // A nudge waits for an answer: the collapsed chat shows its dot.
+    nudgePending: Boolean(nudges?.pendingEnvironment || nudges?.pendingSuite),
   };
 }
