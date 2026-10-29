@@ -49,6 +49,10 @@ vi.mock("../../components/StopTemplateLoadingDialog", () => ({
   default: ({ open }) => (open ? <div data-testid="stop-dialog" /> : null),
 }));
 
+vi.mock("../../components/StepConcurrencyControl", () => ({
+  default: () => <div data-testid="step-concurrency-control" />,
+}));
+
 // Mock notistack
 vi.mock("notistack", () => ({
   enqueueSnackbar: vi.fn(),
@@ -85,6 +89,7 @@ describe("BuilderActions", () => {
       });
       render(<BuilderActions width="300px" hasNodes={true} />);
       expect(screen.getByText("Run Agent Workflow")).toBeInTheDocument();
+      expect(screen.getByTestId("step-concurrency-control")).toBeInTheDocument();
     });
 
     it("opens save dialog when isDraft and clicked", () => {

@@ -15,6 +15,7 @@ export const mapGraphToAgent = (result) => ({
     : "",
   name: result?.name,
   description: result?.description,
+  max_concurrent_nodes: result?.max_concurrent_nodes ?? 10,
   created_at: result?.created_at,
   updated_at: result?.updated_at,
   is_draft: result?.active_version?.status === "draft",

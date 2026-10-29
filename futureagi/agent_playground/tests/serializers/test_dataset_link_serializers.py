@@ -130,3 +130,29 @@ class TestExecuteRequestSerializer:
         serializer = ExecuteRequestSerializer(data={"row_ids": []})
         assert not serializer.is_valid()
         assert "row_ids" in serializer.errors
+
+    def test_max_concurrent_nodes_optional_defaults_omitted(self):
+        serializer = ExecuteRequestSerializer(data={})
+        assert serializer.is_valid(), serializer.errors
+        assert "max_concurrent_nodes" not in serializer.validated_data
+
+    def test_max_concurrent_nodes_accepted(self):
+        serializer = ExecuteRequestSerializer(data={"max_concurrent_nodes": 3})
+        assert serializer.is_valid(), serializer.errors
+        assert serializer.validated_data["max_concurrent_nodes"] == 3
+
+    def test_max_concurrent_nodes_rejects_zero(self):
+        serializer = ExecuteRequestSerializer(data={"max_concurrent_nodes": 0})
+        assert not serializer.is_valid()
+        assert "max_concurrent_nodes" in serializer.errors
+        assert "greater than zero" in str(serializer.errors)
+
+    def test_max_concurrent_nodes_rejects_negative(self):
+        serializer = ExecuteRequestSerializer(data={"max_concurrent_nodes": -1})
+        assert not serializer.is_valid()
+        assert "greater than zero" in str(serializer.errors)
+
+    def test_max_concurrent_nodes_rejects_non_integer(self):
+        serializer = ExecuteRequestSerializer(data={"max_concurrent_nodes": "abc"})
+        assert not serializer.is_valid()
+        assert "greater than zero" in str(serializer.errors)

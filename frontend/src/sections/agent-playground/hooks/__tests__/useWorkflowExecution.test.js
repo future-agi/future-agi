@@ -181,6 +181,36 @@ describe("useWorkflowExecution", () => {
       const runState = useWorkflowRunStore.getState();
       expect(runState.workflowState).toBe(WORKFLOW_STATE.RUNNING);
       expect(runState.executionId).toBe("exec-1");
+      expect(mockExecuteDataset).toHaveBeenCalledWith({
+        graphId: "graph-123",
+        maxConcurrentNodes: undefined,
+      });
+    });
+
+    it("forwards the agent's stored step concurrency to execute", async () => {
+      const nodes = [createPromptNode("n1")];
+      setupNodes(nodes);
+      useAgentPlaygroundStore.setState({
+        currentAgent: { max_concurrent_nodes: 3 },
+        nodes: useAgentPlaygroundStore.getState().nodes,
+        edges: useAgentPlaygroundStore.getState().edges,
+      });
+      mockFetchGraphDataset.mockResolvedValue({
+        rows: [{ cells: [{ value: "ok" }] }],
+      });
+      mockExecuteDataset.mockResolvedValue({
+        data: { result: { execution_ids: ["exec-1"] } },
+      });
+
+      const { result } = renderHook(() => useWorkflowExecution());
+      await act(async () => {
+        await result.current.runWorkflow();
+      });
+
+      expect(mockExecuteDataset).toHaveBeenCalledWith({
+        graphId: "graph-123",
+        maxConcurrentNodes: 3,
+      });
     });
 
     it("sets ERROR state and calls failRun on execution failure", async () => {
