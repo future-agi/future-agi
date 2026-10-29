@@ -692,6 +692,27 @@ async def _cancel_agent_fix_workflow_async(fix_run_id: str) -> None:
     await handle.signal("cancel")
 
 
+def agent_fix_workflow_running(fix_run_id: str) -> bool:
+    return async_to_sync(_agent_fix_workflow_running_async)(fix_run_id)
+
+
+async def _agent_fix_workflow_running_async(fix_run_id: str) -> bool:
+    from temporalio.client import WorkflowExecutionStatus
+    from temporalio.service import RPCError, RPCStatusCode
+
+    from tfc.temporal.common.client import get_client
+
+    client = await get_client()
+    handle = client.get_workflow_handle(f"agent-fix-{fix_run_id}")
+    try:
+        description = await handle.describe()
+    except RPCError as exc:
+        if exc.status == RPCStatusCode.NOT_FOUND:
+            return False
+        raise
+    return description.status == WorkflowExecutionStatus.RUNNING
+
+
 def hosted_harness_gateway_workflow_running(job_id: str) -> bool:
     return async_to_sync(_hosted_harness_gateway_workflow_running_async)(job_id)
 
