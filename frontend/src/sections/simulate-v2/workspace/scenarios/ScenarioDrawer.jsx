@@ -20,6 +20,7 @@ import { ArchivePopover, StateChip } from "./ScenarioStateBits";
 import BlockerFlag from "./BlockerFlag";
 import SourceBadge from "./SourceBadge";
 import TraceSources from "./TraceSources";
+import SourceChangedNotice from "./SourceChangedNotice";
 import { scenarioTitle } from "../../_mock/scenarios";
 
 /*
@@ -216,6 +217,10 @@ export default function ScenarioDrawer({
             </IconButton>
           </Stack>
           <Box sx={{ flex: 1, overflow: "auto" }}>
+            {/* Grounded in a file that has a newer version waiting. */}
+            {row.citedSource && (
+              <SourceChangedNotice row={row} env={env} locked={locked} />
+            )}
             <ScenarioDetail
               bare
               row={row}

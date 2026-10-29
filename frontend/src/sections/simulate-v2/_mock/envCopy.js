@@ -11,26 +11,55 @@ import { envMustPassOf } from "./improvementStart";
 
 /** The agent record an environment stores — a connected agent minus what the list derives. */
 export const agentRecordOf = (a) => {
-  const { usedIn, formerlyIn, latest, id, updatedAt, lastSyncedAt, origin, firstEnvName, versions, ...record } = a || {};
+  const {
+    usedIn,
+    formerlyIn,
+    latest,
+    id,
+    updatedAt,
+    lastSyncedAt,
+    origin,
+    firstEnvName,
+    versions,
+    ...record
+  } = a || {};
   return record;
 };
 
 /** Scope choices with their counts: all, each group, must-pass, the current selection. */
 export const copyScopesOf = (env, envState, selectedIds = []) => {
-  const live = (envState?.scenarios || []).filter((s) => !s.archived && !s.retired);
+  const live = (envState?.scenarios || []).filter(
+    (s) => !s.archived && !s.retired,
+  );
   const liveIds = new Set(live.map((s) => s.id));
   const must = (() => {
     try {
-      return envMustPassOf(env, envState).gated.map((t) => t.scenarioId || t.id).filter((id) => liveIds.has(id));
+      return envMustPassOf(env, envState)
+        .gated.map((t) => t.scenarioId || t.id)
+        .filter((id) => liveIds.has(id));
     } catch {
       return [];
     }
   })();
   return [
     { id: "all", label: "All scenarios", ids: live.map((s) => s.id) },
-    ...groupsOf(envState).map((g) => ({ id: `group:${g.id}`, label: `Group · ${g.name}`, ids: g.ids.filter((id) => liveIds.has(id)) })),
-    ...(must.length ? [{ id: "must", label: "Must-pass only", ids: must }] : []),
-    ...(selectedIds.length ? [{ id: "selected", label: "Selected scenarios", ids: selectedIds.filter((id) => liveIds.has(id)) }] : []),
+    ...groupsOf(envState).map((g) => ({
+      id: `group:${g.id}`,
+      label: `Group · ${g.name}`,
+      ids: g.ids.filter((id) => liveIds.has(id)),
+    })),
+    ...(must.length
+      ? [{ id: "must", label: "Must-pass only", ids: must }]
+      : []),
+    ...(selectedIds.length
+      ? [
+          {
+            id: "selected",
+            label: "Selected scenarios",
+            ids: selectedIds.filter((id) => liveIds.has(id)),
+          },
+        ]
+      : []),
   ].filter((s) => s.ids.length);
 };
 
@@ -55,3 +84,7 @@ export const copyPlanOf = ({ sameAgent, scope, total, runs }) => {
 /** The same copy from the CLI. */
 export const envCopyCli = ({ env, name, version, agentName, scopeId }) =>
   `agent-learn env copy ${env.id} --name "${name}" --version ${version}${agentName ? ` --agent "${agentName}"` : ""}${scopeId && scopeId !== "all" ? ` --scope ${scopeId.replace(/^group:/, "group=")}` : ""}`;
+
+/** Roll back from the CLI: the next version, made from an older one. */
+export const envRollbackCli = (env, label) =>
+  `agent-learn env rollback ${env.id} --to ${label}`;

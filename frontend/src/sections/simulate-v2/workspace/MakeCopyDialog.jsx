@@ -19,6 +19,7 @@ import { pendingEnvChanges } from "../_mock/versions";
 import { buildableAgentsOf } from "../environments/worldSource";
 import { adoptBlockOf, catalogueById, catalogueOf } from "../_mock/catalogue";
 import { copyPlanOf, copyScopesOf, envCopyCli } from "../_mock/envCopy";
+import { forkBindingOf } from "../_mock/forkBinding";
 
 const label = { typography: "s3", fontWeight: 600, mb: 0.5 };
 
@@ -109,6 +110,20 @@ export default function MakeCopyDialog({
     runs: (envState?.runs || []).length,
   });
   const pending = pendingEnvChanges(envState).length;
+  /* A fork: what the new agent changes, reviewed before the copy exists. */
+  const binding = useMemo(
+    () =>
+      !sameAgent && target
+        ? forkBindingOf({
+            env,
+            envState,
+            target,
+            state,
+            scenarioIds: scope.ids,
+          })
+        : null,
+    [sameAgent, target, env, envState, state, scope.ids],
+  );
   /* The world's release, when it came from the catalogue. */
   const entry = env.catalogueId
     ? catalogueById(env.catalogueId)
@@ -241,6 +256,58 @@ export default function MakeCopyDialog({
             <Line k="Compares">{plan.comparability}</Line>
             {main && <Line k="Main">{main}</Line>}
           </Box>
+          {binding && (
+            <Box>
+              <Typography
+                sx={label}
+              >{`What changes with ${target.name}`}</Typography>
+              <Box
+                sx={{
+                  border: "1px solid",
+                  borderColor: "divider",
+                  borderRadius: 1,
+                  px: 1.5,
+                  py: 0.5,
+                }}
+              >
+                <Line k="Tools">
+                  {!binding.known
+                    ? `${target.name}'s tools aren't known yet. Sync it or run its connection check; cases are checked against the world before it runs.`
+                    : `Calls ${binding.covers.length} of the world's ${binding.covers.length + binding.unused.length} tools${binding.unused.length ? `; ${binding.unused.length} it doesn't call stay in the world` : ""}.`}
+                  {binding.unanswered.length > 0 && (
+                    <Box component="span" sx={{ color: "status.warning.fg" }}>
+                      {` Also calls ${binding.unanswered.join(", ")}, which the world can't answer yet. Add ${binding.unanswered.length === 1 ? "it" : "them"} on World & tools after copying.`}
+                    </Box>
+                  )}
+                </Line>
+                <Line k="Cases">
+                  {binding.unmeasurable.length ? (
+                    <Box component="span" sx={{ color: "status.warning.fg" }}>
+                      {`${binding.unmeasurable.length} of the ${binding.cases} active scenarios can't be measured with ${target.name}: ${[
+                        ...new Set(
+                          binding.unmeasurable.map(
+                            (c) => `“${c.title}” needs ${c.missing.join(", ")}`,
+                          ),
+                        ),
+                      ]
+                        .slice(0, 2)
+                        .join(
+                          "; ",
+                        )}${new Set(binding.unmeasurable.map((c) => c.title)).size > 2 ? ", and others" : ""}. They stay in the copy; runs leave them out until the agent has those tools.`}
+                    </Box>
+                  ) : (
+                    `All ${binding.cases} active scenarios can be measured with ${target.name}.`
+                  )}
+                </Line>
+                <Line k="Stays">
+                  {`The world, its ${binding.rules} rule${binding.rules === 1 ? "" : "s"}, evaluations and actors. They grade ${target.name} the same way; only the agent changes.`}
+                </Line>
+                <Line k="Compares">
+                  {`With ${envState?.agent?.name || "the source agent"} on the ${binding.comparable} case${binding.comparable === 1 ? "" : "s"} both can run, on environment ${from}.`}
+                </Line>
+              </Box>
+            </Box>
+          )}
           <Box>
             <CopyCommandButton
               command={envCopyCli({
