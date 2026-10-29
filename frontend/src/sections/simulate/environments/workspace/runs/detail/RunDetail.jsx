@@ -36,6 +36,7 @@ import { useRunEvalActions } from "./useRunEvalActions";
 import FixMyAgentDrawer from "./fixmyagent/FixMyAgentDrawer";
 import OptimizationRunsList from "./fixmyagent/OptimizationRunsList";
 import LaunchOptimizationDrawer from "./fixmyagent/LaunchOptimizationDrawer";
+import LaunchFixDialog from "../../improvements/LaunchFixDialog";
 import BetaChip from "./fixmyagent/BetaChip";
 import { useSelfImprovementOpen } from "./fixmyagent/selfImprovement";
 import RunAnalytics from "./RunAnalytics";
@@ -89,6 +90,7 @@ export default function RunDetail({
   });
   const [debugging, setDebugging] = useState(false);
   const [launching, setLaunching] = useState(false);
+  const [fixLaunching, setFixLaunching] = useState(false);
   const [exporting, setExporting] = useState(false);
   const { identity, stats } = useRunDetail(testId, executionId, {
     envName: env?.name,
@@ -558,12 +560,19 @@ export default function RunDetail({
         stats={stats}
         onLaunch={() => {
           setDebugging(false);
-          setLaunching(true);
+          setFixLaunching(true);
         }}
         onViewCalls={(callExecutionIds) => {
           setDebugging(false);
           openCallsWith({ callExecutionId: callExecutionIds });
         }}
+      />
+
+      <LaunchFixDialog
+        open={fixLaunching}
+        onClose={() => setFixLaunching(false)}
+        envId={env.id}
+        sourceRunId={executionId}
       />
 
       <LaunchOptimizationDrawer

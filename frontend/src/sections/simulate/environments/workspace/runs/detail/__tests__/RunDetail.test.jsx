@@ -86,6 +86,13 @@ vi.mock(
   }),
 );
 
+// The fix launch form reads launch-options itself; stub it to a marker that
+// names the run it was opened for.
+vi.mock("../../../improvements/LaunchFixDialog", () => ({
+  // eslint-disable-next-line react/prop-types
+  default: ({ open, sourceRunId }) => (open ? <div>{`launch-fix:${sourceRunId}`}</div> : null),
+}));
+
 function AddEvaluationDrawerStub({ open, executionId }) {
   return open ? <div>add-evals-drawer:{executionId}</div> : null;
 }
@@ -860,11 +867,13 @@ describe("RunDetail", () => {
     });
     const invalidateSpy = vi.spyOn(client, "invalidateQueries");
     const user = userEvent.setup();
-    renderDetail({ client });
+    
 
-    await user.click(screen.getByRole("button", { name: "Debug failures" }));
+    useOptimizationRuns.mockReturnValue({ runs: [OPT_RUN], isLoading: false });
+    renderDetail({ client });
+    await user.click(screen.getByRole("tab", { name: /Trials/ }));
     await user.click(
-      screen.getByRole("button", { name: "Run Self Improvement" }),
+      screen.getByRole("button", { name: "Launch optimization" }),
     );
     // The optimizer form's onSuccess flows through the real launch drawer to
     // onLaunched → queryClient.invalidateQueries.
@@ -1204,19 +1213,15 @@ describe("RunDetail", () => {
     expect(hook.request).toHaveBeenCalledTimes(2);
   });
 
-  it("launches the first optimization from the diagnosis footer, with no prior runs", async () => {
+  it("opens the fix launch form for this run from the diagnosis footer", async () => {
     useOptimizationRuns.mockReturnValue({ runs: [], isLoading: false });
     const user = userEvent.setup();
     renderDetail();
 
-    // No Trials tab yet (no prior runs), so the footer CTA is the only launch path.
-    expect(screen.queryByRole("tab", { name: /Trials/ })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Debug failures" }));
-    const cta = screen.getByRole("button", { name: "Run Self Improvement" });
-    expect(cta).toBeInTheDocument();
-
-    await user.click(cta);
-    expect(screen.getByText("optimizer-form")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Improve" }));
+    expect(screen.getByText("launch-fix:ex1")).toBeInTheDocument();
+    expect(screen.queryByText("optimizer-form")).toBeNull();
   });
 
   it("shows the Imagine tab as coming soon (no backend)", async () => {
@@ -1228,15 +1233,15 @@ describe("RunDetail", () => {
     expect(screen.getByLabelText("Coming soon")).toBeInTheDocument();
   });
 
-  it("keeps self-improvement in beta: its launch is shown but disabled", async () => {
+  it("keeps Improve open while the old optimizer is in beta", async () => {
     useSelfImprovementOpen.mockReturnValue(false);
     const user = userEvent.setup();
     renderDetail();
 
     await user.click(screen.getByRole("button", { name: "Debug failures" }));
-    const cta = screen.getByRole("button", { name: /Run Self Improvement/ });
-    expect(cta).toBeDisabled();
-    expect(cta).toHaveTextContent("BETA");
+    const cta = screen.getByRole("button", { name: "Improve" });
+    expect(cta).toBeEnabled();
+    expect(cta).not.toHaveTextContent("BETA");
   });
 
   it("keeps the Trials tab visible but disabled while self-improvement is in beta", () => {
