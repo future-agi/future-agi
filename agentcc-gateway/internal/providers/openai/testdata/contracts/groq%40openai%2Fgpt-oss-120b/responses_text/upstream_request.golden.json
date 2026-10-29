@@ -1,0 +1,12 @@
+{
+  "body": {
+    "input": "Tell me a three sentence bedtime story about a unicorn.",
+    "model": "openai/gpt-oss-120b"
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/responses"
+}

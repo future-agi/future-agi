@@ -1,0 +1,5 @@
+{
+  "model": "openai/whisper-large-v3",
+  "file": "audio.mp3",
+  "language": "en"
+}

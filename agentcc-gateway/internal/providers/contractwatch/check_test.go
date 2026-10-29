@@ -49,11 +49,12 @@ func TestCheckUsesRealHosts(t *testing.T) {
 		"ANTHROPIC_API_KEY": "k", "OPENAI_API_KEY": "k", "GEMINI_API_KEY": "k", "COHERE_API_KEY": "k",
 		"GROQ_API_KEY": "k", "AWS_ACCESS_KEY_ID": "AKID", "AWS_SECRET_ACCESS_KEY": "secret", "AWS_REGION": "eu-west-1",
 		"MISTRAL_API_KEY": "k", "CEREBRAS_API_KEY": "k", "TOGETHER_API_KEY": "k", "FIREWORKS_API_KEY": "k", "OPENROUTER_API_KEY": "k",
+		"XAI_API_KEY": "k", "REPLICATE_API_KEY": "k",
 	})
 	rep := Check(context.Background(), reg, CheckOptions{Env: env, Client: rc.client(), Plan: PlanOptions{ProvidersDir: ".."}})
 	// Sections in name order; the aggregators (list "none") are not listed.
 	want := []string{"api.anthropic.com", "bedrock.eu-west-1.amazonaws.com", "api.cerebras.ai", "api.cohere.com", "generativelanguage.googleapis.com",
-		"api.groq.com", "api.mistral.ai", "api.openai.com"}
+		"api.groq.com", "api.mistral.ai", "api.openai.com", "api.x.ai"}
 	if strings.Join(rc.hosts, ",") != strings.Join(want, ",") {
 		t.Errorf("hosts = %v, want %v", rc.hosts, want)
 	}

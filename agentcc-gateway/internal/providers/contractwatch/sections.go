@@ -79,6 +79,14 @@ var Specs = map[string]Spec{
 	"together":   compatSpec("together", "https://api.together.xyz", "/v1/models"),
 	"fireworks":  compatSpec("fireworks", "https://api.fireworks.ai/inference", "/v1/models"),
 	"openrouter": compatSpec("openrouter", "https://openrouter.ai/api", "/v1/models"),
+	"xai":        compatSpec("xai", "https://api.x.ai", "/v1/models"),
+	// Replicate's GET /v1/models answers a page of Replicate models, not
+	// OpenAI's list (gap RP1), so the OpenAI lister would read it as empty:
+	// the section is never listed. The key gates -newest re-recording.
+	"replicate": {
+		Env:  []string{"REPLICATE_API_KEY"},
+		Help: "for the openai suite's replicate@<model> fixtures",
+	},
 	// Perplexity's Sonar models have no list API (its GET /v1/models lists
 	// the Agent API's models, not the chat-completions ones the preset
 	// calls), so the registry holds a static list. The key is still required:

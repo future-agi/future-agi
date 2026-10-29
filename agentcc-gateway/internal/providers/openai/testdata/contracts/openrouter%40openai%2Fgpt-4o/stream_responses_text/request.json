@@ -1,0 +1,5 @@
+{
+  "model": "openai/gpt-4o",
+  "input": "Hello!",
+  "stream": true
+}

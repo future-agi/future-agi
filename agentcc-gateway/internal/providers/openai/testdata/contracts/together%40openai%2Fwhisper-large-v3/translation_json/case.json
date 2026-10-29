@@ -1,0 +1,4 @@
+{
+  "endpoint": "translation",
+  "notes": "AudioTranslationJsonResponse. Recordable with real audio. The upload, german.m4a, is the suite's 4.7 s of German speech (\"Hallo, mein Name ist Wolfgang und ich komme aus Deutschland. Wohin fährst du heute?\"), generated with espeak-ng 1.51 and encoded with ffmpeg (see whisper-1's cases): synthetic, so free of licence terms."
+}

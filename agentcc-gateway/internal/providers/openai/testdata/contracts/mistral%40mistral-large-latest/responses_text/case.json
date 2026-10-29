@@ -1,0 +1,4 @@
+{
+  "endpoint": "responses",
+  "notes": "The /v1/responses passthrough (CreateResponse): CreateResponseResponse (see meta.json). The body goes back unchanged; the server prices it from model and usage. Recordable."
+}

@@ -13,7 +13,7 @@ import (
 // same base URL and API path prefix (providers.KnownProviders), and the
 // recorder's <PRESET>_API_KEY variable, so one set of secrets serves both.
 func TestPresetSpecsMatchProviders(t *testing.T) {
-	for _, name := range []string{"groq", "mistral", "cerebras", "together", "fireworks", "openrouter"} {
+	for _, name := range []string{"groq", "mistral", "cerebras", "together", "fireworks", "openrouter", "xai"} {
 		spec, ok := Specs[name]
 		if !ok || spec.NewLister == nil {
 			t.Errorf("%s: no lister", name)

@@ -166,6 +166,26 @@ var sources = []Source{
 			{Name: "models", Op: "GET /models", Description: descModels + "; " + descOpenAICompat},
 		},
 	},
+	{
+		// The spec models no error bodies (400 and 422 have no content), no
+		// SSE framing and no Responses stream events, so xai has no errors
+		// or responses_stream root.
+		Provider: "xai", Format: FormatOpenAPI,
+		Repo: "xai-org/xai-sdk-ts", Path: "spec/openapi.json",
+		License: "spec in an Apache-2.0 SDK repository (LICENSE, package.json); info has no licence or terms of its own",
+		Roots: []RootDef{
+			{Name: "chat", Op: "POST /v1/chat/completions", Description: descChat + "; " + descOpenAICompat},
+			// Defined, but attached to no operation.
+			{Name: "chat_stream", Schema: "#/components/schemas/ChatResponseChunk", Prefix: "chunk", Description: descChatStream + "; " + descOpenAICompat},
+			{Name: "completions", Op: "POST /v1/completions", Description: "legacy completions response, decoded by TextCompletion into models.CompletionResponse; " + descOpenAICompat},
+			{Name: "embeddings", Op: "POST /v1/embeddings", Description: descEmbeddings + "; " + descOpenAICompat},
+			{Name: "images", Op: "POST /v1/images/generations", Description: "image generation response, decoded by CreateImage into models.ImageResponse; " + descOpenAICompat},
+			{Name: "responses", Op: "POST /v1/responses", Prune: map[string]string{
+				"$.instructions": echoed, "$.tools": echoed, "$.tool_choice": echoed, "$.text": echoed, "$.reasoning": echoed,
+			}, Description: "Responses API response, translated to chat by responses_chat.go (toChat); the /v1/responses passthrough reads its usage; " + descOpenAICompat},
+			{Name: "models", Op: "GET /v1/models", Description: descModels + "; " + descOpenAICompat},
+		},
+	},
 }
 
 // Sources returns the subset definitions, sorted by provider.
@@ -226,11 +246,6 @@ var unfetchable = []Unfetchable{
 		Provider: "mistral",
 		Reason:   "the spec is published in the Speakeasy registry (registry.speakeasyapi.dev, which needs auth) and on docs.mistral.ai; neither is fetchable anonymously from CI",
 		Signal:   &Signal{Repo: "mistralai/client-python", Path: ".speakeasy/workflow.lock", Key: "sources.mistral-openapi.sourceBlobDigest", What: "Speakeasy sourceBlobDigest of the spec the Python SDK was generated from"},
-	},
-	{
-		Provider: "xai",
-		Reason:   "the REST spec is served from api.x.ai / docs.x.ai only; the official machine-readable contract on GitHub is the gRPC protobuf API (xai-org/xai-proto), whose enum names (REASON_STOP) differ from the REST strings",
-		Signal:   &Signal{Repo: "xai-org/xai-proto", Path: "proto/xai/api/v1/chat.proto", What: "sha256 of the chat proto (same messages and finish reasons as the REST API, gRPC names)"},
 	},
 	{
 		Provider: "deepseek",

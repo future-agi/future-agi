@@ -1,0 +1,14 @@
+{
+  "body": {
+    "input": "Today is a wonderful day to build something people love!",
+    "model": "canopylabs/orpheus-3b-0.1-ft",
+    "response_format": "mp3",
+    "voice": "tara"
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/audio/speech"
+}

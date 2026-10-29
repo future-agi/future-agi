@@ -21,11 +21,11 @@ checked by `TestRegistryMatchesFixtures` in `internal/providers/contractwatch`.
 | | |
 |---|---|
 | provider keys | 21: 6 native adapters, 12 OpenAI-compatible presets, Vertex AI, 2 speech-relay vendors |
-| implemented cells (provider key × endpoint) | 207: **50 with contract cases**, 157 exempt |
-| exempt cells | 101 accepted coverage gaps (served and parsed, no fixture yet); 6 answered without an upstream call; 1 relayed, not parsed; 49 not served (the upstream has no such endpoint, or the gateway never routes there) |
-| models | 48: 0 recorded from the real API, 48 synthetic (authored from the provider's reference) |
-| cases | 317: 93 error cases; 212 recordable, 105 synthetic only (`recordable: false`, or a speech session) |
-| model-watch registry | 46 covered models in 14 sections of `contractwatch/known_models.json` |
+| implemented cells (provider key × endpoint) | 207: **89 with contract cases**, 118 exempt |
+| exempt cells | 62 accepted coverage gaps (served and parsed, no fixture yet); 6 answered without an upstream call; 1 relayed, not parsed; 49 not served (the upstream has no such endpoint, or the gateway never routes there) |
+| models | 73: 0 recorded from the real API, 73 synthetic (authored from the provider's reference) |
+| cases | 383: 111 error cases; 259 recordable, 124 synthetic only (`recordable: false`, or a speech session) |
+| model-watch registry | 71 covered models in 16 sections of `contractwatch/known_models.json` |
 
 ## Grid
 
@@ -41,20 +41,20 @@ Legend: a number is the cell's contract cases; `·` the adapter does not impleme
 | `bedrock` | 3 | 41 | 12 | 41 | · | · | · | · | · | · | · | · | · | · | · | · | · | · | · | · | · | `n/u` | · |
 | `cohere` | 4 | 31 | 12 | 23 | · | · | 4 | · | · | · | · | 3 | · | · | · | · | · | · | · | · | · | 1 | · |
 | `anyscale@` | 0 | 0 | 0 | `GAP` | `n/s` | `GAP` | `GAP` | `GAP` | `GAP` | `GAP` | `GAP` | · | `n/s` | `GAP` | `n/s` | `n/s` | · | · | · | · | · | `GAP` | · |
-| `cerebras@` | 1 | 4 | 0 | 4 | `n/s` | `GAP` | `GAP` | `GAP` | `GAP` | `GAP` | `GAP` | · | `n/s` | `GAP` | `n/s` | `n/s` | · | · | · | · | · | `GAP` | · |
+| `cerebras@` | 1 | 6 | 0 | 4 | `n/s` | 1 | `GAP` | `GAP` | `GAP` | `GAP` | `GAP` | · | `n/s` | `GAP` | `n/s` | `n/s` | · | · | · | · | · | 1 | · |
 | `deepinfra@` | 0 | 0 | 0 | `GAP` | `n/s` | `GAP` | `GAP` | `GAP` | `GAP` | `GAP` | `GAP` | · | `n/s` | `GAP` | `n/s` | `n/s` | · | · | · | · | · | `GAP` | · |
-| `fireworks@` | 1 | 3 | 0 | 3 | `n/s` | `GAP` | `GAP` | `GAP` | `GAP` | `GAP` | `GAP` | · | `n/s` | `GAP` | `n/s` | `n/s` | · | · | · | · | · | `GAP` | · |
-| `groq@` | 1 | 3 | 0 | 3 | `n/s` | `GAP` | `GAP` | `GAP` | `GAP` | `GAP` | `GAP` | · | `n/s` | `GAP` | `n/s` | `n/s` | · | · | · | · | · | `GAP` | · |
+| `fireworks@` | 3 | 9 | 0 | 3 | `n/s` | 2 | 1 | `GAP` | `GAP` | `GAP` | `GAP` | · | `n/s` | 2 | `n/s` | `n/s` | · | · | · | · | · | 1 | · |
+| `groq@` | 4 | 9 | 0 | 3 | `n/s` | `GAP` | 1 | `GAP` | 1 | 1 | 1 | · | `n/s` | 1 | `n/s` | `n/s` | · | · | · | · | · | 1 | · |
 | `huggingface@` | 0 | 0 | 0 | `GAP` | `n/s` | `GAP` | `GAP` | `GAP` | `GAP` | `GAP` | `GAP` | · | `n/s` | `GAP` | `n/s` | `n/s` | · | · | · | · | · | `GAP` | · |
-| `mistral@` | 2 | 6 | 2 | 5 | `n/s` | `GAP` | `GAP` | `GAP` | `GAP` | `GAP` | `GAP` | · | 1 | `GAP` | `n/s` | `n/s` | · | · | · | · | · | `GAP` | · |
-| `openrouter@` | 1 | 6 | 2 | 6 | `n/s` | `GAP` | `GAP` | `GAP` | `GAP` | `GAP` | `GAP` | · | `n/s` | `GAP` | `n/s` | `n/s` | · | · | · | · | · | `GAP` | · |
-| `perplexity@` | 1 | 2 | 0 | 2 | `n/s` | `GAP` | `GAP` | `GAP` | `GAP` | `GAP` | `GAP` | · | `n/s` | `GAP` | `n/s` | `n/s` | · | · | · | · | · | `GAP` | · |
-| `replicate@` | 0 | 0 | 0 | `GAP` | `n/s` | `GAP` | `GAP` | `GAP` | `GAP` | `GAP` | `GAP` | · | `n/s` | `GAP` | `n/s` | `n/s` | · | · | · | · | · | `GAP` | · |
-| `together@` | 1 | 3 | 0 | 3 | `n/s` | `GAP` | `GAP` | `GAP` | `GAP` | `GAP` | `GAP` | · | `n/s` | `GAP` | `n/s` | `n/s` | · | · | · | · | · | `GAP` | · |
-| `xai@` | 0 | 0 | 0 | `GAP` | `n/s` | `GAP` | `GAP` | `GAP` | `GAP` | `GAP` | `GAP` | · | `n/s` | `GAP` | `n/s` | `n/s` | · | · | · | · | · | `GAP` | · |
+| `mistral@` | 5 | 16 | 6 | 5 | `n/s` | `GAP` | 2 | `GAP` | 2 | 2 | `GAP` | · | 1 | 3 | `n/s` | `n/s` | · | · | · | · | · | 1 | · |
+| `openrouter@` | 5 | 19 | 8 | 6 | `n/s` | 2 | 2 | `GAP` | 2 | 2 | `GAP` | · | `n/s` | 3 | `n/s` | `n/s` | · | · | · | · | · | 2 | · |
+| `perplexity@` | 3 | 7 | 0 | 2 | `n/s` | `GAP` | 2 | `GAP` | `GAP` | `GAP` | `GAP` | · | `n/s` | 2 | `n/s` | `n/s` | · | · | · | · | · | 1 | · |
+| `replicate@` | 1 | 2 | 1 | `GAP` | `n/s` | `GAP` | `GAP` | `GAP` | `GAP` | `GAP` | `GAP` | · | `n/s` | `GAP` | `n/s` | `n/s` | · | · | · | · | · | 2 | · |
+| `together@` | 6 | 14 | 5 | 3 | `n/s` | 2 | 2 | 1 | 2 | 2 | 2 | · | `n/s` | `GAP` | `n/s` | `n/s` | · | · | · | · | · | `GAP` | · |
+| `xai@` | 5 | 11 | 2 | 4 | `n/s` | 1 | 1 | 1 | `GAP` | `GAP` | `GAP` | · | `n/s` | 3 | `n/s` | `n/s` | · | · | · | · | · | 1 | · |
 | `cartesia` | 1 | 5 | 1 | `n/u` | · | · | · | · | · | · | · | · | · | · | · | · | · | · | · | · | · | `n/u` | 5 |
 | `deepgram` | 1 | 7 | 3 | `n/u` | · | · | · | · | · | · | · | · | · | · | · | · | · | · | · | · | · | `n/u` | 7 |
-| **all** | 48 | 317 | 93 | 219 | 9 | 1 | 12 | 7 | 8 | 9 | 2 | 3 | 1 | 5 | 0 | 1 | 5 | 1 | 11 | 3 | 3 | 5 | 12 |
+| **all** | 73 | 383 | 111 | 223 | 9 | 9 | 23 | 9 | 15 | 16 | 5 | 3 | 1 | 19 | 0 | 1 | 5 | 1 | 11 | 3 | 3 | 15 | 12 |
 
 ## Endpoints
 
@@ -93,17 +93,17 @@ From `internal/providers/contractcoverage/exemptions.json`.
 | provider key | endpoints | reason |
 |---|---|---|
 | `anyscale@` | chat, completions, embeddings, images, speech, transcription, translation, responses, list_models | No anyscale@ fixture at all: the preset points at Anyscale's public Endpoints API (api.endpoints.anyscale.com), which Anyscale moved to a private offering in 2024, and has no machine-readable spec. |
-| `cerebras@` | completions, embeddings, images, speech, transcription, translation, responses, list_models | No cerebras@ fixture for these endpoints. The openai adapter sends each to Cerebras's base URL and its code is pinned by the openai suite's cases, but Cerebras's answers (where Cerebras serves the endpoint at all) are not. |
+| `cerebras@` | embeddings, images, speech, transcription, translation, responses | No cerebras@ fixture for these endpoints. The openai adapter sends each to Cerebras's base URL and its code is pinned by the openai suite's cases, but Cerebras's answers (where Cerebras serves the endpoint at all) are not. |
 | `deepinfra@` | chat, completions, embeddings, images, speech, transcription, translation, responses, list_models | No deepinfra@ fixture at all, and no machine-readable spec (contractspec/subsets/unfetchable.json); the openai adapter's code is pinned by the openai suite, DeepInfra's answers are not. |
-| `fireworks@` | completions, embeddings, images, speech, transcription, translation, responses, list_models | No fireworks@ fixture for these endpoints. The openai adapter sends each to Fireworks's base URL and its code is pinned by the openai suite's cases, but Fireworks's answers (where Fireworks serves the endpoint at all) are not. |
-| `groq@` | completions, embeddings, images, speech, transcription, translation, responses, list_models | No groq@ fixture for these endpoints. The openai adapter sends each to Groq's base URL and its code is pinned by the openai suite's cases, but Groq's answers (where Groq serves the endpoint at all) are not. Groq's own spec is checked for chat, embeddings, transcription and the model list (contractspec subsets groq/*, TestSpecCoverage in the openai package). |
+| `fireworks@` | images, speech, transcription, translation | No fireworks@ fixture for these endpoints. The openai adapter sends each to Fireworks's base URL and its code is pinned by the openai suite's cases, but Fireworks's answers (where Fireworks serves the endpoint at all) are not. |
+| `groq@` | completions, images | No groq@ fixture for these endpoints. The openai adapter sends each to Groq's base URL and its code is pinned by the openai suite's cases, but Groq's answers (where Groq serves the endpoint at all) are not. Groq's own spec is checked for chat, embeddings, transcription and the model list (contractspec subsets groq/*, TestSpecCoverage in the openai package). |
 | `huggingface@` | chat, completions, embeddings, images, speech, transcription, translation, responses, list_models | No huggingface@ fixture at all: the preset points at the legacy serverless Inference API (api-inference.huggingface.co); the openai adapter's code is pinned by the openai suite, Hugging Face's answers are not. |
-| `mistral@` | completions, embeddings, images, speech, transcription, translation, responses, list_models | No mistral@ fixture for these endpoints. The openai adapter sends each to Mistral's base URL and its code is pinned by the openai suite's cases, but Mistral's answers (where Mistral serves the endpoint at all) are not. |
-| `openrouter@` | completions, embeddings, images, speech, transcription, translation, responses, list_models | No openrouter@ fixture for these endpoints. The openai adapter sends each to OpenRouter's base URL and its code is pinned by the openai suite's cases, but OpenRouter's answers (where OpenRouter serves the endpoint at all) are not. OpenRouter's own spec is checked for chat, embeddings and the model list (contractspec subsets openrouter/*). |
-| `perplexity@` | completions, embeddings, images, speech, transcription, translation, responses, list_models | No perplexity@ fixture for these endpoints. The openai adapter sends each to Perplexity's base URL and its code is pinned by the openai suite's cases, but Perplexity's answers (where Perplexity serves the endpoint at all) are not. |
-| `replicate@` | chat, completions, embeddings, images, speech, transcription, translation, responses, list_models | No replicate@ fixture at all: the preset points at api.replicate.com/v1, whose OpenAI-compatible surface no fixture or spec pins; the openai adapter's code is pinned by the openai suite, Replicate's answers are not. |
-| `together@` | completions, embeddings, images, speech, transcription, translation, responses, list_models | No together@ fixture for these endpoints. The openai adapter sends each to Together's base URL and its code is pinned by the openai suite's cases, but Together's answers (where Together serves the endpoint at all) are not. Together's own spec is checked for chat, embeddings and images (contractspec subsets together/*). |
-| `xai@` | chat, completions, embeddings, images, speech, transcription, translation, responses, list_models | No xai@ fixture at all, and xAI's REST spec is not fetchable (contractspec/subsets/unfetchable.json tracks a change signal only); the openai adapter's code is pinned by the openai suite, xAI's answers are not. |
+| `mistral@` | completions, images, translation | No mistral@ fixture for these endpoints. The openai adapter sends each to Mistral's base URL and its code is pinned by the openai suite's cases, but Mistral's answers (where Mistral serves the endpoint at all) are not. |
+| `openrouter@` | images, translation | No openrouter@ fixture for these endpoints. The openai adapter sends each to OpenRouter's base URL and its code is pinned by the openai suite's cases, but OpenRouter's answers (where OpenRouter serves the endpoint at all) are not. OpenRouter's own spec is checked for chat, embeddings and the model list (contractspec subsets openrouter/*). |
+| `perplexity@` | completions, images, speech, transcription, translation | No perplexity@ fixture for these endpoints. The openai adapter sends each to Perplexity's base URL and its code is pinned by the openai suite's cases, but Perplexity's answers (where Perplexity serves the endpoint at all) are not. |
+| `replicate@` | chat, completions, embeddings, images, speech, transcription, translation, responses | No replicate@ fixture for these endpoints: the preset points at api.replicate.com/v1, whose model list alone has a fixture (gap RP1); the openai adapter's code is pinned by the openai suite, Replicate's answers are not. |
+| `together@` | responses, list_models | No together@ fixture for these endpoints. The openai adapter sends each to Together's base URL and its code is pinned by the openai suite's cases, but Together's answers (where Together serves the endpoint at all) are not. Together's own spec is checked for chat, embeddings and images (contractspec subsets together/*). |
+| `xai@` | speech, transcription, translation | No xai@ fixture for these endpoints. The openai adapter sends each to xAI's base URL and its code is pinned by the openai suite's cases, but xAI's answers (where xAI serves the endpoint at all) are not. xAI's own spec is checked for chat, completions, embeddings, images and the model list (contractspec subsets xai/*, TestSpecCoverage in the openai package). |
 
 ### Answered without an upstream call
 

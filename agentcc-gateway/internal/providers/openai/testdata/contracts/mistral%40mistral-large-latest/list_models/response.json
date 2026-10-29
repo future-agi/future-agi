@@ -1,0 +1,34 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "mistral-large-latest",
+      "object": "model",
+      "created": 1793212800,
+      "owned_by": "mistralai",
+      "capabilities": {
+        "completion_chat": true,
+        "function_calling": true,
+        "reasoning": false,
+        "completion_fim": false,
+        "fine_tuning": true,
+        "vision": true,
+        "ocr": false,
+        "classification": false,
+        "moderation": false,
+        "audio": false,
+        "audio_transcription": false,
+        "audio_transcription_realtime": false,
+        "audio_speech": false
+      },
+      "name": "mistral-large-latest",
+      "description": null,
+      "max_context_length": 131072,
+      "aliases": [],
+      "deprecation": null,
+      "deprecation_replacement_model": null,
+      "default_model_temperature": null,
+      "type": "base"
+    }
+  ]
+}

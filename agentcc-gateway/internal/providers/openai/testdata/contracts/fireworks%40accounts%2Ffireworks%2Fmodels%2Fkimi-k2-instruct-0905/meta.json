@@ -3,7 +3,28 @@
   "model": "fireworks@accounts/fireworks/models/kimi-k2-instruct-0905",
   "source": "synthetic",
   "recorded_at": null,
-  "notes": "Synthetic: authored from Fireworks' official SDK, github.com/fw-ai-external/python-sdk at 374be9a (2026-10-21), whose types Stainless generates from Fireworks' spec (the spec itself is not public): types/chat/completion_create_response.py (id, choices, created, model, object, usage; Choice with message, finish_reason, logprobs), types/chat/chat_completion_chunk.py (ChoiceDelta content, reasoning_content, role, tool_calls; finish_reason stop, length, function_call, tool_calls), types/shared/chat_message.py, usage_info.py, prompt_tokens_details.py and chat_completion_message_tool_call.py. The model is the one the SDK README uses. docs.fireworks.ai was not reachable from the authoring sandbox. Not covered: streamed tool calls, whose SDK chunk type has no index; and arguments as an object, which the SDK also allows and which would fail the whole decode.",
-  "allowed_unknown_fields": [],
+  "notes": "Synthetic: authored from Fireworks' official SDK, github.com/fw-ai-external/python-sdk at 374be9a (2026-10-21), whose types Stainless generates from Fireworks' spec (the spec itself is not public): types/chat/completion_create_response.py (id, choices, created, model, object, usage; Choice with message, finish_reason, logprobs), types/chat/chat_completion_chunk.py (ChoiceDelta content, reasoning_content, role, tool_calls; finish_reason stop, length, function_call, tool_calls), types/shared/chat_message.py, usage_info.py, prompt_tokens_details.py and chat_completion_message_tool_call.py. The model is the one the SDK README uses. docs.fireworks.ai was not reachable from the authoring sandbox. Not covered: streamed tool calls, whose SDK chunk type has no index; and arguments as an object, which the SDK also allows and which would fail the whole decode. completions_text and completions_finish_error drive TextCompletion (POST /v1/completions, api.md and resources/completions.py of the same SDK): types/completion_create_response.py CompletionCreateResponse (id, choices[] types/shared/choice.py {index, text, finish_reason stop|length|error, logprobs}, created, model, usage types/shared/usage_info.py, object \"text_completion\"), with no response example: the ids, timestamps, texts and counts are placeholders, the request the model this directory names. completions_finish_error ends with finish_reason \"error\", one of the three values the SDK documents (gap FW1). The gateway never streams /v1/completions upstream (TextCompletion sets stream false), so there is no stream case. list_models drives ListModels at /inference/v1/models, which the Stainless SDK does not wrap (it has only the control plane's /v1/accounts/{account_id}/models): the shape is Fireworks' official legacy SDK, PyPI fireworks-ai 0.19.20 (wheel sha256 9a89220c11138c0e9ac2e1b7f93e581e3ffcf7515511419c14e3ff1f23da8aee, 2025-10-17) fireworks/client/api.py ListModelsResponse {object \"list\", data[] Model {id, object \"model\", created, owned_by, kind, supports_chat, supports_image_input, supports_tools, context_length}}, and the live call is Fireworks' official cookbook, github.com/fw-ai/cookbook at 57968a2237b663be33078d2747a28463983ae134 archived/learn/response-api/fireworks_streaming_example.ipynb cell 1 (the OpenAI client's models.list() at /inference/v1: \"Found 28 available models\"); the values are placeholders, filed here because the request names no model. No error case: no official source shows a Fireworks error body (the Stainless SDK keeps the raw body; the legacy SDK only synthesizes one when the body is not JSON), so one would be invented. docs.fireworks.ai was not reachable from the authoring sandbox.",
+  "allowed_unknown_fields": [
+    {
+      "path": "$.data[].kind",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; Fireworks' model metadata has no slot. ListModels has no production caller (new-model detection reads the list itself, internal/providers/contractwatch)"
+    },
+    {
+      "path": "$.data[].supports_chat",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; Fireworks' model metadata has no slot. ListModels has no production caller (new-model detection reads the list itself, internal/providers/contractwatch)"
+    },
+    {
+      "path": "$.data[].supports_image_input",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; Fireworks' model metadata has no slot. ListModels has no production caller (new-model detection reads the list itself, internal/providers/contractwatch)"
+    },
+    {
+      "path": "$.data[].supports_tools",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; Fireworks' model metadata has no slot. ListModels has no production caller (new-model detection reads the list itself, internal/providers/contractwatch)"
+    },
+    {
+      "path": "$.data[].context_length",
+      "reason": "no canonical field: models.ModelObject has only OpenAI's id, object, created and owned_by; Fireworks' model metadata has no slot. ListModels has no production caller (new-model detection reads the list itself, internal/providers/contractwatch)"
+    }
+  ],
   "allowed_unknown_shapes": []
 }

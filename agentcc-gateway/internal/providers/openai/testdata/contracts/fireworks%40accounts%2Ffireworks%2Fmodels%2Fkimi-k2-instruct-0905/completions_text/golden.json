@@ -1,0 +1,19 @@
+{
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "logprobs": null,
+      "text": " Paris."
+    }
+  ],
+  "created": "<nonzero>",
+  "id": "cmpl-7f3a9c2e5b1d4e8f",
+  "model": "accounts/fireworks/models/kimi-k2-instruct-0905",
+  "object": "text_completion",
+  "usage": {
+    "completion_tokens": 3,
+    "prompt_tokens": 5,
+    "total_tokens": 8
+  }
+}

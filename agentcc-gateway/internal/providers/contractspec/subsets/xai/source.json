@@ -1,0 +1,24 @@
+{
+  "provider": "xai",
+  "format": "openapi",
+  "url": "https://raw.githubusercontent.com/xai-org/xai-sdk-ts/51bfc686c74310226d601e6037fa6c2e562244f7/spec/openapi.json",
+  "repo": "xai-org/xai-sdk-ts",
+  "path": "spec/openapi.json",
+  "commit": "51bfc686c74310226d601e6037fa6c2e562244f7",
+  "spec_version": {
+    "info.version": "1.0.0",
+    "openapi": "3.1.0"
+  },
+  "sha256": "f34f5c20564fefd1869ce9c91b2f3926abf735b2c50df8956712c0511fd95280",
+  "fetched_at": "2026-10-28T23:56:03Z",
+  "license": "spec in an Apache-2.0 SDK repository (LICENSE, package.json); info has no licence or terms of its own",
+  "roots": [
+    "chat",
+    "chat_stream",
+    "completions",
+    "embeddings",
+    "images",
+    "models",
+    "responses"
+  ]
+}

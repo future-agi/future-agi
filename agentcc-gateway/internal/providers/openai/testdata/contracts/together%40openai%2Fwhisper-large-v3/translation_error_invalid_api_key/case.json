@@ -1,0 +1,6 @@
+{
+  "endpoint": "translation",
+  "status": 401,
+  "recordable": false,
+  "notes": "ErrorData for a 401 (see meta.json for the values). Not recordable: the recorder sends a valid key. The upload is the default (contracttest.DefaultUpload): the answer does not depend on it."
+}

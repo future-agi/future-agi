@@ -1,0 +1,4 @@
+{
+  "endpoint": "list_models",
+  "notes": "GET /v1/models (ListModels): the spec's 200 example verbatim. Filed under latest because the request names no model. Recordable."
+}

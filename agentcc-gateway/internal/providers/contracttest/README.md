@@ -307,8 +307,9 @@ Allowlist semantics:
   new one with the provider's prefix otherwise: Anthropic `T` `C` `S` `U` `X`
   `R`, Gemini `G` (`GR` request side), Vertex AI `V`, OpenAI `O`, Azure `A`,
   Bedrock `B`, Cohere `K`, Groq `GQ`, Perplexity `P`, Mistral `MI`,
-  OpenRouter `OR`, Together `TG`, Cerebras `CB`, Fireworks `FW`, Deepgram
-  `DG`, Cartesia `CA`. IDs are unique across providers. Write a definition as
+  OpenRouter `OR`, Together `TG`, Cerebras `CB`, Fireworks `FW`, xAI `XA`,
+  Replicate `RP`, Deepgram `DG`, Cartesia `CA`. IDs are unique across
+  providers. Write a definition as
   `known gap <ID>: <reason>` (a mention without the colon is a reference,
   which must resolve to a definition); `KNOWN_GAPS.md` is generated from
   them, and `contractcoverage`'s `TestKnownGaps` fails on a malformed or

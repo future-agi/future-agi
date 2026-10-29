@@ -1,0 +1,13 @@
+{
+  "body": {
+    "dimensions": 1536,
+    "input": "The quick brown fox jumps over the lazy dog",
+    "model": "openai/text-embedding-3-small"
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/embeddings"
+}

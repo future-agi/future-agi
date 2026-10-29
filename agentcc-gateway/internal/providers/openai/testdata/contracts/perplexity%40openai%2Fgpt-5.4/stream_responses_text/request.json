@@ -1,0 +1,12 @@
+{
+  "model": "openai/gpt-5.4",
+  "input": [
+    {
+      "role": "user",
+      "content": "Summarize the file."
+    }
+  ],
+  "service_tier": "priority",
+  "prompt_cache_key": "doc-1",
+  "stream": true
+}

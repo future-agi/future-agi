@@ -1,0 +1,19 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "index": 0,
+      "embedding": [
+        0.0213623,
+        -0.0478516,
+        0.0362854
+      ],
+      "object": "embedding"
+    }
+  ],
+  "model": "nomic-ai/nomic-embed-text-v1.5",
+  "usage": {
+    "prompt_tokens": 8,
+    "total_tokens": 8
+  }
+}

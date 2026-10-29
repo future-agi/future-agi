@@ -1,0 +1,4 @@
+{
+  "endpoint": "images",
+  "notes": "ImageResponse with a url image. Recordable."
+}

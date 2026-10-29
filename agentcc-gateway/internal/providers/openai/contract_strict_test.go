@@ -2,6 +2,7 @@ package openai
 
 import (
 	"reflect"
+	"sync"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/providers/contracttest"
@@ -17,19 +18,14 @@ import (
 // of these paths in a fixture (or a live recording) must be listed, so a new
 // finish reason, output item type, stream event or tier fails the suite even
 // where the adapter passes it on without a look. Spec names the schema the
-// values come from, for the spec-diff check:
+// values come from, for the spec-diff check.
 //
-//   - openai: github.com/openai/openai-openapi openapi.json (26a2991,
-//     2026-10-28); error types and codes, which the spec leaves free strings,
-//     from its examples and the cookbook's How_to_handle_rate_limits.ipynb.
-//   - groq, together, openrouter: their pinned subsets in
-//     internal/providers/contractspec/subsets (each source.json names the
-//     commit).
-//   - perplexity, mistral, fireworks, cerebras: their official SDKs'
-//     generated types (perplexity-py v0.46.1 types/shared/choice.py;
-//     mistralai client-python 90e3009 models/*.py; fw-ai-external
-//     python-sdk 374be9a types/chat; cerebras-cloud-sdk-python cacaf75
-//     types/chat/chat_completion.py), whose specs are not public.
+// The literal holds the official API's, from github.com/openai/openai-openapi
+// openapi.json (26a2991, 2026-10-28); error types and codes, which the spec
+// leaves free strings, from its examples and the cookbook's
+// How_to_handle_rate_limits.ipynb. Each preset adds its own from its
+// contract_preset_<name>_test.go (registerContractPreset), which names its
+// sources.
 var ContractEnums = map[string]map[string][]contracttest.EnumSpec{
 	officialDialect: {
 		contracttest.EndpointChat:             withErrors(openAIErrorEnums, openAIChatEnums),
@@ -63,87 +59,6 @@ var ContractEnums = map[string]map[string][]contracttest.EnumSpec{
 			{Spec: "Model.object", Paths: []string{"$.data[].object"}, Values: []string{"model"}},
 		}),
 		contracttest.EndpointVectorStores: openAIErrorEnums,
-	},
-	"groq": {
-		contracttest.EndpointChat: []contracttest.EnumSpec{
-			{Spec: "CreateChatCompletionResponse.object", Paths: []string{"$.object"}, Values: []string{"chat.completion"}},
-			{Spec: "CreateChatCompletionStreamResponse.object", Paths: []string{"chunk:$.object"}, Values: []string{"chat.completion.chunk"}},
-			{Spec: "CreateChatCompletionResponse.choices[].finish_reason", Paths: []string{"$.choices[].finish_reason", "chunk:$.choices[].finish_reason"},
-				Values: []string{"stop", "length", "tool_calls", "function_call"}},
-			{Spec: "ChatCompletionResponseMessage.role", Paths: []string{"$.choices[].message.role"}, Values: []string{"assistant"}},
-			{Spec: "ChatCompletionStreamResponseDelta.role", Paths: []string{"chunk:$.choices[].delta.role"}, Values: []string{"assistant", "system", "tool", "user"}},
-			{Spec: "ChatCompletionMessageToolCall.type", Paths: []string{"$.choices[].message.tool_calls[].type", "chunk:$.choices[].delta.tool_calls[].type"},
-				Values: []string{"function"}},
-			{Spec: "CreateChatCompletionResponse.service_tier", Paths: []string{"$.service_tier", "chunk:$.service_tier"},
-				Values: []string{"auto", "default", "flex", "on_demand", "performance"}},
-		},
-	},
-	"perplexity": {
-		contracttest.EndpointChat: []contracttest.EnumSpec{
-			{Spec: "types/shared/choice.py Choice.finish_reason", Paths: []string{"$.choices[].finish_reason", "chunk:$.choices[].finish_reason"},
-				Values: []string{"stop", "length"}},
-			{Spec: "types/shared/chat_message_output.py ChatMessageOutput.role", Paths: []string{
-				"$.choices[].message.role", "$.choices[].delta.role", "chunk:$.choices[].delta.role", "chunk:$.choices[].message.role"},
-				Values: []string{"system", "user", "assistant", "tool"}},
-		},
-	},
-	"together": {
-		contracttest.EndpointChat: []contracttest.EnumSpec{
-			{Spec: "ChatCompletionResponse.object", Paths: []string{"$.object"}, Values: []string{"chat.completion"}},
-			{Spec: "ChatCompletionChunk.object", Paths: []string{"chunk:$.object"}, Values: []string{"chat.completion.chunk"}},
-			{Spec: "FinishReason", Paths: []string{"$.choices[].finish_reason", "chunk:$.choices[].finish_reason"},
-				Values: []string{"stop", "eos", "length", "tool_calls", "function_call"}},
-			{Spec: "ChatCompletionMessage.role", Paths: []string{"$.choices[].message.role"}, Values: []string{"assistant"}},
-			{Spec: "ChatCompletionChunk.choices[].delta.role", Paths: []string{"chunk:$.choices[].delta.role"},
-				Values: []string{"system", "user", "assistant", "function", "tool"}},
-			{Spec: "ToolChoice.type", Paths: []string{"$.choices[].message.tool_calls[].type", "chunk:$.choices[].delta.tool_calls[].type"},
-				Values: []string{"function"}},
-		},
-	},
-	"openrouter": {
-		contracttest.EndpointChat: []contracttest.EnumSpec{
-			{Spec: "ChatResult.object", Paths: []string{"$.object"}, Values: []string{"chat.completion"}},
-			{Spec: "ChatStreamingResponse.data.object", Paths: []string{"chunk:$.object"}, Values: []string{"chat.completion.chunk"}},
-			{Spec: "ChatFinishReasonEnum", Paths: []string{"$.choices[].finish_reason", "chunk:$.choices[].finish_reason"},
-				Values: []string{"stop", "length", "tool_calls", "content_filter", "error"}},
-			{Spec: "ChatAssistantMessage.role", Paths: []string{"$.choices[].message.role", "chunk:$.choices[].delta.role"}, Values: []string{"assistant"}},
-			{Spec: "ChatToolCall.type", Paths: []string{"$.choices[].message.tool_calls[].type", "chunk:$.choices[].delta.tool_calls[].type"},
-				Values: []string{"function"}},
-			{Spec: "ReasoningDetail (discriminator)", Paths: []string{"$.choices[].message.reasoning_details[].type", "chunk:$.choices[].delta.reasoning_details[].type"},
-				Values: []string{"reasoning.encrypted", "reasoning.server_tool_call", "reasoning.summary", "reasoning.text"}},
-			{Spec: "ReasoningDetail.format", Paths: []string{"$.choices[].message.reasoning_details[].format", "chunk:$.choices[].delta.reasoning_details[].format"},
-				Values: []string{"anthropic-claude-v1", "azure-openai-responses-v1", "bedrock-openai-responses-v1", "bedrock-xai-responses-v1",
-					"google-gemini-v1", "meta-responses-v1", "openai-responses-v1", "unknown", "xai-responses-v1"}},
-		},
-	},
-	"mistral": {
-		contracttest.EndpointChat: withErrors(mistralErrorEnums, []contracttest.EnumSpec{
-			{Spec: "models/chatcompletionchoice.py ChatCompletionChoiceFinishReason", Paths: []string{"$.choices[].finish_reason"},
-				Values: []string{"stop", "length", "model_length", "error", "tool_calls"}},
-			{Spec: "models/completionresponsestreamchoice.py CompletionResponseStreamChoiceFinishReason", Paths: []string{"chunk:$.choices[].finish_reason"},
-				Values: []string{"stop", "length", "error", "tool_calls"}},
-			{Spec: "models/assistantmessage.py AssistantMessage.role", Paths: []string{"$.choices[].message.role"}, Values: []string{"assistant"}},
-		}),
-		contracttest.EndpointOCR: mistralErrorEnums,
-	},
-	"fireworks": {
-		contracttest.EndpointChat: []contracttest.EnumSpec{
-			{Spec: "types/chat/chat_completion_chunk.py Choice.finish_reason (the response's is a free string)",
-				Paths: []string{"chunk:$.choices[].finish_reason"}, Values: []string{"stop", "length", "function_call", "tool_calls"}},
-		},
-	},
-	"cerebras": {
-		contracttest.EndpointChat: []contracttest.EnumSpec{
-			{Spec: "ChatCompletionResponse.object", Paths: []string{"$.object"}, Values: []string{"chat.completion"}},
-			{Spec: "ChatChunkResponse.object", Paths: []string{"chunk:$.object"}, Values: []string{"chat.completion.chunk"}},
-			{Spec: "ChatCompletionResponseChoice.finish_reason / ChatChunkResponseChoice.finish_reason",
-				Paths:  []string{"$.choices[].finish_reason", "chunk:$.choices[].finish_reason"},
-				Values: []string{"stop", "length", "content_filter", "tool_calls"}},
-			{Spec: "ChatCompletionResponseChoiceMessage.role / ChatChunkResponseChoiceDelta.role",
-				Paths: []string{"$.choices[].message.role", "chunk:$.choices[].delta.role"}, Values: []string{"assistant", "user", "system", "tool"}},
-			{Spec: "ChatCompletionResponseChoiceMessageToolCall.type", Paths: []string{
-				"$.choices[].message.tool_calls[].type", "chunk:$.choices[].delta.tool_calls[].type"}, Values: []string{"function"}},
-		},
 	},
 }
 
@@ -269,12 +184,6 @@ func openAIErrorEnumsFor(spec string) []contracttest.EnumSpec {
 		Values: []string{"invalid_request_error", "rate_limit_error", "insufficient_quota", "server_error", "service_unavailable_error"}}}
 }
 
-// mistralErrorEnums are the generic error body's ({"object": "error", ...},
-// which the SDK's error hook reads: extra/observability/otel.py).
-var mistralErrorEnums = []contracttest.EnumSpec{
-	{Spec: "the API error body's object (extra/observability/otel.py)", Paths: []string{"error:$.object"}, Values: []string{"error"}},
-}
-
 // contractDecoded are the raw regions each endpoint's adapter code decodes
 // later. models.ChatCompletionResponse, StreamChunk and Usage capture unknown
 // top-level keys in Extra and forward them, so the walk treats them as
@@ -332,8 +241,10 @@ func responsesProtocolFields() map[string]string {
 	return out
 }
 
-// contractStricts are the strict declarations by "<dialect>/<endpoint>".
-var contractStricts = buildContractStricts()
+// contractStricts are the strict declarations by "<dialect>/<endpoint>",
+// built on first use: the presets add their value sets to ContractEnums from
+// their files' init functions, which run after package variables are set.
+var contractStricts = sync.OnceValue(buildContractStricts)
 
 func buildContractStricts() map[string]*contracttest.Strict {
 	out := map[string]*contracttest.Strict{}

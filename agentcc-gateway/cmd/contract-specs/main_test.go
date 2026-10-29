@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -17,9 +19,11 @@ import (
 type fakeFetcher struct {
 	heads map[string]string // repo -> commit
 	files map[string]string // URL -> body
+	asked []string          // "repo ref" of every LsRemote call
 }
 
 func (f *fakeFetcher) LsRemote(_ context.Context, repo, ref string) (string, error) {
+	f.asked = append(f.asked, repo+" "+ref)
 	if shaRE.MatchString(ref) {
 		return ref, nil
 	}
@@ -205,6 +209,87 @@ func TestRunUnextractableRoot(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "FAIL  root not extractable") || !strings.Contains(out.String(), `op "POST /embed" not in spec`) {
 		t.Errorf("output:\n%s", out.String())
+	}
+}
+
+// xaiSpec is a minimal stand-in for xai-org/xai-sdk-ts spec/openapi.json:
+// every operation and schema the xai definition roots at, chat's chunk
+// schema attached to no operation as upstream has it.
+func xaiSpec(extra string) string {
+	obj := `{"type": "object", "properties": {"id": {"type": "string"}}}`
+	op := func(method string) string {
+		return `{"` + method + `": {"responses": {"200": {"content": {"application/json": {"schema": ` + obj + `}}}, "400": {"description": "Bad request."}}}}`
+	}
+	return `{"openapi": "3.1.0", "info": {"version": "1.0.0"}, "paths": {
+  "/v1/chat/completions": {"post": {"responses": {"200": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ChatResponse"}}}}, "400": {"description": "Bad request."}}}},
+  "/v1/completions": ` + op("post") + `,
+  "/v1/embeddings": ` + op("post") + `,
+  "/v1/images/generations": ` + op("post") + `,
+  "/v1/responses": ` + op("post") + `,
+  "/v1/models": ` + op("get") + `},
+ "components": {"schemas": {
+  "ChatResponse": {"type": "object", "properties": {"id": {"type": "string"}, "choices": {"type": "array", "items": {"type": "object", "properties": {
+    "finish_reason": {"type": ["string", "null"], "enum": ["stop", "length"` + extra + `]}}}}}},
+  "ChatResponseChunk": ` + obj + `}}}`
+}
+
+// The xai definition's fetch path: the latest commit of xai-org/xai-sdk-ts
+// by git ls-remote, then spec/openapi.json raw at that commit, every root
+// extracted and the provenance pinned to the immutable URL.
+func TestRunXAIFetchPath(t *testing.T) {
+	src, ok := contractspec.SourceFor("xai")
+	if !ok {
+		t.Fatal("no xai definition")
+	}
+	rawAt := func(sha string) string {
+		return "https://raw.githubusercontent.com/xai-org/xai-sdk-ts/" + sha + "/spec/openapi.json"
+	}
+	dir := t.TempDir()
+	f := &fakeFetcher{
+		heads: map[string]string{"xai-org/xai-sdk-ts": sha1},
+		files: map[string]string{rawAt(sha1): xaiSpec("")},
+	}
+	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	o := options{dir: dir, timeout: time.Minute, sources: []contractspec.Source{src}, fetch: true, update: true}
+	var out bytes.Buffer
+	if code := run(context.Background(), o, f, &out, &out, now); code != exitOK {
+		t.Fatalf("update exit %d:\n%s", code, out.String())
+	}
+	if len(f.asked) != 1 || f.asked[0] != "xai-org/xai-sdk-ts HEAD" {
+		t.Errorf("ls-remote calls %q, want the latest commit of xai-org/xai-sdk-ts", f.asked)
+	}
+	prov, err := contractspec.LoadProvenance(os.DirFS(dir), "xai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var defined []string
+	for _, r := range src.Roots {
+		defined = append(defined, r.Name)
+	}
+	sort.Strings(defined)
+	if prov.URL != rawAt(sha1) || prov.Commit != sha1 || prov.Repo != "xai-org/xai-sdk-ts" || prov.Path != "spec/openapi.json" ||
+		prov.SHA256 != contractspec.SHA256Hex([]byte(xaiSpec(""))) || prov.License == "" || !reflect.DeepEqual(prov.Roots, defined) {
+		t.Errorf("provenance %+v, want %s pinned with roots %v", prov, rawAt(sha1), defined)
+	}
+
+	// Upstream moves on: -check re-resolves the latest commit and fetches
+	// the spec raw at it; a new finish reason is drift.
+	f.heads["xai-org/xai-sdk-ts"] = sha3
+	f.files[rawAt(sha3)] = xaiSpec(`, "end_turn"`)
+	out.Reset()
+	o.update, o.check = false, true
+	if code := run(context.Background(), o, f, &out, &out, now); code != exitDrift {
+		t.Fatalf("check of a drifted spec exit %d, want %d:\n%s", code, exitDrift, out.String())
+	}
+	for _, want := range []string{
+		"committed: xai-org/xai-sdk-ts@" + sha1[:12],
+		"latest:    xai-org/xai-sdk-ts@" + sha3[:12],
+		"xai/chat:",
+		"+ end_turn",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output lacks %q:\n%s", want, out.String())
+		}
 	}
 }
 

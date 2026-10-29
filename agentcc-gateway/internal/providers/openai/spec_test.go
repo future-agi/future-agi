@@ -24,10 +24,12 @@ import (
 //	go test ./internal/providers/openai/ -run SpecCoverage -v                      # coverage figures
 //	CONTRACTSPEC_DRAFT=1 go test ./internal/providers/openai/ -run SpecCoverage    # rewrite the allowlist, TODO reasons for new findings
 //
-// The OpenAI-compatible presets this adapter serves (groq, together,
-// openrouter) have subsets of their own; wire each as another Check with
-// Roots: openAIRoots(t, "<preset>") and its own allowlist file
-// (testdata/spec_allowlist.<preset>.json).
+// The OpenAI-compatible presets this adapter serves with a fetchable spec
+// (groq, together, openrouter, xai) have subsets of their own, checked by
+// TestSpecCoveragePresets: a preset registered with Spec set
+// (contract_preset_<name>_test.go) gets Roots: presetSpecRoots(t, preset),
+// openAIRoots(t, "<preset>") less what the gateway never decodes from a
+// preset, and its own allowlist file (testdata/spec_allowlist.<preset>.json).
 func TestSpecCoverage(t *testing.T) {
 	contractspec.Check(t, contractspec.Coverage{
 		Provider: "openai",
@@ -36,20 +38,70 @@ func TestSpecCoverage(t *testing.T) {
 }
 
 // TestSpecCoveragePresets is TestSpecCoverage for the OpenAI-compatible
-// presets with a fetchable spec (contractspec/subsets/<preset>), each with
-// its own allowlist, testdata/spec_allowlist.<preset>.json. The presets
-// whose spec cannot be fetched (contractspec/subsets/unfetchable.json) are
-// covered by their contract fixtures alone.
+// presets with a fetchable spec (contractspec/subsets/<preset>; registered
+// with Spec set), each with its own allowlist,
+// testdata/spec_allowlist.<preset>.json. The presets whose spec cannot be
+// fetched (contractspec/subsets/unfetchable.json) are covered by their
+// contract fixtures alone.
 func TestSpecCoveragePresets(t *testing.T) {
-	for _, preset := range []string{"groq", "together", "openrouter"} {
+	for _, preset := range contractPresetNames() {
+		if !contractPresets[preset].Spec {
+			continue
+		}
 		t.Run(preset, func(t *testing.T) {
+			roots, elsewhere := presetSpecRoots(t, contractPresets[preset])
 			contractspec.Check(t, contractspec.Coverage{
 				Provider:  preset,
 				Allowlist: "testdata/spec_allowlist." + preset + ".json",
-				Roots:     openAIRoots(t, preset),
+				Roots:     roots,
+				Elsewhere: elsewhere,
 			})
 		})
 	}
+}
+
+// presetSpecRoots are openAIRoots for a preset, less the adapter's
+// finish-reason checks at the preset's SpecFreeStrings. Its Responses
+// subsets are checked elsewhere: the gateway relays a preset's /v1/responses
+// body or stream unchanged, and never decodes one into responsesResponse
+// (the Responses-to-chat translator runs for the official API alone).
+func presetSpecRoots(t *testing.T, p contractPreset) ([]contractspec.Root, map[string]string) {
+	t.Helper()
+	free := map[string]bool{}
+	for _, path := range p.SpecFreeStrings {
+		free[path] = true
+	}
+	elsewhere := map[string]string{}
+	var roots []contractspec.Root
+	for _, r := range openAIRoots(t, p.Name) {
+		switch r.Subset {
+		case p.Name + "/responses", p.Name + "/responses_stream":
+			elsewhere[r.Subset] = "the /v1/responses passthrough relays the body unchanged (CreateResponse, StreamResponse): the " +
+				"server reads its model and usage (internal/server TestContractOpenAIResponsesUsage, over the preset's fixtures), and " +
+				"ChatNeedsResponses is false for every preset, so toChat never reads one"
+			continue
+		}
+		var enums []contractspec.EnumCheck
+		for _, e := range r.Enums {
+			if !free[e.Path] {
+				enums = append(enums, e)
+			}
+		}
+		r.Enums = enums
+		roots = append(roots, r)
+	}
+	for _, path := range p.SpecFreeStrings {
+		used := false
+		for _, r := range allOpenAIRoots(p.Name) {
+			for _, e := range r.Enums {
+				used = used || e.Path == path
+			}
+		}
+		if !used {
+			t.Errorf("%s: SpecFreeStrings has %s, which no EnumCheck of openAIRoots checks", p.Name, path)
+		}
+	}
+	return roots, elsewhere
 }
 
 // TestSpecEnums checks the value sets the contract tests accept

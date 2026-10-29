@@ -69,20 +69,6 @@
         "value": "68e5745c9b747b7aa5f46da6c746e4ea",
         "checked_at": "2026-10-28T21:03:25Z"
       }
-    },
-    {
-      "provider": "xai",
-      "reason": "the REST spec is served from api.x.ai / docs.x.ai only; the official machine-readable contract on GitHub is the gRPC protobuf API (xai-org/xai-proto), whose enum names (REASON_STOP) differ from the REST strings",
-      "signal": {
-        "repo": "xai-org/xai-proto",
-        "path": "proto/xai/api/v1/chat.proto",
-        "what": "sha256 of the chat proto (same messages and finish reasons as the REST API, gRPC names)"
-      },
-      "observed": {
-        "commit": "6499fba5e5081a25a9504c96d01dc396adf35d2b",
-        "value": "sha256:46c588592a791ca20ca8dfc6e272994cb997a80e7cf9bf612d55c870f5cfaff1",
-        "checked_at": "2026-10-28T21:03:25Z"
-      }
     }
   ]
 }

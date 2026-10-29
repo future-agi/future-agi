@@ -128,14 +128,12 @@
     {
       "provider": "cerebras@",
       "endpoints": [
-        "completions",
         "embeddings",
         "images",
         "speech",
         "transcription",
         "translation",
-        "responses",
-        "list_models"
+        "responses"
       ],
       "kind": "uncovered",
       "reason": "No cerebras@ fixture for these endpoints. The openai adapter sends each to Cerebras's base URL and its code is pinned by the openai suite's cases, but Cerebras's answers (where Cerebras serves the endpoint at all) are not."
@@ -209,14 +207,10 @@
     {
       "provider": "fireworks@",
       "endpoints": [
-        "completions",
-        "embeddings",
         "images",
         "speech",
         "transcription",
-        "translation",
-        "responses",
-        "list_models"
+        "translation"
       ],
       "kind": "uncovered",
       "reason": "No fireworks@ fixture for these endpoints. The openai adapter sends each to Fireworks's base URL and its code is pinned by the openai suite's cases, but Fireworks's answers (where Fireworks serves the endpoint at all) are not."
@@ -250,13 +244,7 @@
       "provider": "groq@",
       "endpoints": [
         "completions",
-        "embeddings",
-        "images",
-        "speech",
-        "transcription",
-        "translation",
-        "responses",
-        "list_models"
+        "images"
       ],
       "kind": "uncovered",
       "reason": "No groq@ fixture for these endpoints. The openai adapter sends each to Groq's base URL and its code is pinned by the openai suite's cases, but Groq's answers (where Groq serves the endpoint at all) are not. Groq's own spec is checked for chat, embeddings, transcription and the model list (contractspec subsets groq/*, TestSpecCoverage in the openai package)."
@@ -323,13 +311,8 @@
       "provider": "mistral@",
       "endpoints": [
         "completions",
-        "embeddings",
         "images",
-        "speech",
-        "transcription",
-        "translation",
-        "responses",
-        "list_models"
+        "translation"
       ],
       "kind": "uncovered",
       "reason": "No mistral@ fixture for these endpoints. The openai adapter sends each to Mistral's base URL and its code is pinned by the openai suite's cases, but Mistral's answers (where Mistral serves the endpoint at all) are not."
@@ -362,14 +345,8 @@
     {
       "provider": "openrouter@",
       "endpoints": [
-        "completions",
-        "embeddings",
         "images",
-        "speech",
-        "transcription",
-        "translation",
-        "responses",
-        "list_models"
+        "translation"
       ],
       "kind": "uncovered",
       "reason": "No openrouter@ fixture for these endpoints. The openai adapter sends each to OpenRouter's base URL and its code is pinned by the openai suite's cases, but OpenRouter's answers (where OpenRouter serves the endpoint at all) are not. OpenRouter's own spec is checked for chat, embeddings and the model list (contractspec subsets openrouter/*)."
@@ -403,13 +380,10 @@
       "provider": "perplexity@",
       "endpoints": [
         "completions",
-        "embeddings",
         "images",
         "speech",
         "transcription",
-        "translation",
-        "responses",
-        "list_models"
+        "translation"
       ],
       "kind": "uncovered",
       "reason": "No perplexity@ fixture for these endpoints. The openai adapter sends each to Perplexity's base URL and its code is pinned by the openai suite's cases, but Perplexity's answers (where Perplexity serves the endpoint at all) are not."
@@ -449,11 +423,10 @@
         "speech",
         "transcription",
         "translation",
-        "responses",
-        "list_models"
+        "responses"
       ],
       "kind": "uncovered",
-      "reason": "No replicate@ fixture at all: the preset points at api.replicate.com/v1, whose OpenAI-compatible surface no fixture or spec pins; the openai adapter's code is pinned by the openai suite, Replicate's answers are not."
+      "reason": "No replicate@ fixture for these endpoints: the preset points at api.replicate.com/v1, whose model list alone has a fixture (gap RP1); the openai adapter's code is pinned by the openai suite, Replicate's answers are not."
     },
     {
       "provider": "together@",
@@ -483,12 +456,6 @@
     {
       "provider": "together@",
       "endpoints": [
-        "completions",
-        "embeddings",
-        "images",
-        "speech",
-        "transcription",
-        "translation",
         "responses",
         "list_models"
       ],
@@ -523,18 +490,12 @@
     {
       "provider": "xai@",
       "endpoints": [
-        "chat",
-        "completions",
-        "embeddings",
-        "images",
         "speech",
         "transcription",
-        "translation",
-        "responses",
-        "list_models"
+        "translation"
       ],
       "kind": "uncovered",
-      "reason": "No xai@ fixture at all, and xAI's REST spec is not fetchable (contractspec/subsets/unfetchable.json tracks a change signal only); the openai adapter's code is pinned by the openai suite, xAI's answers are not."
+      "reason": "No xai@ fixture for these endpoints. The openai adapter sends each to xAI's base URL and its code is pinned by the openai suite's cases, but xAI's answers (where xAI serves the endpoint at all) are not. xAI's own spec is checked for chat, completions, embeddings, images and the model list (contractspec subsets xai/*, TestSpecCoverage in the openai package)."
     }
   ]
 }

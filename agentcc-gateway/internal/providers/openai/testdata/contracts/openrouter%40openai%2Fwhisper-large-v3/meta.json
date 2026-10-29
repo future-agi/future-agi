@@ -1,0 +1,20 @@
+{
+  "provider": "openai",
+  "model": "openrouter@openai/whisper-large-v3",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: from OpenRouter's OpenAPI spec as vendored in its official SDK, github.com/OpenRouterTeam/python-sdk .speakeasy/in.openapi.yaml at 752139b7d0b9a71baece3468203a358e07a341b5 (2026-10-28; pinned as contractspec/subsets/openrouter), POST /audio/transcriptions as an OpenAI-style multipart upload (the operation accepts one beside its JSON body): the multipart example's fields (model openai/whisper-large-v3, language en; the suite uploads its own audio.mp3 for the example's audio.wav) and the 200 example (STTResponse: text, usage {cost, input_tokens, output_tokens, seconds, total_tokens}) verbatim, so the text is the example's, not what the upload says. The adapter lifts text and passes the body through. Error bodies are the operation's examples verbatim; their integer code is gap OR1, so each comes back as a 502.",
+  "allowed_unknown_fields": [
+    {
+      "path": "$.usage",
+      "reason": "known gap O18: the upstream usage is ignored; the server prices transcription and translation from the uploaded WAV's duration (server/handlers_audio.go), so token-billed gpt-4o-*-transcribe models are priced by the wrong unit and non-WAV uploads go unpriced. OpenRouter's usage also carries the cost it charged (usage.cost); the body still reaches the client unchanged"
+    }
+  ],
+  "allowed_unknown_shapes": [],
+  "allowed_type_mismatches": [
+    {
+      "path": "error:$.error.code",
+      "reason": "known gap OR1: OpenRouter's error code is an integer (the HTTP status) and models.ErrorDetail.Code a string, so parseProviderError cannot decode any OpenRouter error body and falls back to a 502: a 400, 401, 402 or 429 is retried, failed over and counted against the circuit breaker, and the client gets the raw body as the message"
+    }
+  ]
+}

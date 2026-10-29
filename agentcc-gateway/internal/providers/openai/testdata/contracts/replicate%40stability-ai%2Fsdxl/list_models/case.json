@@ -1,0 +1,10 @@
+{
+  "endpoint": "list_models",
+  "notes": "replicate-go's TestListModels mock body (see meta.json). Recordable.",
+  "sanity_gaps": [
+    {
+      "failure": "0 models",
+      "reason": "known gap RP1: Replicate's model list is a page, {next, previous, results: [Model]}, not OpenAI's {object, data}: ListModels decodes no models from it, so the gateway lists none of Replicate's models. The replicate preset reaches Replicate's own predictions API, which has no other OpenAI endpoint"
+    }
+  ]
+}

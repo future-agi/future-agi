@@ -1,0 +1,6 @@
+{
+  "code": "provider_400",
+  "message": "provider error (HTTP 400): {\n  \"code\": \"invalid-argument\",\n  \"error\": \"Public URLs are not supported for files with content type 'text/plain'.\"\n}\n",
+  "status": 502,
+  "type": "upstream_error"
+}

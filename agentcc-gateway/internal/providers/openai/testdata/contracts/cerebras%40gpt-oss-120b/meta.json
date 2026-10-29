@@ -3,7 +3,7 @@
   "model": "cerebras@gpt-oss-120b",
   "source": "synthetic",
   "recorded_at": null,
-  "notes": "Synthetic: authored from Cerebras' official SDK, github.com/Cerebras/cerebras-cloud-sdk-python at cacaf75 (2026-07-08), whose types Stainless generates from Cerebras' spec (the spec itself is not public): types/chat/chat_completion.py: ChatCompletionResponse (system_fingerprint, service_tier, time_info, usage with image_tokens and token details), message.reasoning, finish_reason stop / length / content_filter / tool_calls, ChatChunkResponse (delta.reasoning, delta.tokens), and ErrorChunkResponse {error {id, code, message, param, type}, status_code} for a failure mid-stream. The model is the one the SDK README uses. inference-docs.cerebras.ai was not reachable from the authoring sandbox. Top-level time_info and usage.image_tokens reach the client through Extra.",
+  "notes": "Synthetic: authored from Cerebras' official SDK, github.com/Cerebras/cerebras-cloud-sdk-python at cacaf75 (2026-07-08), whose types Stainless generates from Cerebras' spec (the spec itself is not public): types/chat/chat_completion.py: ChatCompletionResponse (system_fingerprint, service_tier, time_info, usage with image_tokens and token details), message.reasoning, finish_reason stop / length / content_filter / tool_calls, ChatChunkResponse (delta.reasoning, delta.tokens), and ErrorChunkResponse {error {id, code, message, param, type}, status_code} for a failure mid-stream. The model is the one the SDK README uses. inference-docs.cerebras.ai was not reachable from the authoring sandbox. Top-level time_info and usage.image_tokens reach the client through Extra. completions_text drives TextCompletion (POST /v1/completions, api.md and resources/completions.py of the same SDK): the README's completions example request verbatim (prompt \"It was a dark and stormy \", max_tokens 100, model gpt-oss-120b) and types/completion.py CompletionResponse (id, choices[] {index, finish_reason stop|length|content_filter|tool_calls, logprobs, text, tokens}, created, model, object \"text_completion\", system_fingerprint, time_info, usage), with no response example: the id, timestamps, text and counts are placeholders. The gateway never streams /v1/completions upstream (TextCompletion sets stream false), so there is no stream case. list_models drives ListModels (GET /v1/models, resources/models.py): the default variant of types/model_list_response.py ModelListResponse, ModelMetadataList {data[] {id, created, object \"model\", owned_by}, object \"list\"} (the OpenRouter and Hugging Face variants need a format query the gateway never sends), with placeholder values, filed here because the request names no model. No error cases: the SDK types no error body (_client.py _make_status_error reads an optional status_code alone) and no Cerebras source gives one.",
   "allowed_unknown_fields": [
     {
       "path": "$.choices[].message.reasoning",
@@ -20,6 +20,10 @@
     {
       "path": "error:$.status_code",
       "reason": "known gap CB2: the HTTP status of a mid-stream error (status_code) and the error's id are dropped; the canonical error is always a 502, so a mid-stream rate limit or bad request cannot be told from a server failure"
+    },
+    {
+      "path": "$.time_info",
+      "reason": "known gap CB3: Cerebras' completions time_info (the queue, prompt and completion times it measured) is dropped: models.CompletionResponse has no Extra, unlike chat's types, which carry time_info through to the client"
     }
   ],
   "allowed_unknown_shapes": []

@@ -13,7 +13,7 @@ Coverage by provider and endpoint is in [CONTRACT_COVERAGE.md](CONTRACT_COVERAGE
 
 ## Totals
 
-157 gap IDs, defined 819 times.
+179 gap IDs, defined 896 times.
 
 | prefix | provider | topic | IDs |
 |---|---|---|--:|
@@ -23,7 +23,7 @@ Coverage by provider and endpoint is in [CONTRACT_COVERAGE.md](CONTRACT_COVERAGE
 | `U` | Anthropic | usage and billing | 7 |
 | `X` | Anthropic | errors, models and the rest | 10 |
 | `R` | Anthropic | request side | 1 |
-| `O` | OpenAI | all | 28 |
+| `O` | OpenAI | all | 29 |
 | `A` | Azure OpenAI | all | 9 |
 | `G` | Gemini | all | 28 |
 | `GR` | Gemini | request side | 1 |
@@ -31,10 +31,14 @@ Coverage by provider and endpoint is in [CONTRACT_COVERAGE.md](CONTRACT_COVERAGE
 | `B` | Amazon Bedrock | all | 23 |
 | `K` | Cohere | all | 13 |
 | `GQ` | Groq | all | 5 |
-| `MI` | Mistral | all | 3 |
-| `OR` | OpenRouter | all | 6 |
-| `TG` | Together | all | 4 |
-| `CB` | Cerebras | all | 2 |
+| `P` | Perplexity | all | 3 |
+| `MI` | Mistral | all | 5 |
+| `OR` | OpenRouter | all | 8 |
+| `TG` | Together | all | 7 |
+| `CB` | Cerebras | all | 3 |
+| `FW` | Fireworks | all | 2 |
+| `XA` | xAI | all | 7 |
+| `RP` | Replicate | all | 1 |
 | `DG` | Deepgram | speech relay | 2 |
 | `CA` | Cartesia | speech relay | 2 |
 
@@ -75,25 +79,25 @@ Coverage by provider and endpoint is in [CONTRACT_COVERAGE.md](CONTRACT_COVERAGE
 
 | ID | loss | defined in |
 |---|---|---|
-| O1 | message.refusal is dropped (models.Message has no refusal field), so a structured-outputs refusal reaches the client as content null with no explanation and finish_reason "stop" | azure: gpt-4.1-2025-04-14, spec azure/chat; openai: gpt-4.1-2025-04-14, gpt-5.5-2026-04-23, gpt-5.6-sol, gpt-6-sol, openrouter@anthropic/claude-4.5-sonnet, spec groq/chat, spec openai/chat, spec openrouter/chat |
+| O1 | message.refusal is dropped (models.Message has no refusal field), so a structured-outputs refusal reaches the client as content null with no explanation and finish_reason "stop" | azure: gpt-4.1-2025-04-14, spec azure/chat; openai: gpt-4.1-2025-04-14, gpt-5.5-2026-04-23, gpt-5.6-sol, gpt-6-sol, openrouter@anthropic/claude-4.5-sonnet, spec groq/chat, spec openai/chat, spec openrouter/chat, spec xai/chat, xai@latest |
 | O2 | delta.refusal is dropped (models.Delta has no refusal field), so a streamed refusal reaches the client as empty deltas | azure: spec azure/chat_stream; openai: gpt-4.1-2025-04-14, gpt-5.5-2026-04-23, gpt-5.6-sol, gpt-6-sol, spec groq/chat_stream, spec openai/chat_stream, spec openrouter/chat_stream |
-| O3 | Streamed choice logprobs are dropped (models.StreamChoice has no logprobs field), so a stream with logprobs: true carries none to the client; the non-stream path keeps them | azure: gpt-4.1-2025-04-14, spec azure/chat_stream; openai: gpt-4.1-2025-04-14, gpt-5.5-2026-04-23, gpt-5.6-sol, gpt-6-sol, groq@openai/gpt-oss-120b, spec groq/chat_stream, spec openai/chat_stream, spec openrouter/chat_stream, spec together/chat_stream, together@meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo |
+| O3 | Streamed choice logprobs are dropped (models.StreamChoice has no logprobs field), so a stream with logprobs: true carries none to the client; the non-stream path keeps them | azure: gpt-4.1-2025-04-14, spec azure/chat_stream; openai: gpt-4.1-2025-04-14, gpt-5.5-2026-04-23, gpt-5.6-sol, gpt-6-sol, groq@openai/gpt-oss-120b, spec groq/chat_stream, spec openai/chat_stream, spec openrouter/chat_stream, spec together/chat_stream, spec xai/chat_stream, together@meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo |
 | O4 | A custom tool call's payload (custom.name and custom.input) is dropped: models.ToolCall only has function, so the client receives a tool call of type "custom" with an empty name and empty arguments | openai: gpt-5.6-sol, gpt-5.6-sol/custom_tool_call ×2, spec openai/chat |
 | O5 | request side: the client's stream_options.include_obfuscation false is dropped (models.StreamOptions only has include_usage), so the upstream keeps sending obfuscation padding | openai: gpt-5.6-sol |
 | O6 | the retry-after header is dropped (and retry-after-ms and x-request-id, which openai-python reads too); models.APIError has no retry field, so the gateway retries and fails over on its own schedule instead of when OpenAI says, and the client loses the hint | openai: gpt-5.5-2026-04-23/error_overloaded, gpt-5.5-2026-04-23/error_rate_limit, gpt-5.5-2026-04-23/stream_error_rate_limit, gpt-6-sol/vector_stores_error_conflict |
-| O7 | parseProviderError drops the error's param (models.APIError.Param is never set), so the client cannot tell which parameter was rejected | openai: gpt-5.5-2026-04-23/error_invalid_request |
+| O7 | parseProviderError drops the error's param (models.APIError.Param is never set), so the client cannot tell which parameter was rejected | openai: gpt-5.5-2026-04-23/error_invalid_request, xai@latest/error_invalid_model |
 | O9 | audio output (id, data, transcript, expires_at) is dropped; models.Message / models.Delta have no audio field | openai: spec openai/chat, spec openai/chat_stream, spec openai/responses_stream ×4, spec openrouter/chat, spec openrouter/chat_stream |
 | O10 | The Responses translator drops reasoning output items and events (summary, reasoning text, encrypted_content), so a chat client of a Responses-served route gets no reasoning_content and cannot pass encrypted reasoning back | openai: gpt-5.6-sol ×11, spec openai/responses, spec openai/responses_stream ×6 |
 | O11 | input_tokens_details.cache_write_tokens is dropped (responsesUsage reads cached_tokens only), so prompt-cache writes, which gpt-5.6 and later bill separately, cannot be priced | openai: gpt-5.6-sol ×2, spec openai/responses |
 | O13 | output_text annotations (url_citation, file_citation) are dropped: models.Message.annotations exists but the Responses translator never fills it, so web-search citations vanish | openai: gpt-5.6-sol ×2, spec openai/responses, spec openai/responses_stream |
 | O14 | output_text logprobs are dropped, so a chat request with logprobs served on the Responses API returns none | openai: gpt-5.6-sol ×3, spec openai/responses, spec openai/responses_stream |
 | O17 | The /v1/responses passthrough bills input and output tokens only: cached and cache-write tokens are ignored (a cached prompt is priced at the full rate, cache writes not at all) and reasoning tokens get no breakdown | server: contract_openai_responses_test.go ×2 |
-| O18 | Transcription and translation usage (token or duration) passes through to the client but is never read: the server prices them from the uploaded WAV's duration, so token-billed gpt-4o-*-transcribe models are priced by the wrong unit and non-WAV uploads go unpriced | openai: gpt-4o-mini-transcribe-2025-12-15, spec openai/transcription, whisper-1 |
-| O19 | models.ImageResponse has no field for the image response metadata (background, output_format, quality, size) or usage.output_tokens_details, so the client loses what the image was rendered as and image and text output tokens cannot be priced apart | openai: gpt-image-2-2026-04-21 ×5, spec openai/images ×5 |
+| O18 | Transcription and translation usage (token or duration) passes through to the client but is never read: the server prices them from the uploaded WAV's duration, so token-billed gpt-4o-*-transcribe models are priced by the wrong unit and non-WAV uploads go unpriced | openai: gpt-4o-mini-transcribe-2025-12-15, mistral@voxtral-mini-latest, openrouter@openai/whisper-large-v3, spec openai/transcription, whisper-1 |
+| O19 | models.ImageResponse has no field for the image response metadata (background, output_format, quality, size) or usage.output_tokens_details, so the client loses what the image was rendered as and image and text output tokens cannot be priced apart | openai: gpt-image-2-2026-04-21 ×5, spec openai/images ×5, spec xai/images |
 | O20 | models.ImageRequest has no field for it and no Extra, so the GPT-image request parameters background, output_format, output_compression, moderation, partial_images and stream never reach OpenAI and the client silently gets the defaults | openai: gpt-image-2-2026-04-21/images_request_params ×3 |
 | O21 | models.SpeechRequest has no field for it and no Extra, so instructions (voice steering for gpt-4o-mini-tts) and stream_format "sse" (speech.audio.delta / speech.audio.done events, the only TTS response that reports token usage) never reach OpenAI | openai: gpt-4o-mini-tts-2025-12-15/speech_sse_requested ×2 |
 | O22 | models.TranscriptionRequest has no field for it, so include ["logprobs"], stream, chunking_strategy, known_speaker_names / known_speaker_references, languages and keywords never reach OpenAI: no token logprobs, no streamed transcript, no diarization hints | openai: gpt-4o-mini-transcribe-2025-12-15/transcription_logprobs_requested |
-| O23 | A model's retirement date (OpenAI's shutdown_date, OpenRouter's expiration_date) is dropped from ListModels; models.ModelObject has no field for the one machine-readable deprecation signal | openai: gpt-6-sol, spec openai/models, spec openrouter/models |
+| O23 | A model's retirement date (OpenAI's shutdown_date, OpenRouter's expiration_date, Mistral's deprecation) is dropped from ListModels; models.ModelObject has no field for the one machine-readable deprecation signal | openai: gpt-6-sol, mistral@mistral-large-latest ×2, openrouter@anthropic/claude-4.5-sonnet, spec openai/models, spec openrouter/models |
 | O24 | error.misalignment (the safety-misalignment detail of a refused request) is dropped; models.ErrorDetail keeps only message, type, param and code | openai: spec openai/errors, spec openai/responses |
 | O25 | the Responses-to-chat translator keeps only message and function_call output items; hosted and custom tool items (web/file search, code interpreter, image generation, computer, MCP, shell, apply_patch, tool search, custom tools, compaction, programs) and their events are dropped silently, with no unknown-shape report | openai: spec openai/responses ×25, spec openai/responses_stream ×31 |
 | O26 | an incomplete Responses response whose reason is not max_output_tokens or content_filter finishes as "stop", so the truncated answer looks complete | openai: spec openai/responses ×2 |
@@ -103,6 +107,7 @@ Coverage by provider and endpoint is in [CONTRACT_COVERAGE.md](CONTRACT_COVERAGE
 | O30 | A failed Responses response or stream keeps only the error message: type, code and param are dropped, and the stream ends with a generic 502 | openai: gpt-5.6-sol, spec openai/responses ×2, spec openai/responses_stream |
 | O31 | responsesOutputItem.Arguments is a string, but a tool_search_call item carries arguments as any JSON; an object there fails json.Unmarshal of the whole Responses body, so the chat request errors instead of skipping the item | openai: spec openai/responses |
 | O32 | The legacy function_call (deprecated functions parameter) is dropped from messages and deltas; the canonical types have only tool_calls | azure: spec azure/chat, spec azure/chat_stream; openai: spec groq/chat, spec groq/chat_stream, spec openai/chat, spec openai/chat_stream |
+| O33 | ListModels drops an upstream error: on any status but 200 it returns a plain error ("list models returned status N") that is not a models.APIError and reads no body, so the status class, type, code and message are lost and a caller cannot tell a bad key from a rate limit or an outage | openai: openrouter@anthropic/claude-4.5-sonnet/list_models_error_unauthorized, replicate@stability-ai/sdxl/list_models_error_rate_limit |
 
 ## Azure OpenAI
 
@@ -216,24 +221,36 @@ Coverage by provider and endpoint is in [CONTRACT_COVERAGE.md](CONTRACT_COVERAGE
 | GQ4 | The results of Groq's built-in tools (executed_tools: compound models' web search, code execution, browser automation) are dropped, stream and non-stream | openai: spec groq/chat, spec groq/chat_stream |
 | GQ5 | streamed annotations (document_citation, function_citation) are dropped (models.Delta has no annotations); the non-stream message keeps them as raw JSON | openai: spec groq/chat_stream |
 
+## Perplexity
+
+| ID | loss | defined in |
+|---|---|---|
+| P1 | Perplexity's embeddings are int8 or binary vectors encoded in base64 (encoding_format base64_int8 or base64_binary; it has no float encoding, and its base64 is not OpenAI's float32): a request that asks for floats, or names no encoding as OpenAI clients may, gets a base64 string, which the canonical response passes through unconverted, so an OpenAI client cannot read the vector | openai: perplexity@pplx-embed-v1-0.6b/embeddings_default |
+| P2 | Perplexity's embedding cost (usage.cost: currency, input_cost, total_cost) is dropped: models.EmbeddingUsage has no Extra, unlike chat's models.Usage, so the client loses what Perplexity charged | openai: perplexity@pplx-embed-v1-0.6b |
+| P3 | Perplexity's Responses usage reports what its tools cost (tool_calls_details: each tool's invocations, cost_usd and token usage); applyResponsesUsage reads input, output and total tokens alone, so the tool fees Perplexity bills are not priced | server: contract_openai_responses_test.go |
+
 ## Mistral
 
 | ID | loss | defined in |
 |---|---|---|
-| MI1 | Mistral's error body is {"object": "error", "message", "type", "param", "code"} at the top level, not OpenAI's {"error": {...}}; parseProviderError finds no error.message and falls back to a 502 with the raw body as the message, so a 400 or 401 is retried, failed over and counted against the circuit breaker | openai: mistral@mistral-large-latest ×5, mistral@mistral-large-latest/error_invalid_model |
+| MI1 | Mistral's error body is {"object": "error", "message", "type", "param", "code"} at the top level, not OpenAI's {"error": {...}}; parseProviderError finds no error.message and falls back to a 502 with the raw body as the message, so a 400 or 401 is retried, failed over and counted against the circuit breaker | openai: mistral@mistral-embed ×5, mistral@mistral-embed/error_invalid_model, mistral@mistral-large-latest ×5, mistral@mistral-large-latest/error_invalid_model, mistral@mistral-large-latest/responses_error_invalid_model, mistral@voxtral-mini-latest ×5, mistral@voxtral-mini-latest/transcription_error_invalid_model, mistral@voxtral-mini-tts-3 ×5, mistral@voxtral-mini-tts-3/error_invalid_model |
 | MI2 | Mistral's 422 is a validation error {"detail": [{"loc", "msg", "type"}]}; parseProviderError finds no error.message and falls back to a 502, so a bad request is retried and failed over | openai: mistral@mistral-large-latest, mistral@mistral-large-latest/error_validation |
 | MI3 | the OCR response is decoded into models.OCRResponse and re-encoded, which has bbox where Mistral sends top_left_x / top_left_y / bottom_right_x / bottom_right_y, and no image id or annotations: the client loses where each image is on the page, its id (which the markdown references), and the document and image annotations it asked for | openai: mistral@mistral-ocr-latest ×7 |
+| MI4 | Mistral's speech answer is JSON, {"audio_data": "<base64>"} (SpeechResponse), not the audio bytes OpenAI returns; CreateSpeech passes the body and its application/json Content-Type through, so a client expecting OpenAI's audio stream gets a JSON document it cannot play, and the gateway cannot meter the audio | openai: mistral@voxtral-mini-tts-3/speech_json |
+| MI5 | Mistral's voice_id (the preset or custom voice to speak with) is dropped: models.SpeechRequest has OpenAI's voice, which Mistral's SpeechRequest does not define, and no voice_id, so the voice a client asks for never reaches Mistral | openai: mistral@voxtral-mini-tts-3/speech_json |
 
 ## OpenRouter
 
 | ID | loss | defined in |
 |---|---|---|
-| OR1 | OpenRouter's error code is an integer and models.ErrorDetail.Code a string, so no OpenRouter error body decodes: a 400, 401, 402 or 429 becomes a retryable 502 with the raw body as its message | openai: openrouter@anthropic/claude-4.5-sonnet, openrouter@anthropic/claude-4.5-sonnet/error_payment_required, openrouter@anthropic/claude-4.5-sonnet/error_rate_limit, spec openrouter/errors |
+| OR1 | OpenRouter's error code is an integer and models.ErrorDetail.Code a string, so no OpenRouter error body decodes: a 400, 401, 402 or 429 becomes a retryable 502 with the raw body as its message | openai: openrouter@anthropic/claude-4.5-sonnet, openrouter@anthropic/claude-4.5-sonnet/error_payment_required, openrouter@anthropic/claude-4.5-sonnet/error_rate_limit, openrouter@mistralai/voxtral-mini-tts-2603, openrouter@mistralai/voxtral-mini-tts-2603/error_payment_required, openrouter@openai/gpt-4o, openrouter@openai/gpt-4o/completions_error_unauthorized, openrouter@openai/gpt-4o/error_guardrail_blocked, openrouter@openai/text-embedding-3-small, openrouter@openai/text-embedding-3-small/error_bad_request, openrouter@openai/whisper-large-v3, openrouter@openai/whisper-large-v3/error_payload_too_large, spec openrouter/errors |
 | OR2 | OpenRouter's normalized reasoning and reasoning_details are dropped, stream and non-stream; nothing maps them to reasoning_content or thinking_blocks, so the reasoning and the signatures needed to continue it never reach the client | openai: openrouter@anthropic/claude-4.5-sonnet ×4, spec openrouter/chat ×2, spec openrouter/chat_stream ×2 |
 | OR3 | images an image-output model generates (message.images) are dropped; models.Message has no slot, so an image-generation chat through OpenRouter returns text only | openai: spec openrouter/chat |
-| OR4 | OpenRouter's usage cost (cost, cost_details, is_byok) is dropped for embeddings: models.EmbeddingUsage has no Extra, so the client loses what OpenRouter charged | openai: spec openrouter/embeddings ×4 |
-| OR5 | The error's metadata (the upstream provider's raw error and error_type, a 403's moderation reasons) is dropped, so a client cannot tell which provider failed or why | openai: openrouter@anthropic/claude-4.5-sonnet, spec openrouter/errors |
+| OR4 | OpenRouter's usage cost (cost, cost_details, is_byok) is dropped for embeddings: models.EmbeddingUsage has no Extra, so the client loses what OpenRouter charged | openai: openrouter@openai/text-embedding-3-small ×2, spec openrouter/embeddings ×4 |
+| OR5 | The error's metadata (the upstream provider's raw error and error_type, a 403's moderation reasons or guardrail matches) is dropped, so a client cannot tell which provider failed or why | openai: openrouter@anthropic/claude-4.5-sonnet, openrouter@openai/gpt-4o, spec openrouter/errors |
 | OR6 | finish_reason "error" (the upstream provider failed mid-generation) passes through as a non-canonical finish reason; reportFinishReason reports it, but the request ends as a success with whatever text came before | openai: spec openrouter/chat, spec openrouter/chat_stream |
+| OR7 | CreateImage sends OpenRouter image requests to /api/v1/images/generations, a path OpenRouter does not serve: its spec serves image generation at POST /api/v1/images (createImages), with its own ImageGenerationRequest, so an image request through the openrouter preset fails upstream instead of generating an image | openai: contract_preset_openrouter_test.go |
+| OR8 | OpenRouter's legacy completions extras (provider, the upstream it routed to; choices[].native_finish_reason, that provider's own finish reason; choices[].reasoning) are dropped: models.CompletionResponse and models.CompletionChoice have no Extra, unlike chat's types, so a client cannot tell which provider served a completion or read its reasoning | openai: openrouter@openai/gpt-4o ×3 |
 
 ## Together
 
@@ -242,7 +259,10 @@ Coverage by provider and endpoint is in [CONTRACT_COVERAGE.md](CONTRACT_COVERAGE
 | TG1 | Together's reasoning (message.reasoning, which its reasoning models fill) is dropped; models.Message has reasoning_content, which Together also documents, but nothing maps reasoning to it | openai: spec together/chat |
 | TG2 | streamed reasoning (delta.reasoning) is dropped, as TG1 | openai: spec together/chat_stream |
 | TG3 | Together's top_logprobs, reported beside the choice rather than inside logprobs, are dropped, stream and non-stream | openai: spec together/chat, spec together/chat_stream |
-| TG4 | Together's "eos" finish reason passes through unmapped: it is not a canonical finish reason, so the inbound translators fall back to a default and clients that switch on finish_reason miss it | openai: spec together/chat, spec together/chat_stream, together@meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo, together@meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo/text_basic |
+| TG4 | Together's "eos" finish reason passes through unmapped: it is not a canonical finish reason, so the inbound translators fall back to a default and clients that switch on finish_reason miss it | openai: spec together/chat, spec together/chat_stream, together@meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo, together@meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo/text_basic, together@mistralai/Mixtral-8x7B-Instruct-v0.1/completions_text |
+| TG5 | Together's embeddings answer has no usage (EmbeddingsResponse is object, model and data), so the canonical response has none and the gateway has no token count to price a Together embedding request from | openai: together@togethercomputer/m2-bert-80M-8k-retrieval/embeddings_float |
+| TG6 | ListModels calls GET /v1/models, which Together's spec no longer documents: together-py 057705f8 (2026-10-19) dropped it for /v2/supported-models and the project and organization model lists, whose shapes differ, and the last revision that had it answered a bare JSON array of ModelInfo, which ListModels' models.ModelListResponse cannot decode either, so the gateway cannot list Together's models | openai: contract_preset_together_test.go |
+| TG7 | Together's echoed prompt (prompt[]: the prompt's text and, with logprobs, its token log probabilities, returned when the request sets echo) is dropped: models.CompletionResponse has no field for it and no Extra, so a client that asks for echo gets neither, where OpenAI's completions echo the prompt inside choices[].text | openai: together@mistralai/Mixtral-8x7B-Instruct-v0.1 |
 
 ## Cerebras
 
@@ -250,6 +270,32 @@ Coverage by provider and endpoint is in [CONTRACT_COVERAGE.md](CONTRACT_COVERAGE
 |---|---|---|
 | CB1 | Cerebras' reasoning (message.reasoning / delta.reasoning, filled by its reasoning models) is dropped; models.Message / models.Delta have reasoning_content, the canonical slot, but nothing maps one to the other | openai: cerebras@gpt-oss-120b ×2 |
 | CB2 | the HTTP status of a mid-stream error (status_code) and the error's id are dropped; the canonical error is always a 502, so a mid-stream rate limit or bad request cannot be told from a server failure | openai: cerebras@gpt-oss-120b ×2 |
+| CB3 | Cerebras' completions time_info (the queue, prompt and completion times it measured) is dropped: models.CompletionResponse has no Extra, unlike chat's types, which carry time_info through to the client | openai: cerebras@gpt-oss-120b |
+
+## Fireworks
+
+| ID | loss | defined in |
+|---|---|---|
+| FW1 | Fireworks' finish_reason "error" (the generation failed) passes through as a non-canonical finish reason, and the request ends as a success with whatever text came before: the inbound translators fall back to a default and clients that switch on finish_reason miss the failure | openai: fireworks@accounts/fireworks/models/kimi-k2-instruct-0905/completions_finish_error |
+| FW2 | Fireworks reports Responses usage under chat's names, prompt_tokens and completion_tokens, with input_tokens and output_tokens null; applyResponsesUsage reads input_tokens and output_tokens alone, so a Fireworks Responses request is priced with no input or output tokens (total_tokens alone) | server: contract_openai_responses_test.go |
+
+## xAI
+
+| ID | loss | defined in |
+|---|---|---|
+| XA1 | xAI's completion_tokens (output_tokens in Responses) leave out the reasoning tokens, which total_tokens counts (completion_tokens_details.reasoning_tokens): the gateway prices completion_tokens, so a reasoning model's reasoning, which xAI bills as output, is not priced | openai: xai@latest/stream_text, xai@latest/text_basic, xai@latest/text_end_turn; server: contract_openai_responses_test.go |
+| XA2 | xAI's finish_reason "end_turn" passes through unmapped: not a canonical finish reason, so the inbound translators (Anthropic, Gemini) fall back to a default and clients that switch on finish_reason miss it | openai: xai@latest, xai@latest/text_end_turn |
+| XA3 | xAI's flat error body {"code", "error": "<message>"}, the form its SDK parses beside OpenAI's, does not decode: error is a string where models.ErrorResponse expects an object, so parseProviderError falls back to a 502 with the raw body as the message, and a 400 is retried, failed over and counted against the circuit breaker | openai: xai@latest ×2, xai@latest/responses_error_invalid_argument |
+| XA4 | xAI's Responses usage reports its server-side tool use and its own charge (num_sources_used, num_server_side_tools_used, cost_in_nano_usd, cost_in_usd_ticks); applyResponsesUsage reads input, output and total tokens alone, so the sources and tool calls xAI bills per use are not priced and its charge is not recorded | server: contract_openai_responses_test.go |
+| XA5 | xAI's image metadata is dropped: models.ImageData has no field for mime_type, file_output (the file xAI stored the image as: its id, name and public URL with their expiry) or storage_error, so the client cannot tell the image's format or reach the stored file | openai: spec xai/images ×3 |
+| XA6 | xAI's image usage cost_in_usd_ticks (what xAI charged) and input_tokens_details.cached_tokens are dropped: models.ImageUsage has no field for either, so the client loses the charge and cached prompt tokens cannot be priced at the cached rate | openai: spec xai/images ×2 |
+| XA7 | images an image-output model streams (delta.images) are dropped; models.Delta has no slot, so an image generated in a streamed chat never reaches the client | openai: spec xai/chat_stream |
+
+## Replicate
+
+| ID | loss | defined in |
+|---|---|---|
+| RP1 | Replicate's model list is a page, {next, previous, results: [Model]}, not OpenAI's {object, data}: ListModels decodes no models from it, so the gateway lists none of Replicate's models | openai: replicate@stability-ai/sdxl, replicate@stability-ai/sdxl/list_models |
 
 ## Deepgram
 

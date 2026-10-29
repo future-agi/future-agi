@@ -46,6 +46,8 @@ var gapPrefixes = []struct{ Prefix, Provider, Topic string }{
 	{"TG", "Together", ""},
 	{"CB", "Cerebras", ""},
 	{"FW", "Fireworks", ""},
+	{"XA", "xAI", ""},
+	{"RP", "Replicate", ""},
 	{"DG", "Deepgram", "speech relay"},
 	{"CA", "Cartesia", "speech relay"},
 }

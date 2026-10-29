@@ -1,0 +1,38 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "accounts/fireworks/models/kimi-k2-instruct-0905",
+      "object": "model",
+      "created": 1757030400,
+      "owned_by": "fireworks",
+      "kind": null,
+      "supports_chat": true,
+      "supports_image_input": false,
+      "supports_tools": true,
+      "context_length": 262144
+    },
+    {
+      "id": "accounts/fireworks/models/llama-v3p1-8b-instruct",
+      "object": "model",
+      "created": 1721692800,
+      "owned_by": "fireworks",
+      "kind": null,
+      "supports_chat": true,
+      "supports_image_input": false,
+      "supports_tools": true,
+      "context_length": 131072
+    },
+    {
+      "id": "nomic-ai/nomic-embed-text-v1.5",
+      "object": "model",
+      "created": 1707782400,
+      "owned_by": "fireworks",
+      "kind": null,
+      "supports_chat": false,
+      "supports_image_input": false,
+      "supports_tools": false,
+      "context_length": 8192
+    }
+  ]
+}

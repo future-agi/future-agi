@@ -1,0 +1,50 @@
+[
+  {
+    "created": "<nonzero>",
+    "id": "gemma2-9b-it",
+    "object": "model",
+    "owned_by": "Google"
+  },
+  {
+    "created": "<nonzero>",
+    "id": "llama3-8b-8192",
+    "object": "model",
+    "owned_by": "Meta"
+  },
+  {
+    "created": "<nonzero>",
+    "id": "llama3-70b-8192",
+    "object": "model",
+    "owned_by": "Meta"
+  },
+  {
+    "created": "<nonzero>",
+    "id": "whisper-large-v3-turbo",
+    "object": "model",
+    "owned_by": "OpenAI"
+  },
+  {
+    "created": "<nonzero>",
+    "id": "whisper-large-v3",
+    "object": "model",
+    "owned_by": "OpenAI"
+  },
+  {
+    "created": "<nonzero>",
+    "id": "llama-guard-3-8b",
+    "object": "model",
+    "owned_by": "Meta"
+  },
+  {
+    "created": "<nonzero>",
+    "id": "distil-whisper-large-v3-en",
+    "object": "model",
+    "owned_by": "Hugging Face"
+  },
+  {
+    "created": "<nonzero>",
+    "id": "llama-3.1-8b-instant",
+    "object": "model",
+    "owned_by": "Meta"
+  }
+]

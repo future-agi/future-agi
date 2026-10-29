@@ -1,0 +1,32 @@
+{
+  "results": [
+    {
+      "url": "",
+      "owner": "stability-ai",
+      "name": "sdxl",
+      "description": "A text-to-image generative AI model that creates beautiful 1024x1024 images",
+      "visibility": "",
+      "github_url": "",
+      "paper_url": "",
+      "license_url": "",
+      "run_count": 0,
+      "cover_image_url": "",
+      "default_example": null,
+      "latest_version": null
+    },
+    {
+      "url": "",
+      "owner": "meta",
+      "name": "codellama-13b",
+      "description": "A 13 billion parameter Llama tuned for code completion",
+      "visibility": "",
+      "github_url": "",
+      "paper_url": "",
+      "license_url": "",
+      "run_count": 0,
+      "cover_image_url": "",
+      "default_example": null,
+      "latest_version": null
+    }
+  ]
+}

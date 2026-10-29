@@ -36,6 +36,8 @@ import (
 //   - <preset>@<model-id>: an OpenAI-compatible upstream named by its preset
 //     in providers/presets.go, e.g. groq@openai/gpt-oss-120b, since the same
 //     model ID can be served by several upstreams with different shapes.
+//     Each preset registers its declarations in its own
+//     contract_preset_<name>_test.go (contract_presets_test.go).
 //
 // The directory is the key as contracttest.ModelDir encodes it
 // (groq%40openai%2Fgpt-oss-120b). The test checks the outbound model against
@@ -49,14 +51,6 @@ import (
 // embeddings body's object is "list", a chat body's "chat.completion", and
 // Together documents a finish reason ("eos") OpenAI does not.
 
-// compatPresets are the presets (providers/presets.go KnownProviders) that
-// have fixtures here. The providers package imports this one, so the test
-// cannot read the table itself; a typo in a model key fails instead.
-var compatPresets = map[string]bool{
-	"groq": true, "perplexity": true, "together": true, "openrouter": true,
-	"mistral": true, "fireworks": true, "cerebras": true,
-}
-
 // officialDialect is the dialect of the official OpenAI API, the upstream a
 // fixture without a preset names.
 const officialDialect = "openai"
@@ -69,8 +63,8 @@ func fixtureUpstream(t testing.TB, key string) (preset, model string) {
 	if !ok {
 		return "", key
 	}
-	if !compatPresets[preset] {
-		t.Fatalf("fixture model key %q names preset %q, which is not in compatPresets", key, preset)
+	if _, ok := contractPresets[preset]; !ok {
+		t.Fatalf("fixture model key %q names preset %q, which no contract_preset_<name>_test.go registers", key, preset)
 	}
 	return preset, model
 }
@@ -595,8 +589,9 @@ func assertMidStreamError(t testing.TB, c contracttest.Case, out contractOutput)
 // checkStreamFraming checks a 2xx stream's framing, independently of what
 // the adapter does with it: a Chat Completions stream is data-only (no event
 // names, no "type") with the [DONE] sentinel last when present; a Responses
-// stream names every event with its documented type, and the data carries
-// the same type.
+// stream frames its events as the upstream documents (responsesFramingFor):
+// the official API names every event with its documented type, and the data
+// carries the same type.
 func checkStreamFraming(t testing.TB, c contracttest.Case) {
 	t.Helper()
 	events := contracttest.ParseSSE(c.Body)
@@ -621,7 +616,11 @@ func checkStreamFraming(t testing.TB, c contracttest.Case) {
 			}
 		}
 	case contracttest.EndpointChatViaResponses, contracttest.EndpointResponses:
-		contracttest.AssertKnownEventTypes(t, events, responsesStreamEvents...)
+		framing := responsesFramingFor(t, c)
+		if last := len(events) - 1; framing.Sentinel != "" && string(events[last].Data) == framing.Sentinel {
+			events = events[:last]
+		}
+		contracttest.AssertKnownEventTypes(t, events, framing.Events...)
 		for i, ev := range events {
 			var e struct {
 				Type string `json:"type"`
@@ -630,7 +629,10 @@ func checkStreamFraming(t testing.TB, c contracttest.Case) {
 				t.Errorf("event %d (%q): data is not a JSON object: %v", i, ev.Name, err)
 				continue
 			}
-			if e.Type != ev.Name {
+			switch {
+			case framing.DataOnly && ev.Name != "":
+				t.Errorf("event %d is named %q; this upstream's Responses stream is data-only", i, ev.Name)
+			case !framing.DataOnly && e.Type != ev.Name:
 				t.Errorf("event %d %q carries data.type %q; the API sends them equal", i, ev.Name, e.Type)
 			}
 		}
@@ -662,7 +664,10 @@ func assertContractSane(t testing.TB, c contracttest.Case, out contractOutput) {
 		saneEmbedding(t, c, out.result.(*models.EmbeddingResponse))
 	case contracttest.EndpointImages:
 		saneImage(t, c, out.result.(*models.ImageResponse))
-	case contracttest.EndpointSpeech, contracttest.EndpointResponses, contracttest.EndpointVectorStores:
+	case contracttest.EndpointSpeech:
+		samePassthrough(t, c, out.body)
+		saneSpeech(t, out.contentType)
+	case contracttest.EndpointResponses, contracttest.EndpointVectorStores:
 		samePassthrough(t, c, out.body)
 	case contracttest.EndpointTranscription, contracttest.EndpointTranslation:
 		samePassthrough(t, c, out.body)
@@ -680,6 +685,15 @@ func samePassthrough(t testing.TB, c contracttest.Case, body []byte) {
 	t.Helper()
 	if !bytes.Equal(body, c.Body) {
 		t.Errorf("the adapter changed a passthrough body: got %d bytes, the upstream sent %d", len(body), len(c.Body))
+	}
+}
+
+// saneSpeech checks a speech answer is audio, which is what an OpenAI client
+// plays: CreateSpeech passes the upstream body and Content-Type through.
+func saneSpeech(t testing.TB, contentType string) {
+	t.Helper()
+	if mediaType, _, _ := mime.ParseMediaType(contentType); !strings.HasPrefix(mediaType, "audio/") {
+		t.Errorf("the speech body is %s, not audio", contentType)
 	}
 }
 
@@ -837,11 +851,21 @@ func saneEmbedding(t testing.TB, c contracttest.Case, resp *models.EmbeddingResp
 	if len(resp.Data) != len(up.Data) || len(resp.Data) == 0 {
 		t.Errorf("%d embeddings, the upstream sent %d", len(resp.Data), len(up.Data))
 	}
+	// OpenAI answers floats unless the request asks for base64.
+	var req struct {
+		EncodingFormat string `json:"encoding_format"`
+	}
+	_ = json.Unmarshal(c.RawRequest, &req)
+	wantFloats := req.EncodingFormat == "" || req.EncodingFormat == "float"
 	for i, d := range resp.Data {
 		var floats []float64
 		var b64 string
-		if (json.Unmarshal(d.Embedding, &floats) != nil || len(floats) == 0) && (json.Unmarshal(d.Embedding, &b64) != nil || b64 == "") {
+		isFloats := json.Unmarshal(d.Embedding, &floats) == nil && len(floats) > 0
+		switch {
+		case !isFloats && (json.Unmarshal(d.Embedding, &b64) != nil || b64 == ""):
 			t.Errorf("embedding %d is neither a non-empty float array nor a base64 string", i)
+		case !isFloats && wantFloats:
+			t.Errorf("embedding %d is a base64 string, but the request asked for floats", i)
 		}
 	}
 	if resp.Usage == nil {
@@ -930,21 +954,25 @@ func saneOCR(t testing.TB, c contracttest.Case, resp *models.OCRResponse) {
 func contractStrictFor(t testing.TB, c contracttest.Case) *contracttest.Strict {
 	t.Helper()
 	key := contractDialect(t, c) + "/" + c.Endpoint
-	st := contractStricts[key]
+	st := contractStricts()[key]
 	if st == nil {
-		t.Fatalf("no strict declaration for %s: add the dialect's endpoint to ContractEnums", key)
+		t.Fatalf("no strict declaration for %s: add the endpoint to the dialect's ContractEnums (a preset's Enums, in its contract_preset_<name>_test.go)", key)
 	}
 	return st
 }
 
 // contractDocs splits a case's body into what the adapter decodes. An error
 // body, and the error chunk of a failing chat stream, decode as
-// models.ErrorResponse (parseProviderError) at ErrorRoot.
+// models.ErrorResponse (parseProviderError) at ErrorRoot; ListModels reads
+// no error body at all (gap O33), so its error bodies are opaque.
 func contractDocs(c contracttest.Case) []contracttest.Doc {
 	errorType := reflect.TypeFor[models.ErrorResponse]()
 	if c.IsError() {
-		if !json.Valid(c.Body) {
+		switch {
+		case !json.Valid(c.Body):
 			errorType = nil // an HTML page from a proxy: parseProviderError keeps it as text
+		case c.Endpoint == contracttest.EndpointListModels:
+			errorType = nil // ListModels returns "list models returned status N" without reading the body
 		}
 		return []contracttest.Doc{{Root: contracttest.ErrorRoot, Data: c.Body, Type: errorType}}
 	}
@@ -982,11 +1010,14 @@ func contractDocs(c contracttest.Case) []contracttest.Doc {
 	case contracttest.EndpointResponses:
 		// A passthrough: the adapter decodes nothing. The server reads the
 		// model and usage (internal/server/contract_openai_responses_test.go).
+		// An event is rooted at its type: its name, or for a data-only stream
+		// the type in its data (a sentinel such as [DONE] has neither, and is
+		// skipped as data that is not JSON).
 		if !c.IsStream {
 			return []contracttest.Doc{{Root: "$", Data: c.Body}}
 		}
 		for _, ev := range events {
-			docs = append(docs, contracttest.Doc{Root: ev.Name + ":$", Data: ev.Data})
+			docs = append(docs, contracttest.Doc{Root: ev.Type() + ":$", Data: ev.Data})
 		}
 	case contracttest.EndpointCompletions:
 		return []contracttest.Doc{{Root: "$", Data: c.Body, Type: reflect.TypeFor[models.CompletionResponse]()}}

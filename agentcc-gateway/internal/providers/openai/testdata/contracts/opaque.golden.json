@@ -6,6 +6,7 @@
   "$.data[].embedding",
   "$.usage",
   "chunk:$",
+  "error:$",
   "response.completed:$",
   "response.content_part.added:$",
   "response.content_part.done:$",

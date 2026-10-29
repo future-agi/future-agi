@@ -1,0 +1,9 @@
+{
+  "provider": "openai",
+  "model": "groq@playai-tts",
+  "source": "synthetic",
+  "recorded_at": null,
+  "notes": "Synthetic: from Groq's OpenAPI spec as embedded in its official SDK, github.com/groq/groq-python scripts/mock at 55066d94acca028c3cb74e050f2711b80ade6298 (2026-09-04; pinned as contractspec/subsets/groq), POST /openai/v1/audio/speech: the operation's \"Default\" example request verbatim (x-groq-metadata; playai-tts with voice Fritz-PlayAI, response_format wav) and its one 200 content type, audio/wav, which CreateSpeech passes through with that Content-Type. response.bin is a RIFF/WAVE header (PCM 16-bit mono at 48 kHz, CreateSpeechRequest.sample_rate's default) and 16 samples of silence, not real speech. Not covered: sample_rate, which models.SpeechRequest has no field for. No error case: the spec defines ErrorResponse / Error (message, type, param, code, failed_generation, schema_*, debug) but no operation lists an error response, and no Groq source (spec, SDK, cookbook) gives a value for its type or code, so an error body would be invented. console.groq.com was not reachable from the authoring sandbox.",
+  "allowed_unknown_fields": [],
+  "allowed_unknown_shapes": []
+}

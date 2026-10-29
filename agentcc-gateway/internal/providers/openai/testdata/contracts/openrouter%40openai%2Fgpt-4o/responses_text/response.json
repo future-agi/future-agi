@@ -1,0 +1,46 @@
+{
+  "completed_at": 1700000010,
+  "created_at": 1700000000,
+  "error": null,
+  "frequency_penalty": null,
+  "id": "resp_abc123",
+  "incomplete_details": null,
+  "instructions": null,
+  "max_output_tokens": null,
+  "metadata": null,
+  "model": "openai/gpt-4o",
+  "object": "response",
+  "output": [
+    {
+      "content": [
+        {
+          "annotations": [],
+          "text": "Why did the chicken cross the road? To get to the other side!",
+          "type": "output_text"
+        }
+      ],
+      "id": "msg-abc123",
+      "role": "assistant",
+      "status": "completed",
+      "type": "message"
+    }
+  ],
+  "parallel_tool_calls": true,
+  "presence_penalty": null,
+  "status": "completed",
+  "temperature": null,
+  "tool_choice": "auto",
+  "tools": [],
+  "top_p": null,
+  "usage": {
+    "input_tokens": 10,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens": 20,
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "total_tokens": 30
+  }
+}

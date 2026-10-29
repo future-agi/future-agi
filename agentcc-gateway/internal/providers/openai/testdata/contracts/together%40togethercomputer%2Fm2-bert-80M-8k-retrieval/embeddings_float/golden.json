@@ -1,0 +1,16 @@
+{
+  "data": [
+    {
+      "embedding": [
+        0.2633975,
+        0.13856208,
+        0.14047383
+      ],
+      "index": 0,
+      "object": "embedding"
+    }
+  ],
+  "model": "togethercomputer/m2-bert-80M-8k-retrieval",
+  "object": "list",
+  "usage": null
+}

@@ -1,0 +1,12 @@
+{
+  "endpoint": "speech",
+  "status": 400,
+  "recordable": false,
+  "sanity_gaps": [
+    {
+      "failure": "a client error turned into a retryable server error",
+      "reason": "known gap MI1: Mistral's error body is {\"object\": \"error\", \"message\", \"type\", \"param\", \"code\"} at the top level, not OpenAI's {\"error\": {...}}; parseProviderError finds no error.message and falls back to a 502 with the raw body as the message, so a 400 or 401 is retried, failed over and counted against the circuit breaker"
+    }
+  ],
+  "notes": "The error body of the SDK's test_error_response (extra/tests/test_otel_tracing.py) verbatim, status 400 as there. It names a model other than the request's, so a recording of this request could not reproduce it."
+}

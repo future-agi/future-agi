@@ -1,0 +1,15 @@
+{
+  "body": {
+    "input": "Hello world",
+    "model": "mistralai/voxtral-mini-tts-2603",
+    "response_format": "pcm",
+    "speed": 1,
+    "voice": "en_paul_neutral"
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/audio/speech"
+}

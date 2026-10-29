@@ -1,0 +1,4 @@
+{
+  "endpoint": "list_models",
+  "notes": "GET /models (ListModels): the spec's 200 example verbatim. Filed under anthropic/claude-4.5-sonnet because the request names no model. Recordable."
+}

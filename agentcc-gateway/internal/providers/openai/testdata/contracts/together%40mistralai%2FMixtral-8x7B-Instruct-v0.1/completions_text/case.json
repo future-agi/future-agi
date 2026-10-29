@@ -1,0 +1,10 @@
+{
+  "endpoint": "completions",
+  "notes": "CompletionResponse ending with \"eos\". Recordable.",
+  "sanity_gaps": [
+    {
+      "failure": "finish_reason \"eos\" is not canonical",
+      "reason": "known gap TG4: Together's \"eos\" (end of sequence, its natural stop) passes through unmapped: not a canonical finish reason, so the inbound translators (Anthropic, Gemini) fall back to a default and clients that switch on finish_reason miss it"
+    }
+  ]
+}

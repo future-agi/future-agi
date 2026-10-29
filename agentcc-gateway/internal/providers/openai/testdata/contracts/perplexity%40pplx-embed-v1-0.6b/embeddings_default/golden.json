@@ -1,0 +1,15 @@
+{
+  "data": [
+    {
+      "embedding": "DP0tB/ohAIA=",
+      "index": 0,
+      "object": "embedding"
+    }
+  ],
+  "model": "pplx-embed-v1-0.6b",
+  "object": "list",
+  "usage": {
+    "prompt_tokens": 1,
+    "total_tokens": 1
+  }
+}

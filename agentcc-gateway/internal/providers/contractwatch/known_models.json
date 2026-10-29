@@ -84,7 +84,9 @@
       "note": "Fireworks is an aggregator: GET /inference/v1/models lists every third-party model it routes (its serverless catalog plus the account's own deployments), all answered in Fireworks's one OpenAI-compatible envelope, so a listing would report hundreds of routes, not new response shapes. The envelope is pinned by the covered model below and re-recorded by -newest (with FIREWORKS_API_KEY); the models themselves are tracked in their makers' sections. model-watch has a lister for it (sections.go): switching this section to list \"api\" is a registry edit, once ignore rules can narrow the catalog.",
       "fixtures": {"provider": "openai", "prefix": "fireworks@"},
       "models": [
-        {"id": "accounts/fireworks/models/kimi-k2-instruct-0905", "status": "covered"}
+        {"id": "accounts/fireworks/models/kimi-k2-instruct-0905", "status": "covered"},
+        {"id": "accounts/fireworks/models/llama-v3p1-8b-instruct", "status": "covered"},
+        {"id": "nomic-ai/nomic-embed-text-v1.5", "status": "covered"}
       ]
     },
     "gemini": {
@@ -115,22 +117,29 @@
       "note": "GET /openai/v1/models. The openai suite files Groq's models as groq@<model>. A model with active: false is ignored from that metadata.",
       "fixtures": {"provider": "openai", "prefix": "groq@"},
       "ignore_rules": [
-        {"match": "whisper-*", "reason": "transcription (/openai/v1/audio/transcriptions), not chat"},
-        {"match": "playai-tts*", "reason": "speech synthesis, not chat"},
-        {"match": "canopylabs/*", "reason": "speech synthesis (Orpheus), not chat"},
+        {"match": "whisper-large-v3-*", "reason": "another Whisper build (whisper-large-v3-turbo): the same /openai/v1/audio/transcriptions and translations answer whisper-large-v3 (covered) pins"},
+        {"match": "distil-whisper-*", "reason": "another Whisper build (distil-whisper-large-v3-en): the same transcription answer whisper-large-v3 (covered) pins"},
+        {"match": "playai-tts-*", "reason": "another PlayAI voice set (playai-tts-arabic): the same /openai/v1/audio/speech answer playai-tts (covered) pins"},
+        {"match": "canopylabs/*", "reason": "speech synthesis (Orpheus): the same /openai/v1/audio/speech answer playai-tts (covered) pins"},
         {"match": "*guard*", "reason": "safety classifier (Llama Guard, Prompt Guard, gpt-oss-safeguard): it answers with a verdict, not a chat completion"}
       ],
       "models": [
-        {"id": "openai/gpt-oss-120b", "status": "covered"}
+        {"id": "nomic-embed-text-v1_5", "status": "covered"},
+        {"id": "openai/gpt-oss-120b", "status": "covered"},
+        {"id": "playai-tts", "status": "covered"},
+        {"id": "whisper-large-v3", "status": "covered"}
       ]
     },
     "mistral": {
       "list": "api",
-      "note": "GET /v1/models on api.mistral.ai, with MISTRAL_API_KEY. The openai suite files Mistral's models as mistral@<model>. Mistral lists every alias (mistral-large-latest) beside the dated model it points at, and its capabilities, deprecation and type: a model with neither completion_chat nor ocr (embeddings, moderation, classifiers, transcription), a fine-tune, or a model with an announced deprecation is ignored from that metadata. The covered fixtures key on the -latest aliases the gateway's users send; when the dated model behind one changes, the new dated ID shows as NEW (consider an alias entry).",
+      "note": "GET /v1/models on api.mistral.ai, with MISTRAL_API_KEY. The openai suite files Mistral's models as mistral@<model>. Mistral lists every alias (mistral-large-latest) beside the dated model it points at, and its capabilities, deprecation and type: a model with neither completion_chat nor ocr (embeddings, moderation, classifiers, transcription, speech), a fine-tune, or a model with an announced deprecation is ignored from that metadata, unless it is covered (mistral-embed, voxtral-mini-latest and voxtral-mini-tts-3 are: the metadata rule predates their fixtures and still hides any other embedding, transcription or speech model). The covered fixtures key on the -latest aliases the gateway's users send; when the dated model behind one changes, the new dated ID shows as NEW (consider an alias entry).",
       "fixtures": {"provider": "openai", "prefix": "mistral@"},
       "models": [
+        {"id": "mistral-embed", "status": "covered"},
         {"id": "mistral-large-latest", "status": "covered"},
-        {"id": "mistral-ocr-latest", "status": "covered"}
+        {"id": "mistral-ocr-latest", "status": "covered"},
+        {"id": "voxtral-mini-latest", "status": "covered"},
+        {"id": "voxtral-mini-tts-3", "status": "covered"}
       ]
     },
     "openai": {
@@ -189,12 +198,16 @@
       "note": "OpenRouter is an aggregator: GET /api/v1/models lists every third-party model it routes (several hundred, from dozens of vendors), all answered in OpenRouter's one OpenAI-compatible envelope, so a listing would report hundreds of routes, not new response shapes. The envelope is pinned by the covered model below and re-recorded by -newest (with OPENROUTER_API_KEY); the models themselves are tracked in their makers' sections. model-watch has a lister for it (sections.go): switching this section to list \"api\" is a registry edit, once ignore rules can narrow the catalog.",
       "fixtures": {"provider": "openai", "prefix": "openrouter@"},
       "models": [
-        {"id": "anthropic/claude-4.5-sonnet", "status": "covered"}
+        {"id": "anthropic/claude-4.5-sonnet", "status": "covered"},
+        {"id": "mistralai/voxtral-mini-tts-2603", "status": "covered"},
+        {"id": "openai/gpt-4o", "status": "covered"},
+        {"id": "openai/text-embedding-3-small", "status": "covered"},
+        {"id": "openai/whisper-large-v3", "status": "covered"}
       ]
     },
     "perplexity": {
       "list": "static",
-      "note": "Sonar's chat completions have no list API: Perplexity's GET /v1/models (perplexity-py client.models.list) lists the Agent API's models. This list was assembled on 2026-10-28 from internal/modeldb/litellm.json's current perplexity/* chat entries, because docs.perplexity.ai was not reachable from the authoring session: verify it against the source page. model-watch reminds when static.checked is older than 90 days.",
+      "note": "Sonar's chat completions have no list API: Perplexity's GET /v1/models (perplexity-py client.models.list) lists the Agent API's models. This list was assembled on 2026-10-28 from internal/modeldb/litellm.json's current perplexity/* chat entries, because docs.perplexity.ai was not reachable from the authoring session: verify it against the source page. model-watch reminds when static.checked is older than 90 days. pplx-embed-v1-0.6b (POST /v1/embeddings) and openai/gpt-5.4 (POST /v1/responses, the Agent API) are added by hand: the first is generated/api.py's EmbeddingsRequestInput.model literal and the second the model of the SDK's own responses test (perplexityai/perplexity-py@1a79c5d3a7b1ef8c2dce17c0f0aa7e23f9bbdced tests/test_generated_api_integration.py).",
       "fixtures": {"provider": "openai", "prefix": "perplexity@"},
       "static": {
         "checked": "2026-10-28",
@@ -203,12 +216,24 @@
           "sonar",
           "sonar-pro",
           "sonar-reasoning-pro",
-          "sonar-deep-research"
+          "sonar-deep-research",
+          "pplx-embed-v1-0.6b",
+          "openai/gpt-5.4"
         ]
       },
       "models": [
+        {"id": "openai/gpt-5.4", "status": "covered"},
+        {"id": "pplx-embed-v1-0.6b", "status": "covered"},
         {"id": "sonar", "status": "covered"},
         {"id": "sonar-deep-research", "status": "ignored", "reason": "asynchronous multi-minute research runs, priced per search: too slow and costly to record daily; its chat-completions shape is sonar's"}
+      ]
+    },
+    "replicate": {
+      "list": "none",
+      "note": "Replicate is not OpenAI-compatible: GET /v1/models answers a page of Replicate models ({next, previous, results}, gap RP1), which the OpenAI lister reads as empty, and the preset reaches no other OpenAI endpoint. The covered entry pins that page; Replicate's models are not contract targets of this gateway.",
+      "fixtures": {"provider": "openai", "prefix": "replicate@"},
+      "models": [
+        {"id": "stability-ai/sdxl", "status": "covered"}
       ]
     },
     "together": {
@@ -216,7 +241,12 @@
       "note": "Together is an aggregator: GET /v1/models lists every third-party model it routes (about two hundred open-weight chat, image, embedding and audio models), all answered in Together's one OpenAI-compatible envelope, so a listing would report hundreds of routes, not new response shapes. The envelope is pinned by the covered model below and re-recorded by -newest (with TOGETHER_API_KEY); the models themselves are tracked in their makers' sections. model-watch has a lister for it (sections.go): switching this section to list \"api\" is a registry edit, once ignore rules can narrow the catalog.",
       "fixtures": {"provider": "openai", "prefix": "together@"},
       "models": [
-        {"id": "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo", "status": "covered"}
+        {"id": "black-forest-labs/FLUX.1-schnell", "status": "covered"},
+        {"id": "canopylabs/orpheus-3b-0.1-ft", "status": "covered"},
+        {"id": "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo", "status": "covered"},
+        {"id": "mistralai/Mixtral-8x7B-Instruct-v0.1", "status": "covered"},
+        {"id": "openai/whisper-large-v3", "status": "covered"},
+        {"id": "togethercomputer/m2-bert-80M-8k-retrieval", "status": "covered"}
       ]
     },
     "vertex": {
@@ -228,6 +258,18 @@
         {"id": "gemini-3.8-flash-tts", "status": "covered"},
         {"id": "gemini-embedding-2", "status": "covered"},
         {"id": "imagen-4.0-generate-001", "status": "covered"}
+      ]
+    },
+    "xai": {
+      "list": "api",
+      "note": "GET /v1/models on api.x.ai, with XAI_API_KEY (the spec's ListModelsResponse, pinned as contractspec/subsets/xai/models). The openai suite files xAI's models as xai@<model>. latest is the alias every example of xAI's spec names; v1 is the embedding model the spec's example names (xAI lists embedding models at GET /v1/embedding-models, which model-watch does not read).",
+      "fixtures": {"provider": "openai", "prefix": "xai@"},
+      "models": [
+        {"id": "grok-3", "status": "covered"},
+        {"id": "grok-4.6", "status": "covered"},
+        {"id": "grok-imagine-image", "status": "covered"},
+        {"id": "latest", "status": "covered"},
+        {"id": "v1", "status": "covered"}
       ]
     }
   }

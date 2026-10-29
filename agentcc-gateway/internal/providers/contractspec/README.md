@@ -108,6 +108,7 @@ are followed, and every walk and every decoded size is bounded.
 | groq | `groq/groq-python` `scripts/mock` (`EMBEDDED_SPEC`, base64+gzip, read as data and never run) | chat, chat_stream, embeddings, transcription, models |
 | together | `togethercomputer/together-py` `scripts/mock` (`EMBEDDED_SPEC`) | chat, chat_stream, errors, embeddings, images |
 | openrouter | `OpenRouterTeam/python-sdk` `.speakeasy/in.openapi.yaml` (OpenAPI 3.1) | chat, chat_stream, errors, embeddings, models |
+| xai | `xai-org/xai-sdk-ts` `spec/openapi.json` (OpenAPI 3.1; the REST API, in an Apache-2.0 SDK repository) | chat, chat_stream, completions, embeddings, images, responses, models |
 
 How sources are pinned:
 
@@ -137,7 +138,6 @@ spec does, that value is tracked as a change signal: a moved value fails
 |---|---|---|
 | perplexity, fireworks, cerebras | spec only at a Stainless bucket URL, which returns 403 to anonymous callers | `openapi_spec_hash` in the SDK's `.stats.yml` |
 | mistral | Speakeasy registry (needs auth) and docs host | `sources.mistral-openapi.sourceBlobDigest` in `client-python/.speakeasy/workflow.lock` |
-| xai | REST spec only on api.x.ai / docs.x.ai; the GitHub contract is gRPC protobuf | sha256 of `xai-proto` `chat.proto` |
 | deepseek, deepinfra | no official machine-readable spec | none |
 
 ## cmd/contract-specs
@@ -219,7 +219,7 @@ The check also fails on:
 `TestSpecEnums` compares the value sets a contract test declares
 (`contracttest.EnumSpec`: each adapter package's `ContractEnums`, and the
 openai package's by dialect and endpoint) with the spec. Every wired package
-has it: anthropic, openai (with groq, together and openrouter), azure,
+has it: anthropic, openai (with groq, together, openrouter and xai), azure,
 gemini (with vertex), bedrock and cohere. It resolves `*:` wildcard paths across
 every event, and `same_as` nodes into the subset that flattens them. It
 fails when the spec lists a value the declaration lacks, and logs declared
@@ -245,7 +245,7 @@ Allowlist reasons follow the contract tests' convention:
 
 Every wired root, from `go test ./internal/providers/{anthropic,openai,azure,gemini,bedrock,cohere}/ -run TestSpec -v`
 (`checked in` is the adapter package whose `spec_test.go` checks the root: the openai package checks the groq,
-together and openrouter presets' specs too, the gemini package checks vertex, and the bedrock package binds
+together, openrouter and xai presets' specs too, the gemini package checks vertex, and the bedrock package binds
 InvokeModel bodies, which are Anthropic Messages, to the `anthropic/*` subsets). Every root accounts for all its
 paths.
 
@@ -280,6 +280,12 @@ paths.
 | `openai` | `together/embeddings` | 9 | 7 | 2 | 0 (0) | 0 | 9/9 | – | – |
 | `openai` | `together/errors` | 6 | 6 | 0 | 0 (0) | 0 | 6/6 | – | – |
 | `openai` | `together/images` | 10 | 5 | 0 | 5 (5) | 0 | 10/10 | – | – |
+| `openai` | `xai/chat` | 69 | 44 (18 via Extra) | 23 | 2 (2) | 0 | 69/69 | – | – |
+| `openai` | `xai/chat_stream` | 70 | 45 (19 via Extra) | 10 | 15 (2) | 0 | 70/70 | – | – |
+| `openai` | `xai/completions` | 37 | 27 (12 via Extra) | 10 | 0 (0) | 0 | 37/37 | – | – |
+| `openai` | `xai/embeddings` | 12 | 10 | 2 | 0 (0) | 0 | 12/12 | – | – |
+| `openai` | `xai/images` | 27 | 12 | 0 | 15 (6) | 0 | 27/27 | – | – |
+| `openai` | `xai/models` | 29 | 8 | 0 | 21 (13) | 0 | 29/29 | – | – |
 | `azure` | `azure/chat` | 117 | 49 (25 via Extra) | 27 | 41 (4) | 0 | 117/117 | 5 at 1 paths, 0 allowlisted | – |
 | `azure` | `azure/chat_stream` | 50 | 21 | 0 | 29 (3) | 0 | 50/50 | 5 at 1 paths, 0 allowlisted | – |
 | `azure` | `azure/embeddings` | 12 | 10 | 2 | 0 (0) | 0 | 12/12 | – | – |
@@ -309,13 +315,18 @@ Committed subsets no adapter decodes are declared in `Elsewhere`, with the reaso
 `cohere/models` and `gemini/models` are read by contractwatch's listers (cmd/model-watch), because those adapters'
 `ListModels` return nil without calling upstream (known gaps X8, K10, G26). Bedrock's model list
 (`ListFoundationModels`, `ListInferenceProfiles`) is in the control-plane Smithy model, which is not vendored, so
-it has no committed subset at all; the bedrock adapter's `ListModels` calls no upstream either.
+it has no committed subset at all; the bedrock adapter's `ListModels` calls no upstream either. `xai/responses` is
+relayed, not decoded: the gateway passes a preset's `/v1/responses` body through and reads only its model and usage
+(the server's `TestContractOpenAIResponsesUsage`, over the preset's fixtures), and never sends a preset's chat over
+the Responses API, so the openai package's `presetSpecRoots` lists it in `Elsewhere`. Its finish reasons are free
+strings, so the adapter's finish-reason check is left out for `xai/chat` and `xai/chat_stream`
+(`contractPreset.SpecFreeStrings`); the xai fixtures' value sets pin stop, length and end_turn.
 
 ### Adopting it in a provider package
 
 1. Write `spec_test.go`. Copy `anthropic/spec_test.go` (a native adapter) or
    `openai/spec_test.go` (an OpenAI-format one; its `openAIRoots(provider)`
-   serves the groq, together and openrouter subsets too):
+   serves the groq, together, openrouter and xai subsets too):
 
    ```go
    func TestSpecCoverage(t *testing.T) {
@@ -402,6 +413,10 @@ value with `-fetch -update -provider <p>`.
     `alt=sse` events, a mid-stream error chunk); the gemini contract fixtures'
     `error_*` and `stream_*` cases are the only check on those.
   - Groq's stream schema is orphaned.
+  - xAI's chunk schema is orphaned too, and its spec models no error bodies
+    (400 and 422 have no content) and no Responses stream events, so xai has
+    no errors or responses_stream root. Its finish reasons, and most output
+    item types, are plain strings named only in prose.
   - Azure puts chunks under `application/json`.
   - OpenAI's `[DONE]` and mid-stream errors exist only in prose.
 

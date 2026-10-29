@@ -1,0 +1,4 @@
+{
+  "endpoint": "embeddings",
+  "notes": "The legacy SDK's EmbeddingResponse (see meta.json). Recordable."
+}

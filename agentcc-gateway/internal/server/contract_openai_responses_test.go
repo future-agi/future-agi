@@ -79,7 +79,37 @@ var responsesUsageNotRead = map[string]string{
 		"are not priced at all",
 	"$.usage.output_tokens_details": "known gap O17: reasoning_tokens is ignored; it is part of output_tokens, so cost is " +
 		"right, but the usage the gateway records has no reasoning breakdown",
+	// OpenAI-compatible presets (the openai adapter's <preset>@<model>
+	// fixtures).
+	"$.usage.prompt_tokens":     fireworksUsageNames,
+	"$.usage.completion_tokens": fireworksUsageNames,
+	"$.usage.tool_calls_details": "known gap P3: Perplexity's Responses usage reports what its tools cost (tool_calls_details: " +
+		"each tool's invocations, cost_usd and token usage); applyResponsesUsage reads input, output and total tokens alone, so " +
+		"the tool fees Perplexity bills are not priced",
+	"$.usage.num_sources_used":           xaiServerSideUsage,
+	"$.usage.num_server_side_tools_used": xaiServerSideUsage,
+	"$.usage.cost_in_nano_usd":           xaiServerSideUsage,
+	"$.usage.cost_in_usd_ticks":          xaiServerSideUsage,
 }
+
+// fireworksUsageNames and xaiServerSideUsage are each one gap, read at
+// several usage paths.
+const (
+	fireworksUsageNames = "known gap FW2: Fireworks reports Responses usage under chat's names, prompt_tokens and " +
+		"completion_tokens, with input_tokens and output_tokens null; applyResponsesUsage reads input_tokens and output_tokens " +
+		"alone, so a Fireworks Responses request is priced with no input or output tokens (total_tokens alone)"
+	xaiServerSideUsage = "known gap XA4: xAI's Responses usage reports its server-side tool use and its own charge " +
+		"(num_sources_used, num_server_side_tools_used, cost_in_nano_usd, cost_in_usd_ticks); applyResponsesUsage reads input, " +
+		"output and total tokens alone, so the sources and tool calls xAI bills per use are not priced and its charge is not " +
+		"recorded"
+)
+
+// xaiReasoningOutsideOutput is the openai fixtures' XA1 (contract_preset_xai
+// and testdata/contracts/xai@*): xAI's usage counts reasoning in total_tokens
+// but not in output_tokens.
+const xaiReasoningOutsideOutput = "known gap XA1: xAI's completion_tokens (output_tokens in Responses) leave out the reasoning " +
+	"tokens, which total_tokens counts (completion_tokens_details.reasoning_tokens): the gateway prices completion_tokens, so a " +
+	"reasoning model's reasoning, which xAI bills as output, is not priced"
 
 // responsesUsageGaps are, per case, the checks known to fail because of a
 // gap; contracttest.ExpectGaps fails once one stops failing.
@@ -88,6 +118,24 @@ var responsesUsageGaps = map[string][]contracttest.SanityGap{
 		{Failure: "cached_tokens", Reason: responsesUsageNotRead["$.usage.input_tokens_details"]},
 		{Failure: "cache_write_tokens", Reason: responsesUsageNotRead["$.usage.input_tokens_details"]},
 		{Failure: "reasoning_tokens", Reason: responsesUsageNotRead["$.usage.output_tokens_details"]},
+	},
+	// Keyed by the request's model: the openai fixtures' xai@latest,
+	// xai@grok-4.6 and fireworks@accounts/fireworks/models/llama-v3p1-8b-instruct.
+	"latest/responses_text": {
+		{Failure: "cached_tokens", Reason: responsesUsageNotRead["$.usage.input_tokens_details"]},
+		{Failure: "reasoning_tokens", Reason: responsesUsageNotRead["$.usage.output_tokens_details"]},
+		{Failure: "is not input", Reason: xaiReasoningOutsideOutput},
+	},
+	"grok-4.6/stream_responses_text": {
+		{Failure: "cached_tokens", Reason: responsesUsageNotRead["$.usage.input_tokens_details"]},
+		{Failure: "reasoning_tokens", Reason: responsesUsageNotRead["$.usage.output_tokens_details"]},
+		{Failure: "is not input", Reason: xaiReasoningOutsideOutput},
+	},
+	"accounts/fireworks/models/llama-v3p1-8b-instruct/responses_text": {
+		{Failure: "is not input", Reason: responsesUsageNotRead["$.usage.prompt_tokens"]},
+	},
+	"accounts/fireworks/models/llama-v3p1-8b-instruct/stream_responses_text": {
+		{Failure: "is not input", Reason: responsesUsageNotRead["$.usage.prompt_tokens"]},
 	},
 }
 
@@ -210,12 +258,15 @@ func checkResponsesUsage(t *testing.T, c contracttest.Case) []string {
 	if c.IsStream {
 		priced = nil
 		for _, ev := range contracttest.ParseSSE(c.Body) {
-			if responsesTerminalEvents[ev.Name] {
+			// An event's type is its name, or the type in its data for an
+			// upstream that sends data lines alone (OpenRouter), as
+			// responsesEventType reads it.
+			if responsesTerminalEvents[ev.Type()] {
 				var terminal struct {
 					Response json.RawMessage `json:"response"`
 				}
 				if err := json.Unmarshal(ev.Data, &terminal); err != nil {
-					t.Fatalf("terminal event %s: %v", ev.Name, err)
+					t.Fatalf("terminal event %s: %v", ev.Type(), err)
 				}
 				priced = terminal.Response
 			}
@@ -225,7 +276,10 @@ func checkResponsesUsage(t *testing.T, c contracttest.Case) []string {
 		}
 		for _, ev := range contracttest.ParseSSE(c.Body) {
 			if !bytes.Contains(w.Body.Bytes(), ev.Data) {
-				t.Errorf("event %s was not relayed to the client", ev.Name)
+				t.Errorf("event %s was not relayed to the client", ev.Type())
+			}
+			if responsesTerminalEvents[ev.Type()] {
+				break // endRelay drains what follows the terminal event, such as OpenRouter's [DONE] sentinel
 			}
 		}
 	} else if !bytes.Equal(w.Body.Bytes(), c.Body) {
@@ -283,6 +337,12 @@ func checkResponsesUsage(t *testing.T, c contracttest.Case) []string {
 			if got.PromptTokens != u.InputTokens || got.CompletionTokens != u.OutputTokens || got.TotalTokens != u.TotalTokens {
 				t.Errorf("priced usage %d/%d/%d, the response says input %d, output %d, total %d",
 					got.PromptTokens, got.CompletionTokens, got.TotalTokens, u.InputTokens, u.OutputTokens, u.TotalTokens)
+			}
+			// The cost plugin prices input and output tokens: tokens the
+			// total counts outside them go unpriced.
+			if u.TotalTokens != u.InputTokens+u.OutputTokens {
+				t.Errorf("the response's total_tokens %d is not input %d + output %d, so %d tokens are not priced",
+					u.TotalTokens, u.InputTokens, u.OutputTokens, u.TotalTokens-u.InputTokens-u.OutputTokens)
 			}
 			checkDetail(t, "cached_tokens", u.InputTokensDetails.CachedTokens, got.PromptTokensDetails)
 			checkDetail(t, "cache_write_tokens", u.InputTokensDetails.CacheWriteTokens, got.PromptTokensDetails)

@@ -1,0 +1,22 @@
+{
+  "id": "embd-1234567890",
+  "data": [
+    {
+      "embedding": [
+        0.0023064255,
+        -0.009327292,
+        0.015797347
+      ],
+      "index": 0,
+      "object": "embedding"
+    }
+  ],
+  "model": "openai/text-embedding-3-small",
+  "object": "list",
+  "usage": {
+    "prompt_tokens": 8,
+    "total_tokens": 8,
+    "cost": 0.0001,
+    "is_byok": false
+  }
+}

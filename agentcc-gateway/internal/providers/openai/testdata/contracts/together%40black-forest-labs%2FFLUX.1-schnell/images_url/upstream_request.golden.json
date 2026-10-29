@@ -1,0 +1,14 @@
+{
+  "body": {
+    "model": "black-forest-labs/FLUX.1-schnell",
+    "n": 1,
+    "prompt": "cat floating in space, cinematic",
+    "response_format": "url"
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/images/generations"
+}

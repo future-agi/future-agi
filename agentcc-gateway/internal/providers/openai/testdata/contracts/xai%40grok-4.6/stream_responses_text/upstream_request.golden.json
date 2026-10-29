@@ -1,0 +1,14 @@
+{
+  "body": {
+    "input": "Say hello",
+    "model": "grok-4.6",
+    "stream": true
+  },
+  "headers": {
+    "accept": "text/event-stream",
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/responses"
+}

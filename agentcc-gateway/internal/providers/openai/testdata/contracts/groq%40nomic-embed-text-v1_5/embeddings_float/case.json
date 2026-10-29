@@ -1,0 +1,4 @@
+{
+  "endpoint": "embeddings",
+  "notes": "CreateEmbeddingResponse with encoding_format float. Recordable."
+}

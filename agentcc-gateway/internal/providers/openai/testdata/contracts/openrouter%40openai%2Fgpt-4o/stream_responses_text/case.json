@@ -1,0 +1,4 @@
+{
+  "endpoint": "responses",
+  "notes": "The /v1/responses passthrough (StreamResponse): data-only events from the stream schemas' examples, then [DONE] (see meta.json). The server reads usage from response.completed. Recordable."
+}

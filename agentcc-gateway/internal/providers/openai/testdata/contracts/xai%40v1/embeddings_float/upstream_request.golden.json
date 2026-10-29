@@ -1,0 +1,15 @@
+{
+  "body": {
+    "encoding_format": "float",
+    "input": [
+      "This is an example content to embed..."
+    ],
+    "model": "v1"
+  },
+  "headers": {
+    "authorization": "REDACTED",
+    "content-type": "application/json"
+  },
+  "method": "POST",
+  "path": "/v1/embeddings"
+}

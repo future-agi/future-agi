@@ -1,0 +1,6 @@
+{
+  "model": "nomic-ai/nomic-embed-text-v1.5",
+  "input": [
+    "How do I reset my password?"
+  ]
+}
