@@ -1191,7 +1191,8 @@ def _call_lifecycle_status(body: dict[str, Any]) -> str:
 
 def receipt_outcome_status(body: dict[str, Any]) -> str:
     """The receipt's status, or no_score for a call that ran and has no pass or fail at all: every
-    sub-goal not applicable, inconclusive, or a mix of the two. An execution error stays an error."""
+    sub-goal not applicable, inconclusive, or a mix of the two. An execution error stays an error.
+    """
     results = {
         sub_goal_result(one)
         for one in body.get("sub_goals") or []

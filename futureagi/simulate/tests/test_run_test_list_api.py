@@ -1813,9 +1813,7 @@ class TestRunTestExecutionsView:
                 status=CallExecution.CallStatus.COMPLETED,
                 simulation_call_type=CallExecution.SimulationCallType.TEXT,
                 deleted=deleted,
-                call_metadata=(
-                    {"harness_outcome_status": outcome} if outcome else {}
-                ),
+                call_metadata=({"harness_outcome_status": outcome} if outcome else {}),
             )
             registration = HostedHarnessScenario.objects.create(
                 job=job,
