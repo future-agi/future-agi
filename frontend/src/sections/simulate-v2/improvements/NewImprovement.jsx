@@ -177,7 +177,9 @@ export default function NewImprovement({ open, onClose, initialAgentId = null })
             setBuildOpen(false);
             close();
             navigate(paths.dashboard.simulate.environmentBuild, {
-              state: { presetSource: buildPresetFor(picked, choice) },
+              /* Built to improve: the build's last word and the first run's
+                 page lead back to it. */
+              state: { presetSource: buildPresetFor(picked, choice), toImprove: true },
             });
           }}
         />

@@ -74,6 +74,7 @@ import { IssueRunOrigin } from "../errorFeed/FixRunNote";
 import RunGroupBar from "./RunGroupBar";
 import InsightsTab from "./InsightsTab";
 import CostTab from "./CostTab";
+import NextStepBanner from "../workspace/NextStepBanner";
 import ImprovementSourcesList from "../improvements/ImprovementSourcesList";
 import CostStrip from "./CostStrip";
 import { TraceSheet } from "./TraceWaterfall";
@@ -1115,14 +1116,14 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
           <IconButton
             size="small"
             onClick={() => {
-              /* Return to whichever surface opened this run — Improvements L2,
-               the env's own Runs tab, or the compare page — instead of
-               hard-forcing the env workspace. Falls back on cold-load. */
-              if (window.history.length > 1) navigate(-1);
-              else
-                navigate(
+              /* Back to the page that opened it when that page said so (an
+                 improvement's trials); otherwise the environment's Runs tab.
+                 Not history: after visiting an improvement from this run's
+                 tab, history's previous page is that improvement. */
+              navigate(
+                location.state?.back?.to ||
                   paths.dashboard.simulate.environmentStep(envId, "runs"),
-                );
+              );
             }}
           >
             <Iconify
@@ -1738,6 +1739,34 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
           </Tooltip>
         )}
       </Stack>
+
+      {/* ── came to improve: the environment was built from New improvement,
+          and nothing has been improved in it yet ── */}
+      {envState?.improveIntent &&
+        !(envState.optimizations || []).length &&
+        !fixFirst && (
+          <Box sx={{ px: 2, pt: 1.5, flexShrink: 0 }}>
+            <NextStepBanner
+              tone="info"
+              title={
+                failingScenarioIds.length
+                  ? "Continue your improvement."
+                  : "Nothing failed in this run."
+              }
+              line={
+                failingScenarioIds.length
+                  ? `${failingScenarioIds.length} scenario${failingScenarioIds.length === 1 ? "" : "s"} failed. Debug failures finds why, then starts the improvement from this run.`
+                  : "There's nothing to improve from yet — add harder scenarios, or improve toward a goal from Improvements."
+              }
+              {...(failingScenarioIds.length && {
+                actionLabel: "Debug failures",
+                onAction: () => openDebug(),
+              })}
+              secondaryLabel="Not now"
+              onSecondary={() => patch({ improveIntent: null })}
+            />
+          </Box>
+        )}
 
       {/* ── a fix's first run: what it found, and what else it found ──
           A condition of this page, so a banner under the header (the header

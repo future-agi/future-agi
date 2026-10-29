@@ -129,6 +129,8 @@ export default function BuildFromAgent() {
   /* Sent here by an Error Feed issue's Fix: the agent had no environment, and
      this first one becomes its main — Fix runs there. */
   const fromIssue = location.state?.fromIssue || null;
+  /* Started from New improvement: the person came to improve the agent. */
+  const toImprove = !!location.state?.toImprove;
   /* Set on this history entry once the build is in My environments — so
      coming back to it (Back from the first run, a reload) opens that
      environment instead of building a second copy from the same source. */
@@ -1079,6 +1081,12 @@ export default function BuildFromAgent() {
        today's version — so the note sends the person back to the fix. */
     firstRunRef.current = env.id;
     const agentLabel = currentAgentVersion(envState)?.label || "v1";
+    if (toImprove && !fromIssue)
+      dispatch({
+        type: "patchEnvState",
+        envId: env.id,
+        patch: { improveIntent: { at: new Date().toISOString() } },
+      });
     play(
       fromIssue ? "Ready to fix" : "Ready to run",
       [
@@ -1086,7 +1094,9 @@ export default function BuildFromAgent() {
           kind: "note",
           text: fromIssue
             ? `Built — ${saved.length} scenarios. Continue fixing ${fromIssue} from the banner above: the fix's first step runs them on agent ${agentLabel}, so there's nothing to run by hand.`
-            : `Built. Run it once on agent ${agentLabel} to see where it stands today — ${saved.length} scenarios, 3 repeats each. Run simulation, top right, starts it, and you watch it as it goes.`,
+            : toImprove
+              ? `Built. Run it once on agent ${agentLabel} to see where it fails — ${saved.length} scenarios, 3 repeats each — then improve from what it finds. Run simulation, top right, starts it; when it finishes, the run's page picks the improvement up.`
+              : `Built. Run it once on agent ${agentLabel} to see where it stands today — ${saved.length} scenarios, 3 repeats each. Run simulation, top right, starts it, and you watch it as it goes.`,
         },
       ],
       [],

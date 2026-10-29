@@ -379,7 +379,9 @@ export default function ImprovementRunsView({
       },
     );
   const openRun = (r) =>
-    navigate(paths.dashboard.simulate.simulationRun(env.id, r.runId));
+    navigate(paths.dashboard.simulate.simulationRun(env.id, r.runId), {
+      state: { back: { to: `${location.pathname}${location.search}` } },
+    });
 
   const statusOf = (r) => {
     if (running) {
@@ -932,7 +934,11 @@ export default function ImprovementRunsView({
             evals={[]}
             headline={headline}
             onOpenRun={(r) =>
-              navigate(paths.dashboard.simulate.simulationRun(env.id, r.id))
+              navigate(paths.dashboard.simulate.simulationRun(env.id, r.id), {
+                state: {
+                  back: { to: `${location.pathname}${location.search}` },
+                },
+              })
             }
           />
         </Box>

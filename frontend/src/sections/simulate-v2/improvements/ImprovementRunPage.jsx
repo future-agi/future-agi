@@ -351,6 +351,13 @@ export default function ImprovementRunPage() {
                       env.id,
                       sourceRun.id,
                     ),
+                    {
+                      state: {
+                        back: {
+                          to: `${location.pathname}${location.search}`,
+                        },
+                      },
+                    },
                   )
               : undefined
           }
