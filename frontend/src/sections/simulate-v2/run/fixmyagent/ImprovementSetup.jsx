@@ -76,6 +76,8 @@ import { limitsOf } from "../../agents/agentLimits";
 import { rereadFor, textSearchDefault } from "../../_mock/improvementPolicy";
 import { recordOutsideChange } from "../../_mock/nudgeEffects";
 import { creditsLabel } from "../../_mock/metering";
+import CopyCommandButton from "../../components/CopyCommandButton";
+import { creditsForUsd } from "../../_mock/metering";
 
 /* "Raise the pass rate", "Raise booking success rate", "Raise Policy adherence". */
 const goalText = (g) =>
@@ -1164,6 +1166,12 @@ export default function ImprovementSetup({
               ? "It runs the environment on today's version first. Nothing ships on its own — a winner comes back as a draft."
               : "Nothing ships on its own — a winner comes back as a draft."}
         </Typography>
+        {/* The same experiment from code — what Start improvement would make. */}
+        {main && (
+          <CopyCommandButton
+            command={`agent-learn improve create --baseline ${base?.id || "<run-id>"} \\\n  --goal "${goalOf?.label || "Raise the pass rate"}" --allow prompt,config \\\n  --suite ${main.id}/target --holdout ${main.id}/holdout \\\n  --budget ${creditsForUsd(spend)} --budget-unit credits${suggestOnly ? " --suggest-only" : ""}`}
+          />
+        )}
         <Button size="small" onClick={onClose} sx={{ color: "text.secondary" }}>
           Cancel
         </Button>

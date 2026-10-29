@@ -25,6 +25,7 @@ import { buildCreditsCheck } from "../_mock/metering";
 import useCreditBalance from "../usage/useCreditBalance";
 import ConnectPreflight from "./connect/ConnectPreflight";
 import { credentialCheck, factCheck, usePreflight } from "./connect/preflight";
+import CopyCommandButton from "../components/CopyCommandButton";
 
 const MONO = "ui-monospace, Menlo, monospace";
 /* Quick picks; any count from 1 to 1,000 can be typed — the range the build accepts. */
@@ -389,6 +390,10 @@ export default function BuildEnvironmentDialog({
             {blocked}
           </Typography>
         )}
+        {/* The same build from code — what Build environment would start. */}
+        <CopyCommandButton
+          command={`agent-learn env build ${(name.trim() || `${agent?.name || "my"} environment`).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")} \\\n  --agent "${agent?.name || "my-agent"}@${version}" \\\n  --request "Test it with ${count} scenarios" --budget 100`}
+        />
         <Button size="small" onClick={onClose} sx={{ color: "text.secondary" }}>
           Cancel
         </Button>

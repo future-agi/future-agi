@@ -19,6 +19,7 @@ import {
   IconButton,
   Menu,
   MenuItem,
+  Popover,
   useMediaQuery,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
@@ -383,6 +384,10 @@ export default function EnvironmentWorkspace() {
   /* Header overflow menu (Delete environment) and its confirm step. */
   const [actionsAnchor, setActionsAnchor] = useState(null);
   const [runMenu, setRunMenu] = useState(null);
+  /* The run group's picker, opened from the Run menu's third option. */
+  const [groupAnchor, setGroupAnchor] = useState(null);
+  /* The picks as they were when the picker opened — Cancel puts them back. */
+  const [groupBefore, setGroupBefore] = useState([]);
   const [confirmDelete, setConfirmDelete] = useState(null);
   /*
     Builder mode — Auto (default) or Guided. In Guided, the builder
@@ -1817,153 +1822,291 @@ export default function EnvironmentWorkspace() {
                       flexShrink: 0,
                     }}
                   >
-                    <Tooltip title={runTip} arrow>
+                    <Tooltip title={runMenu ? "" : runTip} arrow>
                       <span style={{ display: "inline-flex" }}>
                         <Button
                           variant="contained"
                           color="primary"
                           size="small"
                           disabled={!runEnabled}
-                          onClick={() => {
-                            const sel = scenarioSelection?.ids || [];
-                            /* Run anyway: the scenarios resting on an open or skipped
-                         optional gap sit out (gapCover.attribution says which gap). */
-                            const covered =
-                              partial && !sel.length && !groupWith.length
-                                ? (plan?.run || [])
-                                    .map((sc) => sc.id)
-                                    .filter((id) => !gapCover.attribution[id])
-                                : null;
-                            startRun(
-                              sel.length > 0
-                                ? sel
-                                : covered?.length
-                                  ? covered
-                                  : undefined,
-                              headerTrials,
-                              { also: groupWith },
-                            );
-                          }}
+                          aria-haspopup="menu"
+                          onClick={(e) => setRunMenu(e.currentTarget)}
                           startIcon={
                             <Iconify icon="solar:play-bold" width={16} />
                           }
-                          sx={{
-                            whiteSpace: "nowrap",
-                            ...(showRunMenu && {
-                              borderTopRightRadius: 0,
-                              borderBottomRightRadius: 0,
-                            }),
-                          }}
+                          endIcon={
+                            <Iconify
+                              icon="solar:alt-arrow-down-linear"
+                              width={14}
+                            />
+                          }
+                          sx={{ whiteSpace: "nowrap" }}
                         >
                           {runLabel}
                         </Button>
                       </span>
                     </Tooltip>
-                    {showRunMenu && (
+                  </Box>
+                  {/* Run asks where: here, or from code (the same run as a
+                      command) — and offers more environments below. */}
+                  {(() => {
+                    const runHere = () => {
+                      setRunMenu(null);
+                      setGroupAnchor(null);
+                      const sel = scenarioSelection?.ids || [];
+                      /* Run anyway: the scenarios resting on an open or skipped
+                         optional gap sit out (gapCover.attribution says which gap). */
+                      const covered =
+                        partial && !sel.length && !groupWith.length
+                          ? (plan?.run || [])
+                              .map((sc) => sc.id)
+                              .filter((id) => !gapCover.attribution[id])
+                          : null;
+                      startRun(
+                        sel.length > 0
+                          ? sel
+                          : covered?.length
+                            ? covered
+                            : undefined,
+                        headerTrials,
+                        { also: groupWith },
+                      );
+                    };
+                    const cancelGroup = () => {
+                      setAlsoRunIn(groupBefore);
+                      setGroupAnchor(null);
+                    };
+                    const RUN_WAYS = [
+                      {
+                        id: "here",
+                        icon: "solar:play-circle-linear",
+                        title: "Run here",
+                        body: "Starts now — you watch it here, and it lands in Runs.",
+                        onClick: runHere,
+                      },
+                      {
+                        id: "code",
+                        icon: "solar:code-linear",
+                        title: "Run from code",
+                        body: "The same run from your terminal, Python or CI — copy the command with these scenarios, repeats and limit.",
+                        onClick: () => {
+                          setRunMenu(null);
+                          setCodeOpen(true);
+                        },
+                      },
+                    ];
+                    return (
                       <>
-                        <Tooltip
-                          arrow
-                          title={
-                            groupWith.length
-                              ? `Running in ${groupWith.length + 1} environments — change`
-                              : "More ways to run"
-                          }
+                        <Menu
+                          anchorEl={runMenu}
+                          open={!!runMenu}
+                          onClose={() => setRunMenu(null)}
+                          anchorOrigin={{
+                            vertical: "bottom",
+                            horizontal: "right",
+                          }}
+                          transformOrigin={{
+                            vertical: "top",
+                            horizontal: "right",
+                          }}
+                          slotProps={{
+                            paper: { sx: { width: 360, mt: 0.5, p: 0.5 } },
+                          }}
                         >
-                          <span style={{ display: "inline-flex" }}>
-                            <Button
-                              variant="contained"
-                              color="primary"
-                              size="small"
-                              aria-label="More ways to run"
-                              disabled={!runEnabled}
-                              onClick={(e) => setRunMenu(e.currentTarget)}
+                          {RUN_WAYS.map((w) => (
+                            <MenuItem
+                              key={w.id}
+                              onClick={w.onClick}
                               sx={{
-                                minWidth: 0,
-                                borderTopLeftRadius: 0,
-                                borderBottomLeftRadius: 0,
-                                /* A hairline inside the button, not a gap between two. */
-                                borderLeft: (t) =>
-                                  `1px solid ${alpha(t.palette.primary.contrastText, 0.16)}`,
+                                alignItems: "flex-start",
+                                gap: 1.5,
+                                p: 1.25,
+                                borderRadius: 1,
+                                whiteSpace: "normal",
                               }}
                             >
                               <Iconify
-                                icon="solar:alt-arrow-down-linear"
-                                width={14}
+                                icon={w.icon}
+                                width={20}
+                                sx={{
+                                  mt: 0.25,
+                                  color: "text.secondary",
+                                  flexShrink: 0,
+                                }}
                               />
-                            </Button>
-                          </span>
-                        </Tooltip>
-                      </>
-                    )}
-                  </Box>
-                  {showRunMenu && (
-                    <>
-                      <Menu
-                        anchorEl={runMenu}
-                        open={!!runMenu}
-                        onClose={() => setRunMenu(null)}
-                        anchorOrigin={{
-                          vertical: "bottom",
-                          horizontal: "right",
-                        }}
-                        transformOrigin={{
-                          vertical: "top",
-                          horizontal: "right",
-                        }}
-                        slotProps={{ paper: { sx: { width: 360, mt: 0.5 } } }}
-                      >
-                        {/* Also run in — picked environments join the next Run as a group. */}
-                        {groupable && (
-                          /* The menu items' own inset, so the two icons line up. */
-                          <Box
-                            sx={{ px: 1, py: 1.25 }}
-                            onKeyDown={(e) => e.stopPropagation()}
-                          >
-                            <Stack
-                              direction="row"
-                              alignItems="flex-start"
-                              spacing={1.25}
+                              <Box sx={{ minWidth: 0 }}>
+                                <Typography
+                                  sx={{ typography: "s1", fontWeight: 600 }}
+                                >
+                                  {w.title}
+                                </Typography>
+                                <Typography
+                                  sx={{
+                                    typography: "s2",
+                                    color: "text.secondary",
+                                  }}
+                                >
+                                  {w.body}
+                                </Typography>
+                              </Box>
+                            </MenuItem>
+                          ))}
+                          {showRunMenu && (
+                            <MenuItem
+                              onClick={() => {
+                                setGroupBefore(alsoRunIn);
+                                setGroupAnchor(runMenu);
+                                setRunMenu(null);
+                              }}
+                              sx={{
+                                alignItems: "flex-start",
+                                gap: 1.5,
+                                p: 1.25,
+                                borderRadius: 1,
+                                whiteSpace: "normal",
+                              }}
                             >
                               <Iconify
                                 icon="solar:layers-linear"
-                                width={16}
+                                width={20}
                                 sx={{
-                                  mt: "2px",
+                                  mt: 0.25,
                                   color: "text.secondary",
                                   flexShrink: 0,
                                 }}
                               />
                               <Box sx={{ minWidth: 0, flex: 1 }}>
                                 <Typography
-                                  sx={{ typography: "s2", fontWeight: 600 }}
+                                  sx={{ typography: "s1", fontWeight: 600 }}
                                 >
                                   Run in more environments
                                 </Typography>
                                 <Typography
                                   sx={{
-                                    typography: "s3",
-                                    color: "text.tertiary",
-                                    whiteSpace: "normal",
-                                    mb: 1,
+                                    typography: "s2",
+                                    color: "text.secondary",
                                   }}
                                 >
-                                  A change to the agent can fix one environment
-                                  and break another.
+                                  {alsoRunIn.length
+                                    ? `${alsoRunIn.length} picked — a change can fix one environment and break another.`
+                                    : `${runGroup.candidates.length} other environment${runGroup.candidates.length === 1 ? "" : "s"} test this agent — a change can fix one and break another.`}
                                 </Typography>
-                                <AlsoRunIn
-                                  variant="inline"
-                                  hideLabel
-                                  candidates={runGroup.candidates}
-                                  value={alsoRunIn}
-                                  onChange={setAlsoRunIn}
-                                />
                               </Box>
-                            </Stack>
+                              <Iconify
+                                icon="solar:alt-arrow-right-linear"
+                                width={16}
+                                sx={{
+                                  mt: 0.5,
+                                  color: "text.tertiary",
+                                  flexShrink: 0,
+                                }}
+                              />
+                            </MenuItem>
+                          )}
+                        </Menu>
+                        {/* Pick the other environments, then run them with this
+                      one — each its own run, read side by side. */}
+                        <Popover
+                          open={!!groupAnchor}
+                          anchorEl={groupAnchor}
+                          onClose={cancelGroup}
+                          anchorOrigin={{
+                            vertical: "bottom",
+                            horizontal: "right",
+                          }}
+                          transformOrigin={{
+                            vertical: "top",
+                            horizontal: "right",
+                          }}
+                          slotProps={{ paper: { sx: { width: 360, mt: 0.5 } } }}
+                        >
+                          <Box
+                            sx={{
+                              px: 2,
+                              py: 1.5,
+                              borderBottom: "1px solid",
+                              borderColor: "divider",
+                            }}
+                          >
+                            <Typography
+                              sx={{ typography: "s1", fontWeight: 600 }}
+                            >
+                              Run in more environments
+                            </Typography>
+                            <Typography
+                              sx={{
+                                typography: "s3",
+                                color: "text.tertiary",
+                                mt: 0.25,
+                              }}
+                            >
+                              The same agent version in each — one run per
+                              environment, started together and read side by
+                              side. Each costs what its own run would.
+                            </Typography>
                           </Box>
-                        )}
-                      </Menu>
-                    </>
-                  )}
+                          <Box
+                            sx={{
+                              px: 2,
+                              py: 1.5,
+                              maxHeight: 280,
+                              overflowY: "auto",
+                            }}
+                          >
+                            <AlsoRunIn
+                              variant="inline"
+                              hideLabel
+                              candidates={runGroup.candidates}
+                              value={alsoRunIn}
+                              onChange={setAlsoRunIn}
+                            />
+                          </Box>
+                          <Stack
+                            direction="row"
+                            alignItems="center"
+                            spacing={1}
+                            sx={{
+                              px: 2,
+                              py: 1.25,
+                              borderTop: "1px solid",
+                              borderColor: "divider",
+                            }}
+                          >
+                            <Typography
+                              sx={{
+                                typography: "s3",
+                                color: "text.tertiary",
+                                flex: 1,
+                              }}
+                            >
+                              {alsoRunIn.length
+                                ? `${alsoRunIn.length + 1} runs, side by side`
+                                : "Pick at least one"}
+                            </Typography>
+                            <Button
+                              size="small"
+                              onClick={cancelGroup}
+                              sx={{ color: "text.secondary" }}
+                            >
+                              Cancel
+                            </Button>
+                            <Button
+                              size="small"
+                              variant="contained"
+                              color="primary"
+                              disabled={!groupWith.length}
+                              onClick={runHere}
+                              startIcon={
+                                <Iconify icon="solar:play-bold" width={14} />
+                              }
+                            >
+                              {`Run in ${groupWith.length + 1}`}
+                            </Button>
+                          </Stack>
+                        </Popover>
+                      </>
+                    );
+                  })()}
                 </>
               )}
             </Stack>

@@ -94,6 +94,7 @@ import { scenarioAtVersion } from "../_mock/decoupled";
 import MeteredText from "./RunRecord";
 import ShareMenu from "./ShareMenu";
 import CopyIdButton from "../components/CopyIdButton";
+import CopyCommandButton from "../components/CopyCommandButton";
 import HandoffTimeline from "./HandoffTimeline";
 import ImprovementRunStrip from "./ImprovementRunStrip";
 
@@ -1366,6 +1367,7 @@ export default function RunResults({
                           : `From ${runViaOf(sourceRun).label}`}
                       </Box>
                     </Tooltip>
+
                   </>
                 );
               })()}
@@ -1535,6 +1537,15 @@ export default function RunResults({
         </Tooltip>
         {/* The run's ID — what the CLI and SDK print and take, so a run
             started in the terminal and this page are one run. */}
+        {/* Started from code (CLI, Python, CI, MCP): run it again the same way. */}
+        {!trialMeta &&
+          sourceRun &&
+          runViaOf(sourceRun).label !== "Console" && (
+            <CopyCommandButton
+              command={`agent-learn rerun ${sourceRun.id}`}
+              label="Copy command"
+            />
+          )}
         {!trialMeta && runId && (
           <CopyIdButton
             id={runId}
@@ -2570,6 +2581,36 @@ export default function RunResults({
             });
           }}
         />
+        {/* The same re-runs from code. */}
+        {runId && (
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={0.5}
+            sx={{
+              px: 1.5,
+              py: 1,
+              borderTop: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            <Typography
+              sx={{ typography: "s3", color: "text.tertiary", flex: 1, pl: 0.5 }}
+            >
+              From code
+            </Typography>
+            {failingScenarioIds.length > 0 && (
+              <CopyCommandButton
+                command={`agent-learn rerun ${runId} --failed-only`}
+                label="Copy failing only"
+              />
+            )}
+            <CopyCommandButton
+              command={`agent-learn rerun ${runId}`}
+              label="Copy whole run"
+            />
+          </Stack>
+        )}
       </Popover>
 
       {/* ── trace drawer ── */}
