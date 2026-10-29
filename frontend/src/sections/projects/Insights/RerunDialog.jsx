@@ -222,7 +222,9 @@ function RerunForm({
               value={sampleSize}
               onChange={(event) => setSampleSize(Number(event.target.value))}
               disabled={busy}
-              sx={{ width: 140 }}
+              // Beside a long estimate the row would squeeze it and cut its
+              // label to "Sample siz".
+              sx={{ width: 140, flexShrink: 0 }}
             >
               {sampleSizeOptions(sampleSize).map((size) => (
                 <MenuItem key={size} value={size}>

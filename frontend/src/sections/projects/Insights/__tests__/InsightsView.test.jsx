@@ -1714,6 +1714,11 @@ describe("InsightsView", () => {
     expect(
       within(dialog).getByRole("button", { name: "Past 7D" }),
     ).toBeInTheDocument();
+    // Beside the estimate the row mustn't squeeze the field into "Sample siz".
+    const sampleField = within(dialog)
+      .getByRole("combobox", { name: "Sample size" })
+      .closest(".MuiTextField-root");
+    expect(getComputedStyle(sampleField).flexShrink).toBe("0");
     const week = presetWindow("7D");
     await waitFor(() =>
       expect(postsTo("/tracer/insights/estimate/").at(-1)?.[1].scope).toEqual({
