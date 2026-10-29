@@ -103,6 +103,7 @@ from .views.agent_version import (
 )
 from .views.agent_versions import (
     AgentVersionChangeView,
+    AgentVersionCompatibilityView,
     AgentVersionDiscardView,
     AgentVersionProductionView,
     AgentVersionRetryView,
@@ -330,6 +331,11 @@ urlpatterns = [
         "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/discard/",
         AgentVersionDiscardView.as_view(),
         name="agent-versions-discard",
+    ),
+    path(
+        "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/compatibility/",
+        AgentVersionCompatibilityView.as_view(),
+        name="agent-versions-compatibility",
     ),
     path(
         "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/restore/",

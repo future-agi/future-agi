@@ -258,3 +258,46 @@ class AgentVersionProductionResponseSerializer(serializers.Serializer):
 
 class AgentVersionActionResponseSerializer(serializers.Serializer):
     message = serializers.CharField(read_only=True)
+
+
+class AgentVersionToolChangeSerializer(serializers.Serializer):
+    name = serializers.CharField(read_only=True)
+    before = serializers.DictField(read_only=True)
+    after = serializers.DictField(read_only=True)
+
+
+class AgentVersionCompatibilityResponseSerializer(serializers.Serializer):
+    """How a version fits the world an environment was built from."""
+
+    environment_id = serializers.CharField(read_only=True)
+    version_id = serializers.CharField(read_only=True)
+    status = serializers.ChoiceField(
+        choices=(
+            "clean",
+            "new_tool",
+            "tool_removed_or_changed",
+            "new_rule",
+            "unmeasured",
+        ),
+        read_only=True,
+    )
+    base = serializers.CharField(read_only=True, allow_null=True)
+    reason = serializers.CharField(read_only=True, required=False)
+    same_version = serializers.BooleanField(read_only=True, required=False)
+    tools_added = serializers.ListField(
+        child=serializers.CharField(), read_only=True, required=False
+    )
+    tools_removed = serializers.ListField(
+        child=serializers.CharField(), read_only=True, required=False
+    )
+    tools_changed = AgentVersionToolChangeSerializer(
+        many=True, read_only=True, required=False
+    )
+    services_added = serializers.ListField(
+        child=serializers.CharField(), read_only=True, required=False
+    )
+    rules_added = serializers.ListField(
+        child=serializers.CharField(), read_only=True, required=False
+    )
+    prompt_changed = serializers.BooleanField(read_only=True, required=False)
+    model_changed = serializers.BooleanField(read_only=True, required=False)

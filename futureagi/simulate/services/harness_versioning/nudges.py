@@ -815,6 +815,26 @@ def _no_facts(source: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _compatibility(environment: HostedHarnessJob, new: AgentVersion) -> dict[str, Any]:
+    """How the offered version fits the world this environment was built from; a
+    reason, never a failure, when a document can't be read."""
+    from simulate.services.agent_compatibility import (
+        UNMEASURED,
+        environment_compatibility,
+    )
+
+    try:
+        return environment_compatibility(environment, new)
+    except Exception as exc:  # noqa: BLE001 - a reason on the card, never a retry
+        logger.warning(
+            "harness_nudge_compatibility_failed environment=%s version=%s error=%s",
+            environment.id,
+            new.id,
+            type(exc).__name__,
+        )
+        return {"status": UNMEASURED, "reason": "compatibility_error", "base": None}
+
+
 def diff_facts(
     environment: HostedHarnessJob, base: AgentVersion | None, new: AgentVersion
 ) -> dict[str, Any]:
@@ -833,6 +853,7 @@ def diff_facts(
     }
     if base_runtime is None:
         return facts
+    facts["compatibility"] = _compatibility(environment, new)
     if (
         base_runtime.prompt_hash
         and new_runtime.prompt_hash

@@ -7,16 +7,18 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from simulate.models import AgentDefinition, AgentVersion
+from simulate.models import AgentDefinition, AgentVersion, HostedHarnessJob
 from simulate.serializers.requests.agent_version import (
     AgentVersionChangeRequestSerializer,
 )
 from simulate.serializers.response.agent_version import (
     AgentVersionActionResponseSerializer,
     AgentVersionChangeResponseSerializer,
+    AgentVersionCompatibilityResponseSerializer,
     AgentVersionProductionResponseSerializer,
 )
 from simulate.services import agent_versions
+from simulate.services.agent_compatibility import environment_compatibility
 from simulate.services.hosted_harness import HostedHarnessError
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import (
@@ -114,12 +116,13 @@ class AgentVersionProductionView(_AgentVersionView):
 class AgentVersionRetryView(_AgentVersionView):
     """POST /agent-definitions/{id}/versions/{vid}/retry/."""
 
-    @swagger_auto_schema(
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
         responses={
             202: AgentVersionActionResponseSerializer,
             404: ApiErrorWithDetailsResponseSerializer,
             409: ApiErrorWithDetailsResponseSerializer,
-        }
+        },
     )
     def post(self, request, agent_id, version_id, *args, **kwargs):
         agent = self._agent(request, agent_id)
@@ -133,12 +136,13 @@ class AgentVersionRetryView(_AgentVersionView):
 class AgentVersionDiscardView(_AgentVersionView):
     """POST /agent-definitions/{id}/versions/{vid}/discard/."""
 
-    @swagger_auto_schema(
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
         responses={
             200: AgentVersionActionResponseSerializer,
             404: ApiErrorWithDetailsResponseSerializer,
             409: ApiErrorWithDetailsResponseSerializer,
-        }
+        },
     )
     def post(self, request, agent_id, version_id, *args, **kwargs):
         agent = self._agent(request, agent_id)
@@ -146,3 +150,36 @@ class AgentVersionDiscardView(_AgentVersionView):
         return Response(
             AgentVersionActionResponseSerializer({"message": "Version discarded"}).data
         )
+
+
+class AgentVersionCompatibilityView(_AgentVersionView):
+    """GET /agent-definitions/{id}/versions/{vid}/compatibility/?environment_id=."""
+
+    @swagger_auto_schema(
+        responses={
+            200: AgentVersionCompatibilityResponseSerializer,
+            400: ApiErrorWithDetailsResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+        }
+    )
+    def get(self, request, agent_id, version_id, *args, **kwargs):
+        agent = self._agent(request, agent_id)
+        version = self._version(agent, version_id)
+        environment_id = request.query_params.get("environment_id")
+        if not environment_id:
+            raise HostedHarnessError(
+                "environment_id_required", "environment_id is required", status_code=400
+            )
+        environment = HostedHarnessJob.objects.filter(
+            id=environment_id,
+            organization=agent.organization,
+            environment__isnull=True,
+            deleted=False,
+        ).first()
+        if environment is None:
+            raise HostedHarnessError(
+                "environment_not_found", "environment not found", status_code=404
+            )
+        body = {"environment_id": str(environment.id), "version_id": str(version.id)}
+        body.update(environment_compatibility(environment, version))
+        return Response(AgentVersionCompatibilityResponseSerializer(body).data)
