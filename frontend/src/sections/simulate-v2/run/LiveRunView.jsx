@@ -911,6 +911,8 @@ function LiveRun() {
         pendingMember?.ordinal ??
         Math.max(0, ...(envState.runs || []).map((r) => r.ordinal || 0)) + 1,
       seed: replaySeed || runId,
+      /* Recorded-tool replay: which run's tool responses it played back. */
+      ...(params.get("tools") && { toolReplayOf: params.get("tools") }),
       /* The run plan's limits, as it started. */
       limits: {
         trialTimeout: Number(params.get("timeout")) || 10,
@@ -1930,6 +1932,25 @@ function LiveRun() {
           </Stack>
         );
       })()}
+
+      {/* Recorded-tool replay: said while it plays, so no one reads it as a live-world result. */}
+      {params.get("tools") && (
+        <Typography
+          sx={{
+            mx: 2,
+            mb: 1,
+            px: 1.5,
+            py: 1,
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: "8px",
+            typography: "s2",
+            color: "text.secondary",
+          }}
+        >
+          {`Recorded-tool replay of run ${(envState.runs || []).find((r) => r.id === params.get("tools"))?.ordinal ?? ""} — every tool answers what it returned then. It can't show how the agent does against a world that changes.`}
+        </Typography>
+      )}
 
       {/* ── three columns ── */}
       <Box sx={{ display: "flex", flex: 1, minHeight: 0 }}>

@@ -54,6 +54,9 @@ import {
 } from "../_mock/compareView";
 import { withPairs, bridgeOf, priceOf, priceLine } from "../_mock/pairs";
 import { useEnvState, useSimStore } from "../store";
+import { mustPassRegressionsOf, promotePatch } from "../_mock/promote";
+import { useRoleGates } from "../_mock/previewRole";
+import PromoteDialog from "./PromoteDialog";
 import { runCreditsOf } from "../_mock/usageLedger";
 import {
   SectionCard,
@@ -148,6 +151,8 @@ export default function CompareRuns() {
     hydrates and lock the screen to the built-in default.
   */
   const [viewOverride, setViewOverride] = useState(null);
+  const [promoting, setPromoting] = useState(false);
+  const gates = useRoleGates();
   const view = viewOverride || {
     ...defaultView(),
     ...(envState.compareView || {}),
@@ -1025,39 +1030,95 @@ export default function CompareRuns() {
       <Box sx={{ flex: 1, minHeight: 0, overflow: "auto", p: 2 }}>
         {/* The verdict over the comparable pairs — or "side by side" when
             the runs sit on different environment versions. */}
-        <CompareVerdict
-          read={read}
-          held={held}
-          runs={comparison.runs}
-          identityOf={identityOf}
-          envHeadline={envHeadline}
-          onExcludeRechecked={setExcludeRechecked}
-          onFix={(fix) => startFix(fix)}
-          onWarning={(w) => {
-            if (w.kind === "regrade" && read) {
-              /* Re-grading reads stored traces — recorded on the environment
+        {(() => {
+          /* Must-pass regressions first; promoting the last run is its own reviewed step. */
+          const mustPass = mustPassRegressionsOf(comparison.rows);
+          const first = comparison.runs[0];
+          const last = comparison.runs[comparison.runs.length - 1];
+          const candidate = last?.agentVersion || null;
+          const baseline = first?.agentVersion || null;
+          const verdict = read?.label?.label || "No verdict";
+          return (
+            <>
+              <PromoteDialog
+                open={promoting}
+                candidate={candidate}
+                baseline={baseline}
+                verdict={verdict}
+                regressions={mustPass}
+                onClose={() => setPromoting(false)}
+                onPromote={({ note, reviewed }) => {
+                  setPromoting(false);
+                  patch(
+                    promotePatch(envState, {
+                      version: candidate,
+                      runId: last?.id,
+                      baseline,
+                      verdict,
+                      reviewed,
+                      note,
+                    }),
+                  );
+                  enqueueSnackbar(
+                    `Agent ${candidate} promoted — ${baseline} stays available to roll back to`,
+                    { variant: "success" },
+                  );
+                }}
+              />
+              <CompareVerdict
+                read={read}
+                held={held}
+                mustPass={mustPass}
+                onShowMustPass={() =>
+                  setViewOverride({ ...view, quick: "critical" })
+                }
+                promote={
+                  candidate && baseline
+                    ? {
+                        candidate,
+                        baseline,
+                        onClick: () => setPromoting(true),
+                        disabled: !gates.canEdit
+                          ? gates.editReason
+                          : candidate === baseline
+                            ? `Both runs are on agent ${candidate} — there's no other version to promote.`
+                            : null,
+                      }
+                    : null
+                }
+                runs={comparison.runs}
+                identityOf={identityOf}
+                envHeadline={envHeadline}
+                onExcludeRechecked={setExcludeRechecked}
+                onFix={(fix) => startFix(fix)}
+                onWarning={(w) => {
+                  if (w.kind === "regrade" && read) {
+                    /* Re-grading reads stored traces — recorded on the environment
                  so the comparison reads both runs under one version. */
-              patch({
-                compareRegrades: [
-                  ...(envState.compareRegrades || []),
-                  { a: read.baselineId, b: read.targetId, to: w.to },
-                ],
-              });
-              enqueueSnackbar(
-                "Both runs re-graded from their stored traces — no calls were made",
-                { variant: "success" },
-              );
-            } else if (w.kind === "bridge" && w.scenarioIds?.length) {
-              startFix({
-                agent: w.agent,
-                scenarioIds: w.scenarioIds,
-                repeats: w.repeats,
-              });
-            }
-          }}
-          questions={[]}
-          onAnswer={(v) => setAnswering(v)}
-        />
+                    patch({
+                      compareRegrades: [
+                        ...(envState.compareRegrades || []),
+                        { a: read.baselineId, b: read.targetId, to: w.to },
+                      ],
+                    });
+                    enqueueSnackbar(
+                      "Both runs re-graded from their stored traces — no calls were made",
+                      { variant: "success" },
+                    );
+                  } else if (w.kind === "bridge" && w.scenarioIds?.length) {
+                    startFix({
+                      agent: w.agent,
+                      scenarioIds: w.scenarioIds,
+                      repeats: w.repeats,
+                    });
+                  }
+                }}
+                questions={[]}
+                onAnswer={(v) => setAnswering(v)}
+              />
+            </>
+          );
+        })()}
 
         {/* One card for both. The distribution is a summary of the rows
             underneath it, so a second border and a gap between them spends

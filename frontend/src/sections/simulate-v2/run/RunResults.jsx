@@ -93,6 +93,8 @@ import { delegationEvidenceOf } from "../_mock/handoffs";
 import StatusBadge from "src/components/status-badge/StatusBadge";
 import { causeOf, outcomeOfCause } from "../_mock/decoupled";
 import { regradeOf, regradeRecordOf } from "../_mock/regrade";
+import { repeatActionsOf } from "../_mock/repeatActions";
+import { RepeatGroup, RepeatRow } from "./RepeatChooser";
 import { agentVersions } from "../_mock/versions";
 import { scenarioAtVersion } from "../_mock/decoupled";
 import MeteredText from "./RunRecord";
@@ -574,7 +576,10 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
     return `${older.length} scenario${older.length === 1 ? "" : "s"} played ${older.length === 1 ? "its" : "their"} text as it was in run ${ordinal}`;
   })();
   const gates = useRoleGates();
-  const rerun = (ids, { mode = "now", agent = null } = {}) =>
+  const rerun = (
+    ids,
+    { mode = "now", agent = null, toolReplay = null } = {},
+  ) =>
     !gates.canRun
       ? enqueueSnackbar(gates.runReason, { variant: "info" })
       : checkRunFit(() => {
@@ -589,6 +594,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
                 : agent || undefined,
               snapshot: snap ? sourceRun.id : undefined,
               envVersion: snap ? sourceRun.envVersion : undefined,
+              toolReplay: toolReplay || undefined,
             }),
           );
         });
@@ -702,6 +708,14 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
     });
   };
   const regradedChanged = tasks.filter((t) => t.regraded?.changed).length;
+  /* Every way to repeat this run, for the one Repeat chooser. */
+  const repeat = repeatActionsOf({
+    env,
+    envState,
+    run: sourceRun,
+    tasks,
+    regrade,
+  });
 
   /* The user's own bar for pass^1 — it colours reports, nothing more. */
   const setReportBar = (pass1) =>
@@ -1348,6 +1362,14 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
               const src = of && (envState.runs || []).find((r) => r.id === of);
               return src ? ` · continues run ${src.ordinal}` : "";
             })()}
+            {(() => {
+              /* Tools answered from an earlier run's recording. */
+              const of = (envState.runs || []).find(
+                (r) => r.id === runId,
+              )?.toolReplayOf;
+              const src = of && (envState.runs || []).find((r) => r.id === of);
+              return src ? ` · recorded-tool replay of run ${src.ordinal}` : "";
+            })()}
             {finishedLabel ? ` · ${finishedLabel}` : ""}
             {/* Where it was started from, when that wasn't the console — the
                 command on hover, so it can be re-run the same way. */}
@@ -1566,6 +1588,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
             envState={envState}
             identity={identity}
             report={report}
+            tasks={tasks}
             compact
           />
         )}
@@ -1603,7 +1626,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
               <Button
                 variant="outlined"
                 size="small"
-                aria-label="More re-run options"
+                aria-label="More ways to repeat this run"
                 onClick={(e) => setRunRerunAnchor(e.currentTarget)}
                 sx={{
                   minWidth: 0,
@@ -1632,7 +1655,7 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
               }
               sx={{ color: "text.primary", borderColor: "divider" }}
             >
-              Re-run
+              Repeat
             </Button>
           ))}
         {/*
@@ -2689,7 +2712,14 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
         anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
         transformOrigin={{ vertical: "top", horizontal: "right" }}
         slotProps={{
-          paper: { sx: { mt: 0.75, width: 380, borderRadius: "8px" } },
+          paper: {
+            sx: {
+              mt: 0.75,
+              width: 420,
+              maxHeight: "calc(100vh - 120px)",
+              borderRadius: "8px",
+            },
+          },
         }}
       >
         <Box sx={{ px: 2, pt: 1.75, pb: 1 }}>
@@ -2702,9 +2732,34 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
               letterSpacing: 0.4,
             }}
           >
-            {`Re-run ${identity ? `run ${identity.ordinal}` : "this run"} · ${stats.total} scenario${stats.total === 1 ? "" : "s"}`}
+            {`Repeat ${identity ? `run ${identity.ordinal}` : "this run"} · ${stats.total} scenario${stats.total === 1 ? "" : "s"}`}
           </Typography>
         </Box>
+        {/* ── nothing runs again ── */}
+        <RepeatGroup>No new agent calls</RepeatGroup>
+        <RepeatRow
+          icon="solar:play-circle-linear"
+          action={repeat.replay}
+          onClick={() => {
+            setRunRerunAnchor(null);
+            setOpenPane("transcript");
+            setOpenTask(
+              tasks.find((t) => t.status === "failed") || tasks[0] || null,
+            );
+          }}
+        />
+        <RepeatRow
+          icon="solar:checklist-minimalistic-linear"
+          action={repeat.reeval}
+          onClick={() => {
+            setRunRerunAnchor(null);
+            if (regrade) return startRegrade();
+            setAdhocIds(tasks.map((t) => t.id));
+            return setAddingAdhocEvals(true);
+          }}
+        />
+        {/* ── the agent runs again ── */}
+        <RepeatGroup>New agent calls</RepeatGroup>
         <RerunModes
           run={sourceRun}
           canSnapshot={canSnapshot}
@@ -2719,6 +2774,49 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
               agent,
             });
           }}
+        />
+        <RepeatRow
+          icon="solar:restart-linear"
+          action={repeat.failures}
+          onClick={() => {
+            setRunRerunAnchor(null);
+            rerun(repeat.failures.ids, {
+              mode: canSnapshot ? "snapshot" : "now",
+            });
+          }}
+        />
+        <RepeatRow
+          icon="solar:play-stream-linear"
+          action={repeat.recorded}
+          onClick={() => {
+            setRunRerunAnchor(null);
+            rerun(sourceRun?.partial ? sourceRun.scenarioIds : null, {
+              mode: "snapshot",
+              toolReplay: sourceRun?.id,
+            });
+          }}
+        />
+        {/* ── unfinished work ── */}
+        <RepeatGroup>Unfinished work</RepeatGroup>
+        <RepeatRow
+          icon="solar:play-linear"
+          action={repeat.resume}
+          onClick={() => {
+            setRunRerunAnchor(null);
+            navigate(
+              runPlanHref(envId, {
+                only: repeat.resume.ids,
+                trials: sourceRun?.repeats || 3,
+                agent: sourceRun?.agentVersion,
+                continues: sourceRun?.id,
+              }),
+            );
+          }}
+        />
+        <RepeatRow icon="solar:history-linear" action={repeat.checkpoint} />
+        <RepeatRow
+          icon="solar:branching-paths-up-linear"
+          action={repeat.fork}
         />
         {/* The same re-runs from code. */}
         {runId && (

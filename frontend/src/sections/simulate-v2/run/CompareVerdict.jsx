@@ -74,6 +74,9 @@ export default function CompareVerdict({
   questions = [],
   onAnswer,
   envHeadline = null,
+  mustPass = [],
+  onShowMustPass,
+  promote = null,
 }) {
   const [pinsOpen, setPinsOpen] = useState(false);
   if (!read) return null;
@@ -116,6 +119,50 @@ export default function CompareVerdict({
         overflow: "hidden",
       }}
     >
+      {/* A must-pass case that regressed comes first, whatever the average says. */}
+      {mustPass.length > 0 && (
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          sx={{
+            px: 2,
+            py: 1,
+            borderBottom: "1px solid",
+            borderColor: "status.danger.border",
+            bgcolor: "status.danger.bg",
+          }}
+        >
+          <Iconify
+            icon="solar:danger-triangle-linear"
+            width={16}
+            sx={{ color: "status.danger.fg", flexShrink: 0 }}
+          />
+          <Typography sx={{ typography: "s2", flex: 1, minWidth: 0 }}>
+            <Box
+              component="span"
+              sx={{ fontWeight: 600, color: "status.danger.fg" }}
+            >
+              {`Must-pass regression${mustPass.length === 1 ? "" : "s"} · ${mustPass.length}`}
+            </Box>
+            {` — ${mustPass
+              .slice(0, 2)
+              .map((r) => r.title)
+              .join(
+                ", ",
+              )}${mustPass.length > 2 ? ` and ${mustPass.length - 2} more` : ""} passed on the baseline and fail now. A better average doesn't make this run the winner.`}
+          </Typography>
+          {onShowMustPass && (
+            <Button
+              size="small"
+              onClick={onShowMustPass}
+              sx={{ color: "text.primary", flexShrink: 0 }}
+            >
+              Show
+            </Button>
+          )}
+        </Stack>
+      )}
       {/* The verdict in one line: the label, the change, what it's over. The
           interval, the no-change band, the simulator's own noise and the
           environment both runs sat on are one hover away. */}
@@ -459,6 +506,41 @@ export default function CompareVerdict({
         </Typography>
       )}
 
+      {/* Choosing the winner is its own reviewed step — comparing deploys nothing. */}
+      {promote && (
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1.5}
+          sx={{ px: 2, py: 1, borderTop: "1px solid", borderColor: "divider" }}
+        >
+          <Typography
+            sx={{
+              typography: "s3",
+              color: "text.tertiary",
+              flex: 1,
+              minWidth: 0,
+            }}
+          >
+            {promote.disabled ||
+              `Comparing deploys nothing. Promote agent ${promote.candidate} after reviewing ${mustPass.length ? "the regressions above" : "the rows below"}; ${promote.baseline} stays available.`}
+          </Typography>
+          <Button
+            size="small"
+            variant="outlined"
+            disabled={!!promote.disabled}
+            onClick={promote.onClick}
+            sx={{
+              color: "text.primary",
+              borderColor: "divider",
+              flexShrink: 0,
+            }}
+          >
+            {`Promote ${promote.candidate}…`}
+          </Button>
+        </Stack>
+      )}
+
       {/* What each run pinned — the old held-fixed box, as a disclosure. */}
       {held && (
         <Box sx={{ borderTop: "1px solid", borderColor: "divider" }}>
@@ -557,6 +639,11 @@ export default function CompareVerdict({
   );
 }
 CompareVerdict.propTypes = {
+  /* Must-pass rows that passed on the baseline and fail now: [{ id, title }]. */
+  mustPass: PropTypes.array,
+  onShowMustPass: PropTypes.func,
+  /* { candidate, baseline, onClick, disabled } — the promote step, or null. */
+  promote: PropTypes.object,
   read: PropTypes.object,
   held: PropTypes.object,
   runs: PropTypes.array,

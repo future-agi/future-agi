@@ -4,6 +4,9 @@ import Iconify from "src/components/iconify";
 import CopyCommandButton from "../components/CopyCommandButton";
 import { useEnvState } from "../store";
 import { useRoleGates } from "../_mock/previewRole";
+import { FALLBACKS } from "../_mock/actors";
+import { useSnackbar } from "notistack";
+import { TextLink } from "../agents/connect/connectBits";
 import {
   approvalCli,
   approvalOf,
@@ -38,6 +41,7 @@ const RESULT = {
 export default function ApprovalTimeline({ env, task }) {
   const { envState, patch } = useEnvState(env.id);
   const gates = useRoleGates();
+  const { enqueueSnackbar } = useSnackbar();
   const a = approvalOf({ env, envState, task });
   if (!a) return null;
   const decide = (decision) =>
@@ -116,9 +120,32 @@ export default function ApprovalTimeline({ env, task }) {
             borderRadius: "8px",
           }}
         >
-          <Typography
-            sx={{ typography: "s2", flex: 1 }}
-          >{`Waiting for approval — decide as ${a.approver.name}`}</Typography>
+          <Box flex={1} minWidth={0}>
+            <Typography sx={{ typography: "s2" }}>
+              {`Waiting for approval — ${a.approver.name} can decide, or you as them`}
+            </Typography>
+            {/* Who can act and when it expires; a viewer gets a way to ask. */}
+            <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+              {`Expires after ${a.approver.timeoutMin || 3} min — then ${
+                (
+                  FALLBACKS.find(
+                    (f) => f.id === (a.approver.fallback || "silent"),
+                  ) || FALLBACKS[0]
+                ).line
+              }. The decision is recorded with who made it.`}
+            </Typography>
+            {!gates.canEdit && (
+              <TextLink
+                onClick={() =>
+                  enqueueSnackbar("Access request sent to workspace admins", {
+                    variant: "info",
+                  })
+                }
+              >
+                Request access to decide
+              </TextLink>
+            )}
+          </Box>
           <Tooltip
             arrow
             title={

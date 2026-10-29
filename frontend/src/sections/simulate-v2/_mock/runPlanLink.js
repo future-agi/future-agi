@@ -14,7 +14,7 @@ import { paths } from "src/routes/paths";
 */
 export const runPlanHref = (
   envId,
-  { only = [], trials, agent, also = [], continues, snapshot, envVersion } = {},
+  { only = [], trials, agent, also = [], continues, snapshot, envVersion, toolReplay } = {},
 ) => {
   const q = new URLSearchParams({ plan: "1" });
   if (only?.length) q.set("only", only.join(","));
@@ -24,6 +24,8 @@ export const runPlanHref = (
   if (continues) q.set("continues", continues);
   if (snapshot) q.set("snapshot", snapshot);
   if (envVersion) q.set("env", envVersion);
+  /* Recorded-tool replay: tools answer with what they returned in that run. */
+  if (toolReplay) q.set("replay", toolReplay);
   return `${paths.dashboard.simulate.environmentStep(envId, "overview")}?${q}`;
 };
 
@@ -39,6 +41,7 @@ export const runPlanRequestOf = (searchParams) => {
     continues: searchParams.get("continues") || undefined,
     snapshot: searchParams.get("snapshot") || undefined,
     envVersion: searchParams.get("env") || undefined,
+    toolReplay: searchParams.get("replay") || undefined,
   };
 };
 
@@ -51,4 +54,5 @@ export const RUN_PLAN_PARAMS = [
   "continues",
   "snapshot",
   "env",
+  "replay",
 ];

@@ -14,6 +14,7 @@ import {
 import Iconify from "src/components/iconify";
 import { shareTokenOf, sharedUrlOf } from "../_mock/runShare";
 import { PrintPortal } from "./SharedReport";
+import { downloadJson, trajectoryExportOf } from "../_mock/trajectoryExport";
 
 const itemText = {
   primaryTypographyProps: { typography: "s2", fontWeight: 600 },
@@ -34,6 +35,7 @@ export default function ShareMenu({
   identity,
   report,
   compact = false,
+  tasks = null,
 }) {
   const { enqueueSnackbar } = useSnackbar();
   const [anchor, setAnchor] = useState(null);
@@ -190,6 +192,36 @@ export default function ShareMenu({
             {...itemText}
           />
         </MenuItem>
+        {/* The trajectories themselves, for tools outside Future AGI. */}
+        {tasks && (
+          <MenuItem
+            onClick={() => {
+              setAnchor(null);
+              downloadJson(
+                trajectoryExportOf({
+                  env,
+                  run: (envState?.runs || []).find((r) => r.id === identity.id),
+                  tasks,
+                }),
+                `${env.id}-run-${identity.ordinal ?? identity.id}-trajectories.json`,
+              );
+            }}
+            sx={{ alignItems: "flex-start", gap: 0.75, py: 1.25 }}
+          >
+            <ListItemIcon sx={{ minWidth: "0 !important", mt: "3px" }}>
+              <Iconify
+                icon="solar:download-minimalistic-linear"
+                width={16}
+                sx={{ color: "text.primary" }}
+              />
+            </ListItemIcon>
+            <ListItemText
+              primary="Export trajectories"
+              secondary="JSON: the resolved configuration, each trial's outcome, turns and tool calls. Hidden evaluation material stays out."
+              {...itemText}
+            />
+          </MenuItem>
+        )}
       </Menu>
 
       {printing && (
@@ -208,6 +240,8 @@ export default function ShareMenu({
 }
 
 ShareMenu.propTypes = {
+  /* The run's trials — offers Export trajectories when given. */
+  tasks: PropTypes.array,
   compact: PropTypes.bool,
   env: PropTypes.object,
   envState: PropTypes.object,

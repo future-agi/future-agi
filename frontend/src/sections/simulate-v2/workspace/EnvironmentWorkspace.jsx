@@ -719,6 +719,7 @@ export default function EnvironmentWorkspace() {
       envVersion,
       candidate,
       limits,
+      toolReplay,
     } = {},
   ) => {
     const runId = protoRunId(envId, Date.now().toString(36));
@@ -751,6 +752,7 @@ export default function EnvironmentWorkspace() {
       params.set("timeout", String(limits.trialTimeout));
     if (limits?.runDeadline) params.set("deadline", String(limits.runDeadline));
     if (limits?.stepLimit) params.set("steps", String(limits.stepLimit));
+    if (toolReplay) params.set("tools", toolReplay);
     const qs = params.toString();
     if (qs) url += `?${qs}`;
     navigate(url);
@@ -804,6 +806,7 @@ export default function EnvironmentWorkspace() {
       envVersion: req.envVersion,
       candidate,
       limits,
+      toolReplay: req.toolReplay,
     });
   };
   const startRun = (scenarioIds, trials, opts = {}) =>
@@ -2803,9 +2806,11 @@ export default function EnvironmentWorkspace() {
           scopeLead={
             runPlanReq?.continues
               ? `Continues run ${(envState.runs || []).find((r) => r.id === runPlanReq.continues)?.ordinal ?? ""} — only the scenarios its limit stopped from starting. The ones that finished aren't run or charged again.`
-              : runPlanReq?.snapshot
-                ? "Re-runs the exact snapshot — a new run, charged as its own."
-                : null
+              : runPlanReq?.toolReplay
+                ? `Recorded-tool replay of run ${(envState.runs || []).find((r) => r.id === runPlanReq.toolReplay)?.ordinal ?? ""} — the agent runs again, and every tool answers what it returned then. It can't show how the agent does against a world that changes.`
+                : runPlanReq?.snapshot
+                  ? "Re-runs the exact snapshot — a new run, charged as its own."
+                  : null
           }
         />
         <RunFromCodeDrawer

@@ -8,6 +8,8 @@ import { causeOf, VERDICT_CAUSES } from "../_mock/decoupled";
 import { sourceLinkOf } from "../_mock/scenarioProvenance";
 import { envLabelOf } from "../_mock/envVersionKinds";
 import { runSummaries } from "../_mock/comparison";
+import { groupsOf } from "../_mock/scenarioOrg";
+import { goalLabel } from "../_mock/scenarios";
 
 /**
  * Trends across this environment's runs (roadmap: Runs → "Environment
@@ -84,6 +86,54 @@ export default function AnalyticsPanel({ env, envState }) {
       .sort((a, b) => b.n - a.n);
   }, [latest]);
 
+  /* Each run as a point on the trend: its channel, simulator model and how
+     many scenarios it graded — a changed population is said beside it. */
+  const trend = useMemo(
+    () =>
+      runs.map((r, i) => {
+        const s = runStatsOf(r);
+        const prev = i ? runStatsOf(runs[i - 1]).measured : null;
+        return {
+          run: `Run ${r.ordinal || i + 1}`,
+          agent: r.agentVersion || "v1",
+          channel:
+            { voice: "Voice", multi: "Voice + text" }[
+              r.surface || env?.surface
+            ] || "Text",
+          model: r.simulator?.label || "—",
+          graded:
+            prev != null && prev !== s.measured
+              ? `${s.measured} (was ${prev})`
+              : String(s.measured),
+          pass: pct(s.scenarioPassed, s.measured),
+        };
+      }),
+    [runs, env?.surface],
+  );
+  const populationChanged = trend.some((t) => t.graded.includes("was"));
+
+  /* The latest run by scenario group — or by goal when there are no groups. */
+  const byGroup = useMemo(() => {
+    const groups = groupsOf(envState);
+    const m = new Map();
+    tasksOf(latest).forEach((t) => {
+      const id = t.scenarioId || t.id;
+      const labels = groups.length
+        ? groups.filter((g) => g.ids.includes(id)).map((g) => g.name)
+        : [goalLabel(t.useCase) || "Other"];
+      (labels.length ? labels : ["No group"]).forEach((label) => {
+        const row = m.get(label) || { label, total: 0, passed: 0 };
+        row.total += 1;
+        if (t.status === "passed") row.passed += 1;
+        m.set(label, row);
+      });
+    });
+    return {
+      by: groups.length ? "Group" : "Goal",
+      rows: [...m.values()].sort((a, b) => b.total - a.total),
+    };
+  }, [latest, envState]);
+
   if (!runs.length)
     return (
       <Box sx={{ p: 2 }}>
@@ -116,6 +166,50 @@ export default function AnalyticsPanel({ env, envState }) {
             r.runs,
             `Run ${r.latest.run.ordinal || ""}`.trim(),
             `${r.latest.stats.scenarioPassed} of ${r.latest.stats.measured} · ${pct(r.latest.stats.scenarioPassed, r.latest.stats.measured)}`,
+          ])}
+        />
+      </SectionCard>
+
+      <SectionCard
+        title="Pass rate over time"
+        subtitle={
+          populationChanged
+            ? "Every finished run, oldest first. The number of graded scenarios changed between some runs — those rates aren't over the same population."
+            : "Every finished run, oldest first, with the channel and simulator model it ran on."
+        }
+        dense
+      >
+        <Table
+          head={[
+            "Run",
+            "Agent",
+            "Channel",
+            "Simulator model",
+            "Graded",
+            "Scenario pass",
+          ]}
+          rows={trend.map((t) => [
+            t.run,
+            t.agent,
+            t.channel,
+            t.model,
+            t.graded,
+            t.pass,
+          ])}
+        />
+      </SectionCard>
+
+      <SectionCard
+        title={`Latest run by ${byGroup.by.toLowerCase()}`}
+        subtitle={`Run ${latest.ordinal || ""} · ${byGroup.by === "Group" ? "a scenario in several groups counts in each" : "the goal each scenario tests"}.`}
+        dense
+      >
+        <Table
+          head={[byGroup.by, "Scenarios", "Passed"]}
+          rows={byGroup.rows.map((r) => [
+            r.label,
+            r.total,
+            `${r.passed} · ${pct(r.passed, r.total)}`,
           ])}
         />
       </SectionCard>
