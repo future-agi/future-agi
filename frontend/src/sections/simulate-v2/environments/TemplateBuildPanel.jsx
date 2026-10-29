@@ -23,16 +23,18 @@ import { HintLine } from "../agents/connect/replicationBits";
 import { WhereOption } from "../agents/connect/connectBits";
 import LocalSteps from "./LocalSteps";
 import WorldAgentPicker from "./AgentChoice";
+import WorldFitReport from "./WorldFitReport";
+import { worldFitOf } from "../_mock/worldFit";
 import {
   buildableAgentsOf,
   sampleAgentOf,
   templateWorldSource,
   useBuildForAgent,
+  scenariosForPack,
   useTryWorld,
   worldChannelOf,
   worldPacksOf,
 } from "./worldSource";
-import { generatedPool } from "../_mock/scenarios";
 import { estimateRunPlan, rangeLabel } from "../_mock/pricing";
 import { resolveEval } from "../_mock/evals";
 import { replicationOf } from "../_mock/replication";
@@ -101,10 +103,30 @@ export default function TemplateBuildPanel({
     const t = setTimeout(() => setCheckedIn(true), 4000);
     return () => clearTimeout(t);
   }, [ranUp]);
+  /* The tool binding the person reviewed; null until they change one. */
+  const [binding, setBinding] = useState(null);
+  /* Adapting writes scenarios for the agent: a fork that doesn't compare. */
+  const [adapt, setAdapt] = useState(false);
+  useEffect(() => setBinding(null), [agentId]);
+  const fit = useMemo(
+    () =>
+      agent
+        ? worldFitOf(template, agent, binding, scenariosForPack(template, pack))
+        : null,
+    [template, agent, binding, pack],
+  );
   const startBuild = (choice, runsOn) =>
     build(agent, choice, {
       ...templateWorldSource(template),
       ...(runsOn === "local" && { runsOn: "local" }),
+      /* The fixed suite: this pack, this release, the reviewed binding. */
+      pack,
+      ...(entry && { release: entry.release.version, catalogueId: entry.id }),
+      ...(fit && {
+        binding: fit.binding,
+        unmeasured: fit.unmeasured.map((x) => x.id),
+      }),
+      ...(adapt && { adapt: true }),
     });
 
   if (!template) return null;
@@ -324,6 +346,17 @@ export default function TemplateBuildPanel({
               onChange={setAgentId}
               surface={worldChannelOf(template)}
             />
+            {/* Review fit: the suite stays fixed; tools bind to the agent's. */}
+            {agent && fit && where === "cloud" && (
+              <WorldFitReport
+                template={template}
+                agent={agent}
+                fit={fit}
+                onBind={(w, a) =>
+                  setBinding({ ...(binding || fit.binding), [w]: a })
+                }
+              />
+            )}
             {agent && replicationOf(agent).proofLabel === "Live" && (
               <Stack
                 direction="row"
@@ -463,23 +496,46 @@ export default function TemplateBuildPanel({
                 borderColor: "divider",
               }}
             >
+              <Select
+                size="small"
+                value={pack}
+                onChange={(e) => setPack(e.target.value)}
+                inputProps={{ "aria-label": "Scenario pack" }}
+                sx={{ typography: "s2", minWidth: 170 }}
+              >
+                {packs.map((p) => (
+                  <MenuItem key={p.id} value={p.id} sx={{ typography: "s2" }}>
+                    {`${p.name} · ${p.count}`}
+                  </MenuItem>
+                ))}
+              </Select>
+              <Box flex={1} />
+              {/* The other way: write scenarios for this agent — a fork that doesn't compare. */}
+              <Button
+                size="small"
+                color="inherit"
+                disabled={!agent || !!blocked}
+                onClick={() => {
+                  setAdapt(true);
+                  setDialogOpen(true);
+                }}
+                sx={{ color: "text.secondary", whiteSpace: "nowrap" }}
+              >
+                Adapt scenarios to my agent
+              </Button>
               <Button
                 variant="contained"
                 color="primary"
                 disabled={!agent || !!blocked}
-                onClick={() => setDialogOpen(true)}
-                startIcon={
-                  <Iconify icon="solar:magic-stick-3-bold" width={16} />
-                }
+                onClick={() => {
+                  setAdapt(false);
+                  setDialogOpen(true);
+                }}
+                startIcon={<Iconify icon="solar:play-bold" width={16} />}
                 sx={{ whiteSpace: "nowrap" }}
               >
-                Build environment
+                Run the same cases
               </Button>
-              {!agent && (
-                <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                  Pick the agent this environment is for
-                </Typography>
-              )}
             </Stack>
           )}
         </SectionCard>

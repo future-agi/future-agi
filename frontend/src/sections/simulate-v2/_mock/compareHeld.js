@@ -31,7 +31,8 @@ export const heldFixedAcross = (runs, env, envState) => {
     };
   });
   const differs = rows.filter((r) => !r.same);
-  const agents = [...new Set(pins.map((p) => p.agent).filter(Boolean))];
+  /* The sample agent's (Reference) runs are another agent, even at the same version label. */
+  const agents = [...new Set(pins.map((p, i) => (p.agent && runs[i]?.reference ? `sample ${p.agent}` : p.agent)).filter(Boolean))];
   return { rows, differs, agents, drift: driftOf(runs, env, envState, !differs.some((r) => r.hard) && agents.length <= 1) };
 };
 

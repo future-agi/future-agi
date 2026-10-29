@@ -854,7 +854,7 @@ const resolveRollbacks = (list) => {
 
 
 /* Mirrors agentChannelsOf (agentLifecycle imports this file, so it can't be imported here). */
-const agentIsVoice = (agent) => {
+export const agentIsVoice = (agent) => {
   const ch = agent?.values?.channels;
   if (Array.isArray(ch) && ch.length) return ch.includes("voice");
   return ["voice_platform", "voice_sip"].includes(agent?.typeId) || !!agent?.values?.contact || !!agent?.values?.phoneNumber;

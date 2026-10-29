@@ -43,6 +43,7 @@ import {
 } from "../_mock/builder";
 import { generatedPool } from "../_mock/scenarios";
 import { getEnvironment } from "../_mock/environments";
+import { scenariosForPack } from "./worldSource";
 import { agentPromptOf } from "../_mock/agentPrompt";
 import { agentPinPatch } from "../_mock/versions";
 import { mcpBuildStateOf } from "../_mock/worldTools";
@@ -190,13 +191,16 @@ export default function BuildFromAgent() {
   /* Started from a prebuilt world: its own proven scenarios come with it
      unchanged — the tests its sample agent runs — rather than a new set
      written for this agent, so the two compare on the same test. */
+  /* "Adapt scenarios to my agent" writes new ones instead — a fork whose
+     results don't compare with the sample. */
+  const ws = source?.worldSource || null;
   const fixedWorld =
-    source?.worldSource?.kind === "template"
-      ? getEnvironment(source.worldSource.id) || null
+    ws?.kind === "template" && !ws.adapt
+      ? getEnvironment(ws.id) || null
       : null;
   const draftPool = () =>
     fixedWorld
-      ? generatedPool(fixedWorld)
+      ? scenariosForPack(fixedWorld, ws.pack || "full")
       : sizeToCount(
           generatedPool({ ...env, difficulty }),
           source?.scenarioCount,
@@ -966,6 +970,17 @@ export default function BuildFromAgent() {
           ...(buildReplication && { replication: buildReplication }),
           /* Built to run on the person's machine through the CLI, not in our sandbox. */
           ...(source?.worldSource?.runsOn === "local" && { runsOn: "local" }),
+          /* From a ready world: its release and pack, the reviewed tool
+             binding and the cases it can't measure — or adapted, a fork. */
+          ...(ws?.kind === "template" && {
+            templateId: ws.id,
+            ...(ws.release && { release: ws.release }),
+            ...(ws.catalogueId && { catalogueId: ws.catalogueId }),
+            ...(ws.pack && { pack: ws.pack }),
+            ...(ws.binding && { toolBinding: ws.binding }),
+            ...(ws.unmeasured?.length && { unmeasured: ws.unmeasured }),
+            ...(ws.adapt && { adaptedFrom: ws.id }),
+          }),
           /* Built from an issue's Fix: the environment links back to it. */
           ...(fromIssue && { returnToIssue: fromIssue, returnFrom: "built" }),
         },

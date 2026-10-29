@@ -160,6 +160,9 @@ export default function EnvAgentLine({
       agentName: n,
       state,
     });
+    /* Taking the sample agent's place: its runs stay, labelled Reference,
+       so they're never read as this agent's. */
+    const fromSample = !!agent?.sample;
     applyAgentSwitch({
       env,
       envState,
@@ -170,6 +173,16 @@ export default function EnvAgentLine({
       changeEnvAgent,
       patch,
     });
+    if (fromSample && (envState?.runs || []).length)
+      storeDispatch({
+        type: "patchEnvState",
+        envId: env.id,
+        patch: {
+          runs: envState.runs.map((r) =>
+            r.kind === "trial" ? r : { ...r, reference: true },
+          ),
+        },
+      });
     if (read) {
       storeDispatch({
         type: "patchEnvironment",

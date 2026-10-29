@@ -56,6 +56,7 @@ import { runCreditsOf } from "../_mock/usageLedger";
 import { resolveEval } from "../_mock/evals";
 import { useConnectedAgents, useEnvState } from "../store";
 import { improvementRowsOf } from "../improvements/improvementRows";
+import { isReferenceRun } from "../_mock/referenceRuns";
 import { neutralCheckboxSx } from "../components/primitives";
 import { Head, MetricCell, ScoreCell } from "./RunsTableCells";
 import { compactTokens } from "./runsTableFormat";
@@ -952,7 +953,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                           >
                             {r.kind === "trial"
                               ? `Run ${r.trialN}${r.selfImprovementName ? ` · ${r.selfImprovementName}` : ""}`
-                              : `Run ${r.ordinal}`}{" "}
+                              : `Run ${r.ordinal}${isReferenceRun(r, envState) ? " · Reference" : ""}`}{" "}
                             · {identityOf(r).label}
                           </Typography>
                           <RunDetail text="waiting to start" />
@@ -1343,7 +1344,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                           >
                             {r.kind === "trial"
                               ? `Run ${r.trialN}${r.selfImprovementName ? ` · ${r.selfImprovementName}` : ""}`
-                              : `Run ${r.ordinal}`}{" "}
+                              : `Run ${r.ordinal}${isReferenceRun(r, envState) ? " · Reference" : ""}`}{" "}
                             · {identityOf(r).label}
                           </Typography>
                           <RunDetail

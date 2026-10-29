@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTheme } from "@mui/material/styles";
 import {
   Box,
@@ -78,6 +78,11 @@ export default function OverviewPanel({
   /* The agent lives in Agents; "Connect agent" here opens the picker in place. */
   const [pick, setPick] = useState(0);
   const go = (step) => (step === "agent" ? setPick(Date.now()) : onGo?.(step));
+  /* ?connect=agent (a sample run's "Connect my agent") opens the picker. */
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("connect") === "agent")
+      setPick(Date.now());
+  }, []);
   /* Viewing an older version (?viewAs=) is read-only: no rebuilds, switches
      or answers from here — those belong to the version in use. */
   const { viewAs } = useEnvViewAs(env, envState);
