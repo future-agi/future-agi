@@ -109,6 +109,7 @@ import SettingsSection from "./SettingsSection";
 import ConnectionCheckSection from "./ConnectionCheckSection";
 import PlatformTestCall from "./PlatformTestCall";
 import AgentCompatibilityTab from "../compat/AgentCompatibilityTab";
+import AgentSkillsTab from "./skills/AgentSkillsTab";
 import { checksConnection, connectionStateOf } from "../_mock/connectionCheck";
 import { IdentityCard, SourceCard } from "./AgentProfileCards";
 import {
@@ -139,6 +140,8 @@ const TABS = [
   /* What we read about the agent, then the files themselves. */
   { id: "definition", label: "Definition" },
   { id: "versions", label: "Versions" },
+  /* The skills it loads — import, inspect, turn on or off in a draft. */
+  { id: "skills", label: "Skills" },
   /* What an improvement may change on this agent, and what it must not move. */
   { id: "constraints", label: "Constraints" },
   { id: "environments", label: "Environments" },
@@ -1219,6 +1222,19 @@ export default function AgentViewPage() {
                 envId: home.envId,
                 patch: home.patch,
               });
+          }}
+        />
+      )}
+      {tab === "skills" && (
+        <AgentSkillsTab
+          agent={agent}
+          agentTools={(baseTools || []).map((t) => t.name)}
+          onRecordVersion={(v) => {
+            recordAgentVersion(agent.key, v);
+            enqueueSnackbar(
+              `Saved as ${v.label}. Environments following production test it on their next run; pinned ones stay put.`,
+              { variant: "success" },
+            );
           }}
         />
       )}
