@@ -5996,17 +5996,24 @@ class UpdateCellValueView(APIView):
                 return self._gm.bad_request(
                     get_error_message("MISSING_ROW_ID_COLUMN_ID_AND_NEW_VALUE")
                 )
-            # Get the cell and verify it exists
-            try:
-                cell = get_object_or_404(
-                    Cell, dataset_id=dataset_id, row_id=row_id, column_id=column_id
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
+            if dataset is None:
+                return self._gm.not_found("Dataset not found")
+            cell = (
+                Cell.no_workspace_objects.filter(
+                    dataset=dataset,
+                    row_id=row_id,
+                    column_id=column_id,
+                    deleted=False,
+                    row__dataset=dataset,
+                    column__dataset=dataset,
                 )
-            except Exception:
-                cell = get_object_or_404(Cell, row_id=row_id, column_id=column_id)
-
-            # Update the cell value
-            # cell.value = str(new_value)
-            column = get_object_or_404(Column, id=column_id)
+                .select_related("column")
+                .first()
+            )
+            if cell is None:
+                return self._gm.not_found("Cell not found")
+            column = cell.column
             column_data_type = column.data_type
 
             # Check if column is editable (non-editable source types cannot be edited)
@@ -9993,10 +10000,16 @@ class ClassifyColumnView(APIView):
             if not isinstance(labels, list) or len(labels) < 2:
                 return self._gm.bad_request(get_error_message("LABELS_LIST_NOT_VALID"))
 
-            # Get source column
-            source_column = get_object_or_404(
-                Column, id=column_id, dataset_id=dataset_id, deleted=False
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
+            if dataset is None:
+                return self._gm.not_found("Dataset not found")
+            source_column = (
+                Column.no_workspace_objects.filter(
+                    id=column_id, dataset=dataset, deleted=False
+                ).first()
             )
+            if source_column is None:
+                return self._gm.not_found("Column not found")
 
             if Column.objects.filter(
                 name=new_column_name, dataset=dataset_id, deleted=False
@@ -10213,10 +10226,16 @@ Remember, accuracy and adherence to the specified format are crucial. Your task 
                     get_error_message("MISSING_COLUMN_ID_AND_INSTRUCTIONS")
                 )
 
-            # Get source column
-            source_column = get_object_or_404(
-                Column, id=column_id, dataset_id=dataset_id, deleted=False
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
+            if dataset is None:
+                return self._gm.not_found("Dataset not found")
+            source_column = (
+                Column.no_workspace_objects.filter(
+                    id=column_id, dataset=dataset, deleted=False
+                ).first()
             )
+            if source_column is None:
+                return self._gm.not_found("Column not found")
 
             if Column.objects.filter(
                 name=new_column_name, dataset=dataset_id, deleted=False
@@ -11502,9 +11521,16 @@ class AddVectorDBColumnView(APIView):
                     get_error_message("MISSING_COLUMN_ID_SUB_TYPE_AND_API_KEY")
                 )
 
-            input_column = get_object_or_404(
-                Column, id=column_id, dataset_id=dataset_id
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
+            if dataset is None:
+                return self._gm.not_found("Dataset not found")
+            input_column = (
+                Column.no_workspace_objects.filter(
+                    id=column_id, dataset=dataset, deleted=False
+                ).first()
             )
+            if input_column is None:
+                return self._gm.not_found("Column not found")
 
             if Column.objects.filter(
                 name=new_column_name, dataset=dataset_id, deleted=False

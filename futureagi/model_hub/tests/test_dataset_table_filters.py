@@ -1,4 +1,5 @@
 import json
+import uuid
 
 import pytest
 from rest_framework import status
@@ -325,6 +326,65 @@ def test_update_cell_value_api_accepts_canonical_payload(
     assert response.status_code == status.HTTP_200_OK
     cell.refresh_from_db()
     assert cell.value == "Gamma"
+
+
+def test_update_cell_value_api_rejects_other_org_dataset(
+    auth_client, dataset_filter_seed, db
+):
+    from accounts.models import Organization
+    from accounts.models.user import User
+    from accounts.models.workspace import Workspace
+
+    dataset, rows, text_col, _bool_col = dataset_filter_seed
+    cell = Cell.objects.get(dataset=dataset, row=rows[0], column=text_col)
+    other_org = Organization.objects.create(name="Other Organization")
+    other_user = User.objects.create_user(
+        email=f"other-{uuid.uuid4().hex[:8]}@futureagi.com",
+        password="testpassword123",
+        name="Other User",
+        organization=other_org,
+    )
+    other_workspace = Workspace.objects.create(
+        name="Other Workspace",
+        organization=other_org,
+        is_default=True,
+        is_active=True,
+        created_by=other_user,
+    )
+    other_dataset = Dataset.objects.create(
+        name="Other dataset",
+        organization=other_org,
+        workspace=other_workspace,
+    )
+    other_col = Column.objects.create(
+        name="status",
+        data_type=DataTypeChoices.TEXT.value,
+        dataset=other_dataset,
+        source=SourceChoices.OTHERS.value,
+    )
+    other_row = Row.objects.create(dataset=other_dataset, order=1)
+    other_cell = Cell.objects.create(
+        dataset=other_dataset,
+        row=other_row,
+        column=other_col,
+        value="Secret",
+    )
+
+    response = auth_client.post(
+        f"/model-hub/develops/{other_dataset.id}/update_cell_value/",
+        {
+            "row_id": str(other_row.id),
+            "column_id": str(other_col.id),
+            "new_value": "Tampered",
+        },
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+    other_cell.refresh_from_db()
+    assert other_cell.value == "Secret"
+    cell.refresh_from_db()
+    assert cell.value == "Alpha"
 
 
 def test_dataset_row_data_api_rejects_legacy_filter_shape(

@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/guardrails"
+	"github.com/futureagi/agentcc-gateway/internal/netguard"
 )
 
 // WebhookGuardrail calls an external HTTP endpoint for guardrail checks.
@@ -43,7 +45,7 @@ func New(name string, cfg map[string]interface{}) *WebhookGuardrail {
 		name:   name,
 		method: "POST",
 		retry:  0,
-		client: &http.Client{Timeout: 10 * time.Second},
+		client: guardedWebhookClient(10 * time.Second),
 	}
 
 	if cfg != nil {
@@ -76,7 +78,7 @@ func New(name string, cfg map[string]interface{}) *WebhookGuardrail {
 	return g
 }
 
-func (g *WebhookGuardrail) Name() string           { return g.name }
+func (g *WebhookGuardrail) Name() string            { return g.name }
 func (g *WebhookGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
 // Check calls the webhook endpoint.
@@ -164,6 +166,18 @@ func errorResult(msg string) *guardrails.CheckResult {
 		Pass:    false,
 		Score:   1.0,
 		Message: msg,
+	}
+}
+
+// guardedWebhookClient refuses loopback, private, link-local, and metadata
+// addresses after DNS. Tenant webhook config must not bypass netguard.
+func guardedWebhookClient(timeout time.Duration) *http.Client {
+	dialer := net.Dialer{Timeout: timeout}
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			DialContext: netguard.DialContext(dialer, false),
+		},
 	}
 }
 
