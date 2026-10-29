@@ -1,18 +1,35 @@
 import PropTypes from "prop-types";
+import { useLayoutEffect, useRef, useState } from "react";
 import { alpha, useTheme } from "@mui/material/styles";
 import { Box, Typography } from "@mui/material";
 
 import { pct } from "./fixRunView";
 
-const W = 720;
+const DEFAULT_W = 720;
 const H = 190;
 const PAD = { l: 40, r: 44, t: 28, b: 24 };
 const num = { fontVariantNumeric: "tabular-nums" };
 
 // The design's trial chart (RunsOverview in trial mode), hand-built SVG: the
 // target pass rate after each trial, against the rate before the change.
+function useWidth() {
+  const ref = useRef(null);
+  const [width, setWidth] = useState(DEFAULT_W);
+  useLayoutEffect(() => {
+    if (!ref.current || typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(([entry]) => {
+      const next = Math.round(entry.contentRect.width);
+      if (next > 0) setWidth(next);
+    });
+    observer.observe(ref.current);
+    return () => observer.disconnect();
+  }, []);
+  return [ref, width];
+}
+
 export default function TrialChart({ candidates }) {
   const theme = useTheme();
+  const [ref, W] = useWidth();
   const trials = [...candidates].sort((a, b) => a.attempt - b.attempt);
   if (!trials.length) return null;
   const rates = trials.map((c) => pct(c.verdict.target_pass_rate[1]));
@@ -29,7 +46,7 @@ export default function TrialChart({ candidates }) {
   const paper = theme.palette.background.paper;
   const sub = theme.palette.text.disabled;
   return (
-    <Box sx={{ mb: 2 }}>
+    <Box ref={ref} sx={{ mb: 2, width: "100%", minWidth: 0 }}>
       <Typography sx={{ typography: "m3", fontWeight: 600, ...num }}>
         {`${best}% pass rate on the target scenarios`}
       </Typography>
@@ -37,11 +54,11 @@ export default function TrialChart({ candidates }) {
         {`Each point is one trial, oldest to latest · ${n} ${n === 1 ? "trial" : "trials"} · ${before}% before the change`}
       </Typography>
       <svg
-        viewBox={`0 0 ${W} ${H}`}
-        width="100%"
+        width={W}
+        height={H}
         role="img"
         aria-label="Target pass rate per trial"
-        style={{ display: "block", maxWidth: W }}
+        style={{ display: "block" }}
       >
         {[100, 50, 0].map((t) => (
           <g key={t}>

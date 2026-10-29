@@ -75,6 +75,12 @@ describe("FixRunPage header", () => {
     expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
   });
 
+  it("shows the engine's stage only while the fix runs", async () => {
+    renderPage("fix-out-of-budget");
+    expect(await screen.findByText("Stopped at budget")).toBeInTheDocument();
+    expect(screen.queryByText("Ship")).toBeNull();
+  });
+
   it("offers no Stop on a finished fix", async () => {
     renderPage("fix-ready-archive");
     expect(await screen.findByText("Improvement 10")).toBeInTheDocument();

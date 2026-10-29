@@ -1,6 +1,8 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Box, Button, Tab, Tabs, Typography } from "@mui/material";
+import { Box, Button, Tab, Typography } from "@mui/material";
+
+import { CustomTabs } from "src/components/tabs/tabs";
 
 import FixVerdict from "./FixVerdict";
 import FixDecisionDrawer from "./FixDecisionDrawer";
@@ -49,6 +51,17 @@ FinishedActions.propTypes = {
   onReview: PropTypes.func.isRequired,
 };
 
+// The run page's tab strip (RunDetail), so a fix's tabs read the same.
+const TABS_SX = {
+  borderBottom: "1px solid",
+  borderColor: "divider",
+  mb: 2,
+  minHeight: 38,
+  "& .MuiTabs-flexContainer": { gap: 3 },
+  "& .MuiTab-root": { minWidth: "auto", px: 0 },
+  "& .MuiTab-root:not(:last-of-type)": { mr: 0 },
+};
+
 const TABS = [
   { id: "trials", label: "Trials" },
   { id: "changes", label: "Changes" },
@@ -87,7 +100,7 @@ export default function FixFinishedView({ fix, tab, onTab, renderTab }) {
           </Box>
         )
       )}
-      <Tabs value={current} onChange={(_, v) => onTab(v)} sx={{ mb: 2 }}>
+      <CustomTabs value={current} onChange={(_, v) => onTab(v)} sx={TABS_SX}>
         {tabs.map((t) => (
           <Tab
             key={t.id}
@@ -95,9 +108,10 @@ export default function FixFinishedView({ fix, tab, onTab, renderTab }) {
             label={
               t.id === "trials" ? `${t.label} (${trials.length})` : t.label
             }
+            sx={{ minHeight: 38 }}
           />
         ))}
-      </Tabs>
+      </CustomTabs>
       {current === "trials" ? (
         trials.length > 0 ? (
           <>

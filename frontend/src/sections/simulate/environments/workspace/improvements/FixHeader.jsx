@@ -111,7 +111,7 @@ export default function FixHeader({ fix, envId, actions }) {
             {fixName(fix)}
           </Typography>
           <FixStatusChip state={fix.state} />
-          {fix.stage && (
+          {fix.stage && STOPPABLE.has(fix.state) && (
             <Typography
               noWrap
               sx={{ typography: "s3", color: "text.tertiary" }}

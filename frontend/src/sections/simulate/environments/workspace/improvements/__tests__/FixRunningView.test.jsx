@@ -100,6 +100,25 @@ describe("TrialChart", () => {
     ).toBeInTheDocument();
   });
 
+  it("fills the width of its container", () => {
+    const original = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = class {
+      constructor(cb) {
+        this.cb = cb;
+      }
+      observe() {
+        this.cb([{ contentRect: { width: 1100 } }]);
+      }
+      disconnect() {}
+    };
+    const fix = byId("fix-ready-archive");
+    const { container } = render(<TrialChart candidates={fix.candidates} />);
+    const svg = container.querySelector("svg");
+    expect(svg.getAttribute("width")).toBe("1100");
+    expect(svg.style.maxWidth).toBe("");
+    globalThis.ResizeObserver = original;
+  });
+
   it("draws nothing without trials", () => {
     const { container } = render(<TrialChart candidates={[]} />);
     expect(container.querySelector("svg")).toBeNull();
