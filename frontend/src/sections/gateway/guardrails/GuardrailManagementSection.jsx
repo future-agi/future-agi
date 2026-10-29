@@ -571,9 +571,9 @@ const PlaygroundTab = ({ gatewayId }) => {
               <Chip
                 label={
                   result.blocked
-                    ? "BLOCKED (446)"
+                    ? `BLOCKED (${statusCode})`
                     : result.warned
-                      ? "WARNING (246)"
+                      ? `WARNING (${statusCode})`
                       : `OK (${statusCode})`
                 }
                 color={
@@ -719,7 +719,7 @@ const PlaygroundTab = ({ gatewayId }) => {
                             ? "Blocked"
                             : h.warned
                               ? "Warning"
-                              : `${h.status_code || "OK"}`
+                              : `${h.statusCode || "OK"}`
                         }
                         color={
                           h.blocked ? "error" : h.warned ? "warning" : "success"
@@ -811,7 +811,8 @@ const LogsTab = ({ gatewayId }) => {
                     color={
                       log.status_code === 246
                         ? "warning"
-                        : log.status_code === 446
+                        : // The gateway answers a block with 403; 446 is the legacy code.
+                          log.status_code === 403 || log.status_code === 446
                           ? "error"
                           : "default"
                     }
