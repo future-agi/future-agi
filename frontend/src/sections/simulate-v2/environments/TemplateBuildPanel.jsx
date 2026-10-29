@@ -10,6 +10,7 @@ import {
   Divider,
   MenuItem,
   Select,
+  Tooltip,
 } from "@mui/material";
 import { paths } from "src/routes/paths";
 import Iconify from "src/components/iconify";
@@ -107,13 +108,26 @@ export default function TemplateBuildPanel({
   const [binding, setBinding] = useState(null);
   /* Adapting writes scenarios for the agent: a fork that doesn't compare. */
   const [adapt, setAdapt] = useState(false);
-  useEffect(() => setBinding(null), [agentId]);
+  /* Mappings whose differences someone reviewed, and the measurable-only choice. */
+  const [reviewed, setReviewed] = useState([]);
+  const [measurableOk, setMeasurableOk] = useState(false);
+  useEffect(() => {
+    setBinding(null);
+    setReviewed([]);
+    setMeasurableOk(false);
+  }, [agentId]);
   const fit = useMemo(
     () =>
       agent
-        ? worldFitOf(template, agent, binding, scenariosForPack(template, pack))
+        ? worldFitOf(
+            template,
+            agent,
+            binding,
+            scenariosForPack(template, pack),
+            reviewed,
+          )
         : null,
-    [template, agent, binding, pack],
+    [template, agent, binding, pack, reviewed],
   );
   const startBuild = (choice, runsOn) =>
     build(agent, choice, {
@@ -355,6 +369,18 @@ export default function TemplateBuildPanel({
                 onBind={(w, a) =>
                   setBinding({ ...(binding || fit.binding), [w]: a })
                 }
+                onReview={(w, on) =>
+                  setReviewed((r) =>
+                    on ? [...new Set([...r, w])] : r.filter((x) => x !== w),
+                  )
+                }
+                measurableOk={measurableOk}
+                onMeasurable={setMeasurableOk}
+                onOtherWorld={() =>
+                  navigate(
+                    `${paths.dashboard.simulate.environments}?view=worlds`,
+                  )
+                }
               />
             )}
             {agent && replicationOf(agent).proofLabel === "Live" && (
@@ -523,19 +549,44 @@ export default function TemplateBuildPanel({
               >
                 Adapt scenarios to my agent
               </Button>
-              <Button
-                variant="contained"
-                color="primary"
-                disabled={!agent || !!blocked}
-                onClick={() => {
-                  setAdapt(false);
-                  setDialogOpen(true);
-                }}
-                startIcon={<Iconify icon="solar:play-bold" width={16} />}
-                sx={{ whiteSpace: "nowrap" }}
+              {/* Needs input waits for the reviewed mappings; Partial for the measurable-only choice. */}
+              <Tooltip
+                arrow
+                title={
+                  fit?.verdict === "needs_input"
+                    ? "Review the mappings that need input first"
+                    : fit?.verdict === "partial" &&
+                        fit.unmeasured.length &&
+                        !measurableOk
+                      ? "Choose to run the measurable cases, or repair the fit"
+                      : ""
+                }
               >
-                Run the same cases
-              </Button>
+                <span>
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    disabled={
+                      !agent ||
+                      !!blocked ||
+                      fit?.verdict === "needs_input" ||
+                      (fit?.verdict === "partial" &&
+                        fit.unmeasured.length > 0 &&
+                        !measurableOk)
+                    }
+                    onClick={() => {
+                      setAdapt(false);
+                      setDialogOpen(true);
+                    }}
+                    startIcon={<Iconify icon="solar:play-bold" width={16} />}
+                    sx={{ whiteSpace: "nowrap" }}
+                  >
+                    {fit?.verdict === "partial" && fit.unmeasured.length
+                      ? `Run the ${fit.total - fit.unmeasured.length} measurable cases`
+                      : "Run the same cases"}
+                  </Button>
+                </span>
+              </Tooltip>
             </Stack>
           )}
         </SectionCard>

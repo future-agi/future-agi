@@ -1,11 +1,19 @@
 import PropTypes from "prop-types";
-import { Box, MenuItem, Select, Stack, Typography } from "@mui/material";
+import {
+  Box,
+  Checkbox,
+  MenuItem,
+  Select,
+  Stack,
+  Typography,
+} from "@mui/material";
+import { TextLink } from "../agents/connect/connectBits";
 import Iconify from "src/components/iconify";
 import { agentToolNamesOf } from "../_mock/worldFit";
 
 const KIND = {
   matched: { label: "Matched", tone: "text.secondary" },
-  mapped: { label: "Mapped — review", tone: "text.primary" },
+  mapped: { label: "Mapped", tone: "text.primary" },
   missing: { label: "Not available", tone: "status.warning.fg" },
 };
 
@@ -15,7 +23,34 @@ const KIND = {
  * name, mapped by meaning (to review), or not available, whose cases stay
  * listed as unmeasured. The suite is never rewritten to make the agent fit.
  */
-export default function WorldFitReport({ template, agent, fit, onBind }) {
+const VERDICT = {
+  ready: {
+    label: "Ready",
+    icon: "solar:check-circle-linear",
+    tone: "status.success.fg",
+  },
+  needs_input: {
+    label: "Needs input",
+    icon: "solar:pen-new-square-linear",
+    tone: "status.warning.fg",
+  },
+  partial: {
+    label: "Partial",
+    icon: "solar:danger-triangle-linear",
+    tone: "status.warning.fg",
+  },
+};
+
+export default function WorldFitReport({
+  template,
+  agent,
+  fit,
+  onBind,
+  onReview,
+  measurableOk = false,
+  onMeasurable,
+  onOtherWorld,
+}) {
   const agentTools = agentToolNamesOf(agent);
   const total = fit.total;
   return (
@@ -23,28 +58,19 @@ export default function WorldFitReport({ template, agent, fit, onBind }) {
       {/* The verdict first: Ready runs the whole supported suite; Partial says what isn't measured. */}
       <Stack direction="row" spacing={1} alignItems="flex-start">
         <Iconify
-          icon={
-            fit.verdict === "ready"
-              ? "solar:check-circle-linear"
-              : "solar:danger-triangle-linear"
-          }
+          icon={VERDICT[fit.verdict].icon}
           width={16}
-          sx={{
-            color:
-              fit.verdict === "ready"
-                ? "status.success.fg"
-                : "status.warning.fg",
-            flexShrink: 0,
-            mt: "2px",
-          }}
+          sx={{ color: VERDICT[fit.verdict].tone, flexShrink: 0, mt: "2px" }}
         />
         <Typography sx={{ typography: "s1" }}>
           <Box component="span" sx={{ fontWeight: 600 }}>
-            {fit.verdict === "ready" ? "Ready" : "Partial"}
+            {VERDICT[fit.verdict].label}
           </Box>
           {fit.verdict === "ready"
             ? ` — all ${total} cases run on ${agent.name}, unchanged.`
-            : ` — ${fit.unmeasured.length} of ${total} cases can't be measured${fit.channel.ok ? "" : `, and ${agent.name} is a ${fit.channel.agent} agent in a ${fit.channel.world} world`}. They stay listed, never dropped.`}
+            : fit.verdict === "needs_input"
+              ? ` — ${fit.needsInput.length} mapping${fit.needsInput.length === 1 ? "" : "s"} to review: the names line up, but ${fit.needsInput.length === 1 ? "something differs" : "things differ"} underneath. Review ${fit.needsInput.length === 1 ? "it" : "them"} below before the run.`
+              : ` — ${fit.unmeasured.length} of ${total} cases can't be measured${fit.channel.ok ? "" : `, and ${agent.name} is a ${fit.channel.agent} agent in a ${fit.channel.world} world`}. They stay listed, never dropped.`}
         </Typography>
       </Stack>
 
@@ -86,66 +112,108 @@ export default function WorldFitReport({ template, agent, fit, onBind }) {
           </Typography>
         </Stack>
         {fit.rows.map((r, i) => (
-          <Stack
+          <Box
             key={r.world}
-            direction="row"
-            spacing={1.5}
-            alignItems="center"
             sx={{
-              px: 1.5,
-              py: 0.5,
               ...(i > 0 && { borderTop: "1px solid", borderColor: "divider" }),
             }}
           >
-            <Typography
-              noWrap
+            <Stack
+              direction="row"
+              spacing={1.5}
+              alignItems="center"
               sx={{
-                typography: "s1",
-                fontFamily: "monospace",
-                width: 190,
-                flexShrink: 0,
+                px: 1.5,
+                py: 0.5,
               }}
             >
-              {r.world}
-            </Typography>
-            <Box flex={1} minWidth={0}>
-              <Select
-                size="small"
-                fullWidth
-                value={r.agent || ""}
-                displayEmpty
-                onChange={(e) => onBind(r.world, e.target.value || null)}
+              <Typography
+                noWrap
                 sx={{
                   typography: "s1",
                   fontFamily: "monospace",
-                  "& .MuiSelect-select": { py: 0.5 },
+                  width: 190,
+                  flexShrink: 0,
                 }}
               >
-                <MenuItem value="" sx={{ typography: "s1" }}>
-                  Not available
-                </MenuItem>
-                {agentTools.map((a) => (
-                  <MenuItem
-                    key={a}
-                    value={a}
-                    sx={{ typography: "s1", fontFamily: "monospace" }}
-                  >
-                    {a}
+                {r.world}
+              </Typography>
+              <Box flex={1} minWidth={0}>
+                <Select
+                  size="small"
+                  fullWidth
+                  value={r.agent || ""}
+                  displayEmpty
+                  onChange={(e) => onBind(r.world, e.target.value || null)}
+                  sx={{
+                    typography: "s1",
+                    fontFamily: "monospace",
+                    "& .MuiSelect-select": { py: 0.5 },
+                  }}
+                >
+                  <MenuItem value="" sx={{ typography: "s1" }}>
+                    Not available
                   </MenuItem>
+                  {agentTools.map((a) => (
+                    <MenuItem
+                      key={a}
+                      value={a}
+                      sx={{ typography: "s1", fontFamily: "monospace" }}
+                    >
+                      {a}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </Box>
+              <Typography
+                sx={{
+                  typography: "s3",
+                  color: KIND[r.kind].tone,
+                  width: 120,
+                  flexShrink: 0,
+                }}
+              >
+                {r.needsInput
+                  ? "Needs input"
+                  : r.kind === "mapped" && r.reviewed
+                    ? "Mapped · reviewed"
+                    : KIND[r.kind].label}
+              </Typography>
+            </Stack>
+            {/* A mapping: identity, units and refusals as well as fields — differences stay visible. */}
+            {r.kind === "mapped" && r.checks && (
+              <Box sx={{ px: 1.5, pb: 0.75, pl: "calc(190px + 24px)" }}>
+                {r.checks.map((c) => (
+                  <Typography
+                    key={c.id}
+                    sx={{
+                      typography: "s3",
+                      color: c.ok ? "text.tertiary" : "text.secondary",
+                    }}
+                  >
+                    <Box
+                      component="span"
+                      sx={{
+                        fontWeight: 600,
+                        color: c.ok ? "text.tertiary" : "status.warning.fg",
+                      }}
+                    >
+                      {`${c.label}: `}
+                    </Box>
+                    {c.line}
+                    {!c.ok && c.fix ? ` — ${c.fix}.` : ""}
+                  </Typography>
                 ))}
-              </Select>
-            </Box>
-            <Typography
-              sx={{
-                typography: "s3",
-                color: KIND[r.kind].tone,
-                width: 120,
-                flexShrink: 0,
-              }}
-            >
-              {KIND[r.kind].label}
-            </Typography>
-          </Stack>
+                {r.differs?.length > 0 && onReview && (
+                  <TextLink onClick={() => onReview(r.world, !r.reviewed)}>
+                    {r.reviewed
+                      ? "Undo review"
+                      : "Reviewed — run with this mapping"}
+                  </TextLink>
+                )}
+              </Box>
+            )}
+          </Box>
         ))}
       </Box>
 
@@ -158,6 +226,17 @@ export default function WorldFitReport({ template, agent, fit, onBind }) {
       {fit.extra.length > 0 && (
         <Typography sx={{ typography: "s3", color: "text.secondary" }}>
           {`${agent.name}'s ${fit.extra.join(", ")} ${fit.extra.length === 1 ? "isn't" : "aren't"} in this world — ${fit.live ? "calls to them reach your real systems on a live run" : "the world doesn't answer them, so a case that calls them fails"}.`}
+        </Typography>
+      )}
+
+      {fit.unreachable?.length > 0 && (
+        <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+          {`No tool bound above reads the seeded ${fit.unreachable.join(", ")} — cases that need ${fit.unreachable.length === 1 ? "it" : "them"} show as not measured.`}
+        </Typography>
+      )}
+      {fit.liveActions?.length > 0 && (
+        <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+          {`Runs for real on ${agent.name}'s platform: ${fit.liveActions.map((t) => `${t.name} (${t.line.charAt(0).toLowerCase()}${t.line.slice(1)})`).join(" · ")}. The world can't redirect platform actions.`}
         </Typography>
       )}
 
@@ -196,10 +275,43 @@ export default function WorldFitReport({ template, agent, fit, onBind }) {
           <Typography
             sx={{ typography: "s3", color: "text.tertiary", mt: 0.75 }}
           >
-            To measure them: map a tool above, add the tool to your agent, or
-            adapt the scenarios to your agent — that makes a fork whose results
-            don&apos;t compare with the sample.
+            To measure them: repair a mapping above, add the tool to your agent,
+            or adapt the scenarios to your agent — that makes a fork whose
+            results don&apos;t compare with the sample.
           </Typography>
+          {/* The other two ways forward: run only what's measurable, or another world. */}
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1.5}
+            sx={{ mt: 0.75 }}
+            flexWrap="wrap"
+            useFlexGap
+          >
+            {onMeasurable && (
+              <Stack
+                direction="row"
+                alignItems="center"
+                spacing={0.75}
+                onClick={() => onMeasurable(!measurableOk)}
+                sx={{ cursor: "pointer" }}
+              >
+                <Checkbox
+                  size="small"
+                  checked={measurableOk}
+                  tabIndex={-1}
+                  sx={{ p: 0 }}
+                  inputProps={{ "aria-label": "Run the measurable cases" }}
+                />
+                <Typography sx={{ typography: "s2" }}>
+                  {`Run the ${total - fit.unmeasured.length} measurable cases — the ${fit.unmeasured.length} stay in the report as not measured`}
+                </Typography>
+              </Stack>
+            )}
+            {onOtherWorld && (
+              <TextLink onClick={onOtherWorld}>Choose another world</TextLink>
+            )}
+          </Stack>
         </Box>
       )}
     </Stack>
@@ -210,4 +322,10 @@ WorldFitReport.propTypes = {
   agent: PropTypes.object.isRequired,
   fit: PropTypes.object.isRequired,
   onBind: PropTypes.func.isRequired,
+  /* (worldTool, reviewed) — a mapping whose differences someone accepted. */
+  onReview: PropTypes.func,
+  /* Partial: running only the measurable cases is an explicit choice. */
+  measurableOk: PropTypes.bool,
+  onMeasurable: PropTypes.func,
+  onOtherWorld: PropTypes.func,
 };
