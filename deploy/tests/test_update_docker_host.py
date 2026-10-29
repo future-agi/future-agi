@@ -475,3 +475,50 @@ class VolumeProbeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CheckedDaemonRoutingTests(unittest.TestCase):
+    """The real guard, not a mock: every production installation pins the
+    registered context as `docker --context <ctx>` (setup, runner, CLI)."""
+
+    CONTEXT = "colima-fagi-update"
+
+    def installation(self, docker, environ=None):
+        class Fixture:
+            def __init__(self):
+                self.docker, self.environ = docker, dict(environ or {})
+
+            def subprocess_env(self):
+                return dict(self.environ)
+
+            def docker_run(self, *args, check=False):
+                return SimpleNamespace(returncode=0, stdout=json.dumps({"ID": "daemon-1", "Driver": "overlay2"}))
+        return Fixture()
+
+    def check(self, docker, environ=None, daemon="daemon-1"):
+        binding = SimpleNamespace(docker_context=self.CONTEXT, daemon_identity=daemon)
+        return host.checked_daemon(self.installation(docker, environ), binding)
+
+    def test_both_pinned_routings_reach_the_registered_daemon(self):
+        for docker, environ in ((["docker", "--context", self.CONTEXT], {}),
+                                (["docker", "--context", self.CONTEXT], {"DOCKER_CONTEXT": self.CONTEXT}),
+                                (["docker"], {"DOCKER_CONTEXT": self.CONTEXT})):
+            with self.subTest(docker=docker, environ=environ):
+                self.assertEqual(self.check(docker, environ)["ID"], "daemon-1")
+
+    def test_any_other_routing_is_refused(self):
+        for docker, environ in ((["docker", "--context", "other"], {}),
+                                (["docker", "--context", self.CONTEXT], {"DOCKER_CONTEXT": "other"}),
+                                (["docker"], {}),
+                                (["docker"], {"DOCKER_CONTEXT": "other"}),
+                                (["docker", "--context", self.CONTEXT, "--debug"], {}),
+                                (["docker", "-H", "tcp://elsewhere:2375"], {}),
+                                (["docker", "--context", self.CONTEXT], {"DOCKER_HOST": "tcp://elsewhere:2375"}),
+                                (["docker"], {"DOCKER_CONTEXT": self.CONTEXT, "DOCKER_TLS_VERIFY": "1"})):
+            with self.subTest(docker=docker, environ=environ):
+                with self.assertRaises(GuardRefused):
+                    self.check(docker, environ)
+
+    def test_a_different_daemon_behind_the_same_context_is_refused(self):
+        with self.assertRaises(GuardRefused):
+            self.check(["docker", "--context", self.CONTEXT], daemon="another-daemon")

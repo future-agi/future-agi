@@ -171,9 +171,19 @@ def docker_json(installation, *args, limit=MAX_OUTPUT):
 
 def checked_daemon(installation, binding):
     effective = installation.subprocess_env()
-    require(len(installation.docker) == 1 and installation.environ.get("DOCKER_CONTEXT") == binding.docker_context
-            and effective.get("DOCKER_CONTEXT") == binding.docker_context
-            and not any(effective.get(key) for key in ("DOCKER_HOST", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH")),
+    context = binding.docker_context
+    docker = list(installation.docker)
+    # The registered context is pinned either on the command line, as the
+    # setup, runner and CLI installations do (`docker --context <ctx>`), or
+    # through DOCKER_CONTEXT with a bare `docker`. Nothing else may route.
+    argv_routed = len(docker) == 3 and docker[1] == "--context" and docker[2] == context
+    env_routed = len(docker) == 1
+    require(bool(context) and (argv_routed or env_routed), ReasonCode.OWNERSHIP_UNCONFIRMED)
+    for source in (installation.environ, effective):
+        selected = source.get("DOCKER_CONTEXT")
+        require(selected == context if env_routed else selected in (None, "", context),
+                ReasonCode.OWNERSHIP_UNCONFIRMED)
+    require(not any(effective.get(key) for key in ("DOCKER_HOST", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH")),
             ReasonCode.OWNERSHIP_UNCONFIRMED)
     info = docker_json(installation, "info", "--format", "{{json .}}")
     require(isinstance(info, dict), ReasonCode.OWNERSHIP_UNCONFIRMED)
@@ -390,7 +400,11 @@ def run_readonly_helper(inst, binding, *, image_id, source, volume_name=None,
                 and not (mount_target == path or mount_target.startswith(path.rstrip("/") + "/")
                          or path.startswith(mount_target.rstrip("/") + "/")),
                 ReasonCode.UNSUPPORTED_INSTALLATION)
-    name = "fagi-upd-e2e-observe-" + uuid.uuid4().hex
+    # Keep read-only probes in the installation's resource namespace too.
+    project = getattr(binding, "compose_project", "fagi-upd-e2e")  # Legacy daemon-only observation bindings.
+    require(re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,62}", project) is not None,
+            ReasonCode.UNSUPPORTED_INSTALLATION)
+    name = project + "-observe-" + uuid.uuid4().hex
     token = uuid.uuid4().hex
     env = inst.subprocess_env()
     args = [*inst.docker, "create", "-i", "--name", name, "--label", HELPER_LABEL + "=" + token,

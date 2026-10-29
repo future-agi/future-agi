@@ -97,6 +97,30 @@ django.setup()
 a=json.load(sys.stdin)
 """
 
+# Offline REAL B loader against A's observed applied set. Runs only in an
+# isolated, networkless B image helper; never imports image code on the host.
+TARGET_LOADER_PLAN = DJANGO_PREFIX + """
+from django.db.migrations.loader import MigrationLoader
+from django.db.migrations.executor import MigrationExecutor
+from pathlib import Path
+import inspect, hashlib
+loader=MigrationLoader(None,ignore_no_migrations=True)
+assert all(not migration.replaces for migration in loader.disk_migrations.values())
+loader.applied_migrations={tuple(node):None for node in a['applied']}
+assert set(loader.applied_migrations) <= set(loader.graph.nodes)
+executor=object.__new__(MigrationExecutor)
+executor.loader=loader
+plan=executor.migration_plan(loader.graph.leaf_nodes())
+assert all(not backwards for migration,backwards in plan)
+inventory=[dict(app_label=app,name=name,source_sha256=hashlib.sha256(
+    Path(inspect.getsourcefile(migration.__class__)).read_bytes()).hexdigest())
+    for (app,name),migration in sorted(loader.disk_migrations.items())]
+print(json.dumps(dict(planned=sorted([list(node) for node in loader.graph.nodes]),
+    inventory=inventory,inventory_sha256=hashlib.sha256(json.dumps(inventory,sort_keys=True,
+    separators=(',',':'),ensure_ascii=False,allow_nan=False).encode()).hexdigest(),
+    pending=[dict(app_label=migration.app_label,name=migration.name) for migration,backwards in plan])))
+"""
+
 S3_OPERATION = """
 import sys, os, json, base64, hashlib, boto3
 a=json.load(sys.stdin)

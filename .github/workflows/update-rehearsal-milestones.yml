@@ -77,3 +77,61 @@ jobs:
           # credentials and raw command logs stay on the ephemeral runner. The
           # exact snapshot inventory includes generated fixture container config;
           # treat this test artifact as private, not production qualification.
+
+  target-readiness:
+    name: M2 retained A snapshot then v1.54.0 target readiness (not qualification)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Daemon-free driver safety tests
+        run: |
+          set -euo pipefail
+          PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s deploy/tests -p test_update_rehearsal_driver.py -v
+      - name: Isolated native daemon context in private runner config
+        run: |
+          set -euo pipefail
+          umask 077
+          dir="$(mktemp -d "$HOME/fagi-upd-e2e-m2-docker.XXXXXX")"
+          docker --config "$dir" context create colima-fagi-update --docker host=unix:///var/run/docker.sock
+          printf 'DOCKER_CONFIG=%s\n' "$dir" >> "$GITHUB_ENV"
+      - name: Milestone job plan (no Docker mutations)
+        run: |
+          set -euo pipefail
+          umask 077
+          python -I scripts/rehearse_update_compatibility.py qualify --through target_readiness \
+            --dry-run --boot-timeout 4200 --docker-context colima-fagi-update \
+            --out "$HOME/fagi-upd-e2e-m2-plan-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+      - name: Same-session A boot, cold snapshot and shipping automatic B start
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$(uname -m)" = x86_64
+          timeout --signal=TERM --kill-after=180s 135m \
+            python -I scripts/rehearse_update_compatibility.py qualify --through target_readiness \
+              --boot-timeout 4200 --docker-context colima-fagi-update \
+              --out "$HOME/fagi-upd-e2e-m2-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+      - name: Retain milestone evidence and bounded diagnostics even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: target-readiness-m2-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ~/fagi-upd-e2e-m2-plan-${{ github.run_id }}-${{ github.run_attempt }}/*.json
+            ~/fagi-upd-e2e-m2-${{ github.run_id }}-${{ github.run_attempt }}/*.json
+            ~/fagi-upd-e2e-m2-${{ github.run_id }}-${{ github.run_attempt }}/snapshot-*.members.jsonl
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 6
+          # Never upload workspace: archives, generated env/private config, API
+          # credentials and raw command logs stay on the ephemeral runner. The
+          # exact snapshot inventory includes generated fixture container config;
+          # treat this test artifact as private, not production qualification.

@@ -25,6 +25,15 @@ Full qualification still refuses shipping_executor_unavailable.
     --through source_snapshot --boot-timeout 4200 \\
     --docker-context colima-fagi-update --out <new-home-directory>
 
+Milestone 2 continues in that SAME session/stack through --through target_readiness:
+B=v1.54.0 is prefetched by digest before quiescence, its real offline Django
+loader plans against A's observed applied set, and Updater's shared lock-held
+entry commits the env and starts B with the real AutomaticRuntime guards. It
+checks B's inventory, every retained witness and final identities, then records
+an explicitly unsigned milestone success decision. No enrollment/admission,
+signed A6 preflight, restore suite or six-suite qualification is claimed.
+A nonzero plan without exact execution measurements fails, never becomes zero.
+
 Add --dry-run to write only the labeled job plan without Git/Docker/trust work.
 The live milestone requires a private runner Docker config whose dedicated
 colima-fagi-update context points at that runner's native daemon, NOT Colima or
@@ -1457,8 +1466,8 @@ def select_retained_layout(source, proof_raw, directory, platform):
 def qualify(argv):
     """Single native pair, with a nonzero failure exit even for notify-only rows."""
     parser = argparse.ArgumentParser(prog='rehearse_update_compatibility.py qualify')
-    parser.add_argument('--through', choices=('source_snapshot',),
-                        help='Milestone 1 only; never writes a qualification/proof row')
+    parser.add_argument('--through', choices=('source_snapshot', 'target_readiness'),
+                        help='Bounded milestone only; never writes a qualification/proof row')
     parser.add_argument('--dry-run', action='store_true', help='Write the milestone job plan without Docker')
     parser.add_argument('--source-ref')
     parser.add_argument('--target-ref')
@@ -1474,15 +1483,15 @@ def qualify(argv):
     args.docker_context = args.docker_context or ('colima-fagi-update' if args.through or sys.platform=='darwin' else 'default')
     if args.through:
         if any((args.source_ref, args.target_ref, args.deployment_dir, args.reference_scale, args.public_key)):
-            parser.error('source_snapshot uses the fixed v1.53.0 tag/pin, not qualification or trust inputs')
+            parser.error('milestones use fixed release tags/pins, not qualification or trust inputs')
         if args.platform not in (None, SUPPORTED_PLATFORM):
-            parser.error('Milestone 1 runs only on native linux/amd64 Actions')
+            parser.error('Milestones run only on native linux/amd64 Actions')
         if not 1 <= args.boot_timeout <= 4200:
             parser.error('source boot ceiling must be between 1 and 4200 seconds')
         from scripts.update_rehearsal_milestone import run
         return run(args)
     if args.dry_run:
-        parser.error('--dry-run requires --through source_snapshot')
+        parser.error('--dry-run requires --through source_snapshot or target_readiness')
     for name in ('source_ref', 'target_ref', 'platform', 'deployment_dir', 'reference_scale'):
         if getattr(args, name) is None:
             parser.error('--'+name.replace('_', '-')+' is required for full qualification')

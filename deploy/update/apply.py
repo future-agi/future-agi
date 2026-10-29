@@ -557,7 +557,7 @@ class Updater:
                  hook_runner: Callable[..., Any] = run_hook, command_options: Sequence[str] = (),
                  automation_guard: Optional[AutomationGuard] = None,
                  guard_context: Optional[Callable[["Updater"], LockedContext]] = None,
-                 built_in_backup=None) -> None:
+                 built_in_backup=None, runtime_observer=None) -> None:
         self.installation = installation
         self.settings = settings
         self.state = state
@@ -569,6 +569,8 @@ class Updater:
             if not isinstance(built_in_backup, StandaloneBackup) or getattr(automation_guard, 'automatic', None) is None:
                 raise ValueError('built-in backup requires an enrolled automatic lifecycle')
         self.built_in_backup = built_in_backup
+        # Optional read-only instrumentation; the runtime still owns every guard.
+        self.runtime_observer = runtime_observer
         if (automation_guard is None) != (guard_context is None):
             raise ValueError("automation guard and locked context must be supplied together")
         self.automation_guard = automation_guard
@@ -1647,7 +1649,7 @@ class Updater:
 
     def _automatic_runtime(self, lifecycle, ledger, backup):
         from .automatic_runtime import AutomaticRuntime, HostRuntimeObserver
-        observer = HostRuntimeObserver(self.installation, lifecycle.registration, backup.b,
+        observer = self.runtime_observer or HostRuntimeObserver(self.installation, lifecycle.registration, backup.b,
             timeout=min(30, self.settings.automation_policy.probe_timeout_seconds))
         return AutomaticRuntime(self.installation, ledger, backup.b, observer=observer)
 
@@ -1905,6 +1907,81 @@ class Updater:
         finally:
             supervisor.deadline = original_deadline
 
+    @contextmanager
+    def start_automatic_target_locked(self, *, ledger, plan, estimate, observe):
+        """Select/create/start B under an already-held automatic update lock.
+
+        Shared by the enrolled transaction and bounded producer rehearsals.
+        The caller owns admission and the sealed backup; this entry never
+        invents either. It retains the shipping envcommit, rollout guard, exact
+        images/model/stores, deadline, stall, watermark and stability checks.
+        observe(runtime) supplies the read-only readiness session; acceptance
+        and metadata remain with the caller while this session/lock stay held.
+        """
+        from .orchestrator import require, GuardRefused
+        from .contracts import AutomaticUpdateEstimate
+        import hashlib
+        guard = self.automation_guard
+        require(self.state.lock_holder(automation=True) is not None, ReasonCode.RECOVERY_REQUIRED)
+        require(guard is not None and guard.automatic is not None and self.built_in_backup is not None,
+                ReasonCode.CONTROL_INVALID)
+        require(isinstance(estimate, AutomaticUpdateEstimate)
+                and type(estimate.protected_restore_reserve_bytes) is int
+                and estimate.protected_restore_reserve_bytes >= self.settings.automation_policy.disk_watermark_reserve_bytes,
+                ReasonCode.RESTORE_CAPACITY_UNKNOWN)
+        require(isinstance(guard.approved_env_sha256, str)
+                and re.fullmatch(r'[0-9a-f]{64}', guard.approved_env_sha256) is not None,
+                ReasonCode.ENV_CONFLICT)
+        record = self.active_record
+        require(record is not None and record.get('automatic_transaction') is True
+                and record['run_id'] == ledger.snapshot['run_id']
+                and ledger.backup_seal is not None and ledger.direction == 'forward_pending'
+                and ledger.snapshot['pending'] is None, ReasonCode.RECOVERY_REQUIRED)
+        lifecycle, policy = guard.automatic, self.settings.automation_policy
+        try:
+            inverse = envfile.recovery_record(self._env_path(), record['env_changes'],
+                expected_before_sha256=guard.approved_env_sha256)
+        except envfile.EnvPreimageError:
+            raise GuardRefused(ReasonCode.ENV_CONFLICT) from None
+        record.update(journal_version=2, automation=self._automation_metadata(), env_recovery=inverse)
+        self.state.write_journal(record)
+        ledger.checkpoint('env_commit_pending', forward_record=record)
+        op = ledger.begin('env_commit', identity={'run_id': record['run_id']},
+            preconditions={'env_sha256': record['env_recovery']['before_sha256']},
+            postconditions={'env_sha256': record['env_recovery']['after_sha256']})
+        envfile.write_changes(self._env_path(), record['env_changes'], recovery=record['env_recovery'])
+        self.installation.reload_env()
+        record['stage'] = 'env_written'
+        self.state.write_journal(record)
+        actual = hashlib.sha256(self._env_path().read_bytes()).hexdigest()
+        require(actual == record['env_recovery']['after_sha256'], ReasonCode.ENV_CONFLICT)
+        ledger.complete(op, {'env_sha256': actual})
+        ledger.checkpoint('env_selected', forward_record=record)
+        expected = {i['variable']: i['target_tag'] for i in plan['components']}
+        config, services = self._check_config(expected)
+        ids = dict(self.built_in_backup.b['images'])
+        inspector = self._automatic_inspection_installation()
+        for service in services:
+            local = inspector.image(service['image'])
+            item = next(i for i in plan['components'] if i['component'] == service['component'])
+            require(local is not None and (parse_image_ref(item['target_image']).name,
+                item['target_digest']) in _digest_set(local['repo_digests']), ReasonCode.IMAGE_DIGEST_MISMATCH)
+            ids[service['service']] = local['id']
+        record['target_image_ids'] = {s['service']: ids[s['service']] for s in services}
+        record['stage'] = 'pulled'  # prefetched, reverified, NEVER pulled cold
+        self.state.write_journal(record)
+        ledger.checkpoint(target_model=config)
+        self._guard('before_rollout')
+        record['stage'] = 'rollout'
+        self.state.write_journal(record)
+        ledger.checkpoint(forward_record=record)
+        runtime = self._automatic_runtime(lifecycle, ledger, self.built_in_backup)
+        roster = runtime.create(ids)
+        with observe(runtime) as session:
+            runtime.start_and_wait(roster, policy, estimate, ready_callback=lambda: session.ready(roster))
+            self._dependencies_unchanged()
+            yield runtime, roster, session
+
     def _apply_automatic_scope_locked(self, make_plan, manifest):
         """Reservation through success OR recovery inside the same update.lock."""
         from .orchestrator import require, GuardRefused
@@ -1956,51 +2033,10 @@ class Updater:
             self.built_in_backup.retire_helpers(ledger)
             self._guard('after_backup')
             self._guard('before_env_commit')
-            try:
-                inverse = envfile.recovery_record(self._env_path(), changes,
-                    expected_before_sha256=guard.approved_env_sha256)
-            except envfile.EnvPreimageError:
-                raise GuardRefused(ReasonCode.ENV_CONFLICT) from None
-            record.update(journal_version=2, automation=self._automation_metadata(), env_recovery=inverse)
-            self.state.write_journal(record)
-            ledger.checkpoint('env_commit_pending', forward_record=record)
-            op = ledger.begin('env_commit', identity={'run_id': record['run_id']},
-                preconditions={'env_sha256': record['env_recovery']['before_sha256']},
-                postconditions={'env_sha256': record['env_recovery']['after_sha256']})
-            envfile.write_changes(self._env_path(), changes, recovery=record['env_recovery'])
-            self.installation.reload_env()
-            record['stage'] = 'env_written'
-            self.state.write_journal(record)
-            actual = hashlib.sha256(self._env_path().read_bytes()).hexdigest()
-            require(actual == record['env_recovery']['after_sha256'], ReasonCode.ENV_CONFLICT)
-            ledger.complete(op, {'env_sha256': actual})
-            ledger.checkpoint('env_selected', forward_record=record)
-            expected = {i['variable']: i['target_tag'] for i in plan['components']}
-            config, services = self._check_config(expected)
-            ids = dict(self.built_in_backup.b['images'])
-            inspector = self._automatic_inspection_installation()
-            for service in services:
-                local = inspector.image(service['image'])
-                item = next(i for i in plan['components'] if i['component'] == service['component'])
-                require(local is not None and (parse_image_ref(item['target_image']).name,
-                    item['target_digest']) in _digest_set(local['repo_digests']), ReasonCode.IMAGE_DIGEST_MISMATCH)
-                ids[service['service']] = local['id']
-            record['target_image_ids'] = {s['service']: ids[s['service']] for s in services}
-            record['stage'] = 'pulled'  # prefetched, reverified, NEVER pulled cold
-            self.state.write_journal(record)
-            ledger.checkpoint(target_model=config)
-            self._guard('before_rollout')
-            record['stage'] = 'rollout'
-            self.state.write_journal(record)
-            ledger.checkpoint(forward_record=record)
-            runtime = self._automatic_runtime(lifecycle, ledger, self.built_in_backup)
-            roster = runtime.create(ids)
-            with runtime.observation_session(lifecycle,
-                    lifecycle.baseline.evidence(lifecycle.intent.target), 'success', policy,
-                    decision.estimate) as session:
-                runtime.start_and_wait(roster, policy, decision.estimate,
-                    ready_callback=lambda: session.ready(roster))
-                self._dependencies_unchanged()
+            observe = lambda runtime: runtime.observation_session(lifecycle,
+                lifecycle.baseline.evidence(lifecycle.intent.target), 'success', policy, decision.estimate)
+            with self.start_automatic_target_locked(ledger=ledger, plan=plan,
+                    estimate=decision.estimate, observe=observe) as (runtime, roster, session):
                 observation = session.result
                 lifecycle.baseline.validate_success_observation(lifecycle.intent, observation)
                 # Retain the FULL validated observation before acceptance. A6
