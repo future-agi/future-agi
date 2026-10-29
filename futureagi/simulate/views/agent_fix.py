@@ -151,7 +151,7 @@ class AgentFixRunViewSet(viewsets.ViewSet):
         source_run = (
             self._jobs(request)
             .filter(
-                id=request.validated_query_data["source_run_id"],
+                test_execution_id=request.validated_query_data["source_run_id"],
                 environment__isnull=False,
             )
             .select_related("environment__environment_version", "environment_version")
@@ -172,7 +172,7 @@ class AgentFixRunViewSet(viewsets.ViewSet):
         data = request.validated_data
         source_run = (
             self._jobs(request)
-            .filter(id=data["source_run_id"], environment__isnull=False)
+            .filter(test_execution_id=data["source_run_id"], environment__isnull=False)
             .select_related("environment")
             .first()
         )

@@ -23,6 +23,7 @@ class CreditsField(serializers.FloatField):
 
 
 class AgentFixLaunchSerializer(serializers.Serializer):
+    # A run is known to the user by its test execution, as every run page names it.
     source_run_id = serializers.UUIDField()
     target_scenario_keys = serializers.ListField(
         child=serializers.CharField(max_length=255),
@@ -168,7 +169,10 @@ class AgentFixCandidateSerializer(serializers.ModelSerializer):
 
 class AgentFixRunSerializer(serializers.ModelSerializer):
     environment_id = serializers.UUIDField()
-    source_run_id = serializers.UUIDField(allow_null=True)
+    # The run's test execution, as for launch.
+    source_run_id = serializers.UUIDField(
+        source="source_run.test_execution_id", allow_null=True
+    )
     base_agent_version_id = serializers.UUIDField()
     request = AgentFixRequestSerializer()
     report = AgentFixReportSerializer(allow_null=True)

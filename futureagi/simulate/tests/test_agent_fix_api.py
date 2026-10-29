@@ -126,7 +126,7 @@ def _git(cwd, *args):
 
 def _launch_body(source_run, **overrides):
     return {
-        "source_run_id": str(source_run.id),
+        "source_run_id": str(source_run.test_execution_id),
         "target_scenario_keys": [KEYS[0]],
         "surfaces": ["prompt"],
         "budget_credits": 500,
@@ -665,7 +665,10 @@ class TestUserApi:
 
         assert response.status_code == 201, response.content
         body = response.json()
-        assert (body["state"], body["source_run_id"]) == ("queued", str(source_run.id))
+        assert (body["state"], body["source_run_id"]) == (
+            "queued",
+            str(source_run.test_execution_id),
+        )
         assert body["request"]["failing_sub_goals"] == ["refunded"]
         temporal.start.assert_called_once_with(body["id"])
 
@@ -693,7 +696,8 @@ class TestUserApi:
         self, auth_client, environment, source_run
     ):
         response = auth_client.get(
-            f"{BASE}/launch-options/", {"source_run_id": str(source_run.id)}
+            f"{BASE}/launch-options/",
+            {"source_run_id": str(source_run.test_execution_id)},
         )
 
         assert response.status_code == 200, response.content
@@ -709,7 +713,7 @@ class TestUserApi:
             "target_scenario_keys": [KEYS[0]],
             "protected_scenario_keys": [KEYS[1]],
         }
-        assert options["source_run"]["id"] == str(source_run.id)
+        assert options["source_run"]["id"] == str(source_run.test_execution_id)
         assert options["source_run"]["number"] == 1
         assert options["environment"]["id"] == str(environment.id)
         assert options["agent"]["kind"] == "github"
@@ -738,7 +742,8 @@ class TestUserApi:
         _fix_run(source_run)
 
         options = auth_client.get(
-            f"{BASE}/launch-options/", {"source_run_id": str(source_run.id)}
+            f"{BASE}/launch-options/",
+            {"source_run_id": str(source_run.test_execution_id)},
         ).json()
         launched = auth_client.post(f"{BASE}/", _launch_body(source_run), format="json")
 

@@ -367,6 +367,7 @@ def fix_runs_for_read(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
         with_spend(runs)
         .annotate(number=Subquery(number), source_run_number=run_number("source_run__"))
         .select_related(
+            "source_run",
             "environment__environment_version",
             "base_agent_version__agent_definition",
             "base_agent_version__harness_runtime",
@@ -465,7 +466,7 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
     blocked = launch_blocker(source_run)
     return LaunchOptions(
         source_run=LaunchSourceRun(
-            id=str(source_run.id),
+            id=str(source_run.test_execution_id),
             number=number,
             state=source_run.state,
             finished_at=source_run.terminal_at.isoformat()
