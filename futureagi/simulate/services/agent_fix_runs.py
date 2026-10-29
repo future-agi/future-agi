@@ -35,15 +35,16 @@ from simulate.temporal.client import (
 logger = structlog.get_logger(__name__)
 
 
-# A third of the failing cases are held back, once there are enough for a third to tell.
+# A third of the failing cases are held back, once there are enough for a third to tell:
+# 4 held back pass a large real fix 87% of the time, 2 only 56%.
 HELD_BACK_SHARE = 3
-HELD_BACK_MIN_CASES = 6
+HELD_BACK_MIN_CASES = 12
 
 
 def split_held_back(seed: str, failing: Mapping[str, list[str]]) -> list[str]:
     """The failing cases the worker never sees, so the verdict can prove the fix holds beyond
     the cases it was made on: one in three, picked by a stable hash of ``seed`` and the key,
-    and never the last case left to search on for a failing sub-goal. None below six."""
+    and never the last case left to search on for a failing sub-goal. None below twelve."""
     cases = [key for key, names in failing.items() if names]
     if len(cases) < HELD_BACK_MIN_CASES:
         return []

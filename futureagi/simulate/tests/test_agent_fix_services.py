@@ -262,30 +262,30 @@ def _move_default_suite(environment, user):
 
 class TestHeldBackSplit:
     def test_too_few_failing_cases_hold_none_back(self):
-        failing = {f"s{i}": ["refunded"] for i in range(5)}
+        failing = {f"s{i}": ["refunded"] for i in range(11)}
 
         assert split_held_back("run", failing) == []
 
     def test_a_third_of_the_failing_cases_are_held_back_the_same_way_each_time(self):
-        failing = {f"s{i}": ["refunded"] for i in range(9)}
+        failing = {f"s{i}": ["refunded"] for i in range(12)}
 
         held = split_held_back("run", failing)
 
-        assert len(held) == 3
+        assert len(held) == 4
         assert set(held) <= set(failing)
         assert split_held_back("run", failing) == held
 
     def test_the_last_case_of_a_failing_sub_goal_stays_to_search_on(self):
-        # Only s5 fails apologised: holding it back would leave the worker nothing to fix it on.
-        failing = {f"s{i}": ["refunded"] for i in range(5)} | {"s5": ["apologised"]}
+        # Only s11 fails apologised: holding it back would leave the worker nothing to fix it on.
+        failing = {f"s{i}": ["refunded"] for i in range(11)} | {"s11": ["apologised"]}
 
         for seed in ("a", "b", "c", "d", "e", "f"):
             held = split_held_back(seed, failing)
-            assert len(held) == 2
-            assert "s5" not in held
+            assert len(held) == 4
+            assert "s11" not in held
 
     def test_cases_that_passed_are_neither_held_back_nor_counted(self):
-        failing = {f"s{i}": ["refunded"] for i in range(5)} | {"clean": []}
+        failing = {f"s{i}": ["refunded"] for i in range(11)} | {"clean": []}
 
         assert split_held_back("run", failing) == []
 
