@@ -146,6 +146,11 @@ class AgentVersionListResponseSerializer(serializers.ModelSerializer):
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     is_active = serializers.ReadOnlyField()
     is_latest = serializers.ReadOnlyField()
+    in_production = serializers.ReadOnlyField(source="is_active")
+    origin = serializers.SerializerMethodField()
+    preflight_status = serializers.SerializerMethodField()
+    environments_count = serializers.SerializerMethodField()
+    source = serializers.SerializerMethodField()
 
     class Meta:
         model = AgentVersion
@@ -163,6 +168,11 @@ class AgentVersionListResponseSerializer(serializers.ModelSerializer):
             "commit_message",
             "is_active",
             "is_latest",
+            "in_production",
+            "origin",
+            "preflight_status",
+            "environments_count",
+            "source",
             "created_at",
         ]
         read_only_fields = fields
@@ -172,6 +182,32 @@ class AgentVersionListResponseSerializer(serializers.ModelSerializer):
         if obj.version_name:
             return obj.version_name
         return f"v{obj.version_number}"
+
+    def _runtime(self, obj):
+        return (self.context.get("runtimes") or {}).get(obj.id)
+
+    def get_origin(self, obj) -> str | None:
+        runtime = self._runtime(obj)
+        return (runtime.trigger or None) if runtime is not None else None
+
+    def get_preflight_status(self, obj) -> str | None:
+        runtime = self._runtime(obj)
+        return runtime.preflight_status if runtime is not None else None
+
+    def get_environments_count(self, obj) -> int:
+        return int((self.context.get("environments_count") or {}).get(obj.id, 0))
+
+    @swagger_serializer_method(serializer_or_field=AgentVersionSourceSerializer)
+    def get_source(self, obj) -> dict | None:
+        runtime = self._runtime(obj)
+        if runtime is None or not runtime.source_kind:
+            return None
+        facts = {
+            name: value
+            for name, value in (runtime.source or {}).items()
+            if name in SOURCE_FACTS and value
+        }
+        return {"kind": str(runtime.source_kind), **facts}
 
 
 class AgentVersionCreateResponseSerializer(serializers.Serializer):
@@ -203,3 +239,22 @@ class AgentVersionRestoreResponseSerializer(serializers.Serializer):
     message = serializers.CharField(read_only=True)
     agent = serializers.DictField(read_only=True)
     version = AgentVersionResponseSerializer(read_only=True)
+
+
+class AgentVersionChangeResponseSerializer(serializers.Serializer):
+    """The version a change made, or the one already standing for that content."""
+
+    version = AgentVersionResponseSerializer(read_only=True)
+    created = serializers.BooleanField(read_only=True)
+    up_to_date = serializers.BooleanField(read_only=True)
+
+
+class AgentVersionProductionResponseSerializer(serializers.Serializer):
+    version = AgentVersionResponseSerializer(read_only=True)
+    moved_environment_ids = serializers.ListField(
+        child=serializers.CharField(), read_only=True
+    )
+
+
+class AgentVersionActionResponseSerializer(serializers.Serializer):
+    message = serializers.CharField(read_only=True)

@@ -33,6 +33,7 @@ from simulate.services.agent_definition import (
     resolve_api_secret_for_version,
     sync_provider_credentials,
 )
+from simulate.services.agent_overview import version_list_context
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 from simulate.utils.eval_summary import (
     _build_template_statistics,
@@ -96,7 +97,9 @@ class AgentVersionListView(APIView):
             paginator = ExtendedPageNumberPagination()
             result_page = paginator.paginate_queryset(versions, request)
 
-            serializer = AgentVersionListResponseSerializer(result_page, many=True)
+            serializer = AgentVersionListResponseSerializer(
+                result_page, many=True, context=version_list_context(result_page)
+            )
             return paginator.get_paginated_response(serializer.data)
 
         except AgentDefinition.DoesNotExist:

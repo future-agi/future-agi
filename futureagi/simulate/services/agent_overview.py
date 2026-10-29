@@ -145,6 +145,34 @@ def environment_counts(agent_ids: list[UUID]) -> dict[UUID, int]:
     return {row["run_test__agent_definition_id"]: row["total"] for row in rows}
 
 
+def version_list_context(versions: list[AgentVersion]) -> dict[str, Any]:
+    """What the versions list needs beside each row: its side row and how many
+    environments have it as their default."""
+    from simulate.models import HarnessAgentVersionRuntime
+
+    ids = [version.id for version in versions]
+    runtimes = {
+        runtime.agent_version_id: runtime
+        for runtime in HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_version_id__in=ids
+        ).defer("credential_blob", "diff")
+    }
+    counts = (
+        HostedHarnessJob.no_workspace_objects.filter(
+            agent_version_id__in=ids,
+            run_test__deleted=False,
+            environment__isnull=True,
+            deleted=False,
+        )
+        .values("agent_version_id")
+        .annotate(total=Count("id"))
+    )
+    return {
+        "runtimes": runtimes,
+        "environments_count": {row["agent_version_id"]: row["total"] for row in counts},
+    }
+
+
 def environments_testing(version: AgentVersion) -> int:
     """How many environments have this version as their default."""
     return HostedHarnessJob.no_workspace_objects.filter(

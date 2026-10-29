@@ -656,6 +656,19 @@ class HarnessAgentVersionCreateSerializer(serializers.Serializer):
         return attrs
 
 
+class HarnessAgentPolicySerializer(serializers.Serializer):
+    """Whether the environment follows its agent's production version or is pinned
+    to one; a pin may name the version to move to."""
+
+    policy = serializers.ChoiceField(choices=("follow", "pinned"))
+    version_id = serializers.UUIDField(required=False)
+
+
+class HarnessAgentPolicyResponseSerializer(serializers.Serializer):
+    policy = serializers.CharField(read_only=True)
+    agent_version = serializers.DictField(read_only=True)
+
+
 class HarnessVersionsSerializer(serializers.Serializer):
     """Every version of an environment's three pieces, newest first."""
 

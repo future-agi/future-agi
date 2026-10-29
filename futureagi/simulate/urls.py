@@ -101,6 +101,12 @@ from .views.agent_version import (
     CreateAgentVersionView,
     RestoreAgentVersionView,
 )
+from .views.agent_versions import (
+    AgentVersionChangeView,
+    AgentVersionDiscardView,
+    AgentVersionProductionView,
+    AgentVersionRetryView,
+)
 from .views.alk_simulate_ingestion import ALKSimulateIngestionViewSet
 from .views.harness_environment import HarnessEnvironmentViewSet
 from .views.harness_github_webhook import HarnessGitHubWebhookView
@@ -304,6 +310,26 @@ urlpatterns = [
         "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/activate/",
         ActivateAgentVersionView.as_view(),
         name="agent-versions-activate",
+    ),
+    path(
+        "agent-definitions/<uuid:agent_id>/versions/change/",
+        AgentVersionChangeView.as_view(),
+        name="agent-versions-change",
+    ),
+    path(
+        "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/production/",
+        AgentVersionProductionView.as_view(),
+        name="agent-versions-production",
+    ),
+    path(
+        "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/retry/",
+        AgentVersionRetryView.as_view(),
+        name="agent-versions-retry",
+    ),
+    path(
+        "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/discard/",
+        AgentVersionDiscardView.as_view(),
+        name="agent-versions-discard",
     ),
     path(
         "agent-definitions/<uuid:agent_id>/versions/<uuid:version_id>/restore/",

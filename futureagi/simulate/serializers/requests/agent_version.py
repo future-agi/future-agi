@@ -104,3 +104,38 @@ class AgentVersionCreateRequestSerializer(serializers.Serializer):
                         f"{', '.join(valid_languages)}"
                     )
         return value
+
+
+class AgentVersionChangeRequestSerializer(serializers.Serializer):
+    """One change to a connected agent, by kind: sync the branch, a new upload, a
+    prompt edit for a built-in agent, or changed credentials."""
+
+    kind = serializers.ChoiceField(choices=("sync", "upload", "credentials", "manual"))
+    archive_artifact_id = serializers.UUIDField(required=False)
+    prompt = serializers.CharField(required=False, allow_blank=True, max_length=65_536)
+    secret_values = serializers.DictField(
+        child=serializers.CharField(max_length=65_536, trim_whitespace=False),
+        required=False,
+    )
+
+    def validate(self, attrs):
+        kind = attrs["kind"]
+        needed = {
+            "upload": "archive_artifact_id",
+            "manual": "prompt",
+            "credentials": "secret_values",
+        }.get(kind)
+        if needed and needed not in attrs:
+            raise serializers.ValidationError({needed: f"required for kind {kind}"})
+        extra = [
+            name
+            for name in ("archive_artifact_id", "prompt", "secret_values")
+            if name in attrs and name != needed
+        ]
+        if extra:
+            raise serializers.ValidationError(
+                {extra[0]: f"not part of a {kind} change"}
+            )
+        if kind == "credentials" and not attrs["secret_values"]:
+            raise serializers.ValidationError({"secret_values": "nothing to change"})
+        return attrs
