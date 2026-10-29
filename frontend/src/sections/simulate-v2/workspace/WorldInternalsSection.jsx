@@ -552,7 +552,9 @@ function ToolImplsCard({ env, tools, envState, patch, onAddMcp, onRemove }) {
                   >
                     {setting.safeTarget && setting.tier === "live"
                       ? `Live at ${setting.safeTarget}`
-                      : tool.desc}
+                      : setting.approval
+                        ? `Waits for ${setting.approval.by} above $${setting.approval.above} · ${tool.desc || ""}`
+                        : tool.desc}
                   </Typography>
                 </Stack>
                 <TierDial

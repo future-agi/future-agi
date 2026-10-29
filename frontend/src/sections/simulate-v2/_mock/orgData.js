@@ -121,6 +121,13 @@ const POLICY_PASSAGES = (days) => [
     page: 2,
     text: "Final-sale items cannot be returned or refunded.",
   },
+  {
+    id: "p5",
+    page: 3,
+    text: "Refunds over $500 need a supervisor's approval before they are issued.",
+    rule: "Refunds over $500 wait for a supervisor's approval.",
+    approval: { above: 500, by: "Supervisor" },
+  },
 ];
 
 const TABLES = [
@@ -354,7 +361,7 @@ export const participantViewsOf = (sources) => {
  *   { items: [{ id, kind, title, detail, cite, inferred?, blocking?, rule?, table?, scenario? }] }
  * kind: rule | table | scenario | missing | hidden | conflict | unreadable.
  */
-export const dataProposalOf = (sources) => {
+export const dataProposalOf = (sources, { cast = [], tools = [] } = {}) => {
   const items = [];
   const policies = sources.filter(
     (s) => s.role === "policy" && s.status === "ready",
@@ -489,6 +496,94 @@ export const dataProposalOf = (sources) => {
         },
       ],
     });
+  /* An approval in the policy needs someone to approve, and a tool that waits. */
+  const approval = policies
+    .flatMap((s) =>
+      s.parsed.passages.filter((p) => p.approval).map((p) => ({ s, p })),
+    )
+    .shift();
+  if (approval) {
+    const { s, p } = approval;
+    const cite = {
+      sourceId: s.id,
+      ref: `${s.name} · p.${p.page}`,
+      excerpt: p.text,
+    };
+    const scope = `Refunds over $${p.approval.above}`;
+    const existing = cast.find((a) => /supervisor/i.test(a.name));
+    items.push({
+      id: `actor-${s.id}-${p.id}`,
+      kind: "actor",
+      title: existing
+        ? `Actor: ${existing.name} approves refunds over $${p.approval.above}`
+        : `Actor: a Supervisor who approves refunds over $${p.approval.above}`,
+      detail: existing
+        ? `Updates the ${existing.name} already in the cast: approval scope becomes “${scope}”.`
+        : "Joins when the agent asks to refund more than the cap; approves or declines, and declines if no one answers in 3 minutes.",
+      cite,
+      existingId: existing?.id || null,
+      actor: {
+        name: existing?.name || "Supervisor",
+        goal: "Keep large refunds within policy.",
+        blurb: `Approves or declines refunds over $${p.approval.above}.`,
+        entry: "joins",
+        pressure: "authority",
+        modalities: ["voice", "chat"],
+        traits: ["brisk"],
+        trigger: `The agent asks to refund more than $${p.approval.above}`,
+        canApprove: true,
+        approvalScope: scope,
+        timeoutMin: 3,
+        fallback: "reject",
+        knowledge: [`${s.name}`],
+      },
+      editable: { field: "approvalScope", label: "Approval scope" },
+    });
+    const tool = tools.find(
+      (t) => /refund/.test(t) && /issue|create|process|make/.test(t),
+    );
+    if (tool)
+      items.push({
+        id: `tool-${s.id}-${p.id}`,
+        kind: "tool",
+        title: `Tool: ${tool} waits for approval above $${p.approval.above}`,
+        detail: `A call above $${p.approval.above} returns needs_approval until the ${existing?.name || "Supervisor"} approves; below it, the refund goes through as before.`,
+        cite,
+        tool,
+        approval: {
+          above: p.approval.above,
+          by: existing?.name || "Supervisor",
+        },
+      });
+  }
+  /* The records a run starts from: the rows the cases name. */
+  const orders = tables.find((s) => s.parsed.table === "orders");
+  if (orders) {
+    const refunds = tables.find((s) => s.parsed.table === "refunds");
+    const o = orders.parsed.sample || {};
+    items.push({
+      id: `state-${orders.id}`,
+      kind: "state",
+      title: refunds
+        ? `Starting state: order ${o.order_id} already has refund ${refunds.parsed.sample?.refund_id}`
+        : `Starting state: order ${o.order_id} delivered ${o.delivered_at}`,
+      detail:
+        "Every run starts from this snapshot of the records, and a reset puts it back. Customer details stay as the privacy settings say.",
+      cite: {
+        sourceId: orders.id,
+        ref: `${orders.name} · ${o.order_id}`,
+        excerpt: `${o.order_id}, delivered ${o.delivered_at}, $${((o.amount_cents || 0) / 100).toFixed(2)}`,
+      },
+      facts: [
+        `Order ${o.order_id} delivered ${o.delivered_at}, $${((o.amount_cents || 0) / 100).toFixed(2)}`,
+        ...(refunds
+          ? [
+              `Refund ${refunds.parsed.sample?.refund_id} on ${o.order_id}: ${refunds.parsed.sample?.status}`,
+            ]
+          : []),
+      ],
+    });
+  }
   sources
     .filter((s) => s.visibility === "evaluator")
     .forEach((s) =>
@@ -517,6 +612,65 @@ export const dataProposalOf = (sources) => {
 
 /* ── accepting it ───────────────────────────────────────────────────────── */
 
+/* Proposed actors join the cast, or update the one already there. */
+const actorPartOf = (envState, items, edits, cast) => {
+  if (!items.length) return {};
+  let customActors = envState?.customActors || [];
+  let actorEdits = envState?.actorEdits || {};
+  let ids = cast.map((a) => a.id);
+  items.forEach((i) => {
+    const fields = {
+      ...i.actor,
+      ...(edits[i.id] != null && { [i.editable.field]: edits[i.id] }),
+    };
+    if (i.existingId && customActors.some((a) => a.id === i.existingId)) {
+      customActors = customActors.map((a) =>
+        a.id === i.existingId
+          ? {
+              ...a,
+              canApprove: true,
+              approvalScope: fields.approvalScope,
+              trigger: fields.trigger,
+            }
+          : a,
+      );
+    } else if (i.existingId) {
+      actorEdits = {
+        ...actorEdits,
+        [i.existingId]: {
+          ...(actorEdits[i.existingId] || {}),
+          canApprove: true,
+          approvalScope: fields.approvalScope,
+          trigger: fields.trigger,
+          editedAt: new Date().toISOString(),
+        },
+      };
+    } else {
+      const id = `act-own-supervisor-${Date.now().toString(36)}`;
+      customActors = [
+        ...customActors,
+        {
+          ...fields,
+          id,
+          version: "v1",
+          versions: [
+            {
+              label: "v1",
+              createdAt: new Date().toISOString(),
+              note: `Proposed from ${i.cite.ref}.`,
+            },
+          ],
+          usedBy: 0,
+          owner: "you",
+          custom: true,
+        },
+      ];
+      ids = [...ids, id];
+    }
+  });
+  return { customActors, actorEdits, actors: ids };
+};
+
 const nextRuleNumber = (env, envState, n) => {
   const ids = [
     ...(env?.rules || []).map((_, i) => i + 1),
@@ -538,7 +692,7 @@ export const acceptDataPatch = (
   envState,
   proposal,
   picked,
-  { conflictPick, scenarioRows } = {},
+  { conflictPick, scenarioRows, edits = {}, cast = [] } = {},
 ) => {
   const now = new Date().toISOString();
   const take = proposal.items.filter(
@@ -557,12 +711,20 @@ export const acceptDataPatch = (
       : null;
   if (chosen) usedSources.add(chosen.sourceId);
   const rules = [
-    ...take.filter((i) => i.kind === "rule").map((i) => i.rule),
+    ...take.filter((i) => i.kind === "rule").map((i) => edits[i.id] ?? i.rule),
     ...(chosen ? [chosen.rule] : []),
   ];
   const tables = take.filter((i) => i.kind === "table");
+  const actorItems = take.filter((i) => i.kind === "actor");
+  const toolItems = take.filter((i) => i.kind === "tool");
+  const stateItem = take.find((i) => i.kind === "state");
   const minted = nextEnvVersion(env, envState, {
-    changed: [rules.length && "rules", tables.length && "seed"].filter(Boolean),
+    changed: [
+      rules.length && "rules",
+      (tables.length || stateItem) && "seed",
+      actorItems.length && "actors",
+      toolItems.length && "toolbehaviour",
+    ].filter(Boolean),
     note: `From ${[...usedSources]
       .map((id) => (envState.sources || []).find((s) => s.id === id)?.name)
       .filter(Boolean)
@@ -607,6 +769,23 @@ export const acceptDataPatch = (
     dataMode: tables.length
       ? "private-sample"
       : envState?.dataMode || "synthetic",
+    ...actorPartOf(envState, actorItems, edits, cast),
+    ...(toolItems.length && {
+      toolEnv: toolItems.reduce(
+        (all, i) => ({
+          ...all,
+          [i.tool]: { ...(all[i.tool] || {}), approval: i.approval },
+        }),
+        envState?.toolEnv || {},
+      ),
+    }),
+    ...(stateItem && {
+      startingState: {
+        facts: stateItem.facts,
+        sourceId: stateItem.cite.sourceId,
+        envVersion: minted.label,
+      },
+    }),
     ruleIds: ruleChanges.map((r) => r.id),
   };
 };
@@ -786,7 +965,12 @@ export const sourceEditPatch = (envState, id, fields, detail) => {
     sources: (envState?.sources || []).map((x) =>
       x.id === id ? { ...x, ...fields } : x,
     ),
-    ...(s?.inEnv && detail ? envChangePatch(envState, "seed", detail) : {}),
+    ...(s?.inEnv && detail
+      ? {
+          ...envChangePatch(envState, "seed", detail),
+          changeSource: `file:${s.name}`,
+        }
+      : {}),
   };
 };
 

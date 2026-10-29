@@ -1,13 +1,6 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import {
-  Box,
-  Stack,
-  Typography,
-  Button,
-  Tooltip,
-  Popover,
-} from "@mui/material";
+import { Box, Stack, Typography, Button, Tooltip } from "@mui/material";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import Iconify from "src/components/iconify";
 import {
@@ -16,11 +9,11 @@ import {
   pendingEnvChanges,
   saveEnvChangesPatch,
   discardEnvChangesPatch,
-  envChangeLabel,
   isEnvDraft,
   scenariosInSet,
 } from "../_mock/versions";
 import { envLabelOf, pendingCostOf } from "../_mock/envVersionKinds";
+import ReviewChangesDrawer from "./ReviewChangesDrawer";
 import { envVersionNameOf } from "../_mock/codeRefs";
 import { currentEnvSnapshot } from "../_mock/envSnapshot";
 import useEnvViewAs from "./useEnvViewAs";
@@ -70,7 +63,7 @@ export default function VersionBar({
   /* Before the first run nothing is a version yet: edits land in place. */
   const draft = !viewAs && isEnvDraft(envState);
   const [historyAnchor, setHistoryAnchor] = useState(null);
-  /* The unsaved edits, listed; Discard asks first. */
+  /* The unsaved edits, in Review changes; Discard asks first. */
   const [editsAnchor, setEditsAnchor] = useState(null);
   const [discarding, setDiscarding] = useState(false);
   const discardPatch = pending.length
@@ -185,9 +178,9 @@ export default function VersionBar({
           <Stack direction="row" alignItems="center" spacing={0.75}>
             <Button
               size="small"
-              onClick={(e) => setEditsAnchor(e.currentTarget)}
+              onClick={() => setEditsAnchor(true)}
               endIcon={
-                <Iconify icon="solar:alt-arrow-down-linear" width={14} />
+                <Iconify icon="solar:alt-arrow-right-linear" width={14} />
               }
               sx={{
                 minWidth: 0,
@@ -226,108 +219,25 @@ export default function VersionBar({
             )}
           </Stack>
         )}
-        <Popover
+        <ReviewChangesDrawer
           open={!!editsAnchor}
-          anchorEl={editsAnchor}
           onClose={() => setEditsAnchor(null)}
-          anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
-          transformOrigin={{ vertical: "top", horizontal: "right" }}
-          slotProps={{ paper: { sx: { width: 400, mt: 0.5 } } }}
-        >
-          <Box
-            sx={{
-              px: 2,
-              py: 1.5,
-              borderBottom: "1px solid",
-              borderColor: "divider",
-            }}
-          >
-            <Typography sx={{ typography: "s1", fontWeight: 600 }}>
-              {`Unsaved edits since environment ${shownLabel}`}
-            </Typography>
-            <Typography
-              sx={{ typography: "s3", color: "text.tertiary", mt: 0.25 }}
-            >
-              {`Runs use environment ${shownLabel} until these are saved. ${cost?.comparability || ""}`}
-            </Typography>
-          </Box>
-          <Box sx={{ maxHeight: 280, overflowY: "auto" }}>
-            {pending.map((c, i) => (
-              <Stack
-                key={`${c.kind}-${c.at || i}`}
-                direction="row"
-                spacing={1.5}
-                sx={{
-                  px: 2,
-                  py: 1,
-                  "& + &": { borderTop: "1px solid", borderColor: "divider" },
-                }}
-              >
-                <Typography
-                  sx={{
-                    typography: "s3",
-                    color: "text.tertiary",
-                    width: 112,
-                    flexShrink: 0,
-                  }}
-                >
-                  {envChangeLabel(c.kind)}
-                </Typography>
-                <Typography sx={{ typography: "s2", flex: 1, minWidth: 0 }}>
-                  {c.detail || envChangeLabel(c.kind)}
-                </Typography>
-              </Stack>
-            ))}
-          </Box>
-          {canEdit && (
-            <Stack
-              direction="row"
-              alignItems="center"
-              spacing={1}
-              sx={{
-                px: 2,
-                py: 1.25,
-                borderTop: "1px solid",
-                borderColor: "divider",
-              }}
-            >
-              <Tooltip
-                arrow
-                title={
-                  discardPatch
-                    ? ""
-                    : `Environment ${shownLabel} didn't keep its settings, so these can't be undone in one step — save them, or change them back by hand.`
-                }
-              >
-                <span>
-                  <Button
-                    size="small"
-                    disabled={!discardPatch}
-                    onClick={() => {
-                      setEditsAnchor(null);
-                      setDiscarding(true);
-                    }}
-                    sx={{ color: "text.secondary" }}
-                  >
-                    Discard edits
-                  </Button>
-                </span>
-              </Tooltip>
-              <Box flex={1} />
-              <Button
-                size="small"
-                variant="contained"
-                color="primary"
-                onClick={() => {
-                  setEditsAnchor(null);
-                  onSave ? onSave() : patch(saveEnvChangesPatch(env, envState));
-                }}
-              >
-                {`Save as environment ${cost?.label}`}
-              </Button>
-            </Stack>
-          )}
-        </Popover>
+          env={env}
+          envState={envState}
+          patch={patch}
+          label={shownLabel}
+          cost={cost}
+          canEdit={canEdit}
+          canDiscard={!!discardPatch}
+          onDiscard={() => {
+            setEditsAnchor(null);
+            setDiscarding(true);
+          }}
+          onSave={() => {
+            setEditsAnchor(null);
+            onSave ? onSave() : patch(saveEnvChangesPatch(env, envState));
+          }}
+        />
         <ConfirmDialog
           open={discarding}
           onClose={() => setDiscarding(false)}

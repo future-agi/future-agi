@@ -6,6 +6,7 @@ import {
   ButtonBase,
   Checkbox,
   Stack,
+  TextField,
   Typography,
 } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
@@ -22,6 +23,7 @@ import { personaFor } from "../../_mock/scenarios";
 import { stampNewBatch } from "../../_mock/addScenarios";
 import { asProposal } from "../../_mock/scenarioSources";
 import { neutralCheckboxSx } from "../../components/primitives";
+import { castOf } from "../../_mock/actors";
 
 const KIND = {
   rule: { icon: "solar:document-text-linear", label: "Rule" },
@@ -31,7 +33,20 @@ const KIND = {
   conflict: { icon: "solar:danger-triangle-linear", label: "Conflict" },
   hidden: { icon: "solar:eye-closed-linear", label: "Hidden" },
   unreadable: { icon: "solar:danger-triangle-linear", label: "Can't read" },
+  actor: { icon: "solar:users-group-rounded-linear", label: "Actor" },
+  tool: { icon: "solar:widget-4-linear", label: "Tool" },
+  state: { icon: "solar:database-linear", label: "Starting state" },
 };
+
+/* Grouped by what each change touches — the same areas as Review changes. */
+const GROUPS = [
+  { label: "Rules", kinds: ["conflict", "rule"] },
+  { label: "Starting state and records", kinds: ["table", "state", "missing"] },
+  { label: "Tools", kinds: ["tool"] },
+  { label: "Actors", kinds: ["actor"] },
+  { label: "Scenarios", kinds: ["scenario"] },
+  { label: "Who sees what, and problems", kinds: ["hidden", "unreadable"] },
+];
 
 /**
  * What the builder proposes from the attached files (roadmap data.md §1
@@ -47,7 +62,21 @@ export default function DataProposalCard({ env, sourceIds, onOpenSource }) {
     () => (envState.sources || []).filter((s) => sourceIds.includes(s.id)),
     [envState.sources, sourceIds],
   );
-  const proposal = useMemo(() => dataProposalOf(sources), [sources]);
+  const cast = useMemo(() => castOf(env, envState), [env, envState]);
+  const proposal = useMemo(
+    () =>
+      dataProposalOf(sources, {
+        cast,
+        tools: (env.tools || []).map((t) => t.name),
+      }),
+    [sources, cast, env.tools],
+  );
+  /* An item's text changed before accepting: a rule's wording, an approval scope. */
+  const [edits, setEdits] = useState({});
+  const [editing, setEditing] = useState(null);
+  const editValueOf = (i) =>
+    edits[i.id] ??
+    (i.kind === "rule" ? i.rule : i.actor?.[i.editable?.field] || "");
   const [picked, setPicked] = useState(() =>
     proposal.items
       .filter((i) => !i.blocking && i.kind !== "hidden")
@@ -93,6 +122,8 @@ export default function DataProposalCard({ env, sourceIds, onOpenSource }) {
     const p = acceptDataPatch(env, envState, proposal, picked, {
       conflictPick,
       scenarioRows,
+      edits,
+      cast,
     });
     const { ruleIds, ...rest } = p;
     patch(rest);
@@ -108,6 +139,163 @@ export default function DataProposalCard({ env, sourceIds, onOpenSource }) {
         },
       }),
     );
+
+  const renderItem = (i) => {
+    const k = KIND[i.kind];
+    const on = picked.includes(i.id);
+    return (
+      <Stack
+        key={i.id}
+        direction="row"
+        spacing={1}
+        sx={{
+          px: 1,
+          py: 1,
+          "& + &": { borderTop: "1px solid", borderColor: "divider" },
+        }}
+      >
+        <Checkbox
+          size="small"
+          checked={pickable(i) && on}
+          disabled={!pickable(i)}
+          onChange={() =>
+            setPicked((cur) =>
+              on ? cur.filter((x) => x !== i.id) : [...cur, i.id],
+            )
+          }
+          sx={{ ...neutralCheckboxSx, p: 0.25, alignSelf: "flex-start" }}
+        />
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Stack direction="row" spacing={0.75} alignItems="center">
+            <Iconify
+              icon={k.icon}
+              width={14}
+              sx={{
+                color: i.blocking ? "status.warning.fg" : "text.tertiary",
+                flexShrink: 0,
+              }}
+            />
+            <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+              {i.kind === "rule" && edits[i.id] != null
+                ? `Rule: ${edits[i.id]}`
+                : i.title}
+            </Typography>
+            {(i.kind === "rule" || i.editable) && pickable(i) && (
+              <ButtonBase
+                onClick={() => setEditing(editing === i.id ? null : i.id)}
+                sx={{
+                  typography: "s3",
+                  color: "text.tertiary",
+                  "&:hover": { color: "text.primary" },
+                }}
+              >
+                {editing === i.id ? "Done" : "Edit"}
+              </ButtonBase>
+            )}
+            {i.inferred && (
+              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                · inferred
+              </Typography>
+            )}
+          </Stack>
+          {i.detail && !(i.editable && edits[i.id] != null) && (
+            <Typography
+              sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
+            >
+              {i.detail}
+            </Typography>
+          )}
+          {i.editable && edits[i.id] != null && editing !== i.id && (
+            <Typography
+              sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
+            >
+              {`${i.editable.label}: ${edits[i.id]} · edited`}
+            </Typography>
+          )}
+          {editing === i.id && (
+            <TextField
+              size="small"
+              fullWidth
+              autoFocus
+              label={i.kind === "rule" ? "Rule" : i.editable.label}
+              value={editValueOf(i)}
+              onChange={(e) =>
+                setEdits((cur) => ({ ...cur, [i.id]: e.target.value }))
+              }
+              onKeyDown={(e) => e.key === "Enter" && setEditing(null)}
+              sx={{ mt: 0.75 }}
+            />
+          )}
+          {i.cite && (
+            <ButtonBase
+              onClick={() => onOpenSource?.(i.cite.sourceId)}
+              sx={{
+                mt: 0.5,
+                typography: "s3",
+                color: "text.tertiary",
+                textAlign: "left",
+                display: "block",
+                "&:hover": { color: "text.primary" },
+              }}
+            >
+              <Iconify
+                icon="solar:link-minimalistic-linear"
+                width={12}
+                sx={{ mr: 0.5, verticalAlign: "-2px" }}
+              />
+              {i.cite.ref}
+              {i.cite.excerpt ? ` — “${i.cite.excerpt}”` : ""}
+            </ButtonBase>
+          )}
+          {i.kind === "conflict" && (
+            <Stack spacing={0.5} sx={{ mt: 0.75 }} role="radiogroup">
+              {i.options.map((o) => (
+                <ButtonBase
+                  key={o.sourceId}
+                  role="radio"
+                  aria-checked={conflictPick === o.sourceId}
+                  onClick={() => setConflictPick(o.sourceId)}
+                  sx={{
+                    justifyContent: "flex-start",
+                    gap: 0.75,
+                    typography: "s3",
+                    textAlign: "left",
+                  }}
+                >
+                  <Iconify
+                    icon={
+                      conflictPick === o.sourceId
+                        ? "solar:check-circle-bold"
+                        : "solar:circle-linear"
+                    }
+                    width={14}
+                  />
+                  {`${o.label} applies: ${o.rule}`}
+                </ButtonBase>
+              ))}
+            </Stack>
+          )}
+          {i.kind === "missing" && (
+            <Stack direction="row" spacing={1} sx={{ mt: 0.5 }}>
+              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                Attach the missing file in chat, or
+              </Typography>
+              <ButtonBase
+                onClick={() => omitRows(i)}
+                sx={{
+                  typography: "s3",
+                  fontWeight: 600,
+                  textDecoration: "underline",
+                }}
+              >
+                leave those rows out
+              </ButtonBase>
+            </Stack>
+          )}
+        </Box>
+      </Stack>
+    );
+  };
 
   if (rejected)
     return (
@@ -153,126 +341,27 @@ export default function DataProposalCard({ env, sourceIds, onOpenSource }) {
           Each one cites where it came from. Nothing changes until you accept.
         </Typography>
       </Box>
-      {proposal.items.map((i) => {
-        const k = KIND[i.kind];
-        const on = picked.includes(i.id);
-        return (
-          <Stack
-            key={i.id}
-            direction="row"
-            spacing={1}
+      {GROUPS.flatMap((g) => {
+        const items = proposal.items.filter((x) => g.kinds.includes(x.kind));
+        if (!items.length) return [];
+        return [
+          <Typography
+            key={`h-${g.label}`}
             sx={{
-              px: 1,
-              py: 1,
-              "& + &": { borderTop: "1px solid", borderColor: "divider" },
+              typography: "s3",
+              fontWeight: 600,
+              color: "text.tertiary",
+              px: 1.5,
+              pt: 1,
+              pb: 0.25,
+              borderTop: "1px solid",
+              borderColor: "divider",
             }}
           >
-            <Checkbox
-              size="small"
-              checked={pickable(i) && on}
-              disabled={!pickable(i)}
-              onChange={() =>
-                setPicked((cur) =>
-                  on ? cur.filter((x) => x !== i.id) : [...cur, i.id],
-                )
-              }
-              sx={{ ...neutralCheckboxSx, p: 0.25, alignSelf: "flex-start" }}
-            />
-            <Box sx={{ flex: 1, minWidth: 0 }}>
-              <Stack direction="row" spacing={0.75} alignItems="center">
-                <Iconify
-                  icon={k.icon}
-                  width={14}
-                  sx={{
-                    color: i.blocking ? "status.warning.fg" : "text.tertiary",
-                    flexShrink: 0,
-                  }}
-                />
-                <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                  {i.title}
-                </Typography>
-                {i.inferred && (
-                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                    · inferred
-                  </Typography>
-                )}
-              </Stack>
-              {i.detail && (
-                <Typography
-                  sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
-                >
-                  {i.detail}
-                </Typography>
-              )}
-              {i.cite && (
-                <ButtonBase
-                  onClick={() => onOpenSource?.(i.cite.sourceId)}
-                  sx={{
-                    mt: 0.5,
-                    typography: "s3",
-                    color: "text.tertiary",
-                    textAlign: "left",
-                    display: "block",
-                    "&:hover": { color: "text.primary" },
-                  }}
-                >
-                  <Iconify
-                    icon="solar:link-minimalistic-linear"
-                    width={12}
-                    sx={{ mr: 0.5, verticalAlign: "-2px" }}
-                  />
-                  {i.cite.ref}
-                  {i.cite.excerpt ? ` — “${i.cite.excerpt}”` : ""}
-                </ButtonBase>
-              )}
-              {i.kind === "conflict" && (
-                <Stack spacing={0.5} sx={{ mt: 0.75 }} role="radiogroup">
-                  {i.options.map((o) => (
-                    <ButtonBase
-                      key={o.sourceId}
-                      role="radio"
-                      aria-checked={conflictPick === o.sourceId}
-                      onClick={() => setConflictPick(o.sourceId)}
-                      sx={{
-                        justifyContent: "flex-start",
-                        gap: 0.75,
-                        typography: "s3",
-                        textAlign: "left",
-                      }}
-                    >
-                      <Iconify
-                        icon={
-                          conflictPick === o.sourceId
-                            ? "solar:check-circle-bold"
-                            : "solar:circle-linear"
-                        }
-                        width={14}
-                      />
-                      {`${o.label} applies: ${o.rule}`}
-                    </ButtonBase>
-                  ))}
-                </Stack>
-              )}
-              {i.kind === "missing" && (
-                <Stack direction="row" spacing={1} sx={{ mt: 0.5 }}>
-                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                    Attach the missing file in chat, or
-                  </Typography>
-                  <ButtonBase
-                    onClick={() => omitRows(i)}
-                    sx={{
-                      typography: "s3",
-                      fontWeight: 600,
-                      textDecoration: "underline",
-                    }}
-                  >
-                    leave those rows out
-                  </ButtonBase>
-                </Stack>
-              )}
-            </Box>
-          </Stack>
-        );
+            {`${g.label} · ${items.length}`}
+          </Typography>,
+          ...items.map((x) => renderItem(x)),
+        ];
       })}
       <Stack
         direction="row"

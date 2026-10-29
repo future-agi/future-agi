@@ -59,7 +59,8 @@ export default function useChatActions() {
   const adopted = !!env && !!state?.myEnvironments?.some((e) => e.id === envId);
   const envState = (envId && state?.byEnv?.[envId]) || emptyEnvState();
   const dispatch = store?.dispatch;
-  const patch = useCallback((p) => { if (dispatch && envId) dispatch({ type: "patchEnvState", envId, patch: p }); }, [dispatch, envId]);
+  /* Edits made here are marked as the chat's in Review changes. */
+  const patch = useCallback((p) => { if (dispatch && envId) dispatch({ type: "patchEnvState", envId, patch: { ...p, changeSource: "chat" } }); }, [dispatch, envId]);
   const locked = !!envState.seededFromTemplate && !env?.templateId;
   const active = !!store && adopted;
 

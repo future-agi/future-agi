@@ -7,6 +7,7 @@
  * one file's actions, not the screens.
  */
 import PropTypes from "prop-types";
+import { stampEdit } from "./_mock/editReview";
 import {
   createContext,
   useContext,
@@ -377,7 +378,8 @@ function reducer(state, action) {
 
     case "patchEnvState": {
       const prev = state.byEnv[action.envId] || emptyEnvState();
-      const byEnv = { ...state.byEnv, [action.envId]: { ...prev, ...scrubPatch(action.patch) } };
+      /* An edit remembers what it replaced, so it can be undone on its own. */
+      const byEnv = { ...state.byEnv, [action.envId]: { ...prev, ...scrubPatch(stampEdit(prev, action.patch)) } };
       /* A version released here is released for the agent: every environment
          testing it learns so, and those following production move to it. */
       const before = new Set((prev.releases || []).map((r) => r.version));
