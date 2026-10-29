@@ -57,6 +57,7 @@ type Relay struct {
 	providerToClient chan relayMessage
 	config           RelayConfig
 	logger           *slog.Logger
+	checker          *GuardrailChecker
 	wg               sync.WaitGroup
 	// providerClosed is set once the provider's side has ended; from then on writeToClient
 	// delivers what is still queued and ends the session.
@@ -69,7 +70,7 @@ type Relay struct {
 }
 
 // NewRelay creates a new message relay.
-func NewRelay(session *Session, config RelayConfig, logger *slog.Logger) *Relay {
+func NewRelay(session *Session, config RelayConfig, logger *slog.Logger, checker *GuardrailChecker) *Relay {
 	if config.ChannelBufferSize == 0 {
 		config.ChannelBufferSize = 64
 	}
@@ -78,6 +79,7 @@ func NewRelay(session *Session, config RelayConfig, logger *slog.Logger) *Relay 
 		clientToProvider: make(chan relayMessage, config.ChannelBufferSize),
 		providerToClient: make(chan relayMessage, config.ChannelBufferSize),
 		config:           config,
+		checker:          checker,
 		logger:           logger,
 		clientDraining:   make(chan struct{}),
 		clientReadDone:   make(chan struct{}),
