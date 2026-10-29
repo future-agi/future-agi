@@ -50089,16 +50089,28 @@
                         "required": true,
                         "type": "string",
                         "format": "uuid"
+                    },
+                    {
+                        "name": "page",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "minimum": 1
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "maximum": 100,
+                        "minimum": 1
                     }
                 ],
                 "responses": {
                     "200": {
                         "description": "",
                         "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/AgentFixRun"
-                            }
+                            "$ref": "#/definitions/AgentFixRunList"
                         }
                     },
                     "default": {
@@ -124842,6 +124854,49 @@
                     "type": "string",
                     "format": "date-time",
                     "readOnly": true
+                }
+            }
+        },
+        "AgentFixRunList": {
+            "required": [
+                "count",
+                "next",
+                "previous",
+                "total_pages",
+                "current_page",
+                "results"
+            ],
+            "type": "object",
+            "properties": {
+                "count": {
+                    "title": "Count",
+                    "type": "integer"
+                },
+                "next": {
+                    "title": "Next",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "previous": {
+                    "title": "Previous",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "total_pages": {
+                    "title": "Total pages",
+                    "type": "integer"
+                },
+                "current_page": {
+                    "title": "Current page",
+                    "type": "integer"
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AgentFixRun"
+                    }
                 }
             }
         },

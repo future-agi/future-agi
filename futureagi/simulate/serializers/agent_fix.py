@@ -31,6 +31,9 @@ class AgentFixLaunchSerializer(serializers.Serializer):
 
 class AgentFixListQuerySerializer(serializers.Serializer):
     environment_id = serializers.UUIDField()
+    # Named as ExtendedPageNumberPagination reads them.
+    page = serializers.IntegerField(required=False, min_value=1)
+    limit = serializers.IntegerField(required=False, min_value=1, max_value=100)
 
 
 class AgentFixRequestSerializer(serializers.Serializer):
@@ -160,6 +163,15 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
             "finished_at",
             "created_at",
         ]
+
+
+class AgentFixRunListSerializer(serializers.Serializer):
+    count = serializers.IntegerField()
+    next = serializers.CharField(allow_null=True)
+    previous = serializers.CharField(allow_null=True)
+    total_pages = serializers.IntegerField()
+    current_page = serializers.IntegerField()
+    results = AgentFixRunSerializer(many=True)
 
 
 class AgentFixMakeDefaultSerializer(serializers.Serializer):

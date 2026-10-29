@@ -93,6 +93,7 @@ import type {
   AgentFixMakeDefaultApi,
   AgentFixPullRequestApi,
   AgentFixRunApi,
+  AgentFixRunListApi,
   AgentPlaygroundErrorResponseApi,
   AgentPlaygroundGraphsExecutionsListParams,
   AgentPlaygroundGraphsList200,
@@ -57989,7 +57990,7 @@ export const simulateApiAgentFixEngineV1ChatCompletionsCreate = async (
 };
 
 export type simulateApiAgentFixRunsListResponse200 = {
-  data: AgentFixRunApi[];
+  data: AgentFixRunListApi;
   status: 200;
 };
 

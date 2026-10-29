@@ -34291,104 +34291,84 @@ export const SimulateApiAgentFixEngineV1ChatCompletionsCreateBody = zod.record(
  * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
 and ship its winner: the environment's default, or a GitHub pull request.
  */
+
+export const simulateApiAgentFixRunsListQueryLimitMax = 100;
+
 export const SimulateApiAgentFixRunsListQueryParams = zod.object({
   environment_id: zod.string().uuid(),
+  page: zod.number().min(1).optional(),
+  limit: zod
+    .number()
+    .min(1)
+    .max(simulateApiAgentFixRunsListQueryLimitMax)
+    .optional(),
 });
 
-export const simulateApiAgentFixRunsListResponseStageMax = 32;
+export const simulateApiAgentFixRunsListResponseResultsItemStageMax = 32;
 
-export const simulateApiAgentFixRunsListResponseRequestHeldBackScenarioKeysDefault =
+export const simulateApiAgentFixRunsListResponseResultsItemRequestHeldBackScenarioKeysDefault =
   [];
 
-export const simulateApiAgentFixRunsListResponseCandidatesItemAttemptMin = 0;
-export const simulateApiAgentFixRunsListResponseCandidatesItemAttemptMax = 32767;
+export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemAttemptMin = 0;
+export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemAttemptMax = 32767;
 
-export const simulateApiAgentFixRunsListResponseCandidatesItemVerdictMustPassWithinNoiseDefault =
+export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictMustPassWithinNoiseDefault =
   [];
 
-export const simulateApiAgentFixRunsListResponseCandidatesItemPullRequestUrlMax = 512;
+export const simulateApiAgentFixRunsListResponseResultsItemCandidatesItemPullRequestUrlMax = 512;
 
-export const SimulateApiAgentFixRunsListResponseItem = zod.object({
-  id: zod.string().uuid().optional(),
-  environment_id: zod.string().uuid(),
-  source_run_id: zod.string().uuid(),
-  base_agent_version_id: zod.string().uuid(),
-  state: zod
-    .enum([
-      "queued",
-      "running",
-      "stopping",
-      "ready",
-      "no_improvement",
-      "not_reproduced",
-      "out_of_budget",
-      "stopped",
-      "failed",
-    ])
-    .optional(),
-  stage: zod
-    .string()
-    .max(simulateApiAgentFixRunsListResponseStageMax)
-    .optional(),
-  request: zod.object({
-    target_scenario_keys: zod.array(zod.string().min(1)),
-    held_back_scenario_keys: zod
-      .array(zod.string().min(1))
-      .default(
-        simulateApiAgentFixRunsListResponseRequestHeldBackScenarioKeysDefault,
-      ),
-    failing_sub_goals: zod.array(zod.string().min(1)),
-    surfaces: zod.array(zod.string().min(1)),
-    locked_paths: zod.array(zod.string().min(1)),
-    budget_credits: zod.number(),
-    max_minutes: zod.number(),
-  }),
-  spent_credits: zod.number(),
-  committed_credits: zod.number(),
-  report: zod.object({
-    ending: zod.string().min(1),
-    summary: zod.string(),
-    winner_candidate_id: zod.string().min(1),
-  }),
-  failure: zod.object({
-    code: zod.string().min(1),
-    message: zod.string().min(1),
-  }),
-  check_runs: zod
-    .array(
-      zod.object({
-        run_id: zod.string().uuid(),
-        test_execution_id: zod.string().uuid(),
-        label: zod.string().min(1),
-        state: zod.string().min(1),
-      }),
-    )
-    .optional()
-    .describe("The base version's runs; each candidate lists its own."),
-  candidates: zod.array(
+export const SimulateApiAgentFixRunsListResponse = zod.object({
+  count: zod.number(),
+  next: zod.string().min(1),
+  previous: zod.string().min(1),
+  total_pages: zod.number(),
+  current_page: zod.number(),
+  results: zod.array(
     zod.object({
       id: zod.string().uuid().optional(),
-      attempt: zod
-        .number()
-        .min(simulateApiAgentFixRunsListResponseCandidatesItemAttemptMin)
-        .max(simulateApiAgentFixRunsListResponseCandidatesItemAttemptMax),
-      agent_version_id: zod.string().uuid(),
-      version_number: zod.number(),
-      summary: zod.string().optional(),
-      outcome: zod
-        .enum(["pending", "rejected", "finalist", "winner"])
+      environment_id: zod.string().uuid(),
+      source_run_id: zod.string().uuid(),
+      base_agent_version_id: zod.string().uuid(),
+      state: zod
+        .enum([
+          "queued",
+          "running",
+          "stopping",
+          "ready",
+          "no_improvement",
+          "not_reproduced",
+          "out_of_budget",
+          "stopped",
+          "failed",
+        ])
         .optional(),
-      verdict: zod.object({
-        accepted: zod.boolean(),
-        reason: zod.string().min(1),
-        target_pass_rate: zod.array(zod.number()).optional(),
-        held_back_pass_rate: zod.array(zod.number()).optional(),
-        must_pass_regressions: zod.array(zod.string().min(1)),
-        must_pass_within_noise: zod
+      stage: zod
+        .string()
+        .max(simulateApiAgentFixRunsListResponseResultsItemStageMax)
+        .optional(),
+      request: zod.object({
+        target_scenario_keys: zod.array(zod.string().min(1)),
+        held_back_scenario_keys: zod
           .array(zod.string().min(1))
           .default(
-            simulateApiAgentFixRunsListResponseCandidatesItemVerdictMustPassWithinNoiseDefault,
+            simulateApiAgentFixRunsListResponseResultsItemRequestHeldBackScenarioKeysDefault,
           ),
+        failing_sub_goals: zod.array(zod.string().min(1)),
+        surfaces: zod.array(zod.string().min(1)),
+        locked_paths: zod.array(zod.string().min(1)),
+        budget_credits: zod.number(),
+        max_minutes: zod.number(),
+      }),
+      spent_credits: zod.number(),
+      committed_credits: zod.number(),
+      report: zod.object({
+        ending: zod.string().min(1),
+        summary: zod.string(),
+        winner_candidate_id: zod.string().min(1),
+      }),
+      failure: zod.object({
+        code: zod.string().min(1),
+        message: zod.string().min(1),
       }),
       check_runs: zod
         .array(
@@ -34399,22 +34379,63 @@ export const SimulateApiAgentFixRunsListResponseItem = zod.object({
             state: zod.string().min(1),
           }),
         )
-        .optional(),
-      pull_request_url: zod
-        .string()
-        .url()
-        .max(simulateApiAgentFixRunsListResponseCandidatesItemPullRequestUrlMax)
-        .optional(),
+        .optional()
+        .describe("The base version's runs; each candidate lists its own."),
+      candidates: zod.array(
+        zod.object({
+          id: zod.string().uuid().optional(),
+          attempt: zod
+            .number()
+            .min(
+              simulateApiAgentFixRunsListResponseResultsItemCandidatesItemAttemptMin,
+            )
+            .max(
+              simulateApiAgentFixRunsListResponseResultsItemCandidatesItemAttemptMax,
+            ),
+          agent_version_id: zod.string().uuid(),
+          version_number: zod.number(),
+          summary: zod.string().optional(),
+          outcome: zod
+            .enum(["pending", "rejected", "finalist", "winner"])
+            .optional(),
+          verdict: zod.object({
+            accepted: zod.boolean(),
+            reason: zod.string().min(1),
+            target_pass_rate: zod.array(zod.number()).optional(),
+            held_back_pass_rate: zod.array(zod.number()).optional(),
+            must_pass_regressions: zod.array(zod.string().min(1)),
+            must_pass_within_noise: zod
+              .array(zod.string().min(1))
+              .default(
+                simulateApiAgentFixRunsListResponseResultsItemCandidatesItemVerdictMustPassWithinNoiseDefault,
+              ),
+          }),
+          check_runs: zod
+            .array(
+              zod.object({
+                run_id: zod.string().uuid(),
+                test_execution_id: zod.string().uuid(),
+                label: zod.string().min(1),
+                state: zod.string().min(1),
+              }),
+            )
+            .optional(),
+          pull_request_url: zod
+            .string()
+            .url()
+            .max(
+              simulateApiAgentFixRunsListResponseResultsItemCandidatesItemPullRequestUrlMax,
+            )
+            .optional(),
+          created_at: zod.string().datetime({ offset: true }).optional(),
+        }),
+      ),
+      started_at: zod.string().datetime({ offset: true }).optional(),
+      finished_at: zod.string().datetime({ offset: true }).optional(),
       created_at: zod.string().datetime({ offset: true }).optional(),
     }),
   ),
-  started_at: zod.string().datetime({ offset: true }).optional(),
-  finished_at: zod.string().datetime({ offset: true }).optional(),
-  created_at: zod.string().datetime({ offset: true }).optional(),
 });
-export const SimulateApiAgentFixRunsListResponse = zod.array(
-  SimulateApiAgentFixRunsListResponseItem,
-);
 
 /**
  * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,

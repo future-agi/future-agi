@@ -286,5 +286,6 @@ def fix_runs_for_environment(environment: HostedHarnessJob) -> QuerySet[AgentFix
     return fix_runs_for_read(
         AgentFixRun.no_workspace_objects.filter(environment=environment)
         .select_related("base_agent_version", "source_run")
-        .order_by("-created_at")
+        # The id breaks ties, so a page holds still while fixes are added.
+        .order_by("-created_at", "-id")
     )

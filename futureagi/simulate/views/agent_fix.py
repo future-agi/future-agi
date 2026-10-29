@@ -36,6 +36,7 @@ from simulate.serializers.agent_fix import (
     AgentFixListQuerySerializer,
     AgentFixMakeDefaultSerializer,
     AgentFixPullRequestSerializer,
+    AgentFixRunListSerializer,
     AgentFixRunSerializer,
 )
 from simulate.services import agent_fix_engine, agent_fix_models
@@ -54,6 +55,7 @@ from simulate.services.hosted_harness import HostedHarnessError
 from tfc.ee_gating import EEFeature, check_ee_feature
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import EmptyRequestSerializer
+from tfc.utils.pagination import ExtendedPageNumberPagination
 
 
 def _error_response(exc):
@@ -72,6 +74,10 @@ def _not_found():
         {"error": "not_found", "message": "Not found", "retryable": False},
         status=status.HTTP_404_NOT_FOUND,
     )
+
+
+class _FixRunPages(ExtendedPageNumberPagination):
+    page_size = 25
 
 
 class AgentFixRunViewSet(viewsets.ViewSet):
@@ -110,7 +116,7 @@ class AgentFixRunViewSet(viewsets.ViewSet):
 
     @validated_request(
         query_serializer=AgentFixListQuerySerializer,
-        responses={200: AgentFixRunSerializer(many=True)},
+        responses={200: AgentFixRunListSerializer},
     )
     def list(self, request):
         environment = (
@@ -123,8 +129,13 @@ class AgentFixRunViewSet(viewsets.ViewSet):
         )
         if environment is None:
             return _not_found()
-        runs = fix_runs_for_environment(environment)[:50]
-        return Response(AgentFixRunSerializer(runs, many=True).data)
+        paginator = _FixRunPages()
+        page = paginator.paginate_queryset(
+            fix_runs_for_environment(environment), request, view=self
+        )
+        return paginator.get_paginated_response(
+            AgentFixRunSerializer(page, many=True).data
+        )
 
     @validated_request(
         request_serializer=AgentFixLaunchSerializer,

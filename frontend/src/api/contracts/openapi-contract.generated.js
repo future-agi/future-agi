@@ -27794,13 +27794,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
               format: "uuid",
             },
           },
+          page: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+            },
+          },
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 100,
+            },
+          },
         },
         responses: {
           200: {
-            type: "array",
-            items: {
-              $ref: "#/definitions/AgentFixRun",
-            },
+            $ref: "#/definitions/AgentFixRunList",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -49507,6 +49519,49 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "date-time",
           readOnly: true,
+        },
+      },
+    },
+    AgentFixRunList: {
+      required: [
+        "count",
+        "next",
+        "previous",
+        "total_pages",
+        "current_page",
+        "results",
+      ],
+      type: "object",
+      properties: {
+        count: {
+          title: "Count",
+          type: "integer",
+        },
+        next: {
+          title: "Next",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        previous: {
+          title: "Previous",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        total_pages: {
+          title: "Total pages",
+          type: "integer",
+        },
+        current_page: {
+          title: "Current page",
+          type: "integer",
+        },
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixRun",
+          },
         },
       },
     },

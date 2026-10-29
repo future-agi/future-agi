@@ -640,8 +640,29 @@ class TestUserApi:
         by_run = auth_client.get(f"{BASE}/", {"environment_id": str(source_run.id)})
 
         assert listed.status_code == 200, listed.content
-        assert [one["id"] for one in listed.json()] == [str(newer.id), str(older.id)]
+        assert [one["id"] for one in listed.json()["results"]] == [
+            str(newer.id),
+            str(older.id),
+        ]
         assert by_run.status_code == 404
+
+    def test_fixes_list_in_pages_with_their_total(
+        self, auth_client, environment, source_run
+    ):
+        fixes = [_fix_run(source_run, state=AgentFixRun.State.READY) for _ in range(3)]
+        newest_first = [str(one.id) for one in reversed(fixes)]
+
+        def page(**query):
+            response = auth_client.get(
+                f"{BASE}/", {"environment_id": str(environment.id), **query}
+            )
+            assert response.status_code == 200, response.content
+            body = response.json()
+            return body["count"], [one["id"] for one in body["results"]]
+
+        assert page() == (3, newest_first)
+        assert page(limit=2) == (3, newest_first[:2])
+        assert page(limit=2, page=2) == (3, newest_first[2:])
 
     def test_a_fix_shows_its_limit_and_spend_in_credits(
         self, auth_client, environment, source_run, settings
@@ -655,7 +676,7 @@ class TestUserApi:
                 f"{BASE}/", {"environment_id": str(environment.id)}
             ).json()
             read = auth_client.get(f"{BASE}/{fix_run.id}/").json()
-            assert listed == [read]
+            assert listed["results"] == [read]
             return read["spent_credits"], read["committed_credits"]
 
         # The engine's $0.25, and two unsealed check conversations held at $0.50 each.

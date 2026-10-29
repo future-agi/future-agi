@@ -17032,6 +17032,17 @@ export interface AgentFixRunApi {
   readonly created_at?: string;
 }
 
+export interface AgentFixRunListApi {
+  count: number;
+  /** @minLength 1 */
+  next: string;
+  /** @minLength 1 */
+  previous: string;
+  total_pages: number;
+  current_page: number;
+  results: AgentFixRunApi[];
+}
+
 export type AgentFixLaunchApiSurfacesItem =
   (typeof AgentFixLaunchApiSurfacesItem)[keyof typeof AgentFixLaunchApiSurfacesItem];
 
@@ -36431,6 +36442,15 @@ export type SimulateApiAgentFixEngineV1ChatCompletionsCreateBody = {
 
 export type SimulateApiAgentFixRunsListParams = {
   environment_id: string;
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
 };
 
 export type SimulateApiAgentPromptOptimiserListParams = {
