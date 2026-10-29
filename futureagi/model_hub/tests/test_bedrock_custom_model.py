@@ -14,8 +14,6 @@ from accounts.models import Organization, User
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import Workspace
 from model_hub.models.custom_models import CustomAIModel
-from model_hub.views.custom_model import CustomAIModelCreateView
-
 
 CREATE_URL = "/model-hub/custom_models/create/"
 EDIT_URL = "/model-hub/custom_models/edit/"
@@ -104,9 +102,7 @@ def test_foundation_id_is_forwarded_unchanged(client, organization, monkeypatch)
         seen.update(kwargs)
         return object()
 
-    monkeypatch.setattr(
-        "model_hub.views.custom_model.validate_model_working", accept
-    )
+    monkeypatch.setattr("model_hub.views.custom_model.validate_model_working", accept)
 
     response = client.post(CREATE_URL, _payload(FOUNDATION_ID), format="json")
 
@@ -121,7 +117,9 @@ def test_foundation_id_is_forwarded_unchanged(client, organization, monkeypatch)
 
 
 @pytest.mark.django_db
-def test_edit_rejects_friendly_label_before_provider(client, organization, user, workspace, monkeypatch):
+def test_edit_rejects_friendly_label_before_provider(
+    client, organization, user, workspace, monkeypatch
+):
     saved = CustomAIModel.objects.create(
         user_model_id=FOUNDATION_ID,
         provider="bedrock",
@@ -171,7 +169,5 @@ def test_identifier_helper_rejects_family_label_only():
     assert invalid_bedrock_model_id("  ")
     assert invalid_bedrock_model_id("My Claude")
     assert not invalid_bedrock_model_id(FOUNDATION_ID)
-    assert not invalid_bedrock_model_id(
-        "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
-    )
+    assert not invalid_bedrock_model_id("us.anthropic.claude-3-5-sonnet-20241022-v2:0")
     assert not invalid_bedrock_model_id(f"bedrock/{FOUNDATION_ID}")
