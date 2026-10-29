@@ -26,6 +26,7 @@ import { isConnectOnly } from "../_mock/envModel";
 import { envLabelOf } from "../_mock/envVersionKinds";
 import { firstSnapshotOfWorld } from "../_mock/envSnapshot";
 import BuildStreamNote from "../environments/BuildStreamNote";
+import SourcesSection from "./data/SourcesSection";
 
 /**
  * The world — the data and tool answers a run executes against.
@@ -463,6 +464,15 @@ export default function WorldPanel({
             )}
           </Box>
         )}
+
+      {!inBuild && (
+        <SourcesSection
+          env={env}
+          envState={envState}
+          patch={patch}
+          readOnly={locked}
+        />
+      )}
 
       {!inBuild && (
         <WorldInternalsSection

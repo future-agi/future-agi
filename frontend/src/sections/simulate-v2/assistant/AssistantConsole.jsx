@@ -783,6 +783,9 @@ function Step({ step }) {
     );
   }
 
+  /* A card the conversation carries — attachments, a proposal. */
+  if (step.kind === "node") return step.node;
+
   if (step.kind === "ask") {
     return (
       <AskUserQuestionCard

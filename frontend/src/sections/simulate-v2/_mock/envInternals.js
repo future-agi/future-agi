@@ -153,9 +153,16 @@ const fallbackCols = (name) => [
   ["created_at", "timestamptz", false],
 ];
 
-export function schemaFor(env) {
+export function schemaFor(env, envState) {
   const tables = env?.seed?.tables || [];
-  return tables.map((t) => {
+  /* Tables imported from attached records (orgData.js) join the world's own. */
+  const imported = (envState?.dataImports || []).filter((t) => !tables.some((x) => x.name === t.name));
+  return [
+    ...tables,
+    ...imported.map((t) => ({ name: t.name, rows: t.rows, note: `Imported from your records`, cols: t.cols })),
+  ].map((t) => {
+    if (t.cols)
+      return { name: t.name, rows: t.rows, note: t.note, cols: t.cols.map(([name, type, pk]) => ({ name, type, pk: !!pk })) };
     const recipe = TABLE_RECIPES.find((r) => r.match.test(t.name.toLowerCase()));
     const cols = (recipe?.cols || fallbackCols(t.name)).map(([name, type, pk]) => ({
       name, type, pk: !!pk,

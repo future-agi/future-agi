@@ -72,7 +72,7 @@ export default function WorldInternalsSection({
   mcp = null,
   onMcp,
 }) {
-  const schema = schemaFor(env);
+  const schema = schemaFor(env, envState);
   /* The world being edited: the pinned version, plus tools added or removed since. */
   const tools = worldToolsFor(env, envState);
   const { dispatch } = useSimStore();

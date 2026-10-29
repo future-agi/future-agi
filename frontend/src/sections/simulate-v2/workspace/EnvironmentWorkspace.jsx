@@ -108,6 +108,8 @@ import {
   saveBothPatch,
 } from "../_mock/teammateSave";
 import SaveClashDialog from "./SaveClashDialog";
+import AttachmentsCard from "./data/AttachmentsCard";
+import DataProposalCard from "./data/DataProposalCard";
 import ActorsPanel from "./ActorsPanel";
 import VersionHistoryMenu from "./VersionHistory";
 import { envOf } from "../_mock/runGroup";
@@ -1049,8 +1051,89 @@ export default function EnvironmentWorkspace() {
      Fork sits beside Run simulation. */
 
   const chips = CHIPS_BY_TAB[activeTab] || CHIPS_BY_TAB.overview;
-  const sendChat = (text) => {
+  /* A source opened from a citation: World & tools, with it open. */
+  const openSource = (id) =>
+    navigate(
+      `${paths.dashboard.simulate.environmentStep(envId, "world")}${id ? `?source=${encodeURIComponent(id)}` : ""}`,
+    );
+  /*
+    Files attached in builder chat (roadmap data.md): each uploads on its
+    own; once they've settled, the readable ones join the environment's
+    sources (not its world yet) and the builder proposes what to do with
+    them — rules, seed tables, cases — each citing its passage or row.
+  */
+  const sendFiles = (text, files) => {
+    const names = files.map((f) => f.name).join(", ");
+    setTurns((prev) => [
+      ...prev,
+      {
+        id: `u-${Date.now()}`,
+        role: "user",
+        text: text ? `${text} · Attached: ${names}` : `Attached: ${names}`,
+      },
+      {
+        id: `a-files-${Date.now()}`,
+        role: "assistant",
+        steps: [
+          {
+            kind: "note",
+            text: `Reading ${files.length === 1 ? "the file" : `${files.length} files`} — each uploads on its own, so one failing keeps the others and your message.`,
+          },
+          {
+            kind: "node",
+            node: (
+              <AttachmentsCard
+                files={files}
+                onDone={(read) => {
+                  const usable = read.filter((s) => s.status !== "unsupported");
+                  patch({
+                    sources: [
+                      ...(latestEnvState.current.sources || []),
+                      ...read,
+                    ],
+                  });
+                  setTurns((prev) => [
+                    ...prev,
+                    {
+                      id: `a-proposal-${Date.now()}`,
+                      role: "assistant",
+                      steps: usable.length
+                        ? [
+                            {
+                              kind: "note",
+                              text: `Here's what I'd change${text ? ` for “${text}”` : ""}. Expected answers stay with the evaluator; everything else cites where it came from.`,
+                            },
+                            {
+                              kind: "node",
+                              node: (
+                                <DataProposalCard
+                                  env={env}
+                                  sourceIds={usable.map((s) => s.id)}
+                                  onOpenSource={openSource}
+                                />
+                              ),
+                            },
+                          ]
+                        : [
+                            {
+                              kind: "note",
+                              text: "None of those can be read here, so nothing changes. Attach a PDF, text, Markdown, CSV or JSON file.",
+                            },
+                          ],
+                    },
+                  ]);
+                }}
+              />
+            ),
+          },
+        ],
+      },
+    ]);
+  };
+
+  const sendChat = (text, files = []) => {
     const trimmed = (text || "").trim();
+    if (files?.length) return sendFiles(trimmed, files);
     if (!trimmed) return;
     /*
       Snapshot the selection at the moment of send. If the user has
