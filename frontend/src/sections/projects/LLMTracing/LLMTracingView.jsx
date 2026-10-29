@@ -189,6 +189,7 @@ import {
   singleProjectIdFromFilters,
 } from "./GraphSection/graphFilterUtils";
 import { buildAddEvalsDraft } from "./buildAddEvalsDraft";
+import { getObservePaneTabLabel } from "./observePaneTabLabels";
 import SelectAllBanner from "./SelectAllBanner";
 import { getSelectionCountState } from "./listTotalMetadata";
 import { spanSourceIdsFromPhysicalRowIds } from "./spanPhysicalIdentity";
@@ -4072,7 +4073,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     margin: theme.spacing(0),
                     px: theme.spacing(1.875),
                   }}
-                  label="Primary Graph"
+                  label={getObservePaneTabLabel(effectiveViewMode, "primary")}
                   value="primary"
                 />
                 <Tab
@@ -4080,7 +4081,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     margin: theme.spacing(0),
                     px: theme.spacing(1.875),
                   }}
-                  label="Comparison Graph"
+                  label={getObservePaneTabLabel(effectiveViewMode, "compare")}
                   value="compare"
                 />
               </Tabs>
