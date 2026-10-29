@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { FIX_RUN_FIXTURES } from "src/api/simulate-environments/_fixtures/fixRuns";
@@ -48,10 +48,12 @@ describe("Changes tab", () => {
 });
 
 describe("Cost tab", () => {
-  it("shows spent, held and the limit in credits", () => {
+  it("shows spent, reserved, committed and the budget side by side", () => {
     render(<FixCostTab fix={byId("fix-ready-archive")} />);
-    expect(screen.getByText("412 credits")).toBeInTheDocument();
-    expect(screen.getByText("108 credits")).toBeInTheDocument();
-    expect(screen.getByText("1,500 credits")).toBeInTheDocument();
+    const cell = (label) => within(screen.getByTestId(`cost-${label}`));
+    expect(cell("Spent").getByText("412 credits")).toBeInTheDocument();
+    expect(cell("Reserved").getByText("108 credits")).toBeInTheDocument();
+    expect(cell("Committed").getByText("520 credits")).toBeInTheDocument();
+    expect(cell("Budget").getByText("1,500 credits")).toBeInTheDocument();
   });
 });

@@ -7,12 +7,12 @@ import TrialsTable from "./TrialsTable";
 
 // Screen 2: a running fix. Everything here comes from the one read the page
 // polls; nothing is estimated.
-export default function FixRunningView({ fix }) {
+export default function FixRunningView({ fix, runTestId }) {
   const trials = fix.candidates || [];
   const max = fix.plan?.max_candidates;
   return (
     <Box data-testid="fix-running-view" sx={{ px: 3, py: 2.5 }}>
-      <FixSteps fix={fix} />
+      <FixSteps fix={fix} runTestId={runTestId} />
       <TrialChart candidates={trials} />
       {trials.length > 0 && (
         <>
@@ -28,4 +28,7 @@ export default function FixRunningView({ fix }) {
   );
 }
 
-FixRunningView.propTypes = { fix: PropTypes.object.isRequired };
+FixRunningView.propTypes = {
+  fix: PropTypes.object.isRequired,
+  runTestId: PropTypes.string,
+};

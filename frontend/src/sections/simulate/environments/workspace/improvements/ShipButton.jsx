@@ -1,9 +1,10 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Button } from "@mui/material";
+import { Box, Button } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import {
   fetchCandidatePatch,
   fixErrorOf,
@@ -13,6 +14,11 @@ import {
 
 import { downloadText } from "./downloadText";
 import { isShipped, winnerOf } from "./fixRunView";
+
+const shipHint = (fix, winner) =>
+  fix.agent?.kind === "github"
+    ? `Opens a pull request with Trial ${winner.attempt}'s change on the agent's repository`
+    : `Makes Trial ${winner.attempt}'s version the environment's default`;
 
 // Ship: only the fix's winner, only once the fix is ready. An uploaded agent's
 // winner becomes the environment's default; a GitHub agent's opens a pull
@@ -62,29 +68,34 @@ export default function ShipButton({ fix }) {
       </Button>
     );
   }
-  const github = fix.agent?.kind === "github";
   return (
-    <Button
-      size="small"
-      variant="contained"
-      disabled={busy}
-      onClick={async () => {
-        setBusy(true);
-        try {
-          await ship.mutateAsync(winner.id);
-        } catch (error) {
-          const parsed = fixErrorOf(error);
-          if (parsed.offerPatch) setOfferPatch(true);
-          enqueueSnackbar(parsed.message || "Could not ship this change", {
-            variant: "error",
-          });
-        } finally {
-          setBusy(false);
-        }
-      }}
-    >
-      {github ? "Open pull request" : "Make default"}
-    </Button>
+    <CustomTooltip show title={shipHint(fix, winner)} size="small" arrow>
+      <Box component="span">
+        <Button
+          size="small"
+          variant="contained"
+          color="primary"
+          disabled={busy}
+          startIcon={<Iconify icon="solar:upload-linear" width={16} />}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              await ship.mutateAsync(winner.id);
+            } catch (error) {
+              const parsed = fixErrorOf(error);
+              if (parsed.offerPatch) setOfferPatch(true);
+              enqueueSnackbar(parsed.message || "Could not ship this change", {
+                variant: "error",
+              });
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          Ship
+        </Button>
+      </Box>
+    </CustomTooltip>
   );
 }
 

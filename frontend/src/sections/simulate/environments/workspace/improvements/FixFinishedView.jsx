@@ -2,6 +2,7 @@ import PropTypes from "prop-types";
 import { useState } from "react";
 import { Box, Button, Tab, Typography } from "@mui/material";
 
+import Iconify from "src/components/iconify";
 import { CustomTabs } from "src/components/tabs/tabs";
 
 import FixVerdict from "./FixVerdict";
@@ -23,6 +24,7 @@ export function FinishedActions({ fix, onReview }) {
         <Button
           size="small"
           variant="outlined"
+          startIcon={<Iconify icon="solar:shield-check-linear" width={16} />}
           onClick={() => setDeciding(true)}
         >
           How it was decided
@@ -32,6 +34,7 @@ export function FinishedActions({ fix, onReview }) {
         <Button
           size="small"
           variant="outlined"
+          endIcon={<Iconify icon="solar:arrow-right-linear" width={14} />}
           onClick={() => onReview(winner.id)}
         >
           {`Review Trial ${winner.attempt}`}

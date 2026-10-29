@@ -92,9 +92,7 @@ describe("finished fix", () => {
   it("makes an uploaded agent's winner the default", async () => {
     const user = userEvent.setup();
     renderPage("fix-ready-archive");
-    await user.click(
-      await screen.findByRole("button", { name: "Make default" }),
-    );
+    await user.click(await screen.findByRole("button", { name: "Ship" }));
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Default" })).toBeDisabled(),
     );
@@ -103,9 +101,7 @@ describe("finished fix", () => {
   it("opens a pull request for a GitHub agent's winner", async () => {
     const user = userEvent.setup();
     renderPage("fix-ready-github");
-    await user.click(
-      await screen.findByRole("button", { name: "Open pull request" }),
-    );
+    await user.click(await screen.findByRole("button", { name: "Ship" }));
     expect(
       await screen.findByRole("link", { name: "View pull request" }),
     ).toHaveAttribute("href", "https://github.com/acme/dispatch-agent/pull/42");
@@ -122,13 +118,11 @@ describe("finished fix", () => {
       }),
     };
     renderPage("fix-ready-archive");
-    await user.click(
-      await screen.findByRole("button", { name: "Make default" }),
-    );
+    await user.click(await screen.findByRole("button", { name: "Ship" }));
     expect(
       await screen.findByText("Could not activate v11"),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Make default" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Ship" })).toBeEnabled();
   });
 
   it("offers the patch when the repository cannot take a pull request", async () => {
@@ -142,25 +136,43 @@ describe("finished fix", () => {
       }),
     };
     renderPage("fix-ready-github");
-    await user.click(
-      await screen.findByRole("button", { name: "Open pull request" }),
-    );
+    await user.click(await screen.findByRole("button", { name: "Ship" }));
     expect(
       await screen.findByRole("button", { name: "Download patch" }),
     ).toBeInTheDocument();
   });
 
-  it("explains how it was decided", async () => {
+  it("says what Ship does before it is clicked", async () => {
+    const user = userEvent.setup();
+    renderPage("fix-ready-github");
+    await user.hover(await screen.findByRole("button", { name: "Ship" }));
+    expect(
+      await screen.findByText(
+        "Opens a pull request with Trial 3's change on the agent's repository",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("groups how it was decided into evidence, finalists and checks", async () => {
     const user = userEvent.setup();
     renderPage("fix-ready-archive");
     await user.click(
       await screen.findByRole("button", { name: "How it was decided" }),
     );
-    const drawer = await screen.findByTestId("fix-decision");
-    expect(within(drawer).getByText("Trial 1 · Rejected")).toBeInTheDocument();
+    const drawer = within(await screen.findByTestId("fix-decision"));
     expect(
-      within(drawer).getByText("target: 0 of 1 target scenarios passed"),
+      drawer.getByText("Improvement 10 · Trial 3 kept"),
     ).toBeInTheDocument();
+    expect(drawer.getByText("Evidence")).toBeInTheDocument();
+    expect(drawer.getByText("Held-back scenarios")).toBeInTheDocument();
+    expect(drawer.getByText("Finalists")).toBeInTheDocument();
+    expect(
+      within(drawer.getByTestId("finalist-3")).getByText("Kept"),
+    ).toBeInTheDocument();
+    expect(
+      within(drawer.getByTestId("finalist-2")).getByText("Passed"),
+    ).toBeInTheDocument();
+    expect(drawer.getByText("Checks")).toBeInTheDocument();
   });
 
   it("shows why a failed fix ended and offers no Ship", async () => {
@@ -170,9 +182,16 @@ describe("finished fix", () => {
         "The engine could not start the agent's sandbox.",
       ),
     ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Ship$/ })).toBeNull();
+  });
+
+  it("heads the trial chart with the winner and its gain", async () => {
+    renderPage("fix-ready-archive");
     expect(
-      screen.queryByRole("button", { name: /Make default|Open pull request/ }),
-    ).toBeNull();
+      await screen.findByText(
+        "pass rate on the target scenarios · Trial 3 · winner ▲ 67 pts vs the agent before the change, on the same scenarios",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("switches to the finished view when a running fix ends", async () => {

@@ -1,33 +1,20 @@
 import PropTypes from "prop-types";
-import { Box, Stack, Typography } from "@mui/material";
+import { Box, Typography } from "@mui/material";
 
 import { formatCredits } from "./fixRunView";
 
 const num = { fontVariantNumeric: "tabular-nums" };
 
-// The design's credit ledger, contract fields only: what was spent, what is
-// held for check runs not yet billed, and the limit.
+// The design's credit strip, contract fields only: what was spent, what is
+// reserved for check runs not yet billed, the two together, and the budget.
 export default function FixCostTab({ fix }) {
-  const held = Math.max(
-    0,
-    (fix.committed_credits ?? 0) - (fix.spent_credits ?? 0),
-  );
-  const rows = [
-    {
-      label: "Spent",
-      note: "model calls and finished check runs, as billed",
-      value: fix.spent_credits,
-    },
-    {
-      label: "Held for running checks",
-      note: "a worst-case hold for each check run not yet billed",
-      value: held,
-    },
-    {
-      label: "Limit",
-      note: "the fix stops at this",
-      value: fix.request?.budget_credits,
-    },
+  const spent = fix.spent_credits ?? 0;
+  const committed = fix.committed_credits ?? spent;
+  const cells = [
+    { label: "Spent", value: spent },
+    { label: "Reserved", value: Math.max(0, committed - spent) },
+    { label: "Committed", value: committed },
+    { label: "Budget", value: fix.request?.budget_credits },
   ];
   return (
     <Box
@@ -35,33 +22,45 @@ export default function FixCostTab({ fix }) {
         border: "1px solid",
         borderColor: "divider",
         borderRadius: "8px",
-        maxWidth: 560,
+        p: 1,
       }}
     >
-      {rows.map((r, i) => (
-        <Stack
-          key={r.label}
-          direction="row"
-          alignItems="center"
-          sx={{
-            px: 2,
-            py: 1,
-            ...(i > 0 && { borderTop: "1px solid", borderColor: "divider" }),
-          }}
-        >
-          <Box flex={1} minWidth={0}>
-            <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-              {r.label}
-            </Typography>
+      <Box
+        sx={{
+          display: "grid",
+          gridTemplateColumns: {
+            xs: "repeat(2, minmax(0, 1fr))",
+            md: "repeat(4, minmax(0, 1fr))",
+          },
+          border: "1px solid",
+          borderColor: "divider",
+          borderRadius: "6px",
+          "& > *:not(:first-of-type)": {
+            borderLeft: "1px solid",
+            borderColor: "divider",
+          },
+        }}
+      >
+        {cells.map((c) => (
+          <Box
+            key={c.label}
+            data-testid={`cost-${c.label}`}
+            sx={{ px: 1.5, py: 1 }}
+          >
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-              {r.note}
+              {c.label}
+            </Typography>
+            <Typography sx={{ typography: "s2", fontWeight: 600, ...num }}>
+              {formatCredits(c.value)}
             </Typography>
           </Box>
-          <Typography sx={{ typography: "s2", fontWeight: 600, ...num }}>
-            {formatCredits(r.value)}
-          </Typography>
-        </Stack>
-      ))}
+        ))}
+      </Box>
+      <Typography
+        sx={{ typography: "s3", color: "text.subtitle", px: 0.5, pt: 1 }}
+      >
+        {`Budget ${formatCredits(fix.request?.budget_credits)} · spent is the engine's model calls and finished check runs, as billed; reserved is a worst-case hold for each check run not yet billed`}
+      </Typography>
     </Box>
   );
 }

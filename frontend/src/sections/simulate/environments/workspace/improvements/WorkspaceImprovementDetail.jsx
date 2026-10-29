@@ -8,5 +8,12 @@ export default function WorkspaceImprovementDetail() {
   const { env } = useOutletContext() || {};
   const { fixId } = useParams();
   if (!env) return null;
-  return <FixRunPage key={fixId} envId={env.id} fixId={fixId} />;
+  return (
+    <FixRunPage
+      key={fixId}
+      envId={env.id}
+      fixId={fixId}
+      runTestId={env.platform?.runTestId}
+    />
+  );
 }

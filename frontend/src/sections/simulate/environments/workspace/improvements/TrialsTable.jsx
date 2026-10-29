@@ -1,3 +1,4 @@
+import { alpha } from "@mui/material/styles";
 import PropTypes from "prop-types";
 import { useLocation } from "react-router-dom";
 import { Box, Link, Stack, Typography } from "@mui/material";
@@ -5,10 +6,12 @@ import { Box, Link, Stack, Typography } from "@mui/material";
 import { RouterLink } from "src/routes/components";
 import { paths } from "src/routes/paths";
 
+import { runColor } from "../runs/runs.constants";
+
 import { OUTCOME_LABEL, pct, pts } from "./fixRunView";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 
-const GRID = "minmax(260px, 1fr) 170px 110px";
+const GRID = "minmax(280px, 380px) 200px 160px 1fr";
 const num = { fontVariantNumeric: "tabular-nums" };
 
 const head = { typography: "s3", fontWeight: 600, color: "text.subtitle" };
@@ -16,7 +19,7 @@ const head = { typography: "s3", fontWeight: 600, color: "text.subtitle" };
 function PassCell({ rate }) {
   const delta = pts(rate);
   return (
-    <Box>
+    <Stack direction="row" spacing={1} alignItems="baseline">
       <Typography
         sx={{ typography: "s2", fontWeight: 600, ...num }}
       >{`${pct(rate[1])}%`}</Typography>
@@ -28,10 +31,10 @@ function PassCell({ rate }) {
             color: delta > 0 ? BUILD_TONES.green : BUILD_TONES.red,
           }}
         >
-          {`${delta > 0 ? "▲" : "▼"} ${Math.abs(delta)} pts`}
+          {`${delta > 0 ? "↑" : "↓"} ${Math.abs(delta)} pts`}
         </Typography>
       )}
-    </Box>
+    </Stack>
   );
 }
 PassCell.propTypes = { rate: PropTypes.arrayOf(PropTypes.number).isRequired };
@@ -93,7 +96,12 @@ export default function TrialsTable({ fix }) {
                   borderRadius: 0.75,
                   typography: "s3",
                   fontWeight: 700,
-                  bgcolor: "action.hover",
+                  color: runColor(c.attempt),
+                  bgcolor: (t) =>
+                    alpha(
+                      runColor(c.attempt),
+                      t.palette.mode === "dark" ? 0.22 : 0.14,
+                    ),
                   flexShrink: 0,
                 }}
               >

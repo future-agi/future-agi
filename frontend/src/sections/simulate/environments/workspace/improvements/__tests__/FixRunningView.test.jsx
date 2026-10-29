@@ -39,6 +39,29 @@ describe("FixRunningView", () => {
     expect(steps.getByText("Starts from Run 1 on v8")).toBeInTheDocument();
   });
 
+  it("links the reproduce step to the run it starts from", () => {
+    render(
+      <MemoryRouter>
+        <FixRunningView fix={byId("fix-search")} runTestId="rt-env" />
+      </MemoryRouter>,
+    );
+    expect(
+      within(screen.getByTestId("step-reproduce")).getByRole("link", {
+        name: "Environment Run 1",
+      }),
+    ).toHaveAttribute(
+      "href",
+      "/dashboard/simulate/environments/env-1/runs/rt-env/te-source-run-1",
+    );
+  });
+
+  it("shows the pass change on the same line as the rate", () => {
+    renderView(byId("fix-search"));
+    expect(
+      within(screen.getByTestId("trial-2")).getByText("↑ 34 pts"),
+    ).toBeInTheDocument();
+  });
+
   it("shows what the search is held to", () => {
     renderView(byId("fix-search"));
     const held = within(screen.getByTestId("held-to"));
@@ -96,7 +119,7 @@ describe("TrialChart", () => {
     render(<TrialChart candidates={fix.candidates} />);
     expect(screen.getAllByTestId("trial-point")).toHaveLength(3);
     expect(
-      screen.getByText("100% pass rate on the target scenarios"),
+      screen.getByText(/^pass rate on the target scenarios · Trial 3 · winner/),
     ).toBeInTheDocument();
   });
 

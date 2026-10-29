@@ -1,7 +1,10 @@
 import PropTypes from "prop-types";
-import { Box, Stack, Typography } from "@mui/material";
+import { useLocation } from "react-router-dom";
+import { Box, Button, Stack, Typography } from "@mui/material";
 
 import Iconify from "src/components/iconify";
+import { RouterLink } from "src/routes/components";
+import { paths } from "src/routes/paths";
 
 import { heldToRows, stepRows } from "./fixRunView";
 
@@ -56,8 +59,17 @@ const labelCell = {
 
 // The design's step list (ImprovementStages): one row per engine step, the
 // current one spinning, then what the search is held to.
-export default function FixSteps({ fix }) {
+export default function FixSteps({ fix, runTestId }) {
+  const location = useLocation();
   const rows = stepRows(fix);
+  const sourceHref =
+    runTestId && fix.source_run_id
+      ? paths.dashboard.simulate.environments.execution(
+          fix.environment_id,
+          runTestId,
+          fix.source_run_id,
+        )
+      : null;
   const heldTo = heldToRows(fix);
   return (
     <Box
@@ -123,6 +135,22 @@ export default function FixSteps({ fix }) {
                   </Typography>
                 ))}
             </Box>
+            {row.id === "reproduce" &&
+              sourceHref &&
+              fix.source_run_number != null && (
+                <Button
+                  size="small"
+                  component={RouterLink}
+                  href={sourceHref}
+                  state={{ backTo: location.pathname }}
+                  endIcon={
+                    <Iconify icon="solar:arrow-right-linear" width={14} />
+                  }
+                  sx={{ color: "text.secondary", flexShrink: 0, minWidth: 0 }}
+                >
+                  {`Environment Run ${fix.source_run_number}`}
+                </Button>
+              )}
           </Stack>
         );
       })}
@@ -172,4 +200,7 @@ export default function FixSteps({ fix }) {
   );
 }
 
-FixSteps.propTypes = { fix: PropTypes.object.isRequired };
+FixSteps.propTypes = {
+  fix: PropTypes.object.isRequired,
+  runTestId: PropTypes.string,
+};
