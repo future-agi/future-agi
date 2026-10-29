@@ -25,6 +25,7 @@ import { omegaReport } from "./omega";
 import { hashSeed } from "./runStream";
 import { passShareOf } from "./optimize";
 import { definitionOf, envAgentKey } from "./agentRegistry";
+import { frontmatterOf, loadedVOf, skillRuntimeOf, skillSetOf } from "./skills";
 import { agentVersions, currentEnvVersion } from "./versions";
 import {
   repoTestsOf,
@@ -357,6 +358,42 @@ const engineConfig = ({
 
 /* The cost and latency ceilings, checked on every candidate as it runs —
    the one gate every screen uses (optimizationRuns.limitGate). */
+/*
+  The skills an improvement may change: the ones the agent loads, narrowed
+  to the one picked (limits.skillFocus), each at the version it runs.
+*/
+export const skillsForSearch = (env, es, state, limits) => {
+  if (!(limits?.allowed || []).includes("skills") || !es?.agent) return null;
+  const agent = {
+    ...es.agent,
+    key: es.agent.key || envAgentKey(es.agent, env?.id),
+  };
+  const set = skillSetOf(agent, state?.workspaceSettings);
+  const skills = set.skills
+    .filter(
+      (x) =>
+        x.state === "on" && (!limits.skillFocus || x.id === limits.skillFocus),
+    )
+    .map((x) => {
+      const v = loadedVOf(x);
+      const md =
+        (
+          x.versions.find((y) => y.v === v) || x.versions[x.versions.length - 1]
+        ).files.find((f) => f.path === "SKILL.md")?.text || "";
+      return {
+        id: x.id,
+        v,
+        md,
+        description: frontmatterOf(md)?.description || "",
+      };
+    });
+  return {
+    skills,
+    skillDepth: limits.skillDepth || "description",
+    skillObserved: !!skillRuntimeOf(agent).observed,
+  };
+};
+
 const limitGateFor = (limits, env, es) =>
   limitGate({
     limits,
@@ -416,6 +453,7 @@ export const planSearch = ({
       ...(eng && pick && { pick }),
       allowed: limits.allowed,
       protected: limits.protected,
+      ...(skillsForSearch(env, es, state, limits) || {}),
       /* Model switches are candidates only when the agent names approved models. */
       models:
         limits.model?.mode === "approved" ? limits.model.approved || [] : [],

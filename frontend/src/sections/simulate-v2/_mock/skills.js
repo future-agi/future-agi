@@ -915,3 +915,72 @@ export const skillEvidenceOf = (skill, tests, runtime, scenariosOf) => {
     failures,
   };
 };
+
+/*
+  A winning improvement that changed a skill (roadmap improve_next.md):
+  each skill change becomes that skill's next version. The agent keeps
+  loading the version it has until the draft agent version is released.
+*/
+export const skillCandidatesPatch = (
+  set,
+  proposals = [],
+  { by, note } = {},
+) => {
+  const changes = proposals.filter((p) => p.kind === "Skill" && p.skillId);
+  if (!changes.length) return null;
+  const skills = set.skills.map((s) => {
+    const c = changes.find((p) => p.skillId === s.id);
+    if (!c) return s;
+    const from = s.versions.find((v) => v.v === c.skillFrom) || latestOf(s);
+    const files = from.files.map((f) => {
+      if (f.path !== "SKILL.md") return f;
+      let text = f.text.replace(
+        /^description:.*$/m,
+        `description: ${c.newDescription}`,
+      );
+      if (c.newStep) {
+        /* Numbered like the steps before it, when they're numbered. */
+        const last = (text
+          .trim()
+          .split("\n")
+          .pop()
+          .match(/^(\d+)\./) || [])[1];
+        const step = last ? `${Number(last) + 1}. ${c.newStep}` : c.newStep;
+        text = `${text.replace(/\n*$/, "")}\n${step}\n`;
+      }
+      return { ...f, text };
+    });
+    const v = latestOf(s).v + 1;
+    return {
+      ...s,
+      ...(s.state === "on" && { loadedV: loadedVOf(s) }),
+      versions: [
+        ...s.versions,
+        {
+          v,
+          at: new Date().toISOString(),
+          by: by || currentUser().name,
+          source: { kind: "improvement", note },
+          files,
+          note: note || "From an improvement",
+        },
+      ],
+    };
+  });
+  return { ...set, skills };
+};
+
+/** The cases (by title) that mention what a skill is for. */
+export const casesForSkillOf = (skill, cases = []) => {
+  const words = skillWordsOf(skill);
+  return cases.filter((c) => {
+    const hay = new Set(
+      String(`${c.title || ""} ${c.summary || ""} ${c.task || ""}`)
+        .toLowerCase()
+        .replace(/[^a-z0-9 ]+/g, " ")
+        .split(/\s+/)
+        .map((w) => w.replace(/(ing|ed|es|s)$/, "")),
+    );
+    return [...words].some((w) => hay.has(w));
+  });
+};

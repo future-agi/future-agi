@@ -48,6 +48,9 @@ export const withEdits = (limits, edits = {}) => ({
   /* What it may change and the files it must never edit, set in place. */
   ...(edits.allowed && { allowed: edits.allowed }),
   ...(edits.protected && { protected: edits.protected }),
+  /* Which skill may change, and how much of it. */
+  ...(edits.skillFocus && { skillFocus: edits.skillFocus }),
+  ...(edits.skillDepth && { skillDepth: edits.skillDepth }),
   budget: {
     ...limits.budget,
     ...(edits.dollars != null && { dollars: edits.dollars }),

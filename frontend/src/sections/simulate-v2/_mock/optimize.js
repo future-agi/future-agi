@@ -34,6 +34,7 @@ export const FILE_FOR_KIND = {
   Memory:              { path: (env) => `${env?.id || "agent"}/state/memory.py`, language: "python" },
   Architecture:        { path: (env) => `${env?.id || "agent"}/graph.py`, language: "python" },
   "Agent setting":     { path: (env) => `${env?.id || "agent"}/agent.yaml`, language: "yaml" },
+  Skill:               { path: (env, p) => `skills/${p?.skillId || "skill"}/SKILL.md`, language: "markdown" },
 };
 
 /* The prompt section a System-prompt change edits — what a protected
@@ -663,3 +664,78 @@ export const projectedWithGeneralisation = (measured = [], proposals = []) => {
   const total = measured.reduce((a, t) => a + (helps(t) ? 1 : passShareOf(t)), 0);
   return Math.min(100, Math.round((total / measured.length) * 100));
 };
+
+/* ── skill candidates (roadmap improve_next.md) ─────────────────────────── */
+
+const SKILL_STOP = new Set("use when the a an or and to of in for is it its not new with any be can cant that this on caller agent asks task".split(" "));
+const skillWords = (text) =>
+  new Set(
+    String(text || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9 ]+/g, " ")
+      .split(/\s+/)
+      .filter((w) => w.length > 3 && !SKILL_STOP.has(w))
+      .map((w) => w.replace(/(ing|ed|es|s)$/, "")),
+  );
+
+/**
+ * New versions of a skill, written from the cases it should have handled:
+ * one that says more exactly when it's used (and, when allowed, adds a step),
+ * and one that broadens it to every related request — the kind of change
+ * that fixes the targets and loads where it shouldn't, which the protected
+ * cases are there to catch. Only the description, or the description and
+ * instructions, change; scripts and resources never do.
+ * `skills`: [{ id, v, md, description }].
+ */
+export const skillProposalsFor = (skills = [], failing = [], { depth = "description", observed = false } = {}) =>
+  skills.flatMap((s) => {
+    const words = skillWords(`${s.id.replace(/-/g, " ")} ${s.description}`);
+    const hits = failing.filter((t) => {
+      const hay = skillWords(`${t.title} ${t.summary || ""} ${t.task || ""}`);
+      return [...words].some((w) => hay.has(w));
+    });
+    if (!hits.length) return [];
+    const topic = [...words][0] || "these";
+    const sharper = `${s.description.replace(/\.?\s*$/, ".")} Also when the caller says an earlier attempt failed or asks to try again.`;
+    const broader = `Use for any ${topic} question.`;
+    const base = {
+      kind: "Skill",
+      skillId: s.id,
+      skillFrom: s.v,
+      skillTo: s.v + 1,
+      observed,
+      addresses: hits.map((t) => t.id),
+      step: s.id,
+    };
+    const descLine = (d) => `description: ${d}`;
+    return [
+      {
+        ...base,
+        id: `skill-sharpen-${s.id}`,
+        title: `Say exactly when ${s.id} is used`,
+        why: `${hits.length} ${hits.length === 1 ? "case" : "cases"} matched what ${s.id} is for but ${hits.length === 1 ? "wasn't" : "weren't"} handled by it. Narrows the description to the request that failed.`,
+        diff: [
+          { type: "remove", text: descLine(s.description) },
+          { type: "add", text: descLine(sharper) },
+          ...(depth === "instructions"
+            ? [{ type: "add", text: "Before acting, read the current state; a retried request reuses what already succeeded." }]
+            : []),
+        ],
+        newDescription: sharper,
+        ...(depth === "instructions" && { newStep: "Before acting, read the current state; a retried request reuses what already succeeded." }),
+      },
+      {
+        ...base,
+        id: `skill-broaden-${s.id}`,
+        title: `Use ${s.id} for every ${topic} request`,
+        why: `Broader activation reaches all ${hits.length} ${hits.length === 1 ? "case" : "cases"}, but it may load on requests the skill wasn't written for.`,
+        diff: [
+          { type: "remove", text: descLine(s.description) },
+          { type: "add", text: descLine(broader) },
+        ],
+        newDescription: broader,
+        /* Loads where it shouldn't: the protected cases catch it. */
+        overReach: true,
+      },
+    ];
+  });

@@ -59,6 +59,18 @@ export default function WinnerChanges({ env, winner, members, record }) {
               sx={{ typography: "s2", color: "text.secondary", mt: 0.25 }}
             >{`Why: ${p.why}`}</Typography>
           )}
+          {/* A skill change: the version it makes, and whether its use was seen. */}
+          {p.kind === "Skill" && (
+            <Typography
+              sx={{ typography: "s3", color: "text.tertiary", mt: 0.25 }}
+            >
+              {`${p.skillId} v${p.skillFrom} → v${p.skillTo} · ${
+                p.observed
+                  ? "skill use observed from the runtime's loading events"
+                  : "skill use unknown: this runtime doesn't report loading, so the result shows outcomes only"
+              }`}
+            </Typography>
+          )}
           {/* A settings change is a typed edit within the platform's allowed values. */}
           {p.setting && (
             <Typography

@@ -30,7 +30,7 @@
  */
 
 import { rng, hashSeed } from "./runStream";
-import { proposalsFor, issueProposals, projectedRate, optimisable, generalisesTo, passShareOf, changeFileFor, SECTION_FOR } from "./optimize";
+import { proposalsFor, skillProposalsFor, issueProposals, projectedRate, optimisable, generalisesTo, passShareOf, changeFileFor, SECTION_FOR } from "./optimize";
 import { staleForAgentOf } from "./decoupled";
 import { contractCandidateOf } from "./improvementPolicy";
 import { withScenarioSetSeed } from "./scenarioSetSeed";
@@ -643,6 +643,7 @@ export const KIND_SURFACE = {
   Memory: "code",
   Architecture: "structure",
   "Agent setting": "settings",
+  Skill: "skills",
   /* Not one of the kinds an agent allows — a model switch is tried only when
      its constraints name an approved list, and only to models on it. */
   Model: "model",
@@ -709,7 +710,7 @@ export const protectedHit = (proposal, list = []) => {
 };
 
 /* How deep a change goes — a search prefers the shallowest that verifies. */
-const DEPTH = { prompt: 0, tools: 1, settings: 2, model: 2, code: 3, structure: 4 };
+const DEPTH = { prompt: 0, tools: 1, skills: 1, settings: 2, model: 2, code: 3, structure: 4 };
 export const depthOf = (proposals) => Math.max(0, ...proposals.map((p) => DEPTH[KIND_SURFACE[p.kind] || "code"] ?? 3));
 
 /*
@@ -867,6 +868,13 @@ const revisionOf = (baseP, still, last, repeats, n) => {
   };
 };
 
+/* A candidate carries one new version of a skill at most: a later version of
+   the same skill replaces the earlier one rather than stacking on it. */
+const oneVersionPerSkill = (pool, ids) => {
+  const skillOf = (id) => pool.find((p) => p.id === id)?.skillId || null;
+  return ids.filter((id, i) => !skillOf(id) || !ids.slice(i + 1).some((x) => skillOf(x) === skillOf(id)));
+};
+
 export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope: given, limitGate = null }) => {
   const scope = given || searchScope({ env, tasks });
   const optimizer = optimizerById(optimizerId);
@@ -990,6 +998,10 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
   const pool = [
     ...issuePool,
     ...permitted(proposalsFor(env, failingTrain, trainMeasured)),
+    /* New versions of the skills it may change — description, or description and steps. */
+    ...(cfg.skills?.length
+      ? permitted(skillProposalsFor(cfg.skills, failingTrain, { depth: cfg.skillDepth, observed: !!cfg.skillObserved }))
+      : []),
     ...modelProposals(cfg.models || [], failingTrain).map(tag).filter((p) => p.addresses.length),
     ...(!cfg.allowed || cfg.allowed.includes("prompt")
       ? lineageProposals(cfg.lineage || [], failingTrain).map(tag).filter((p) => p.addresses.length)
@@ -1065,7 +1077,7 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
         next = from.length ? from[Math.floor(r() * from.length)].id : null;
       }
       if (next && issueIds.includes(next)) triedIssue.add(next);
-      picks = next ? [...keep, next] : keep;
+      picks = next ? oneVersionPerSkill(pool, [...keep, next]) : keep;
       /* Nothing new to add: revise the incumbent's newest change from what
          the last run still failed, rather than run it again unchanged. */
       const last = trials[trials.length - 1];
@@ -1082,7 +1094,7 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
       }
     } else {
       const size = 1 + Math.floor(r() * Math.min(pool.length, 1 + Math.ceil((n / count) * pool.length)));
-      picks = shuffle(pool, r).slice(0, size).map((p) => p.id);
+      picks = oneVersionPerSkill(pool, shuffle(pool, r).slice(0, size).map((p) => p.id));
     }
 
     const candidate = pool.filter((p) => picks.includes(p.id));
@@ -1354,13 +1366,22 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
       records read must-pass scenarios off the held-back set.
     */
     /* A confirmation re-runs the held-back set only — must-pass already ran. */
-    const mustPassFails = rsi && !stream
+    const drawnFails = rsi && !stream
       ? mustPassMeasured
         .filter((t) => passShareOf(t) >= 1 && hashSeed(`${key}:mp:${t.id}`) % 100 < 3)
         .map((t) => ({ id: t.id, title: t.title, critical: !!t.critical, repeated: repeatsOnRerun(`${key}:mp:${t.id}`) }))
       : [];
+    /* A skill broadened past what it was written for loads on a protected
+       case it shouldn't, and breaks it — on the re-run too. */
+    const overReach = winning.find((p) => p.overReach);
+    const reached = overReach && rsi && !stream
+      ? mustPassMeasured.find((t) => passShareOf(t) >= 1 && !overReach.addresses.includes(t.id) && !drawnFails.some((x) => x.id === t.id))
+      : null;
+    const mustPassFails = reached
+      ? [...drawnFails, { id: reached.id, title: reached.title, critical: !!reached.critical, repeated: true, skill: overReach.skillId }]
+      : drawnFails;
     const blockers = rsi
-      ? mustPassFails.filter((x) => x.repeated).map(({ id, title, critical }) => ({ id, title, critical }))
+      ? mustPassFails.filter((x) => x.repeated).map(({ id, title, critical, skill }) => ({ id, title, critical, ...(skill && { skill }) }))
       : heldMeasured
         .filter((t) => mustPass(t) && per[t.id] === "broke" && repeatsOnRerun(`${key}:${t.id}`))
         .map((t) => ({ id: t.id, title: t.title, critical: !!t.critical }));
@@ -1371,7 +1392,9 @@ export const runSearch = ({ env, tasks, optimizerId, config, seed = "opt", scope
     const envs = rsi && !stream && (cfg.otherEnvs || []).length ? cfg.otherEnvs.map((e) => otherEnvRun(`${key}:f${f.n}`, e)) : null;
     const envBroke = (envs || []).find((e) => !e.held);
     /* The acceptance rule, as the verdict reads it. */
-    const why = blockers.length ? "a must-pass scenario failed again on a re-run"
+    const skillBlock = blockers.find((b) => b.skill);
+    const why = skillBlock ? `${skillBlock.skill} loaded on “${skillBlock.title}”, a protected case it wasn't written for, and broke it again on a re-run`
+      : blockers.length ? "a must-pass scenario failed again on a re-run"
         : envBroke ? `a must-pass scenario failed in ${envBroke.name}, and again on a re-run`
         : issueFix
           ? (heldIssueTargets.length && !issueHeldFixed ? "didn't fix the issue on the held-back set"
@@ -1655,7 +1678,7 @@ export const rejectedFor = (t) => {
 
 /* The smallest kind of change that fits the cause — the winner's, else the
    shallowest the diagnosis wrote. */
-const SURFACE_WORDS = { prompt: "prompt", tools: "tool descriptions", settings: "settings", model: "model", code: "code", structure: "structure" };
+const SURFACE_WORDS = { prompt: "prompt", tools: "tool descriptions", skills: "skills", settings: "settings", model: "model", code: "code", structure: "structure" };
 export const smallestSurfaceOf = (result) => {
   const list = result?.winner?.proposals?.length ? result.winner.proposals : result?.pool || [];
   if (!list.length) return null;

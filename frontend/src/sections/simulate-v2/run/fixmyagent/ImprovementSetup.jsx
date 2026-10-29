@@ -85,6 +85,7 @@ import { recordOutsideChange } from "../../_mock/nudgeEffects";
 import { creditsLabel } from "../../_mock/metering";
 import CopyCommandButton from "../../components/CopyCommandButton";
 import { creditsForUsd } from "../../_mock/metering";
+import { casesForSkillOf, loadedVOf, skillSetOf } from "../../_mock/skills";
 
 /* "Raise the pass rate", "Raise booking success rate", "Raise Policy adherence". */
 const goalText = (g) =>
@@ -512,9 +513,19 @@ export default function ImprovementSetup({
      platform agents their settings; every agent its instructions and tools. */
   const codeAgent = !!agent && isCodeAgent(agent);
   const depthKind = fixDepthOf(es?.agent).depth;
+  /* The skills the agent loads — a skill can change only where it has some. */
+  const loadedSkills = agent
+    ? skillSetOf(agent, state.workspaceSettings).skills.filter(
+        (x) => x.state === "on",
+      )
+    : [];
+  const skillFocus = limits.skillFocus || loadedSkills[0]?.id || "";
+  const skillDepth = limits.skillDepth || "description";
+  const focusSkill = loadedSkills.find((x) => x.id === skillFocus);
   const partOptions = [
     { id: "prompt", label: "Instructions" },
     { id: "tools", label: "Tools" },
+    ...(loadedSkills.length ? [{ id: "skills", label: "Skills" }] : []),
     ...(depthKind === "settings"
       ? [{ id: "settings", label: "Settings" }]
       : []),
@@ -727,6 +738,67 @@ export default function ImprovementSetup({
                 })}
               </Stack>
             </ConfirmRow>
+            {(limits.allowed || []).includes("skills") && focusSkill && (
+              <ConfirmRow k="Skill">
+                <Stack
+                  direction="row"
+                  spacing={1}
+                  alignItems="center"
+                  flexWrap="wrap"
+                  useFlexGap
+                >
+                  <Select
+                    size="small"
+                    value={skillFocus}
+                    onChange={(e) =>
+                      setEdits((ed) => ({ ...ed, skillFocus: e.target.value }))
+                    }
+                    sx={{
+                      typography: "s2",
+                      fontFamily: "ui-monospace, Menlo, monospace",
+                      minWidth: 180,
+                    }}
+                  >
+                    {loadedSkills.map((x) => (
+                      <MenuItem
+                        key={x.id}
+                        value={x.id}
+                        sx={{ typography: "s2" }}
+                      >
+                        {`${x.id} v${loadedVOf(x)}`}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                  <Select
+                    size="small"
+                    value={skillDepth}
+                    onChange={(e) =>
+                      setEdits((ed) => ({ ...ed, skillDepth: e.target.value }))
+                    }
+                    sx={{ typography: "s2", minWidth: 220 }}
+                  >
+                    <MenuItem value="description" sx={{ typography: "s2" }}>
+                      When it&apos;s used only
+                    </MenuItem>
+                    <MenuItem value="instructions" sx={{ typography: "s2" }}>
+                      When it&apos;s used, and its steps
+                    </MenuItem>
+                  </Select>
+                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                    {`From v${loadedVOf(focusSkill)}. Its scripts, resources and the protected cases stay locked.`}
+                  </Typography>
+                  {preview?.trainMeasuredTasks &&
+                    !casesForSkillOf(focusSkill, preview.trainMeasuredTasks)
+                      .length && (
+                      <Typography
+                        sx={{ typography: "s3", color: "status.warning.fg" }}
+                      >
+                        {`None of the ${preview.trainMeasuredTasks.length} case${preview.trainMeasuredTasks.length === 1 ? "" : "s"} to fix mention${preview.trainMeasuredTasks.length === 1 ? "s" : ""} what ${focusSkill.id} is for, so it has nothing to change. Pick another skill, choose other cases, or allow instructions too.`}
+                      </Typography>
+                    )}
+                </Stack>
+              </ConfirmRow>
+            )}
             {codeAgent && (
               <ConfirmRow k="Locked files">
                 <Stack

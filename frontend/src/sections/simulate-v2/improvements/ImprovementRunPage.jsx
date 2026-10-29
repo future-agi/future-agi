@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
+import useSaveSkillCandidates from "../agents/skills/useSaveSkillCandidates";
 import { Helmet } from "react-helmet-async";
 import { Box, Button, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
@@ -47,6 +48,7 @@ export default function ImprovementRunPage() {
   const { state } = useSimStore();
   const env = (state.myEnvironments || []).find((e) => e.id === envId) || null;
   const { envState, patch, addAgentVersion } = useEnvState(envId);
+  const saveSkillCandidates = useSaveSkillCandidates();
   const { agents } = useConnectedAgents();
   const record =
     (envState?.optimizations || []).find((o) => o.id === optId) || null;
@@ -157,6 +159,13 @@ export default function ImprovementRunPage() {
       status: "draft",
     };
     if (!info.version) addAgentVersion?.(version);
+    /* A skill change is that skill's next version, loaded by this draft. */
+    saveSkillCandidates(
+      envId,
+      envState?.agent,
+      changes,
+      `From improvement ${record.id}, in ${version.label}`,
+    );
     patch({
       omegaExpectation: {
         key: record.id,

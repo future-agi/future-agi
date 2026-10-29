@@ -37,6 +37,7 @@ import { limitsOf } from "../../agents/agentLimits";
 import { envAgentKey } from "../../_mock/agentRegistry";
 import OptimizationRunView from "./OptimizationRunView";
 import { useSimStore } from "../../store";
+import useSaveSkillCandidates from "../../agents/skills/useSaveSkillCandidates";
 import { improvementPath } from "../../improvements/improvementNav";
 
 /* A change's diff with its added lines replaced by a person's wording; what
@@ -75,6 +76,7 @@ export default function FixMyAgentDrawer({
   const navigate = useNavigate();
   const { enqueueSnackbar } = useSnackbar();
   const { state: simState, commit } = useSimStore();
+  const saveSkillCandidates = useSaveSkillCandidates();
   /* Opening a row in the runs list lands on that run, not on the diagnosis —
      the list already told you which one you wanted. */
   const [view, setView] = useState(
@@ -460,6 +462,13 @@ export default function FixMyAgentDrawer({
       status: "draft",
     };
     if (!minted) addAgentVersion?.(version);
+    /* A skill change is that skill's next version, loaded by this draft. */
+    saveSkillCandidates(
+      env?.id,
+      envState?.agent,
+      changes || [],
+      `From improvement ${key}, in ${version.label}`,
+    );
     const at = new Date().toISOString();
     patch({
       omegaExpectation: {
