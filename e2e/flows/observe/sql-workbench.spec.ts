@@ -20,10 +20,10 @@ type Execution = { id: string; project_id: string; state: string; error: string;
 const EXPECTED_SPAN_COUNT = 2;
 const EXPECTED_ROW_COUNT = 1;
 
-test('OBS-E2E-052: an analyst saves a scoped SQL result as a live dashboard query', {
+test('OBS-E2E-053: an analyst saves a scoped SQL result as a live dashboard query', {
   tag: ['@flow'],
   annotation: flowAnnotation({
-    id: 'OBS-E2E-052', area: 'observe',
+    id: 'OBS-E2E-053', area: 'observe',
     userGoal: 'An analyst runs a project-scoped query, shares its definition with project members, and adds it to a dashboard.',
     steps: [
       'send a trace with two independently named spans to a new project',

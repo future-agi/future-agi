@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1084,
+  endpointCount: 1103,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -852,6 +852,10 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/simulate/api/call-executions/": ["get"],
       "/simulate/api/harness-environments/": ["get"],
       "/simulate/api/harness-environments/{id}/": ["delete", "get", "patch"],
+      "/simulate/api/harness-environments/{id}/compare/": ["get"],
+      "/simulate/api/harness-environments/{id}/drafts/": ["get"],
+      "/simulate/api/harness-environments/{id}/drafts/save/": ["post"],
+      "/simulate/api/harness-environments/{id}/drafts/{piece}/": ["delete"],
       "/simulate/api/harness-environments/{id}/evaluations/": ["post"],
       "/simulate/api/harness-environments/{id}/evaluations/available/": ["get"],
       "/simulate/api/harness-environments/{id}/evaluations/tool-call/": ["put"],
@@ -859,11 +863,31 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         "delete",
         "patch",
       ],
+      "/simulate/api/harness-environments/{id}/nudges/": ["get"],
+      "/simulate/api/harness-environments/{id}/nudges/{nudge_id}/answer/": [
+        "post",
+      ],
+      "/simulate/api/harness-environments/{id}/nudges/{nudge_id}/stop/": [
+        "post",
+      ],
+      "/simulate/api/harness-environments/{id}/run-plan/": ["get"],
       "/simulate/api/harness-environments/{id}/run/": ["post"],
       "/simulate/api/harness-environments/{id}/runs/{execution_id}/evaluations/":
         ["post"],
       "/simulate/api/harness-environments/{id}/runs/{execution_id}/evaluations/run/":
         ["post"],
+      "/simulate/api/harness-environments/{id}/versions/": ["get"],
+      "/simulate/api/harness-environments/{id}/versions/agent/": ["post"],
+      "/simulate/api/harness-environments/{id}/versions/agent/{version_id}/discard/":
+        ["post"],
+      "/simulate/api/harness-environments/{id}/versions/agent/{version_id}/retry/":
+        ["post"],
+      "/simulate/api/harness-environments/{id}/versions/suite/{version_id}/members/":
+        ["get"],
+      "/simulate/api/harness-environments/{id}/versions/{piece}/{version_id}/default/":
+        ["post"],
+      "/simulate/api/harness-environments/{id}/versions/{piece}/{version_id}/diff/":
+        ["get"],
       "/simulate/api/harness-jobs/": ["get", "post"],
       "/simulate/api/harness-jobs/health/": ["get"],
       "/simulate/api/harness-jobs/preflight/": ["post"],
@@ -903,6 +927,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         "post",
       ],
       "/simulate/api/harness/conversations/{id}/workspace/": ["put"],
+      "/simulate/api/harness/github/webhook/": ["post"],
       "/simulate/api/harness/ingress/{token}/": [
         "delete",
         "get",
@@ -1035,6 +1060,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/simulate/v3/test-executions/{test_execution_id}/analytics/": ["get"],
       "/simulate/v3/test-executions/{test_execution_id}/calls/": ["get"],
       "/simulate/v3/test-executions/{test_execution_id}/export/": ["post"],
+      "/simulate/v3/test-executions/{test_execution_id}/reliability/": ["get"],
       "/simulate/v3/test-executions/{test_execution_id}/traces/": ["get"],
     },
     telemetry: {
@@ -1211,6 +1237,8 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/tracer/shared-links/{id}/access/": ["post"],
       "/tracer/shared-links/{id}/access/{access_id}/": ["delete"],
       "/tracer/shared/{token}/": ["get"],
+      "/tracer/shared/{token}/sidebar/": ["get"],
+      "/tracer/shared/{token}/traces/{trace_id}/": ["get"],
       "/tracer/sql-query/": ["get"],
       "/tracer/sql-query/catalog/": ["get"],
       "/tracer/sql-query/estimate/": ["post"],
@@ -2159,6 +2187,10 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/simulate/api/call-executions/": ["get"],
   "/simulate/api/harness-environments/": ["get"],
   "/simulate/api/harness-environments/{id}/": ["delete", "get", "patch"],
+  "/simulate/api/harness-environments/{id}/compare/": ["get"],
+  "/simulate/api/harness-environments/{id}/drafts/": ["get"],
+  "/simulate/api/harness-environments/{id}/drafts/save/": ["post"],
+  "/simulate/api/harness-environments/{id}/drafts/{piece}/": ["delete"],
   "/simulate/api/harness-environments/{id}/evaluations/": ["post"],
   "/simulate/api/harness-environments/{id}/evaluations/available/": ["get"],
   "/simulate/api/harness-environments/{id}/evaluations/tool-call/": ["put"],
@@ -2166,12 +2198,28 @@ export const API_SURFACE_PATHS = Object.freeze({
     "delete",
     "patch",
   ],
+  "/simulate/api/harness-environments/{id}/nudges/": ["get"],
+  "/simulate/api/harness-environments/{id}/nudges/{nudge_id}/answer/": ["post"],
+  "/simulate/api/harness-environments/{id}/nudges/{nudge_id}/stop/": ["post"],
+  "/simulate/api/harness-environments/{id}/run-plan/": ["get"],
   "/simulate/api/harness-environments/{id}/run/": ["post"],
   "/simulate/api/harness-environments/{id}/runs/{execution_id}/evaluations/": [
     "post",
   ],
   "/simulate/api/harness-environments/{id}/runs/{execution_id}/evaluations/run/":
     ["post"],
+  "/simulate/api/harness-environments/{id}/versions/": ["get"],
+  "/simulate/api/harness-environments/{id}/versions/agent/": ["post"],
+  "/simulate/api/harness-environments/{id}/versions/agent/{version_id}/discard/":
+    ["post"],
+  "/simulate/api/harness-environments/{id}/versions/agent/{version_id}/retry/":
+    ["post"],
+  "/simulate/api/harness-environments/{id}/versions/suite/{version_id}/members/":
+    ["get"],
+  "/simulate/api/harness-environments/{id}/versions/{piece}/{version_id}/default/":
+    ["post"],
+  "/simulate/api/harness-environments/{id}/versions/{piece}/{version_id}/diff/":
+    ["get"],
   "/simulate/api/harness-jobs/": ["get", "post"],
   "/simulate/api/harness-jobs/health/": ["get"],
   "/simulate/api/harness-jobs/preflight/": ["post"],
@@ -2207,6 +2255,7 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/simulate/api/harness/conversations/{id}/session-store/": ["get"],
   "/simulate/api/harness/conversations/{id}/session-store/append/": ["post"],
   "/simulate/api/harness/conversations/{id}/workspace/": ["put"],
+  "/simulate/api/harness/github/webhook/": ["post"],
   "/simulate/api/harness/ingress/{token}/": [
     "delete",
     "get",
@@ -2335,6 +2384,7 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/simulate/v3/test-executions/{test_execution_id}/analytics/": ["get"],
   "/simulate/v3/test-executions/{test_execution_id}/calls/": ["get"],
   "/simulate/v3/test-executions/{test_execution_id}/export/": ["post"],
+  "/simulate/v3/test-executions/{test_execution_id}/reliability/": ["get"],
   "/simulate/v3/test-executions/{test_execution_id}/traces/": ["get"],
   "/telemetry/heartbeat/": ["post"],
   "/telemetry/register/": ["post"],
@@ -2507,6 +2557,8 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/tracer/shared-links/{id}/access/": ["post"],
   "/tracer/shared-links/{id}/access/{access_id}/": ["delete"],
   "/tracer/shared/{token}/": ["get"],
+  "/tracer/shared/{token}/sidebar/": ["get"],
+  "/tracer/shared/{token}/traces/{trace_id}/": ["get"],
   "/tracer/sql-query/": ["get"],
   "/tracer/sql-query/catalog/": ["get"],
   "/tracer/sql-query/estimate/": ["post"],

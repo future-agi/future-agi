@@ -38,6 +38,23 @@ type ClientTimeoutReporter interface {
 	ClientTimeout() time.Duration
 }
 
+// PriceTableNamer is implemented by providers whose models the price table
+// keys under a name the provider's ID need not match: the table lists new
+// Gemini models only as "vertex_ai/gemini-4-argon" and "gemini/gemini-4-argon",
+// so a Gemini provider named "vertex_ai_global" states "vertex_ai".
+type PriceTableNamer interface {
+	PriceTableName() string
+}
+
+// PriceTableName returns the name the price table keys p's models under, or
+// "" when p states none.
+func PriceTableName(p Provider) string {
+	if n, ok := p.(PriceTableNamer); ok {
+		return n.PriceTableName()
+	}
+	return ""
+}
+
 // EmbeddingProvider is implemented by providers that support embedding generation.
 type EmbeddingProvider interface {
 	CreateEmbedding(ctx context.Context, req *models.EmbeddingRequest) (*models.EmbeddingResponse, error)
@@ -73,6 +90,17 @@ type ResponsesProvider interface {
 	// StreamResponse sends a streaming Responses API request.
 	// Returns a reader for the SSE stream and the response status.
 	StreamResponse(ctx context.Context, reqBody []byte) (io.ReadCloser, int, error)
+}
+
+// ChatViaResponsesProvider is implemented by providers that can carry a chat
+// request over the Responses API, for a model that refuses it on chat
+// completions. Routes that translate their own dialect into a chat request use
+// it; /v1/chat/completions forwards the caller's request as sent.
+type ChatViaResponsesProvider interface {
+	// ChatNeedsResponses reports whether req must go to the Responses API.
+	ChatNeedsResponses(req *models.ChatCompletionRequest) bool
+	ChatCompletionViaResponses(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error)
+	StreamChatCompletionViaResponses(ctx context.Context, req *models.ChatCompletionRequest) (<-chan models.StreamChunk, <-chan error)
 }
 
 // TranslationProvider is implemented by providers that support audio translation.

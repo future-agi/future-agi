@@ -25,6 +25,7 @@ import Iconify from "src/components/iconify";
 import { purple } from "src/theme/palette";
 import { useErrorFeedStore } from "../store";
 import { useFollowUpRunner } from "../useAnalyzeRunner";
+import { useSharedIssue } from "../sharedIssueContext";
 import { useStreamingText } from "../useStreamingText";
 import {
   CONF_META,
@@ -1402,6 +1403,8 @@ export default function AnalyzeTab({ error }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const clusterId = error?.cluster_id;
+  // A shared issue shows its saved analysis read-only: no runs, no follow-ups.
+  const readOnly = !!useSharedIssue();
   const thread = useErrorFeedStore(
     (s) => s.analyzeThreadsByCluster[clusterId] ?? null,
   );
@@ -1540,26 +1543,28 @@ export default function AnalyzeTab({ error }) {
           </Typography>
         )}
         <Box sx={{ flex: 1 }} />
-        <Tooltip title="Re-run with current cluster state (1 credit)" arrow>
-          <span>
-            <Button
-              size="small"
-              variant="text"
-              disabled={isStreaming}
-              onClick={onTriggerRun}
-              startIcon={<Iconify icon="mdi:refresh" width={12} />}
-              sx={{
-                height: 24,
-                fontSize: "11.5px",
-                textTransform: "none",
-                color: "text.secondary",
-                "&:hover": { color: "text.primary" },
-              }}
-            >
-              Re-run
-            </Button>
-          </span>
-        </Tooltip>
+        {!readOnly && (
+          <Tooltip title="Re-run with current cluster state (1 credit)" arrow>
+            <span>
+              <Button
+                size="small"
+                variant="text"
+                disabled={isStreaming}
+                onClick={onTriggerRun}
+                startIcon={<Iconify icon="mdi:refresh" width={12} />}
+                sx={{
+                  height: 24,
+                  fontSize: "11.5px",
+                  textTransform: "none",
+                  color: "text.secondary",
+                  "&:hover": { color: "text.primary" },
+                }}
+              >
+                Re-run
+              </Button>
+            </span>
+          </Tooltip>
+        )}
       </Stack>
 
       {/* Scrollable message stream */}
@@ -1607,39 +1612,47 @@ export default function AnalyzeTab({ error }) {
                 />
               </Box>
               <Typography fontSize="14px" fontWeight={600} color="text.primary">
-                No analysis yet
+                {readOnly
+                  ? "No analysis saved for this issue."
+                  : "No analysis yet"}
               </Typography>
-              <Typography
-                fontSize="12px"
-                color="text.secondary"
-                sx={{ lineHeight: 1.55 }}
-              >
-                Kick off a cluster-level analysis. Sub-agents will sample
-                representative calls, compare against a passing baseline, and
-                synthesise the result here.
-              </Typography>
-              <Button
-                size="small"
-                variant="contained"
-                startIcon={<Iconify icon="mdi:star-four-points" width={13} />}
-                onClick={onTriggerRun}
-                sx={{
-                  mt: 0.5,
-                  height: 32,
-                  fontSize: "12.5px",
-                  fontWeight: 600,
-                  borderRadius: "8px",
-                  textTransform: "none",
-                  // White button in dark theme, purple in light.
-                  bgcolor: isDark ? "#fff" : "#7857FC",
-                  color: isDark ? "#111" : "#fff",
-                  px: 1.75,
-                  "&:hover": { bgcolor: isDark ? "#e8e8e8" : "#6845E8" },
-                  boxShadow: "none",
-                }}
-              >
-                Analyze this cluster
-              </Button>
+              {!readOnly && (
+                <>
+                  <Typography
+                    fontSize="12px"
+                    color="text.secondary"
+                    sx={{ lineHeight: 1.55 }}
+                  >
+                    Kick off a cluster-level analysis. Sub-agents will sample
+                    representative calls, compare against a passing baseline,
+                    and synthesise the result here.
+                  </Typography>
+                  <Button
+                    size="small"
+                    variant="contained"
+                    startIcon={
+                      <Iconify icon="mdi:star-four-points" width={13} />
+                    }
+                    onClick={onTriggerRun}
+                    sx={{
+                      mt: 0.5,
+                      height: 32,
+                      fontSize: "12.5px",
+                      fontWeight: 600,
+                      borderRadius: "8px",
+                      textTransform: "none",
+                      // White button in dark theme, purple in light.
+                      bgcolor: isDark ? "#fff" : "#7857FC",
+                      color: isDark ? "#111" : "#fff",
+                      px: 1.75,
+                      "&:hover": { bgcolor: isDark ? "#e8e8e8" : "#6845E8" },
+                      boxShadow: "none",
+                    }}
+                  >
+                    Analyze this cluster
+                  </Button>
+                </>
+              )}
             </Stack>
           ) : messages.length === 0 && isStreaming ? (
             <Stack
@@ -1707,7 +1720,17 @@ export default function AnalyzeTab({ error }) {
           synthesis; chips seed with curated examples until the user asks
           their first follow-up, then track the latest sub-agent's
           "Try asking" set. */}
-      {mainRunDone && thread?.conversationId ? (
+      {readOnly ? (
+        mainRunDone && thread?.cachedOnly ? (
+          <Typography
+            fontSize="11.5px"
+            color="text.disabled"
+            sx={{ textAlign: "center", flexShrink: 0, py: 0.5 }}
+          >
+            Showing the last saved analysis
+          </Typography>
+        ) : null
+      ) : mainRunDone && thread?.conversationId ? (
         <ComposeArea
           suggestions={composeSuggestions}
           suggestionsHeader={composeHeader}

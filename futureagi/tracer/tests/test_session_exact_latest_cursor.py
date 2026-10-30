@@ -232,6 +232,7 @@ def _inline_execute(chdb, sql, params, rows, remaps):
         {"rows": tuple(rows), "remaps": tuple(remaps), "columns": columns}, context
     )
     spans = f"""SELECT *, start_time + INTERVAL 1 SECOND AS end_time, toInt64(1) AS total_tokens,
+        lengthUTF8(input) AS input_length,
         map('state', input) AS attrs_string, map('amount', cost) AS attrs_number,
         map('ok', true) AS attrs_bool, '{{}}' AS attributes_extra
         FROM values({literals["columns"]}, {literals["rows"][1:-1]})"""
@@ -466,7 +467,7 @@ def test_public_default_session_dispatch_uses_real_exact_builder_and_signed_cano
                     for sid, when in records
                 ]
             )
-        if "sum(cost) AS total_cost" in sql:
+        if "sum(cost) AS root_total_cost" in sql:
             return SimpleNamespace(
                 data=[
                     {
