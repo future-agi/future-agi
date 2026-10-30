@@ -865,5 +865,26 @@ class SetupCliTests(unittest.TestCase):
                     self.assertFalse(calls.exists())
 
 
+
+class SetupCapacityReasonTests(unittest.TestCase):
+    """Setup tells an unmeasurable image store apart from a measured shortage."""
+
+    def capacity(self, available):
+        policy = SimpleNamespace(probe_timeout_seconds=90)
+        with mock.patch('deploy.update.docker_host.observe_daemon_storage', return_value=available) as observe:
+            en.SetupHost.capacity(object.__new__(en.SetupHost), 'installation', 'registration',
+                                  'sha256:' + 'd' * 64, policy)
+        observe.assert_called_once_with('installation', 'registration', helper_image_id='sha256:' + 'd' * 64,
+                                        timeout=90)
+
+    def test_unknown_capacity_and_a_measured_shortage_refuse_with_different_codes(self):
+        for available, code in ((None, ReasonCode.RESTORE_CAPACITY_UNKNOWN),
+                                (64 * 1024 * 1024 - 1, ReasonCode.DISK_SPACE_INSUFFICIENT)):
+            with self.subTest(available=available), self.assertRaises(GuardRefused) as raised:
+                self.capacity(available)
+            self.assertEqual(raised.exception.reason_code, code)
+        self.capacity(64 * 1024 * 1024)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -521,6 +521,31 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  daemon-storage:
+    # Setup and admission need image-store capacity. The non-root installation
+    # user cannot read a rootful daemon's /var/lib/docker, so this exercises the
+    # fixed daemon-side helper in minutes instead of after a full qualification.
+    name: Native daemon storage helper (non-root user, rootful overlay2)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Registered context on the runner's rootful daemon
+        run: docker context create colima-fagi-update --docker host=unix:///var/run/docker.sock
+      - name: Real inspect_daemon_storage as the non-root runner user
+        run: |
+          set -euo pipefail
+          test "$(id -u)" != 0
+          python -I deploy/tests/update_e2e/native_storage_probe.py \
+            docker.io/futureagi/standalone:v1.56.1@sha256:3ae9fd984297b9a24a437fd55272a55e24f94288b18d65924d7777c69ec0d515
+
   backup:
     name: Native vendor cold backup and crash-restore matrices
     runs-on: ubuntu-24.04

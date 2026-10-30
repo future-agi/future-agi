@@ -656,7 +656,9 @@ class SetupHost:
         from .docker_host import observe_daemon_storage
         available = observe_daemon_storage(installation, registration, helper_image_id=helper,
                                            timeout=policy.probe_timeout_seconds)
-        require(type(available) is int and available >= 64 * 1024 * 1024, ReasonCode.DISK_SPACE_INSUFFICIENT)
+        # An unmeasurable store is unknown capacity, not a measured shortage.
+        require(type(available) is int, ReasonCode.RESTORE_CAPACITY_UNKNOWN)
+        require(available >= 64 * 1024 * 1024, ReasonCode.DISK_SPACE_INSUFFICIENT)
 
     def backup(self, installation, registration, observation, config, *, previous=None):
         policy = BackupPolicy(timeout_seconds=config.policy.backup_timeout_seconds,
