@@ -347,6 +347,59 @@ def _goals_payload(scenario) -> dict | None:
     }
 
 
+# A recorded tool call as the worker accepts it; long text values are cut so one
+# verbose tool cannot crowd out the transcript.
+_TOOL_CALL_FIELDS = ("name", "arguments", "result", "ok", "error", "refused")
+_TOOL_CALL_TEXT_LIMIT = 4000
+_TOOL_CALL_LIMIT = 500
+
+
+def _capped(value):
+    if isinstance(value, str) and len(value) > _TOOL_CALL_TEXT_LIMIT:
+        cut = len(value) - _TOOL_CALL_TEXT_LIMIT
+        return f"{value[:_TOOL_CALL_TEXT_LIMIT]}... [{cut} more characters]"
+    return value
+
+
+def _agent_prompt(call: CallExecution, execution: TestExecution) -> str | None:
+    """The configured prompt of the agent version the call ran.
+
+    call_metadata's agent_prompt can be a fragment of it, so it is only the
+    fallback. Nothing else from the version snapshot leaves the platform.
+    """
+    version = call.agent_version or execution.agent_version
+    snapshot = (version.configuration_snapshot or {}) if version else {}
+    metadata = call.call_metadata or {}
+    prompt = snapshot.get("description") or metadata.get("agent_prompt")
+    return prompt if isinstance(prompt, str) and prompt.strip() else None
+
+
+def _tool_calls(call: CallExecution) -> list | None:
+    """The provider's recorded tool calls, or None when no provider recorded any.
+
+    None and [] differ: an empty list says the agent called no tools, while a
+    call whose tools ran outside the provider has no tool record at all.
+    """
+    recorded, calls = False, []
+    for data in (call.provider_call_data or {}).values():
+        if not isinstance(data, dict) or "tool_calls" not in data:
+            continue
+        recorded = True
+        for item in data.get("tool_calls") or []:
+            name = item.get("name") if isinstance(item, dict) else None
+            if not isinstance(name, str) or not name.strip() or len(name) > 256:
+                continue
+            entry = {
+                key: _capped(item[key]) for key in _TOOL_CALL_FIELDS if key in item
+            }
+            start = item.get("start_time_ms")
+            valid_time = isinstance(start, (int, float)) and not isinstance(start, bool)
+            if valid_time and start >= 0:
+                entry["start_time_ms"] = start
+            calls.append(entry)
+    return calls[:_TOOL_CALL_LIMIT] if recorded else None
+
+
 def simulation_evidence_page(
     *, attempt_id: uuid.UUID, lease_token: str, cursor: int
 ) -> dict:
@@ -356,7 +409,9 @@ def simulation_evidence_page(
         raise SimulationInvestigationConflict("Invalid evidence cursor")
     attempt = (
         TraceInvestigationAttempt.no_workspace_objects.select_related(
-            "job__project", "job__test_execution__run_test"
+            "job__project",
+            "job__test_execution__run_test",
+            "job__test_execution__agent_version",
         )
         .filter(
             id=attempt_id,
@@ -394,7 +449,7 @@ def simulation_evidence_page(
             status__in=_TERMINAL_CALL_STATUSES,
             deleted=False,
         )
-        .select_related("scenario")
+        .select_related("scenario", "agent_version")
         .prefetch_related(
             Prefetch(
                 "transcripts",
@@ -419,6 +474,7 @@ def simulation_evidence_page(
     }
     calls = []
     for call in rows:
+        tool_calls = _tool_calls(call)
         calls.append(
             {
                 "call_execution_id": str(call.id),
@@ -450,6 +506,10 @@ def simulation_evidence_page(
                     }
                     for row in eval_rows(call, live_eval_configs)
                 ],
+                # What the agent was told and what its tools returned, so the
+                # investigator can check its turns against both.
+                "agent_prompt": _agent_prompt(call, execution),
+                **({"tool_calls": tool_calls} if tool_calls is not None else {}),
             }
         )
     payload = {"calls": calls, "next_cursor": cursor + len(calls), "total_calls": total}

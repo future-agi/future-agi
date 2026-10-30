@@ -10,6 +10,8 @@ from django.test import override_settings
 from django.utils import timezone
 
 from simulate.models import Scenarios
+from simulate.models.agent_definition import AgentDefinition
+from simulate.models.agent_version import AgentVersion
 from simulate.models.hosted_harness import HostedHarnessJob, HostedHarnessScenario
 from simulate.models.run_test import RunTest
 from simulate.models.test_execution import CallExecution, TestExecution
@@ -412,6 +414,91 @@ def test_debug_evidence_carries_the_runs_live_eval_verdicts(
             "reason": "Replied in Spanish throughout.",
         }
     ]
+
+
+def test_debug_evidence_carries_the_agent_prompt_and_recorded_tool_calls(
+    auth_client, organization, workspace
+):
+    scenario = Scenarios.objects.create(
+        name="Booking",
+        source="Booking policy",
+        organization=organization,
+        workspace=workspace,
+    )
+    execution, call = _execution(
+        organization, workspace, scenario, "tools", CallExecution.CallStatus.COMPLETED
+    )
+    agent = AgentDefinition.objects.create(
+        agent_name="Booking Agent",
+        agent_type=AgentDefinition.AgentTypeChoices.VOICE,
+        contact_number="+15551230000",
+        inbound=True,
+        description="Draft prompt",
+        organization=organization,
+        workspace=workspace,
+        languages=["en"],
+    )
+    version = AgentVersion.objects.create(
+        agent_definition=agent,
+        organization=organization,
+        workspace=workspace,
+        version_number=1,
+        version_name="v1",
+        configuration_snapshot={
+            "description": "You book tables. Confirm the party size first.",
+            "api_key": "never-served",
+        },
+    )
+    call.agent_version = version
+    call.call_metadata = {"agent_prompt": "You book tables."}
+    call.provider_call_data = {
+        "livekit": {
+            "tool_calls": [
+                {
+                    "name": "book_table",
+                    "arguments": {"party_size": 4},
+                    "result": "x" * 4100,
+                    "ok": True,
+                    "error": None,
+                    "refused": False,
+                    "at": 12.5,
+                    "start_time_ms": 12500,
+                },
+                {"arguments": {}},
+            ]
+        }
+    }
+    call.save(update_fields=["agent_version", "call_metadata", "provider_call_data"])
+    auth_client.post(f"/simulate/test-executions/{execution.id}/debug-analysis/")
+    claim = claim_due_investigations(
+        worker_id="test-worker", engine_version="omega-v1", limit=1
+    )["claims"][0]
+
+    served = simulation_evidence_page(
+        attempt_id=claim["attempt_id"], lease_token=claim["lease_token"], cursor=0
+    )["calls"][0]
+
+    # The version's prompt wins over call_metadata's copy, and nothing else
+    # from the snapshot is served.
+    assert served["agent_prompt"] == "You book tables. Confirm the party size first."
+    assert "never-served" not in str(served)
+    [tool] = served["tool_calls"]
+    assert tool["name"] == "book_table"
+    assert tool["arguments"] == {"party_size": 4}
+    assert tool["start_time_ms"] == 12500
+    assert "at" not in tool
+    assert tool["result"].startswith("x" * 4000)
+    assert tool["result"].endswith("... [100 more characters]")
+
+    # A call no provider recorded tools for has no tool_calls, not an empty list.
+    call.provider_call_data = {"livekit": {"transcript": []}}
+    call.agent_version = None
+    call.save(update_fields=["provider_call_data", "agent_version"])
+    served = simulation_evidence_page(
+        attempt_id=claim["attempt_id"], lease_token=claim["lease_token"], cursor=0
+    )["calls"][0]
+    assert "tool_calls" not in served
+    assert served["agent_prompt"] == "You book tables."
 
 
 @override_settings(
