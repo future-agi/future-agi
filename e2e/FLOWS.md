@@ -959,6 +959,28 @@
 - UI POST and stored task retain the custom predicate
 - completed task has exactly the matching span in PG and CH, with mock verdict and usage
 
+### EVAL-E2E-006 — a task run opens its trace in a drawer from the Usage tab
+
+**Goal:** Open the trace behind an eval task result without leaving the task Usage tab  
+**Spec:** `flows/evals/task-usage-trace-drawer.spec.ts:25`  
+**Tags:** —
+
+**User steps:**
+
+1. seed a trace and run an eval task over it through the mock judge
+2. open the task Usage tab and click its run
+3. read the run panel Trace ID and Span ID
+4. click Open trace and read the drawer
+5. press Esc to close the drawer, then Esc again to close the run panel
+
+**Backend state verified:**
+
+- the task completes with exactly one completed PG result on the evaluated child span
+- the Usage runs response carries that result with the seeded trace and span IDs
+- the run panel shows the seeded trace and span IDs
+- the drawer opens on the seeded trace with the evaluated span selected and its Evals tab open
+- the first Esc closes only the drawer and the second closes the run panel
+
 ## gateway
 
 ### GW-E2E-001 — gateway traffic is filtered by the application that sent it
