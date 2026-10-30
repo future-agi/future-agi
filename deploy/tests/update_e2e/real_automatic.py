@@ -256,6 +256,109 @@ def replacement_tolerant(read, paths, *, attempts=5):
             time.sleep(0.05)
 
 
+def scheduler_history(store, backup_destination, containers=(), *, activation=None):
+    """Closed, token-free projection of what the installed scheduler did.
+
+    Cron discards tick output, so after a scheduler wait times out this is the
+    only record of each tick's outcome. Versions, states, phases and reason
+    codes only: no operation tokens, paths, env or logs. Read only after the
+    wait, never while asserting; never qualification evidence.
+    """
+    from deploy.update.baseline import BaselineStore
+    from deploy.update.receipt import StateDir
+    from deploy.update.runner_state import StoreBusy
+    when = lambda value: None if value is None else value.isoformat()
+    version = lambda target: None if target is None else target.version
+    closed = lambda values: [v for v in values if isinstance(v, str) and re.fullmatch(r'[a-z_]{1,80}', v)]
+    result = dict(schema_version=1, qualification_evidence=False, errors=[])
+
+    def read(label, function):
+        for _ in range(10):
+            try:
+                return replacement_tolerant(function, [store.path / 'state.json'])
+            except StoreBusy:
+                time.sleep(1)
+            except Exception as exc:
+                result['errors'].append(label + ':' + type(exc).__name__)
+                return None
+        result['errors'].append(label + ':busy')
+        return None
+    state = read('state', store.read_state)
+    if state is not None:
+        result['state'] = dict(last_tick_at=when(state.last_tick_at), last_attempt_at=when(state.last_attempt_at),
+            last_successful_check_at=when(state.last_successful_check_at), next_check_at=when(state.next_check_at),
+            retry_count=state.retry_count, retry_not_before=when(state.retry_not_before),
+            cached_candidate=version(state.cached_candidate_identity), download=version(state.download_identity),
+            active_attempt=state.active_attempt_id is not None, failed_target_latch=version(state.failed_target_latch))
+    events = read('events', store.read_events)
+    if events is not None:
+        result['events'] = [dict(sequence=r.sequence, target=version(r.target), state=r.event.state, kind=r.event.kind,
+                                 stage=r.event.stage, phase=r.event.phase, reported_at=when(r.event.reported_at),
+                                 reason_codes=[c.value for c in r.event.reason_codes]) for r in events]
+    control = read('control', store.read_control)
+    if control is not None:
+        result['control'] = dict(enabled_override=control.enabled_override, pause_until=when(control.pause_until),
+                                 pause_indefinite=control.pause_indefinite)
+    if activation is not None:
+        result['activation'] = dict(state=activation.state, reason=getattr(activation.reason, 'value', None))
+    head = read('baseline', BaselineStore(store).current)
+    result['baseline_version'] = None if head is None else head.release.version
+    try:
+        state_dir = StateDir(store.checkout)
+        result['receipts'] = [dict(kind=r.get('kind'), status=r.get('status'), target_version=r.get('target_version'),
+                                   reason_codes=closed(r.get('reason_codes') or r.get('reasons') or []))
+                              for r in (state_dir.load_receipt(path) for path in state_dir.receipts())]
+    except Exception as exc:
+        result['errors'].append('receipts:' + type(exc).__name__)
+    attempts = []
+    for ledger in sorted(Path(backup_destination).glob('*/recovery.json')):
+        try:
+            document, leaves = read_attempt_ledger(ledger.parent)
+            attempts.append(dict(direction=document.get('direction'), phase=document.get('phase'),
+                                 leaves=sorted(name for name in leaves if re.fullmatch(r'[a-z0-9._-]{1,64}', name))))
+        except Exception as exc:
+            attempts.append(dict(error=type(exc).__name__))
+    result['attempts'] = attempts
+    result['running'] = {c['Config'].get('Labels', {}).get('com.docker.compose.service'):
+                         dict(version=c['Config'].get('Labels', {}).get('org.opencontainers.image.version'),
+                              running=bool(c.get('State', {}).get('Running')),
+                              health=(c.get('State', {}).get('Health') or {}).get('Status'))
+                         for c in containers}
+    return result
+
+
+def diagnostic_scheduler_run(store, policy, *, timeout=900):
+    """Run the installed cron command ONCE, output captured, after a failed wait.
+
+    Only for a scheduler that never recorded an outcome: every cron run then
+    failed before the runner's own event store, and cron discards output. Keep
+    the exit code, exception class names and known reason codes; never the
+    output itself. A timeout kills the whole process group.
+    """
+    import signal
+    from deploy.update.contracts import ReasonCode
+    from deploy.update.scheduler_assets import render_scheduler
+    suffix = ' </dev/null >/dev/null 2>&1'
+    content = ''.join(render_scheduler(store, policy, backend='cron').files.values())
+    lines = [line for line in content.splitlines() if line.endswith(suffix) and not line.startswith('#')]
+    if len(lines) != 1 or len(lines[0].split(' ', 5)) != 6:
+        return dict(error='cron_command_not_found')
+    command = lines[0].split(' ', 5)[5][:-len(suffix)]
+    process = subprocess.Popen(['/bin/bash', '-c', command], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT, start_new_session=True)
+    try:
+        output, _ = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.communicate()
+        return dict(error='timeout', seconds=timeout)
+    text = output.decode('utf-8', errors='replace')
+    types = re.findall(r'^([A-Za-z_][\w.]*(?:Error|Exception|Refused|Blocked|Failure|Interrupted))(?::|$)', text, re.M)
+    return dict(exit_code=process.returncode, exception_types=sorted(set(types))[:20],
+                reason_codes=sorted(code.value for code in ReasonCode
+                                    if re.search(r'(?<![a-z_])' + re.escape(code.value) + r'(?![a-z_])', text)))
+
+
 def read_attempt_ledger(directory):
     return replacement_tolerant(lambda: _read_attempt_ledger(directory), [Path(directory) / 'recovery.json'])
 

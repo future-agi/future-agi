@@ -427,6 +427,22 @@ jobs:
           umask 077
           python -I deploy/tests/update_e2e/acceptance.py --mode upgrade \
             --out "$HOME/fagi-upd-e2e-real-upgrade-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+      - name: Count cron deliveries of the installed scheduler (closed counts only)
+        # Cron discards the scheduler's output by design; its own journal shows
+        # whether each */5 delivery happened. Counts and times only, no command lines.
+        if: always()
+        run: |
+          set -uo pipefail
+          out="$HOME/fagi-upd-e2e-real-upgrade-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$out"
+          { sudo journalctl -u cron.service --no-pager -o short-iso; sudo journalctl -t CRON --no-pager -o short-iso; } \
+            2>/dev/null | sort -u | python3 -I -c '
+          import json, sys
+          rows = [line.split()[0] for line in sys.stdin
+                  if "(runner) CMD" in line and "bin/update" in line and " run " in line]
+          print(json.dumps({"schema_version": 1, "deliveries": len(rows),
+                            "first": rows[0] if rows else None, "last": rows[-1] if rows else None}))
+          ' > "$out/cron-deliveries.json" || true
       - name: Retain bounded public CI result only
         if: always()
         uses: actions/upload-artifact@v4
@@ -434,6 +450,7 @@ jobs:
           name: automatic-upgrade-result
           path: |
             ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/summary.json
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/cron-deliveries.json
             ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/failure.json
             ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/test-output.log
             ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/command-diagnostics.json
@@ -444,6 +461,7 @@ jobs:
             ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/acceptance-budgets.json
             ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/restored-source.json
             ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/cleanup.json
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/scheduler-history.json
             ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/startup-result.json
             ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-publisher-*/v*/package-result.json
             ${{ runner.temp }}/pr-mirror-probe.json
@@ -498,6 +516,22 @@ jobs:
           umask 077
           python -I deploy/tests/update_e2e/acceptance.py --mode a-b-c \
             --out "$HOME/fagi-upd-e2e-real-abc-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+      - name: Count cron deliveries of the installed scheduler (closed counts only)
+        # Cron discards the scheduler's output by design; its own journal shows
+        # whether each */5 delivery happened. Counts and times only, no command lines.
+        if: always()
+        run: |
+          set -uo pipefail
+          out="$HOME/fagi-upd-e2e-real-abc-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$out"
+          { sudo journalctl -u cron.service --no-pager -o short-iso; sudo journalctl -t CRON --no-pager -o short-iso; } \
+            2>/dev/null | sort -u | python3 -I -c '
+          import json, sys
+          rows = [line.split()[0] for line in sys.stdin
+                  if "(runner) CMD" in line and "bin/update" in line and " run " in line]
+          print(json.dumps({"schema_version": 1, "deliveries": len(rows),
+                            "first": rows[0] if rows else None, "last": rows[-1] if rows else None}))
+          ' > "$out/cron-deliveries.json" || true
       - name: Retain bounded public CI result only
         if: always()
         uses: actions/upload-artifact@v4
@@ -505,6 +539,7 @@ jobs:
           name: automatic-a-b-c-result
           path: |
             ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/summary.json
+            ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/cron-deliveries.json
             ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/failure.json
             ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/test-output.log
             ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/command-diagnostics.json
@@ -512,6 +547,7 @@ jobs:
             ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/cron-environment.json
             ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/acceptance-budgets.json
             ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/cleanup.json
+            ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/scheduler-history.json
             ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/startup-result.json
             ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-publisher-*/v*/package-result.json
             ~/fagi-upd-e2e-real-abc-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/acceptance-diagnostics.json

@@ -944,6 +944,41 @@ class OracleReplacementRaceTests(unittest.TestCase):
                 self.assertEqual(document['phase'], 'success_metadata_committed')
                 self.assertIn('success-decision.json', leaves)
 
+    def test_scheduler_history_keeps_tick_outcomes_but_never_operation_tokens(self):
+        from datetime import datetime, timezone
+        from deploy.update.contracts import OperationEvent, ReasonCode
+        from deploy.update.runner_state import TargetIdentity
+        token = 'secret-operation-token-' + 'f' * 16
+        self.store.append_event(OperationEvent('blocked', 'apply', None, datetime(2026, 10, 30, tzinfo=timezone.utc),
+                                               token, (ReasonCode.RESTORE_CAPACITY_UNKNOWN,)),
+                                TargetIdentity('v1.54.0', 'b' * 64))
+        container = {'Config': {'Labels': {'com.docker.compose.service': 'app',
+                                           'org.opencontainers.image.version': 'v1.53.0'}},
+                     'State': {'Running': True, 'Health': {'Status': 'healthy'}}}
+        history = real.scheduler_history(self.store, self.base / 'no-backups', [container])
+        self.assertNotIn(token, json.dumps(history))
+        self.assertEqual(history['events'][-1], dict(sequence=0, target='v1.54.0', state='blocked', kind='apply',
+            stage=None, phase=None, reported_at='2026-10-30T00:00:00+00:00', reason_codes=['restore_capacity_unknown']))
+        self.assertEqual(history['baseline_version'], 'v1.53.0')
+        self.assertFalse(history['state']['active_attempt'])
+        self.assertEqual(history['running'], {'app': dict(version='v1.53.0', running=True, health='healthy')})
+        self.assertEqual((history['attempts'], history['errors']), ([], []))
+        self.assertIs(history['qualification_evidence'], False)
+
+    def test_diagnostic_scheduler_run_keeps_only_closed_tokens(self):
+        def assets(command):
+            line = '*/5 * * * * umask 077; ' + command + ' </dev/null >/dev/null 2>&1'
+            return SimpleNamespace(files={'unit.cron': '# BEGIN unit\n' + line + '\n# END unit\n'})
+        crash = ("printf 'Traceback\\n  File \"/home/runner/private/x.py\", line 1\\n"
+                 "deploy.update.runner_state.StoreError: control_invalid at /home/runner/private\\n'; exit 2")
+        with patch('deploy.update.scheduler_assets.render_scheduler', return_value=assets(crash)):
+            result = real.diagnostic_scheduler_run(self.store, object())
+        self.assertEqual(result, dict(exit_code=2, exception_types=['deploy.update.runner_state.StoreError'],
+                                      reason_codes=['control_invalid']))
+        with patch('deploy.update.scheduler_assets.render_scheduler', return_value=assets('sleep 30')):
+            self.assertEqual(real.diagnostic_scheduler_run(self.store, object(), timeout=1),
+                             dict(error='timeout', seconds=1))
+
     def test_unchanged_corrupt_or_unsafe_leaf_still_fails_without_retrying(self):
         from deploy.update.runner_state import StoreError
         state_leaf = self.store.path / 'state.json'

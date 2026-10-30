@@ -21,7 +21,7 @@ from deploy.tests.update_e2e import harness as e2e
 from deploy.tests.update_e2e.real_automatic import (
     CRON_PERIOD_SECONDS, FAULT_SEAM, acceptance_policy, acceptance_reserve_seconds, policy_cli_arguments,
     pending_migration_names, read_attempt_ledger, read_event_records, scheduler_wait_budget,
-    replacement_tolerant, setup_timeout_seconds)
+    replacement_tolerant, scheduler_history, diagnostic_scheduler_run, setup_timeout_seconds)
 from deploy.update.baseline import BaselineStore
 from deploy.update.contracts import ReasonCode
 from deploy.update.enrollment import AUTOMATIC_UPDATE_DISCLOSURE
@@ -124,6 +124,27 @@ class AutomaticLifecycleE2E(unittest.TestCase):
             proofs_before = set(destination.rglob('proof.json'))
             previous_migrations = initial_migrations
             previous_app = source_images['app']
+            def scheduler_wait(predicate, *, refused=lambda: False, **kwargs):
+                def check():
+                    value = predicate()
+                    if not value and refused():
+                        # A restored or latched target is never retried: stop waiting.
+                        raise AssertionError('installed scheduler restored or latched ' + version
+                                             + ' instead of advancing')
+                    return value
+                try:
+                    return e2e.wait_for(check, **kwargs)
+                except AssertionError:
+                    # Cron discards tick output: keep the scheduler's own closed outcomes.
+                    try:
+                        activation = inspect_activation(store, configuration.policy, **configuration.scheduler_options)
+                    except Exception:
+                        activation = None
+                    history = scheduler_history(store, destination, checkout.containers(), activation=activation)
+                    if not history.get('state', {}).get('last_tick_at'):
+                        history['diagnostic_run'] = diagnostic_scheduler_run(store, configuration.policy)
+                    checkout.record('scheduler-history.json', history)
+                    raise
             for position, version in enumerate(versions[1:], 1):
                 timeout = remaining_timeout()
                 row = transitions[version]
@@ -138,7 +159,7 @@ class AutomaticLifecycleE2E(unittest.TestCase):
                     self.assertFalse(fault['pending'])
                     self.assertEqual(fault['inventory_sha256'], migration['target_inventory_sha256'])
                     self.assertEqual(fault['applied_sha256'], migration['target_applied_set_sha256'])
-                    e2e.wait_for(lambda: read_state().active_attempt_id is None and
+                    scheduler_wait(lambda: read_state().active_attempt_id is None and
                         current_head().release == source_head.release and any(
                         r.get('kind') == 'restore' and r.get('status') == 'restored'
                         and r.get('target_version') == version for r in checkout.receipts()),
@@ -151,10 +172,14 @@ class AutomaticLifecycleE2E(unittest.TestCase):
                     checkout.verify_candidate_only_absent()
                     outcome = 'restored'
                 else:
-                    e2e.wait_for(lambda: current_head().release.version == version and any(
+                    scheduler_wait(lambda: current_head().release.version == version and any(
                         r.get('kind') == 'apply' and r.get('status') == 'succeeded' and r.get('target_version') == version
                         for r in checkout.receipts()), timeout=min(timeout, deadline-time.monotonic()), interval=2,
-                        what='installed scheduler to advance '+version+' and publish its receipt')
+                        what='installed scheduler to advance '+version+' and publish its receipt',
+                        refused=lambda: (read_state().failed_target_latch is not None
+                                         and read_state().failed_target_latch.version == version) or any(
+                            r.get('kind') == 'restore' and r.get('target_version') == version
+                            for r in checkout.receipts()))
                     outcome = 'succeeded'
                 receipts = [r for r in checkout.receipts() if r.get('status') == outcome
                             and r.get('target_version') == version]
