@@ -748,6 +748,15 @@ _TRACE_PROJECT_SCOPE = filed(
 # Every entry is decided: a reader is filed under the category whose claim holds,
 # with a reason, and a reader nobody filed fails the case that reads this table.
 _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
+    "accounts.user_onboard": {
+        "_write_demo_trace_to_clickhouse": filed(
+            BY_ID_ALONE,
+            why=(
+                "demo publication reads the span ids of the one demo trace it is "
+                "given before inserting, so a retried publication cannot double them"
+            ),
+        ),
+    },
     "agentic_eval.core.database.ch_vector": {
         "ClickHouseVectorDB.fetch_all_vectors": _EMBEDDING_STORE,
         "ClickHouseVectorDB.fetch_vector_by_id": _EMBEDDING_STORE,
@@ -1936,6 +1945,9 @@ SCOPE_IDS = {
 BY_ID_WITHOUT_AN_ID = {
     "tracer.services.clickhouse.v2.span_reader:_dedup_sql": (
         "wraps reads that name their ids in the where clause the caller passes"
+    ),
+    "accounts.user_onboard:_write_demo_trace_to_clickhouse": (
+        "takes the one demo Trace object it publishes and reads by that trace's id"
     ),
 }
 
