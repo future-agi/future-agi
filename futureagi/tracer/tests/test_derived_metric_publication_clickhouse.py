@@ -1,0 +1,469 @@
+# ruff: noqa: F811 -- shared isolated CH fixture
+"""Real immutable-attempt visibility, stale writes, pins and checkpoint proofs."""
+
+from datetime import UTC, datetime, timedelta
+from threading import Event, Thread
+from uuid import uuid4
+
+import pytest
+from django.db import close_old_connections
+from django.utils import timezone
+
+from tracer.models.derived_metric import (
+    MetricProjectRefresh,
+    MetricReadManifest,
+    MetricRefreshAttempt,
+    MetricStateConflict,
+)
+from tracer.services.clickhouse.v2.apply_schema_rewriter import split_statements
+from tracer.services.derived_metrics.deletion_protocol import (
+    capture_pin,
+    collect_history,
+    revoke_generations,
+    serialized_project,
+)
+from tracer.services.derived_metrics.lease import ProjectLease, project_lease
+from tracer.services.derived_metrics.publication import (
+    ClickHousePublicationStore,
+    MetricVisibilityError,
+    committed_rows_select,
+    pinned_read,
+)
+from tracer.services.derived_metrics.refresh import RefreshWriter
+from tracer.services.derived_metrics.storage import FIELD_VALUES, TABLES, UNIT_STATE
+from tracer.tests.test_derived_metric_clickhouse import SCHEMA, metric_ch  # noqa: F401
+
+
+@pytest.fixture
+def publication_store(metric_ch):
+    for filename in dict.fromkeys(table.schema_file for table in TABLES.values()):
+        for sql in split_statements((SCHEMA / filename).read_text()):
+            metric_ch.execute(sql)
+    return ClickHousePublicationStore(metric_ch)
+
+
+@pytest.fixture
+def live_writer(publication_store, observe_project, workspace):
+    with project_lease(observe_project.id, holder="b07-live") as lease:
+        yield RefreshWriter(
+            lease,
+            publication_store,
+            org_id=workspace.organization_id,
+            workspace_id=workspace.id,
+            retention_days=lambda: 0,
+        )
+
+
+def field_query(
+    unit_id="unit-a",
+    *,
+    n=3,
+    start=datetime(2026, 1, 31, 23, 59, tzinfo=UTC),
+    deleted=0,
+    user="",
+    group="region-a",
+    metric=None,
+):
+    metric = metric or uuid4()
+    replacements = {
+        "field_id": "toUUID(%(test_metric)s)",
+        "field_version": "toUInt32(1)",
+        "level": "'conversation'",
+        "unit_id": "%(test_unit)s",
+        "session_id": "%(test_unit)s",
+        "user_id": "%(test_user)s",
+        "unit_start": "toDateTime64(%(test_start)s, 6, 'UTC')",
+        "bucket_start": "toStartOfFifteenMinutes(toDateTime(%(test_start)s, 'UTC'))",
+        "status": "'ok'",
+        "value_number": "toNullable(toFloat64(%(test_n)s))",
+        "part_n": "toNullable(toFloat64(%(test_n)s))",
+        "part_d": "toNullable(toFloat64(1))",
+        "inputs": "map('y', toNullable(toFloat64(%(test_n)s)))",
+        "sample_probability": "toNullable(toFloat64(1))",
+        "sampling_design": "'live'",
+        "group_key": "%(test_group)s",
+        "is_deleted": "toUInt8(%(test_deleted)s)",
+    }
+    columns = []
+    # stamp metadata is overwritten by RefreshWriter.freeze, but giving defaults
+    # keeps this query useful as an independent finite payload relation too.
+    for name, kind in FIELD_VALUES.schema:
+        expr = replacements.get(
+            name,
+            f"defaultValueOfTypeName('{kind.replace(chr(39), chr(92) + chr(39))}')",
+        )
+        columns.append(f"{expr} AS {name}")
+    return "SELECT " + ", ".join(columns), {
+        "test_metric": str(metric),
+        "test_unit": unit_id,
+        "test_user": user,
+        "test_start": start,
+        "test_n": n,
+        "test_group": group,
+        "test_deleted": deleted,
+    }
+
+
+def prepare_field(writer, *, metric=None, unit_id="unit-a", n=3, **kwargs):
+    attempt = writer.begin(
+        ledger={
+            "dirty_before": [{"unit_id": unit_id, "old_start": "2026-02-01"}],
+            "dirty_after": [{"unit_id": unit_id, "new_start": "2026-01-31"}],
+        }
+    )
+    sql, params = field_query(unit_id, n=n, metric=metric, **kwargs)
+    payloads = writer.freeze(attempt, FIELD_VALUES, sql, params)
+    writer.seal(attempt, cursors={"watermark_ns": attempt.generation})
+    return attempt, payloads
+
+
+def current_fields(writer, manifest):
+    sql, params = committed_rows_select(
+        FIELD_VALUES, manifest, org_id=writer.org_id, project_id=writer.lease.project_id
+    )
+    return writer.store.execute(
+        f"SELECT unit_id, value_number, is_deleted, bucket_start FROM ({sql}) ORDER BY unit_id",
+        params,
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_delayed_real_insert_is_excluded_even_for_key_absent_in_replacement(
+    live_writer,
+):
+    writer = live_writer
+    metric = uuid4()
+    initial, _ = prepare_field(writer, metric=metric)
+    committed = writer.stage_and_publish(initial)
+    old, late = prepare_field(writer, metric=metric, unit_id="only-aborted", n=900)
+    future = timezone.now() + timedelta(minutes=6)
+    grant = MetricProjectRefresh.take_lease(
+        writer.lease.project_id, holder="new", ttl=timedelta(minutes=5), now=future
+    )
+    replacement = RefreshWriter(
+        ProjectLease(grant, clock=lambda: future), writer.store, org_id=writer.org_id
+    )
+    replacement.abort_stale()
+    fresh, _ = prepare_field(replacement, metric=metric, n=8)
+    head = replacement.stage_and_publish(fresh)
+    # This is a REAL delayed CH INSERT, submitted after replacement publication.
+    # It carries the OLD epoch and an attempt/key no replacement ever wrote.
+    writer.store.insert(FIELD_VALUES, late[0])
+    assert [r[:3] for r in current_fields(replacement, head)] == [("unit-a", 8.0, 0)]
+    assert [r[:3] for r in current_fields(replacement, committed)] == [
+        ("unit-a", 3.0, 0)
+    ]
+    compacted = replacement.compact()
+    assert [r[:3] for r in current_fields(replacement, compacted)] == [
+        ("unit-a", 8.0, 0)
+    ]
+    MetricRefreshAttempt.objects.filter(project_id=writer.lease.project_id).exclude(
+        id=compacted.published_by_id
+    ).update(expires_at=future + timedelta(seconds=1))
+    audit = MetricReadManifest.objects.get(id=compacted.id).manifest_sha256
+    intent = collect_history(writer.lease.project_id, now=future + timedelta(seconds=2))
+    assert intent and intent.scope_kind == "history"
+    assert (
+        MetricReadManifest.objects.filter(project_id=writer.lease.project_id).count()
+        == 1
+    )
+    assert (
+        MetricRefreshAttempt.objects.filter(project_id=writer.lease.project_id).count()
+        == 1
+    )
+    assert MetricReadManifest.objects.get(id=compacted.id).manifest_sha256 == audit
+    # A late write remains excluded even after PG collection removed its attempt.
+    writer.store.insert(FIELD_VALUES, late[0])
+    assert [r[:3] for r in current_fields(replacement, compacted)] == [
+        ("unit-a", 8.0, 0)
+    ]
+
+
+@pytest.mark.django_db
+def test_receipt_wrong_shard_and_expired_pins_fail_closed(live_writer):
+    attempt, _ = prepare_field(live_writer)
+    manifest = live_writer.stage_and_publish(attempt)
+    pin = capture_pin(
+        live_writer.lease.project_id, consumer_kind="snapshot", ttl=timedelta(minutes=1)
+    )
+    with pinned_read(live_writer.store, live_writer.lease.project_id, pin=pin) as (
+        pinned,
+        _,
+    ):
+        assert pinned.id == manifest.id
+    old = live_writer.store.identity
+    live_writer.store.identity = lambda: ["another-server", "another_database"]
+    with pytest.raises(MetricVisibilityError):
+        live_writer.store.assert_visible(manifest)
+    live_writer.store.identity = old
+    revoke_generations(live_writer.lease.project_id, reason="retention_expired")
+    with pytest.raises(MetricStateConflict, match="expired"):
+        with pinned_read(live_writer.store, live_writer.lease.project_id, pin=pin):
+            pytest.fail("revoked capture entered")
+
+
+@pytest.mark.django_db(transaction=True)
+def test_pin_capture_waits_for_locked_revocation(live_writer):
+    attempt, _ = prepare_field(live_writer)
+    live_writer.stage_and_publish(attempt)
+    entered, completed, failures = Event(), Event(), []
+    project = live_writer.lease.project_id
+
+    def capture():
+        close_old_connections()
+        entered.set()
+        try:
+            capture_pin(project, consumer_kind="snapshot", ttl=timedelta(minutes=1))
+        except MetricStateConflict:
+            failures.append("expired")
+        finally:
+            completed.set()
+            close_old_connections()
+
+    with serialized_project(project):
+        thread = Thread(target=capture)
+        thread.start()
+        assert entered.wait(5)
+        assert not completed.wait(0.1)
+        revoke_generations(project, reason="erased")
+    thread.join(10)
+    assert completed.is_set() and failures == ["expired"]
+
+
+@pytest.mark.django_db
+def test_binary_roundtrip_is_lossless_and_duplicate_retries_verify(live_writer):
+    attempt, payloads = prepare_field(live_writer, unit_id="ends-with-last-byte-z")
+    manifest = live_writer.stage_and_publish(attempt)
+    live_writer.store.insert(FIELD_VALUES, payloads[0])
+    batch = attempt.batches.get()
+    assert (
+        live_writer.store.verify(FIELD_VALUES, attempt, batch)["sha256"]
+        == payloads[0].digest
+    )
+    assert current_fields(live_writer, manifest)[0][0] == "ends-with-last-byte-z"
+
+
+def default_row_select(table, overrides):
+    columns = []
+    for name, kind in table.schema:
+        escaped = kind.replace("'", "\\'")
+        expression = overrides.get(name, f"defaultValueOfTypeName('{escaped}')")
+        columns.append(f"{expression} AS {name}")
+    return "SELECT " + ", ".join(columns)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_outstanding_old_write_all_stores_and_actual_history_collection(live_writer):
+    from tracer.models.derived_metric import MetricFencingError
+    from tracer.services.derived_metrics.storage import (
+        BUCKET_TOTALS,
+        SOURCE_DEPENDENCIES,
+    )
+
+    writer = live_writer
+    initial, _ = prepare_field(writer)
+    writer.stage_and_publish(initial)
+    old = writer.begin(ledger={"dirty_after": [{"unit_id": "only-old"}]})
+    sql, p = field_query("only-old")
+    late = {FIELD_VALUES: writer.freeze(old, FIELD_VALUES, sql, p)}
+    for table, overrides in (
+        (UNIT_STATE, {"level": "'conversation'", "unit_id": "'only-old'"}),
+        (
+            SOURCE_DEPENDENCIES,
+            {"trace_id": "'only-old-trace'", "span_id": "'only-old-span'"},
+        ),
+        (
+            BUCKET_TOTALS,
+            {
+                "metric_id": "toUUID('00000000-0000-0000-0000-000000000001')",
+                "metric_version": "toUInt32(1)",
+                "group_key": "'only-old-group'",
+                "uniq_state": "initializeAggregation('uniqCombined64State', 'only-old')",
+                "quantile_state": "initializeAggregation('quantileTDigestState', toFloat64(1))",
+            },
+        ),
+    ):
+        late[table] = writer.freeze(old, table, default_row_select(table, overrides))
+    writer.seal(old)
+    entered, release, finished, errors = Event(), Event(), Event(), []
+    original_insert = writer.store.insert
+
+    def delayed_insert(table, payload):
+        entered.set()
+        if not release.wait(15):
+            raise RuntimeError("delayed test insert was not released")
+        original_insert(table, payload)
+
+    def old_worker():
+        close_old_connections()
+        try:
+            writer.stage_and_publish(old)
+        except MetricFencingError:
+            errors.append("fenced")
+        finally:
+            close_old_connections()
+            finished.set()
+
+    writer.store.insert = delayed_insert
+    thread = Thread(target=old_worker)
+    thread.start()
+    try:
+        assert entered.wait(10)
+        writer.store.insert = original_insert
+        future = timezone.now() + timedelta(minutes=6)
+        clock = [future]
+        grant = MetricProjectRefresh.take_lease(
+            writer.lease.project_id,
+            holder="takeover",
+            ttl=timedelta(minutes=10),
+            now=future,
+        )
+        new = RefreshWriter(
+            ProjectLease(grant, clock=lambda: clock[0]),
+            writer.store,
+            org_id=writer.org_id,
+        )
+        new.abort_stale()
+        fresh, _ = prepare_field(new, n=8)
+        head = new.stage_and_publish(fresh)
+        release.set()
+        assert finished.wait(15)
+        thread.join(5)
+        assert errors == ["fenced"]
+        # The remaining tables also receive late immutable writes from that same
+        # revoked attempt, including keys the replacement never mentioned.
+        for table in (UNIT_STATE, SOURCE_DEPENDENCIES, BUCKET_TOTALS):
+            original_insert(table, late[table][0])
+        for table in (UNIT_STATE, SOURCE_DEPENDENCIES, BUCKET_TOTALS):
+            sql, p = committed_rows_select(
+                table, head, org_id=writer.org_id, project_id=writer.lease.project_id
+            )
+            assert writer.store.execute(f"SELECT count() FROM ({sql})", p) == [(0,)]
+        checkpoint = new.compact()
+        MetricRefreshAttempt.objects.filter(project_id=writer.lease.project_id).exclude(
+            id=checkpoint.published_by_id
+        ).update(expires_at=future + timedelta(seconds=1))
+        clock[0] = future + timedelta(seconds=2)
+        intent = new.collect_garbage()
+        assert intent is not None
+        assert (
+            MetricReadManifest.objects.filter(
+                project_id=writer.lease.project_id
+            ).count()
+            == 1
+        )
+        assert (
+            MetricRefreshAttempt.objects.filter(
+                project_id=writer.lease.project_id
+            ).count()
+            == 1
+        )
+        for table in late:
+            assert writer.store.execute(
+                f"SELECT count() FROM {table.name} WHERE attempt_id = %(attempt)s",
+                {"attempt": old.id},
+            ) == [(0,)]
+            # Even an insert that arrives AFTER physical GC cannot become current.
+            original_insert(table, late[table][0])
+            sql, p = committed_rows_select(
+                table,
+                checkpoint,
+                org_id=writer.org_id,
+                project_id=writer.lease.project_id,
+            )
+            result = writer.store.execute(
+                f"SELECT count() FROM ({sql}) WHERE attempt_id = %(attempt)s",
+                {**p, "attempt": old.id},
+            )
+            assert result == [(0,)]
+    finally:
+        release.set()
+        thread.join(20)
+        writer.store.insert = original_insert
+
+
+@pytest.mark.django_db(transaction=True)
+def test_keyset_batches_and_checkpoint_stream_without_offset_or_payload_recopies(
+    live_writer,
+):
+    writer = live_writer
+    attempt = writer.begin()
+    sql, params = field_query()
+    expanded = f"SELECT * REPLACE(concat('unit-', leftPad(toString(number), 4, '0')) AS unit_id) FROM ({sql}) AS f CROSS JOIN numbers(1001) AS n"
+    payloads = writer.freeze(attempt, FIELD_VALUES, expanded, params)
+    assert [len(p.rows) for p in payloads] == [500, 500, 1]
+    writer.seal(attempt)
+    head = writer.stage_and_publish(attempt)
+    assert len(current_fields(writer, head)) == 1001
+    checkpoint = writer.compact()
+    assert len(current_fields(writer, checkpoint)) == 1001
+    batches = checkpoint.published_by.batches.filter(
+        table_name="field_values"
+    ).order_by("batch_no")
+    assert list(batches.values_list("row_count", flat=True)) == [500, 500, 1]
+    assert all(
+        b.row_sequence_last - b.row_sequence_first + 1 == b.row_count for b in batches
+    )
+    with pytest.raises(ValueError, match="immutable"):
+        committed_rows_select(
+            FIELD_VALUES,
+            checkpoint,
+            org_id=writer.org_id,
+            project_id=writer.lease.project_id,
+            key_after={"status": "ok"},
+        )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_repeated_checkpoint_pin_revocation_and_gc_collects_real_pg_ancestry(
+    live_writer,
+):
+    writer = live_writer
+    clock = [timezone.now()]
+    writer.lease.clock = lambda: clock[0]
+    metric = uuid4()
+    initial, delayed = prepare_field(writer, metric=metric, n=99)
+    writer.stage_and_publish(initial)
+    for _ in range(3):
+        pin = capture_pin(
+            writer.lease.project_id,
+            consumer_kind="snapshot",
+            ttl=timedelta(minutes=5),
+            now=clock[0],
+        )
+        removal, _ = prepare_field(writer, metric=metric, deleted=1)
+        writer.stage_and_publish(removal)
+        checkpoint = writer.compact()
+        original_hash = checkpoint.manifest_sha256
+        MetricRefreshAttempt.objects.filter(project_id=writer.lease.project_id).exclude(
+            id=checkpoint.published_by_id
+        ).update(expires_at=clock[0] + timedelta(seconds=1))
+        clock[0] += timedelta(seconds=2)
+        writer.collect_garbage()
+        assert pin.is_usable(clock[0])
+        assert MetricReadManifest.objects.filter(id=pin.manifest_id).exists()
+        revoke_generations(
+            writer.lease.project_id,
+            reason="erased",
+            manifest_ids=[pin.manifest_id],
+            now=clock[0],
+        )
+        writer.collect_garbage()
+        assert (
+            MetricReadManifest.objects.filter(
+                project_id=writer.lease.project_id
+            ).count()
+            == 1
+        )
+        assert (
+            MetricRefreshAttempt.objects.filter(
+                project_id=writer.lease.project_id
+            ).count()
+            == 1
+        )
+        assert (
+            MetricReadManifest.objects.get(id=checkpoint.id).manifest_sha256
+            == original_hash
+        )
+        writer.store.insert(FIELD_VALUES, delayed[0])
+        assert current_fields(writer, checkpoint)[0][2] == 1
