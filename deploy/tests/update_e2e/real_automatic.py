@@ -355,8 +355,6 @@ class ProductHarness:
         # Never inherit an operator's provider keys, Compose overlays or profiles.
         self.env = {key: os.environ[key] for key in ("PATH", "HOME", "TMPDIR") if key in os.environ}
         self.env["DOCKER_CONTEXT"] = CONTEXT
-        if native_ci():
-            self.env['PATH'] = native_launcher_path(self.env)
         self.sequence = max((int(p.stem.split("-")[1]) for p in self.evidence.glob("command-*.json")), default=0)
         self.model: Optional[dict] = None
         self.ports: dict = {}
@@ -410,6 +408,11 @@ class ProductHarness:
         # Tests may enroll/deactivate, never drive scheduler run/tick/apply.
         if not args or args[0] != 'setup':
             raise ValueError('acceptance may only call one-time setup/deactivation')
+        # Resolve real launcher prerequisites at the setup boundary, not when a
+        # daemon-free unit fixture merely constructs a harness. Native acceptance
+        # also probes this cleared environment before expensive qualification.
+        if native_ci():
+            self.env['PATH'] = native_launcher_path(self.env)
         previous = self.env.get('PYTHON')
         self.env['PYTHON'] = sys.executable
         try:

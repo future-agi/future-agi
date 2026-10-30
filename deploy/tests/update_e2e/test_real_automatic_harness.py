@@ -195,6 +195,37 @@ class HelperTests(unittest.TestCase):
         compose.assert_not_called()
 
 
+class NativeLauncherTests(unittest.TestCase):
+    def test_native_construction_does_not_require_host_tools(self):
+        with patch.object(real, "native_ci", return_value=True), \
+                patch.object(real.shutil, "which", return_value=None) as which:
+            real.ProductHarness(real.HOME / "fixture", Path.cwd(), "fagi-upd-e2e-real-unit")
+        which.assert_not_called()
+
+    def test_real_native_setup_still_refuses_missing_host_tools(self):
+        harness = real.ProductHarness(real.HOME / "fixture", Path.cwd(), "fagi-upd-e2e-real-unit")
+        with patch.object(real, "native_ci", return_value=True), \
+                patch.object(real.shutil, "which", return_value=None) as which, \
+                patch.object(harness, "command") as command, \
+                self.assertRaisesRegex(ValueError, "native acceptance host tool missing: docker-compose"):
+            harness.bin_update('setup', '--yes')
+        self.assertEqual(which.call_args.args, ("docker-compose",))
+        command.assert_not_called()
+
+    def test_native_setup_uses_validated_path_before_command(self):
+        harness = real.ProductHarness(real.HOME / "fixture", Path.cwd(), "fagi-upd-e2e-real-unit")
+        harness.env['PYTHON'] = 'original-interpreter'
+        with patch.object(real, "native_ci", return_value=True), \
+                patch.object(real, "native_launcher_path", return_value=os.defpath) as launcher, \
+                patch.object(harness, "command", side_effect=lambda *args, **kwargs: dict(harness.env)):
+            observed = harness.bin_update('setup', '--yes')
+        launcher.assert_called_once()
+        self.assertEqual(observed['PATH'], os.defpath)
+        self.assertEqual(observed['PYTHON'], real.sys.executable)
+        self.assertEqual(observed['DOCKER_CONTEXT'], real.CONTEXT)
+        self.assertEqual(harness.env['PYTHON'], 'original-interpreter')
+
+
 class ArchiveTests(unittest.TestCase):
     def make_archive(self, root, names=(".", "./payload")):
         path = Path(root) / "fixture.tar"
