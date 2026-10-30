@@ -570,9 +570,14 @@ const ObserveHeader = ({ text, refreshData, resetFilters }) => {
                 aria-label={reloadLabel}
                 onClick={() => {
                   // Use refreshData from LLMTracingView if available
-                  refreshData?.({ includeAggregations: false });
+                  const refreshHandled =
+                    refreshData?.(
+                      isAggregationRefreshing
+                        ? { includeAggregations: false, listOnly: true }
+                        : { includeAggregations: false },
+                    ) === true;
                   // Keep row/project data fresh. Aggregations listen for the
-                  // explicit event below and send `refresh=true` themselves.
+                  // explicit event below and send the exact refresh themselves.
                   queryClient.invalidateQueries({
                     queryKey: ["observe-projects"],
                   });
@@ -580,14 +585,16 @@ const ObserveHeader = ({ text, refreshData, resetFilters }) => {
                   // background revalidation), Reload stays available for the
                   // rows: it sends the list-only event, and the charts keep
                   // polling the refresh already under way.
-                  window.dispatchEvent(
-                    new CustomEvent(
-                      isAggregationRefreshing
-                        ? OBSERVE_LIST_REFRESH_EVENT
-                        : "observe-refresh",
-                      { detail: { observeId } },
-                    ),
-                  );
+                  if (!refreshHandled) {
+                    window.dispatchEvent(
+                      new CustomEvent(
+                        isAggregationRefreshing
+                          ? OBSERVE_LIST_REFRESH_EVENT
+                          : "observe-refresh",
+                        { detail: { observeId } },
+                      ),
+                    );
+                  }
                 }}
               >
                 {isAggregationRefreshing ? (
