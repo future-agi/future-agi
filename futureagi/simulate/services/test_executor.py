@@ -299,8 +299,14 @@ class TestExecutor:
                     test_execution.eval_explanation_summary_status = (
                         EvalExplanationSummaryStatus.PENDING
                     )
+                    test_execution.eval_explanation_summary_last_updated = (
+                        timezone.now()
+                    )
                     test_execution.save(
-                        update_fields=["eval_explanation_summary_status"]
+                        update_fields=[
+                            "eval_explanation_summary_status",
+                            "eval_explanation_summary_last_updated",
+                        ]
                     )
                     # Lazy import to avoid circular dependency
                     from simulate.tasks.eval_summary_tasks import run_eval_summary_task
@@ -513,6 +519,9 @@ class TestExecutor:
 
                         test_execution.eval_explanation_summary_status = (
                             EvalExplanationSummaryStatus.PENDING
+                        )
+                        test_execution.eval_explanation_summary_last_updated = (
+                            timezone.now()
                         )
                         test_execution.save()
                         # Lazy import to avoid circular dependency
@@ -4233,6 +4242,7 @@ class TestExecutor:
                     completed_calls=completed_call_count,
                     failed_calls=failed_call_count,
                     eval_explanation_summary_status=EvalExplanationSummaryStatus.PENDING,
+                    eval_explanation_summary_last_updated=timezone.now(),
                 )
                 if updated:
                     logger.info(

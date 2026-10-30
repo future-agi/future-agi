@@ -167,6 +167,7 @@ async def finalize_rerun_execution(input: FinalizeRerunInput) -> None:
                 failed_calls=failed_count,
                 completed_at=test_execution.completed_at,
                 eval_explanation_summary_status=EvalExplanationSummaryStatus.PENDING,
+                eval_explanation_summary_last_updated=timezone.now(),
             )
             # Whether or not the update above moved the run, and whatever
             # status it holds now (completed by the settle, or ended by a

@@ -660,6 +660,7 @@ async def finalize_test_execution(input: FinalizeInput) -> None:
                 completed_at=test_execution.completed_at,
                 picked_up_by_executor=False,
                 eval_explanation_summary_status=EvalExplanationSummaryStatus.PENDING,
+                eval_explanation_summary_last_updated=timezone.now(),
             )
             if not moved:
                 # Whoever ended the run owns its status, counts and summary;

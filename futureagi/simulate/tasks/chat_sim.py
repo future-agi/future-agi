@@ -407,7 +407,13 @@ def monitor_test_execution_for_chat(test_execution_id: str):
             test_execution.eval_explanation_summary_status = (
                 EvalExplanationSummaryStatus.PENDING
             )
-            test_execution.save(update_fields=["eval_explanation_summary_status"])
+            test_execution.eval_explanation_summary_last_updated = timezone.now()
+            test_execution.save(
+                update_fields=[
+                    "eval_explanation_summary_status",
+                    "eval_explanation_summary_last_updated",
+                ]
+            )
             # Lazy import to avoid circular dependency
             from simulate.tasks.eval_summary_tasks import run_eval_summary_task
 
