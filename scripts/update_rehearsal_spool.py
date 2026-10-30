@@ -380,6 +380,16 @@ def _parse_grant_line(line: str):
     _fail("unsupported observed-catalog writer grant")
 
 
+def _parse_grant_row(row):
+    # ClickHouse 25.3 InterpreterShowGrantsQuery names the result after the
+    # formatted SHOW query without its SHOW prefix, not a literal "grants".
+    columns = ("GRANTS FOR observed_catalog_writer",
+               "GRANTS FOR observed_catalog_writer FORMAT JSONEachRow")
+    if type(row) is not dict or len(row) != 1 or next(iter(row)) not in columns:
+        _fail("unsupported observed-catalog writer grant layout")
+    return _parse_grant_line(next(iter(row.values())))
+
+
 def _scope_rows_sql_rows(driver, scope):
     params = {"org": scope["organization_id"], "workspace": scope["workspace_id"],
               "project": scope["project_id"]}
@@ -425,9 +435,7 @@ class ObservedSpoolWitness:
             _fail("unsupported observed-catalog writer grant layout")
         parsed = []
         for row in rows:
-            if type(row) is not dict or set(row) != {"grants"}:
-                _fail("unsupported observed-catalog writer grant layout")
-            parsed.append(_parse_grant_line(row["grants"]))
+            parsed.append(_parse_grant_row(row))
         if len(set(parsed)) != 2 or set(parsed) != {(table, "SELECT, INSERT") for table in TABLES}:
             _fail("observed-catalog writer grants differ from bootstrap")
         return tuple(sorted(_expected_grant(table) for table in TABLES))
@@ -506,9 +514,7 @@ class ObservedSpoolWitness:
                 return None
             parsed = []
             for row in rows:
-                if type(row) is not dict or set(row) != {"grants"}:
-                    return None
-                parsed.append(_parse_grant_line(row["grants"]))
+                parsed.append(_parse_grant_row(row))
             if len(set(parsed)) != len(parsed):
                 return None
             return tuple(sorted(_expected_grant(table, privilege) for table, privilege in parsed))

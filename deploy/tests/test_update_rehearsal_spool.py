@@ -84,6 +84,7 @@ def column_rows():
 
 class FakeDriver:
     project = "fagi-upd-e2e-driver-m1-aaaaaaaaaaaa"
+    grant_column = "GRANTS FOR observed_catalog_writer FORMAT JSONEachRow"
 
     def __init__(self):
         self.spool = []
@@ -100,7 +101,7 @@ class FakeDriver:
 
     def clickhouse(self, sql, *, params=None):
         if sql == "SHOW GRANTS FOR observed_catalog_writer FORMAT JSONEachRow":
-            return [{"grants": grant} for grant in self.grants]
+            return [{self.grant_column: grant} for grant in self.grants]
         if sql == TABLE_LAYOUT_QUERY:
             return schema_rows()
         if sql == COLUMN_LAYOUT_QUERY:
@@ -180,6 +181,39 @@ class ObservedSpoolWitnessTests(unittest.TestCase):
                  self.assertRaisesRegex(ObservedSpoolWitnessError, 'column layout'):
                 witness.pause_delivery()
             self.assertEqual(driver.commands, [])
+
+    def test_actual_show_grants_heading_survives_pause_and_exact_restore(self):
+        for heading in ('GRANTS FOR observed_catalog_writer',
+                        'GRANTS FOR observed_catalog_writer FORMAT JSONEachRow'):
+            driver, witness = make_witness()
+            driver.grant_column = heading
+            with self.subTest(heading=heading):
+                witness.pause_delivery()
+                self.assertTrue(witness._paused)
+                witness.restore_delivery()
+                self.assertEqual(sorted(driver.grants), sorted(expected_grants()))
+                self.assertEqual(len(driver.commands), 4)
+
+    def test_other_grant_heading_or_extra_columns_never_authorize_privilege_mutation(self):
+        for heading in ('grants', 'GRANTS FOR another_user', 'GRANTS FOR observed_catalog_writer FINAL',
+                        'GRANTS FOR observed_catalog_writer FORMAT JSON', '', 1):
+            driver, witness = make_witness()
+            driver.grant_column = heading
+            with self.subTest(heading=heading), self.assertRaisesRegex(ObservedSpoolWitnessError, 'grant layout'):
+                witness.pause_delivery()
+            self.assertEqual(driver.commands, [])
+        driver, witness = make_witness()
+        clickhouse = driver.clickhouse
+        def extra_columns(sql, **kwargs):
+            rows = clickhouse(sql, **kwargs)
+            if sql.startswith('SHOW GRANTS'):
+                for row in rows:
+                    row['unexpected'] = 'extra column'
+            return rows
+        driver.clickhouse = extra_columns
+        with self.assertRaisesRegex(ObservedSpoolWitnessError, 'grant layout'):
+            witness.pause_delivery()
+        self.assertEqual(driver.commands, [])
 
     def test_sql_uses_clickhouse_format_datetime_not_the_collectors_go_helper_name(self):
         # ClickHouse src/Functions/formatDateTime.cpp registers formatDateTime;
