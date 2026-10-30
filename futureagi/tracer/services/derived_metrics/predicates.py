@@ -331,11 +331,14 @@ class MetricFilterCandidates:
     """Code-owned canonical candidates, not a SQL string supplied by HTTP.
 
     A relation must expose a String id column named unit_id holding canonical
-    (remap-resolved) conversation ids.
+    (remap-resolved) conversation ids. For finite-retention ``is_null`` filters,
+    it must also expose the canonical conversation start in a code-owned column;
+    this lets an expired cell remain No value after its field rows are purged.
     """
 
     ids_param: str | None = None
     relation: str | None = None
+    unit_start_column: str | None = None
 
     def __post_init__(self):
         names = [v for v in (self.ids_param, self.relation) if v is not None]
@@ -343,11 +346,29 @@ class MetricFilterCandidates:
             raise MetricFilterError(
                 "Metric filters require one internal candidate set."
             )
+        if self.unit_start_column is not None and (
+            self.relation is None
+            or not _INTERNAL_IDENTIFIER.fullmatch(self.unit_start_column)
+        ):
+            raise MetricFilterError(
+                "Retention-aware No value filters require a safe candidate relation."
+            )
 
     def condition(self, column: str) -> str:
         if self.ids_param is not None:
             return f"{column} IN %({self.ids_param})s"
         return f"{column} IN (SELECT {column} FROM {self.relation})"
+
+    def expired_unit_ids(self, retention_start: datetime, bind: Callable) -> str:
+        if self.relation is None or self.unit_start_column is None:
+            raise MetricFilterError(
+                "Finite-retention No value filters require canonical candidate starts.",
+                "metric_filter_planner_unavailable",
+            )
+        return (
+            f"SELECT unit_id FROM {self.relation} WHERE "
+            f"{self.unit_start_column} < {bind(retention_start)}"
+        )
 
 
 @dataclass(frozen=True)
@@ -445,7 +466,9 @@ def build_metric_membership(
     unit_start: list date/root membership stays with the native classifier.
     The canonical candidates are pushed into each attempt-qualified source
     before the latest-state collapse; deletion, retention and the comparison
-    apply after it.
+    apply after it. With finite retention, ``is_null`` also unions expired ids
+    from the native candidate relation, so expiry stays No value after the
+    per-unit field rows are physically purged.
     """
     metadata = scope.metadata
     validate_metric_filter(item, metadata, context=context)
@@ -517,11 +540,18 @@ def build_metric_membership(
         + " UNION ALL ".join(sources)
         + ") GROUP BY unit_id)"
     )
-    # Retention-expired units fall outside every operator, including is_null,
-    # exactly like open or never-calculated units. Matching them as No value
-    # would flip the result when the physical purge removes their rows.
+    # Field rows past the horizon never participate in value comparisons. An
+    # expired cell is nevertheless No value: for is_null, use the native list's
+    # canonical candidate starts so the result is stable before and after the
+    # retention worker physically purges those field rows.
     live = "is_deleted = 0"
+    expired_ids = None
     if scope.retention_start is not None:
         live += f" AND unit_start >= {bind(scope.retention_start)}"
+        if item["filter_config"]["filter_op"] == "is_null":
+            expired_ids = candidates.expired_unit_ids(scope.retention_start, bind)
     comparison = metric_value_comparison(item, metadata, value_type, bind)
-    return f"SELECT unit_id FROM ({latest}) WHERE {live} AND ({comparison})"
+    membership = f"SELECT unit_id FROM ({latest}) WHERE {live} AND ({comparison})"
+    if expired_ids is not None:
+        membership += f" UNION DISTINCT {expired_ids}"
+    return membership

@@ -373,12 +373,14 @@ def translate(
     context="sessions",
     outer_column="session_id",
     builder_class=ClickHouseFilterBuilderV2,
+    candidates=None,
 ):
     builder = builder_class(
         project_id=meta.project_id,
         metric_filter_context=context,
         metric_read_scopes={meta.identity: scope},
-        metric_candidates=MetricFilterCandidates(ids_param="metric_candidates"),
+        metric_candidates=candidates
+        or MetricFilterCandidates(ids_param="metric_candidates"),
         metric_outer_column=outer_column,
     )
     return builder.translate([chip(meta, value_type or meta.value_type, op, value)])
@@ -390,6 +392,26 @@ def test_unintegrated_planners_fail_closed(metadata):
     for name in ["bad; DROP TABLE x", "x.y", "x y"]:
         with pytest.raises(MetricFilterError):
             MetricFilterCandidates(relation=name)
+    for column in ["unit_start; DROP TABLE x", "candidate.start", "start time"]:
+        with pytest.raises(MetricFilterError):
+            MetricFilterCandidates(relation="candidate_rows", unit_start_column=column)
+    with pytest.raises(MetricFilterError):
+        MetricFilterCandidates(
+            ids_param="candidate_ids", unit_start_column="unit_start"
+        )
+
+
+def test_finite_retention_is_null_requires_canonical_candidate_starts(metadata):
+    scope = scope_for(
+        replace(metadata, value_type="number"),
+        deltas=[(1, uuid4())],
+        retention_start=datetime(2026, 9, 15, tzinfo=UTC),
+    )
+    with pytest.raises(MetricFilterError) as error:
+        translate(
+            replace(metadata, value_type="number"), scope, op="is_null", value=None
+        )
+    assert error.value.code == "metric_filter_planner_unavailable"
 
 
 def test_sql_uses_exact_allowlist_then_tuple_collapse_no_list_date(metadata):
@@ -719,35 +741,64 @@ def test_live_numeric_operator_matrix(live_store, metadata, op, value, expected)
     "op,value,expected",
     [
         ("equals", 5, {"kept"}),
-        ("is_null", None, {"missing"}),
+        (
+            "is_null",
+            None,
+            {"missing", "expired", "expired-missing", "expired-purged"},
+        ),
         ("is_not_null", None, {"kept"}),
         ("not_equals", 7, {"kept"}),
     ],
 )
-def test_live_retention_expired_units_are_outside_every_operator(
+def test_live_retention_expired_units_remain_no_value_after_purge(
     live_store, metadata, op, value, expected
 ):
-    # Recorded choice: an expired unit is neither a value nor No value for a
-    # filter (like an open or never-calculated unit), so the result does not
-    # change when the physical purge later removes its rows.
+    # Expired cells are No value for is_null even after their field rows are
+    # physically purged. Other operators cannot read or match expired values.
     meta = replace(metadata, value_type="number")
     attempt = uuid4()
     recent = datetime(2026, 10, 1, tzinfo=UTC)
+    expired = datetime(2026, 9, 1, tzinfo=UTC)
     for unit, changes in [
         ("kept", {"unit_start": recent}),
         ("missing", {"unit_start": recent, "status": STATUS_NO_VALUE}),
-        ("expired", {}),
-        ("expired-missing", {"status": STATUS_NO_VALUE}),
+        ("expired", {"unit_start": expired}),
+        ("expired-missing", {"unit_start": expired, "status": STATUS_NO_VALUE}),
     ]:
         insert_field(live_store, meta, attempt, 1, unit, **changes)
+    live_store.command(
+        "CREATE TABLE IF NOT EXISTS metric_candidate_rows "
+        "(unit_id String, unit_start DateTime64(6, 'UTC')) ENGINE=Memory"
+    )
+    live_store.command("TRUNCATE TABLE metric_candidate_rows")
+    candidates = [
+        ("kept", recent),
+        ("missing", recent),
+        ("expired", expired),
+        ("expired-missing", expired),
+        # This candidate has no field row, as after the retention purge.
+        ("expired-purged", expired),
+    ]
+    live_store.insert(
+        "metric_candidate_rows",
+        candidates,
+        column_names=["unit_id", "unit_start"],
+    )
     scope = scope_for(
         meta,
         deltas=[(1, attempt)],
         retention_start=datetime(2026, 9, 15, tzinfo=UTC),
     )
-    sql, params = translate(meta, scope, op=op, value=value)
-    units = ["kept", "missing", "expired", "expired-missing"]
-    params["metric_candidates"] = tuple(units)
+    sql, params = translate(
+        meta,
+        scope,
+        op=op,
+        value=value,
+        candidates=MetricFilterCandidates(
+            relation="metric_candidate_rows", unit_start_column="unit_start"
+        ),
+    )
+    units = [unit for unit, _ in candidates]
     params["outer_candidates"] = units
     query = (
         "SELECT session_id FROM (SELECT arrayJoin(%(outer_candidates)s) AS session_id) "
