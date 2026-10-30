@@ -1065,12 +1065,27 @@ print(json.dumps({'identity':a['identity'],'absent':absent}))
         import secrets
         import base64
         values["INTEGRATION_ENCRYPTION_KEY"] = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()
-        for key in ("SECRET_KEY", "REDIS_PASSWORD", "PG_PASSWORD",
-                    "CH_PASSWORD", "MINIO_ROOT_PASSWORD", "AGENTCC_INTERNAL_API_KEY", "AGENTCC_ADMIN_TOKEN"):
+        # The secrets bin/install generates (bin/lib/secrets.sh), including the webhook secret.
+        for key in ("SECRET_KEY", "REDIS_PASSWORD", "PG_PASSWORD", "CH_PASSWORD", "MINIO_ROOT_PASSWORD",
+                    "AGENTCC_INTERNAL_API_KEY", "AGENTCC_ADMIN_TOKEN", "AGENTCC_WEBHOOK_SECRET"):
             values[key] = secrets.token_hex(32)
         self._secret_values.update(str(value) for key, value in values.items()
                                    if re.search(r'PASSWORD|SECRET|TOKEN|KEY', key))
-        (self.root / ".env").write_text("".join("{}={}\n".format(k, v) for k, v in values.items()))
+        # Like bin/install: start from the release's own .env.example, then set this
+        # harness's values. A partial .env lacks example keys, which the update plan
+        # rightly refuses ("run ./bin/install --no-up") on every scheduled run.
+        example = self.root / ".env.example"
+        lines = example.read_text().splitlines() if example.is_file() else []
+        rendered, seen = [], set()
+        for line in lines:
+            match = re.match(r"([A-Za-z_][A-Za-z0-9_]*)=", line)
+            if match and match.group(1) in values:
+                seen.add(match.group(1))
+                rendered.append("{}={}".format(match.group(1), values[match.group(1)]))
+            else:
+                rendered.append(line)
+        rendered += ["{}={}".format(k, v) for k, v in values.items() if k not in seen]
+        (self.root / ".env").write_text("\n".join(rendered) + "\n")
         (self.root / ".env").chmod(0o600)
         self.model = json.loads(self.dc("config", "--format", "json").stdout)
         validate_model(self.model, self.project)
