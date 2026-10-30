@@ -163,9 +163,66 @@ func NewTaskStore() *TaskStore {
 	}
 }
 
+func cloneRawMessage(value json.RawMessage) json.RawMessage {
+	if value == nil {
+		return nil
+	}
+	return append(json.RawMessage(nil), value...)
+}
+
+func cloneMessageParts(parts []MessagePart) []MessagePart {
+	if parts == nil {
+		return nil
+	}
+	cloned := make([]MessagePart, len(parts))
+	copy(cloned, parts)
+	for i := range cloned {
+		cloned[i].Data = cloneRawMessage(parts[i].Data)
+	}
+	return cloned
+}
+
+func cloneMessages(messages []Message) []Message {
+	if messages == nil {
+		return nil
+	}
+	cloned := make([]Message, len(messages))
+	copy(cloned, messages)
+	for i := range cloned {
+		cloned[i].Parts = cloneMessageParts(messages[i].Parts)
+		cloned[i].Metadata = cloneRawMessage(messages[i].Metadata)
+	}
+	return cloned
+}
+
+func cloneArtifacts(artifacts []Artifact) []Artifact {
+	if artifacts == nil {
+		return nil
+	}
+	cloned := make([]Artifact, len(artifacts))
+	copy(cloned, artifacts)
+	for i := range cloned {
+		cloned[i].Parts = cloneMessageParts(artifacts[i].Parts)
+		cloned[i].Metadata = cloneRawMessage(artifacts[i].Metadata)
+	}
+	return cloned
+}
+
+func cloneTask(task *Task) *Task {
+	if task == nil {
+		return nil
+	}
+	cloned := *task
+	cloned.Status.Message = cloneMessageParts(task.Status.Message)
+	cloned.Artifacts = cloneArtifacts(task.Artifacts)
+	cloned.History = cloneMessages(task.History)
+	cloned.Metadata = cloneRawMessage(task.Metadata)
+	return &cloned
+}
+
 // Store saves a task.
 func (ts *TaskStore) Store(task *Task) {
-	ts.tasks[task.ID] = &taskEntry{task: task, createdAt: time.Now()}
+	ts.tasks[task.ID] = &taskEntry{task: cloneTask(task), createdAt: time.Now()}
 }
 
 // Get retrieves a task by ID.
@@ -174,14 +231,14 @@ func (ts *TaskStore) Get(id string) (*Task, bool) {
 	if !ok {
 		return nil, false
 	}
-	return e.task, true
+	return cloneTask(e.task), true
 }
 
 // Cleanup removes tasks older than the given duration.
 func (ts *TaskStore) Cleanup(maxAge time.Duration) {
 	cutoff := time.Now().Add(-maxAge)
 	for id, e := range ts.tasks {
-		if e.createdAt.Before(cutoff) {
+		if !e.createdAt.After(cutoff) {
 			delete(ts.tasks, id)
 		}
 	}
