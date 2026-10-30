@@ -362,10 +362,9 @@ func (w *Writer) appendDeadLetter(rows []map[string]any) error {
 			return err
 		}
 	}
-	// Sync to ensure the dead-letter is durable before we report the
-	// upstream error. If the kernel crashes before this returns, the row
-	// is lost — that's the at-least-once boundary we accept (matches
-	// SigNoz's own collector dead-letter behavior).
+	// Sync the dead-letter before reporting the upstream error. A crash before
+	// this completes can lose these rows; this is not a durable pre-ack queue
+	// and does not provide automatic replay or an exactly-once guarantee.
 	return w.dlFile.Sync()
 }
 

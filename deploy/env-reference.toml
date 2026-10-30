@@ -1888,6 +1888,25 @@ in a compose override; the Helm chart sets them from `global.proxy`,
     text = "`1` stops the model server from downloading models; pre-seed its cache first. Helm: on (serving only) with `global.airgap`."
 
   [[part.section]]
+  heading = "Collector row admission and provenance"
+  body = '''
+Set these in the collector container's environment (a Compose override or
+`fiCollector.extraEnv` in Helm), not just in the installer's `.env`.
+'''
+
+    [[part.section.row]]
+    keys = ["FI_MAX_PENDING_ROWS"]
+    default = "`0` (row admission disabled)"
+    setups = ["S", "D", "H"]
+    text = "Non-negative integer overriding `server.max_pending_rows`. A positive value limits pending plus in-flight rows; a full budget refuses the entire request with retry hints. One request larger than the budget may enter while the buffer is below it. `batch_max_rows` is clamped to a positive row budget. This bounds row count, not bytes or crash loss, and does not make acknowledgement durable. Negative or malformed values prevent startup. Size and test it with the deployment's workload before enabling."
+
+    [[part.section.row]]
+    keys = ["FI_BUILD_REVISION"]
+    default = "unset"
+    setups = ["S", "D", "H"]
+    text = "Optional build identifier exposed as `/healthz.build.configured_revision` for benchmark provenance, especially for image builds without `.git`. It is operator-supplied metadata, not a verified source hash; record the image digest and available VCS fields too. Does not change ingestion behavior."
+
+  [[part.section]]
   heading = "Development overlays (`./bin/dev`)"
   body = '''
 Read only by `docker-compose.dev.yml` and `docker-compose.distributed.dev.yml`.

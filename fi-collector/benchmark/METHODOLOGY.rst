@@ -476,24 +476,15 @@ Comparisons this tool does not support
 * **Do not compare a latency timed from the actual send with one timed from
   the scheduled send**, or a lower bound with an upper bound. State which of
   the bounds you quote.
-* **Do not rank spans/s against vendor figures.** Vendors publish events,
-  requests, traces, observations or documents per second, with payloads from
-  about 500 B to 100 KB and different acknowledgement points.
-* **Do not compare a self-hosted measurement with a vendor's cloud plan
-  limits or quotas.** Those are pricing limits, not measured capacity.
-* **Do not compare read-visible lag with vendor latencies whose definitions
-  differ.** Each of these is documented by its vendor and not measured by us:
-
-  * LangSmith reports "trace ingestion" P50 630 ms and P99 1.47 s, with the
-    stage undefined (https://www.langchain.com/blog/introducing-smithdb).
-  * Braintrust reports separate flush-to-server and visible-for-reads times for
-    one shot of 100 documents of 100 KB (https://www.braintrust.dev/blog/brainstore).
-  * Arize reports a P50-only ingest-to-read figure that includes UI load
-    (https://arize.com/docs/ax/concepts/adb/performance).
-
-  These quoted figures do not establish an equivalent per-span read-visible
-  measurement from the scheduled send for this workload. They are not evidence
-  that the vendors lack such instrumentation.
+* **Keep throughput units explicit.** Events, requests, traces, observations,
+  documents and spans are different units. State the payload sizes and the
+  acknowledgement point alongside every throughput figure.
+* **A plan limit or quota is not measured capacity.** A self-hosted run needs
+  its own recorded hardware, topology, workload and verification evidence.
+* **Keep latency boundaries explicit.** Scheduled-send-to-read-visible,
+  send-to-acknowledgement, flush-to-server and UI-inclusive times measure
+  different stages. Without equivalent start/end points and per-span coverage,
+  they cannot establish the same read-visible lag for this workload.
 * **Do not compare runs across ClickHouse default changes.** CI pins
   25.3.14.14; insert deduplication and async-insert defaults differ in 26.2 and
   later.
@@ -536,8 +527,6 @@ against them.
 * TPCx-IoT: a full disclosure report detailed enough to replicate, reporting
   the lower of two measured runs
   (https://www.tpc.org/TPC_Documents_Current_Versions/pdf/TPCX-IOT_v2.1.2.pdf).
-* Langfuse documents a manual four-step runbook for missing events
-  (https://langfuse.com/faq/all/self-hosting-missing-events-after-ingestion).
 
 Historical v3 notes (small runs, 2026-10-22)
 -------------------------------------------

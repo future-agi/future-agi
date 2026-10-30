@@ -723,15 +723,13 @@ policy, probe rate, producer utilization and noisy-neighbor isolation for every
 published row. Test failover/headroom separately; extrapolation assumes per-shard
 linearity and does not establish it.
 
-Public methodology comparison (checked 2026-10-22)
---------------------------------------------------
+Reference methods and measurement scope
+---------------------------------------
 
-This compares WHAT public tools and vendor benchmarks measure and how, from their
-own documentation. It is not a performance ranking: no number below was measured
-by this harness, units differ (traces, events, observations, requests, spans), and
-none of these sources publishes a same-hardware, zero-loss 24-hour span benchmark
-that this harness could be ranked against. Nothing here claims this harness or the
-collector is faster than any product.
+The following infrastructure tools document useful load-generation and
+correctness methods. They are references, not measurements made by this harness
+or a performance ranking. Keep units, workloads, acknowledgement points and
+verification coverage explicit when interpreting any result.
 
 Load generators and correctness tools:
 
@@ -747,7 +745,7 @@ Load generators and correctness tools:
   counters, which the OpenTelemetry docs say do not by themselves imply data loss.
   https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/cmd/telemetrygen
   https://opentelemetry.io/docs/collector/internal-telemetry/
-* **Grafana Tempo vulture**: the closest public analogue. It writes test traces over
+* **Grafana Tempo vulture**: writes test traces over
   OTLP gRPC and reads them back by ID, by TraceQL search and by TraceQL metrics,
   counting ``missingspans``, ``notfound_byid``, ``incorrectresult`` and similar; its
   validation mode runs a fixed number of write/read cycles (default 3). It checks a
@@ -755,42 +753,11 @@ Load generators and correctness tools:
   benchmark and does not account for every span of a load test.
   https://grafana.com/docs/tempo/latest/operations/tempo-vulture/
 
-LLM-observability vendors (vendor-published claims, not measurements here):
-
-* **Langfuse**: self-hosting docs state 90B+ observations per month across its
-  users and describe queued ingestion (batches written to S3, a Redis reference,
-  workers inserting into ClickHouse); scaling guidance uses worker CPU and queue
-  depth. Earlier enterprise copy cited >80M traces/day and >5B tracing events/month.
-  No published span-rate benchmark methodology or loss verification was found.
-  https://langfuse.com/self-hosting
-  https://langfuse.com/self-hosting/configuration/scaling
-  https://langfuse.com/enterprise/enterprise
-* **LangSmith (self-hosted)**: scaling tables are sized by TRACES submitted per
-  second (10 to 1,000); one configuration "allowed us to scale to 100 traces
-  ingested per second and 40 read requests per second" in internal testing.
-  Spans per trace, hardware and loss accounting are not stated.
-  https://docs.langchain.com/langsmith/self-host-scale
-* **Arize adb**: a five-part benchmark (dataset upload by code and UI, trace upload,
-  ingest-to-read latency, regexp search over 5M/10M spans of ~25 KB text) with
-  results for 1k and 50k traces, median database timing and anonymised
-  competitors; the stated environment is a 150 MB/s connection. Hardware/topology
-  and loss verification are not published.
-  https://arize.com/docs/ax/concepts/adb/performance
-* **Opik**: a scaling guide describing a 4-6M TRACES/day production workload and
-  40M stored traces/250M stored spans with backend inputs; an engineering article
-  reports roughly 3,000 EVENTS/s on one local machine with three-span traces.
-  https://www.comet.com/docs/opik/self-host/scaling.mdx
-  https://www.comet.com/site/blog/llm-observability-architecture-engineering/
-* **Helicone**: a 2023 ClickHouse meetup report cites 3 million REQUESTS per day
-  after moving analytics to ClickHouse.
-  https://clickhouse.com/blog/helicones-migration-from-postgres-to-clickhouse-for-advanced-llm-monitoring
 * OTLP response and retry semantics: https://opentelemetry.io/docs/specs/otlp/
 
-What this harness implements, each covered by tests in this repository but NOT
-yet exercised at full scale. This is a list of its features, not a claim that the
-tools and vendors above lack them: reading their public material leaves that
-unknown, and several (the testbed, Tempo vulture, Arize's benchmark) measure some
-of the same things in their own way.
+The following harness features are covered by tests in this repository but have
+NOT yet been exercised at full scale. They describe this implementation's
+measurement scope, not capabilities established by a completed capacity run.
 
 1. Every attempted span verified by both IDs in the real database, with exact
    distinct counts and visible duplicates, instead of item counters at a mock
@@ -810,8 +777,7 @@ of the same things in their own way.
 6. The same seeded workload over OTLP/HTTP protobuf, JSON and gRPC, with and
    without gzip.
 
-The competitive opportunity is reproducible, transparent evidence with hardware,
-units, failure counts and workload definitions. Publishing an unrun target or
-calling an acknowledgement durable storage would not provide that evidence; any
-comparative claim needs the sustained and burst runs above, on recorded hardware,
-first.
+Reproducible evidence needs recorded hardware, units, failure counts and workload
+definitions. An unrun target is not a measured result, and an acknowledgement is
+not durable storage. Capacity claims require the sustained and burst runs above
+on recorded hardware, with complete verification and their limitations disclosed.

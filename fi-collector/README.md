@@ -223,7 +223,7 @@ exact-ID ClickHouse verification that separates acknowledged-but-missing spans f
 rejected ones and can resume from a checkpoint, the collector settings the 15k
 spans/s x 24h and 60k spans/s burst target profiles need (neither profile has been
 run), direct ClickHouse and authenticated application read probes, provenance
-recording, a public methodology comparison and an explicitly extrapolated sizing
+recording, measurement limitations and an explicitly extrapolated sizing
 worksheet.
 
 The CLI is offline by default and requires `--execute` to send anything. Remote
