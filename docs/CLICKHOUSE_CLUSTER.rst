@@ -1,8 +1,8 @@
 Sharded ClickHouse deployment
-============================
+=============================
 
 Scope and release gates (TH-8686)
---------------------------------
+---------------------------------
 
 This opt-in topology adds storage replication and horizontal sharding without
 changing the default single-node install. It is not a capacity certification or
@@ -176,7 +176,7 @@ pods in the release. Kubernetes Secret encryption at rest, backup encryption,
 least-privilege app roles and certificate/credential rotation are operator gates.
 
 Migration, backfill, cutover and rollback
-----------------------------------------
+-----------------------------------------
 
 1. Inventory source databases, clients, active eval table, custom tables,
    materialized views, remaps, dictionaries and schema hashes. Back up ClickHouse,
@@ -331,16 +331,15 @@ This mode publishes CH HTTP on 28123-28128, PostgreSQL on 28129, Redis on 28130
 and the first CH native port on 28131. The actual product UI/Temporal-worker E2E
 suite remains a separate release gate; this job does not silently claim it.
 
-Evidence and public architecture references
-------------------------------------------
+Evidence and ClickHouse references
+----------------------------------
 
 Implementation evidence is the checked-in planner/runner, chart, unit tests and
 isolated harness. Helm lint/template and unit tests alone do not prove server SQL
 semantics or fault tolerance. The acceptance, product E2E, GKE/EKS and full-scale
 soak gates must be recorded separately; do not replace a missing run with a pass.
 
-The following first-party sources were reviewed on 2026-10-21. Vendor performance
-claims describe the vendor's workload, not a transferable capacity target.
+ClickHouse documentation for the storage semantics above (reviewed 2026-10-21):
 
 * ClickHouse replication: per-shard replication, block dedup and independent
   Keeper paths. https://clickhouse.com/docs/reference/engines/table-engines/mergetree-family/replication
@@ -350,22 +349,8 @@ claims describe the vendor's workload, not a transferable capacity target.
   https://clickhouse.com/docs/concepts/features/operations/insert/transactions
 * Keeper plus shard/replica reference topology.
   https://clickhouse.com/docs/guides/oss/deployment-and-scaling/examples/2-shards-2-replicas
-* Langfuse: ClickHouse observability storage plus queued raw events in blob
-  storage. Lesson: ingest buffering is a separate durability layer, not supplied
-  by replicas alone. Self-managed Langfuse's ClickHouse documentation explicitly
-  describes one shard with configurable replicas, not multi-shard support;
-  replication is not equivalent to sharding. https://langfuse.com/handbook/product-engineering/architecture
-  and https://langfuse.com/self-hosting/deployment/infrastructure/clickhouse
-* Braintrust: Brainstore appends a WAL to object storage, then builds indexes and
-  colocates trace spans in segments. This implementation does not claim that WAL
-  or storage/compute separation. https://www.braintrust.dev/blog/brainstore-architecture
-* Arize AX: adb uses columnar object storage and stateless query compute; this
-  is a different storage design, not evidence that local-disk replicas match its
-  scale. https://arize.com/docs/ax/concepts/adb/architecture
-* LangSmith: SmithDB combines durable object storage, PostgreSQL segment metadata
-  and Rust/DataFusion/Vortex; self-hosted dual ingestion has explicit migration
-  controls. https://www.langchain.com/blog/introducing-smithdb and
-  https://docs.langchain.com/langsmith/self-host-smithdb
-* Opik: published production reference uses ClickHouse with one shard/two
-  replicas and documents infrastructure sizing. Reference sizing is not an SLO
-  for another schema. https://www.comet.com/docs/opik/self-host/scaling
+
+Ingest buffering is a separate durability layer, not supplied by replicas alone.
+This topology does not add an object-storage write-ahead log or storage/compute
+separation. Replication and sharding do not establish a workload's capacity;
+qualification requires the recorded correctness, fault and scale gates above.
