@@ -38,12 +38,12 @@ from simulate.services.hosted_harness_gateway import (
     _SIMULATOR_SECRETS_PATH,
     HostedHarnessGateway,
     HostedSourceAcquirer,
+    _add_scoped_guest_pin_policy,
     _authoring_archive_for,
     _authoring_ttl_seconds,
     _connector_egress_domains,
     _execution_ttl_seconds,
     _known_simulator_egress_inputs,
-    _add_scoped_guest_pin_policy,
     _normalize_egress_domains,
     _platform_simulator_material,
     _provider_egress_domains,
@@ -1178,7 +1178,7 @@ def test_dispatch_and_certify_jobs_pass_alk_secret_check_with_chat_state():
 
 @pytest.mark.django_db
 def test_gateway_clones_exact_commit_without_archiving_git_credentials(
-    organization, monkeypatch
+    organization, monkeypatch, memory_storage
 ):
     job, _ = create_hosted_job(
         organization, _payload(), idempotency_key="source-gateway"
@@ -1221,6 +1221,7 @@ def test_gateway_clones_exact_commit_without_archiving_git_credentials(
         names = set(tar.getnames())
     assert "source/agent.py" in names
     assert all(".git" not in name for name in names)
+    assert list(memory_storage.objects.values()) == [archive]
 
 
 class _Filesystem:
@@ -1883,7 +1884,9 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         client.sandbox.process.session_request.command.encode()
     )
     assert "--await-harness" in client.sandbox.process.session_request.command
-    assert job.conversation.messages.get().content.startswith("Build the test environment")
+    assert job.conversation.messages.get().content.startswith(
+        "Build the test environment"
+    )
     assert "; fi &&" in client.sandbox.process.session_request.command
     # Authoring and call execution are distinct bounded phases. The sandbox must survive the
     # former rather than using only the 10-minute call-runtime budget plus two minutes.
@@ -1914,7 +1917,9 @@ def test_a_fresh_build_runs_the_staged_pipeline_when_the_builder_session_is_off(
         "endpoint": "https://agent.example.com",
         "visibility": "public",
     }
-    job, _ = create_hosted_job(organization, payload, idempotency_key="launch-gateway-staged")
+    job, _ = create_hosted_job(
+        organization, payload, idempotency_key="launch-gateway-staged"
+    )
     client = _Daytona()
     gateway = object.__new__(HostedHarnessGateway)
     gateway.client = client
@@ -1946,8 +1951,9 @@ def test_a_fresh_build_runs_the_staged_pipeline_when_the_builder_session_is_off(
     assert attempt.state == HostedHarnessAttempt.State.RUNNING
     command = client.sandbox.process.session_request.command
     assert "--await-harness" not in command and "--adjustments" in command
-    assert not job.conversation.messages.filter(content__startswith="Build the test environment").exists()
-
+    assert not job.conversation.messages.filter(
+        content__startswith="Build the test environment"
+    ).exists()
 
 
 def _launch_and_read_job_json(
@@ -2173,7 +2179,9 @@ def test_adjustment_goes_to_the_stage_the_chat_names(organization, settings, tmp
         "endpoint": "https://agent.example.com",
         "visibility": "public",
     }
-    job, _ = create_hosted_job(organization, payload, idempotency_key="adjust-named-stage")
+    job, _ = create_hosted_job(
+        organization, payload, idempotency_key="adjust-named-stage"
+    )
     client = _Daytona()
     gateway = object.__new__(HostedHarnessGateway)
     gateway.client = client
@@ -2199,7 +2207,9 @@ def test_adjustment_goes_to_the_stage_the_chat_names(organization, settings, tmp
         },
     )
 
-    assert adjusted.payload["metadata"]["adjustments"][-1]["target_stage"] == "environment"
+    assert (
+        adjusted.payload["metadata"]["adjustments"][-1]["target_stage"] == "environment"
+    )
 
 
 @pytest.mark.django_db
@@ -2792,6 +2802,224 @@ def test_reconcile_terminal_and_authoring_exits_never_retry(
         attempt.refresh_from_db()
         assert attempt.terminal_failure["domain"] == "environment"
         assert attempt.terminal_failure["code"] == "authoring_runtime_validation_failed"
+
+
+def _refusal(**overrides):
+    return {
+        "domain": "agent",
+        "stage": "understanding_agent",
+        "code": "agent_type_unsupported",
+        "message": "browser agents are not supported yet",
+        "retryable": False,
+        "details": {"agent_type": "browser"},
+        **overrides,
+    }
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("refusal_file", "expected_code", "expected_retry"),
+    [
+        (_refusal(), "agent_type_unsupported", False),
+        (
+            _refusal(code="subfolder_not_found", stage="acquiring_source"),
+            "subfolder_not_found",
+            False,
+        ),
+        (
+            _refusal(code="source_unreachable", retryable=True),
+            "source_unreachable",
+            False,
+        ),
+        (
+            _refusal(
+                domain="infrastructure",
+                stage="acquiring_source",
+                code="source_unreachable",
+                retryable=True,
+            ),
+            "source_unreachable",
+            True,
+        ),
+        (_refusal(retryable="no"), "guest_crashed", True),
+        (_refusal(domain="nowhere"), "guest_crashed", True),
+        ("invalid", "guest_crashed", True),
+        (None, "guest_crashed", True),
+    ],
+)
+def test_reconcile_reads_the_refusal_file_before_the_exit_code(
+    organization, monkeypatch, refusal_file, expected_code, expected_retry
+):
+    from simulate.services.hosted_harness import record_cleanup
+
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(organization, payload, idempotency_key="refusal-gateway")
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = _Daytona()
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = ""
+    captured = {}
+
+    def _fake_delete(attempt, *, retry_pending=False):
+        captured["retry_pending"] = retry_pending
+        return record_cleanup(
+            attempt.id,
+            provider_ref=str(attempt.provider_ref),
+            verified_absent=True,
+            retry_pending=retry_pending,
+            details={"provider": "test"},
+        )
+
+    monkeypatch.setattr(gateway, "_delete_and_record", _fake_delete)
+    acquire = patch(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        return_value=(b"archive", ""),
+    )
+    with acquire:
+        attempt = gateway.launch(job, endpoint_base_url="https://platform.example.com")
+    monkeypatch.setattr(
+        gateway,
+        "inspect",
+        lambda _: {"exit_code": 1, "logs": "", "refusal_file": refusal_file},
+    )
+
+    gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    assert attempt.state == HostedHarnessAttempt.State.FAILED
+    assert attempt.terminal_failure["code"] == expected_code
+    assert captured["retry_pending"] is expected_retry
+    if expected_code != "guest_crashed":
+        assert attempt.terminal_failure["domain"] == refusal_file["domain"]
+        assert attempt.terminal_failure["stage"] == refusal_file["stage"]
+        assert attempt.terminal_failure["message"] == refusal_file["message"]
+        assert attempt.terminal_failure["retryable"] is refusal_file["retryable"]
+        assert attempt.terminal_failure["details"] == refusal_file["details"]
+    else:
+        assert attempt.terminal_failure["domain"] == "infrastructure"
+
+
+@pytest.mark.django_db
+def test_reconcile_keeps_a_failure_the_platform_set_over_a_crash_exit(
+    organization, monkeypatch
+):
+    from simulate.services.hosted_harness import (
+        _fail_attempt_from_platform,
+        record_cleanup,
+    )
+
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(organization, payload, idempotency_key="kept-gateway")
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = _Daytona()
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = ""
+    captured = {}
+
+    def _fake_delete(attempt, *, retry_pending=False):
+        captured["retry_pending"] = retry_pending
+        return record_cleanup(
+            attempt.id,
+            provider_ref=str(attempt.provider_ref),
+            verified_absent=True,
+            retry_pending=retry_pending,
+            details={"provider": "test"},
+        )
+
+    monkeypatch.setattr(gateway, "_delete_and_record", _fake_delete)
+    acquire = patch(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        return_value=(b"archive", ""),
+    )
+    with acquire:
+        attempt = gateway.launch(job, endpoint_base_url="https://platform.example.com")
+    _fail_attempt_from_platform(
+        attempt,
+        stage="understanding_agent",
+        code="subfolder_ignored",
+        message="the harness read the repository root",
+    )
+    monkeypatch.setattr(gateway, "inspect", lambda _: {"exit_code": 1, "logs": ""})
+
+    job = gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    assert attempt.terminal_failure["code"] == "subfolder_ignored"
+    assert job.failure["code"] == "subfolder_ignored"
+    assert job.state == HostedHarnessJob.State.FAILED
+
+
+def test_read_refusal_file_tells_absent_from_malformed():
+    from simulate.services.hosted_harness_gateway import _read_refusal_file
+
+    def _sandbox(body):
+        def download(path, timeout=None):
+            assert path == "/work/authoring/failure.json"
+            if body is None:
+                raise FileNotFoundError(path)
+            return body
+
+        return SimpleNamespace(fs=SimpleNamespace(download_file=download))
+
+    assert _read_refusal_file(_sandbox(None)) is None
+    assert _read_refusal_file(_sandbox(b"")) is None
+    assert _read_refusal_file(_sandbox(b"not json")) == "invalid"
+    assert _read_refusal_file(_sandbox(b"\xff\xfe")) == "invalid"
+    assert _read_refusal_file(_sandbox(json.dumps(_refusal()).encode())) == _refusal()
+
+
+@pytest.mark.django_db
+def test_inspect_reads_the_refusal_file_only_on_a_failed_exit(
+    organization, monkeypatch
+):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="inspect-refusal"
+    )
+    attempt = register_attempt(
+        job.id,
+        endpoint_base_url="https://platform.example.com",
+        provider_ref="sandbox-1",
+        snapshot_name="alk-hosted-v1",
+    ).attempt
+    client = _Daytona()
+    process = client.sandbox.process
+    reads = []
+
+    def download(path, timeout=None):
+        reads.append(path)
+        if path == "/work/authoring/failure.json":
+            return json.dumps(_refusal()).encode()
+        return b"command-1"
+
+    client.sandbox.fs.download_file = download
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway.HostedHarnessGateway._capture_diagnostics",
+        lambda *args, **kwargs: None,
+    )
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = client
+
+    assert "refusal_file" not in gateway.inspect(attempt)
+    process.command_exit_code = 0
+    process.command_status = "finished"
+    assert "refusal_file" not in gateway.inspect(attempt)
+    assert "/work/authoring/failure.json" not in reads
+
+    process.command_exit_code = 1
+    observation = gateway.inspect(attempt)
+
+    assert observation["exit_code"] == 1
+    assert observation["refusal_file"] == _refusal()
 
 
 @pytest.mark.django_db

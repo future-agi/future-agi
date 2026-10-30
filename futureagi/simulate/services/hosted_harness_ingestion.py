@@ -711,9 +711,12 @@ def _store_event(
         )
     if rejection is None and event["type"] == "terminal":
         payload = event["payload"]
-        attempt.terminal_stage = payload["stage"]
+        from simulate.services.hosted_harness import platform_set_failure
+
+        kept = platform_set_failure(attempt)
+        attempt.terminal_stage = "failed" if kept else payload["stage"]
         attempt.terminal_reason = payload.get("reason")
-        attempt.terminal_failure = payload.get("failure")
+        attempt.terminal_failure = kept or payload.get("failure")
         attempt.terminal_event_received = True
         attempt.state = HostedHarnessAttempt.State.FINALIZING
 

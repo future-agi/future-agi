@@ -51,6 +51,15 @@ class HarnessEnvironmentRenameSerializer(serializers.Serializer):
     )
 
 
+class AgentVersionRefSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    version_number = serializers.IntegerField()
+
+
+class EnvironmentVersionRefSerializer(AgentVersionRefSerializer):
+    pass
+
+
 class HarnessEnvironmentFieldsSerializer(serializers.Serializer):
     """One row of the environments list.
 
@@ -78,13 +87,14 @@ class HarnessEnvironmentFieldsSerializer(serializers.Serializer):
     # 0 or 1 today: a job carries at most one test execution, so this counts
     # "has it been run" until run history becomes a table of its own.
     runs_count = serializers.IntegerField()
+    # The agent version this environment tests by default; null before
+    # versioning recorded one.
+    agent_version = AgentVersionRefSerializer(allow_null=True)
+    # Whether the environment follows its agent's production version or stays
+    # pinned to the one above.
+    agent_policy = serializers.ChoiceField(choices=("follow", "pinned"))
     last_updated = serializers.DateTimeField(allow_null=True)
     created_at = serializers.DateTimeField()
-
-
-class AgentVersionRefSerializer(serializers.Serializer):
-    id = serializers.UUIDField()
-    version_number = serializers.IntegerField()
 
 
 class RunEnvironmentRefSerializer(serializers.Serializer):
@@ -101,6 +111,10 @@ class HarnessRunSummarySerializer(serializers.Serializer):
     status = serializers.CharField()
     environment = RunEnvironmentRefSerializer(allow_null=True)
     agent_version = AgentVersionRefSerializer(allow_null=True)
+    environment_version = EnvironmentVersionRefSerializer(allow_null=True)
+    # True when the run covered only some of the environment's scenarios;
+    # null for a Simulate run, which has no environment to compare with.
+    partial = serializers.BooleanField(allow_null=True)
     outcome_passed = serializers.IntegerField(allow_null=True)
     outcome_failed = serializers.IntegerField(allow_null=True)
     outcome_skipped = serializers.IntegerField(allow_null=True)
@@ -643,6 +657,19 @@ class HarnessAgentVersionCreateSerializer(serializers.Serializer):
         if "agent_payload" in attrs and not attrs["agent_payload"]["config"]:
             raise serializers.ValidationError({"agent_payload": "Nothing to change."})
         return attrs
+
+
+class HarnessAgentPolicySerializer(serializers.Serializer):
+    """Whether the environment follows its agent's production version or is pinned
+    to one; a pin may name the version to move to."""
+
+    policy = serializers.ChoiceField(choices=("follow", "pinned"))
+    version_id = serializers.UUIDField(required=False)
+
+
+class HarnessAgentPolicyResponseSerializer(serializers.Serializer):
+    policy = serializers.ChoiceField(choices=("follow", "pinned"), read_only=True)
+    agent_version = HarnessVersionSerializer(read_only=True, allow_null=True)
 
 
 class HarnessVersionsSerializer(serializers.Serializer):

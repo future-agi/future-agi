@@ -10,6 +10,18 @@ from tracer.services.observability_switch import snapshot_as_shown
 
 logger = structlog.get_logger(__name__)
 
+# The non-secret facts a code version's source carries; anything else the
+# runtime recorded (installation ids, access hints) stays server-side.
+SOURCE_FACTS = ("repository", "ref", "commit_sha", "subfolder")
+
+
+class AgentVersionSourceSerializer(serializers.Serializer):
+    kind = serializers.CharField()
+    repository = serializers.CharField(required=False)
+    ref = serializers.CharField(required=False)
+    commit_sha = serializers.CharField(required=False)
+    subfolder = serializers.CharField(required=False)
+
 
 class AgentVersionResponseSerializer(serializers.ModelSerializer):
     """
@@ -24,6 +36,7 @@ class AgentVersionResponseSerializer(serializers.ModelSerializer):
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     agent_kind = serializers.SerializerMethodField()
     api_key = serializers.SerializerMethodField()
+    source = serializers.SerializerMethodField()
 
     class Meta:
         model = AgentVersion
@@ -47,6 +60,7 @@ class AgentVersionResponseSerializer(serializers.ModelSerializer):
             "is_latest",
             "agent_kind",
             "api_key",
+            "source",
             "created_at",
             "updated_at",
         ]
@@ -106,6 +120,21 @@ class AgentVersionResponseSerializer(serializers.ModelSerializer):
         api_key = resolve_api_key_for_version(obj)
         return mask_key(api_key) if api_key else None
 
+    @swagger_serializer_method(
+        serializer_or_field=AgentVersionSourceSerializer(allow_null=True)
+    )
+    def get_source(self, obj) -> dict | None:
+        """Where a versioned agent was read from; null for a version without a runtime."""
+        try:
+            runtime = obj.harness_runtime
+        except AgentVersion.harness_runtime.RelatedObjectDoesNotExist:
+            return None
+        facts = runtime.source or {}
+        return {
+            "kind": runtime.source_kind,
+            **{name: facts[name] for name in SOURCE_FACTS if facts.get(name)},
+        }
+
 
 class AgentVersionListResponseSerializer(serializers.ModelSerializer):
     """
@@ -117,6 +146,11 @@ class AgentVersionListResponseSerializer(serializers.ModelSerializer):
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     is_active = serializers.ReadOnlyField()
     is_latest = serializers.ReadOnlyField()
+    in_production = serializers.BooleanField(source="is_active", read_only=True)
+    origin = serializers.SerializerMethodField()
+    preflight_status = serializers.SerializerMethodField()
+    environments_count = serializers.SerializerMethodField()
+    source = serializers.SerializerMethodField()
 
     class Meta:
         model = AgentVersion
@@ -134,6 +168,11 @@ class AgentVersionListResponseSerializer(serializers.ModelSerializer):
             "commit_message",
             "is_active",
             "is_latest",
+            "in_production",
+            "origin",
+            "preflight_status",
+            "environments_count",
+            "source",
             "created_at",
         ]
         read_only_fields = fields
@@ -143,6 +182,34 @@ class AgentVersionListResponseSerializer(serializers.ModelSerializer):
         if obj.version_name:
             return obj.version_name
         return f"v{obj.version_number}"
+
+    def _runtime(self, obj):
+        return (self.context.get("runtimes") or {}).get(obj.id)
+
+    def get_origin(self, obj) -> str | None:
+        runtime = self._runtime(obj)
+        return (runtime.trigger or None) if runtime is not None else None
+
+    def get_preflight_status(self, obj) -> str | None:
+        runtime = self._runtime(obj)
+        return runtime.preflight_status if runtime is not None else None
+
+    def get_environments_count(self, obj) -> int:
+        return int((self.context.get("environments_count") or {}).get(obj.id, 0))
+
+    @swagger_serializer_method(
+        serializer_or_field=AgentVersionSourceSerializer(allow_null=True)
+    )
+    def get_source(self, obj) -> dict | None:
+        runtime = self._runtime(obj)
+        if runtime is None or not runtime.source_kind:
+            return None
+        facts = {
+            name: value
+            for name, value in (runtime.source or {}).items()
+            if name in SOURCE_FACTS and value
+        }
+        return {"kind": str(runtime.source_kind), **facts}
 
 
 class AgentVersionCreateResponseSerializer(serializers.Serializer):
@@ -165,15 +232,6 @@ class AgentVersionActivateResponseSerializer(serializers.Serializer):
     version = AgentVersionResponseSerializer(read_only=True)
 
 
-class AgentVersionDeleteResponseSerializer(serializers.Serializer):
-    """
-    Response serializer for DELETE /agent-definitions/{id}/versions/{id}/delete/.
-    Shape: {"message": "..."}
-    """
-
-    message = serializers.CharField(read_only=True)
-
-
 class AgentVersionRestoreResponseSerializer(serializers.Serializer):
     """
     Response serializer for POST /agent-definitions/{id}/versions/{id}/restore/.
@@ -183,3 +241,128 @@ class AgentVersionRestoreResponseSerializer(serializers.Serializer):
     message = serializers.CharField(read_only=True)
     agent = serializers.DictField(read_only=True)
     version = AgentVersionResponseSerializer(read_only=True)
+
+
+class AgentVersionChangeResponseSerializer(serializers.Serializer):
+    """The version a change made, or the one already standing for that content."""
+
+    version = AgentVersionResponseSerializer(read_only=True)
+    created = serializers.BooleanField(read_only=True)
+    up_to_date = serializers.BooleanField(read_only=True)
+
+
+class AgentVersionProductionResponseSerializer(serializers.Serializer):
+    version = AgentVersionResponseSerializer(read_only=True)
+    moved_environment_ids = serializers.ListField(
+        child=serializers.CharField(), read_only=True
+    )
+
+
+class AgentVersionActionResponseSerializer(serializers.Serializer):
+    message = serializers.CharField(read_only=True)
+
+
+class AgentToolSignatureSerializer(serializers.Serializer):
+    arguments = serializers.ListField(child=serializers.CharField(), read_only=True)
+    required = serializers.ListField(child=serializers.CharField(), read_only=True)
+    kind = serializers.CharField(read_only=True, allow_null=True)
+
+
+class AgentVersionToolChangeSerializer(serializers.Serializer):
+    name = serializers.CharField(read_only=True)
+    before = AgentToolSignatureSerializer(read_only=True)
+    after = AgentToolSignatureSerializer(read_only=True)
+
+
+class AgentVersionCompatibilityResponseSerializer(serializers.Serializer):
+    """How a version fits the world an environment was built from."""
+
+    environment_id = serializers.CharField(read_only=True)
+    version_id = serializers.CharField(read_only=True)
+    status = serializers.ChoiceField(
+        choices=(
+            "clean",
+            "new_tool",
+            "tool_removed_or_changed",
+            "new_rule",
+            "unmeasured",
+        ),
+        read_only=True,
+    )
+    base = serializers.CharField(read_only=True, allow_null=True)
+    reason = serializers.CharField(read_only=True, required=False)
+    same_version = serializers.BooleanField(read_only=True, required=False)
+    tools_added = serializers.ListField(
+        child=serializers.CharField(), read_only=True, required=False
+    )
+    tools_removed = serializers.ListField(
+        child=serializers.CharField(), read_only=True, required=False
+    )
+    tools_changed = AgentVersionToolChangeSerializer(
+        many=True, read_only=True, required=False
+    )
+    services_added = serializers.ListField(
+        child=serializers.CharField(), read_only=True, required=False
+    )
+    rules_added = serializers.ListField(
+        child=serializers.CharField(), read_only=True, required=False
+    )
+    prompt_changed = serializers.BooleanField(read_only=True, required=False)
+    model_changed = serializers.BooleanField(read_only=True, required=False)
+
+
+class AgentBuildPreflightCheckSerializer(serializers.Serializer):
+    name = serializers.CharField(read_only=True)
+    status = serializers.ChoiceField(choices=("ok", "blocked"), read_only=True)
+    message = serializers.CharField(read_only=True)
+
+
+class AgentBuildPreflightResponseSerializer(serializers.Serializer):
+    """Whether an environment can be built from the agent, and from which version."""
+
+    ok = serializers.BooleanField(read_only=True)
+    version_id = serializers.CharField(read_only=True, allow_null=True)
+    checks = AgentBuildPreflightCheckSerializer(many=True, read_only=True)
+
+
+class AgentCodeEntrySerializer(serializers.Serializer):
+    path = serializers.CharField(read_only=True)
+    size = serializers.IntegerField(read_only=True)
+    kind = serializers.ChoiceField(
+        choices=("text", "binary", "too_large"), read_only=True
+    )
+
+
+class AgentCodeTreeResponseSerializer(serializers.Serializer):
+    """Every file of a version's code, relative to the archive root."""
+
+    subfolder = serializers.CharField(read_only=True, allow_blank=True)
+    files = AgentCodeEntrySerializer(many=True, read_only=True)
+    truncated = serializers.BooleanField(read_only=True)
+
+
+class AgentCodeFileResponseSerializer(serializers.Serializer):
+    """One file of a version's code; content only for text under the cap."""
+
+    path = serializers.CharField(read_only=True)
+    size = serializers.IntegerField(read_only=True)
+    kind = serializers.ChoiceField(
+        choices=("text", "binary", "too_large"), read_only=True
+    )
+    language = serializers.CharField(read_only=True)
+    content = serializers.CharField(read_only=True, required=False, allow_blank=True)
+
+
+class AgentCodeChangeSerializer(serializers.Serializer):
+    path = serializers.CharField(read_only=True)
+    status = serializers.ChoiceField(
+        choices=("added", "removed", "modified"), read_only=True
+    )
+
+
+class AgentCodeChangesResponseSerializer(serializers.Serializer):
+    """The files that changed between two versions, by content."""
+
+    against = serializers.CharField(read_only=True, allow_null=True)
+    files = AgentCodeChangeSerializer(many=True, read_only=True)
+    unavailable = serializers.CharField(read_only=True, required=False)

@@ -8,6 +8,7 @@ from simulate.serializers.harness_environment import (
     HarnessRunSummarySerializer,
     RunEnvironmentRefSerializer,
 )
+from simulate.services.agent_overview import observe_project
 
 MASKED_CREDENTIAL_VALUE = "********"
 
@@ -161,6 +162,11 @@ class AgentDefinitionEditResponseSerializer(serializers.Serializer):
     agent = AgentDefinitionResponseSerializer(read_only=True)
 
 
+class ObserveProjectRefSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+
+
 class AgentDefinitionListResponseSerializer(serializers.ModelSerializer):
     """
     Response serializer for GET /agent-definitions/ (list).
@@ -179,6 +185,7 @@ class AgentDefinitionListResponseSerializer(serializers.ModelSerializer):
         source="_environment_count", read_only=True
     )
     environments = serializers.SerializerMethodField()
+    observe_project = serializers.SerializerMethodField()
 
     class Meta:
         model = AgentDefinition
@@ -210,6 +217,7 @@ class AgentDefinitionListResponseSerializer(serializers.ModelSerializer):
             "version_count",
             "environment_count",
             "environments",
+            "observe_project",
         ]
         read_only_fields = fields
 
@@ -218,6 +226,12 @@ class AgentDefinitionListResponseSerializer(serializers.ModelSerializer):
     )
     def get_environments(self, obj) -> list[dict[str, str]]:
         return self.context.get("environments", {}).get(obj.id, [])
+
+    @swagger_serializer_method(
+        serializer_or_field=ObserveProjectRefSerializer(allow_null=True)
+    )
+    def get_observe_project(self, obj) -> dict[str, str] | None:
+        return observe_project(obj, getattr(obj, "_agent_kind", None))
 
     def get_latest_version(self, obj):
         """Get the latest version number for the agent."""
@@ -247,6 +261,7 @@ class AgentDefinitionDetailResponseSerializer(AgentDefinitionResponseSerializer)
     source = serializers.CharField(read_only=True, allow_null=True)
     environment_count = serializers.IntegerField(read_only=True)
     observability_enabled = serializers.BooleanField(read_only=True)
+    observe_project = ObserveProjectRefSerializer(read_only=True, allow_null=True)
 
     class Meta(AgentDefinitionResponseSerializer.Meta):
         fields = [
@@ -258,6 +273,7 @@ class AgentDefinitionDetailResponseSerializer(AgentDefinitionResponseSerializer)
             "source",
             "environment_count",
             "observability_enabled",
+            "observe_project",
         ]
         read_only_fields = fields
 

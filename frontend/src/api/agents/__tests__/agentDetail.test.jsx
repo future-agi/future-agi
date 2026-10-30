@@ -102,6 +102,8 @@ describe("toRun", () => {
         name: "ride-voice-agent",
       },
       agentVersion: { id: "93956ae6", number: 3 },
+      environmentVersion: { id: "7e1c2a90", number: 7 },
+      partial: false,
       passed: 3,
       failed: 7,
       skipped: 0,
@@ -115,6 +117,8 @@ describe("toRun", () => {
     const r = toRun(SIMULATE_RUN);
     expect(r.environment).toBeNull();
     expect(r.agentVersion).toBeNull();
+    expect(r.environmentVersion).toBeNull();
+    expect(r.partial).toBeNull();
     expect(r.passRate).toBeNull();
     expect(r.completedAt).toBeNull();
   });
@@ -129,8 +133,33 @@ describe("toVersion", () => {
       label: "v2",
       isActive: true,
       isLatest: true,
+      isDraft: false,
       commitMessage: "Shorter greeting",
       createdAt: "2026-10-15T09:00:00Z",
+      origin: null,
+      check: null,
+      environmentsCount: 0,
+      source: null,
+    });
+  });
+
+  it("carries a version's origin, check, environments and source when the list has them", () => {
+    const raw = {
+      ...HOSTED_AGENT_DETAIL.versions[0],
+      origin: "sync",
+      preflight_status: "pending",
+      environments_count: 2,
+      source: {
+        kind: "github",
+        repository: "acme/agent",
+        commit_sha: "a".repeat(40),
+      },
+    };
+    expect(toVersion(raw)).toMatchObject({
+      origin: "sync",
+      check: "pending",
+      environmentsCount: 2,
+      source: { kind: "github", repository: "acme/agent" },
     });
   });
 });
@@ -238,12 +267,16 @@ describe("hooks", () => {
         id: "e5391b8a",
         name: "ride-voice-agent",
         status: "ready",
+        agentVersion: { id: "93956ae6", number: 3 },
+        policy: "follow",
         lastRun: toRun(ENVIRONMENT_RUN),
       },
       {
         id: "e9999999",
         name: "Refund edge cases",
         status: "failed",
+        agentVersion: null,
+        policy: "follow",
         lastRun: null,
       },
     ]);

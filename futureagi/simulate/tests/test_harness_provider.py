@@ -1065,6 +1065,7 @@ def test_sandbox_flatten_maps_github_source():
                 "repository": "acme/agent",
                 "ref": "main",
                 "commit_sha": "a" * 40,
+                "subfolder": "agents/support",
                 "visibility": "public",
             },
             "agent": {
@@ -1080,6 +1081,7 @@ def test_sandbox_flatten_maps_github_source():
     assert flat["github_repository"] == "acme/agent"
     assert flat["github_ref"] == "main"
     assert flat["github_commit_sha"] == "a" * 40
+    assert flat["github_subfolder"] == "agents/support"
     assert flat["github_visibility"] == "public"
     assert flat["connector"] == "livekit"
     assert flat["connector_config"] == {"room": "r1"}

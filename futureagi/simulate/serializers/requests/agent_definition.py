@@ -292,6 +292,9 @@ class AgentDefinitionEditRequestSerializer(serializers.Serializer):
     """
 
     observability_enabled = serializers.BooleanField(required=False)
+    # The Observe project a code agent's production traces land in; null
+    # clears it. Leaves the observability switch as it is.
+    production_project_id = serializers.UUIDField(required=False, allow_null=True)
     agent_name = serializers.CharField(max_length=255, required=False)
     agent_type = serializers.ChoiceField(
         choices=AgentTypeChoices.choices, required=False

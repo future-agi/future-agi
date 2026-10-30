@@ -164,6 +164,16 @@ class AgentDefinition(BaseModel):
         blank=True,
         null=True,
     )
+    # The Observe project a code agent's production traces land in, chosen by
+    # the user. Independent of observability_provider, which for a code agent
+    # only gates the export of simulation spans to its hidden project.
+    production_project = models.ForeignKey(
+        "tracer.Project",
+        on_delete=models.SET_NULL,
+        related_name="production_agents",
+        blank=True,
+        null=True,
+    )
 
     authentication_method = models.CharField(
         choices=AgentDefinitionAuthenticationChoices,

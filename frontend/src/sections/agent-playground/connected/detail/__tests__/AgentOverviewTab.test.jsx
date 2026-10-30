@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { toRun } from "src/api/agents/agentDetail";
 import {
@@ -7,6 +7,7 @@ import {
   SIMULATE_RUN,
 } from "src/api/agents/_fixtures/agentDetail";
 import AgentOverviewTab from "../AgentOverviewTab";
+import { pairLabel } from "../runCells";
 
 const runsState = { current: {} };
 const authState = { user: {} };
@@ -25,6 +26,15 @@ vi.mock("src/api/agents/agentDetail", async () => {
     },
   };
 });
+
+const agentState = { current: { id: "a1", agentKind: null } };
+vi.mock("../useAgentRoute", () => ({
+  default: () => ({ agentId: "a1", agent: agentState.current }),
+}));
+
+vi.mock("../AgentNextSteps", () => ({
+  default: ({ agent }) => <div data-testid="next-steps">{agent.id}</div>,
+}));
 
 let currentLocation;
 const LocationProbe = () => {
@@ -52,38 +62,91 @@ const loaded = (raw) => ({
   data: raw.map(toRun),
 });
 
+const ENV_RUN_CELL = `run-cell-${ENVIRONMENT_RUN.test_execution_id}`;
+const COLUMNS = [
+  "Run",
+  "Status",
+  "Environment",
+  "Agent × environment",
+  "Pass rate",
+  "When",
+];
+
 beforeEach(() => {
   runsState.current = loaded([ENVIRONMENT_RUN, SIMULATE_RUN]);
   authState.user = {};
+  agentState.current = { id: "a1", agentKind: null };
+});
+
+describe("pairLabel", () => {
+  it("names what a run held fixed", () => {
+    expect(pairLabel(toRun(ENVIRONMENT_RUN))).toBe("agent v3 × environment v7");
+  });
+
+  it("gives only the side a run recorded", () => {
+    expect(
+      pairLabel(toRun({ ...ENVIRONMENT_RUN, environment_version: null })),
+    ).toBe("agent v3");
+    expect(pairLabel(toRun(SIMULATE_RUN))).toBeNull();
+  });
 });
 
 describe("AgentOverviewTab", () => {
-  it("asks for the 15 newest runs", () => {
+  it("asks for the 5 newest runs", () => {
     renderTab();
-    expect(runsState.args).toEqual(["a1", { limit: 15 }]);
+    expect(runsState.args).toEqual(["a1", { limit: 5 }]);
   });
 
-  it("shows only Recent runs with the ticket's columns", () => {
+  it("puts Next steps above the runs", () => {
+    agentState.current = { id: "a1", agentKind: "source" };
+    renderTab();
+    const card = screen.getByTestId("next-steps");
+    expect(card).toHaveTextContent("a1");
+    expect(
+      card.compareDocumentPosition(screen.getByText("Recent runs")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("holds Next steps' place while the agent loads", () => {
+    agentState.current = null;
+    renderTab();
+    expect(screen.queryByTestId("next-steps")).toBeNull();
+    expect(screen.getByTestId("next-steps-skeleton")).toBeInTheDocument();
+    expect(screen.getByText("Recent runs")).toBeInTheDocument();
+  });
+
+  it("shows more runs on request, when there may be more", () => {
+    runsState.current = loaded(
+      Array.from({ length: 5 }, (_, i) => ({
+        ...ENVIRONMENT_RUN,
+        test_execution_id: `run-${i}`,
+        run_number: i + 1,
+      })),
+    );
+    renderTab();
+    fireEvent.click(screen.getByRole("button", { name: "Show more runs" }));
+    expect(runsState.args).toEqual(["a1", { limit: 20 }]);
+  });
+
+  it("offers no more runs when fewer than five came back", () => {
+    renderTab();
+    expect(screen.queryByRole("button", { name: "Show more runs" })).toBeNull();
+  });
+
+  it("shows only Recent runs with the designed columns", () => {
     renderTab();
     expect(screen.getByText("Recent runs")).toBeInTheDocument();
-    const headers = screen
-      .getAllByRole("columnheader")
-      .map((h) => h.textContent.trim());
-    expect(headers).toEqual([
-      "Run",
-      "Status",
-      "Environment",
-      "Agent version",
-      "Pass rate",
-      "When",
-    ]);
+    expect(
+      screen.getAllByRole("columnheader").map((h) => h.textContent.trim()),
+    ).toEqual(COLUMNS);
   });
 
-  it("shows an environment run's number, environment, version and pass rate", () => {
+  it("shows an environment run's number, environment, pairing and pass rate", () => {
     renderTab();
     expect(screen.getByText("Run 2")).toBeInTheDocument();
     expect(screen.getByText("ride-voice-agent")).toBeInTheDocument();
-    expect(screen.getByText("v3")).toBeInTheDocument();
+    expect(screen.getByText("agent v3 × environment v7")).toBeInTheDocument();
     expect(
       screen.getByTestId("pass-rate-68dedb99-42b6-46e7-8e94-b511041fa2cb"),
     ).toHaveTextContent("30% 3/10");
@@ -93,20 +156,13 @@ describe("AgentOverviewTab", () => {
     renderTab();
     expect(screen.getByText("Old refill check")).toBeInTheDocument();
     expect(screen.getByText("Simulate")).toBeInTheDocument();
-    expect(screen.getByText("Running")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("run-status-c766900d-00e6-41c7-b922-c4e8eed1e7ec"),
+    ).toHaveTextContent("Running");
     expect(
       screen.getByTestId("pass-rate-c766900d-00e6-41c7-b922-c4e8eed1e7ec"),
     ).toHaveTextContent("—");
     expect(screen.getByText(/^started /)).toBeInTheDocument();
-  });
-
-  it("shows an evaluating run as grading, with no final rate", () => {
-    runsState.current = loaded([{ ...ENVIRONMENT_RUN, status: "evaluating" }]);
-    renderTab();
-    expect(screen.getByText("Grading")).toBeInTheDocument();
-    expect(
-      screen.getByTestId("pass-rate-68dedb99-42b6-46e7-8e94-b511041fa2cb"),
-    ).toHaveTextContent("—");
   });
 
   it.each([
@@ -123,10 +179,38 @@ describe("AgentOverviewTab", () => {
       runsState.current = loaded([{ ...ENVIRONMENT_RUN, status }]);
       renderTab();
       expect(
-        screen.getByTestId("run-status-68dedb99-42b6-46e7-8e94-b511041fa2cb"),
+        screen.getByTestId(`run-status-${ENVIRONMENT_RUN.test_execution_id}`),
       ).toHaveTextContent(label);
     },
   );
+
+  it.each(["pending", "evaluating", "cancelling"])(
+    "gives a %s run no final rate",
+    (status) => {
+      runsState.current = loaded([{ ...ENVIRONMENT_RUN, status }]);
+      renderTab();
+      expect(
+        screen.getByTestId("pass-rate-68dedb99-42b6-46e7-8e94-b511041fa2cb"),
+      ).toHaveTextContent("—");
+    },
+  );
+
+  it("tags a run of only some scenarios as Partial", () => {
+    runsState.current = loaded([{ ...ENVIRONMENT_RUN, partial: true }]);
+    renderTab();
+    expect(
+      within(screen.getByTestId(ENV_RUN_CELL)).getByText("Partial"),
+    ).toBeInTheDocument();
+  });
+
+  it("doesn't tag a full run, or one still going, as Partial", () => {
+    runsState.current = loaded([
+      ENVIRONMENT_RUN,
+      { ...SIMULATE_RUN, partial: true },
+    ]);
+    renderTab();
+    expect(screen.queryByText("Partial")).toBeNull();
+  });
 
   it("opens an environment run on its environment's run page", () => {
     renderTab();
@@ -145,7 +229,7 @@ describe("AgentOverviewTab", () => {
   });
 
   // The Simulate run page is one the router does not register for an org
-  // restricted to Environments (TH-8602), so its row must not lead to the 404.
+  // restricted to Environments, so its row must not lead to the 404.
   it("does not open a Simulate run for an org restricted to Environments", () => {
     authState.user = { restrict_simulate_to_environments: true };
     renderTab();
@@ -169,15 +253,8 @@ describe("AgentOverviewTab", () => {
     renderTab();
     expect(
       screen.getAllByRole("columnheader").map((h) => h.textContent.trim()),
-    ).toEqual([
-      "Run",
-      "Status",
-      "Environment",
-      "Agent version",
-      "Pass rate",
-      "When",
-    ]);
-    expect(screen.getAllByTestId("run-row-skeleton")).toHaveLength(8);
+    ).toEqual(COLUMNS);
+    expect(screen.getAllByTestId("run-row-skeleton")).toHaveLength(5);
     expect(screen.queryByRole("progressbar")).toBeNull();
   });
 

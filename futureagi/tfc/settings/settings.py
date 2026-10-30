@@ -994,6 +994,9 @@ ALK_HARNESS_SANDBOX_TOKEN = os.getenv("ALK_HARNESS_SANDBOX_TOKEN", "")
 GITHUB_APP_ID = os.getenv("GITHUB_APP_ID", "")
 GITHUB_APP_PRIVATE_KEY = os.getenv("GITHUB_APP_PRIVATE_KEY", "")
 GITHUB_APP_WEBHOOK_SECRET = os.getenv("GITHUB_APP_WEBHOOK_SECRET", "")
+GITHUB_APP_SLUG = os.getenv("GITHUB_APP_SLUG", "")
+GITHUB_APP_CLIENT_ID = os.getenv("GITHUB_APP_CLIENT_ID", "")
+GITHUB_APP_CLIENT_SECRET = os.getenv("GITHUB_APP_CLIENT_SECRET", "")
 ALK_HOSTED_SOURCE_MAX_BYTES = int(
     os.getenv("ALK_HOSTED_SOURCE_MAX_BYTES", str(256 * 1024 * 1024))
 )
@@ -1117,6 +1120,11 @@ HARNESS_BUNDLE_CERTIFY_ENABLED = os.getenv(
 # Raising agent-change nudges; only takes effect while versioning is enabled.
 HARNESS_VERSIONING_NUDGES_ENABLED = os.getenv(
     "HARNESS_VERSIONING_NUDGES_ENABLED", ""
+).lower() in ("1", "true", "yes")
+# Accepting source.subfolder on a build; only once the sandbox's agent-learning-kit
+# reads it, else the harness would silently build from the repository root.
+HARNESS_SOURCE_SUBFOLDER_ENABLED = os.getenv(
+    "HARNESS_SOURCE_SUBFOLDER_ENABLED", ""
 ).lower() in ("1", "true", "yes")
 # Most scenarios × trials one simulation Run may submit.
 HARNESS_MAX_EXECUTIONS_PER_RUN = int(os.getenv("HARNESS_MAX_EXECUTIONS_PER_RUN", "200"))

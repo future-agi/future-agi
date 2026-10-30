@@ -5108,6 +5108,7 @@ export const IntegrationConnectionListApiPlatform = {
   message_queue: "message_queue",
   linear: "linear",
   slack: "slack",
+  github: "github",
 } as const;
 
 export type IntegrationConnectionListApiStatus =
@@ -5227,6 +5228,7 @@ export const IntegrationConnectionCreateApiPlatform = {
   message_queue: "message_queue",
   linear: "linear",
   slack: "slack",
+  github: "github",
 } as const;
 
 export type IntegrationConnectionCreateApiCredentials = {
@@ -5295,6 +5297,7 @@ export const IntegrationConnectionDetailApiPlatform = {
   message_queue: "message_queue",
   linear: "linear",
   slack: "slack",
+  github: "github",
 } as const;
 
 export type IntegrationConnectionDetailApiStatus =
@@ -5389,6 +5392,7 @@ export const ValidateCredentialsApiPlatform = {
   message_queue: "message_queue",
   linear: "linear",
   slack: "slack",
+  github: "github",
 } as const;
 
 export type ValidateCredentialsApiCredentials = { [key: string]: unknown };
@@ -5437,6 +5441,39 @@ export interface IntegrationValidationResultApi {
 export interface IntegrationValidationResponseApi {
   status?: boolean;
   result: IntegrationValidationResultApi;
+}
+
+export interface SourceRepositoryApi {
+  id: number;
+  /** @minLength 1 */
+  full_name: string;
+  default_branch: string;
+  private: boolean;
+}
+
+export interface SourceRepositoriesResultApi {
+  repositories: SourceRepositoryApi[];
+  next_page: number;
+}
+
+export interface SourceRepositoriesResponseApi {
+  status: boolean;
+  result: SourceRepositoriesResultApi;
+}
+
+export interface SourceBranchApi {
+  /** @minLength 1 */
+  name: string;
+  is_default: boolean;
+}
+
+export interface SourceBranchesResultApi {
+  branches: SourceBranchApi[];
+}
+
+export interface SourceBranchesResponseApi {
+  status: boolean;
+  result: SourceBranchesResultApi;
 }
 
 export interface SlackChannelApi {
@@ -5500,6 +5537,48 @@ export interface IntegrationMessageResultApi {
 export interface IntegrationMessageResponseApi {
   status?: boolean;
   result: IntegrationMessageResultApi;
+}
+
+export interface GitHubInstallResultApi {
+  /** @minLength 1 */
+  install_url: string;
+}
+
+export interface GitHubInstallResponseApi {
+  status: boolean;
+  result: GitHubInstallResultApi;
+}
+
+export interface GitHubInstallCompleteApi {
+  /**
+   * @minLength 1
+   * @maxLength 2048
+   */
+  state: string;
+  /** @maxLength 32 */
+  setup_action?: string;
+  /** @maxLength 255 */
+  code?: string;
+  /** @maxLength 32 */
+  installation_id?: string;
+}
+
+export type GitHubInstallCompleteResultApiOutcome =
+  (typeof GitHubInstallCompleteResultApiOutcome)[keyof typeof GitHubInstallCompleteResultApiOutcome];
+
+export const GitHubInstallCompleteResultApiOutcome = {
+  connected: "connected",
+  requested: "requested",
+  already_connected: "already_connected",
+} as const;
+
+export interface GitHubInstallCompleteResultApi {
+  outcome: GitHubInstallCompleteResultApiOutcome;
+}
+
+export interface GitHubInstallCompleteResponseApi {
+  status: boolean;
+  result: GitHubInstallCompleteResultApi;
 }
 
 export interface SlackInstallApi {
@@ -15416,6 +15495,12 @@ export interface RunEnvironmentRefApi {
   name: string;
 }
 
+export interface ObserveProjectRefApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+}
+
 export interface AgentDefinitionListResponseApi {
   readonly id?: string;
   /**
@@ -15480,6 +15565,7 @@ export interface AgentDefinitionListResponseApi {
   readonly version_count?: number;
   readonly environment_count?: number;
   readonly environments?: readonly RunEnvironmentRefApi[];
+  observe_project?: ObserveProjectRefApi;
 }
 
 export type ApiErrorWithDetailsResponseApiType =
@@ -15957,6 +16043,30 @@ export interface AgentDefinitionDetailResponseApi {
   readonly source?: string;
   readonly environment_count?: number;
   readonly observability_enabled?: boolean;
+  observe_project?: ObserveProjectRefApi;
+}
+
+export type AgentBuildPreflightCheckApiStatus =
+  (typeof AgentBuildPreflightCheckApiStatus)[keyof typeof AgentBuildPreflightCheckApiStatus];
+
+export const AgentBuildPreflightCheckApiStatus = {
+  ok: "ok",
+  blocked: "blocked",
+} as const;
+
+export interface AgentBuildPreflightCheckApi {
+  /** @minLength 1 */
+  readonly name?: string;
+  readonly status?: AgentBuildPreflightCheckApiStatus;
+  /** @minLength 1 */
+  readonly message?: string;
+}
+
+export interface AgentBuildPreflightResponseApi {
+  readonly ok?: boolean;
+  /** @minLength 1 */
+  readonly version_id?: string;
+  readonly checks?: readonly AgentBuildPreflightCheckApi[];
 }
 
 export interface AgentDefinitionDeleteResponseApi {
@@ -15993,6 +16103,7 @@ export type AgentDefinitionEditRequestApiLivekitConfigJson = {
 
 export interface AgentDefinitionEditRequestApi {
   observability_enabled?: boolean;
+  production_project_id?: string;
   /**
    * @minLength 1
    * @maxLength 255
@@ -16046,6 +16157,11 @@ export interface AgentVersionRefApi {
   version_number: number;
 }
 
+export interface EnvironmentVersionRefApi {
+  id: string;
+  version_number: number;
+}
+
 export interface HarnessRunSummaryApi {
   kind: HarnessRunSummaryApiKind;
   test_execution_id: string;
@@ -16056,6 +16172,8 @@ export interface HarnessRunSummaryApi {
   status: string;
   environment: RunEnvironmentRefApi;
   agent_version: AgentVersionRefApi;
+  environment_version: EnvironmentVersionRefApi;
+  partial: boolean;
   outcome_passed: number;
   outcome_failed: number;
   outcome_skipped: number;
@@ -16079,6 +16197,19 @@ export const AgentVersionListResponseApiStatus = {
   archived: "archived",
   deprecated: "deprecated",
 } as const;
+
+export interface AgentVersionSourceApi {
+  /** @minLength 1 */
+  kind: string;
+  /** @minLength 1 */
+  repository?: string;
+  /** @minLength 1 */
+  ref?: string;
+  /** @minLength 1 */
+  commit_sha?: string;
+  /** @minLength 1 */
+  subfolder?: string;
+}
 
 export interface AgentVersionListResponseApi {
   readonly id?: string;
@@ -16112,68 +16243,34 @@ export interface AgentVersionListResponseApi {
   readonly commit_message?: string;
   readonly is_active?: string;
   readonly is_latest?: string;
+  readonly in_production?: boolean;
+  readonly origin?: string;
+  readonly preflight_status?: string;
+  readonly environments_count?: number;
+  source?: AgentVersionSourceApi;
   readonly created_at?: string;
 }
 
-export type AgentVersionCreateRequestApiAgentType =
-  (typeof AgentVersionCreateRequestApiAgentType)[keyof typeof AgentVersionCreateRequestApiAgentType];
+export type AgentVersionChangeRequestApiKind =
+  (typeof AgentVersionChangeRequestApiKind)[keyof typeof AgentVersionChangeRequestApiKind];
 
-export const AgentVersionCreateRequestApiAgentType = {
-  voice: "voice",
-  text: "text",
+export const AgentVersionChangeRequestApiKind = {
+  sync: "sync",
+  upload: "upload",
+  credentials: "credentials",
+  manual: "manual",
 } as const;
 
-export type AgentVersionCreateRequestApiAuthenticationMethod =
-  (typeof AgentVersionCreateRequestApiAuthenticationMethod)[keyof typeof AgentVersionCreateRequestApiAuthenticationMethod];
-
-export const AgentVersionCreateRequestApiAuthenticationMethod = {
-  api_key: "api_key",
-} as const;
-
-export type AgentVersionCreateRequestApiModelDetails = {
-  [key: string]: unknown;
+export type AgentVersionChangeRequestApiSecretValues = {
+  [key: string]: string;
 };
 
-export type AgentVersionCreateRequestApiLivekitConfigJson = {
-  [key: string]: unknown;
-};
-
-export interface AgentVersionCreateRequestApi {
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  agent_name?: string;
-  agent_type?: AgentVersionCreateRequestApiAgentType;
-  description?: string;
-  provider?: string;
-  api_key?: string;
-  assistant_id?: string;
-  authentication_method?: AgentVersionCreateRequestApiAuthenticationMethod;
-  language?: string;
-  languages?: string[];
-  contact_number?: string;
-  inbound?: boolean;
-  target_speaks_first?: boolean;
-  knowledge_base?: string;
-  model?: string;
-  model_details?: AgentVersionCreateRequestApiModelDetails;
-  /** @maxLength 500 */
-  livekit_url?: string;
-  /** @maxLength 255 */
-  livekit_api_key?: string;
-  /** @maxLength 500 */
-  livekit_api_secret?: string;
-  /** @maxLength 255 */
-  livekit_agent_name?: string;
-  livekit_config_json?: AgentVersionCreateRequestApiLivekitConfigJson;
-  /**
-   * @minimum 1
-   * @maximum 25
-   */
-  livekit_max_concurrency?: number;
-  commit_message?: string;
-  observability_enabled?: boolean;
+export interface AgentVersionChangeRequestApi {
+  kind: AgentVersionChangeRequestApiKind;
+  archive_artifact_id?: string;
+  /** @maxLength 65536 */
+  prompt?: string;
+  secret_values?: AgentVersionChangeRequestApiSecretValues;
 }
 
 /**
@@ -16243,8 +16340,76 @@ export interface AgentVersionResponseApi {
   readonly agent_kind?: string;
   /** @minLength 1 */
   readonly api_key?: string;
+  source?: AgentVersionSourceApi;
   readonly created_at?: string;
   readonly updated_at?: string;
+}
+
+export interface AgentVersionChangeResponseApi {
+  version?: AgentVersionResponseApi;
+  readonly created?: boolean;
+  readonly up_to_date?: boolean;
+}
+
+export type AgentVersionCreateRequestApiAgentType =
+  (typeof AgentVersionCreateRequestApiAgentType)[keyof typeof AgentVersionCreateRequestApiAgentType];
+
+export const AgentVersionCreateRequestApiAgentType = {
+  voice: "voice",
+  text: "text",
+} as const;
+
+export type AgentVersionCreateRequestApiAuthenticationMethod =
+  (typeof AgentVersionCreateRequestApiAuthenticationMethod)[keyof typeof AgentVersionCreateRequestApiAuthenticationMethod];
+
+export const AgentVersionCreateRequestApiAuthenticationMethod = {
+  api_key: "api_key",
+} as const;
+
+export type AgentVersionCreateRequestApiModelDetails = {
+  [key: string]: unknown;
+};
+
+export type AgentVersionCreateRequestApiLivekitConfigJson = {
+  [key: string]: unknown;
+};
+
+export interface AgentVersionCreateRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  agent_name?: string;
+  agent_type?: AgentVersionCreateRequestApiAgentType;
+  description?: string;
+  provider?: string;
+  api_key?: string;
+  assistant_id?: string;
+  authentication_method?: AgentVersionCreateRequestApiAuthenticationMethod;
+  language?: string;
+  languages?: string[];
+  contact_number?: string;
+  inbound?: boolean;
+  target_speaks_first?: boolean;
+  knowledge_base?: string;
+  model?: string;
+  model_details?: AgentVersionCreateRequestApiModelDetails;
+  /** @maxLength 500 */
+  livekit_url?: string;
+  /** @maxLength 255 */
+  livekit_api_key?: string;
+  /** @maxLength 500 */
+  livekit_api_secret?: string;
+  /** @maxLength 255 */
+  livekit_agent_name?: string;
+  livekit_config_json?: AgentVersionCreateRequestApiLivekitConfigJson;
+  /**
+   * @minimum 1
+   * @maximum 25
+   */
+  livekit_max_concurrency?: number;
+  commit_message?: string;
+  observability_enabled?: boolean;
 }
 
 export interface AgentVersionCreateResponseApi {
@@ -16580,7 +16745,116 @@ export interface CallExecutionApi {
   readonly processing_skip_reason?: string;
 }
 
-export interface AgentVersionDeleteResponseApi {
+export type AgentCodeChangeApiStatus =
+  (typeof AgentCodeChangeApiStatus)[keyof typeof AgentCodeChangeApiStatus];
+
+export const AgentCodeChangeApiStatus = {
+  added: "added",
+  removed: "removed",
+  modified: "modified",
+} as const;
+
+export interface AgentCodeChangeApi {
+  /** @minLength 1 */
+  readonly path?: string;
+  readonly status?: AgentCodeChangeApiStatus;
+}
+
+export interface AgentCodeChangesResponseApi {
+  /** @minLength 1 */
+  readonly against?: string;
+  readonly files?: readonly AgentCodeChangeApi[];
+  /** @minLength 1 */
+  readonly unavailable?: string;
+}
+
+export type AgentCodeFileResponseApiKind =
+  (typeof AgentCodeFileResponseApiKind)[keyof typeof AgentCodeFileResponseApiKind];
+
+export const AgentCodeFileResponseApiKind = {
+  text: "text",
+  binary: "binary",
+  too_large: "too_large",
+} as const;
+
+export interface AgentCodeFileResponseApi {
+  /** @minLength 1 */
+  readonly path?: string;
+  readonly size?: number;
+  readonly kind?: AgentCodeFileResponseApiKind;
+  /** @minLength 1 */
+  readonly language?: string;
+  readonly content?: string;
+}
+
+export type AgentCodeEntryApiKind =
+  (typeof AgentCodeEntryApiKind)[keyof typeof AgentCodeEntryApiKind];
+
+export const AgentCodeEntryApiKind = {
+  text: "text",
+  binary: "binary",
+  too_large: "too_large",
+} as const;
+
+export interface AgentCodeEntryApi {
+  /** @minLength 1 */
+  readonly path?: string;
+  readonly size?: number;
+  readonly kind?: AgentCodeEntryApiKind;
+}
+
+export interface AgentCodeTreeResponseApi {
+  readonly subfolder?: string;
+  readonly files?: readonly AgentCodeEntryApi[];
+  readonly truncated?: boolean;
+}
+
+export type AgentVersionCompatibilityResponseApiStatus =
+  (typeof AgentVersionCompatibilityResponseApiStatus)[keyof typeof AgentVersionCompatibilityResponseApiStatus];
+
+export const AgentVersionCompatibilityResponseApiStatus = {
+  clean: "clean",
+  new_tool: "new_tool",
+  tool_removed_or_changed: "tool_removed_or_changed",
+  new_rule: "new_rule",
+  unmeasured: "unmeasured",
+} as const;
+
+export interface AgentToolSignatureApi {
+  readonly arguments?: readonly string[];
+  readonly required?: readonly string[];
+  /** @minLength 1 */
+  readonly kind?: string;
+}
+
+export interface AgentVersionToolChangeApi {
+  /** @minLength 1 */
+  readonly name?: string;
+  before?: AgentToolSignatureApi;
+  after?: AgentToolSignatureApi;
+}
+
+export interface AgentVersionCompatibilityResponseApi {
+  /** @minLength 1 */
+  readonly environment_id?: string;
+  /** @minLength 1 */
+  readonly version_id?: string;
+  readonly status?: AgentVersionCompatibilityResponseApiStatus;
+  /** @minLength 1 */
+  readonly base?: string;
+  /** @minLength 1 */
+  readonly reason?: string;
+  readonly same_version?: boolean;
+  readonly tools_added?: readonly string[];
+  readonly tools_removed?: readonly string[];
+  readonly tools_changed?: readonly AgentVersionToolChangeApi[];
+  readonly services_added?: readonly string[];
+  readonly rules_added?: readonly string[];
+  readonly prompt_changed?: boolean;
+  readonly model_changed?: boolean;
+}
+
+export interface AgentVersionActionResponseApi {
   /** @minLength 1 */
   readonly message?: string;
 }
@@ -16634,6 +16908,11 @@ export interface EvalErrorResponseApi {
   error?: string;
   attr?: string;
   details?: EvalErrorResponseApiDetails;
+}
+
+export interface AgentVersionProductionResponseApi {
+  version?: AgentVersionResponseApi;
+  readonly moved_environment_ids?: readonly string[];
 }
 
 export type AgentVersionRestoreResponseApiAgent = { [key: string]: string };
@@ -17556,6 +17835,14 @@ export const HarnessEnvironmentApiStatus = {
   failed: "failed",
 } as const;
 
+export type HarnessEnvironmentApiAgentPolicy =
+  (typeof HarnessEnvironmentApiAgentPolicy)[keyof typeof HarnessEnvironmentApiAgentPolicy];
+
+export const HarnessEnvironmentApiAgentPolicy = {
+  follow: "follow",
+  pinned: "pinned",
+} as const;
+
 export interface HarnessEnvironmentApi {
   id: string;
   /** @minLength 1 */
@@ -17574,6 +17861,8 @@ export interface HarnessEnvironmentApi {
   sub_goals_count: number;
   tools_count: number;
   runs_count: number;
+  agent_version: AgentVersionRefApi;
+  agent_policy: HarnessEnvironmentApiAgentPolicy;
   last_updated: string;
   created_at: string;
   last_run: HarnessRunSummaryApi;
@@ -17606,6 +17895,14 @@ export const HarnessEnvironmentOverviewApiStatus = {
   running: "running",
   completed: "completed",
   failed: "failed",
+} as const;
+
+export type HarnessEnvironmentOverviewApiAgentPolicy =
+  (typeof HarnessEnvironmentOverviewApiAgentPolicy)[keyof typeof HarnessEnvironmentOverviewApiAgentPolicy];
+
+export const HarnessEnvironmentOverviewApiAgentPolicy = {
+  follow: "follow",
+  pinned: "pinned",
 } as const;
 
 export interface HarnessEnvironmentRunLinkApi {
@@ -17644,6 +17941,8 @@ export interface HarnessEnvironmentOverviewApi {
   sub_goals_count: number;
   tools_count: number;
   runs_count: number;
+  agent_version: AgentVersionRefApi;
+  agent_policy: HarnessEnvironmentOverviewApiAgentPolicy;
   last_updated: string;
   created_at: string;
   flows_count: number;
@@ -17965,6 +18264,101 @@ export interface HarnessEnvironmentRenameApi {
   name: string;
 }
 
+export type HarnessAgentPolicyApiPolicy =
+  (typeof HarnessAgentPolicyApiPolicy)[keyof typeof HarnessAgentPolicyApiPolicy];
+
+export const HarnessAgentPolicyApiPolicy = {
+  follow: "follow",
+  pinned: "pinned",
+} as const;
+
+export interface HarnessAgentPolicyApi {
+  policy: HarnessAgentPolicyApiPolicy;
+  version_id?: string;
+}
+
+export type HarnessAgentPolicyResponseApiPolicy =
+  (typeof HarnessAgentPolicyResponseApiPolicy)[keyof typeof HarnessAgentPolicyResponseApiPolicy];
+
+export const HarnessAgentPolicyResponseApiPolicy = {
+  follow: "follow",
+  pinned: "pinned",
+} as const;
+
+export type HarnessVersionApiStatus =
+  (typeof HarnessVersionApiStatus)[keyof typeof HarnessVersionApiStatus];
+
+export const HarnessVersionApiStatus = {
+  draft: "draft",
+  active: "active",
+  discarded: "discarded",
+} as const;
+
+export interface HarnessVersionPersonApi {
+  /** @minLength 1 */
+  id: string;
+  name: string;
+}
+
+/**
+ * An agent version's non-secret source facts.
+ */
+export type HarnessVersionApiSource = { [key: string]: unknown };
+
+/**
+ * An agent version's last check: check statuses and names only.
+ */
+export type HarnessVersionApiPreflightReport = { [key: string]: unknown };
+
+export interface HarnessVersionApi {
+  id: string;
+  /** @minLength 1 */
+  label: string | null;
+  status: HarnessVersionApiStatus;
+  is_default: boolean;
+  created_at: string;
+  created_by: HarnessVersionPersonApi | null;
+  /** @minLength 1 */
+  origin: string | null;
+  summary: string;
+  /** @minLength 1 */
+  hash: string | null;
+  parent_id: string | null;
+  derived_from_agent_version_id: string | null;
+  scenario_count: number | null;
+  /** An agent version's non-secret source facts. */
+  source: HarnessVersionApiSource | null;
+  /** The default agent version's prompt; null on every other item. */
+  prompt: string | null;
+  /** @minLength 1 */
+  preflight_status: string | null;
+  /** An agent version's last check: check statuses and names only. */
+  preflight_report: HarnessVersionApiPreflightReport | null;
+  preflighted_at: string | null;
+  /** When an agent version's latest check was asked for. */
+  check_started_at: string | null;
+  /** An agent version's credential names, provider keys included. */
+  credential_names: string[] | null;
+  /** The variables an agent version's source reads, when known. */
+  required_variable_names: string[] | null;
+  /**
+   * Why a passed agent version is or isn't this environment's default, as last recorded.
+   * @minLength 1
+   */
+  activation_outcome: string | null;
+  /** Whether this environment asked for an agent version. */
+  requested_here: boolean | null;
+  /** Whether an agent version can be picked for a run of this environment or made its default. */
+  pickable: boolean | null;
+  /** Whether this environment can discard an agent version. */
+  discardable: boolean | null;
+}
+
+export interface HarnessAgentPolicyResponseApi {
+  readonly policy?: HarnessAgentPolicyResponseApiPolicy;
+  agent_version?: HarnessVersionApi;
+}
+
 export type HarnessComparePairApiBand =
   (typeof HarnessComparePairApiBand)[keyof typeof HarnessComparePairApiBand];
 
@@ -18069,12 +18463,6 @@ export const HarnessDraftItemApiStatus = {
   active: "active",
   discarded: "discarded",
 } as const;
-
-export interface HarnessVersionPersonApi {
-  /** @minLength 1 */
-  id: string;
-  name: string;
-}
 
 /**
  * An agent version's non-secret source facts.
@@ -18187,69 +18575,6 @@ export interface HarnessDraftSaveApi {
    * @pattern ^[A-Za-z0-9_-]+$
    */
   idempotency_key: string;
-}
-
-export type HarnessVersionApiStatus =
-  (typeof HarnessVersionApiStatus)[keyof typeof HarnessVersionApiStatus];
-
-export const HarnessVersionApiStatus = {
-  draft: "draft",
-  active: "active",
-  discarded: "discarded",
-} as const;
-
-/**
- * An agent version's non-secret source facts.
- */
-export type HarnessVersionApiSource = { [key: string]: unknown };
-
-/**
- * An agent version's last check: check statuses and names only.
- */
-export type HarnessVersionApiPreflightReport = { [key: string]: unknown };
-
-export interface HarnessVersionApi {
-  id: string;
-  /** @minLength 1 */
-  label: string | null;
-  status: HarnessVersionApiStatus;
-  is_default: boolean;
-  created_at: string;
-  created_by: HarnessVersionPersonApi | null;
-  /** @minLength 1 */
-  origin: string | null;
-  summary: string;
-  /** @minLength 1 */
-  hash: string | null;
-  parent_id: string | null;
-  derived_from_agent_version_id: string | null;
-  scenario_count: number | null;
-  /** An agent version's non-secret source facts. */
-  source: HarnessVersionApiSource | null;
-  /** The default agent version's prompt; null on every other item. */
-  prompt: string | null;
-  /** @minLength 1 */
-  preflight_status: string | null;
-  /** An agent version's last check: check statuses and names only. */
-  preflight_report: HarnessVersionApiPreflightReport | null;
-  preflighted_at: string | null;
-  /** When an agent version's latest check was asked for. */
-  check_started_at: string | null;
-  /** An agent version's credential names, provider keys included. */
-  credential_names: string[] | null;
-  /** The variables an agent version's source reads, when known. */
-  required_variable_names: string[] | null;
-  /**
-   * Why a passed agent version is or isn't this environment's default, as last recorded.
-   * @minLength 1
-   */
-  activation_outcome: string | null;
-  /** Whether this environment asked for an agent version. */
-  requested_here: boolean | null;
-  /** Whether an agent version can be picked for a run of this environment or made its default. */
-  pickable: boolean | null;
-  /** Whether this environment can discard an agent version. */
-  discardable: boolean | null;
 }
 
 /**
@@ -19051,6 +19376,11 @@ export interface HarnessSourceApi {
    * @maxLength 255
    */
   installation_id?: string;
+  /**
+   * @maxLength 512
+   * @pattern ^(?!/)(?!.*(^|/)\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$
+   */
+  subfolder?: string;
   archive_artifact_id?: string;
   /** @minLength 1 */
   endpoint?: string;
@@ -34645,6 +34975,35 @@ export type IntegrationsConnectionsListParams = {
    * @maximum 100
    */
   page_size?: number;
+  platform?: IntegrationsConnectionsListPlatform;
+};
+
+export type IntegrationsConnectionsListPlatform =
+  (typeof IntegrationsConnectionsListPlatform)[keyof typeof IntegrationsConnectionsListPlatform];
+
+export const IntegrationsConnectionsListPlatform = {
+  langfuse: "langfuse",
+  datadog: "datadog",
+  posthog: "posthog",
+  pagerduty: "pagerduty",
+  mixpanel: "mixpanel",
+  cloud_storage: "cloud_storage",
+  message_queue: "message_queue",
+  linear: "linear",
+  slack: "slack",
+  github: "github",
+} as const;
+
+export type IntegrationsConnectionsRepositoriesListParams = {
+  /**
+   * @maxLength 100
+   */
+  q?: string;
+  /**
+   * @minimum 1
+   * @maximum 200
+   */
+  page?: number;
 };
 
 export type IntegrationsConnectionsSlackChannelsListParams = {
@@ -36170,6 +36529,14 @@ export type SimulateAgentDefinitionsRunsListParams = {
    * @maximum 20
    */
   limit?: number;
+};
+
+export type SimulateAgentDefinitionsVersionsCodeChangesListParams = {
+  against?: string;
+};
+
+export type SimulateAgentDefinitionsVersionsCodeFileListParams = {
+  path: string;
 };
 
 export type SimulateApiAgentDefinitionOperationsListParams = {

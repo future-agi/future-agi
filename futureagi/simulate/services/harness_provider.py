@@ -85,6 +85,28 @@ def _validate_phone_connectivity(payload) -> None:
         )
 
 
+def _validate_github_installation(
+    organization_id: Any, payload: dict[str, Any]
+) -> None:
+    source = payload.get("source") or {}
+    installation_id = str(source.get("installation_id") or "")
+    if source.get("kind") != "github" or not installation_id:
+        return
+    from integrations.services.github_app import installation_connected
+
+    if organization_id is None or not installation_connected(
+        organization_id=organization_id, installation_id=installation_id
+    ):
+        from simulate.services.hosted_harness import HostedHarnessError
+
+        raise HostedHarnessError(
+            "github_installation_not_connected",
+            "Connect GitHub in Settings > Integrations before building from a"
+            " private repository",
+            status_code=422,
+        )
+
+
 def get_harness_provider():
     """Return the configured public harness backend."""
     name = str(getattr(settings, "HARNESS_PROVIDER", "hosted") or "hosted").lower()
@@ -1328,6 +1350,7 @@ class HostedHarnessProvider:
         try:
             _validate_secret_refs_hosted(payload["agent"]["secret_refs"])
             _validate_phone_connectivity(payload)
+            _validate_github_installation(organization.id, payload)
             _validate_known_hosted_egress(payload, base_url)
             if versioning_enabled():
                 from simulate.services.harness_agent_changes import (
@@ -1466,6 +1489,9 @@ class HostedHarnessProvider:
         try:
             _validate_secret_refs_hosted(payload["agent"]["secret_refs"])
             _validate_phone_connectivity(payload)
+            _validate_github_installation(
+                getattr(request_organization(request), "id", None), payload
+            )
             _validate_known_hosted_egress(payload, base_url)
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
@@ -2953,6 +2979,8 @@ class SandboxHarnessProvider:
                 flat["github_ref"] = source["ref"]
             if source.get("commit_sha"):
                 flat["github_commit_sha"] = source["commit_sha"]
+            if source.get("subfolder"):
+                flat["github_subfolder"] = source["subfolder"]
             flat["github_visibility"] = source.get("visibility", "public")
             if source.get("installation_id"):
                 flat["github_installation_id"] = source["installation_id"]

@@ -166,3 +166,12 @@ describe("old Agent Definition link", () => {
     ).toBeTruthy();
   });
 });
+
+describe("New agent", () => {
+  it("opens the connect page under Agents, outside the tabs", () => {
+    const [dashboardRoute] = dashboardRoutes(null, null, { isCloud: true });
+    const agents = findChildRoute(dashboardRoute, "agents");
+    expect(findChildRoute(agents, "connect")).toBeTruthy();
+    expect(findChildRoute(agents.children[0], "connect")).toBeUndefined();
+  });
+});

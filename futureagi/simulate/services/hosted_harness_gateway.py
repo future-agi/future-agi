@@ -14,7 +14,6 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
-import time
 import uuid
 import zlib
 from collections.abc import Callable, Iterable, Mapping
@@ -25,14 +24,16 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-import jwt
-import requests
 import structlog
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 from minio.error import S3Error
 
+from integrations.services.github_app import (
+    GitHubAppError,
+    installation_credential,
+)
 from simulate.models import (
     HostedHarnessAttempt,
     HostedHarnessConversation,
@@ -42,10 +43,15 @@ from simulate.models import (
     HostedHarnessSecret,
 )
 from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
+from simulate.services.code_archives import (
+    store_commit_archive,
+    stored_commit_archive,
+)
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     activate_attempt_capability,
     finish_deferred_delete,
+    platform_set_failure,
     record_cleanup,
     register_attempt,
     request_cancellation,
@@ -175,7 +181,8 @@ def _current_chat_workspace(job: HostedHarnessJob, checkpoint: bytes) -> bytes |
     """
     environment = job.environment or job
     revision = str(
-        ((environment.payload or {}).get("metadata") or {}).get("authoring_revision") or ""
+        ((environment.payload or {}).get("metadata") or {}).get("authoring_revision")
+        or ""
     )
     if not revision:
         return checkpoint
@@ -196,7 +203,9 @@ def _with_chat_state(current: bytes, checkpoint: bytes | None) -> bytes:
         for member in accepted.getmembers():
             parts = _archive_parts(member.name)
             if parts and not parts[0].startswith("."):
-                target.addfile(member, accepted.extractfile(member) if member.isfile() else None)
+                target.addfile(
+                    member, accepted.extractfile(member) if member.isfile() else None
+                )
         if checkpoint is not None:
             with tarfile.open(fileobj=io.BytesIO(checkpoint), mode="r:gz") as chat:
                 for member in chat.getmembers():
@@ -665,83 +674,22 @@ def _extend_command_for(
 
 
 class GitHubAppTokenProvider:
-    def __init__(self, *, app_id: str, private_key: str) -> None:
-        self.app_id = app_id
-        self.private_key = private_key
-
     @classmethod
     def from_settings(cls) -> GitHubAppTokenProvider:
-        app_id = getattr(settings, "GITHUB_APP_ID", "")
-        private_key = getattr(settings, "GITHUB_APP_PRIVATE_KEY", "").replace(
-            "\\n", "\n"
-        )
-        if not app_id or not private_key:
-            raise HostedHarnessError(
-                "github_app_not_configured",
-                "GitHub App credentials are not configured",
-                status_code=503,
-                retryable=True,
-            )
-        return cls(app_id=str(app_id), private_key=private_key)
-
-    def installation_token(self, installation_id: str) -> str:
-        now = int(time.time())
-        app_jwt = jwt.encode(
-            {"iat": now - 30, "exp": now + 540, "iss": self.app_id},
-            self.private_key,
-            algorithm="RS256",
-        )
-        response = requests.post(
-            f"https://api.github.com/app/installations/{installation_id}/access_tokens",
-            headers={
-                "Authorization": f"Bearer {app_jwt}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
-            timeout=(5, 30),
-        )
-        if response.status_code != 201:
-            raise HostedHarnessError(
-                "github_installation_token_failed",
-                f"GitHub rejected installation {installation_id}",
-                status_code=502,
-                retryable=response.status_code >= 500,
-            )
-        token = response.json().get("token")
-        if not token:
-            raise HostedHarnessError(
-                "github_installation_token_missing",
-                "GitHub returned no installation token",
-                status_code=502,
-                retryable=True,
-            )
-        return str(token)
-
-    def revoke(self, token: str) -> None:
-        response = requests.delete(
-            "https://api.github.com/installation/token",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
-            timeout=(5, 30),
-        )
-        if response.status_code != 204:
-            raise HostedHarnessError(
-                "github_installation_token_revoke_failed",
-                "GitHub installation token could not be revoked",
-                status_code=502,
-                retryable=response.status_code >= 500,
-            )
+        return cls()
 
     @contextmanager
     def credential(self, installation_id: str):
-        token = self.installation_token(installation_id)
         try:
-            yield token
-        finally:
-            self.revoke(token)
+            with installation_credential(installation_id) as token:
+                yield token
+        except GitHubAppError as exc:
+            raise HostedHarnessError(
+                exc.code,
+                exc.message,
+                status_code=exc.status_code,
+                retryable=exc.retryable,
+            ) from exc
 
 
 # Dependency manifests and code are where a voice framework shows up; prose (README, docs)
@@ -905,6 +853,15 @@ class HostedSourceAcquirer:
             )
         if ".." in ref or not self._REF.fullmatch(ref):
             raise HostedHarnessError("github_ref_invalid", "invalid GitHub ref")
+        pinned_commit = str(source.get("commit_sha") or "").lower()
+        if pinned_commit:
+            stored = stored_commit_archive(
+                organization_id=job.organization_id,
+                repository=repository,
+                commit_sha=pinned_commit,
+            )
+            if stored is not None:
+                return stored, pinned_commit
         if shutil.which("git") is None:
             # The default backend image ships without git (with perl it is
             # ~81 MB unpacked). futureagi/Dockerfile.oss --build-arg
@@ -1021,7 +978,14 @@ class HostedSourceAcquirer:
                     "compressed source exceeds the hosted source limit",
                     status_code=413,
                 )
-            return archive.getvalue(), commit_sha
+            body = archive.getvalue()
+            store_commit_archive(
+                organization_id=job.organization_id,
+                repository=repository,
+                commit_sha=commit_sha,
+                body=body,
+            )
+            return body, commit_sha
 
 
 def _check_secret_reference(alias: str, reference: Mapping[str, Any]) -> None:
@@ -2053,9 +2017,11 @@ def _persist_bundle_stage_outputs(
                 HostedHarnessStageOutput(
                     job=job,
                     title="Contract",
-                    summary=contract_data.get("one_liner", "")
-                    if isinstance(contract_data, dict)
-                    else "",
+                    summary=(
+                        contract_data.get("one_liner", "")
+                        if isinstance(contract_data, dict)
+                        else ""
+                    ),
                     kind="contract",
                     data=contract_data,
                 )
@@ -2424,7 +2390,9 @@ class HostedHarnessGateway:
             if sandbox is not None:
                 try:
                     sandbox.delete()
-                except Exception:  # noqa: BLE001 - best-effort cleanup of throwaway sandbox
+                except (
+                    Exception
+                ):  # noqa: BLE001 - best-effort cleanup of throwaway sandbox
                     pass
 
     def launch(
@@ -2799,7 +2767,11 @@ class HostedHarnessGateway:
                         "if [ ! -f /work/authoring/contract.json ]; then "
                         "python -m fi.alk.harness.hosted_authoring_entrypoint "
                         "/work/job.json --source /work/source --output /work/authoring "
-                        + ("--await-harness " if harness_builds else f"--adjustments {_ADJUSTMENTS_PATH} ")
+                        + (
+                            "--await-harness "
+                            if harness_builds
+                            else f"--adjustments {_ADJUSTMENTS_PATH} "
+                        )
                         + provider_profile_args
                         + "; fi && "
                         + ((extend_command + " && ") if extend_command else "")
@@ -3509,6 +3481,8 @@ class HostedHarnessGateway:
         if capture is not None:
             observation["logs"] = capture.entrypoint_log[-8000:]
             observation["process_logs"] = capture.process_logs[-16000:]
+        if command.exit_code:
+            observation["refusal_file"] = _read_refusal_file(sandbox)
         if command.exit_code is not None:
             # Keep the bounded failure tails in the worker log as well as the durable S3
             # snapshot so an operator can diagnose a run from either surface.
@@ -3592,7 +3566,9 @@ class HostedHarnessGateway:
                 response = {
                     "error": {"code": exc.code, "message": exc.message},
                 }
-            except Exception as exc:  # noqa: BLE001 - return a bounded typed response to guest
+            except (
+                Exception
+            ) as exc:  # noqa: BLE001 - return a bounded typed response to guest
                 logger.exception(
                     "offline hosted control failed attempt=%s request=%s",
                     attempt.id,
@@ -3755,7 +3731,9 @@ class HostedHarnessGateway:
                         path, _PROGRESS_FILE_TIMEOUT_SECONDS
                     ).decode("utf-8")
                 )
-            except Exception:  # noqa: BLE001 - an absent/incomplete stage file is expected
+            except (
+                Exception
+            ):  # noqa: BLE001 - an absent/incomplete stage file is expected
                 return None
 
         try:
@@ -3885,7 +3863,9 @@ class HostedHarnessGateway:
                     proved_since=getattr(attempt, "created_at", None),
                 )
                 job.refresh_from_db()
-            except Exception:  # noqa: BLE001 - retry on the next poll; do not abort calls
+            except (
+                Exception
+            ):  # noqa: BLE001 - retry on the next poll; do not abort calls
                 logger.exception(
                     "could not freeze unified authoring snapshot job=%s attempt=%s",
                     job.id,
@@ -3978,7 +3958,9 @@ class HostedHarnessGateway:
             raw = sandbox.fs.download_file(
                 _ADJUSTMENT_STATUS_PATH, _PROGRESS_FILE_TIMEOUT_SECONDS
             ).decode("utf-8")
-        except Exception:  # noqa: BLE001 - status file does not exist before first boundary
+        except (
+            Exception
+        ):  # noqa: BLE001 - status file does not exist before first boundary
             return
         statuses: dict[str, dict[str, Any]] = {}
         for line in raw.splitlines():
@@ -4483,7 +4465,9 @@ class HostedHarnessGateway:
         ):
             try:
                 self._recover_offline_delivery(attempt)
-            except Exception:  # noqa: BLE001 - preserve the typed delivery failure below
+            except (
+                Exception
+            ):  # noqa: BLE001 - preserve the typed delivery failure below
                 logger.exception(
                     "offline hosted delivery recovery failed attempt=%s provider_ref=%s",
                     attempt.id,
@@ -4501,7 +4485,41 @@ class HostedHarnessGateway:
                 ]
             )
         retry_pending = False
-        if exit_code == 3:
+        refusal = None
+        # Exit 3 is the chain fenced by a newer attempt: never a failure of its own.
+        if exit_code not in (0, 3) and not attempt.terminal_event_received:
+            refusal = refusal_failure(observation)
+            if refusal is None and observation.get("refusal_file") is not None:
+                logger.warning(
+                    "refusal_file_invalid attempt=%s exit_code=%s",
+                    attempt.id,
+                    exit_code,
+                )
+        if refusal is not None:
+            attempt.terminal_stage = "failed"
+            attempt.terminal_failure = platform_set_failure(attempt) or refusal
+            attempt.state = HostedHarnessAttempt.State.FAILED
+            attempt.save(
+                update_fields=[
+                    "terminal_stage",
+                    "terminal_failure",
+                    "state",
+                    "updated_at",
+                ]
+            )
+            retry_pending = refusal["retryable"] and self._should_retry(
+                attempt, str(refusal["domain"])
+            )
+            if exit_code == 78:
+                from simulate.services.harness_versioning.assembly import mark_failed
+
+                try:
+                    mark_failed(attempt.job, attempt.terminal_failure["message"])
+                except Exception:  # noqa: BLE001 - the cache never changes the outcome
+                    logger.exception(
+                        "could not mark the bundle cache failed attempt=%s", attempt.id
+                    )
+        elif exit_code == 3:
             attempt.state = HostedHarnessAttempt.State.SUPERSEDED
             attempt.save(update_fields=["state", "updated_at"])
         elif exit_code == 4 and (
@@ -4554,24 +4572,27 @@ class HostedHarnessGateway:
             label = (
                 "Generated environment failed real-runtime validation after bounded repair"
                 if exit_code == 78
-                else "Environment authoring failed before a runnable world was saved"
-                if authoring_failed
-                else f"guest entrypoint exited {exit_code}"
+                else (
+                    "Environment authoring failed before a runnable world was saved"
+                    if authoring_failed
+                    else f"guest entrypoint exited {exit_code}"
+                )
             )
             cause = guest_failure_cause(guest_logs)
+            kept = platform_set_failure(attempt)
             attempt.terminal_stage = "failed"
-            attempt.terminal_failure = {
+            attempt.terminal_failure = kept or {
                 "domain": "environment" if authoring_invalid else "infrastructure",
-                "stage": "validating_environment"
-                if exit_code == 78
-                else "generating_environment"
-                if authoring_failed
-                else "running",
-                "code": "authoring_runtime_validation_failed"
-                if exit_code == 78
-                else "authoring_failed"
-                if authoring_failed
-                else "guest_crashed",
+                "stage": (
+                    "validating_environment"
+                    if exit_code == 78
+                    else "generating_environment" if authoring_failed else "running"
+                ),
+                "code": (
+                    "authoring_runtime_validation_failed"
+                    if exit_code == 78
+                    else "authoring_failed" if authoring_failed else "guest_crashed"
+                ),
                 "message": f"{label}: {cause}" if cause else label,
                 "details": {
                     "guest_log_tail": guest_logs,
@@ -4587,8 +4608,11 @@ class HostedHarnessGateway:
                     "updated_at",
                 ]
             )
-            retry_pending = not authoring_invalid and self._should_retry(
-                attempt, "infrastructure"
+            # A failure the platform set is final: the same build would fail again.
+            retry_pending = (
+                kept is None
+                and not authoring_invalid
+                and self._should_retry(attempt, "infrastructure")
             )
             if exit_code == 78:
                 from simulate.services.harness_versioning.assembly import mark_failed
@@ -5113,7 +5137,9 @@ def _offered_eval_catalogue(job: Any) -> list[dict[str, Any]]:
 
     try:
         return briefing_evals(job.organization, job.workspace, _authored_modality(job))
-    except Exception:  # noqa: BLE001 - a catalogue is an offer; never fail a launch over it
+    except (
+        Exception
+    ):  # noqa: BLE001 - a catalogue is an offer; never fail a launch over it
         structlog_logger.exception(
             "harness_eval_catalogue_failed",
             job_id=str(getattr(job, "id", "") or ""),
@@ -5176,9 +5202,47 @@ def _secret_safe(value: Any, *, key: str = "") -> Any:
         }
     if isinstance(value, list):
         return [_secret_safe(item) for item in value]
-    if isinstance(value, (str, int, float, bool)) or value is None:
+    if isinstance(value, str | int | float | bool) or value is None:
         return value
     return str(value)
+
+
+_REFUSAL_FILE = "/work/authoring/failure.json"
+_REFUSAL_FILE_INVALID = "invalid"
+
+
+def _read_refusal_file(sandbox) -> Any:
+    """The failure the guest wrote before exiting: None, the parsed object, or invalid."""
+    try:
+        body = sandbox.fs.download_file(_REFUSAL_FILE, _PROGRESS_FILE_TIMEOUT_SECONDS)
+    except SandboxNotFoundError:
+        return None
+    except Exception:  # noqa: BLE001 - read as "no file", but say so
+        logger.warning("refusal_file_unreadable path=%s", _REFUSAL_FILE, exc_info=True)
+        return None
+    if not body:
+        return None
+    try:
+        return json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return _REFUSAL_FILE_INVALID
+
+
+def refusal_failure(observation: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The guest's declared failure, validated; None when absent or malformed."""
+    from simulate.serializers.hosted_harness import HarnessFailureSerializer
+
+    value = observation.get("refusal_file")
+    if not isinstance(value, dict):
+        return None
+    serializer = HarnessFailureSerializer(data=value)
+    if not serializer.is_valid():
+        return None
+    retryable = value.get("retryable", False)
+    details = value.get("details", {})
+    if not isinstance(retryable, bool) or not isinstance(details, dict):
+        return None
+    return {**serializer.validated_data, "retryable": retryable, "details": details}
 
 
 def _read_harness_usage(attempt: HostedHarnessAttempt, sandbox) -> None:
@@ -5216,7 +5280,9 @@ def _read_harness_spend(attempt: HostedHarnessAttempt, sandbox) -> None:
         body = sandbox.fs.download_file("/work/authoring/cost.json").decode("utf-8")
         job = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id)
         _record_harness_spend(job, json.loads(body), attempt.attempt_number)
-    except Exception:  # noqa: BLE001 - no ledger is the ordinary case for an early failure
+    except (
+        Exception
+    ):  # noqa: BLE001 - no ledger is the ordinary case for an early failure
         logger.debug("no harness ledger to read attempt=%s", attempt.id)
 
 
@@ -5772,7 +5838,9 @@ def rewrite_authoring_scenarios(
     try:
         response = client.get_object(UPLOAD_BUCKET_NAME, object_key)
         body = response.read()
-    except Exception as exc:  # noqa: BLE001 - an archive we cannot read cannot take the edit
+    except (
+        Exception
+    ) as exc:  # noqa: BLE001 - an archive we cannot read cannot take the edit
         logger.exception("could not read authoring archive for amend job=%s", job.id)
         raise AuthoringArchiveKept("the saved scenarios could not be read") from exc
     finally:
@@ -5801,7 +5869,9 @@ def rewrite_authoring_scenarios(
             raise AuthoringArchiveKept(
                 exc.message, code=exc.code, status_code=exc.status_code
             ) from exc
-        except Exception as exc:  # noqa: BLE001 - an edit that cannot be saved changes nothing
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 - an edit that cannot be saved changes nothing
             logger.exception("could not version an amended suite job=%s", job.id)
             raise AuthoringArchiveKept("the change could not be saved") from exc
         if recorded is None:

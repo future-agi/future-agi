@@ -7,9 +7,11 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from simulate.models import AgentDefinition, HostedHarnessJob
+from simulate.models import AgentDefinition, AgentVersion, HostedHarnessJob
 from simulate.serializers.harness_environment import (
     HarnessAgentCredentialsResponseSerializer,
+    HarnessAgentPolicyResponseSerializer,
+    HarnessAgentPolicySerializer,
     HarnessAgentVersionCreateSerializer,
     HarnessCompareQuerySerializer,
     HarnessCompareSerializer,
@@ -179,9 +181,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
     @action(
         detail=True,
         methods=["get"],
-        url_path=(
-            r"versions/(?P<piece>[a-z]+)/(?P<version_id>[0-9a-fA-F-]{36})/diff"
-        ),
+        url_path=(r"versions/(?P<piece>[a-z]+)/(?P<version_id>[0-9a-fA-F-]{36})/diff"),
     )
     def version_diff(self, request, pk=None, piece=None, version_id=None):
         """What one version changed, against its parent or the ``against`` version."""
@@ -315,6 +315,38 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         return Response(
             {"agent_version": version_reads.agent_version_item(job, version)},
             status=status.HTTP_202_ACCEPTED,
+        )
+
+    @validated_request(
+        request_serializer=HarnessAgentPolicySerializer,
+        responses={200: HarnessAgentPolicyResponseSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="agent-policy")
+    def agent_policy(self, request, pk=None):
+        """Follow the agent's production version, or pin this environment to one."""
+        from simulate.services.agent_versions import set_environment_policy
+        from simulate.services.harness_agent_versions import environment_policy
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        locked = set_environment_policy(
+            job, user=request.user, **request.validated_data
+        )
+        version = AgentVersion.no_workspace_objects.filter(
+            id=locked.agent_version_id
+        ).first()
+        return Response(
+            {
+                "policy": environment_policy(locked),
+                "agent_version": (
+                    version_reads.agent_version_item(locked, version)
+                    if version is not None
+                    else None
+                ),
+            }
         )
 
     @validated_request(responses={200: HarnessSuiteMemberSerializer(many=True)})

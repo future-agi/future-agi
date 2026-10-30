@@ -17170,6 +17170,24 @@
                         "default": 20,
                         "maximum": 100,
                         "minimum": 1
+                    },
+                    {
+                        "name": "platform",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "langfuse",
+                            "datadog",
+                            "posthog",
+                            "pagerduty",
+                            "mixpanel",
+                            "cloud_storage",
+                            "message_queue",
+                            "linear",
+                            "slack",
+                            "github"
+                        ]
                     }
                 ],
                 "responses": {
@@ -17316,6 +17334,97 @@
                 "x-runtime-response-validation": true
             },
             "parameters": []
+        },
+        "/integrations/connections/{connection_id}/repositories/": {
+            "get": {
+                "operationId": "integrations_connections_repositories_list",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "q",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "default": "",
+                        "maxLength": 100
+                    },
+                    {
+                        "name": "page",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 1,
+                        "maximum": 200,
+                        "minimum": 1
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SourceRepositoriesResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "integrations"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "connection_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/integrations/connections/{connection_id}/repositories/{repository_id}/branches/": {
+            "get": {
+                "operationId": "integrations_connections_repositories_branches_list",
+                "description": "",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SourceBranchesResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "integrations"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "connection_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "repository_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
         },
         "/integrations/connections/{connection_id}/slack/channels/": {
             "get": {
@@ -17736,6 +17845,90 @@
                     "type": "string"
                 }
             ]
+        },
+        "/integrations/github/install/": {
+            "post": {
+                "operationId": "integrations_github_install_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/IntegrationEmptyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GitHubInstallResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "integrations"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/integrations/github/install/complete/": {
+            "post": {
+                "operationId": "integrations_github_install_complete_create",
+                "description": "The signed-in user finishes the install GitHub redirected them back from.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/GitHubInstallComplete"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GitHubInstallCompleteResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GitHubInstallResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/GitHubInstallResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "integrations"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
         },
         "/integrations/slack/install/": {
             "post": {
@@ -48728,6 +48921,44 @@
                 }
             ]
         },
+        "/simulate/agent-definitions/{agent_id}/build-preflight/": {
+            "get": {
+                "operationId": "simulate_agent-definitions_build-preflight_list",
+                "description": "GET /agent-definitions/{id}/build-preflight/?version_id=.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentBuildPreflightResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "parameters": [
+                {
+                    "name": "agent_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/agent-definitions/{agent_id}/delete/": {
             "delete": {
                 "operationId": "simulate_agent-definitions_delete_delete",
@@ -48738,6 +48969,12 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/AgentDefinitionDeleteResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
                         }
                     },
                     "404": {
@@ -48920,6 +49157,79 @@
                 "tags": [
                     "simulate"
                 ]
+            },
+            "parameters": [
+                {
+                    "name": "agent_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/agent-definitions/{agent_id}/versions/change/": {
+            "post": {
+                "operationId": "simulate_agent-definitions_versions_change_create",
+                "description": "POST /agent-definitions/{id}/versions/change/: a new version by kind.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/AgentVersionChangeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentVersionChangeResponse"
+                        }
+                    },
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentVersionChangeResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": [
                 {
@@ -49205,22 +49515,23 @@
                 }
             ]
         },
-        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/delete/": {
-            "delete": {
-                "operationId": "simulate_agent-definitions_versions_delete_delete",
-                "description": "Soft delete an agent version.",
-                "parameters": [],
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/changes/": {
+            "get": {
+                "operationId": "simulate_agent-definitions_versions_code_changes_list",
+                "description": "GET /agent-definitions/{id}/versions/{vid}/code/changes/?against=.",
+                "parameters": [
+                    {
+                        "name": "against",
+                        "in": "query",
+                        "required": false,
+                        "type": "string"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/AgentVersionDeleteResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                            "$ref": "#/definitions/AgentCodeChangesResponse"
                         }
                     },
                     "404": {
@@ -49229,7 +49540,7 @@
                             "$ref": "#/definitions/ApiErrorWithDetailsResponse"
                         }
                     },
-                    "500": {
+                    "503": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorWithDetailsResponse"
@@ -49245,6 +49556,230 @@
                 "tags": [
                     "simulate"
                 ]
+            },
+            "parameters": [
+                {
+                    "name": "agent_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "version_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/file/": {
+            "get": {
+                "operationId": "simulate_agent-definitions_versions_code_file_list",
+                "description": "GET /agent-definitions/{id}/versions/{vid}/code/file/?path=.",
+                "parameters": [
+                    {
+                        "name": "path",
+                        "in": "query",
+                        "required": true,
+                        "type": "string"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentCodeFileResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "parameters": [
+                {
+                    "name": "agent_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "version_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/tree/": {
+            "get": {
+                "operationId": "simulate_agent-definitions_versions_code_tree_list",
+                "description": "GET /agent-definitions/{id}/versions/{vid}/code/tree/.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentCodeTreeResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "parameters": [
+                {
+                    "name": "agent_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "version_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/compatibility/": {
+            "get": {
+                "operationId": "simulate_agent-definitions_versions_compatibility_list",
+                "description": "GET /agent-definitions/{id}/versions/{vid}/compatibility/?environment_id=.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentVersionCompatibilityResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "parameters": [
+                {
+                    "name": "agent_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "version_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/discard/": {
+            "post": {
+                "operationId": "simulate_agent-definitions_versions_discard_create",
+                "description": "POST /agent-definitions/{id}/versions/{vid}/discard/.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/EmptyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentVersionActionResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": [
                 {
@@ -49311,6 +49846,67 @@
                 }
             ]
         },
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/production/": {
+            "post": {
+                "operationId": "simulate_agent-definitions_versions_production_create",
+                "description": "POST /agent-definitions/{id}/versions/{vid}/production/.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/EmptyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentVersionProductionResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "agent_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "version_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/agent-definitions/{agent_id}/versions/{version_id}/restore/": {
             "post": {
                 "operationId": "simulate_agent-definitions_versions_restore_create",
@@ -49345,6 +49941,67 @@
                         }
                     },
                     "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "agent_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "version_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/agent-definitions/{agent_id}/versions/{version_id}/retry/": {
+            "post": {
+                "operationId": "simulate_agent-definitions_versions_retry_create",
+                "description": "POST /agent-definitions/{id}/versions/{vid}/retry/.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/EmptyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AgentVersionActionResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "409": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorWithDetailsResponse"
@@ -49692,6 +50349,12 @@
                 "responses": {
                     "204": {
                         "description": ""
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
                     },
                     "404": {
                         "description": "",
@@ -50903,6 +51566,49 @@
                 "tags": [
                     "simulate"
                 ]
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/agent-policy/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_agent_policy",
+                "description": "Follow the agent's production version, or pin this environment to one.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessAgentPolicy"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessAgentPolicyResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": [
                 {
@@ -53419,7 +54125,7 @@
         "/simulate/api/harness/github/webhook/": {
             "post": {
                 "operationId": "simulate_api_harness_github_webhook_create",
-                "description": "GitHub App push webhook, signed with X-Hub-Signature-256. Answers 204, or 429 when throttled.",
+                "description": "GitHub App webhook for push and installation events, signed with X-Hub-Signature-256. Answers 204, or 429 when throttled.",
                 "parameters": [
                     {
                         "name": "data",
@@ -94637,7 +95343,8 @@
                         "cloud_storage",
                         "message_queue",
                         "linear",
-                        "slack"
+                        "slack",
+                        "github"
                     ]
                 },
                 "display_name": {
@@ -94844,7 +95551,8 @@
                         "cloud_storage",
                         "message_queue",
                         "linear",
-                        "slack"
+                        "slack",
+                        "github"
                     ]
                 },
                 "host_url": {
@@ -94965,7 +95673,8 @@
                         "cloud_storage",
                         "message_queue",
                         "linear",
-                        "slack"
+                        "slack",
+                        "github"
                     ]
                 },
                 "display_name": {
@@ -95132,7 +95841,8 @@
                         "cloud_storage",
                         "message_queue",
                         "linear",
-                        "slack"
+                        "slack",
+                        "github"
                     ]
                 },
                 "host_url": {
@@ -95249,6 +95959,118 @@
                 },
                 "result": {
                     "$ref": "#/definitions/IntegrationValidationResult"
+                }
+            }
+        },
+        "SourceRepository": {
+            "required": [
+                "id",
+                "full_name",
+                "default_branch",
+                "private"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "integer"
+                },
+                "full_name": {
+                    "title": "Full name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "default_branch": {
+                    "title": "Default branch",
+                    "type": "string"
+                },
+                "private": {
+                    "title": "Private",
+                    "type": "boolean"
+                }
+            }
+        },
+        "SourceRepositoriesResult": {
+            "required": [
+                "repositories",
+                "next_page"
+            ],
+            "type": "object",
+            "properties": {
+                "repositories": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SourceRepository"
+                    }
+                },
+                "next_page": {
+                    "title": "Next page",
+                    "type": "integer",
+                    "x-nullable": true
+                }
+            }
+        },
+        "SourceRepositoriesResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SourceRepositoriesResult"
+                }
+            }
+        },
+        "SourceBranch": {
+            "required": [
+                "name",
+                "is_default"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "is_default": {
+                    "title": "Is default",
+                    "type": "boolean"
+                }
+            }
+        },
+        "SourceBranchesResult": {
+            "required": [
+                "branches"
+            ],
+            "type": "object",
+            "properties": {
+                "branches": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SourceBranch"
+                    }
+                }
+            }
+        },
+        "SourceBranchesResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/SourceBranchesResult"
                 }
             }
         },
@@ -95389,6 +96211,101 @@
                 },
                 "result": {
                     "$ref": "#/definitions/IntegrationMessageResult"
+                }
+            }
+        },
+        "GitHubInstallResult": {
+            "required": [
+                "install_url"
+            ],
+            "type": "object",
+            "properties": {
+                "install_url": {
+                    "title": "Install url",
+                    "type": "string",
+                    "format": "uri",
+                    "minLength": 1
+                }
+            }
+        },
+        "GitHubInstallResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/GitHubInstallResult"
+                }
+            }
+        },
+        "GitHubInstallComplete": {
+            "required": [
+                "state"
+            ],
+            "type": "object",
+            "properties": {
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "maxLength": 2048,
+                    "minLength": 1
+                },
+                "setup_action": {
+                    "title": "Setup action",
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 32
+                },
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 255
+                },
+                "installation_id": {
+                    "title": "Installation id",
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 32
+                }
+            }
+        },
+        "GitHubInstallCompleteResult": {
+            "required": [
+                "outcome"
+            ],
+            "type": "object",
+            "properties": {
+                "outcome": {
+                    "title": "Outcome",
+                    "type": "string",
+                    "enum": [
+                        "connected",
+                        "requested",
+                        "already_connected"
+                    ]
+                }
+            }
+        },
+        "GitHubInstallCompleteResponse": {
+            "required": [
+                "status",
+                "result"
+            ],
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean"
+                },
+                "result": {
+                    "$ref": "#/definitions/GitHubInstallCompleteResult"
                 }
             }
         },
@@ -120705,6 +121622,26 @@
                 }
             }
         },
+        "ObserveProjectRef": {
+            "required": [
+                "id",
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                }
+            },
+            "x-nullable": true
+        },
         "AgentDefinitionListResponse": {
             "type": "object",
             "properties": {
@@ -120957,6 +121894,9 @@
                         "$ref": "#/definitions/RunEnvironmentRef"
                     },
                     "readOnly": true
+                },
+                "observe_project": {
+                    "$ref": "#/definitions/ObserveProjectRef"
                 }
             }
         },
@@ -121806,6 +122746,59 @@
                     "title": "Observability enabled",
                     "type": "boolean",
                     "readOnly": true
+                },
+                "observe_project": {
+                    "$ref": "#/definitions/ObserveProjectRef"
+                }
+            }
+        },
+        "AgentBuildPreflightCheck": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "ok",
+                        "blocked"
+                    ],
+                    "readOnly": true
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                }
+            }
+        },
+        "AgentBuildPreflightResponse": {
+            "type": "object",
+            "properties": {
+                "ok": {
+                    "title": "Ok",
+                    "type": "boolean",
+                    "readOnly": true
+                },
+                "version_id": {
+                    "title": "Version id",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "checks": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AgentBuildPreflightCheck"
+                    },
+                    "readOnly": true
                 }
             }
         },
@@ -121826,6 +122819,12 @@
                 "observability_enabled": {
                     "title": "Observability enabled",
                     "type": "boolean"
+                },
+                "production_project_id": {
+                    "title": "Production project id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
                 },
                 "agent_name": {
                     "title": "Agent name",
@@ -121991,6 +122990,25 @@
             },
             "x-nullable": true
         },
+        "EnvironmentVersionRef": {
+            "required": [
+                "id",
+                "version_number"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "version_number": {
+                    "title": "Version number",
+                    "type": "integer"
+                }
+            },
+            "x-nullable": true
+        },
         "HarnessRunSummary": {
             "required": [
                 "kind",
@@ -122001,6 +123019,8 @@
                 "status",
                 "environment",
                 "agent_version",
+                "environment_version",
+                "partial",
                 "outcome_passed",
                 "outcome_failed",
                 "outcome_skipped",
@@ -122047,6 +123067,14 @@
                 "agent_version": {
                     "$ref": "#/definitions/AgentVersionRef"
                 },
+                "environment_version": {
+                    "$ref": "#/definitions/EnvironmentVersionRef"
+                },
+                "partial": {
+                    "title": "Partial",
+                    "type": "boolean",
+                    "x-nullable": true
+                },
                 "outcome_passed": {
                     "title": "Outcome passed",
                     "type": "integer",
@@ -122087,6 +123115,40 @@
                     "readOnly": true
                 }
             }
+        },
+        "AgentVersionSource": {
+            "required": [
+                "kind"
+            ],
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "repository": {
+                    "title": "Repository",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "ref": {
+                    "title": "Ref",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "commit_sha": {
+                    "title": "Commit sha",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "subfolder": {
+                    "title": "Subfolder",
+                    "type": "string",
+                    "minLength": 1
+                }
+            },
+            "x-nullable": true
         },
         "AgentVersionListResponse": {
             "type": "object",
@@ -122181,6 +123243,31 @@
                     "type": "string",
                     "readOnly": true
                 },
+                "in_production": {
+                    "title": "In production",
+                    "type": "boolean",
+                    "readOnly": true
+                },
+                "origin": {
+                    "title": "Origin",
+                    "type": "string",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "preflight_status": {
+                    "title": "Preflight status",
+                    "type": "string",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "environments_count": {
+                    "title": "Environments count",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "source": {
+                    "$ref": "#/definitions/AgentVersionSource"
+                },
                 "created_at": {
                     "title": "Created at",
                     "type": "string",
@@ -122189,133 +123276,40 @@
                 }
             }
         },
-        "AgentVersionCreateRequest": {
+        "AgentVersionChangeRequest": {
+            "required": [
+                "kind"
+            ],
             "type": "object",
             "properties": {
-                "agent_name": {
-                    "title": "Agent name",
-                    "type": "string",
-                    "maxLength": 255,
-                    "minLength": 1
-                },
-                "agent_type": {
-                    "title": "Agent type",
+                "kind": {
+                    "title": "Kind",
                     "type": "string",
                     "enum": [
-                        "voice",
-                        "text"
+                        "sync",
+                        "upload",
+                        "credentials",
+                        "manual"
                     ]
                 },
-                "description": {
-                    "title": "Description",
+                "archive_artifact_id": {
+                    "title": "Archive artifact id",
                     "type": "string",
-                    "x-nullable": true
+                    "format": "uuid"
                 },
-                "provider": {
-                    "title": "Provider",
+                "prompt": {
+                    "title": "Prompt",
                     "type": "string",
-                    "x-nullable": true
+                    "maxLength": 65536
                 },
-                "api_key": {
-                    "title": "Api key",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "assistant_id": {
-                    "title": "Assistant id",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "authentication_method": {
-                    "title": "Authentication method",
-                    "type": "string",
-                    "enum": [
-                        "api_key"
-                    ],
-                    "x-nullable": true
-                },
-                "language": {
-                    "title": "Language",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "languages": {
-                    "type": "array",
-                    "items": {
+                "secret_values": {
+                    "title": "Secret values",
+                    "type": "object",
+                    "additionalProperties": {
                         "type": "string",
+                        "maxLength": 65536,
                         "minLength": 1
-                    },
-                    "x-nullable": true
-                },
-                "contact_number": {
-                    "title": "Contact number",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "inbound": {
-                    "title": "Inbound",
-                    "type": "boolean"
-                },
-                "target_speaks_first": {
-                    "title": "Target speaks first",
-                    "type": "boolean",
-                    "x-nullable": true
-                },
-                "knowledge_base": {
-                    "title": "Knowledge base",
-                    "type": "string",
-                    "format": "uuid",
-                    "x-nullable": true
-                },
-                "model": {
-                    "title": "Model",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "model_details": {
-                    "title": "Model details",
-                    "type": "object",
-                    "x-nullable": true
-                },
-                "livekit_url": {
-                    "title": "Livekit url",
-                    "type": "string",
-                    "maxLength": 500
-                },
-                "livekit_api_key": {
-                    "title": "Livekit api key",
-                    "type": "string",
-                    "maxLength": 255
-                },
-                "livekit_api_secret": {
-                    "title": "Livekit api secret",
-                    "type": "string",
-                    "maxLength": 500
-                },
-                "livekit_agent_name": {
-                    "title": "Livekit agent name",
-                    "type": "string",
-                    "maxLength": 255
-                },
-                "livekit_config_json": {
-                    "title": "Livekit config json",
-                    "type": "object",
-                    "x-nullable": true
-                },
-                "livekit_max_concurrency": {
-                    "title": "Livekit max concurrency",
-                    "type": "integer",
-                    "maximum": 25,
-                    "minimum": 1
-                },
-                "commit_message": {
-                    "title": "Commit message",
-                    "type": "string",
-                    "default": ""
-                },
-                "observability_enabled": {
-                    "title": "Observability enabled",
-                    "type": "boolean"
+                    }
                 }
             }
         },
@@ -122454,6 +123448,9 @@
                     "minLength": 1,
                     "x-nullable": true
                 },
+                "source": {
+                    "$ref": "#/definitions/AgentVersionSource"
+                },
                 "created_at": {
                     "title": "Created at",
                     "type": "string",
@@ -122465,6 +123462,154 @@
                     "type": "string",
                     "format": "date-time",
                     "readOnly": true
+                }
+            }
+        },
+        "AgentVersionChangeResponse": {
+            "type": "object",
+            "properties": {
+                "version": {
+                    "$ref": "#/definitions/AgentVersionResponse"
+                },
+                "created": {
+                    "title": "Created",
+                    "type": "boolean",
+                    "readOnly": true
+                },
+                "up_to_date": {
+                    "title": "Up to date",
+                    "type": "boolean",
+                    "readOnly": true
+                }
+            }
+        },
+        "AgentVersionCreateRequest": {
+            "type": "object",
+            "properties": {
+                "agent_name": {
+                    "title": "Agent name",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "agent_type": {
+                    "title": "Agent type",
+                    "type": "string",
+                    "enum": [
+                        "voice",
+                        "text"
+                    ]
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "provider": {
+                    "title": "Provider",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "api_key": {
+                    "title": "Api key",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "assistant_id": {
+                    "title": "Assistant id",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "authentication_method": {
+                    "title": "Authentication method",
+                    "type": "string",
+                    "enum": [
+                        "api_key"
+                    ],
+                    "x-nullable": true
+                },
+                "language": {
+                    "title": "Language",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "languages": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "x-nullable": true
+                },
+                "contact_number": {
+                    "title": "Contact number",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "inbound": {
+                    "title": "Inbound",
+                    "type": "boolean"
+                },
+                "target_speaks_first": {
+                    "title": "Target speaks first",
+                    "type": "boolean",
+                    "x-nullable": true
+                },
+                "knowledge_base": {
+                    "title": "Knowledge base",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "model": {
+                    "title": "Model",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "model_details": {
+                    "title": "Model details",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "livekit_url": {
+                    "title": "Livekit url",
+                    "type": "string",
+                    "maxLength": 500
+                },
+                "livekit_api_key": {
+                    "title": "Livekit api key",
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "livekit_api_secret": {
+                    "title": "Livekit api secret",
+                    "type": "string",
+                    "maxLength": 500
+                },
+                "livekit_agent_name": {
+                    "title": "Livekit agent name",
+                    "type": "string",
+                    "maxLength": 255
+                },
+                "livekit_config_json": {
+                    "title": "Livekit config json",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "livekit_max_concurrency": {
+                    "title": "Livekit max concurrency",
+                    "type": "integer",
+                    "maximum": 25,
+                    "minimum": 1
+                },
+                "commit_message": {
+                    "title": "Commit message",
+                    "type": "string",
+                    "default": ""
+                },
+                "observability_enabled": {
+                    "title": "Observability enabled",
+                    "type": "boolean"
                 }
             }
         },
@@ -123221,7 +124366,279 @@
                 }
             }
         },
-        "AgentVersionDeleteResponse": {
+        "AgentCodeChange": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "title": "Path",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "added",
+                        "removed",
+                        "modified"
+                    ],
+                    "readOnly": true
+                }
+            }
+        },
+        "AgentCodeChangesResponse": {
+            "type": "object",
+            "properties": {
+                "against": {
+                    "title": "Against",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AgentCodeChange"
+                    },
+                    "readOnly": true
+                },
+                "unavailable": {
+                    "title": "Unavailable",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                }
+            }
+        },
+        "AgentCodeFileResponse": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "title": "Path",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "size": {
+                    "title": "Size",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "text",
+                        "binary",
+                        "too_large"
+                    ],
+                    "readOnly": true
+                },
+                "language": {
+                    "title": "Language",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "content": {
+                    "title": "Content",
+                    "type": "string",
+                    "readOnly": true
+                }
+            }
+        },
+        "AgentCodeEntry": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "title": "Path",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "size": {
+                    "title": "Size",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "text",
+                        "binary",
+                        "too_large"
+                    ],
+                    "readOnly": true
+                }
+            }
+        },
+        "AgentCodeTreeResponse": {
+            "type": "object",
+            "properties": {
+                "subfolder": {
+                    "title": "Subfolder",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AgentCodeEntry"
+                    },
+                    "readOnly": true
+                },
+                "truncated": {
+                    "title": "Truncated",
+                    "type": "boolean",
+                    "readOnly": true
+                }
+            }
+        },
+        "AgentToolSignature": {
+            "type": "object",
+            "properties": {
+                "arguments": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "readOnly": true
+                },
+                "required": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "readOnly": true
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "AgentVersionToolChange": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "before": {
+                    "$ref": "#/definitions/AgentToolSignature"
+                },
+                "after": {
+                    "$ref": "#/definitions/AgentToolSignature"
+                }
+            }
+        },
+        "AgentVersionCompatibilityResponse": {
+            "type": "object",
+            "properties": {
+                "environment_id": {
+                    "title": "Environment id",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "version_id": {
+                    "title": "Version id",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "clean",
+                        "new_tool",
+                        "tool_removed_or_changed",
+                        "new_rule",
+                        "unmeasured"
+                    ],
+                    "readOnly": true
+                },
+                "base": {
+                    "title": "Base",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "same_version": {
+                    "title": "Same version",
+                    "type": "boolean",
+                    "readOnly": true
+                },
+                "tools_added": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "readOnly": true
+                },
+                "tools_removed": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "readOnly": true
+                },
+                "tools_changed": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AgentVersionToolChange"
+                    },
+                    "readOnly": true
+                },
+                "services_added": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "readOnly": true
+                },
+                "rules_added": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "readOnly": true
+                },
+                "prompt_changed": {
+                    "title": "Prompt changed",
+                    "type": "boolean",
+                    "readOnly": true
+                },
+                "model_changed": {
+                    "title": "Model changed",
+                    "type": "boolean",
+                    "readOnly": true
+                }
+            }
+        },
+        "AgentVersionActionResponse": {
             "type": "object",
             "properties": {
                 "message": {
@@ -123350,6 +124767,22 @@
                             "minLength": 1
                         }
                     }
+                }
+            }
+        },
+        "AgentVersionProductionResponse": {
+            "type": "object",
+            "properties": {
+                "version": {
+                    "$ref": "#/definitions/AgentVersionResponse"
+                },
+                "moved_environment_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "readOnly": true
                 }
             }
         },
@@ -125411,6 +126844,8 @@
                 "sub_goals_count",
                 "tools_count",
                 "runs_count",
+                "agent_version",
+                "agent_policy",
                 "last_updated",
                 "created_at",
                 "last_run"
@@ -125484,6 +126919,17 @@
                 "runs_count": {
                     "title": "Runs count",
                     "type": "integer"
+                },
+                "agent_version": {
+                    "$ref": "#/definitions/AgentVersionRef"
+                },
+                "agent_policy": {
+                    "title": "Agent policy",
+                    "type": "string",
+                    "enum": [
+                        "follow",
+                        "pinned"
+                    ]
                 },
                 "last_updated": {
                     "title": "Last updated",
@@ -125626,6 +127072,8 @@
                 "sub_goals_count",
                 "tools_count",
                 "runs_count",
+                "agent_version",
+                "agent_policy",
                 "last_updated",
                 "created_at",
                 "flows_count",
@@ -125704,6 +127152,17 @@
                 "runs_count": {
                     "title": "Runs count",
                     "type": "integer"
+                },
+                "agent_version": {
+                    "$ref": "#/definitions/AgentVersionRef"
+                },
+                "agent_policy": {
+                    "title": "Agent policy",
+                    "type": "string",
+                    "enum": [
+                        "follow",
+                        "pinned"
+                    ]
                 },
                 "last_updated": {
                     "title": "Last updated",
@@ -126652,6 +128111,240 @@
                 }
             }
         },
+        "HarnessAgentPolicy": {
+            "required": [
+                "policy"
+            ],
+            "type": "object",
+            "properties": {
+                "policy": {
+                    "title": "Policy",
+                    "type": "string",
+                    "enum": [
+                        "follow",
+                        "pinned"
+                    ]
+                },
+                "version_id": {
+                    "title": "Version id",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "HarnessVersionPerson": {
+            "required": [
+                "id",
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string"
+                }
+            },
+            "x-nullable": true
+        },
+        "HarnessVersion": {
+            "required": [
+                "id",
+                "label",
+                "status",
+                "is_default",
+                "created_at",
+                "created_by",
+                "origin",
+                "summary",
+                "hash",
+                "parent_id",
+                "derived_from_agent_version_id",
+                "scenario_count",
+                "source",
+                "prompt",
+                "preflight_status",
+                "preflight_report",
+                "preflighted_at",
+                "check_started_at",
+                "credential_names",
+                "required_variable_names",
+                "activation_outcome",
+                "requested_here",
+                "pickable",
+                "discardable"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "draft",
+                        "active",
+                        "discarded"
+                    ]
+                },
+                "is_default": {
+                    "title": "Is default",
+                    "type": "boolean"
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "created_by": {
+                    "$ref": "#/definitions/HarnessVersionPerson"
+                },
+                "origin": {
+                    "title": "Origin",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "summary": {
+                    "title": "Summary",
+                    "type": "string"
+                },
+                "hash": {
+                    "title": "Hash",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "parent_id": {
+                    "title": "Parent id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "derived_from_agent_version_id": {
+                    "title": "Derived from agent version id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "scenario_count": {
+                    "title": "Scenario count",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "source": {
+                    "title": "Source",
+                    "description": "An agent version's non-secret source facts.",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "prompt": {
+                    "title": "Prompt",
+                    "description": "The default agent version's prompt; null on every other item.",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "preflight_status": {
+                    "title": "Preflight status",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "preflight_report": {
+                    "title": "Preflight report",
+                    "description": "An agent version's last check: check statuses and names only.",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "preflighted_at": {
+                    "title": "Preflighted at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "check_started_at": {
+                    "title": "Check started at",
+                    "description": "When an agent version's latest check was asked for.",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "credential_names": {
+                    "description": "An agent version's credential names, provider keys included.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "x-nullable": true
+                },
+                "required_variable_names": {
+                    "description": "The variables an agent version's source reads, when known.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "x-nullable": true
+                },
+                "activation_outcome": {
+                    "title": "Activation outcome",
+                    "description": "Why a passed agent version is or isn't this environment's default, as last recorded.",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "requested_here": {
+                    "title": "Requested here",
+                    "description": "Whether this environment asked for an agent version.",
+                    "type": "boolean",
+                    "x-nullable": true
+                },
+                "pickable": {
+                    "title": "Pickable",
+                    "description": "Whether an agent version can be picked for a run of this environment or made its default.",
+                    "type": "boolean",
+                    "x-nullable": true
+                },
+                "discardable": {
+                    "title": "Discardable",
+                    "description": "Whether this environment can discard an agent version.",
+                    "type": "boolean",
+                    "x-nullable": true
+                }
+            },
+            "x-nullable": true
+        },
+        "HarnessAgentPolicyResponse": {
+            "type": "object",
+            "properties": {
+                "policy": {
+                    "title": "Policy",
+                    "type": "string",
+                    "enum": [
+                        "follow",
+                        "pinned"
+                    ],
+                    "readOnly": true
+                },
+                "agent_version": {
+                    "$ref": "#/definitions/HarnessVersion"
+                }
+            }
+        },
         "HarnessCompareInterval": {
             "description": "Newcombe 95% interval of the difference.",
             "required": [
@@ -126940,25 +128633,6 @@
                     "$ref": "#/definitions/HarnessCompareVersions"
                 }
             }
-        },
-        "HarnessVersionPerson": {
-            "required": [
-                "id",
-                "name"
-            ],
-            "type": "object",
-            "properties": {
-                "id": {
-                    "title": "Id",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "name": {
-                    "title": "Name",
-                    "type": "string"
-                }
-            },
-            "x-nullable": true
         },
         "HarnessDraftItem": {
             "required": [
@@ -127256,182 +128930,6 @@
                     "pattern": "^[A-Za-z0-9_-]+$",
                     "maxLength": 128,
                     "minLength": 1
-                }
-            }
-        },
-        "HarnessVersion": {
-            "required": [
-                "id",
-                "label",
-                "status",
-                "is_default",
-                "created_at",
-                "created_by",
-                "origin",
-                "summary",
-                "hash",
-                "parent_id",
-                "derived_from_agent_version_id",
-                "scenario_count",
-                "source",
-                "prompt",
-                "preflight_status",
-                "preflight_report",
-                "preflighted_at",
-                "check_started_at",
-                "credential_names",
-                "required_variable_names",
-                "activation_outcome",
-                "requested_here",
-                "pickable",
-                "discardable"
-            ],
-            "type": "object",
-            "properties": {
-                "id": {
-                    "title": "Id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "label": {
-                    "title": "Label",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "status": {
-                    "title": "Status",
-                    "type": "string",
-                    "enum": [
-                        "draft",
-                        "active",
-                        "discarded"
-                    ]
-                },
-                "is_default": {
-                    "title": "Is default",
-                    "type": "boolean"
-                },
-                "created_at": {
-                    "title": "Created at",
-                    "type": "string",
-                    "format": "date-time"
-                },
-                "created_by": {
-                    "$ref": "#/definitions/HarnessVersionPerson"
-                },
-                "origin": {
-                    "title": "Origin",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "summary": {
-                    "title": "Summary",
-                    "type": "string"
-                },
-                "hash": {
-                    "title": "Hash",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "parent_id": {
-                    "title": "Parent id",
-                    "type": "string",
-                    "format": "uuid",
-                    "x-nullable": true
-                },
-                "derived_from_agent_version_id": {
-                    "title": "Derived from agent version id",
-                    "type": "string",
-                    "format": "uuid",
-                    "x-nullable": true
-                },
-                "scenario_count": {
-                    "title": "Scenario count",
-                    "type": "integer",
-                    "x-nullable": true
-                },
-                "source": {
-                    "title": "Source",
-                    "description": "An agent version's non-secret source facts.",
-                    "type": "object",
-                    "x-nullable": true
-                },
-                "prompt": {
-                    "title": "Prompt",
-                    "description": "The default agent version's prompt; null on every other item.",
-                    "type": "string",
-                    "x-nullable": true
-                },
-                "preflight_status": {
-                    "title": "Preflight status",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "preflight_report": {
-                    "title": "Preflight report",
-                    "description": "An agent version's last check: check statuses and names only.",
-                    "type": "object",
-                    "x-nullable": true
-                },
-                "preflighted_at": {
-                    "title": "Preflighted at",
-                    "type": "string",
-                    "format": "date-time",
-                    "x-nullable": true
-                },
-                "check_started_at": {
-                    "title": "Check started at",
-                    "description": "When an agent version's latest check was asked for.",
-                    "type": "string",
-                    "format": "date-time",
-                    "x-nullable": true
-                },
-                "credential_names": {
-                    "description": "An agent version's credential names, provider keys included.",
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "minLength": 1
-                    },
-                    "x-nullable": true
-                },
-                "required_variable_names": {
-                    "description": "The variables an agent version's source reads, when known.",
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "minLength": 1
-                    },
-                    "x-nullable": true
-                },
-                "activation_outcome": {
-                    "title": "Activation outcome",
-                    "description": "Why a passed agent version is or isn't this environment's default, as last recorded.",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "requested_here": {
-                    "title": "Requested here",
-                    "description": "Whether this environment asked for an agent version.",
-                    "type": "boolean",
-                    "x-nullable": true
-                },
-                "pickable": {
-                    "title": "Pickable",
-                    "description": "Whether an agent version can be picked for a run of this environment or made its default.",
-                    "type": "boolean",
-                    "x-nullable": true
-                },
-                "discardable": {
-                    "title": "Discardable",
-                    "description": "Whether this environment can discard an agent version.",
-                    "type": "boolean",
-                    "x-nullable": true
                 }
             }
         },
@@ -129396,6 +130894,13 @@
                     "type": "string",
                     "maxLength": 255,
                     "minLength": 1,
+                    "x-nullable": true
+                },
+                "subfolder": {
+                    "title": "Subfolder",
+                    "type": "string",
+                    "pattern": "^(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$",
+                    "maxLength": 512,
                     "x-nullable": true
                 },
                 "archive_artifact_id": {

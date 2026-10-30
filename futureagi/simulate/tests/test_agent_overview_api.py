@@ -3,14 +3,21 @@ from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
+from django.db import connection
 from django.test import override_settings
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
 
 from accounts.models import Organization
+from accounts.models.workspace import Workspace
+from model_hub.models.ai_model import AIModel
 from simulate.models import (
     AgentDefinition,
+    AgentVersion,
+    HarnessAgentVersionRuntime,
+    HarnessEnvironmentVersion,
     HostedHarnessAttempt,
     HostedHarnessJob,
     HostedHarnessReceipt,
@@ -275,6 +282,8 @@ def test_runs_list_environment_and_simulate_runs_newest_first(
         "status": "completed",
         "environment": None,
         "agent_version": None,
+        "environment_version": None,
+        "partial": None,
         "outcome_passed": None,
         "outcome_failed": None,
         "outcome_skipped": None,
@@ -702,3 +711,515 @@ def test_each_environment_run_records_the_latest_version_at_launch(user, workspa
     assert after.test_execution.agent_version_id == second.id
     environment.run_test.refresh_from_db()
     assert environment.run_test.agent_version_id is None
+
+
+def _environment_version(environment, number):
+    return HarnessEnvironmentVersion.no_workspace_objects.create(
+        job=environment,
+        organization_id=environment.organization_id,
+        workspace_id=environment.workspace_id,
+        version_number=number,
+        status="active",
+        origin="authoring",
+        hash="sha256:" + str(number) * 64,
+        archive_object_key=f"harness/environments/{number}.tar.gz",
+        archive_sha256="",
+        archive_size=0,
+    )
+
+
+def _register(environment, *keys, minutes):
+    for key in keys:
+        row = HostedHarnessScenario.objects.create(job=environment, scenario_key=key)
+        _at(HostedHarnessScenario, row, minutes)
+
+
+def _run_of(environment, minutes, keys):
+    execution = _execution(environment.run_test, minutes, total_scenarios=len(keys))
+    job = _job(
+        environment.run_test,
+        minutes=minutes,
+        environment=environment,
+        execution=execution,
+    )
+    job.payload = {**job.payload, "metadata": {"selected_scenario_keys": list(keys)}}
+    # Trials multiply the calls, not the scenarios a run picked.
+    job.scenario_count = len(keys) * 3
+    job.save(update_fields=["payload", "scenario_count"])
+    return execution, job
+
+
+@pytest.mark.django_db
+def test_runs_carry_the_environment_version_and_say_when_they_were_partial(
+    auth_client, organization, workspace
+):
+    agent = _agent(organization, workspace, "Northwind")
+    environment = _environment(agent, 1)
+    _register(environment, "a", "b", "c", "d", minutes=2)
+    full, full_job = _run_of(environment, 10, ["a", "b", "c", "d"])
+    full_job.environment_version = _environment_version(environment, 7)
+    full_job.save(update_fields=["environment_version"])
+    some, _ = _run_of(environment, 20, ["a", "b"])
+    _register(environment, "e", minutes=30)
+    simulate = _execution(_run_test(agent, "Old suite"), 40)
+
+    response = auth_client.get(f"{AGENTS}{agent.id}/runs/", {"limit": 5})
+
+    assert response.status_code == status.HTTP_200_OK, response.content
+    rows = {row["test_execution_id"]: row for row in response.json()["results"]}
+    assert rows[str(full.id)]["environment_version"]["version_number"] == 7
+    # Every scenario the environment had then, though it gained one later.
+    assert rows[str(full.id)]["partial"] is False
+    assert rows[str(some.id)]["environment_version"] is None
+    assert rows[str(some.id)]["partial"] is True
+    assert rows[str(simulate.id)]["environment_version"] is None
+    assert rows[str(simulate.id)]["partial"] is None
+
+
+@pytest.mark.django_db
+def test_a_scenario_removed_after_a_run_still_counts_for_that_run(
+    auth_client, organization, workspace
+):
+    agent = _agent(organization, workspace, "Northwind")
+    environment = _environment(agent, 1)
+    _register(environment, "a", "b", minutes=2)
+    run, _ = _run_of(environment, 10, ["a"])
+    removed = HostedHarnessScenario.objects.get(job=environment, scenario_key="b")
+    HostedHarnessScenario.all_objects.filter(id=removed.id).update(
+        deleted=True, deleted_at=START + timedelta(minutes=20)
+    )
+
+    rows = auth_client.get(f"{AGENTS}{agent.id}/runs/").json()["results"]
+
+    assert [
+        row["partial"] for row in rows if row["test_execution_id"] == str(run.id)
+    ] == [True]
+
+
+@pytest.mark.django_db
+def test_run_summaries_read_every_environment_s_scenarios_in_one_query(
+    auth_client, organization, workspace, django_assert_max_num_queries
+):
+    agent = _agent(organization, workspace, "Northwind")
+    for minutes in (1, 2, 3):
+        environment = _environment(agent, minutes)
+        _register(environment, "a", "b", minutes=minutes)
+        _run_of(environment, minutes + 10, ["a"])
+    url = f"{AGENTS}{agent.id}/runs/"
+    with CaptureQueriesContext(connection) as one_page:
+        auth_client.get(url, {"limit": 1})
+    with django_assert_max_num_queries(len(one_page.captured_queries)):
+        auth_client.get(url, {"limit": 3})
+
+
+@pytest.mark.django_db
+def test_environments_carry_the_version_each_is_pinned_to(
+    auth_client, organization, workspace
+):
+    agent = _agent(organization, workspace, "Northwind")
+    pinned = _environment(agent, 1)
+    version = agent.create_version(
+        description="p", commit_message="v1", status="active"
+    )
+    pinned.agent_version = version
+    pinned.save(update_fields=["agent_version"])
+    unpinned = _environment(agent, 2)
+
+    response = auth_client.get(
+        ENVIRONMENTS,
+        {"agent_definition_id": agent.id},
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+    )
+
+    assert response.status_code == status.HTTP_200_OK, response.content
+    rows = {row["id"]: row for row in response.json()["results"]}
+    assert rows[str(pinned.id)]["agent_version"] == {
+        "id": str(version.id),
+        "version_number": 1,
+    }
+    assert rows[str(unpinned.id)]["agent_version"] is None
+
+
+@pytest.mark.django_db
+def test_a_version_cannot_be_deleted_whether_or_not_an_environment_pins_it(
+    auth_client, organization, workspace
+):
+    agent = _agent(organization, workspace, "Northwind")
+    agent.create_version(description="p", commit_message="v1", status="active")
+    pinned = agent.create_version(description="p", commit_message="v2", status="draft")
+    environment = _environment(agent, 1)
+    environment.agent_version = pinned
+    environment.save(update_fields=["agent_version"])
+
+    refused = auth_client.delete(f"{AGENTS}{agent.id}/versions/{pinned.id}/delete/")
+    assert refused.status_code == status.HTTP_404_NOT_FOUND, refused.content
+    pinned.refresh_from_db()
+    assert pinned.deleted is False
+
+
+@pytest.mark.django_db
+def test_an_agent_with_environments_cannot_be_deleted_one_at_a_time(
+    auth_client, organization, workspace
+):
+    tested = _agent(organization, workspace, "Northwind")
+    _environment(tested, 1)
+    _environment(tested, 2)
+    free = _agent(organization, workspace, "Spare")
+
+    single = auth_client.delete(f"{AGENTS}{tested.id}/delete/")
+    assert single.status_code == status.HTTP_400_BAD_REQUEST, single.content
+    assert single.json()["detail"] == (
+        "Northwind is tested by 2 environments. Delete those environments first."
+    )
+    operations = auth_client.delete(
+        f"/simulate/api/agent-definition-operations/{tested.id}/"
+    )
+    assert operations.status_code == status.HTTP_400_BAD_REQUEST, operations.content
+    tested.refresh_from_db()
+    assert tested.deleted is False
+
+    assert (
+        auth_client.delete(f"{AGENTS}{free.id}/delete/").status_code
+        == status.HTTP_200_OK
+    )
+    free.refresh_from_db()
+    assert free.deleted is True
+
+
+@pytest.mark.django_db
+def test_version_detail_says_where_a_code_version_was_read_from(
+    auth_client, organization, workspace
+):
+    agent = _agent(organization, workspace, "Harbor Hotels", provider="")
+    code = agent.create_version(description="", commit_message="v1", status="active")
+    HarnessAgentVersionRuntime.no_workspace_objects.create(
+        agent_version=code,
+        agent_definition=agent,
+        organization=organization,
+        workspace=workspace,
+        hash="sha256:" + "a" * 64,
+        source_kind="github",
+        trigger="creation",
+        source={
+            "repository": "https://github.com/acme/hotel-agent",
+            "ref": "main",
+            "commit_sha": "b" * 40,
+            "installation_id": 175787687,
+        },
+    )
+    bare = agent.create_version(description="", commit_message="v2", status="draft")
+
+    detail = auth_client.get(f"{AGENTS}{agent.id}/versions/{code.id}/")
+    assert detail.status_code == status.HTTP_200_OK, detail.content
+    assert detail.json()["source"] == {
+        "kind": "github",
+        "repository": "https://github.com/acme/hotel-agent",
+        "ref": "main",
+        "commit_sha": "b" * 40,
+    }
+    assert (
+        auth_client.get(f"{AGENTS}{agent.id}/versions/{bare.id}/").json()["source"]
+        is None
+    )
+
+
+def _observe_project(organization, workspace, name):
+    return Project.no_workspace_objects.create(
+        name=name,
+        organization=organization,
+        workspace=workspace,
+        model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+        trace_type="observe",
+    )
+
+
+def _code_agent(organization, workspace, name, **stored):
+    agent = _agent(organization, workspace, name, provider="")
+    version = agent.create_version(description="", commit_message="v1", status="active")
+    store_agent(
+        agent_version_id=version.id, agent=source_agent(**stored), sdk_version="0.2.3"
+    )
+    return agent
+
+
+def _link(client, agent, project_id, **fields):
+    return client.put(
+        f"{AGENTS}{agent.id}/edit/",
+        {"production_project_id": project_id, **fields},
+        format="json",
+    )
+
+
+def _detail(client, agent):
+    return client.get(f"{AGENTS}{agent.id}/").json()
+
+
+@pytest.mark.django_db
+def test_a_code_agent_links_and_unlinks_its_production_project(
+    auth_client, organization, workspace
+):
+    agent = _code_agent(organization, workspace, "Harbor Hotels")
+    chosen = _observe_project(organization, workspace, "Harbor production")
+    other = _observe_project(organization, workspace, "Harbor staging")
+
+    assert _detail(auth_client, agent)["observe_project"] is None
+
+    linked = _link(auth_client, agent, str(chosen.id))
+    assert linked.status_code == status.HTTP_200_OK, linked.content
+    assert _detail(auth_client, agent)["observe_project"] == {
+        "id": str(chosen.id),
+        "name": "Harbor production",
+    }
+
+    moved = _link(auth_client, agent, str(other.id))
+    assert moved.status_code == status.HTTP_200_OK, moved.content
+    assert _detail(auth_client, agent)["observe_project"]["name"] == "Harbor staging"
+
+    unlinked = _link(auth_client, agent, None)
+    assert unlinked.status_code == status.HTTP_200_OK, unlinked.content
+    assert _detail(auth_client, agent)["observe_project"] is None
+
+
+@pytest.mark.django_db
+def test_linking_and_unlinking_leave_simulation_export_as_it_was(
+    auth_client, organization, workspace
+):
+    agent = _code_agent(organization, workspace, "Harbor Hotels")
+    chosen = _observe_project(organization, workspace, "Harbor production")
+    url = f"{AGENTS}{agent.id}/edit/"
+    switched_on = auth_client.put(url, {"observability_enabled": True}, format="json")
+    assert switched_on.status_code == status.HTTP_200_OK, switched_on.content
+
+    _link(auth_client, agent, str(chosen.id))
+    assert _detail(auth_client, agent)["observability_enabled"] is True
+    _link(auth_client, agent, None)
+    assert _detail(auth_client, agent)["observability_enabled"] is True
+
+
+@pytest.mark.django_db
+def test_turning_simulation_export_off_keeps_the_production_project(
+    auth_client, organization, workspace
+):
+    agent = _code_agent(organization, workspace, "Harbor Hotels")
+    chosen = _observe_project(organization, workspace, "Harbor production")
+    _link(auth_client, agent, str(chosen.id))
+
+    # What the agent config form sends on every save.
+    saved = auth_client.put(
+        f"{AGENTS}{agent.id}/edit/",
+        {"agent_name": "Harbor Hotels", "observability_enabled": False},
+        format="json",
+    )
+
+    assert saved.status_code == status.HTTP_200_OK, saved.content
+    body = _detail(auth_client, agent)
+    assert body["observability_enabled"] is False
+    assert body["observe_project"] == {
+        "id": str(chosen.id),
+        "name": "Harbor production",
+    }
+
+
+@pytest.mark.django_db
+def test_a_code_agent_without_instrumentation_can_still_link(
+    auth_client, organization, workspace
+):
+    agent = _code_agent(
+        organization, workspace, "Harbor Hotels", instrumentation="none"
+    )
+    chosen = _observe_project(organization, workspace, "Harbor production")
+
+    linked = _link(auth_client, agent, str(chosen.id))
+
+    assert linked.status_code == status.HTTP_200_OK, linked.content
+    assert _detail(auth_client, agent)["observability_enabled"] is False
+
+
+@pytest.mark.django_db
+def test_a_deleted_production_project_reads_as_not_linked(
+    auth_client, organization, workspace
+):
+    agent = _code_agent(organization, workspace, "Harbor Hotels")
+    chosen = _observe_project(organization, workspace, "Harbor production")
+    _link(auth_client, agent, str(chosen.id))
+
+    Project.all_objects.filter(id=chosen.id).update(deleted=True)
+
+    assert _detail(auth_client, agent)["observe_project"] is None
+
+
+@pytest.mark.django_db
+def test_a_hosted_agent_shows_its_pulled_project_and_cannot_link(
+    auth_client, organization, workspace
+):
+    hosted = _agent(organization, workspace, "Northwind")
+    project = _observe_project(organization, workspace, "Northwind production")
+
+    refused = _link(auth_client, hosted, str(project.id), agent_name="Renamed")
+
+    assert refused.status_code == status.HTTP_400_BAD_REQUEST, refused.content
+    assert "Only a code agent" in refused.json()["detail"]
+    hosted.refresh_from_db()
+    # The rest of the edit was refused with it.
+    assert hosted.agent_name == "Northwind"
+    assert hosted.production_project_id is None
+
+
+@pytest.mark.django_db
+def test_linking_refuses_a_project_outside_the_agent_s_workspace(
+    auth_client, organization, workspace, user
+):
+    code = _code_agent(organization, workspace, "Harbor Hotels")
+    missing = _link(auth_client, code, str(uuid.uuid4()))
+    assert missing.status_code == status.HTTP_400_BAD_REQUEST, missing.content
+    assert "not found" in missing.json()["detail"]
+
+    sibling = Workspace.objects.create(
+        name="Sibling", organization=organization, is_active=True, created_by=user
+    )
+    in_sibling = _observe_project(organization, sibling, "Sibling production")
+    elsewhere = _observe_project(
+        Organization.objects.create(name="Elsewhere"), None, "Not ours"
+    )
+    for project in (in_sibling, elsewhere):
+        refused = _link(auth_client, code, str(project.id))
+        assert refused.status_code == status.HTTP_400_BAD_REQUEST, refused.content
+    code.refresh_from_db()
+    assert code.production_project_id is None
+
+
+def _pulling(agent, project, *, enabled=True):
+    row = ObservabilityProvider.objects.create(
+        project=project,
+        provider=ProviderChoices.VAPI,
+        enabled=enabled,
+        organization=agent.organization,
+        workspace=agent.workspace,
+    )
+    AgentDefinition.objects.filter(id=agent.id).update(observability_provider=row)
+
+
+@pytest.mark.django_db
+def test_the_list_names_each_agent_s_observe_project_by_kind(
+    auth_client, organization, workspace
+):
+    code = _code_agent(organization, workspace, "Harbor Hotels")
+    production = _observe_project(organization, workspace, "Harbor production")
+    _link(auth_client, code, str(production.id))
+    # The switch's own project for a code agent is not where its traces land.
+    _pulling(code, _observe_project(organization, workspace, "Harbor Hotels"))
+    unlinked = _code_agent(organization, workspace, "Page Turner Books")
+    hosted = _agent(organization, workspace, "Northwind")
+    pulled = _observe_project(organization, workspace, "Northwind calls")
+    _pulling(hosted, pulled)
+    switched_off = _agent(organization, workspace, "Clinic")
+    _pulling(
+        switched_off,
+        _observe_project(organization, workspace, "Clinic calls"),
+        enabled=False,
+    )
+
+    rows = _rows(auth_client)
+
+    assert rows["Harbor Hotels"]["observe_project"] == {
+        "id": str(production.id),
+        "name": "Harbor production",
+    }
+    assert rows["Page Turner Books"]["observe_project"] is None
+    assert rows["Northwind"]["observe_project"] == {
+        "id": str(pulled.id),
+        "name": "Northwind calls",
+    }
+    assert rows["Clinic"]["observe_project"] is None
+    assert unlinked.production_project_id is None
+
+
+@pytest.mark.django_db
+def test_the_list_reads_observe_projects_without_a_query_per_agent(
+    auth_client, organization, workspace, django_assert_max_num_queries
+):
+    for index in range(3):
+        agent = _agent(organization, workspace, f"Hosted {index}")
+        _pulling(agent, _observe_project(organization, workspace, f"Calls {index}"))
+    with CaptureQueriesContext(connection) as one_more:
+        _rows(auth_client)
+    agent = _agent(organization, workspace, "Hosted 3")
+    _pulling(agent, _observe_project(organization, workspace, "Calls 3"))
+
+    with django_assert_max_num_queries(len(one_more.captured_queries)):
+        assert len(_rows(auth_client)) == 4
+
+
+def test_bulk_delete_refuses_a_tested_agent_and_deletes_nothing(
+    auth_client, organization, workspace
+):
+    tested = _agent(organization, workspace, "tested")
+    _environment(tested, 1)
+    idle = _agent(organization, workspace, "idle")
+
+    response = auth_client.delete(
+        "/simulate/agent-definitions/",
+        {"agent_ids": [str(idle.id), str(tested.id)]},
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert "tested is tested by 1 environment" in response.json()["error"]
+    assert (
+        AgentDefinition.objects.filter(
+            id__in=[idle.id, tested.id], deleted=False
+        ).count()
+        == 2
+    )
+
+
+def test_an_agent_version_cannot_be_deleted(auth_client, organization, workspace):
+    agent = _agent(organization, workspace, "kept")
+    version = agent.create_version(description="p", commit_message="v1")
+
+    response = auth_client.delete(
+        f"/simulate/agent-definitions/{agent.id}/versions/{version.id}/delete/"
+    )
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+    assert AgentVersion.objects.filter(id=version.id, deleted=False).exists()
+
+
+def test_overview_reports_the_environment_pin_not_the_latest_version(
+    organization, workspace
+):
+    from simulate.services.harness_environment import _agent as overview_agent
+
+    agent = _agent(organization, workspace, "pinned")
+    first = agent.create_version(description="p", commit_message="v1", status="active")
+    agent.create_version(description="p2", commit_message="v2", status="active")
+    environment = _environment(agent, 1)
+
+    assert overview_agent(environment)["active_version"] == "v2"
+
+    HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+        agent_version=first
+    )
+    environment.refresh_from_db()
+
+    assert overview_agent(environment)["active_version"] == "v1"
+    assert overview_agent(environment)["versions_count"] == 2
+
+
+def test_environment_rows_carry_their_policy(auth_client, organization, workspace):
+    from simulate.services.harness_agent_versions import POLICY_KEY
+
+    agent = _agent(organization, workspace, "policies")
+    following = _environment(agent, 1)
+    pinned = _environment(agent, 2)
+    HostedHarnessJob.no_workspace_objects.filter(id=pinned.id).update(
+        payload={**pinned.payload, "metadata": {POLICY_KEY: "pinned"}}
+    )
+
+    response = auth_client.get(
+        "/simulate/api/harness-environments/", {"agent_definition_id": str(agent.id)}
+    )
+
+    assert response.status_code == status.HTTP_200_OK, response.content
+    rows = {row["id"]: row["agent_policy"] for row in response.json()["results"]}
+    assert rows == {str(following.id): "follow", str(pinned.id): "pinned"}

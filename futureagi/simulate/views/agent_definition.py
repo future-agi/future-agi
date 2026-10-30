@@ -9,7 +9,7 @@ from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
 from rest_framework.decorators import action
-from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -47,9 +47,15 @@ from simulate.services.agent_definition import (
 )
 from simulate.services.agent_overview import (
     annotate_agent_rows,
+    environment_counts,
     environment_refs,
     observability_on,
+    observe_project,
     recent_agent_runs,
+)
+from simulate.services.production_project import (
+    ProductionProjectError,
+    link_production_project,
 )
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 from tfc.ee_stub import _ee_stub
@@ -81,6 +87,17 @@ from tracer.utils.otel import ResourceLimitError
 from tracer.utils.replay_session import link_agent_to_replay_session
 
 logger = structlog.get_logger(__name__)
+
+
+def tested_agent_refusal(agent: AgentDefinition) -> str | None:
+    """Why this agent can't be deleted, or None when no environment tests it."""
+    total = environment_counts([agent.id]).get(agent.id, 0)
+    if not total:
+        return None
+    return (
+        f"{agent.agent_name} is tested by {total} environment"
+        f"{'s' if total != 1 else ''}. Delete those environments first."
+    )
 
 
 def soft_delete_agent_definition_and_versions(agent):
@@ -145,13 +162,17 @@ class AgentDefinitionView(APIView):
                 .values("id")[:1]
             )
 
-            agents = annotate_agent_rows(
-                AgentDefinition.objects.filter(
-                    organization=user_organization,
+            agents = (
+                annotate_agent_rows(
+                    AgentDefinition.objects.filter(
+                        organization=user_organization,
+                    )
                 )
-            ).annotate(
-                _latest_version=Subquery(latest_version_subquery),
-                _latest_version_id=Subquery(latest_version_id_subquery),
+                .annotate(
+                    _latest_version=Subquery(latest_version_subquery),
+                    _latest_version_id=Subquery(latest_version_id_subquery),
+                )
+                .select_related("observability_provider__project", "production_project")
             )
 
             if agent_type is not None:
@@ -223,11 +244,16 @@ class AgentDefinitionView(APIView):
             agent_ids = request.validated_data["agent_ids"]
 
             with transaction.atomic():
-                updated_agents = AgentDefinition.objects.filter(
+                agents = AgentDefinition.objects.filter(
                     id__in=agent_ids,
                     organization=getattr(request, "organization", None)
                     or request.user.organization,
-                ).update(deleted=True, deleted_at=timezone.now())
+                )
+                counts = environment_counts(list(agents.values_list("id", flat=True)))
+                for agent in agents:
+                    if counts.get(agent.id):
+                        return self._gm.bad_request(tested_agent_refusal(agent))
+                updated_agents = agents.update(deleted=True, deleted_at=timezone.now())
 
                 updated_versions = AgentVersion.objects.filter(
                     agent_definition_id__in=agent_ids,
@@ -412,7 +438,7 @@ class AgentDefinitionDetailView(APIView):
         try:
             agent = (
                 annotate_agent_rows(AgentDefinition.objects.all())
-                .select_related("observability_provider__project")
+                .select_related("observability_provider__project", "production_project")
                 .get(
                     id=agent_id,
                     organization=getattr(request, "organization", None)
@@ -445,6 +471,7 @@ class AgentDefinitionDetailView(APIView):
                     "source": agent._source,
                     "environment_count": agent._environment_count,
                     "observability_enabled": observability_on(agent),
+                    "observe_project": observe_project(agent, agent._agent_kind),
                 },
                 status=status.HTTP_200_OK,
             )
@@ -552,6 +579,7 @@ class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
 
     @swagger_auto_schema(
         responses={
+            400: ApiErrorWithDetailsResponseSerializer,
             404: ApiErrorWithDetailsResponseSerializer,
             500: ApiErrorWithDetailsResponseSerializer,
         }
@@ -560,6 +588,9 @@ class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
         return super().destroy(request, *args, **kwargs)
 
     def perform_destroy(self, instance):
+        refusal = tested_agent_refusal(instance)
+        if refusal:
+            raise ValidationError(refusal)
         soft_delete_agent_definition_and_versions(instance)
 
     @validated_request(
@@ -801,6 +832,11 @@ class EditAgentDefinitionView(APIView):
                 )
                 if version:
                     sync_provider_credentials(version, creds_input)
+                if "production_project_id" in validated:
+                    link_production_project(
+                        agent_definition=agent,
+                        project_id=validated["production_project_id"],
+                    )
                 if "observability_enabled" in validated:
                     set_agent_observability(
                         agent_definition=agent,
@@ -839,6 +875,8 @@ class EditAgentDefinitionView(APIView):
             return self._gm.not_found("Agent definition not found")
         except ObservabilityRefused as error:
             return Response(refusal_body(error), status=status.HTTP_400_BAD_REQUEST)
+        except ProductionProjectError as error:
+            return self._gm.bad_request(str(error))
         except Exception as e:
             return self._gm.internal_server_error_response(
                 f"Failed to update agent definition: {str(e)}"
@@ -856,6 +894,7 @@ class DeleteAgentDefinitionView(APIView):
     @swagger_auto_schema(
         responses={
             200: AgentDefinitionDeleteResponseSerializer,
+            400: ApiErrorWithDetailsResponseSerializer,
             404: ApiErrorWithDetailsResponseSerializer,
             500: ApiErrorWithDetailsResponseSerializer,
         },
@@ -871,6 +910,10 @@ class DeleteAgentDefinitionView(APIView):
                 or request.user.organization,
                 deleted=False,
             )
+
+            refusal = tested_agent_refusal(agent)
+            if refusal:
+                return self._gm.bad_request(refusal)
 
             soft_delete_agent_definition_and_versions(agent)
 

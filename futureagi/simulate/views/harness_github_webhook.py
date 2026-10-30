@@ -12,7 +12,14 @@ from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
 
-from simulate.serializers.hosted_harness import HarnessGitHubPushSerializer
+from integrations.services.github_app import (
+    apply_installation_event,
+    forget_repositories,
+)
+from simulate.serializers.hosted_harness import (
+    HarnessGitHubInstallationSerializer,
+    HarnessGitHubPushSerializer,
+)
 from simulate.services.harness_github import safe_ref, safe_repository, short_ref
 
 logger = logging.getLogger(__name__)
@@ -43,8 +50,9 @@ def _delivery(request) -> str:
 
 
 class HarnessGitHubWebhookView(APIView):
-    """GitHub App push webhook: a signed push re-reads the head of the watched
-    repositories it names. Nothing is read from the database here."""
+    """GitHub App webhook: a signed push re-reads the head of the watched
+    repositories it names; a signed installation event updates the GitHub
+    connections of that installation."""
 
     authentication_classes = []
     permission_classes = [AllowAny]
@@ -59,10 +67,27 @@ class HarnessGitHubWebhookView(APIView):
             self.throttled(request, throttle.wait())
         return _rejected(reason)
 
+    def _installation(self, event: str, body: bytes, delivery: str) -> Response:
+        try:
+            change = HarnessGitHubInstallationSerializer(data=json.loads(body))
+        except ValueError:
+            return _rejected("bad_json", delivery)
+        if not change.is_valid():
+            return _rejected("bad_json", delivery)
+        installation_id = str(change.validated_data["installation"]["id"])
+        if event == "installation_repositories":
+            forget_repositories(installation_id)
+        else:
+            apply_installation_event(
+                installation_id=installation_id,
+                action=change.validated_data["action"],
+            )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
     @swagger_auto_schema(
         operation_description=(
-            "GitHub App push webhook, signed with X-Hub-Signature-256. Answers 204, "
-            "or 429 when throttled."
+            "GitHub App webhook for push and installation events, signed with "
+            "X-Hub-Signature-256. Answers 204, or 429 when throttled."
         ),
         request_body=HarnessGitHubPushSerializer,
         # Checked by the view once the signature over the raw body holds.
@@ -98,6 +123,8 @@ class HarnessGitHubWebhookView(APIView):
         event = request.headers.get("X-GitHub-Event", "")
         if event == "ping":
             return Response(status=status.HTTP_204_NO_CONTENT)
+        if event in ("installation", "installation_repositories"):
+            return self._installation(event, body, delivery)
         if event != "push":
             return _rejected("ignored_event", delivery)
         try:

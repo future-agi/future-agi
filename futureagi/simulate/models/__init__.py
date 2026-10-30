@@ -13,6 +13,7 @@ from .agent_version import AgentVersion
 from .call_log_entry import CallLogEntry
 from .chat_message import ChatMessageModel
 from .chat_simulator import ChatSimulatorAssistant, ChatSimulatorSession
+from .code_archive import CodeArchive
 from .component_evaluation import ComponentEvaluation
 from .harness_environment_credentials import (
     HarnessCredentialFile,
@@ -93,6 +94,7 @@ __all__ = [
     "CallTranscript",
     "CallExecutionSnapshot",
     "CallLogEntry",
+    "CodeArchive",
     "ScenarioGraph",
     "NodeType",
     "SimulationPhoneNumber",
