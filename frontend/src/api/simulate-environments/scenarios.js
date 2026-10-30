@@ -101,12 +101,10 @@ export const subActorWhen = (trigger = {}) => {
       return `After the agent's turn ${trigger.turn}`;
     case "on_tool":
       return trigger.on_call > 1
-        ? `On call ${trigger.on_call} of ${trigger.tool}`
-        : `When the agent calls ${trigger.tool}`;
+        ? `On call ${trigger.on_call} of ${trigger.tool}, or after the agent's turn 4`
+        : `When the agent calls ${trigger.tool}, or after the agent's turn 4`;
     case "on_keyword":
-      return `When the agent says ${(trigger.words || []).join(", ")}`;
-    case "probability":
-      return `In ${Math.round((trigger.p || 0) * 100)}% of calls`;
+      return `When the agent says ${(trigger.words || []).join(", ")}, or after the agent's turn 4`;
     default:
       return "From the start";
   }

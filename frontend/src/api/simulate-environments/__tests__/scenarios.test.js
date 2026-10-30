@@ -431,10 +431,18 @@ describe("subActorWhen", () => {
   it.each([
     [{ kind: "always" }, "From the start"],
     [{ kind: "mid_journey", turn: 3 }, "After the agent's turn 3"],
-    [{ kind: "on_tool", tool: "place_order", on_call: 1 }, "When the agent calls place_order"],
-    [{ kind: "on_tool", tool: "place_order", on_call: 2 }, "On call 2 of place_order"],
-    [{ kind: "on_keyword", words: ["total", "price"] }, "When the agent says total, price"],
-    [{ kind: "probability", p: 0.25 }, "In 25% of calls"],
+    [
+      { kind: "on_tool", tool: "place_order", on_call: 1 },
+      "When the agent calls place_order, or after the agent's turn 4",
+    ],
+    [
+      { kind: "on_tool", tool: "place_order", on_call: 2 },
+      "On call 2 of place_order, or after the agent's turn 4",
+    ],
+    [
+      { kind: "on_keyword", words: ["total", "price"] },
+      "When the agent says total, price, or after the agent's turn 4",
+    ],
     [undefined, "From the start"],
   ])("says when a sub-actor enters for %j", (trigger, said) => {
     expect(subActorWhen(trigger)).toBe(said);
