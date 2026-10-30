@@ -116,6 +116,8 @@ def _apply_resolved(
     else:
         requeued, dropped = _requeue_and_drop(task, resolved=resolved)
         result = ReconcileResult(created=created, requeued=requeued, dropped=dropped)
+    if result.created or result.requeued:
+        _stamp_last_run(task, now)
     # Candidate overflow catch-up may prove only a strict prefix of the frozen
     # arrival window. Advance from that exact proof ceiling, in this same DB
     # transaction, never from the later wall-clock ceiling the pass requested.
@@ -123,6 +125,15 @@ def _apply_resolved(
     if resolved.full_state:
         _stamp_reclassified_revision(task)
     return result
+
+
+def _stamp_last_run(task: EvalTask, now: datetime) -> None:
+    """Stamp the list's "Last Run": the last pass that produced work (created
+    or requeued entries), not the last poll."""
+    if not isinstance(task, EvalTask):
+        return
+    task.last_run = now
+    EvalTask.objects.filter(id=task.id).update(last_run=now)
 
 
 def _stamp_reclassified_revision(task: EvalTask) -> None:
