@@ -547,8 +547,10 @@ class HarnessJobCreateSerializer(serializers.Serializer):
     def validate_metadata(self, value):
         reserved = {
             "agent_definition_owner",
+            "agent_source_pending",
             "agent_source_repository_id",
             "agent_source_seen",
+            "agent_source_skipped",
             "attempt_cycle_start",
             "build_agent_version_id",
             "parallelism_clamped",
@@ -735,8 +737,6 @@ class HarnessJobCreateSerializer(serializers.Serializer):
             )
             metadata["parallelism_warnings"] = warnings
         attrs["metadata"] = metadata
-
-
 
 
 LIVEKIT_ALIASES = ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET")
@@ -1097,6 +1097,16 @@ class HarnessVersioningFlagsSerializer(serializers.Serializer):
     nudges_enabled = serializers.BooleanField()
 
 
+class HarnessPendingCommitSerializer(serializers.Serializer):
+    """A new commit on the agent's branch, offered to the environment and not yet
+    synced or skipped."""
+
+    repository = serializers.CharField()
+    ref = serializers.CharField(allow_null=True)
+    commit_sha = serializers.CharField()
+    at = serializers.DateTimeField(allow_null=True)
+
+
 class HarnessJobReadSerializer(serializers.Serializer):
     """Consolidated public read DTO for list/create/retrieve/cancel/poll."""
 
@@ -1113,3 +1123,4 @@ class HarnessJobReadSerializer(serializers.Serializer):
     consumption = HarnessConsumptionSerializer(required=False, allow_null=True)
     usage_limit = serializers.JSONField(required=False, allow_null=True)
     versioning = HarnessVersioningFlagsSerializer(required=False)
+    pending_commit = HarnessPendingCommitSerializer(required=False, allow_null=True)

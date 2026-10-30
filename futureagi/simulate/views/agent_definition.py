@@ -53,7 +53,10 @@ from simulate.services.agent_overview import (
     observe_project,
     recent_agent_runs,
 )
-from simulate.services.harness_agent_versions import connected_agent
+from simulate.services.harness_agent_versions import (
+    connected_agent,
+    environment_owned,
+)
 from simulate.services.production_project import (
     ProductionProjectError,
     link_production_project,
@@ -474,6 +477,11 @@ class AgentDefinitionDetailView(APIView):
                     "observability_enabled": observability_on(agent),
                     "observe_project": observe_project(agent, agent._agent_kind),
                     "connected": connected_agent(agent.id),
+                    "managed_by": (
+                        (environment_refs([agent]).get(agent.id) or [None])[0]
+                        if environment_owned(agent.id)
+                        else None
+                    ),
                 },
                 status=status.HTTP_200_OK,
             )

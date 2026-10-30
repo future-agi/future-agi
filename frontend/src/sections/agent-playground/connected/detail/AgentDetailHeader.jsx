@@ -1,6 +1,7 @@
 import PropTypes from "prop-types";
 import React, { useState } from "react";
 import { useSnackbar } from "notistack";
+import { useNavigate } from "react-router-dom";
 import {
   Box,
   Button,
@@ -15,6 +16,7 @@ import { useChangeVersion } from "src/api/agents/agentDetail";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
+import { paths } from "src/routes/paths";
 import { sourceLabel } from "../connectedAgentLabels";
 import AddVersionDialog from "./AddVersionDialog";
 import { newVersionAction } from "./newVersionAction";
@@ -99,8 +101,11 @@ export default function AgentDetailHeader({
   onOpenEnvironments,
   action,
 }) {
+  const navigate = useNavigate();
   const isCode = agent.agentKind === "source";
-  const { source } = agent;
+  const { source, managedBy } = agent;
+  const openManager = () =>
+    navigate(paths.dashboard.simulate.environments.detail(managedBy.id));
   const where = isCode
     ? source
       ? sourceLabel(source)
@@ -137,6 +142,23 @@ export default function AgentDetailHeader({
       ) : (
         envs
       )),
+    managedBy && (
+      <Box
+        component="span"
+        key="managed"
+        role="link"
+        tabIndex={0}
+        data-testid="agent-managed-by"
+        onClick={openManager}
+        onKeyDown={(e) => e.key === "Enter" && openManager()}
+        sx={{
+          cursor: "pointer",
+          "&:hover": { color: "text.primary", textDecoration: "underline" },
+        }}
+      >
+        {`Managed by ${managedBy.name}`}
+      </Box>
+    ),
   ].filter(Boolean);
 
   return (

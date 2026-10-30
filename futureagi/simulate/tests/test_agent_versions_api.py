@@ -6,7 +6,12 @@ from unittest.mock import patch
 import pytest
 from rest_framework import status
 
-from simulate.models import AgentDefinition, AgentVersion, HostedHarnessJob
+from simulate.models import (
+    AgentDefinition,
+    AgentVersion,
+    HarnessAgentVersionRuntime,
+    HostedHarnessJob,
+)
 from simulate.services.harness_agent_changes import HeadResult
 from simulate.services.harness_agent_versions import POLICY_KEY
 from simulate.tests.test_agent_overview_api import _environment
@@ -424,3 +429,68 @@ def test_the_old_agent_page_leaves_a_connected_agents_versions_alone(
     production.refresh_from_db()
     assert production.status == "active"
     assert auth_client.get(f"{AGENTS}{agent.id}/").json()["connected"] is True
+
+
+def test_an_agent_an_environment_made_has_no_production_here(
+    auth_client, agent, production
+):
+    from simulate.services.agent_overview import environment_name
+
+    environment = _completed(_environment(agent, 1), production)
+    runtime = HarnessAgentVersionRuntime.objects.get(agent_version=production)
+    runtime.agent_payload = {**runtime.agent_payload, "definition_owner": "environment"}
+    runtime.save(update_fields=["agent_payload"])
+
+    refused = auth_client.post(
+        f"{AGENTS}{agent.id}/versions/{production.id}/production/"
+    )
+
+    assert refused.status_code == status.HTTP_409_CONFLICT, refused.content
+    assert refused.json()["error"] == "managed_by_environment"
+    production.refresh_from_db()
+    assert production.status == "active"
+    assert auth_client.get(f"{AGENTS}{agent.id}/").json()["managed_by"] == {
+        "id": str(environment.id),
+        "name": environment_name(environment),
+    }
+
+
+def test_an_agent_connected_here_is_managed_by_no_environment(
+    auth_client, agent, production
+):
+    _completed(_environment(agent, 1), production)
+
+    assert auth_client.get(f"{AGENTS}{agent.id}/").json()["managed_by"] is None
+
+
+def test_a_version_made_here_for_an_environments_agent_stays_that_environments(
+    auth_client, agent, production
+):
+    environment = _completed(_environment(agent, 1), production)
+    runtime = HarnessAgentVersionRuntime.objects.get(agent_version=production)
+    runtime.agent_payload = {**runtime.agent_payload, "definition_owner": "environment"}
+    runtime.save(update_fields=["agent_payload"])
+    with patch(
+        "simulate.services.harness_agent_changes.github_head",
+        return_value=HeadResult("ok", "b" * 40),
+    ):
+        second_id = _change(auth_client, agent, kind="sync").json()["version"]["id"]
+    second = AgentVersion.objects.get(id=second_id)
+    assert (
+        HarnessAgentVersionRuntime.objects.get(agent_version=second).agent_payload[
+            "definition_owner"
+        ]
+        == "environment"
+    )
+
+    with patch(NUDGE) as nudge:
+        _preflight(second)
+
+    production.refresh_from_db()
+    environment.refresh_from_db()
+    assert production.status == "active"
+    assert environment.agent_version_id == production.id
+    assert [
+        (str(call.args[0]), str(call.args[1]), call.kwargs.get("default_moved"))
+        for call in nudge.call_args_list
+    ] == [(str(environment.id), str(second.id), False)]

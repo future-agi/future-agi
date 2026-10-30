@@ -32010,6 +32010,12 @@ export const SimulateAgentDefinitionsReadResponse = zod.object({
     })
     .optional(),
   connected: zod.boolean().optional(),
+  managed_by: zod
+    .object({
+      id: zod.string().uuid(),
+      name: zod.string().min(1),
+    })
+    .optional(),
 });
 
 /**
@@ -38390,6 +38396,86 @@ export const SimulateApiHarnessEnvironmentsNudgesStopNudgeResponse = zod.object(
 );
 
 /**
+ * Answer the new commit offered to this environment: sync it as the next
+agent version, or skip it.
+ */
+export const SimulateApiHarnessEnvironmentsPendingCommitParams = zod.object({
+  id: zod.string(),
+});
+
+export const SimulateApiHarnessEnvironmentsPendingCommitBody = zod.object({
+  answer: zod.enum(["sync", "skip"]),
+});
+
+export const SimulateApiHarnessEnvironmentsPendingCommitResponse = zod.object({
+  agent_version: zod
+    .object({
+      id: zod.string().uuid(),
+      label: zod.string().min(1),
+      status: zod.enum(["draft", "active", "discarded"]),
+      is_default: zod.boolean(),
+      created_at: zod.string().datetime({ offset: true }),
+      created_by: zod.object({
+        id: zod.string().min(1),
+        name: zod.string(),
+      }),
+      origin: zod.string().min(1),
+      summary: zod.string(),
+      hash: zod.string().min(1),
+      parent_id: zod.string().uuid(),
+      derived_from_agent_version_id: zod.string().uuid(),
+      scenario_count: zod.number(),
+      source: zod
+        .object({})
+        .passthrough()
+        .describe("An agent version's non-secret source facts."),
+      prompt: zod
+        .string()
+        .describe(
+          "The default agent version's prompt; null on every other item.",
+        ),
+      preflight_status: zod.string().min(1),
+      preflight_report: zod
+        .object({})
+        .passthrough()
+        .describe(
+          "An agent version's last check: check statuses and names only.",
+        ),
+      preflighted_at: zod.string().datetime({ offset: true }),
+      check_started_at: zod
+        .string()
+        .datetime({ offset: true })
+        .describe("When an agent version's latest check was asked for."),
+      credential_names: zod
+        .array(zod.string().min(1))
+        .describe(
+          "An agent version's credential names, provider keys included.",
+        ),
+      required_variable_names: zod
+        .array(zod.string().min(1))
+        .describe("The variables an agent version's source reads, when known."),
+      activation_outcome: zod
+        .string()
+        .min(1)
+        .describe(
+          "Why a passed agent version is or isn't this environment's default, as last recorded.",
+        ),
+      requested_here: zod
+        .boolean()
+        .describe("Whether this environment asked for an agent version."),
+      pickable: zod
+        .boolean()
+        .describe(
+          "Whether an agent version can be picked for a run of this environment or made its default.",
+        ),
+      discardable: zod
+        .boolean()
+        .describe("Whether this environment can discard an agent version."),
+    })
+    .optional(),
+});
+
+/**
  * The versions a run of these picks would use and what to warn about; no
 writes. An absent pick is the environment's default.
  */
@@ -39565,6 +39651,14 @@ export const SimulateApiHarnessJobsListResponseItem = zod.object({
       nudges_enabled: zod.boolean(),
     })
     .optional(),
+  pending_commit: zod
+    .object({
+      repository: zod.string().min(1),
+      ref: zod.string().min(1),
+      commit_sha: zod.string().min(1),
+      at: zod.string().datetime({ offset: true }),
+    })
+    .optional(),
 });
 export const SimulateApiHarnessJobsListResponse = zod.array(
   SimulateApiHarnessJobsListResponseItem,
@@ -40592,6 +40686,14 @@ export const SimulateApiHarnessJobsReadResponse = zod.object({
       nudges_enabled: zod.boolean(),
     })
     .optional(),
+  pending_commit: zod
+    .object({
+      repository: zod.string().min(1),
+      ref: zod.string().min(1),
+      commit_sha: zod.string().min(1),
+      at: zod.string().datetime({ offset: true }),
+    })
+    .optional(),
 });
 
 /**
@@ -40813,6 +40915,14 @@ export const SimulateApiHarnessJobsCancelResponse = zod.object({
     .object({
       enabled: zod.boolean(),
       nudges_enabled: zod.boolean(),
+    })
+    .optional(),
+  pending_commit: zod
+    .object({
+      repository: zod.string().min(1),
+      ref: zod.string().min(1),
+      commit_sha: zod.string().min(1),
+      at: zod.string().datetime({ offset: true }),
     })
     .optional(),
 });

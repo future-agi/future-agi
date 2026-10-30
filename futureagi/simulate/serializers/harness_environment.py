@@ -672,6 +672,17 @@ class HarnessAgentPolicyResponseSerializer(serializers.Serializer):
     agent_version = HarnessVersionSerializer(read_only=True, allow_null=True)
 
 
+class HarnessPendingCommitAnswerSerializer(serializers.Serializer):
+    """Sync the new commit offered to the environment as its next agent version, or
+    skip it."""
+
+    answer = serializers.ChoiceField(choices=("sync", "skip"))
+
+
+class HarnessPendingCommitResponseSerializer(serializers.Serializer):
+    agent_version = HarnessVersionSerializer(read_only=True, allow_null=True)
+
+
 class HarnessVersionsSerializer(serializers.Serializer):
     """Every version of an environment's three pieces, newest first."""
 

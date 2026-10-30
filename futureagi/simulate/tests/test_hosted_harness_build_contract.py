@@ -73,6 +73,31 @@ def test_the_first_attempt_freezes_the_pin_and_a_retry_keeps_it(
     assert frozen_build_pin(job) == first
 
 
+def test_an_unpinned_environment_is_pinned_when_its_build_starts(
+    organization, definition, settings
+):
+    settings.HARNESS_VERSIONING_ENABLED = True
+    first = definition.create_version(
+        description="p", commit_message="v1", status="active"
+    )
+    job = _job(organization, "pin-at-start")
+    job.payload = {
+        **job.payload,
+        "metadata": {
+            **job.payload.get("metadata", {}),
+            "agent_definition_id": str(definition.id),
+        },
+    }
+    job.save(update_fields=["payload", "updated_at"])
+    assert job.agent_version_id is None
+
+    register_attempt(job.id, endpoint_base_url="https://platform.example")
+    job.refresh_from_db()
+
+    assert job.agent_version_id == first.id
+    assert frozen_build_pin(job) == first
+
+
 def test_a_build_with_no_pin_is_not_frozen(organization):
     job = _job(organization, "no-pin")
 

@@ -193,6 +193,14 @@ describe("AgentDetailLayout", () => {
     expect(await screen.findByRole("button", { name: "Sync" })).toBeDisabled();
   });
 
+  it("names the environment that manages the agent", async () => {
+    serve({ ...HOSTED, managed_by: { id: "env-1", name: "Refund flow" } });
+    renderAt(`${base(HOSTED)}/overview`);
+    expect(await screen.findByTestId("agent-managed-by")).toHaveTextContent(
+      "Managed by Refund flow",
+    );
+  });
+
   it("offers an upload for an uploaded agent", async () => {
     serve({ ...CODE, source: "archive" });
     renderAt(`${base(CODE)}/overview`);

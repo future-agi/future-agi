@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1105,
+  endpointCount: 1106,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -28860,6 +28860,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/api/harness-environments/{id}/pending-commit/": {
+      post: {
+        operationId: "simulate_api_harness-environments_pending_commit",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessPendingCommitAnswer",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessPendingCommitResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/api/harness-environments/{id}/run-plan/": {
       get: {
         operationId: "simulate_api_harness-environments_run_plan",
@@ -48740,6 +48759,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
           readOnly: true,
         },
+        managed_by: {
+          $ref: "#/definitions/RunEnvironmentRef",
+        },
       },
     },
     AgentDefinitionEditRequest: {
@@ -65796,6 +65818,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         versioning: {
           $ref: "#/definitions/HarnessVersioningFlags",
         },
+        pending_commit: {
+          $ref: "#/definitions/HarnessPendingCommit",
+        },
       },
     },
     HarnessManifest: {
@@ -65974,6 +65999,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Answer",
           type: "string",
           enum: ["yes", "no"],
+        },
+      },
+    },
+    HarnessPendingCommitAnswer: {
+      required: ["answer"],
+      type: "object",
+      properties: {
+        answer: {
+          title: "Answer",
+          type: "string",
+          enum: ["sync", "skip"],
+        },
+      },
+    },
+    HarnessPendingCommitResponse: {
+      type: "object",
+      properties: {
+        agent_version: {
+          $ref: "#/definitions/HarnessVersion",
         },
       },
     },
@@ -97575,6 +97619,35 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+    },
+    HarnessPendingCommit: {
+      required: ["repository", "ref", "commit_sha", "at"],
+      type: "object",
+      properties: {
+        repository: {
+          title: "Repository",
+          type: "string",
+          minLength: 1,
+        },
+        ref: {
+          title: "Ref",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        commit_sha: {
+          title: "Commit sha",
+          type: "string",
+          minLength: 1,
+        },
+        at: {
+          title: "At",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
     },
     HarnessPlatform: {
       required: ["run_test_id", "test_execution_id", "url"],

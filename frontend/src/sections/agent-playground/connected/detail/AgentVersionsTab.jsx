@@ -369,7 +369,7 @@ export default function AgentVersionsTab() {
                     <Button {...actionProps(() => viewDefinition(v))}>
                       View definition
                     </Button>
-                    {canEdit && canPromote(v) && (
+                    {canEdit && agent && !agent.managedBy && canPromote(v) && (
                       <Button {...actionProps(() => setToActivate(v))}>
                         Set as production
                       </Button>

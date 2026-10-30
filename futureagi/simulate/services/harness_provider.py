@@ -283,6 +283,7 @@ def _metadata_for_read(job: HostedHarnessJob) -> dict[str, Any]:
 
 def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
     from simulate.services.harness_usage import harness_consumption
+    from simulate.services.harness_agent_changes import pending_commit_item
     from simulate.services.harness_versioning.read import versioning_flags
 
     attempt = job.attempts.order_by("-attempt_number").first()
@@ -327,15 +328,17 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
             "scenario_key": reg.scenario_key,
             "scenario_id": str(reg.scenario_id),
             "name": getattr(reg.scenario, "name", "") if reg.scenario else "",
-            "instruction": (getattr(reg.scenario, "prompt", None) or "")
-            if reg.scenario
-            else None,
-            "use_case": (getattr(reg.scenario, "use_case", None) or "")
-            if reg.scenario
-            else None,
-            "call_execution_id": str(reg.call_execution_id)
-            if reg.call_execution_id
-            else None,
+            "instruction": (
+                (getattr(reg.scenario, "prompt", None) or "") if reg.scenario else None
+            ),
+            "use_case": (
+                (getattr(reg.scenario, "use_case", None) or "")
+                if reg.scenario
+                else None
+            ),
+            "call_execution_id": (
+                str(reg.call_execution_id) if reg.call_execution_id else None
+            ),
             "status": _scenario_status(reg),
         }
         for reg in scenario_regs
@@ -382,9 +385,9 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
     queued = 0 if terminal else max(0, job.scenario_count - len(finished) - active)
     platform = {
         "run_test_id": str(job.run_test_id) if job.run_test_id else None,
-        "test_execution_id": str(job.test_execution_id)
-        if job.test_execution_id
-        else None,
+        "test_execution_id": (
+            str(job.test_execution_id) if job.test_execution_id else None
+        ),
         "url": (
             f"/dashboard/simulate/test/{job.run_test_id}/{job.test_execution_id}/call-details"
             if job.run_test_id and job.test_execution_id
@@ -445,16 +448,16 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
                 "cpu_units": _runtime.get("cpu_units"),
             },
             "run_test_id": str(job.run_test_id) if job.run_test_id else None,
-            "test_execution_id": str(job.test_execution_id)
-            if job.test_execution_id
-            else None,
+            "test_execution_id": (
+                str(job.test_execution_id) if job.test_execution_id else None
+            ),
         },
         "parallelism": {
             "requested": _requested_parallelism,
             "admitted": _admitted,
-            "effective": min(_effective, _admitted)
-            if _effective is not None
-            else _admitted,
+            "effective": (
+                min(_effective, _admitted) if _effective is not None else _admitted
+            ),
             "degrade_reasons": _degrade_reasons,
         },
         "status": {
@@ -489,6 +492,7 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
             serialize_conversation(conversation) if conversation is not None else None
         ),
         "versioning": versioning_flags(),
+        "pending_commit": pending_commit_item(job),
     }
 
 
@@ -1127,15 +1131,15 @@ def _scenario_row(reg, number: int | None = None) -> dict:
         "scenario_key": reg.scenario_key,
         "scenario_id": str(reg.scenario_id),
         "name": getattr(reg.scenario, "name", "") if reg.scenario else "",
-        "instruction": (getattr(reg.scenario, "prompt", None) or "")
-        if reg.scenario
-        else None,
-        "use_case": (getattr(reg.scenario, "use_case", None) or "")
-        if reg.scenario
-        else None,
-        "call_execution_id": str(reg.call_execution_id)
-        if reg.call_execution_id
-        else None,
+        "instruction": (
+            (getattr(reg.scenario, "prompt", None) or "") if reg.scenario else None
+        ),
+        "use_case": (
+            (getattr(reg.scenario, "use_case", None) or "") if reg.scenario else None
+        ),
+        "call_execution_id": (
+            str(reg.call_execution_id) if reg.call_execution_id else None
+        ),
         "status": _scenario_status(reg),
     }
 
@@ -2467,7 +2471,9 @@ class HostedHarnessProvider:
                 ):
                     try:
                         problems = scenario_edit_problems(Scenario.model_validate(one))
-                    except Exception:  # noqa: BLE001 - a document we cannot read is the edit's fault
+                    except (
+                        Exception
+                    ):  # noqa: BLE001 - a document we cannot read is the edit's fault
                         problems = ["the edited scenario could not be read"]
                     if problems:
                         rejected.append((str(one.get("name") or ""), problems))
@@ -2512,13 +2518,15 @@ class HostedHarnessProvider:
                     return Response(
                         {
                             "receipts": [
-                                {
-                                    **one,
-                                    "outcome": "refused",
-                                    "why": f"nothing changed: {kept}",
-                                }
-                                if one.get("outcome") == "applied"
-                                else one
+                                (
+                                    {
+                                        **one,
+                                        "outcome": "refused",
+                                        "why": f"nothing changed: {kept}",
+                                    }
+                                    if one.get("outcome") == "applied"
+                                    else one
+                                )
                                 for one in receipts
                             ]
                         }
@@ -2529,9 +2537,11 @@ class HostedHarnessProvider:
                     output.save(update_fields=["data", "summary", "updated_at"])
                 else:
                     job.stage_outputs = [
-                        {**item, "data": suite}
-                        if item.get("kind") == "scenarios"
-                        else item
+                        (
+                            {**item, "data": suite}
+                            if item.get("kind") == "scenarios"
+                            else item
+                        )
                         for item in (job.stage_outputs or [])
                     ]
                     job.save(update_fields=["stage_outputs", "updated_at"])
@@ -2540,7 +2550,9 @@ class HostedHarnessProvider:
                     from simulate.services.harness_scenarios import index_scenarios
 
                     index_scenarios(job, suite, prune=True)
-                except Exception:  # noqa: BLE001 - the edit itself applied; the index can lag
+                except (
+                    Exception
+                ):  # noqa: BLE001 - the edit itself applied; the index can lag
                     logger.warning(
                         "harness_scenario_reindex_failed job_id=%s",
                         job.id,
@@ -2549,9 +2561,11 @@ class HostedHarnessProvider:
                 delivered = push_scenarios_into_live_sandbox(job, suite)
                 if delivered:
                     receipts = [
-                        {**one, "outcome": "queued"}
-                        if one.get("outcome") == "applied"
-                        else one
+                        (
+                            {**one, "outcome": "queued"}
+                            if one.get("outcome") == "applied"
+                            else one
+                        )
                         for one in receipts
                     ]
         return Response({"receipts": receipts})
@@ -2676,7 +2690,8 @@ class HostedHarnessProvider:
 
     def extend(self, request, pk) -> Response:
         """Chat 'Add scenarios' on a finished RL environment: add ``count`` new scenarios,
-        steered by optional guidance, replaying the authored world. Rerun is a separate action."""
+        steered by optional guidance, replaying the authored world. Rerun is a separate action.
+        """
         import copy
         from uuid import uuid4
 

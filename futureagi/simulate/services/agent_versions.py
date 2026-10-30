@@ -24,6 +24,7 @@ from simulate.services.harness_agent_versions import (
     POLICY_PINNED,
     create_agent_version,
     discard_agent_version,
+    environment_owned,
     environment_policy,
     hand_move,
     promote_to_production,
@@ -270,7 +271,14 @@ def change_version(
 
 def set_production(version: AgentVersion) -> list[Any]:
     """Make ``version`` the agent's production version; a checked version must have
-    passed. Returns the environments moved to it."""
+    passed. Returns the environments moved to it. An agent an environment made has
+    no production here: its environment decides which version is in use."""
+    if environment_owned(version.agent_definition_id):
+        raise HostedHarnessError(
+            "managed_by_environment",
+            "An environment manages this agent; change its version from there",
+            status_code=409,
+        )
     runtime = _runtime(version)
     if runtime is not None and runtime.preflight_status not in (
         Status.PASSED,

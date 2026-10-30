@@ -263,6 +263,7 @@ class AgentDefinitionDetailResponseSerializer(AgentDefinitionResponseSerializer)
     observability_enabled = serializers.BooleanField(read_only=True)
     observe_project = ObserveProjectRefSerializer(read_only=True, allow_null=True)
     connected = serializers.BooleanField(read_only=True)
+    managed_by = RunEnvironmentRefSerializer(read_only=True, allow_null=True)
 
     class Meta(AgentDefinitionResponseSerializer.Meta):
         fields = [
@@ -276,6 +277,7 @@ class AgentDefinitionDetailResponseSerializer(AgentDefinitionResponseSerializer)
             "observability_enabled",
             "observe_project",
             "connected",
+            "managed_by",
         ]
         read_only_fields = fields
 

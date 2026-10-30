@@ -12,6 +12,7 @@ from simulate.models import (
     HostedHarnessJob,
 )
 from simulate.services.agent_setup import store_agent
+from simulate.services.agent_versions import set_production
 from simulate.services.harness_agent_versions import (
     CONNECTED_OWNER,
     POLICY_FOLLOW,
@@ -175,6 +176,7 @@ def test_production_moves_following_environments_and_offers_pinned_ones(agent):
         "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
     ) as nudge:
         result = _preflight(second)
+        set_production(second)
 
     assert result.status == Status.PASSED
     second.refresh_from_db()
@@ -218,6 +220,7 @@ def test_production_offers_an_environment_that_never_chose_to_follow(agent):
         "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
     ) as nudge:
         _preflight(second)
+        set_production(second)
 
     unchosen.refresh_from_db()
     assert unchosen.agent_version_id == first.id
@@ -229,6 +232,35 @@ def test_production_offers_an_environment_that_never_chose_to_follow(agent):
     assert {entry["environment_id"]: entry["outcome"] for entry in report} == {
         str(unchosen.id): "pinned",
     }
+
+
+def test_a_later_version_that_passes_waits_to_be_made_production(agent):
+    first = _connect(agent)
+    with patch(
+        "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
+    ):
+        _preflight(first)
+    following = _following(
+        _built_from(_completed(_environment(agent, 1), first), first, source_agent())
+    )
+    second = _connect(agent, parent=first, commit="b", trigger=Trigger.SYNC)
+    assert store_agent(
+        agent_version_id=second.id, agent=source_agent(), sdk_version="0.2.3"
+    )
+
+    with patch(
+        "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
+    ) as nudge:
+        result = _preflight(second)
+
+    assert result.status == Status.PASSED
+    first.refresh_from_db()
+    second.refresh_from_db()
+    following.refresh_from_db()
+    assert first.status == "active"
+    assert second.status != "active"
+    assert following.agent_version_id == first.id
+    assert nudge.call_count == 0
 
 
 def test_activating_a_connected_version_again_moves_nothing_twice(agent):
@@ -291,6 +323,7 @@ def test_a_major_change_is_offered_to_a_following_environment_not_applied(agent)
         "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
     ) as nudge:
         _preflight(second)
+        set_production(second)
 
     second.refresh_from_db()
     following.refresh_from_db()
@@ -322,6 +355,7 @@ def test_a_version_that_was_never_read_is_offered_not_applied(agent):
         "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
     ) as nudge:
         _preflight(second)
+        set_production(second)
 
     following.refresh_from_db()
     assert following.agent_version_id == first.id
@@ -336,8 +370,6 @@ def test_a_version_that_was_never_read_is_offered_not_applied(agent):
 
 
 def test_returning_production_to_an_earlier_version_carries_followers_back(agent):
-    from simulate.services.agent_versions import set_production
-
     first = _connect(agent)
     with patch(
         "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
@@ -354,6 +386,7 @@ def test_returning_production_to_an_earlier_version_carries_followers_back(agent
         "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
     ):
         _preflight(second)
+        set_production(second)
     following.refresh_from_db()
     assert following.agent_version_id == second.id
 

@@ -10,6 +10,7 @@ import Iconify from "src/components/iconify";
 import { BUILD_TONES } from "../buildTones";
 import AskUserQuestionCard from "./AskUserQuestionCard";
 import NudgeCard from "./NudgeCard";
+import PendingCommitCard from "./PendingCommitCard";
 
 const MONO = "ui-monospace, Menlo, monospace";
 
@@ -59,14 +60,32 @@ export function Turn({ turn }) {
       <Stack alignItems="flex-end">
         <Box
           sx={{
-            maxWidth: "82%", px: 1.75, py: 1.125, borderRadius: 2,
-            bgcolor: (t) => alpha(BUILD_TONES.accent, t.palette.mode === "dark" ? 0.14 : 0.08),
+            maxWidth: "82%",
+            px: 1.75,
+            py: 1.125,
+            borderRadius: 2,
+            bgcolor: (t) =>
+              alpha(
+                BUILD_TONES.accent,
+                t.palette.mode === "dark" ? 0.14 : 0.08,
+              ),
             border: "1px solid",
-            borderColor: (t) => alpha(BUILD_TONES.accent, t.palette.mode === "dark" ? 0.22 : 0.16),
+            borderColor: (t) =>
+              alpha(
+                BUILD_TONES.accent,
+                t.palette.mode === "dark" ? 0.22 : 0.16,
+              ),
           }}
         >
           {/* pre-wrap keeps the line breaks the user typed. */}
-          <Typography sx={{ typography: "s2", lineHeight: 1.55, color: "text.primary", whiteSpace: "pre-wrap" }}>
+          <Typography
+            sx={{
+              typography: "s2",
+              lineHeight: 1.55,
+              color: "text.primary",
+              whiteSpace: "pre-wrap",
+            }}
+          >
             {turn.text}
           </Typography>
         </Box>
@@ -74,6 +93,9 @@ export function Turn({ turn }) {
     );
   }
 
+  if (turn.role === "system" && turn.kind === "commit") {
+    return <PendingCommitCard envId={turn.envId} commit={turn.commit} />;
+  }
   if (turn.role === "system") return <NudgeCard turn={turn} />;
 
   return (
@@ -81,15 +103,20 @@ export function Turn({ turn }) {
       {turn.title && (
         <Typography
           sx={{
-            typography: "s3", fontWeight: "fontWeightBold",
-            color: "text.primary", textTransform: "uppercase", letterSpacing: 0.6,
+            typography: "s3",
+            fontWeight: "fontWeightBold",
+            color: "text.primary",
+            textTransform: "uppercase",
+            letterSpacing: 0.6,
             pt: 0.5,
           }}
         >
           {turn.title}
         </Typography>
       )}
-      {(turn.steps || []).map((step, i) => <Step key={step.id ?? i} step={step} />)}
+      {(turn.steps || []).map((step, i) => (
+        <Step key={step.id ?? i} step={step} />
+      ))}
     </Stack>
   );
 }
@@ -97,9 +124,15 @@ Turn.propTypes = {
   turn: PropTypes.shape({
     id: PropTypes.string,
     role: PropTypes.oneOf(["builder", "user", "system"]),
+    kind: PropTypes.string,
     title: PropTypes.string,
     text: PropTypes.string,
     steps: PropTypes.arrayOf(STEP_SHAPE),
+    envId: PropTypes.string,
+    commit: PropTypes.shape({
+      commitSha: PropTypes.string,
+      ref: PropTypes.string,
+    }),
   }),
 };
 
@@ -125,7 +158,8 @@ export function Step({ step }) {
     return (
       <Typography
         sx={{
-          typography: "s2", lineHeight: 1.65,
+          typography: "s2",
+          lineHeight: 1.65,
           color: step.kind === "think" ? "text.secondary" : "text.primary",
         }}
       >
@@ -149,10 +183,26 @@ export function Step({ step }) {
   if (step.kind === "file") {
     return (
       <QuietRow tint={BUILD_TONES.green}>
-        <Typography sx={{ typography: "s3", fontFamily: MONO, flexShrink: 0, maxWidth: "60%", color: "text.primary" }}>
+        <Typography
+          sx={{
+            typography: "s3",
+            fontFamily: MONO,
+            flexShrink: 0,
+            maxWidth: "60%",
+            color: "text.primary",
+          }}
+        >
           {step.path}
         </Typography>
-        <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", flex: 1, minWidth: 0 }}>
+        <Typography
+          noWrap
+          sx={{
+            typography: "s3",
+            color: "text.subtitle",
+            flex: 1,
+            minWidth: 0,
+          }}
+        >
           {step.note}
         </Typography>
       </QuietRow>
@@ -163,25 +213,46 @@ export function Step({ step }) {
     return (
       <Box>
         <Stack
-          direction="row" alignItems="center" spacing={1}
+          direction="row"
+          alignItems="center"
+          spacing={1}
           onClick={() => setOpen((o) => !o)}
-          sx={{ py: 0.5, cursor: "pointer", borderRadius: 1, px: 0.75, "&:hover": { bgcolor: "action.hover" } }}
+          sx={{
+            py: 0.5,
+            cursor: "pointer",
+            borderRadius: 1,
+            px: 0.75,
+            "&:hover": { bgcolor: "action.hover" },
+          }}
         >
           <Iconify
-            icon={open ? "solar:alt-arrow-down-linear" : "solar:alt-arrow-right-linear"}
+            icon={
+              open
+                ? "solar:alt-arrow-down-linear"
+                : "solar:alt-arrow-right-linear"
+            }
             width={12}
             sx={{ color: "text.subtitle", flexShrink: 0 }}
           />
-          <Typography sx={{ typography: "s3", fontFamily: MONO, color: "text.secondary" }}>
+          <Typography
+            sx={{ typography: "s3", fontFamily: MONO, color: "text.secondary" }}
+          >
             {step.label}
           </Typography>
         </Stack>
         <Collapse in={open} unmountOnExit>
           <Typography
             sx={{
-              ml: 2.5, mt: 0.5, px: 1.25, py: 1, borderRadius: 1,
-              typography: "s3", color: "text.secondary", whiteSpace: "pre-wrap",
-              fontFamily: MONO, bgcolor: "background.neutral",
+              ml: 2.5,
+              mt: 0.5,
+              px: 1.25,
+              py: 1,
+              borderRadius: 1,
+              typography: "s3",
+              color: "text.secondary",
+              whiteSpace: "pre-wrap",
+              fontFamily: MONO,
+              bgcolor: "background.neutral",
             }}
           >
             {step.value}
@@ -197,12 +268,24 @@ export function Step({ step }) {
     return (
       <Box>
         <Stack
-          direction="row" alignItems="center" spacing={1}
+          direction="row"
+          alignItems="center"
+          spacing={1}
           onClick={() => setOpen((o) => !o)}
-          sx={{ py: 0.5, cursor: "pointer", borderRadius: 1, px: 0.75, "&:hover": { bgcolor: "action.hover" } }}
+          sx={{
+            py: 0.5,
+            cursor: "pointer",
+            borderRadius: 1,
+            px: 0.75,
+            "&:hover": { bgcolor: "action.hover" },
+          }}
         >
           <Iconify
-            icon={open ? "solar:alt-arrow-down-linear" : "solar:alt-arrow-right-linear"}
+            icon={
+              open
+                ? "solar:alt-arrow-down-linear"
+                : "solar:alt-arrow-right-linear"
+            }
             width={12}
             sx={{ color: "text.subtitle", flexShrink: 0 }}
           />
@@ -213,7 +296,14 @@ export function Step({ step }) {
         <Collapse in={open} unmountOnExit>
           <Stack spacing={0.25} sx={{ ml: 2.5, mt: 0.5 }}>
             {(step.lines || []).map((line, i) => (
-              <Typography key={i} sx={{ typography: "s3", color: "text.subtitle", fontFamily: MONO }}>
+              <Typography
+                key={i}
+                sx={{
+                  typography: "s3",
+                  color: "text.subtitle",
+                  fontFamily: MONO,
+                }}
+              >
                 {line}
               </Typography>
             ))}
@@ -226,7 +316,9 @@ export function Step({ step }) {
   if (step.kind === "error") {
     return (
       <QuietRow tint={BUILD_TONES.red}>
-        <Typography sx={{ typography: "s2", color: "text.primary", flex: 1, minWidth: 0 }}>
+        <Typography
+          sx={{ typography: "s2", color: "text.primary", flex: 1, minWidth: 0 }}
+        >
           {step.text}
         </Typography>
         {step.onRetry && (
@@ -234,8 +326,13 @@ export function Step({ step }) {
             component="button"
             onClick={step.onRetry}
             sx={{
-              flexShrink: 0, border: "none", background: "none", cursor: "pointer",
-              typography: "s3", fontWeight: "fontWeightSemiBold", color: BUILD_TONES.accent,
+              flexShrink: 0,
+              border: "none",
+              background: "none",
+              cursor: "pointer",
+              typography: "s3",
+              fontWeight: "fontWeightSemiBold",
+              color: BUILD_TONES.accent,
               "&:hover": { textDecoration: "underline" },
             }}
           >
@@ -248,18 +345,40 @@ export function Step({ step }) {
 
   if (step.kind === "cancelled") {
     return (
-      <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 0.5, py: 0.25 }}>
-        <Iconify icon="solar:close-circle-linear" width={14} sx={{ color: "text.subtitle", flexShrink: 0 }} />
-        <Typography sx={{ typography: "s2", color: "text.subtitle" }}>{step.text || "Stopped."}</Typography>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        sx={{ px: 0.5, py: 0.25 }}
+      >
+        <Iconify
+          icon="solar:close-circle-linear"
+          width={14}
+          sx={{ color: "text.subtitle", flexShrink: 0 }}
+        />
+        <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+          {step.text || "Stopped."}
+        </Typography>
       </Stack>
     );
   }
 
   if (step.kind === "completed") {
     return (
-      <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 0.5, py: 0.25 }}>
-        <Iconify icon="solar:check-circle-bold" width={14} sx={{ color: BUILD_TONES.green, flexShrink: 0 }} />
-        <Typography sx={{ typography: "s2", color: "text.subtitle" }}>{step.text || "Done."}</Typography>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        sx={{ px: 0.5, py: 0.25 }}
+      >
+        <Iconify
+          icon="solar:check-circle-bold"
+          width={14}
+          sx={{ color: BUILD_TONES.green, flexShrink: 0 }}
+        />
+        <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+          {step.text || "Done."}
+        </Typography>
       </Stack>
     );
   }
@@ -286,7 +405,9 @@ Step.propTypes = { step: STEP_SHAPE };
 function formatToolOutput(text) {
   try {
     const parsed = JSON.parse(text);
-    return parsed !== null && typeof parsed === "object" ? JSON.stringify(parsed, null, 2) : text;
+    return parsed !== null && typeof parsed === "object"
+      ? JSON.stringify(parsed, null, 2)
+      : text;
   } catch {
     return text;
   }
@@ -310,10 +431,21 @@ function ToolStep({ step }) {
 
   const row = (
     <QuietRow tint={tone} pulse={running}>
-      <Typography sx={{ typography: "s3", fontFamily: MONO, flexShrink: 0, maxWidth: "60%", color: "text.primary" }}>
+      <Typography
+        sx={{
+          typography: "s3",
+          fontFamily: MONO,
+          flexShrink: 0,
+          maxWidth: "60%",
+          color: "text.primary",
+        }}
+      >
         {step.label}
       </Typography>
-      <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", flex: 1, minWidth: 0 }}>
+      <Typography
+        noWrap
+        sx={{ typography: "s3", color: "text.subtitle", flex: 1, minWidth: 0 }}
+      >
         {running ? "…" : step.result}
       </Typography>
       {expandable && (
@@ -326,7 +458,10 @@ function ToolStep({ step }) {
             color: "text.subtitle",
             opacity: open ? 1 : 0,
             transform: open ? "rotate(180deg)" : "none",
-            transition: (t) => t.transitions.create(["opacity", "transform"], { duration: t.transitions.duration.shorter }),
+            transition: (t) =>
+              t.transitions.create(["opacity", "transform"], {
+                duration: t.transitions.duration.shorter,
+              }),
           }}
         />
       )}
@@ -357,7 +492,9 @@ function ToolStep({ step }) {
           borderRadius: 1,
           outline: "none",
           "&:hover, &:focus-visible": { bgcolor: "action.hover" },
-          "&:hover .tool-step-chevron, &:focus-visible .tool-step-chevron": { opacity: 1 },
+          "&:hover .tool-step-chevron, &:focus-visible .tool-step-chevron": {
+            opacity: 1,
+          },
         }}
       >
         {row}
@@ -366,11 +503,22 @@ function ToolStep({ step }) {
         <Typography
           data-testid="tool-step-output"
           sx={{
-            ml: 2.75, mt: 0.5, mb: 0.5, px: 1.25, py: 1, borderRadius: 1,
-            typography: "s3", fontFamily: MONO, color: "text.secondary",
-            whiteSpace: "pre-wrap", overflowWrap: "anywhere",
-            maxHeight: 320, overflowY: "auto",
-            bgcolor: "background.neutral", border: "1px solid", borderColor: "divider",
+            ml: 2.75,
+            mt: 0.5,
+            mb: 0.5,
+            px: 1.25,
+            py: 1,
+            borderRadius: 1,
+            typography: "s3",
+            fontFamily: MONO,
+            color: "text.secondary",
+            whiteSpace: "pre-wrap",
+            overflowWrap: "anywhere",
+            maxHeight: 320,
+            overflowY: "auto",
+            bgcolor: "background.neutral",
+            border: "1px solid",
+            borderColor: "divider",
           }}
         >
           {output}
@@ -387,7 +535,8 @@ function Markdown({ text, dim }) {
   return (
     <Box
       sx={{
-        typography: "s2", lineHeight: 1.65,
+        typography: "s2",
+        lineHeight: 1.65,
         color: dim ? "text.secondary" : "text.primary",
         "& p": { m: 0, mb: 0.75 },
         "& p:last-of-type": { mb: 0 },
@@ -397,20 +546,36 @@ function Markdown({ text, dim }) {
         // Code keeps its lines and tables keep whole words, so both scroll
         // sideways inside their own box rather than widening the chat.
         "& pre": {
-          m: 0, mb: 0.75, px: 1.25, py: 1, borderRadius: 1,
-          bgcolor: "background.neutral", overflowX: "auto", maxWidth: "100%",
+          m: 0,
+          mb: 0.75,
+          px: 1.25,
+          py: 1,
+          borderRadius: 1,
+          bgcolor: "background.neutral",
+          overflowX: "auto",
+          maxWidth: "100%",
         },
         "& table": {
-          display: "block", maxWidth: "100%", overflowX: "auto",
-          borderCollapse: "collapse", mb: 0.75,
+          display: "block",
+          maxWidth: "100%",
+          overflowX: "auto",
+          borderCollapse: "collapse",
+          mb: 0.75,
         },
         "& th, & td": {
-          px: 1, py: 0.5, border: "1px solid", borderColor: "divider",
-          textAlign: "left", overflowWrap: "normal",
+          px: 1,
+          py: 0.5,
+          border: "1px solid",
+          borderColor: "divider",
+          textAlign: "left",
+          overflowWrap: "normal",
         },
       }}
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeSanitize]}
+      >
         {text || ""}
       </ReactMarkdown>
     </Box>
@@ -425,14 +590,27 @@ Markdown.propTypes = { text: PropTypes.string, dim: PropTypes.bool };
 // not a stack of chips. `pulse` animates the dot for an in-flight tool call.
 export function QuietRow({ tint, pulse, children }) {
   return (
-    <Stack direction="row" alignItems="center" spacing={1.25} sx={{ px: 0.5, py: 0.25 }}>
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={1.25}
+      sx={{ px: 0.5, py: 0.25 }}
+    >
       <Box
         sx={{
-          width: 7, height: 7, borderRadius: "50%", flexShrink: 0, bgcolor: tint,
-          boxShadow: (t) => `0 0 0 3px ${alpha(tint, t.palette.mode === "dark" ? 0.15 : 0.12)}`,
+          width: 7,
+          height: 7,
+          borderRadius: "50%",
+          flexShrink: 0,
+          bgcolor: tint,
+          boxShadow: (t) =>
+            `0 0 0 3px ${alpha(tint, t.palette.mode === "dark" ? 0.15 : 0.12)}`,
           ...(pulse && {
             animation: "quietPulse 1.1s ease-in-out infinite",
-            "@keyframes quietPulse": { "0%,100%": { opacity: 0.35 }, "50%": { opacity: 1 } },
+            "@keyframes quietPulse": {
+              "0%,100%": { opacity: 0.35 },
+              "50%": { opacity: 1 },
+            },
           }),
         }}
       />
@@ -440,7 +618,11 @@ export function QuietRow({ tint, pulse, children }) {
     </Stack>
   );
 }
-QuietRow.propTypes = { tint: PropTypes.string, pulse: PropTypes.bool, children: PropTypes.node };
+QuietRow.propTypes = {
+  tint: PropTypes.string,
+  pulse: PropTypes.bool,
+  children: PropTypes.node,
+};
 
 /* ── working indicator ───────────────────────────────────────────────────── */
 
@@ -449,12 +631,20 @@ export function Working({ label }) {
     <Stack direction="row" alignItems="center" spacing={1}>
       <Box
         sx={{
-          width: 7, height: 7, borderRadius: "50%", bgcolor: "text.subtitle",
+          width: 7,
+          height: 7,
+          borderRadius: "50%",
+          bgcolor: "text.subtitle",
           animation: "pulse 1.2s ease-in-out infinite",
-          "@keyframes pulse": { "0%,100%": { opacity: 0.3 }, "50%": { opacity: 1 } },
+          "@keyframes pulse": {
+            "0%,100%": { opacity: 0.3 },
+            "50%": { opacity: 1 },
+          },
         }}
       />
-      <Typography sx={{ typography: "s2", color: "text.subtitle" }}>{label}</Typography>
+      <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+        {label}
+      </Typography>
     </Stack>
   );
 }
@@ -479,12 +669,23 @@ function HeartbeatRow({ since }) {
   }, []);
   const elapsed = elapsedLabel(since);
   return (
-    <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 0.5, py: 0.25 }}>
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={1}
+      sx={{ px: 0.5, py: 0.25 }}
+    >
       <Box
         sx={{
-          width: 7, height: 7, borderRadius: "50%", bgcolor: BUILD_TONES.accent,
+          width: 7,
+          height: 7,
+          borderRadius: "50%",
+          bgcolor: BUILD_TONES.accent,
           animation: "pulse 1.2s ease-in-out infinite",
-          "@keyframes pulse": { "0%,100%": { opacity: 0.3 }, "50%": { opacity: 1 } },
+          "@keyframes pulse": {
+            "0%,100%": { opacity: 0.3 },
+            "50%": { opacity: 1 },
+          },
         }}
       />
       <Typography sx={{ typography: "s2", color: "text.subtitle" }}>

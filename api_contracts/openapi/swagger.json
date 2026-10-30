@@ -52125,6 +52125,49 @@
                 }
             ]
         },
+        "/simulate/api/harness-environments/{id}/pending-commit/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_pending_commit",
+                "description": "Answer the new commit offered to this environment: sync it as the next\nagent version, or skip it.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessPendingCommitAnswer"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessPendingCommitResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-environments/{id}/run-plan/": {
             "get": {
                 "operationId": "simulate_api_harness-environments_run_plan",
@@ -122766,6 +122809,9 @@
                     "title": "Connected",
                     "type": "boolean",
                     "readOnly": true
+                },
+                "managed_by": {
+                    "$ref": "#/definitions/RunEnvironmentRef"
                 }
             }
         },
@@ -129767,6 +129813,30 @@
                 }
             }
         },
+        "HarnessPendingCommitAnswer": {
+            "required": [
+                "answer"
+            ],
+            "type": "object",
+            "properties": {
+                "answer": {
+                    "title": "Answer",
+                    "type": "string",
+                    "enum": [
+                        "sync",
+                        "skip"
+                    ]
+                }
+            }
+        },
+        "HarnessPendingCommitResponse": {
+            "type": "object",
+            "properties": {
+                "agent_version": {
+                    "$ref": "#/definitions/HarnessVersion"
+                }
+            }
+        },
         "HarnessRunWarning": {
             "required": [
                 "code",
@@ -130802,6 +130872,40 @@
                 }
             }
         },
+        "HarnessPendingCommit": {
+            "required": [
+                "repository",
+                "ref",
+                "commit_sha",
+                "at"
+            ],
+            "type": "object",
+            "properties": {
+                "repository": {
+                    "title": "Repository",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "ref": {
+                    "title": "Ref",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "commit_sha": {
+                    "title": "Commit sha",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "at": {
+                    "title": "At",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                }
+            },
+            "x-nullable": true
+        },
         "HarnessJobRead": {
             "required": [
                 "job",
@@ -130866,6 +130970,9 @@
                 },
                 "versioning": {
                     "$ref": "#/definitions/HarnessVersioningFlags"
+                },
+                "pending_commit": {
+                    "$ref": "#/definitions/HarnessPendingCommit"
                 }
             }
         },

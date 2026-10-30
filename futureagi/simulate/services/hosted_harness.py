@@ -1626,12 +1626,15 @@ BUILD_PIN_KEY = "build_agent_version_id"
 
 def _freeze_build_pin(job: HostedHarnessJob) -> None:
     """Keep the agent version a build is tied to on its first attempt, so a retry and
-    the write-back land on it even when the environment's default moves meanwhile."""
+    the write-back land on it even when the environment's default moves meanwhile.
+    An environment without one is pinned here, before the build, never after it."""
     if job.environment_id is not None or job.test_execution_id is not None:
         return
-    from simulate.services.harness_agent_versions import agent_pin_candidate
+    from simulate.services.harness_agent_versions import fill_agent_pin
 
-    pinned = job.agent_version_id or getattr(agent_pin_candidate(job), "id", None)
+    if job.agent_version_id is None:
+        fill_agent_pin(job)
+    pinned = job.agent_version_id
     if pinned is None:
         return
     metadata = dict((job.payload or {}).get("metadata") or {})
@@ -1776,6 +1779,7 @@ def register_attempt(
         job.save(
             update_fields=[
                 "current_attempt_number",
+                "agent_version",
                 "payload",
                 "state",
                 "current_stage",

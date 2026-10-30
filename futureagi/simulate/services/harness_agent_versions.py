@@ -1861,7 +1861,9 @@ def activate_agent_version(version: AgentVersion) -> list[Any]:
     its own) is recorded as not having asked and stays where it is. An environment is
     skipped when the version was discarded meanwhile, a newer version is already its
     default, or the version is not one it can pick. A rerun's version, asked for by
-    none, moves no environment. Returns the environments moved.
+    none, moves no environment. A connected agent's version becomes production only
+    when the agent has none yet; a later one waits to be made production by hand.
+    Returns the environments moved.
     """
     from simulate.services.harness_versioning.assembly import legacy_runtime
     from simulate.services.harness_versioning.nudges import schedule_environment_nudge
@@ -1886,6 +1888,15 @@ def activate_agent_version(version: AgentVersion) -> list[Any]:
         and not payload.get("created_for_environment")
         and payload.get("definition_owner") == CONNECTED_OWNER
     ):
+        if (
+            AgentVersion._base_manager.filter(
+                agent_definition_id=version.agent_definition_id,
+                status=AgentVersion.StatusChoices.ACTIVE,
+            )
+            .exclude(id=version.id)
+            .exists()
+        ):
+            return []
         return _activate_production(version, runtime)
     others = []
     # TODO: offer legacy sharers a version of their own (Q6).

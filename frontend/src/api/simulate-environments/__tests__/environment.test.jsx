@@ -52,7 +52,11 @@ const COMPLETED_JOB = {
         hard_constraints: ["Verify identity before changing an account."],
       },
     },
-    { id: "o2", kind: "environment", data: { services: ["postgres", "redis"] } },
+    {
+      id: "o2",
+      kind: "environment",
+      data: { services: ["postgres", "redis"] },
+    },
   ],
 };
 
@@ -73,19 +77,40 @@ const RUNNING_JOB = {
 // A job still assembling its world — the stage the build experience renders on.
 const BUILDING_JOB = {
   ...RUNNING_JOB,
-  job: { ...RUNNING_JOB.job, job_id: "job-building", metadata: { name: "Building Environment" } },
-  status: { stage: "generating_environment", updated_at: "2026-09-15T09:00:00Z" },
+  job: {
+    ...RUNNING_JOB.job,
+    job_id: "job-building",
+    metadata: { name: "Building Environment" },
+  },
+  status: {
+    stage: "generating_environment",
+    updated_at: "2026-09-15T09:00:00Z",
+  },
 };
 
 // A completed job that also carries top-level registered scenarios, to exercise
 // the job.scenarios[] fallback in harnessEnvState.
 const JOB_WITH_SCENARIOS = {
-  job: { job_id: "job-sc", metadata: { name: "Scenario Env" }, scenario_count: 9 },
+  job: {
+    job_id: "job-sc",
+    metadata: { name: "Scenario Env" },
+    scenario_count: 9,
+  },
   status: { stage: "completed", updated_at: "2026-09-15T09:00:00Z" },
   credentials: { detected_connectors: ["vapi"] },
   scenarios: [
-    { scenario_key: "sk1", name: "sc_one", instruction: "Track a delivery", use_case: "UC1" },
-    { scenario_key: "sk2", name: "sc_two", instruction: "Dispute a charge", use_case: "UC2" },
+    {
+      scenario_key: "sk1",
+      name: "sc_one",
+      instruction: "Track a delivery",
+      use_case: "UC1",
+    },
+    {
+      scenario_key: "sk2",
+      name: "sc_two",
+      instruction: "Dispute a charge",
+      use_case: "UC2",
+    },
   ],
   stage_outputs: [],
 };
@@ -285,7 +310,11 @@ describe("stageOutputsToWorld", () => {
       {
         kind: "scenarios",
         data: [
-          { name: "happy_path", instruction: "Answer a delivery query.", use_case: "Track a delivery" },
+          {
+            name: "happy_path",
+            instruction: "Answer a delivery query.",
+            use_case: "Track a delivery",
+          },
         ],
       },
     ];
@@ -310,10 +339,34 @@ describe("stageOutputsToWorld", () => {
   });
 });
 
+describe("harnessJobToEnvironment — the commit waiting for Sync", () => {
+  it("maps a pending commit, and none when there is none", () => {
+    const { env } = harnessJobToEnvironment({
+      ...COMPLETED_JOB,
+      pending_commit: {
+        repository: "acme/agent",
+        ref: "main",
+        commit_sha: "abc1234",
+        at: "2026-10-30T10:00:00Z",
+      },
+    });
+    expect(env.pendingCommit).toEqual({
+      repository: "acme/agent",
+      ref: "main",
+      commitSha: "abc1234",
+      at: "2026-10-30T10:00:00Z",
+    });
+    expect(harnessJobToEnvironment(COMPLETED_JOB).env.pendingCommit).toBeNull();
+  });
+});
+
 describe("harnessJobToEnvironment — only the real world, no fixture fill", () => {
   it("surfaces parsed world fields and carries the real seed verbatim", () => {
     const { env } = harnessJobToEnvironment(COMPLETED_JOB);
-    expect(env.tools.map((t) => t.name)).toEqual(["lookup_order", "issue_refund"]);
+    expect(env.tools.map((t) => t.name)).toEqual([
+      "lookup_order",
+      "issue_refund",
+    ]);
     expect(env.seed.services).toEqual(["postgres", "redis"]);
     // The run emitted no seed tables, so none are shown — the "Customer Support
     // Line" fixture tables must not fill the gap.
@@ -364,17 +417,28 @@ describe("harnessJobToEnvironment", () => {
       status: {
         stage: "failed",
         updated_at: "2026-09-21T14:02:13Z",
-        failure: { domain: "infrastructure", stage: "queued", code: "sandbox_launch_failed", message: "boom" },
+        failure: {
+          domain: "infrastructure",
+          stage: "queued",
+          code: "sandbox_launch_failed",
+          message: "boom",
+        },
       },
     };
     const { env } = harnessJobToEnvironment(failed);
     expect(env.buildStatus).toBe("failed");
     expect(env.status).toBe(ENV_STATUS.FAILED);
-    expect(env.buildError).toMatchObject({ code: "sandbox_launch_failed", message: "boom" });
+    expect(env.buildError).toMatchObject({
+      code: "sandbox_launch_failed",
+      message: "boom",
+    });
   });
 
   it("marks a canceled job as failed too", () => {
-    const canceled = { ...RUNNING_JOB, status: { stage: "canceled", updated_at: "2026-09-21T14:02:13Z" } };
+    const canceled = {
+      ...RUNNING_JOB,
+      status: { stage: "canceled", updated_at: "2026-09-21T14:02:13Z" },
+    };
     expect(harnessJobToEnvironment(canceled).env.buildStatus).toBe("failed");
   });
 });
@@ -384,13 +448,19 @@ describe("canRunHeader", () => {
     const completed = { status: "ready", platform: { runTestId: "rt1" } };
     expect(canRunHeader("harness", completed, true)).toBe(true);
     expect(canRunHeader("harness", completed, false)).toBe(false);
-    expect(canRunHeader("harness", { status: "ready", platform: {} }, true)).toBe(false);
-    expect(canRunHeader("harness", { ...completed, status: "finalizing" }, true)).toBe(false);
+    expect(
+      canRunHeader("harness", { status: "ready", platform: {} }, true),
+    ).toBe(false);
+    expect(
+      canRunHeader("harness", { ...completed, status: "finalizing" }, true),
+    ).toBe(false);
   });
 
   it("falls back to canRun for non-harness sources", () => {
     expect(canRunHeader("client", {}, true)).toBe(true);
-    expect(canRunHeader("client", { platform: { runTestId: "rt1" } }, false)).toBe(false);
+    expect(
+      canRunHeader("client", { platform: { runTestId: "rt1" } }, false),
+    ).toBe(false);
   });
 });
 
@@ -409,7 +479,11 @@ describe("useEnvironment status when the detail is older than the job poll", () 
   const jobInCleanup = (status) => ({
     ...RUNNING_JOB,
     job: { ...RUNNING_JOB.job, job_id: "job-fin" },
-    status: { stage: "cleaning_up", updated_at: "2026-09-15T09:05:00Z", ...status },
+    status: {
+      stage: "cleaning_up",
+      updated_at: "2026-09-15T09:05:00Z",
+      ...status,
+    },
     platform: { run_test_id: "rt1", test_execution_id: "ex1" },
   });
 
@@ -417,8 +491,14 @@ describe("useEnvironment status when the detail is older than the job poll", () 
     getHarnessJob.mockResolvedValue(job);
     getHarnessEnvironment.mockResolvedValue(DETAIL_FROM_VALIDATION);
     const { Wrapper } = makeWrapper();
-    const { result } = renderHook(() => useEnvironment("job-fin"), { wrapper: Wrapper });
-    await waitFor(() => expect(result.current.env?.description).toBe("A returns-and-orders phone line."));
+    const { result } = renderHook(() => useEnvironment("job-fin"), {
+      wrapper: Wrapper,
+    });
+    await waitFor(() =>
+      expect(result.current.env?.description).toBe(
+        "A returns-and-orders phone line.",
+      ),
+    );
     return result.current.env;
   };
 
@@ -429,7 +509,9 @@ describe("useEnvironment status when the detail is older than the job poll", () 
   });
 
   it("shows Cancelling when the job poll carries a requested cancel", async () => {
-    const env = await renderEnv(jobInCleanup({ cancel_requested_at: "2026-09-15T09:04:00Z" }));
+    const env = await renderEnv(
+      jobInCleanup({ cancel_requested_at: "2026-09-15T09:04:00Z" }),
+    );
     expect(env.status).toBe(ENV_STATUS.CANCELLING);
     expect(canRunHeader("harness", env, true)).toBe(false);
   });
@@ -437,7 +519,8 @@ describe("useEnvironment status when the detail is older than the job poll", () 
 
 describe("useEnvironment keeps the versions current", () => {
   const isVersionsCall = ([arg]) =>
-    JSON.stringify(arg?.queryKey) === JSON.stringify(["harness-env-versions", "job-done"]);
+    JSON.stringify(arg?.queryKey) ===
+    JSON.stringify(["harness-env-versions", "job-done"]);
   const versionsCalls = (spy) => spy.mock.calls.filter(isVersionsCall).length;
   const isDraftsCall = ([arg]) =>
     JSON.stringify(arg?.queryKey) ===
@@ -450,10 +533,15 @@ describe("useEnvironment keeps the versions current", () => {
         JSON.stringify(arg?.queryKey) ===
         JSON.stringify(["harness-env-versions", "job-done", sub]),
     );
-  const atStage = (stage) => ({ ...COMPLETED_JOB, status: { ...COMPLETED_JOB.status, stage } });
+  const atStage = (stage) => ({
+    ...COMPLETED_JOB,
+    status: { ...COMPLETED_JOB.status, stage },
+  });
   const poll = (queryClient, job) => {
     getHarnessJob.mockResolvedValue(job);
-    return queryClient.refetchQueries({ queryKey: ["harness-job", "job-done"] });
+    return queryClient.refetchQueries({
+      queryKey: ["harness-job", "job-done"],
+    });
   };
   const chatJobs = (conversationId) => {
     const conversation = { conversation_id: conversationId, messages: [] };
@@ -474,9 +562,13 @@ describe("useEnvironment keeps the versions current", () => {
     const { queryClient, Wrapper } = makeWrapper();
     const spy = vi.spyOn(queryClient, "invalidateQueries");
 
-    const { result } = renderHook(() => useEnvironment("job-done"), { wrapper: Wrapper });
+    const { result } = renderHook(() => useEnvironment("job-done"), {
+      wrapper: Wrapper,
+    });
 
-    await waitFor(() => expect(result.current.env?.name).toBe("Done Environment"));
+    await waitFor(() =>
+      expect(result.current.env?.name).toBe("Done Environment"),
+    );
     expect(versionsCalls(spy)).toBe(0);
   });
 
@@ -492,15 +584,21 @@ describe("useEnvironment keeps the versions current", () => {
 
     await waitFor(() => expect(versionsCalls(spy)).toBe(1));
     // The list only: a version's own diff and scenarios never change.
-    expect(spy.mock.calls.find(isVersionsCall)[0]).toMatchObject({ exact: true });
+    expect(spy.mock.calls.find(isVersionsCall)[0]).toMatchObject({
+      exact: true,
+    });
   });
 
   it("refreshes again after a later rebuild finishes", async () => {
     getHarnessJob.mockResolvedValue(COMPLETED_JOB);
     const { queryClient, Wrapper } = makeWrapper();
     const spy = vi.spyOn(queryClient, "invalidateQueries");
-    const { result } = renderHook(() => useEnvironment("job-done"), { wrapper: Wrapper });
-    await waitFor(() => expect(result.current.env?.name).toBe("Done Environment"));
+    const { result } = renderHook(() => useEnvironment("job-done"), {
+      wrapper: Wrapper,
+    });
+    await waitFor(() =>
+      expect(result.current.env?.name).toBe("Done Environment"),
+    );
     const finished = result.current.env.status;
     // Polls arrive seconds apart, so each stage renders before the next one.
     const pollAndRender = async (job, changed) => {
@@ -524,7 +622,9 @@ describe("useEnvironment keeps the versions current", () => {
 
   it("does not refresh a finished environment's versions on switching to it", async () => {
     getHarnessJob.mockImplementation((id) =>
-      Promise.resolve(id === "job-a" ? { ...atStage("running"), id: "job-a" } : COMPLETED_JOB),
+      Promise.resolve(
+        id === "job-a" ? { ...atStage("running"), id: "job-a" } : COMPLETED_JOB,
+      ),
     );
     const { queryClient, Wrapper } = makeWrapper();
     // The finished environment was opened before, so its job is already cached and
@@ -548,8 +648,12 @@ describe("useEnvironment keeps the versions current", () => {
     getHarnessJob.mockResolvedValue(busy);
     const { queryClient, Wrapper } = makeWrapper();
     const spy = vi.spyOn(queryClient, "invalidateQueries");
-    const { result } = renderHook(() => useEnvironment("job-done"), { wrapper: Wrapper });
-    await waitFor(() => expect(result.current.env?.name).toBe("Done Environment"));
+    const { result } = renderHook(() => useEnvironment("job-done"), {
+      wrapper: Wrapper,
+    });
+    await waitFor(() =>
+      expect(result.current.env?.name).toBe("Done Environment"),
+    );
     await waitFor(() => expect(getHarnessEnvironment).toHaveBeenCalled());
     const detailFetches = getHarnessEnvironment.mock.calls.length;
     expect(versionsCalls(spy)).toBe(0);

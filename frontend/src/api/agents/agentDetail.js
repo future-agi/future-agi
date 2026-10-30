@@ -85,6 +85,9 @@ export const mapAgentDetail = (raw) => ({
   languages: raw.languages ?? [],
   model: raw.model || raw.model_details?.model || null,
   connected: !!raw.connected,
+  managedBy: raw.managed_by
+    ? { id: raw.managed_by.id, name: raw.managed_by.name }
+    : null,
 });
 
 const toStoredAgent = (d) => ({

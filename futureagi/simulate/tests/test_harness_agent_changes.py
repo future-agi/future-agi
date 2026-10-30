@@ -166,8 +166,20 @@ def _push_versions(definition_id):
 
 
 def _observe(environment):
+    """Look for new heads, and sync every commit that offers, as answering an offer
+    with Sync does."""
     environment.refresh_from_db()
-    return observe_repository_head(environment.agent_version.agent_definition_id)
+    outcomes = observe_repository_head(environment.agent_version.agent_definition_id)
+    for environment_id, outcome in list(outcomes.items()):
+        if outcome == "offered":
+            outcomes[environment_id], _ = changes.answer_pending_commit(
+                environment_id, sync=True
+            )
+    return outcomes
+
+
+def _sync(environment):
+    return changes.answer_pending_commit(environment.id, sync=True)
 
 
 def _hand_move(environment):
@@ -340,6 +352,100 @@ class TestPush:
         assert _outcomes(version) == {str(environment.id): "activated"}
         assert _hand_move(environment) is None
 
+    def test_a_push_only_offers_its_commit_until_it_is_synced(
+        self, user, workspace, storage, gh, scheduled
+    ):
+        environment = _environment(user, workspace, "offer-sync", storage)
+        gh.heads[("acme/agent", "main")] = HEAD_Y
+
+        definition_id = environment.agent_version.agent_definition_id
+        assert observe_repository_head(definition_id) == {
+            str(environment.id): "offered"
+        }
+        environment.refresh_from_db()
+        assert _push_rows(environment) == []
+        assert changes.pending_commit(environment)["commit_sha"] == HEAD_Y
+        assert changes.pending_commit_item(environment)["commit_sha"] == HEAD_Y
+        assert observe_repository_head(definition_id) == {
+            str(environment.id): "unchanged"
+        }
+
+        outcome, version = _sync(environment)
+
+        assert outcome == "created"
+        [row] = _push_rows(environment)
+        assert row.agent_version == version
+        assert row.source["commit_sha"] == HEAD_Y
+        environment.refresh_from_db()
+        assert changes.pending_commit_item(environment) is None
+        assert observe_repository_head(definition_id) == {
+            str(environment.id): "unchanged"
+        }
+
+    def test_a_skipped_commit_is_not_offered_again(
+        self, user, workspace, storage, gh, scheduled
+    ):
+        environment = _environment(user, workspace, "offer-skip", storage)
+        definition_id = environment.agent_version.agent_definition_id
+        gh.heads[("acme/agent", "main")] = HEAD_Y
+        observe_repository_head(definition_id)
+
+        assert changes.answer_pending_commit(environment.id, sync=False) == (
+            "skipped",
+            None,
+        )
+
+        environment.refresh_from_db()
+        assert _push_rows(environment) == []
+        assert changes.pending_commit(environment) == {}
+        assert observe_repository_head(definition_id) == {
+            str(environment.id): "unchanged"
+        }
+        gh.heads[("acme/agent", "main")] = HEAD_Z
+        assert observe_repository_head(definition_id) == {
+            str(environment.id): "offered"
+        }
+
+    def test_a_newer_push_replaces_the_offer(
+        self, user, workspace, storage, gh, scheduled
+    ):
+        environment = _environment(user, workspace, "offer-newer", storage)
+        definition_id = environment.agent_version.agent_definition_id
+        gh.heads[("acme/agent", "main")] = HEAD_Y
+        observe_repository_head(definition_id)
+        gh.heads[("acme/agent", "main")] = HEAD_Z
+
+        assert observe_repository_head(definition_id) == {
+            str(environment.id): "offered"
+        }
+        environment.refresh_from_db()
+        assert changes.pending_commit(environment)["commit_sha"] == HEAD_Z
+
+        _sync(environment)
+
+        [row] = _push_rows(environment)
+        assert row.source["commit_sha"] == HEAD_Z
+
+    def test_the_environment_answers_its_offer(
+        self, user, workspace, storage, gh, scheduled
+    ):
+        environment = _environment(user, workspace, "offer-api", storage)
+        api = APIClient()
+        api.force_authenticate(user=user)
+        url = f"/simulate/api/harness-environments/{environment.id}/pending-commit/"
+
+        nothing = api.post(url, {"answer": "sync"}, format="json")
+        assert nothing.status_code == 409
+        assert nothing.json()["error"] == "no_pending_commit"
+
+        gh.heads[("acme/agent", "main")] = HEAD_Y
+        observe_repository_head(environment.agent_version.agent_definition_id)
+        synced = api.post(url, {"answer": "sync"}, format="json")
+
+        assert synced.status_code == 200, synced.content
+        [row] = _push_rows(environment)
+        assert synced.json()["agent_version"]["id"] == str(row.agent_version_id)
+
     def test_one_version_for_environments_with_the_same_facts(
         self, user, workspace, storage, gh, scheduled
     ):
@@ -395,8 +501,10 @@ class TestPush:
 
         first, second = (call() for call in calls)
 
-        assert first == {"created": 1}
+        assert first == {"offered": 1}
         assert second == {"unchanged": 1}
+        assert _push_rows(environment) == []
+        assert _sync(environment)[0] == "created"
         assert len(_push_rows(environment)) == 1
 
     def test_a_roll_back_by_hand_is_not_undone(
@@ -1394,7 +1502,13 @@ class TestCreationCheck:
         assert replay.id == first.id
 
     @pytest.mark.parametrize(
-        "marker", ["agent_source_seen", "agent_source_repository_id"]
+        "marker",
+        [
+            "agent_source_seen",
+            "agent_source_repository_id",
+            "agent_source_pending",
+            "agent_source_skipped",
+        ],
     )
     def test_the_seen_markers_are_reserved(self, marker):
         from simulate.serializers.harness_job import HarnessJobCreateSerializer
@@ -1713,8 +1827,9 @@ class TestRepositoryId:
         assert receive_push("acme/agent", "refs/heads/main", "main", 999) == {}
         assert gh.calls == []
         assert receive_push("acme/agent", "refs/heads/main", "main", 77) == {
-            "created": 1
+            "offered": 1
         }
+        _sync(environment)
         assert _push_rows(environment)
 
 
