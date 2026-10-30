@@ -4,12 +4,14 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+from pathlib import Path
+import re
 import unittest
 from unittest.mock import patch
 
 from scripts.update_rehearsal_spool import (
-    COLUMN_LAYOUT_QUERY, DATABASE, KEY_COLUMNS, KEY_ORDER, TABLE_LAYOUT_QUERY,
-    TABLES, SPOOL_DIRECTORY, VALUE_COLUMNS, VALUE_ORDER, KEYS_QUERY, VALUES_QUERY,
+    COLUMN_LAYOUT_QUERY, DATABASE, KEY_ORDER, TABLE_LAYOUT_QUERY,
+    TABLES, SPOOL_DIRECTORY, VALUE_ORDER, KEYS_QUERY, VALUES_QUERY,
     ObservedSpoolWitness, ObservedSpoolWitnessError, privilege_sql,
 )
 
@@ -67,10 +69,16 @@ def schema_rows():
 
 
 def column_rows():
+    # Derive the oracle from product DDL, not the validator's expected constants.
+    schema = (Path(__file__).resolve().parents[2] /
+        'futureagi/tracer/services/clickhouse/v2/observed_catalog/schema.sql').read_text()
     rows = []
-    for table, columns in ((TABLES[0], KEY_COLUMNS), (TABLES[1], VALUE_COLUMNS)):
+    for table in ('observed_attribute_keys', 'observed_attribute_values'):
+        body = schema.split('CREATE TABLE IF NOT EXISTS '+table+'\n', 1)[1].split('\n)\nENGINE', 1)[0]
+        columns = re.findall(r'^    ([a-z_]+) (.+)$', body, re.MULTILINE)
         for position, (name, kind) in enumerate(columns, 1):
-            rows.append(dict(table=table, name=name, type=kind, position=position))
+            # Default JSONEachRow encoding for the UInt64 position column.
+            rows.append(dict(table=table, name=name, type=kind.rstrip(','), position=str(position)))
     return rows
 
 
@@ -137,6 +145,42 @@ def add_target_record(driver):
 
 
 class ObservedSpoolWitnessTests(unittest.TestCase):
+    def test_product_DDL_matches_quoted_and_unquoted_UInt64_positions(self):
+        for quoted in (True, False):
+            driver, witness = make_witness()
+            rows = column_rows()
+            self.assertEqual(len(rows), 20)
+            if not quoted:
+                for row in rows:
+                    row['position'] = int(row['position'])
+            with self.subTest(quoted=quoted), patch(__name__+'.column_rows', return_value=rows):
+                witness.pause_delivery()
+            self.assertEqual(len(driver.commands), 2)
+
+    def test_malformed_positions_and_schema_drift_refuse_before_privilege_mutation(self):
+        for position in (True, False, None, 1.0, 0, -1, 100, '0', '01', '-1', '+1',
+                         '1.0', '1e0', ' 1', '1 ', '１', '100', '9'*1000, [], {}):
+            driver, witness = make_witness()
+            rows = column_rows(); rows[0]['position'] = position
+            with self.subTest(position=repr(position)[:40]), \
+                 patch(__name__+'.column_rows', return_value=rows), \
+                 self.assertRaisesRegex(ObservedSpoolWitnessError, 'column layout'):
+                witness.pause_delivery()
+            self.assertEqual(driver.commands, [])
+        for change in ('duplicate', 'order', 'type', 'name', 'missing', 'extra'):
+            driver, witness = make_witness()
+            rows = column_rows()
+            if change == 'duplicate': rows[1]['position'] = rows[0]['position']
+            elif change == 'order': rows[0], rows[1] = rows[1], rows[0]
+            elif change == 'type': rows[5]['type'] = 'String'
+            elif change == 'name': rows[0]['name'] = 'unexpected'
+            elif change == 'missing': rows.pop()
+            else: rows.append(dict(rows[-1]))
+            with self.subTest(change=change), patch(__name__+'.column_rows', return_value=rows), \
+                 self.assertRaisesRegex(ObservedSpoolWitnessError, 'column layout'):
+                witness.pause_delivery()
+            self.assertEqual(driver.commands, [])
+
     def test_sql_uses_clickhouse_format_datetime_not_the_collectors_go_helper_name(self):
         # ClickHouse src/Functions/formatDateTime.cpp registers formatDateTime;
         # formatDateTime64 is a local Go serializer helper, not a SQL function.

@@ -473,10 +473,16 @@ class ObservedSpoolWitness:
                 _fail("unsupported observed-catalog column layout")
             table = row["table"]
             if (type(table) is not str or table not in observed
-                    or type(row["name"]) is not str or type(row["type"]) is not str
-                    or type(row["position"]) is not int):
+                    or type(row["name"]) is not str or type(row["type"]) is not str):
                 _fail("unsupported observed-catalog column layout")
-            observed[table].append((row["name"], _schema_compact(row["type"]), row["position"]))
+            # system.columns.position is UInt64. The pinned ClickHouse 25.3
+            # JSON default quotes it; other versions/settings may leave numbers.
+            position = row["position"]
+            if type(position) is str and re.fullmatch(r"[1-9][0-9]?", position):
+                position = int(position)
+            if type(position) is not int or not 1 <= position <= len(expected_columns[table]):
+                _fail("unsupported observed-catalog column layout")
+            observed[table].append((row["name"], _schema_compact(row["type"]), position))
         for table in TABLES:
             expected = expected_columns[table]
             actual = observed[table]
