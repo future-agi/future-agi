@@ -7,6 +7,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"math"
+	"math/bits"
 	"net"
 	"net/http"
 	"net/url"
@@ -151,19 +153,49 @@ func NewRunID() string {
 var identifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 var runIDPattern = regexp.MustCompile(`^[0-9a-f]{16}$`)
 
+// PlannedSpans floors rate * duration exactly, including fractional seconds.
+// -1 denotes an invalid or unrepresentable plan; Validate rejects it.
 func (c Config) PlannedSpans() int64 {
-	return int64(float64(c.Rate) * c.Duration.Seconds())
+	if c.Rate < 0 || c.Duration < 0 {
+		return -1
+	}
+	hi, lo := bits.Mul64(uint64(c.Rate), uint64(c.Duration))
+	if hi >= uint64(time.Second) {
+		return -1
+	}
+	n, _ := bits.Div64(hi, lo, uint64(time.Second))
+	if n > math.MaxInt64 {
+		return -1
+	}
+	return int64(n)
+}
+
+// ValidateLoadBounds is shared by load planning and the offline budget command.
+func ValidateLoadBounds(rate int64, batchSize, concurrency int) error {
+	if rate < 1 || rate > 1000000 {
+		return fmt.Errorf("--rate must be 1..1000000 spans/s")
+	}
+	if batchSize < 1 || batchSize > 10000 {
+		return fmt.Errorf("--batch-size must be 1..10000")
+	}
+	if concurrency < 1 || concurrency > 128 {
+		return fmt.Errorf("--concurrency must be 1..128")
+	}
+	return nil
 }
 
 func (c Config) Validate() error {
 	if !runIDPattern.MatchString(c.RunID) || c.RunID == "0000000000000000" {
 		return fmt.Errorf("run-id must be 16 lowercase hexadecimal characters, nonzero and unique per execution")
 	}
-	if c.Rate < 1 || c.Rate > 1000000 || c.Duration <= 0 || c.MaxDuration <= 0 || c.Duration > c.MaxDuration || c.MaxDuration > 24*time.Hour {
+	if err := ValidateLoadBounds(c.Rate, c.BatchSize, c.Concurrency); err != nil {
+		return err
+	}
+	if c.Duration <= 0 || c.MaxDuration <= 0 || c.Duration > c.MaxDuration || c.MaxDuration > 24*time.Hour {
 		return fmt.Errorf("rate must be 1..1000000 spans/s; duration <= max-duration <= 24h")
 	}
-	if c.PlannedSpans() < 1 || c.MaxBytes < 1 || c.BatchSize < 1 || c.BatchSize > 10000 || c.Concurrency < 1 || c.Concurrency > 128 {
-		return fmt.Errorf("positive span/byte budgets required; batch-size 1..10000 and concurrency 1..128")
+	if c.PlannedSpans() < 1 || c.MaxBytes < 1 {
+		return fmt.Errorf("positive span/byte budgets required")
 	}
 	if c.SpansPerTrace < 1 || c.SpansPerTrace > 10000 || c.TracesPerSession < 1 || c.TracesPerSession > 10000 {
 		return fmt.Errorf("spans-per-trace and traces-per-session must be 1..10000")

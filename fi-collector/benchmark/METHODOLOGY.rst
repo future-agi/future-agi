@@ -20,7 +20,14 @@ A span passes five stages. Each is counted separately, as a total in the result
 and as a 1-second series in the telemetry stream (``run.json.telemetry.jsonl``).
 
 **Offered** (``planned_spans``)
-    ``rate x duration``: what the profile calls for. A plan, not a measurement.
+    ``floor(rate x duration)``: what the profile calls for. A plan, not a
+    measurement. The calculation uses exact integer nanoseconds with wide,
+    checked multiplication, not floating-point truncation. For example,
+    1,000 spans/s for 1.001 s plans 1,001 spans (older builds incorrectly
+    planned 1,000). Inputs whose floating-point result was already exact retain
+    the same plan and scheduled send times; corrected boundary inputs can gain
+    or lose the incorrectly rounded final span. A positive duration that plans
+    zero spans is rejected.
 
 **Scheduled** (``schedule.scheduled_spans``)
     The load is open loop: request *k* is due at ``load start + k x batch_size /
@@ -162,6 +169,39 @@ and the durable lag. The per-window read-visible summaries use the same
 histogram. The durable lag is bucketed server-side by SQL that a live test checks
 against the Go bucketing value by value.
 
+Quantiles use the nearest rank: ``ceil(count * q)``, with q = 0.5, 0.95,
+0.99 or 0.999, and the first occupied bucket whose cumulative count reaches
+that rank. Ranks are mathematical integers, not rounded floating-point sample
+counts. Empty populations have no occupied buckets and all-zero summaries.
+The exact maximum lies in the final occupied half-open bucket
+``[lower_ms, upper_ms)``; it is not a quantile edge, even for lower-bound series.
+The last log-linear bucket (lower = 136902082.56 ms, nominal upper =
+137438953.472 ms) also holds overflow values above its nominal upper edge.
+For that bucket the same edge-reporting rule is retained: its lower edge for
+lower-bound quantiles and its nominal upper edge capped at the exact maximum
+for upper-bound quantiles. The ``never below`` guarantee for upper quantiles
+therefore applies only within the histogram's representable range, not overflow.
+
+In v4 the only summaries shipped with raw buckets are
+``lag.read_visible_lag_upper_bound_from_scheduled_send`` (upper edges, capped)
+and ``verification.durable_lag.insert_lag_from_scheduled_send`` (lower edges).
+Offline validation first checks **every bound pair** against the canonical
+whole-microsecond/log-linear grid, including the sole canonical overflow bucket.
+Bounds must equal the integer-microsecond edges divided by 1,000; the quantile
+rounding tolerance does not permit moving, merging or widening buckets. It then
+reconstructs every quantile of both, including partial or inconsistent durable
+observations, and checks maximum membership. Quantile equality
+allows at most four binary64 ULPs at the expected edge for unit-conversion
+rounding, not a percentage of the bucket width (less than 0.00000012 ms at the
+38-hour edge). Bucket membership remains half-open, without this tolerance.
+Single-bucket populations follow exactly the same rank, capping and maximum
+rules. No minimum is reported for these latency series. Realised
+``Distribution`` summaries do report min/max but have no raw histogram in v4;
+so do the other latency series, including windows and censored probe elapsed
+lower bounds. Those summaries retain their ordering/population checks only:
+no histogram is inferred from another series and censoring never becomes a
+completed latency measurement.
+
 Clock offset
 ------------
 
@@ -284,15 +324,148 @@ load to the completion of its last export), which is at most the offered rate.
 The headline is printed only when all of these hold; otherwise every reason is
 listed and no throughput statement appears:
 
-* the run was executed;
+* the run was executed and its status is ``measured-profile-complete``;
 * it lasted at least ``--min-sustained`` (1 hour by default; the acceptance
   profile is 24 hours);
-* its verification completed with no missing and no unexpected span, and no
-  stored span of a refused request (each tested on its own);
+* its verification completed with no missing, visible duplicate or unexpected
+  span, and no stored span of a refused request (each tested on its own);
 * it started and acknowledged the whole offered load;
 * every sentinel became visible;
 * it had no fault;
 * no telemetry line breaks the accounting identity.
+
+Offline evidence validation and CLI contract
+--------------------------------------------
+
+``report`` and ``publish`` share an offline semantic validator. Before decoding
+measurements, a reflection-driven JSON structural pass checks the wire types and
+presence of non-optional fields. CLI input is limited to 16 MiB; excess input is
+rejected rather than truncated into an apparently valid document. An explicit
+``null`` is not numeric zero, and
+an omitted required measurement is not a measured zero. Field requirements
+follow the Go schema: ``omitempty`` allows absence, pointer fields allow
+absence/null, and slices/maps allow absence/null (an empty collection). Supplied
+collection elements still obey their element types: numeric map values cannot
+be null. Whole ``workload`` and ``provenance`` disclosures are optional/nullable;
+when supplied as objects, their required fields must be present. Recovery and
+its pointer-valued unobserved components remain nullable. Opaque external JSON
+metadata is not interpreted as a benchmark measurement.
+
+Duplicate object keys are rejected, even when their values are equal. For
+struct fields, case-insensitive aliases collide just as they do in Go's JSON
+decoder (``count`` and ``COUNT`` cannot both appear); map keys follow their
+actual key type. A single case-insensitive spelling remains supported. Unknown
+schema fields are rejected. These checks precede semantic validation and all
+report bytes/output-file creation, not merely headline gating.
+
+Schema-compatible JSON alone is not evidence: required identity/state fields,
+non-negative finite counts and measurements, and overflow-safe accounting checks
+must also pass. In addition to the attempted-span identity above, the validator
+checks:
+
+* accepted = acknowledged; whole-request rejected = retryable + non-retryable;
+  unacknowledged = whole-request rejected + ambiguous;
+* requests = acknowledged + partial-rejection + retryable-rejection +
+  non-retryable-rejection + ambiguous request counts (retry-hint requests are a
+  subset, not an additional outcome); request errors count rejected + ambiguous;
+* attempted <= generated <= planned; attempted + scheduled-but-not-started =
+  scheduled <= planned; requests match the attempted batch count;
+* persisted distinct + missing = attempted; scanned attempted + unscanned =
+  attempted; distinct + visible duplicates + unexpected = scanned run rows;
+* acknowledged-missing + partial-rejected-missing + whole-rejected-missing +
+  ambiguous-missing + unscanned = missing. Partial-request missing beyond the
+  rejected count is a subset of acknowledged-missing, not an extra term;
+* missing fraction = missing / attempted, with zero for zero attempts;
+  complete verification covers every attempted span and planned chunk;
+* elapsed load time is finite, non-negative, positive after load execution,
+  no earlier than the last due scheduled/attempted batch, and at least the
+  configured duration for a completed profile;
+* registered sentinels = sampled + dropped-not-acknowledged; sampled = seen +
+  unseen. All three seen-series counts agree; actual-send and lower-bound
+  quantiles cannot exceed scheduled-send upper bounds. Window seen/unseen and
+  histogram bucket counts conserve those populations, using overflow-safe
+  arithmetic. Windows and bucket bounds are ordered and non-overlapping;
+* every recorded export status (including transport errors) counts exactly one
+  request. HTTP/gRPC statuses reconcile with their possible outcome classes;
+  malformed success bodies may be ambiguous, and a zero-rejection partial-success
+  warning remains acknowledged. Retry-hint counts agree across both summaries;
+* both export latency summaries and ``schedule.start_delay_after_scheduled_send``
+  cover every attempted request, including failed requests. When workload is
+  disclosed, its dispatch-delay count equals that same population. Preflight
+  receipts with no attempts have zero observations; interrupted runs cover only
+  their attempted requests, not the whole offered plan. Every latency summary,
+  including probes, censored lower bounds, lag windows and generator statistics,
+  has ``0 <= p50 <= p95 <= p99 <= p99.9 <= max`` (there is no p90 field in v4).
+  Empty summaries have zero quantiles. Realised value distributions also require
+  ``min <= p50 <= p95 <= p99 <= max`` and a mean within min/max, with no
+  out-of-range epsilon allowance (also for single-observation/constant series).
+  The binary64 mean is compared with the **exact integer** extrema, including
+  above 2^53: extrema are not rounded outwards to admit a larger/smaller mean.
+  A constant integer population whose mean cannot be represented in binary64
+  within its exact extrema cannot supply a valid v4 distribution summary;
+* scanned work requires nonzero verified chunks, planned chunks and chunk size.
+  Planned chunks cover the attempted population, and verified chunks cover a
+  prefix (with a possibly short final chunk). Complete scans cover the whole
+  population; incomplete scans may stop at any completed chunk;
+* durable-lag measured rows = non-negative-lag count + before-schedule rows.
+  Only a complete lag summary labelled ``measured`` must equal the exact-ID
+  distinct count; ``partial``, ``errors`` and ``inconsistent`` remain diagnostic
+  observations of potentially different database snapshots;
+* supplied workload partitions, request-byte means, probe latency populations,
+  backlog sample subsets, measured clock uncertainty (half the round trip), and
+  recovered-fault component maxima must agree with their respective ledgers.
+
+These are necessary internal-consistency checks, not authentication of a receipt.
+An entirely absent optional workload disclosure is not reconstructed. Missing
+ranges may be omitted diagnostic detail; their supplied counts cannot exceed the
+scanned loss ledger. Collector lifetime counters need not equal this run's
+counters, may reset on restart, and may include unrelated traffic. Verification
+elapsed time can exceed its query budgets because of retry backoff and checkpoint
+I/O; only durable-query elapsed <= total verification elapsed is required. Wire
+bytes may be zero for an unsuccessful gRPC send, and compression can enlarge a
+small message. Cross-host wall-clock ordering and raw external resource metadata
+are not treated as monotonic measurements. Checkpoint resume validation is a
+separate boundary; this offline result validator does not authenticate or fully
+validate checkpoint internals.
+
+Validation never contacts a target or requests execution credentials/approval.
+A valid failed, preflight-failed, incomplete, censored-probe or no-probe result
+remains renderable for diagnosis. Its completion label cannot override its
+counters; the publisher independently withholds an unearned headline. Invalid
+accounting is refused even when ``accounting_error`` is absent. A withheld
+headline is a successful diagnostic publication, not a passed measurement.
+
+All commands accept ``-h`` and ``--help``. Root help lists command synopses and
+required operands. The binary's exit codes are **0** for successful work or
+help, and **1** for invalid usage/input, output errors, execution failures or
+an incomplete verification. The historical shared error code is retained;
+callers should not infer usage versus runtime failure from it. An executed
+load also exits 1 for a profile that did not complete without errors (except
+an explicitly declared, completed recovery case). A written diagnostic result
+may therefore accompany a nonzero exit. ``go run`` and shell wrappers may add
+their own diagnostics/status handling; ``run-profile.sh`` uses ``set -e`` and
+returns 2 for its own unknown-profile error.
+
+``collector-budget`` uses the same bounds as root load planning: rate
+1..1,000,000 spans/s, batch size 1..10,000, concurrency 1..128. Invalid values
+name the offending flag and range. The row heuristic uses checked exact
+arithmetic, including potentially large collector-reported flush ages; it never
+recommends a wrapped negative limit.
+
+Publication pairs and resumed verification results are staged privately (mode
+0600) and synced before final paths are created with exclusive hard links.
+Existing files, including dangling leaf symlinks and files created by concurrent
+writers, are never replaced. Handled failures remove only this invocation's
+owned incomplete files; retry does not collide with its own failed publication.
+Load commands reserve all result/telemetry paths exclusively before execution,
+so concurrent writers cannot both start a run for the same output and telemetry
+remains tail-able. Valid failed/incomplete diagnostic results are retained.
+These guarantees cover handled errors, not crash-atomic multi-file publication:
+a hard kill or power loss between final links can leave a partial set.
+
+Offline ``report``, ``size`` and ``publish`` keep normal signal termination even
+when stdout is blocked. Graceful load/verification commands cancel on the first
+interrupt and restore normal termination for a subsequent interrupt.
 
 Comparisons this tool does not support
 --------------------------------------

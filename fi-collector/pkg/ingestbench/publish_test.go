@@ -140,18 +140,45 @@ func TestPublicationHeadlineNeedsAnEarnedRun(t *testing.T) {
 		"incomplete": {func(r *Result) {
 			r.Verification.Complete, r.Verification.Error = false, "verification budget exhausted"
 		}, opts, "verification is incomplete (verification budget exhausted)"},
-		"missing":         {func(r *Result) { r.Verification.Missing, r.Verification.MissingBy.AcknowledgedMissing = 1, 1 }, opts, "1 attempted spans are missing"},
-		"unexpected-rows": {func(r *Result) { r.Verification.UnexpectedRows = 1 }, opts, "storage holds 1 rows that are not this run's identities"},
+		"missing": {func(r *Result) {
+			r.Verification.Missing, r.Verification.MissingBy.AcknowledgedMissing = 1, 1
+			r.Verification.DistinctExpected--
+			r.Verification.Rows--
+			r.Verification.MissingFraction, r.Verification.DataLossDetected = 1.0/12, true
+			r.Verification.DurableLag.Status = "inconsistent" // lag observed a different snapshot
+		}, opts, "1 attempted spans are missing"},
+		"unexpected-rows": {func(r *Result) {
+			r.Verification.UnexpectedRows = 1
+			r.Verification.Rows++
+		}, opts, "storage holds 1 rows that are not this run's identities"},
 		"contract-violation": {func(r *Result) {
+			// One four-span request was refused; two of those spans persisted.
+			r.Counters.Acknowledged, r.Counters.Accepted, r.Counters.SuccessStatus = 8, 8, 8
+			r.Counters.WholeRequestRejected, r.Counters.RejectedRetryable, r.Counters.Unacknowledged = 4, 4, 4
+			r.Counters.RequestErrors = 1
+			r.Counters.RequestOutcomes = RequestOutcomes{Acknowledged: 2, RejectedRetryable: 1}
+			r.Statuses = map[string]int64{"http:200": 2, "http:503": 1}
+			removeSeenSentinel(r, false)
+			r.Verification.DurableLag.Status = "inconsistent"
 			r.Verification.ContractViolation, r.Verification.PersistedBy.RejectedButPersisted = true, 2
+			r.Verification.Rows, r.Verification.DistinctExpected = 10, 10
+			r.Verification.Missing, r.Verification.MissingBy.RejectedMissing, r.Verification.MissingFraction = 2, 2, 2.0/12
 		}, opts, "storage holds spans of requests the collector refused (2 whole-request rejected"},
-		"not-all-accepted": {func(r *Result) { r.Counters.Acknowledged -= 4 }, opts, "4 of 12 attempted spans not acknowledged"},
-		"not-all-started":  {func(r *Result) { r.StopReason = "byte-budget" }, opts, "stop reason byte-budget"},
-		"recovery":         {func(r *Result) { r.Recovery = &RecoveryResult{} }, opts, "not a throughput measurement"},
-		"unseen-sentinel":  {func(r *Result) { r.Lag.Unseen = 1 }, opts, "1 acknowledged sentinels never became visible"},
-		"accounting":       {func(r *Result) { r.AccountingError = "span accounting identity broken" }, opts, "accounting error"},
-		"dry-run":          {func(r *Result) { r.Config.Execute = false }, opts, "not executed"},
-		"telemetry":        {func(*Result) {}, PublishOptions{MinSustained: opts.MinSustained, Telemetry: bytes.NewReader(tampered)}, "telemetry progress lines break the accounting identity"},
+		"not-all-accepted": {func(r *Result) {
+			// An ambiguous four-span export can still be found stored.
+			r.Counters.Acknowledged, r.Counters.Accepted, r.Counters.SuccessStatus = 8, 8, 8
+			r.Counters.Ambiguous, r.Counters.Unacknowledged, r.Counters.RequestErrors = 4, 4, 1
+			r.Counters.RequestOutcomes = RequestOutcomes{Acknowledged: 2, Ambiguous: 1}
+			r.Statuses = map[string]int64{"http:200": 2, "transport-error": 1}
+			removeSeenSentinel(r, false)
+			r.Verification.PersistedBy.AmbiguousPersisted = 4
+		}, opts, "4 of 12 attempted spans not acknowledged"},
+		"not-all-started": {func(r *Result) { r.StopReason = "byte-budget" }, opts, "stop reason byte-budget"},
+		"recovery":        {func(r *Result) { r.Recovery = &RecoveryResult{} }, opts, "not a throughput measurement"},
+		"unseen-sentinel": {func(r *Result) { removeSeenSentinel(r, true) }, opts, "1 acknowledged sentinels never became visible"},
+		"accounting":      {func(r *Result) { r.AccountingError = "span accounting identity broken" }, opts, "accounting error"},
+		"dry-run":         {func(r *Result) { r.Config.Execute = false }, opts, "not executed"},
+		"telemetry":       {func(*Result) {}, PublishOptions{MinSustained: opts.MinSustained, Telemetry: bytes.NewReader(tampered)}, "telemetry progress lines break the accounting identity"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if name == "telemetry" && bytes.Equal(tampered, telemetry) {

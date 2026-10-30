@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
+	"math/big"
 	"net/http"
 	"strings"
 	"time"
@@ -60,17 +60,40 @@ type BudgetCheck struct {
 	Sufficient           bool   `json:"sufficient"`
 	BatchFits            bool   `json:"batch_fits_budget"`
 	RecommendedSetting   string `json:"recommended_setting"`
+	Error                string `json:"error,omitempty"`
 }
 
 const insertAllowance = 2 * time.Second
 
-// RequiredPendingRows is the heuristic row budget for a profile.
+// RequiredPendingRows is the heuristic row budget, or -1 for invalid inputs.
 func RequiredPendingRows(rate int64, batchSize, concurrency int, limits CollectorLimits) int64 {
-	trigger := min(float64(limits.BatchMaxRows), float64(rate)*float64(limits.BatchMaxAgeMS)/1000)
-	if limits.BatchMaxRows <= 0 {
-		trigger = float64(rate) * float64(limits.BatchMaxAgeMS) / 1000
+	n, err := requiredPendingRows(rate, batchSize, concurrency, limits)
+	if err != nil {
+		return -1
 	}
-	return int64(math.Ceil(trigger+float64(rate)*insertAllowance.Seconds())) + int64(concurrency)*int64(batchSize)
+	return n
+}
+
+func requiredPendingRows(rate int64, batchSize, concurrency int, limits CollectorLimits) (int64, error) {
+	if err := ValidateLoadBounds(rate, batchSize, concurrency); err != nil {
+		return 0, err
+	}
+	if limits.BatchMaxAgeMS < 0 || limits.BatchMaxRows < 0 || limits.MaxPendingRows < 0 {
+		return 0, fmt.Errorf("collector limits batch_max_age_ms, batch_max_rows and max_pending_rows must be non-negative")
+	}
+	// The reported flush age is not bounded by the CLI. Keep multiplication,
+	// ceiling and addition wide until representability has been checked.
+	trigger := new(big.Int).Mul(big.NewInt(rate), big.NewInt(limits.BatchMaxAgeMS))
+	trigger.Add(trigger, big.NewInt(999)).Quo(trigger, big.NewInt(1000))
+	if limits.BatchMaxRows > 0 && trigger.Cmp(big.NewInt(limits.BatchMaxRows)) > 0 {
+		trigger.SetInt64(limits.BatchMaxRows)
+	}
+	trigger.Add(trigger, big.NewInt(rate*int64(insertAllowance/time.Second)))
+	trigger.Add(trigger, big.NewInt(int64(concurrency)*int64(batchSize)))
+	if !trigger.IsInt64() {
+		return 0, fmt.Errorf("collector batch_max_age_ms produces an unrepresentable required_pending_rows")
+	}
+	return trigger.Int64(), nil
 }
 
 // CheckBudget fills a BudgetCheck from the reported limits, or from a declared
@@ -83,7 +106,13 @@ func CheckBudget(rate int64, batchSize, concurrency int, reported *CollectorLimi
 		limits.MaxPendingRows, source = declared, "declared by operator (not observed)"
 	}
 	b := BudgetCheck{Method: "heuristic: min(batch_max_rows, rate*batch_max_age) + rate*2s insert allowance + concurrency*batch_size",
-		RequiredPendingRows: RequiredPendingRows(rate, batchSize, concurrency, limits), AvailablePendingRows: limits.MaxPendingRows, Source: source}
+		AvailablePendingRows: limits.MaxPendingRows, Source: source}
+	var err error
+	b.RequiredPendingRows, err = requiredPendingRows(rate, batchSize, concurrency, limits)
+	if err != nil {
+		b.Error = err.Error()
+		return b
+	}
 	b.Sufficient = b.AvailablePendingRows == 0 || b.AvailablePendingRows >= b.RequiredPendingRows
 	b.BatchFits = b.AvailablePendingRows == 0 || int64(batchSize) <= b.AvailablePendingRows
 	b.RecommendedSetting = fmt.Sprintf("FI_MAX_PENDING_ROWS=%d (server.max_pending_rows)", b.RequiredPendingRows)
@@ -92,6 +121,9 @@ func CheckBudget(rate int64, batchSize, concurrency int, reported *CollectorLimi
 
 // Warnings are the loud, human-readable consequences of a budget check.
 func (b BudgetCheck) Warnings() []string {
+	if b.Error != "" {
+		return []string{"collector budget unavailable: " + b.Error}
+	}
 	var out []string
 	if b.AvailablePendingRows == 0 {
 		out = append(out, fmt.Sprintf("collector row admission is disabled (%s): retained rows and crash loss have no configured bound. For an isolated capacity run, provision and explicitly set %s or higher; this heuristic does not bound process memory", b.Source, b.RecommendedSetting))

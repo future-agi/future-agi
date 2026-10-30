@@ -55,18 +55,22 @@ type Counters struct {
 // CheckIdentity verifies that every attempted span and request is in exactly
 // one outcome class.
 func (c Counters) CheckIdentity() error {
-	if c.Attempted != c.Acknowledged+c.PartialRejected+c.WholeRequestRejected+c.Ambiguous {
-		return fmt.Errorf("span accounting identity broken: attempted %d != acknowledged %d + partial rejected %d + whole-request rejected %d + ambiguous %d",
+	if err := measurementNumbers(c, "counters"); err != nil {
+		return err
+	}
+	if !sumEquals(uint64(c.Attempted), uint64(c.Acknowledged), uint64(c.PartialRejected), uint64(c.WholeRequestRejected), uint64(c.Ambiguous)) {
+		return fmt.Errorf("counters.attempted_spans: span accounting identity broken: attempted %d != acknowledged %d + partial rejected %d + whole-request rejected %d + ambiguous %d",
 			c.Attempted, c.Acknowledged, c.PartialRejected, c.WholeRequestRejected, c.Ambiguous)
 	}
-	if c.WholeRequestRejected != c.RejectedRetryable+c.RejectedNonRetryable || c.Unacknowledged != c.WholeRequestRejected+c.Ambiguous {
-		return fmt.Errorf("rejection sub-totals do not add up")
+	if !sumEquals(uint64(c.WholeRequestRejected), uint64(c.RejectedRetryable), uint64(c.RejectedNonRetryable)) || !sumEquals(uint64(c.Unacknowledged), uint64(c.WholeRequestRejected), uint64(c.Ambiguous)) {
+		return fmt.Errorf("counters.whole_request_rejected_spans/unacknowledged_spans: rejection sub-totals do not add up")
 	}
-	if c.Requests != c.RequestOutcomes.total() || c.RequestOutcomes.RejectedWithRetryHint > c.RequestOutcomes.RejectedRetryable {
-		return fmt.Errorf("request accounting identity broken: %d requests, %d classified", c.Requests, c.RequestOutcomes.total())
+	o := c.RequestOutcomes
+	if !sumEquals(uint64(c.Requests), uint64(o.Acknowledged), uint64(o.PartialRejection), uint64(o.RejectedRetryable), uint64(o.RejectedNonRetryable), uint64(o.Ambiguous)) || o.RejectedWithRetryHint > o.RejectedRetryable {
+		return fmt.Errorf("counters.requests: request accounting identity broken or retry hints exceed retryable rejections")
 	}
 	if c.Accepted != c.Acknowledged {
-		return fmt.Errorf("accepted and acknowledged differ")
+		return fmt.Errorf("counters.accepted_spans and acknowledged_spans differ")
 	}
 	return nil
 }
@@ -465,7 +469,7 @@ type Result struct {
 	SchemaVersion   string           `json:"schema_version"`
 	Status          string           `json:"status"`
 	Config          Config           `json:"config"`
-	Provenance      Provenance       `json:"provenance"`
+	Provenance      Provenance       `json:"provenance" receipt:"optional"`
 	Started         time.Time        `json:"started_at"`
 	LoadSeconds     float64          `json:"load_elapsed_seconds"`
 	StopReason      string           `json:"stop_reason"`
@@ -479,7 +483,7 @@ type Result struct {
 	// scheduled send (coordinated-omission corrected).
 	RequestLatencyFromScheduled Percentiles        `json:"otlp_request_latency_from_scheduled_send"`
 	Schedule                    ScheduleResult     `json:"schedule"`
-	Workload                    WorkloadStats      `json:"workload"`
+	Workload                    WorkloadStats      `json:"workload" receipt:"optional"`
 	Verification                Verification       `json:"verification"`
 	Lag                         LagResult          `json:"lag"`
 	Backlog                     BacklogResult      `json:"collector_backlog"`
@@ -521,8 +525,8 @@ func WriteResult(w io.Writer, r Result) error {
 
 // Report is a plain-text, unit-explicit report, not a performance certification.
 func Report(w io.Writer, r Result) error {
-	if r.SchemaVersion != SchemaVersion {
-		return fmt.Errorf("unsupported result schema %q", r.SchemaVersion)
+	if err := ValidateResult(r); err != nil {
+		return err
 	}
 	c := r.Counters
 	fmt.Fprintf(w, "OTLP ingestion measurement (%s)\nRun: %s  Environment: %s  Topology: %s\n", r.Status, r.Config.RunID, r.Config.Environment, r.Config.Topology)

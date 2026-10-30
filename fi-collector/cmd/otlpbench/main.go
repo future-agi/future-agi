@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -20,9 +21,18 @@ import (
 var warnings io.Writer = os.Stderr
 
 func main() {
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-	if err := command(ctx, os.Args[1:], os.Stdout); err != nil {
+	ctx := context.Background()
+	// Offline renderers may block in Write and do not observe a context. Leave
+	// their signals alone. Graceful commands restore default termination after
+	// the first cancellation so a second interrupt can stop blocked cleanup/I/O.
+	offline := len(os.Args) > 1 && (os.Args[1] == "report" || os.Args[1] == "size" || os.Args[1] == "publish")
+	if !offline {
+		var stop context.CancelFunc
+		ctx, stop = signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		go func() { <-ctx.Done(); stop() }()
+	}
+	if err := command(ctx, os.Args[1:], os.Stdout); err != nil && !errors.Is(err, flag.ErrHelp) {
 		fmt.Fprintln(os.Stderr, "otlpbench:", err)
 		os.Exit(1)
 	}
@@ -32,20 +42,22 @@ func command(ctx context.Context, args []string, stdout io.Writer) error {
 	if len(args) > 0 {
 		switch args[0] {
 		case "report":
-			if len(args) != 2 {
-				return fmt.Errorf("usage: otlpbench report result.json")
+			path, err := inputOperand("report", "result.json", args[1:], stdout)
+			if err != nil {
+				return err
 			}
 			var result ingestbench.Result
-			if err := readJSON(args[1], &result); err != nil {
+			if err := readJSON(path, &result); err != nil {
 				return err
 			}
 			return ingestbench.Report(stdout, result)
 		case "size":
-			if len(args) != 2 {
-				return fmt.Errorf("usage: otlpbench size measured-sizing-inputs.json")
+			path, err := inputOperand("size", "measured-sizing-inputs.json", args[1:], stdout)
+			if err != nil {
+				return err
 			}
 			var input ingestbench.SizingInput
-			if err := readJSON(args[1], &input); err != nil {
+			if err := readJSON(path, &input); err != nil {
 				return err
 			}
 			result, err := ingestbench.Size(input)
@@ -65,6 +77,17 @@ func command(ctx context.Context, args []string, stdout io.Writer) error {
 	c.RunID = ingestbench.NewRunID()
 	f := flag.NewFlagSet("otlpbench", flag.ContinueOnError)
 	f.SetOutput(stdout)
+	f.Usage = func() {
+		fmt.Fprintln(stdout, "Usage: otlpbench --project-id UUID --project-name NAME [load flags] (offline plan unless --execute)")
+		fmt.Fprintln(stdout, "Subcommands:")
+		fmt.Fprintln(stdout, "  report result.json                         Render an offline diagnostic report")
+		fmt.Fprintln(stdout, "  size measured-sizing-inputs.json           Extrapolate from supplied measurements")
+		fmt.Fprintln(stdout, "  publish --markdown NEW.md --json NEW.json result.json  Publish validated evidence offline")
+		fmt.Fprintln(stdout, "  verify --checkpoint PATH --out NEW.json    Resume read-only storage verification")
+		fmt.Fprintln(stdout, "  collector-budget [--rate N --batch-size N --concurrency N]  Compute an admission heuristic")
+		fmt.Fprintln(stdout, "Use <subcommand> --help for details. Load flags:")
+		f.PrintDefaults()
+	}
 	f.StringVar(&c.RunID, "run-id", c.RunID, "unique 16-lowercase-hex run namespace (reuse is refused)")
 	f.StringVar(&c.Endpoint, "endpoint", c.Endpoint, "collector OTLP endpoint: the full OTLP/HTTP traces URL, or http(s)://host:port for --encoding grpc")
 	f.StringVar(&c.Encoding, "encoding", c.Encoding, "wire path: protobuf (OTLP/HTTP protobuf), json (OTLP/HTTP JSON) or grpc (OTLP/gRPC)")
@@ -168,24 +191,23 @@ func command(ctx context.Context, args []string, stdout io.Writer) error {
 			return err
 		}
 	}
-	var output, resources *os.File
+	var outputs *outputSet
 	if c.Execute && *out == "" {
 		return fmt.Errorf("--out is required for executed runs")
 	}
 	if *out != "" {
-		var err error
-		output, err = os.OpenFile(*out, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-		if err != nil {
-			return fmt.Errorf("create output (existing files are never overwritten): %w", err)
-		}
-		defer output.Close()
+		paths := []string{*out}
 		if c.Execute {
-			resources, err = os.OpenFile(*out+".telemetry.jsonl", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-			if err != nil {
-				return err
-			}
-			defer resources.Close()
-			options.ResourceWriter = resources
+			paths = append(paths, *out+".telemetry.jsonl")
+		}
+		var err error
+		outputs, err = reserveOutputs(paths...)
+		if err != nil {
+			return err
+		}
+		defer outputs.cleanup()
+		if c.Execute {
+			options.ResourceWriter = outputs.files[1]
 		}
 	}
 	// The context also bounds settle, probes, verification and resource reads
@@ -193,17 +215,12 @@ func command(ctx context.Context, args []string, stdout io.Writer) error {
 	ctx, cancel := context.WithTimeout(ctx, c.MaxDuration+c.Settle+c.VerifyBudget()+c.DirectProbeBudget()+5*time.Minute)
 	defer cancel()
 	result, runErr := ingestbench.Run(ctx, c, options)
-	if output != nil {
-		if err := ingestbench.WriteResult(output, result); err != nil {
+	if outputs != nil {
+		if err := ingestbench.WriteResult(outputs.files[0], result); err != nil {
 			return err
 		}
-		if err := output.Sync(); err != nil {
+		if err := outputs.commit(); err != nil {
 			return err
-		}
-		if resources != nil {
-			if err := resources.Sync(); err != nil {
-				return err
-			}
 		}
 	}
 	if err := ingestbench.WriteResult(stdout, result); err != nil {
@@ -246,6 +263,10 @@ func (f *faultFlags) Set(v string) error {
 func publishCommand(args []string, stdout io.Writer) error {
 	f := flag.NewFlagSet("otlpbench publish", flag.ContinueOnError)
 	f.SetOutput(stdout)
+	f.Usage = func() {
+		fmt.Fprintln(stdout, "Usage: otlpbench publish --markdown new.md --json new.json [flags] result.json")
+		f.PrintDefaults()
+	}
 	markdown := f.String("markdown", "", "new path for the Markdown publication")
 	jsonOut := f.String("json", "", "new path for the JSON publication")
 	telemetry := f.String("telemetry", "", "the run's .telemetry.jsonl: digested and checked line by line")
@@ -273,21 +294,19 @@ func publishCommand(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	for _, out := range []struct {
-		path  string
-		write func(io.Writer) error
-	}{{*markdown, func(w io.Writer) error { return ingestbench.WritePublicationMarkdown(w, p) }}, {*jsonOut, func(w io.Writer) error { return ingestbench.WritePublicationJSON(w, p) }}} {
-		file, err := os.OpenFile(out.path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-		if err != nil {
-			return fmt.Errorf("create output (existing files are never overwritten): %w", err)
-		}
-		if err := out.write(file); err != nil {
-			file.Close()
-			return err
-		}
-		if err := file.Close(); err != nil {
-			return err
-		}
+	outputs, err := stageOutputs(*markdown, *jsonOut)
+	if err != nil {
+		return err
+	}
+	defer outputs.cleanup()
+	if err := ingestbench.WritePublicationMarkdown(outputs.files[0], p); err != nil {
+		return err
+	}
+	if err := ingestbench.WritePublicationJSON(outputs.files[1], p); err != nil {
+		return err
+	}
+	if err := outputs.commit(); err != nil {
+		return err
 	}
 	fmt.Fprintf(stdout, "headline %s", p.Headline.Status)
 	if len(p.Headline.WithheldReasons) > 0 {
@@ -330,11 +349,11 @@ func verifyCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	output, err := os.OpenFile(*out, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	outputs, err := stageOutputs(*out)
 	if err != nil {
-		return fmt.Errorf("create output (existing files are never overwritten): %w", err)
+		return err
 	}
-	defer output.Close()
+	defer outputs.cleanup()
 	cfg, v, err := ingestbench.ResumeVerification(ctx, *checkpoint, headers, func(c *ingestbench.Config) {
 		c.Execute, c.ConfirmRemote = true, *confirmRemote
 		if *timeout > 0 {
@@ -355,12 +374,17 @@ func verifyCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	}
 	doc := ResumedVerification{SchemaVersion: ingestbench.SchemaVersion, Kind: "resumed-verification", RunID: cfg.RunID,
 		CommandLine: ingestbench.RedactArgs(append([]string{"otlpbench", "verify"}, args...)), Verification: v}
-	enc := json.NewEncoder(io.MultiWriter(output, stdout))
+	enc := json.NewEncoder(outputs.files[0])
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(doc); err != nil {
 		return err
 	}
-	if err := output.Sync(); err != nil {
+	if err := outputs.commit(); err != nil {
+		return err
+	}
+	enc = json.NewEncoder(stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(doc); err != nil {
 		return err
 	}
 	if !v.Complete {
@@ -384,7 +408,10 @@ func budgetCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	if err := f.Parse(args); err != nil {
 		return err
 	}
-	if len(f.Args()) != 0 || c.Rate < 1 || c.BatchSize < 1 || c.Concurrency < 1 || *declared < 0 {
+	if err := ingestbench.ValidateLoadBounds(c.Rate, c.BatchSize, c.Concurrency); err != nil {
+		return err
+	}
+	if len(f.Args()) != 0 || *declared < 0 {
 		return fmt.Errorf("usage: otlpbench collector-budget --rate N --batch-size N --concurrency N [--collector-health-url URL]")
 	}
 	var info ingestbench.CollectorInfo
@@ -404,6 +431,9 @@ func budgetCommand(ctx context.Context, args []string, stdout io.Writer) error {
 		}
 	}
 	info.Budget = ingestbench.CheckBudget(c.Rate, c.BatchSize, c.Concurrency, info.Limits, *declared)
+	if info.Budget.Error != "" {
+		return fmt.Errorf("collector-budget: %s", info.Budget.Error)
+	}
 	for _, w := range info.Budget.Warnings() {
 		fmt.Fprintf(warnings, "\n*** WARNING: %s ***\n\n", w)
 	}
@@ -412,13 +442,39 @@ func budgetCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	return enc.Encode(info)
 }
 
+func inputOperand(name, operand string, args []string, stdout io.Writer) (string, error) {
+	f := flag.NewFlagSet("otlpbench "+name, flag.ContinueOnError)
+	f.SetOutput(stdout)
+	usage := "Usage: otlpbench " + name + " " + operand
+	f.Usage = func() { fmt.Fprintln(stdout, usage) }
+	if err := f.Parse(args); err != nil {
+		return "", err
+	}
+	if f.NArg() != 1 {
+		return "", fmt.Errorf("%s", usage)
+	}
+	return f.Arg(0), nil
+}
+
 func readJSON(path string, out any) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	d := json.NewDecoder(io.LimitReader(f, 16<<20))
+	raw, err := io.ReadAll(io.LimitReader(f, (16<<20)+1))
+	if err != nil {
+		return err
+	}
+	if len(raw) > 16<<20 {
+		return fmt.Errorf("input JSON exceeds 16 MiB")
+	}
+	if _, ok := out.(*ingestbench.Result); ok {
+		if err := ingestbench.ValidateResultJSON(raw); err != nil {
+			return fmt.Errorf("invalid input JSON: %w", err)
+		}
+	}
+	d := json.NewDecoder(strings.NewReader(string(raw)))
 	d.DisallowUnknownFields()
 	if err := d.Decode(out); err != nil {
 		return fmt.Errorf("invalid input JSON: %w", err)

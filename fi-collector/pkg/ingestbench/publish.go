@@ -113,12 +113,11 @@ type Publication struct {
 	Telemetry          *TelemetryCheck    `json:"telemetry,omitempty"`
 }
 
-// Publish builds the publication of a result. It refuses a result of another
-// schema and a telemetry stream that belongs to another run; everything else is
-// published, with the headline withheld when the run does not earn it.
+// Publish builds a publication after validating the imported evidence offline.
+// Valid failed/incomplete results are rendered with their headline withheld.
 func Publish(r Result, o PublishOptions) (Publication, error) {
-	if r.SchemaVersion != SchemaVersion {
-		return Publication{}, fmt.Errorf("unsupported result schema %q (want %s)", r.SchemaVersion, SchemaVersion)
+	if err := ValidateResult(r); err != nil {
+		return Publication{}, err
 	}
 	if o.MinSustained <= 0 {
 		o.MinSustained = DefaultMinSustained
@@ -172,13 +171,19 @@ func headline(r Result, minSustained time.Duration, telemetry *TelemetryCheck) H
 	h := Headline{Status: "withheld", WithheldReasons: []string{}, OfferedSpansPerSecond: r.Config.Rate, SustainedSeconds: r.Config.Duration.Seconds(), MinSustainedSeconds: minSustained.Seconds(),
 		LoadWindowSeconds: r.LoadSeconds,
 		Definition:        "a pass at the offered rate, not a capacity: the offered spans/s is stated as sustained when every offered span was started, acknowledged and found stored by the exact-ID verification; the achieved figure is acknowledged spans / measured load window (load start to the completion of the last export)",
-		Rule:              "printed only for an executed run of at least the minimum duration whose verification completed with no missing or unexpected span and no stored span of a refused request, that started and acknowledged all offered load, saw every sentinel and had no fault"}
+		Rule:              "printed only for an executed run of at least the minimum duration with clean completion status whose verification completed with no missing, visible duplicate or unexpected span and no stored span of a refused request, that started and acknowledged all offered load, saw every sentinel and had no fault"}
 	why := func(format string, args ...any) {
 		h.WithheldReasons = append(h.WithheldReasons, fmt.Sprintf(format, args...))
 	}
 	c, v := r.Counters, r.Verification
 	if !r.Config.Execute || r.Status == "dry-run" {
 		why("the run was not executed (dry run)")
+	}
+	if r.Status != "measured-profile-complete" {
+		why("run status %q is not a clean measured-profile-complete result", r.Status)
+	}
+	if v.DuplicateRows != 0 {
+		why("storage holds %d visible duplicate expected rows", v.DuplicateRows)
 	}
 	if !v.Complete {
 		why("independent verification is incomplete (%s)", orUnknown(v.Error))
@@ -462,13 +467,13 @@ func WritePublicationMarkdown(w io.Writer, p Publication) error {
 	if p.Headline.Status == "published" {
 		f("**Sustained the offered %d spans/s for %.0f s (verified):** every offered span was started, acknowledged and found stored. Achieved %.1f acknowledged spans/s over the measured %.3f s load window. This is a pass at the offered rate, not a capacity limit.\n\n",
 			*p.Headline.SustainedOfferedSpansPerSecond, p.Headline.SustainedSeconds, *p.Headline.AchievedAcknowledgedSpansPerSecond, p.Headline.LoadWindowSeconds)
-		f("Definition: %s; %s (minimum %.0f s).\n\n", p.Headline.Definition, p.Headline.Rule, p.Headline.MinSustainedSeconds)
+		f("Definition: %s; %s (minimum %g s).\n\n", p.Headline.Definition, p.Headline.Rule, p.Headline.MinSustainedSeconds)
 	} else {
 		f("**No headline throughput.** It is withheld because:\n\n")
 		for _, reason := range p.Headline.WithheldReasons {
 			f("- %s\n", reason)
 		}
-		f("\nDefinition: %s; %s (minimum %.0f s).\n\n", p.Headline.Definition, p.Headline.Rule, p.Headline.MinSustainedSeconds)
+		f("\nDefinition: %s; %s (minimum %g s).\n\n", p.Headline.Definition, p.Headline.Rule, p.Headline.MinSustainedSeconds)
 	}
 	f("## Stages\n\n| Stage | Spans | Meaning |\n|---|---:|---|\n")
 	for _, s := range p.Stages {
