@@ -215,6 +215,10 @@ class StorageObservation:
 # /proc entries read by the probes (comm, cmdline, mountinfo, stat) are world-
 # readable. A store bind is non-recursive so no container overlay comes along.
 _STORE = ",readonly,bind-propagation=rprivate"
+# Docker refuses a private bind from inside its own data root (it could pin
+# container mounts); rslave is required. The helper is read-only, network-less
+# and capability-free, lives for seconds and runs only the pinned probe.
+_DAEMON_ROOT_STORE = ",readonly,bind-propagation=rslave,bind-recursive=disabled"
 DAEMON_STORAGE_HELPERS = {
     "external-containerd-overlayfs": ("daemon_storage.py", (
         ("/proc", "/host-proc", _STORE), ("/etc/docker", "/host-docker-config", _STORE),
@@ -222,7 +226,7 @@ DAEMON_STORAGE_HELPERS = {
         ("/var/lib/containerd", "/daemon-store", _STORE)), {"content", "snapshots"}),
     "helper-overlay2": ("daemon_overlay2.py", (
         ("/proc", "/host-proc", _STORE),
-        ("/var/lib/docker/overlay2", "/daemon-store", _STORE + ",bind-recursive=disabled")), {"overlay2"}),
+        ("/var/lib/docker/overlay2", "/daemon-store", _DAEMON_ROOT_STORE)), {"overlay2"}),
 }
 
 

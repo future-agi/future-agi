@@ -215,7 +215,9 @@ class CapacityTests(unittest.TestCase):
         mounts = [create[0][i+1] for i, arg in enumerate(create[0]) if arg == "--mount"]
         self.assertEqual(mounts, [
             "type=bind,src=/proc,dst=/host-proc,readonly,bind-propagation=rprivate",
-            "type=bind,src=/var/lib/docker/overlay2,dst=/daemon-store,readonly,bind-propagation=rprivate,bind-recursive=disabled"])
+            "type=bind,src=/var/lib/docker/overlay2,dst=/daemon-store,readonly,bind-propagation=rslave,bind-recursive=disabled"])
+        # Native Docker 28: "must use either propagation mode rslave or rshared when mount source is within
+        # the daemon root". The daemon-root store bind never uses rprivate.
         for flag, value in (("--network", "none"), ("--cap-drop", "ALL"), ("--pull", "never")):
             self.assertEqual(create[0][create[0].index(flag) + 1], value)
         self.assertNotIn("--privileged", create[0])
