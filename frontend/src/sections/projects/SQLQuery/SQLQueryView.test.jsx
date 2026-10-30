@@ -429,6 +429,51 @@ describe("SQL review regressions", () => {
     expect(screen.queryByLabelText(/Previous query results/)).toBeNull();
   });
 
+  it.each(["succeeded", "queued"])(
+    "warns when a %s saved execution used a newer server definition than the editor",
+    async (state) => {
+      sqlApi.saved.mockResolvedValue({ items: [savedQuery], has_more: false });
+      const actualSQL = "SELECT count() FROM traces";
+      const execution = {
+        ...resultJob,
+        id: "saved-definition-updated-elsewhere",
+        sql: actualSQL,
+        result: { ...resultJob.result, rows: [[47]] },
+      };
+      sqlApi.runSaved.mockResolvedValue({
+        ...execution,
+        state,
+        result: state === "queued" ? undefined : execution.result,
+      });
+      sqlApi.result.mockResolvedValue(execution);
+      renderPage();
+      await screen.findByText(schema.identity_semantics);
+      await openSaved();
+      runQuery();
+      const table = await screen.findByRole("table", {
+        name: "SQL query results",
+      });
+      expect(table).toHaveTextContent("47");
+      const editor = screen.getByLabelText("SQL query editor");
+      expect(editor).toHaveValue(savedQuery.sql);
+      expect(sqlApi.runSaved).toHaveBeenCalledWith(
+        expect.objectContaining({
+          project_id: "project",
+          saved_query_id: savedQuery.id,
+        }),
+        expect.any(Object),
+      );
+      expect(screen.getByLabelText(/Previous query results/)).toBeVisible();
+      fireEvent.change(editor, { target: { value: actualSQL } });
+      expect(screen.queryByLabelText(/Previous query results/)).toBeNull();
+      chooseWindow("Last hour");
+      expect(screen.getByLabelText(/Previous query results/)).toHaveTextContent(
+        /last 1 day.*Run to update/,
+      );
+      expect(table).toHaveTextContent("47");
+    },
+  );
+
   it("keeps exact saved-versus-edited routing when the selected window changes", async () => {
     sqlApi.saved.mockResolvedValue({ items: [savedQuery], has_more: false });
     sqlApi.runSaved.mockResolvedValue({ ...resultJob, sql: savedQuery.sql });

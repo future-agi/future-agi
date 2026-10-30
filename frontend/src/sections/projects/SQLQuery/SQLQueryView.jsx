@@ -139,7 +139,7 @@ export default function SQLQueryView() {
   }, [observeId, search]);
   const execute = () => {
     // run clears the previous job synchronously and ignores superseded replies.
-    // Keep the submitted controls with that execution, not the polling response.
+    // Capture the project/window here; the returned job supplies the SQL that ran.
     setSubmitted({ sql, projectId: observeId, hours });
     const end = new Date();
     const window = {
@@ -801,11 +801,14 @@ export default function SQLQueryView() {
                   </Typography>
                 </Stack>
                 {job &&
-                  isPreviousQuery(submitted, {
-                    sql,
-                    projectId: observeId,
-                    hours,
-                  }) && (
+                  isPreviousQuery(
+                    submitted && {
+                      ...submitted,
+                      // Saved definitions may change after this editor opens.
+                      sql: job.sql ?? submitted.sql,
+                    },
+                    { sql, projectId: observeId, hours },
+                  ) && (
                     <Typography
                       variant="caption"
                       color="text.secondary"
