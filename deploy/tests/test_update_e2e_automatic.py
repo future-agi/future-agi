@@ -21,7 +21,7 @@ from deploy.tests.update_e2e import harness as e2e
 from deploy.tests.update_e2e.real_automatic import (
     CRON_PERIOD_SECONDS, FAULT_SEAM, acceptance_policy, acceptance_reserve_seconds, policy_cli_arguments,
     pending_migration_names, read_attempt_ledger, read_event_records, scheduler_wait_budget,
-    replacement_tolerant, scheduler_history, diagnostic_scheduler_run, setup_timeout_seconds)
+    replacement_tolerant, scheduler_history, diagnostic_scheduler_replay, setup_timeout_seconds)
 from deploy.update.baseline import BaselineStore
 from deploy.update.contracts import ReasonCode
 from deploy.update.enrollment import AUTOMATIC_UPDATE_DISCLOSURE
@@ -129,7 +129,7 @@ class AutomaticLifecycleE2E(unittest.TestCase):
                     value = predicate()
                     if not value and refused():
                         # A restored or latched target is never retried: stop waiting.
-                        raise AssertionError('installed scheduler restored or latched ' + version
+                        raise AssertionError('installed scheduler restored, latched or stalled on ' + version
                                              + ' instead of advancing')
                     return value
                 try:
@@ -141,8 +141,9 @@ class AutomaticLifecycleE2E(unittest.TestCase):
                     except Exception:
                         activation = None
                     history = scheduler_history(store, destination, checkout.containers(), activation=activation)
-                    if not history.get('state', {}).get('last_tick_at'):
-                        history['diagnostic_run'] = diagnostic_scheduler_run(store, configuration.policy)
+                    if not history.get('attempts'):
+                        # Every tick refused before an attempt: name the refusing check.
+                        history['diagnostic_replay'] = diagnostic_scheduler_replay(store)
                     checkout.record('scheduler-history.json', history)
                     raise
             for position, version in enumerate(versions[1:], 1):
@@ -172,6 +173,17 @@ class AutomaticLifecycleE2E(unittest.TestCase):
                     checkout.verify_candidate_only_absent()
                     outcome = 'restored'
                 else:
+                    # No attempt within delivery plus a few healthy-source observations
+                    # means every tick is refusing; stop waiting and keep the history.
+                    published, started = time.monotonic(), []
+                    attempt_start_seconds = (2*CRON_PERIOD_SECONDS + 60 + 600
+                                             + 4*(policy.probe_timeout_seconds + policy.stability_period_seconds))
+                    def stalled():
+                        state = read_state()
+                        if state.active_attempt_id is not None:
+                            started.append(True)
+                        return state.retry_count >= 3 or (not started
+                            and time.monotonic() - published > attempt_start_seconds)
                     scheduler_wait(lambda: current_head().release.version == version and any(
                         r.get('kind') == 'apply' and r.get('status') == 'succeeded' and r.get('target_version') == version
                         for r in checkout.receipts()), timeout=min(timeout, deadline-time.monotonic()), interval=2,
@@ -179,7 +191,7 @@ class AutomaticLifecycleE2E(unittest.TestCase):
                         refused=lambda: (read_state().failed_target_latch is not None
                                          and read_state().failed_target_latch.version == version) or any(
                             r.get('kind') == 'restore' and r.get('target_version') == version
-                            for r in checkout.receipts()))
+                            for r in checkout.receipts()) or stalled())
                     outcome = 'succeeded'
                 receipts = [r for r in checkout.receipts() if r.get('status') == outcome
                             and r.get('target_version') == version]

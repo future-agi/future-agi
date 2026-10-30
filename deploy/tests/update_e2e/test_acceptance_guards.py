@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -965,19 +966,54 @@ class OracleReplacementRaceTests(unittest.TestCase):
         self.assertEqual((history['attempts'], history['errors']), ([], []))
         self.assertIs(history['qualification_evidence'], False)
 
-    def test_diagnostic_scheduler_run_keeps_only_closed_tokens(self):
-        def assets(command):
-            line = '*/5 * * * * umask 077; ' + command + ' </dev/null >/dev/null 2>&1'
-            return SimpleNamespace(files={'unit.cron': '# BEGIN unit\n' + line + '\n# END unit\n'})
-        crash = ("printf 'Traceback\\n  File \"/home/runner/private/x.py\", line 1\\n"
-                 "deploy.update.runner_state.StoreError: control_invalid at /home/runner/private\\n'; exit 2")
-        with patch('deploy.update.scheduler_assets.render_scheduler', return_value=assets(crash)):
-            result = real.diagnostic_scheduler_run(self.store, object())
-        self.assertEqual(result, dict(exit_code=2, exception_types=['deploy.update.runner_state.StoreError'],
-                                      reason_codes=['control_invalid']))
-        with patch('deploy.update.scheduler_assets.render_scheduler', return_value=assets('sleep 30')):
-            self.assertEqual(real.diagnostic_scheduler_run(self.store, object(), timeout=1),
-                             dict(error='timeout', seconds=1))
+    def test_diagnostic_replay_names_the_refusing_frames_with_closed_tokens_only(self):
+        # A stand-in package with bin/update's loader contract: HostRunner._refusal
+        # receives the live exception; main prints the CLI's JSON summary line.
+        package = self.base / 'replay-root' / 'deploy' / 'update'
+        package.mkdir(parents=True)
+        (package / '__init__.py').write_text('')
+        (package / 'runner.py').write_text(
+            'class Refused(RuntimeError):\n'
+            '    def __init__(self, code):\n'
+            '        self.reason_code = type("Code", (), {"value": code})()\n'
+            '        super().__init__("PRIVATE /home/runner/secret")\n'
+            'class HostRunner:\n'
+            '    @staticmethod\n'
+            '    def _refusal(exc):\n'
+            '        return exc.reason_code.value\n'
+            '    def tick(self):\n'
+            '        try:\n'
+            '            self.select()\n'
+            '        except Exception as exc:\n'
+            '            return self._refusal(exc)\n'
+            '    def select(self):\n'
+            '        prepared = type("Prepared", (), {"plan": {"decision": "blocked", "missing_env_keys": ["NEW_KEY"],\n'
+            '                        "deployment_drift": {"docker-compose.yml": "x", "/etc/passwd": "y"},\n'
+            '                        "reasons": ["PRIVATE /home/runner/text"]}})()\n'
+            '        raise Refused("configuration_changed")\n')
+        (package / '__main__.py').write_text(
+            'import json\n'
+            'from .runner import HostRunner\n'
+            'def main(argv):\n'
+            '    HostRunner().tick()\n'
+            '    print(json.dumps({"disposition": "blocked", "reason_codes": ["configuration_changed", "/home/x"]}))\n'
+            '    return 3\n')
+        root = str(package.parent.parent)
+        done = subprocess.run([sys.executable, '-I', '-c', real.REPLAY, root, '--root', root, 'run'],
+                              capture_output=True, text=True, timeout=30)
+        result = real.closed_replay_result(done.returncode, done.stdout + done.stderr)
+        self.assertEqual(result['exit_code'], 3)
+        self.assertEqual(result['disposition'], 'blocked')
+        self.assertEqual(result['reason_codes'], ['configuration_changed'])
+        self.assertEqual(len(result['refusals']), 1)
+        refusal = result['refusals'][0]
+        self.assertEqual((refusal['reason_code'], refusal['exception_type']), ('configuration_changed', 'Refused'))
+        self.assertEqual([(name, function) for name, _, function in refusal['frames']],
+                         [('runner.py', 'tick'), ('runner.py', 'select')])
+        self.assertEqual(refusal['facts'], {'plan': dict(decision='blocked', resume=False, reasons=1,
+            missing_env_keys=['NEW_KEY'], deployment_drift=['docker-compose.yml'])})
+        self.assertNotIn('/home', json.dumps(result))
+        self.assertNotIn('PRIVATE', json.dumps(result))
 
     def test_unchanged_corrupt_or_unsafe_leaf_still_fails_without_retrying(self):
         from deploy.update.runner_state import StoreError

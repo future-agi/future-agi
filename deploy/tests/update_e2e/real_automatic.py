@@ -327,36 +327,135 @@ def scheduler_history(store, backup_destination, containers=(), *, activation=No
     return result
 
 
-def diagnostic_scheduler_run(store, policy, *, timeout=900):
-    """Run the installed cron command ONCE, output captured, after a failed wait.
+REPLAY = r"""
+import importlib.util, json, os, sys, traceback
+root = sys.argv[1]
+package = os.path.join(root, "deploy", "update")
+spec = importlib.util.spec_from_file_location(
+    "futureagi_update", os.path.join(package, "__init__.py"), submodule_search_locations=[package])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+import futureagi_update.runner as runner
+original = runner.HostRunner._refusal
+def refusal(exc):
+    frames = [(os.path.basename(f.filename), f.lineno, f.name) for f in traceback.extract_tb(exc.__traceback__)
+              if os.path.abspath(f.filename).startswith(package + os.sep)]
+    code = getattr(getattr(exc, "reason_code", None), "value", None)
+    facts = {}
+    trace = exc.__traceback__
+    try:
+        facts.update(collect(trace))
+    except Exception:
+        facts["error"] = "facts_unavailable"
+    print("FAGI-REFUSAL " + json.dumps({"reason_code": code, "exception_type": type(exc).__name__,
+                                        "frames": frames[-12:], "facts": facts}, default=str), flush=True)
+    return original(exc)
+def collect(trace):
+    facts = {}
+    while trace is not None:
+        local = trace.tb_frame.f_locals
+        plan = getattr(local.get("prepared"), "plan", None)
+        if isinstance(plan, dict):
+            # Names and counts only: env key NAMES, deployment file names, never values or reason text.
+            drift = plan.get("deployment_drift") or {}
+            facts["plan"] = {"decision": plan.get("decision"), "resume": bool(plan.get("resume")),
+                             "missing_env_keys": sorted(map(str, plan.get("missing_env_keys") or []))[:40],
+                             "deployment_drift": sorted(map(str, drift if isinstance(drift, (dict, list)) else []))[:40],
+                             "reasons": len(plan.get("reasons") or [])}
+        if trace.tb_frame.f_code.co_name == "observe" and "head" in local and "observation" in local:
+            head, observation = local["head"], local["observation"]
+            obs = observation.facts
+            from futureagi_update.baseline import sha
+            facts["baseline"] = {"config": obs.config_fingerprint == local.get("config", head.config_fingerprint),
+                                 "profile": obs.profile_fingerprint == head.profile_fingerprint,
+                                 "env": sha(observation.env_bytes) == local.get("env_hash", head.env_sha256),
+                                 "structure": observation.structure_sha256 == head.structure_sha256}
+        trace = trace.tb_next
+    return facts
+runner.HostRunner._refusal = staticmethod(refusal)
+from futureagi_update.__main__ import main
+sys.exit(main(sys.argv[2:]))
+"""
 
-    Only for a scheduler that never recorded an outcome: every cron run then
-    failed before the runner's own event store, and cron discards output. Keep
-    the exit code, exception class names and known reason codes; never the
-    output itself. A timeout kills the whole process group.
+
+def closed_replay_result(returncode, output):
+    """Keep only closed tokens from a diagnostic replay's output."""
+    from deploy.update.contracts import ReasonCode
+    codes = {code.value for code in ReasonCode}
+    refusals = []
+    for line in output.splitlines():
+        if not line.startswith('FAGI-REFUSAL '):
+            continue
+        try:
+            row = json.loads(line[len('FAGI-REFUSAL '):])
+            frames = [(name, number, function) for name, number, function in row['frames']
+                      if re.fullmatch(r'[a-z0-9_]{1,64}\.py', name) and type(number) is int
+                      and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,63}|<[a-z]+>', function)]
+            facts = {}
+            plan = (row.get('facts') or {}).get('plan')
+            if isinstance(plan, dict):
+                name = lambda v: isinstance(v, str) and re.fullmatch(r'[A-Za-z0-9_./-]{1,128}', v) and '..' not in v
+                facts['plan'] = dict(decision=plan.get('decision') if name(plan.get('decision')) else None,
+                    resume=plan.get('resume') is True, reasons=plan.get('reasons') if type(plan.get('reasons')) is int else None,
+                    missing_env_keys=[k for k in plan.get('missing_env_keys') or [] if name(k) and '/' not in k],
+                    deployment_drift=[k for k in plan.get('deployment_drift') or [] if name(k) and not k.startswith('/')])
+            baseline = (row.get('facts') or {}).get('baseline')
+            if isinstance(baseline, dict):
+                facts['baseline'] = {k: baseline.get(k) is True for k in ('config', 'profile', 'env', 'structure')}
+            refusals.append(dict(reason_code=row['reason_code'] if row['reason_code'] in codes else None,
+                                 exception_type=row['exception_type']
+                                 if re.fullmatch(r'[A-Za-z_]\w{0,63}', str(row['exception_type'])) else None,
+                                 frames=frames, facts=facts))
+        except (ValueError, KeyError, TypeError):
+            refusals.append(dict(error='unparsed'))
+    result = dict(exit_code=returncode, refusals=refusals[:5])
+    for line in output.splitlines():
+        if line.startswith('{'):
+            try:
+                summary = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(summary, dict) and 'disposition' in summary:
+                result['disposition'] = summary['disposition'] if re.fullmatch(r'[a-z_]{1,40}', str(
+                    summary['disposition'])) else None
+                result['reason_codes'] = [c for c in summary.get('reason_codes') or [] if c in codes]
+    types = re.findall(r'^([A-Za-z_][\w.]*(?:Error|Exception|Refused|Blocked|Failure|Interrupted))(?::|$)', output, re.M)
+    result['exception_types'] = sorted(set(types))[:20]
+    return result
+
+
+def diagnostic_scheduler_replay(store, *, timeout=900, attempts=3):
+    """Replay ONE scheduled run, exactly as cron launches it, after a failed wait.
+
+    Same registered launcher environment (env -i HOME/PATH/PYTHON/DOCKER_CONTEXT)
+    and the same bin/update package loader; the only addition reports which
+    updater frames raised the run's refusal. Never part of acceptance: it runs
+    only after the scheduler assertion already failed, so it cannot make a
+    journey pass. Output is reduced to closed tokens.
     """
     import signal
-    from deploy.update.contracts import ReasonCode
-    from deploy.update.scheduler_assets import render_scheduler
-    suffix = ' </dev/null >/dev/null 2>&1'
-    content = ''.join(render_scheduler(store, policy, backend='cron').files.values())
-    lines = [line for line in content.splitlines() if line.endswith(suffix) and not line.startswith('#')]
-    if len(lines) != 1 or len(lines[0].split(' ', 5)) != 6:
-        return dict(error='cron_command_not_found')
-    command = lines[0].split(' ', 5)[5][:-len(suffix)]
-    process = subprocess.Popen(['/bin/bash', '-c', command], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                               stderr=subprocess.STDOUT, start_new_session=True)
-    try:
-        output, _ = process.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        os.killpg(process.pid, signal.SIGKILL)
-        process.communicate()
-        return dict(error='timeout', seconds=timeout)
-    text = output.decode('utf-8', errors='replace')
-    types = re.findall(r'^([A-Za-z_][\w.]*(?:Error|Exception|Refused|Blocked|Failure|Interrupted))(?::|$)', text, re.M)
-    return dict(exit_code=process.returncode, exception_types=sorted(set(types))[:20],
-                reason_codes=sorted(code.value for code in ReasonCode
-                                    if re.search(r'(?<![a-z_])' + re.escape(code.value) + r'(?![a-z_])', text)))
+    registration = store.read_registration()
+    binding, launch = registration.binding, registration.launcher
+    root = str(binding.checkout)
+    argv = ['/usr/bin/env', '-i', 'HOME=' + str(launch.home), 'PATH=' + launch.path, 'PYTHON=' + str(launch.python),
+            'DOCKER_CONTEXT=' + binding.docker_context, str(launch.python), '-I', '-c', REPLAY, root,
+            '--root', root, '--cwd', root, 'run', '--env-file', str(binding.env_alias)]
+    result = dict(error='busy')
+    for _ in range(attempts):
+        process = subprocess.Popen(argv, cwd=root, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, start_new_session=True)
+        try:
+            output, _ = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.communicate()
+            return dict(error='timeout', seconds=timeout)
+        result = closed_replay_result(process.returncode, output.decode('utf-8', errors='replace'))
+        if result.get('disposition') != 'busy':
+            return result
+        time.sleep(30)
+    return result
 
 
 def read_attempt_ledger(directory):
