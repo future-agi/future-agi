@@ -28,9 +28,8 @@ Capability matrix
 
 These are bounded capabilities, verified by the repository tests below on
 ClickHouse 25.3.14.14 with SQLGlot 28.10.1. They do not imply unrestricted SQL,
-large-fixture performance, cluster qualification or superiority over another
-product. The live fixtures contain two tenants and independently computed
-expected values.
+large-fixture performance or cluster qualification. The live fixtures contain
+two tenants and independently computed expected values.
 
 .. list-table:: Tested SQL capabilities
    :header-rows: 1
@@ -447,7 +446,7 @@ configuration: review/test on an isolated instance before production. Do not cla
 this command has changed a running installation; it prints DDL only.
 
 Verification and unqualified requirements
-----------------------------------------
+-----------------------------------------
 
 Reproducible repository commands::
 
@@ -507,50 +506,20 @@ claims. No seconds-at-1B performance claim is made. This bounded lane intentiona
 rejects scans beyond its resource profile rather than silently launching an
 unbounded scan or returning partial aggregate answers.
 
-Public competitive reference
-----------------------------
+Scope boundaries
+----------------
 
-https://www.braintrust.dev/docs/reference/sql (reviewed 2026-10-21): the public
-SQL page documents a Query editor with completion/validation and table results,
-CLI/API access, a 30-second hosted synchronous timeout, SQL exclusions for JOIN,
-UNION and window functions, and enterprise background execution restrictions.
-This workbench supports bounded equality joins and UNION across its scoped
-catalog and asynchronous execution. It does not claim equivalent full SQL breadth,
-CLI parity, unlimited asynchronous scans or measured performance superiority.
-Parquet is implemented here; that particular SQL page does not establish a
-Braintrust export claim. A separate Braintrust first-party export page
-(https://www.braintrust.dev/docs/admin/data-management/export, reviewed
-2026-10-21) documents enterprise JSONL/Parquet automations; its custom-query
-exports are same-project logs and exclude subqueries/aggregates. That scheduled
-export is distinct from this workbench's interactive bounded result download.
-
-Other first-party boundaries (also reviewed 2026-10-21): Datadog's LLM
-Observability dataset docs
-(https://docs.datadoghq.com/ddsql_reference/data_directory/dd/dd.llm_observability.dataset.md)
-and general DDSQL reference (https://docs.datadoghq.com/ddsql_reference.md)
-document a typed LLM span/evaluation source and SQL joins; the editor requires
-``ddsql_editor_read`` (https://docs.datadoghq.com/ddsql_editor.md), and the MCP
-SQL toolset is separately marked Preview. This design therefore exposes a
-purpose-built typed LLM catalog but makes *its own* stable scope and maturity
-explicit rather than equating an MCP preview label with the editor.
-
-Opik's scoped analytics endpoint
-(https://www.comet.com/docs/opik/reference/rest-api/system-analytics-queries/execute-scoped-analytics-query)
-is documented as an internal read-only ClickHouse endpoint, not a GA user SQL
-editor. Its workspace-wide experiment/dataset scope differs from its optional
-project scoping for traces/spans/feedback/threads. This workbench deliberately
-requires a concrete project for every virtual dataset, including joins and
-nested queries; it does not claim general workspace-wide raw SQL. Arize AX
-custom metrics (https://arize.com/docs/ax/observe/projects/custom-metrics-api)
-are documented AQL scalar metrics and saved dashboard/monitor objects, not a
-claim that the AX data plane exposes equivalent interactive SQL. Arize Data
-Fabric (https://arize.com/docs/ax/security-and-settings/data-fabric) is hourly
-Iceberg warehouse sync with late eval/annotation updates; it is not a synchronous
-SQL connector and is outside this feature. Claims are limited to these public
-first-party docs; no internal customer intelligence is included.
+All virtual datasets require a concrete authorized project, including in joins
+and nested queries. Bounded equality joins, UNION and asynchronous execution
+operate within the documented SQL allow-list and resource profile. CSV and
+Parquet downloads export the bounded interactive result snapshot. This feature
+does not provide unrestricted workspace-wide raw SQL or unbounded asynchronous
+scans; full-scale performance remains an unexecuted release gate. No broader SQL
+or CLI capabilities are claimed. Warehouse synchronization is outside this
+feature.
 
 Dedicated full-scale profile (not executed locally)
---------------------------------------------------
+---------------------------------------------------
 
 ``futureagi/scripts/sql_workbench/profile.json`` declares the one-billion-span
 project / one-hour query window / 24-hour, single-client profile. The benchmark
@@ -597,7 +566,7 @@ Measured local checks are tiny fixtures, not this profile. No billion-span or
 24-hour result is represented by their unit/integration test timings.
 
 Cluster coordinator provisioning
--------------------------------
+--------------------------------
 
 The provisioning commands print single-coordinator DDL. On a sharded/replicated
 installation, apply that same reviewed DDL on **every possible read-only
