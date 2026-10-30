@@ -55,7 +55,7 @@ import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Mapping, Optional, Tuple
 
@@ -598,6 +598,25 @@ class StandaloneBackup:
         finally:
             runner.deadline = previous  # only narrow; never extend the registered tick budget
 
+    def _started_at(self, expected):
+        # Proof timestamps have whole-second precision, while attempt reservations
+        # retain microseconds. Wait before any stop rather than backdating the
+        # reservation or declaring a future proof start. A real clock regression
+        # or exhausted budget still refuses.
+        now = self.clock().astimezone(timezone.utc)
+        _need(now >= expected.reserved_at, 'backup_clock_skew')
+        started = now.replace(microsecond=0)
+        if started < expected.reserved_at:
+            delay = (started + timedelta(seconds=1) - now).total_seconds()
+            _need(time.monotonic() + delay < self.deadline, 'backup_timeout')
+            time.sleep(delay)
+            observed = self.clock().astimezone(timezone.utc)
+            _need(observed >= now, 'backup_clock_skew')
+            started = observed.replace(microsecond=0)
+        _need(started >= expected.reserved_at, 'backup_clock_skew')
+        _need(time.monotonic() < self.deadline, 'backup_timeout')
+        return started
+
     @contextmanager
     def _locked(self):
         with _directory(self.destination) as directory:
@@ -762,8 +781,7 @@ class StandaloneBackup:
             ledger = None
             try:
                 _private(directory, True)
-                started = self.clock().astimezone(timezone.utc).replace(microsecond=0)
-                _need(started >= expected.reserved_at, 'backup_clock_skew')
+                started = self._started_at(expected)
                 model, containers, files = self._observe(running=True)
                 space = os.fstatvfs(directory)
                 _need(space.f_bavail * space.f_frsize >= self.policy.reserve_bytes + 4 * MAX_METADATA
@@ -917,8 +935,7 @@ class StandaloneBackup:
         _private(proof_directory_fd, True)
         _filesystem(proof_directory_fd)
         with self._locked(), self._budget(self.policy.timeout_seconds), _directory(ledger.directory) as directory:
-            started = self.clock().astimezone(timezone.utc).replace(microsecond=0)
-            _need(started >= expected.reserved_at, 'backup_clock_skew')
+            started = self._started_at(expected)
             model, containers, files = self._observe(running=True)
             timeout_version = _command(self.installation, self.b['context'], 'exec', containers['postgres']['Id'],
                                        '/usr/bin/timeout', '--version')
