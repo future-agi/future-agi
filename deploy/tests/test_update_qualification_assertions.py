@@ -39,7 +39,7 @@ def driver_fixture():
     driver.current_source_witnesses = mock.Mock(side_effect=lambda: copy.deepcopy(witnesses))
     driver.verify_restored_source = mock.Mock(return_value=SimpleNamespace(
         facts=SimpleNamespace(runtime_observation=SimpleNamespace(ready=True, stable=True))))
-    driver.witnesses = SimpleNamespace(assert_absent=mock.Mock(return_value=None))
+    driver.witnesses = SimpleNamespace(assert_absent=mock.Mock(return_value=True))
     return driver, cases
 
 
@@ -141,6 +141,41 @@ class QualificationAssertionTests(unittest.TestCase):
             self.assert_suite(cases, suite, omitted)
             driver.verify_restored_source.assert_called_once_with()
             driver.witnesses.assert_absent.assert_called_once_with('target')
+
+    def test_real_absence_oracle_returns_true_and_void_callback_checks_it(self):
+        from scripts.update_rehearsal_shipping import ProductWitnesses
+        for remaining in (None, 'relational', 'span', 'object', 'temporal', 'spool'):
+            driver, cases = driver_fixture()
+            io_driver = SimpleNamespace(
+                app_python=mock.Mock(side_effect=[
+                    dict(user=remaining=='relational',organization=False,workspace=False,project=False),
+                    {'absent':remaining!='object'}, {'absent':remaining!='temporal'}]),
+                clickhouse=mock.Mock(return_value=[{'id':'target-span'}] if remaining=='span' else []),
+                spool_witness=SimpleNamespace(assert_absent=mock.Mock(return_value=remaining!='spool')))
+            driver.witnesses = ProductWitnesses(io_driver)
+            driver.witnesses.namespaces['target'] = dict(account={'email':'unit@example.invalid'},
+                headers={'X-Organization-Id':'unit-org','X-Workspace-Id':'unit-workspace'},
+                namespace='unit-target', trace_id='unit-trace',span_id='unit-span',object={},workflow={'run_id':'unit-run'})
+            with self.subTest(remaining=remaining), mock.patch.object(ProductHarness, 'migration_inventory',
+                                                                    return_value=driver._source_migrations):
+                if remaining is None:
+                    driver.restore_assertions('failure_restore')
+                    self.assert_suite(cases, 'failure_restore', ('failure_after_migration',))
+                    self.assertEqual(io_driver.app_python.call_count, 3)
+                    io_driver.spool_witness.assert_absent.assert_called_once_with('target')
+                else:
+                    with self.assertRaises(p.RehearsalError):
+                        driver.restore_assertions('failure_restore')
+                    self.assertEqual(cases.failed, ('failure_restore', 'candidate_only_absent'))
+                    self.assertNotIn('candidate_only_absent', cases.cases['failure_restore'])
+        for verdict in (False, None, 1, {'absent':True}):
+            driver, cases = driver_fixture()
+            driver.witnesses.assert_absent.return_value = verdict
+            with self.subTest(verdict=verdict), mock.patch.object(ProductHarness, 'migration_inventory',
+                                                                return_value=driver._source_migrations), \
+                 self.assertRaisesRegex(p.RehearsalError, 'absence was not observed'):
+                driver.restore_assertions('failure_restore')
+            self.assertEqual(cases.failed, ('failure_restore', 'candidate_only_absent'))
 
     def test_unready_or_unstable_restored_source_never_counts_as_ready(self):
         for ready, stable in ((False, True), (True, False)):

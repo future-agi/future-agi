@@ -542,7 +542,8 @@ print(json.dumps({'postgres':schema}))
         self.check(suite, 'source_ready', self.assert_restored_source_ready)
         self.check(suite, 'source_migrations_exact', lambda: p.equal(
             ProductHarness.migration_inventory(self), self._source_migrations, 'source migrations not restored'))
-        self.check(suite, 'candidate_only_absent', lambda: self.witnesses.assert_absent('target'))
+        self.check(suite, 'candidate_only_absent', lambda: p.need(self.witnesses.assert_absent('target') is True,
+            'target-only namespace absence was not observed'))
         self.check(suite, 'restored_namespace_complete', lambda: p.equal(
             p.witness_inventory(self.current_source_witnesses()), self.corpus['source_witnesses'],
             'restored witness namespace changed'))
