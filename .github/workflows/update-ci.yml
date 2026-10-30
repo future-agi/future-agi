@@ -228,6 +228,7 @@ jobs:
           python -m unittest discover -s deploy/tests/update_e2e -p 'test_automatic_publisher.py' -v
           python -m unittest discover -s deploy/tests/update_e2e -p 'test_acceptance_ci.py' -v
           python -m unittest discover -s deploy/tests/update_e2e -p 'test_acceptance_guards.py' -v
+          python -m unittest discover -s deploy/tests/update_e2e -p 'test_release_metadata.py' -v
 
   compose:
     name: compose versions
@@ -419,6 +420,8 @@ jobs:
         # export OCI layouts).
         env:
           FAGI_UPDATE_E2E_BUILDER: ${{ steps.buildx.outputs.name }}
+          # Only api.github.com release metadata; acceptance strips it from children.
+          FAGI_UPDATE_RELEASE_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           umask 077
@@ -487,6 +490,9 @@ jobs:
         with:
           endpoint: colima-fagi-update
       - name: Real published images, qualify/package with test key, installed-scheduler acceptance
+        env:
+          # Existing contents:read token, not inherited by app/qualifier processes.
+          FAGI_UPDATE_RELEASE_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           umask 077

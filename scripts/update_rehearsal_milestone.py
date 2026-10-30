@@ -329,14 +329,18 @@ class SnapshotMilestone(ShippingRehearsal):
                 if mount['type']=='bind':
                     p.need(mount.get('read_only') and (mount['source']=='/dev/null' or
                            Path(mount['source']).resolve().is_relative_to(self.root)), 'foreign retained bind')
-        p.equal(model['services']['app']['image'], self.source_image, 'source is not digest-pinned')
+        from deploy.update.manifest import parse_image_ref
+        p.equal(parse_image_ref(model['services']['app']['image']), parse_image_ref(self.source_image),
+                'source is not digest-pinned')
         self.image_inspections = {}
         for name, service in model['services'].items():
             self.installation.docker_run('pull','--platform',self.platform,service['image'])
             image = self._json('image','inspect',service['image'])[0]
             p.equal(image['Os']+'/'+image['Architecture'], self.platform, 'non-native source image')
             self.image_inspections[name] = {k:image[k] for k in ('Id','Os','Architecture','RepoDigests')}
-        p.need(any(ref.endswith('@'+self.source_digest) for ref in self.image_inspections['app']['RepoDigests']),
+        p.need(any(parse_image_ref(ref).name == parse_image_ref(self.source_image).name and
+                   parse_image_ref(ref).digest == self.source_digest
+                   for ref in self.image_inspections['app']['RepoDigests']),
                'source digest identity unavailable')
         self.record('image-inspections.json', self.image_inspections)
         self._wait_healthy()

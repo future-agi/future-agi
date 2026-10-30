@@ -366,9 +366,10 @@ class NormalBootstrapEnvelopeSampler:
             digest = target_image.get("digest")
             _need(type(digest) is str and re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is not None,
                   "resource_input_invalid")
+            _need(parsed.digest in (None, digest), "resource_input_invalid")
             self.target_digest = digest
             self.target_repository = parsed.repository
-            self.target_image_ref = target_image_ref
+            self.target_image_ref = target_image_ref.split('@', 1)[0] + '@' + digest
             self.expected_container_ids = {}
             self.expected_image_ids = {}
             self.expected_created = {}
@@ -499,7 +500,8 @@ class NormalBootstrapEnvelopeSampler:
                 config_image = (row.get("Config") or {}).get("Image")
                 # The target digest is checked against the immutable image ID below;
                 # raw Config.Env and reference strings are never retained.
-                _need(type(config_image) is str and config_image == self.target_image_ref,
+                _need(type(config_image) is str and
+                      parse_image_ref(config_image) == parse_image_ref(self.target_image_ref),
                       "resource_identity_ambiguous")
             graph = row.get("GraphDriver")
             graph_data = graph.get("Data") if type(graph) is dict else None
@@ -569,7 +571,8 @@ class NormalBootstrapEnvelopeSampler:
                     parsed_reference = parse_image_ref(reference)
                 except (TypeError, ValueError):
                     continue
-                if parsed_reference.repository == self.target_repository and parsed_reference.digest == self.target_digest:
+                if (parsed_reference.name == parse_image_ref(self.target_image_ref).name
+                        and parsed_reference.digest == self.target_digest):
                     verified_digest = True
                     break
             _need(verified_digest, "resource_identity_ambiguous")

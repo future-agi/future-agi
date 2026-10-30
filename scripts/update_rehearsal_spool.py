@@ -172,8 +172,77 @@ SETTINGS max_result_rows=129, max_result_bytes=1048576, result_overflow_mode='th
 FORMAT JSONEachRow"""
 
 
+WITNESS_DIAGNOSTIC_DETAILS = frozenset(('attributable observed-catalog spool record unavailable',
+ 'corrupt observed-catalog spool record',
+ 'duplicate JSON field in observed-catalog record',
+ 'duplicate observed-catalog witness label',
+ 'empty observed-catalog spool record',
+ 'invalid observed-catalog JSON',
+ 'invalid observed-catalog attribute key',
+ 'invalid observed-catalog identity',
+ 'invalid observed-catalog observation interval',
+ 'invalid observed-catalog row value',
+ 'invalid observed-catalog spool digest',
+ 'invalid observed-catalog spool identity',
+ 'invalid observed-catalog spool observation',
+ 'invalid observed-catalog spool path',
+ 'invalid observed-catalog spool payload',
+ 'invalid observed-catalog spool rows',
+ 'invalid observed-catalog timestamp',
+ 'invalid observed-catalog value fingerprint',
+ 'invalid observed-catalog witness label',
+ 'invalid observed-catalog witness namespace',
+ 'invalid or over-limit observed-catalog index response',
+ 'non-finite number in observed-catalog record',
+ 'noncanonical observed-catalog identity',
+ 'noncanonical observed-catalog timestamp',
+ 'normal bootstrap did not replay the observed-catalog witness',
+ 'normal bootstrap did not restore observed-catalog grants',
+ 'observed-catalog INSERT pause was not confirmed',
+ 'observed-catalog delivery is already paused',
+ 'observed-catalog fixture fault cleanup was not confirmed',
+ 'observed-catalog fixture privilege operation failed',
+ 'observed-catalog index read failed',
+ 'observed-catalog index returned another tenant',
+ 'observed-catalog namespace key is missing',
+ 'observed-catalog namespace value is missing',
+ 'observed-catalog spool observation exceeded bounds',
+ 'observed-catalog spool observation failed',
+ 'observed-catalog spool/index witness differs',
+ 'observed-catalog table layout is unavailable',
+ 'observed-catalog witness cannot be normalized',
+ 'observed-catalog witness requires an owned disposable rehearsal project',
+ 'observed-catalog witness requires fixed product operations',
+ 'observed-catalog writer grants are unavailable',
+ 'observed-catalog writer grants changed outside bootstrap',
+ 'observed-catalog writer grants differ from bootstrap',
+ 'observed-catalog writer grants were not restored exactly',
+ 'target-only observed-catalog record remains in index',
+ 'target-only observed-catalog record remains in spool',
+ 'unexpected observed-catalog index row for witness tenant',
+ 'unexpected observed-catalog spool row for witness tenant',
+ 'unknown observed-catalog witness label',
+ 'unsupported observed-catalog attribute type',
+ 'unsupported observed-catalog column layout',
+ 'unsupported observed-catalog privilege layout',
+ 'unsupported observed-catalog privilege operation',
+ 'unsupported observed-catalog row layout',
+ 'unsupported observed-catalog source kind',
+ 'unsupported observed-catalog spool envelope',
+ 'unsupported observed-catalog spool version',
+ 'unsupported observed-catalog table layout',
+ 'unsupported observed-catalog writer grant',
+ 'unsupported observed-catalog writer grant layout'))
+
+
 class ObservedSpoolWitnessError(RuntimeError):
     """A bounded, sanitized refusal to claim the shared-files witness."""
+    refusal_code = 'witness_operation_unavailable'
+
+    def __init__(self, detail):
+        self.safe_detail = (detail if type(detail) is str and detail in WITNESS_DIAGNOSTIC_DETAILS
+                            else 'unknown observed-catalog witness failure')
+        super().__init__(self.safe_detail)
 
 
 def _fail(message: str) -> None:

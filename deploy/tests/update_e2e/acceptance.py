@@ -16,6 +16,7 @@ import argparse
 import gzip
 import hashlib
 from datetime import datetime, timezone
+from http.client import HTTPException
 import io
 import json
 import time
@@ -26,7 +27,8 @@ import subprocess
 import sys
 import tarfile
 from types import SimpleNamespace
-from urllib.request import ProxyHandler, Request, build_opener
+from urllib.error import HTTPError
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
@@ -36,7 +38,7 @@ from deploy.tests.update_e2e.real_automatic import CONTEXT, home_path, native_ci
 from deploy.tests.update_e2e.oci_registry import DockerHubMirror, MIRROR_HOST, OCIRegistry, REGISTRY_IMAGE
 from deploy.update.manifest import (COMPONENT_REPOSITORIES, COMPONENT_TAG_SUFFIX, PRODUCT,
                                     canonical_json, deployment_hashes, hash_path, parse_version,
-                                    read_deployment_file_list, read_upgrade_floor, parse_image_ref, validate_manifest)
+                                    read_deployment_file_list, read_upgrade_floor, parse_image_ref, is_version, validate_manifest)
 from scripts.generate_update_manifest import apply_release_policy
 
 # Counted from the acceptance step, not the job start: finish before the
@@ -53,12 +55,56 @@ BUILDS = (
 )
 
 
+RELEASE_API = 'https://api.github.com/repos/future-agi/future-agi/releases/'
+RELEASE_TOKEN_ENV = 'FAGI_UPDATE_RELEASE_TOKEN'
+
+
+class _NoReleaseRedirects(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # Refuse even same-origin redirects: metadata is never an asset download.
+        return None
+
+
 def get_json(url):
-    with build_opener(ProxyHandler({})).open(Request(url,headers={'Accept':'application/json'}),timeout=60) as response:
-        raw = response.read(8*1024*1024+1)
+    # Validate the raw spelling, before urllib can normalize controls, userinfo,
+    # ports or path escapes. Only our two stable release-metadata routes qualify.
+    if not isinstance(url, str) or not url.startswith(RELEASE_API):
+        raise ValueError('unsupported release metadata URL')
+    endpoint = url[len(RELEASE_API):]
+    if endpoint != 'latest' and not (endpoint.startswith('tags/') and
+            is_version(endpoint[5:]) and parse_version(endpoint[5:])[3] == 2):
+        raise ValueError('unsupported release metadata URL')
+    # This step-scoped read-only Actions credential is not an app/updater token.
+    # No fallback to an operator's GH_TOKEN/GITHUB_TOKEN or credential helper.
+    token = os.environ.get(RELEASE_TOKEN_ENV, '')
+    if token and (len(token) > 4096 or not re.fullmatch(r'[A-Za-z0-9._~+/-]+=*', token)):
+        raise ValueError('invalid release metadata credential')
+    request = Request(url, headers={'Accept': 'application/json'})
+    if token:
+        request.add_unredirected_header('Authorization', 'Bearer '+token)
+    try:
+        # The default HTTPS handler retains certificate and hostname validation.
+        with build_opener(ProxyHandler({}), _NoReleaseRedirects()).open(request, timeout=60) as response:
+            raw = response.read(8*1024*1024+1)
+    except HTTPError as error:
+        error.close()
+        # Never retain server reason/body/Location or exception chains: they may
+        # reflect credentials, and main writes the exception to failure.json.
+        raise RuntimeError('release metadata HTTP request failed (status %d)' % error.code) from None
+    except (OSError, HTTPException, ValueError):
+        raise RuntimeError('release metadata request failed') from None
     if len(raw) > 8*1024*1024:
         raise ValueError('release response exceeds bound')
-    return json.loads(raw)
+    try:
+        return json.loads(raw)
+    except (ValueError, RecursionError):
+        raise ValueError('invalid release metadata JSON') from None
+
+
+def command_environment():
+    # Both native command execution and the unittest/qualify/package subtree
+    # otherwise inherit os.environ; stripping only at the app layer is too late.
+    return {key: value for key, value in os.environ.items() if key != RELEASE_TOKEN_ENV}
 
 
 def plan(mode):
@@ -108,7 +154,7 @@ class NativeAcceptance:
         stderr = self.out/('command-%04d.stderr'%index)
         try:
             with stderr.open('wb') as err:
-                result=subprocess.run([str(a) for a in args],cwd=ROOT,env=os.environ.copy(),
+                result=subprocess.run([str(a) for a in args],cwd=ROOT,env=command_environment(),
                                       stdout=subprocess.PIPE,stderr=err,
                                       timeout=max(1,min(timeout,self.deadline-time.monotonic())))
             (self.out/('command-%04d.stdout'%index)).write_bytes(result.stdout)
@@ -285,7 +331,7 @@ class NativeAcceptance:
         update manifest, proof, or production signing authority is assumed.
         """
         parse_version(version)
-        metadata = get_json('https://api.github.com/repos/future-agi/future-agi/releases/tags/'+version)
+        metadata = get_json(RELEASE_API+'tags/'+version)
         if metadata.get('tag_name') != version or metadata.get('draft') or metadata.get('prerelease'):
             raise ValueError('historical source is not the requested stable release')
         sha = self.command(['git','rev-parse','refs/tags/'+version+'^{commit}']).decode().strip()
@@ -444,7 +490,7 @@ class NativeAcceptance:
     def run_tests(self,mode,registry):
         versions=['v1.53.0','v1.54.0','v1.55.0']
         if mode == 'upgrade':
-            latest=get_json('https://api.github.com/repos/future-agi/future-agi/releases/latest')
+            latest=get_json(RELEASE_API+'latest')
             if latest.get('draft') or latest.get('prerelease'):
                 raise ValueError('latest source is not stable')
             versions=[latest['tag_name']]
@@ -461,7 +507,7 @@ class NativeAcceptance:
             base=str(self.out/'acceptance'),run_id=int(os.environ['GITHUB_RUN_ID']),
             deadline_monotonic=self.deadline)))
         config.chmod(0o600)
-        env=dict(os.environ,FUTURE_AGI_UPDATE_E2E='1',FAGI_UPDATE_ACCEPTANCE_INPUTS=str(config))
+        env=dict(command_environment(),FUTURE_AGI_UPDATE_E2E='1',FAGI_UPDATE_ACCEPTANCE_INPUTS=str(config))
         with (self.out/'test-output.log').open('wb') as output:
             result=subprocess.run([sys.executable,'-m','unittest','discover','-s','deploy/tests',
                 '-p','test_update_e2e_automatic.py','-v'],cwd=ROOT,env=env,stdout=output,stderr=subprocess.STDOUT,timeout=max(1,self.deadline-time.monotonic()))
@@ -526,7 +572,11 @@ def main(argv=None):
             status=run.run_tests(args.mode,registry)
     except Exception as error:
         # Do not leak private command output, credentials or DB data to CI logs.
-        (out/'failure.json').write_bytes(canonical_json(dict(status='failed',reason=str(error))))
+        reason = str(error)
+        token = os.environ.get(RELEASE_TOKEN_ENV)
+        if token:
+            reason = reason.replace(token, '[REDACTED]')
+        (out/'failure.json').write_bytes(canonical_json(dict(status='failed',reason=redacted_tail(reason))))
         print('real automatic acceptance failed; bounded diagnostics retained',file=sys.stderr)
     finally:
         (out/'summary.json').write_bytes(canonical_json(dict(schema_version=1,mode=args.mode,

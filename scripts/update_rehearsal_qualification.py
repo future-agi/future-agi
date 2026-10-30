@@ -58,7 +58,8 @@ def validate_bootstrap_envelope(fields, corpus, target, references):
     p._keys(image, ('Id', 'Os', 'Architecture', 'RepoDigests'), 'missing target image inspection')
     target_component = target['components']['standalone']
     repository = parse_image_ref(target_component['image']).repository
-    p.need(repository + '@' + target_component['digest'] in image['RepoDigests'] and
+    p.need(any(parse_image_ref(ref).name == parse_image_ref(target_component['image']).name and
+               parse_image_ref(ref).digest == target_component['digest'] for ref in image['RepoDigests']) and
            image['Os'] + '/' + image['Architecture'] == fields['predecessor']['platform'],
            'resource target image differs from the frozen candidate')
     p.equal((identity['daemon_id'], identity['project'], identity['target_repository'],
@@ -620,19 +621,21 @@ def run_qualification(args):
         driver.execute()
     except (Exception, Interrupted, KeyboardInterrupt) as exc:
         failure = p.failure_diagnostics(exc, driver)
+        failure['stage'] = driver._diagnostic_data['active_phase'] if driver else 'qualification_setup'
     finally:
         if driver is not None:
             try:
                 driver.cleanup()
                 p.need(driver.cleanup_verified is True, 'qualification cleanup unverified')
             except (Exception, Interrupted, KeyboardInterrupt) as exc:
-                failure = failure or p.failure_diagnostics(exc, driver)
+                if failure is None:
+                    failure = dict(p.failure_diagnostics(exc, driver), stage='cleanup')
         signal.signal(signal.SIGTERM, previous)
     if failure is None:
         try:
             args.qualification.validate_finished()
         except (Exception, Interrupted, KeyboardInterrupt) as exc:
-            failure = p.failure_diagnostics(exc, driver)
+            failure = dict(p.failure_diagnostics(exc, driver), stage='validate_finished')
     result = label(milestone='qualification', status='failed' if failure else 'passed',
         executed_stages=[row['phase'] for row in driver._diagnostic_data['phase_timings']
                          if row['outcome'] == 'passed'] if driver else [],

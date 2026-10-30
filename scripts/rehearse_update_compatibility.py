@@ -1141,15 +1141,16 @@ def validate_snapshot_evidence(fields, corpus, *, target, predecessor_raw):
     for service, (image, digest) in expected_images.items():
         runtime_image = (source.product_images if service in source.product_images else source.dependency_images)[service][0]
         # Tags and immutable pins can name the same authenticated repository.
-        equal((parse_image_ref(runtime_image.image).repository, runtime_image.digest),
-              (parse_image_ref(image).repository, digest), 'snapshot source image digest differs')
+        equal((parse_image_ref(runtime_image.image).name, runtime_image.digest),
+              (parse_image_ref(image).name, digest), 'snapshot source image digest differs')
         inspection = inspections[service]
         _keys(inspection, ('Id', 'Os', 'Architecture', 'RepoDigests'), 'incomplete source image inspection')
         need(type(inspection['RepoDigests']) is list and all(type(v) is str for v in inspection['RepoDigests']) and
              type(runtime_image.image_id) is str and re.fullmatch(r'sha256:[a-f0-9]{64}', runtime_image.image_id) and
              inspection['Id'] == runtime_image.image_id == binding['images'][service] and
              inspection['Os'] + '/' + inspection['Architecture'] == previous['platform'] and
-             parse_image_ref(image).repository + '@' + digest in inspection['RepoDigests'],
+             any(parse_image_ref(ref).name == parse_image_ref(image).name and
+                 parse_image_ref(ref).digest == digest for ref in inspection['RepoDigests']),
              'snapshot image inspection belongs to another transition')
     expectation = snapshot['expectation']
     _keys(expectation, (f.name for f in dataclass_fields(BackupExpectation)), 'incomplete snapshot expectation')
@@ -1535,8 +1536,10 @@ def failure_diagnostics(exc, executor=None, *, completed_rows=0):
     from deploy.update.apply import Interrupted
     from deploy.update.recovery import RecoveryError
     from deploy.update.standalone_backup import BackupError
+    from scripts.update_rehearsal_resources import ResourceObservationError
+    from scripts.update_rehearsal_spool import ObservedSpoolWitnessError
     code = getattr(exc, 'reason_code', getattr(exc, 'refusal_code', None))
-    if code is None and isinstance(exc, (BackupError, RecoveryError)):
+    if code is None and isinstance(exc, (BackupError, RecoveryError, ResourceObservationError)):
         code = exc.code
     code = getattr(code, 'value', code)
     if isinstance(exc, (Interrupted, KeyboardInterrupt)):
@@ -1550,6 +1553,8 @@ def failure_diagnostics(exc, executor=None, *, completed_rows=0):
     if isinstance(exc, RehearsalError):
         # Only this producer's own fixed diagnostics, not third-party stderr.
         result['assertion_detail'] = str(exc)[:512]
+    if isinstance(exc, ObservedSpoolWitnessError):
+        result['assertion_detail'] = exc.safe_detail
     if isinstance(exc, CommandError):
         result['command'] = dict(executable=exc.command_name, exit_code=exc.returncode)
     if reason == 'shipping_executor_unavailable':
@@ -2050,7 +2055,7 @@ def _milestone_outcome(directory):
             if type(record.get('executed_stages')) is list else [],
         cleanup_verified=record.get('cleanup_verified') is True,
         failure=None if failure is None else {k: str(failure[k])[:512] for k in
-            ('stage', 'reason', 'exception_type', 'detail') if k in failure})
+            ('stage', 'reason', 'refusal_code', 'exception_type', 'detail', 'assertion_detail') if k in failure})
 
 
 def qualify(argv):
