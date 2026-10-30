@@ -347,6 +347,9 @@ func validateResultMeasurements(r Result) error {
 	if b.FailedSamples > b.Samples || b.KeptSamples > b.Samples || b.SlopeSamples > b.KeptSamples || b.SecondHalfSamples > b.SlopeSamples || b.AtBudgetSamples > b.SlopeSamples || b.BufferedRows.Count != b.SlopeSamples || b.MaxBufferedRows != b.BufferedRows.Max || b.CounterResets > b.KeptSamples {
 		return fmt.Errorf("collector_backlog sample subsets, buffered_rows count/max and slope samples disagree")
 	}
+	if err := validateByteAdmission(r); err != nil {
+		return err
+	}
 	for _, windows := range [][]Window{b.Unreachable, b.InsertStalls} {
 		for i, w := range windows {
 			if w.StartS > w.EndS || (i > 0 && w.StartS < windows[i-1].EndS) || w.Samples > b.KeptSamples {

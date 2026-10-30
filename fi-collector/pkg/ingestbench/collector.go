@@ -117,8 +117,8 @@ func CheckBudget(rate int64, batchSize, concurrency int, reported *CollectorLimi
 		if err := ValidateLoadBounds(rate, batchSize, concurrency); err != nil {
 			b.Error = err.Error()
 		}
-		if reported.IngestBudgetBytes <= 0 || reported.WirePoolBytes <= 0 || reported.WorkPoolBytes <= 0 || reported.WorkPoolBytes >= reported.IngestBudgetBytes || reported.WirePoolBytes != reported.IngestBudgetBytes-reported.WorkPoolBytes {
-			b.Error = "invalid observed byte-pool limits"
+		if err := validateByteLimits(*reported); err != nil {
+			b.Error = err.Error()
 		}
 		return b
 	}
@@ -204,6 +204,13 @@ func FetchCollectorHealth(ctx context.Context, client *http.Client, healthURL st
 	info.Status, info.Build, info.Runtime, info.Limits, info.Writer = health.Status, health.Build, health.Runtime, health.Limits, health.Writer
 	if info.Limits == nil {
 		info.Error = "collector /healthz does not report limits (collector predates limit reporting)"
+	} else if info.Limits.AdmissionModel == "byte-leases-v1" {
+		if err := validateByteLimits(*info.Limits); err != nil {
+			// Keep the failed observation reportable, but do not promote impossible
+			// health values into typed measurement evidence or publication disclosures.
+			info.Error = "collector /healthz: " + err.Error()
+			info.Limits = nil
+		}
 	}
 	return info
 }

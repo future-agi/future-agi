@@ -204,6 +204,9 @@ func ParseCollectorHealth(status int, body []byte) CollectorSample {
 	if len(health.Ingest) > 0 && json.Unmarshal(health.Ingest, &ingest) != nil {
 		return CollectorSample{HTTPStatus: status, Error: "malformed ingest budget telemetry"}
 	}
+	if ingest.BudgetBytes < 0 || ingest.Work.InUseBytes < 0 || ingest.Wire.InUseBytes < 0 || ingest.Work.InUseBytes > ingest.BudgetBytes || ingest.Wire.InUseBytes > ingest.BudgetBytes-ingest.Work.InUseBytes {
+		return CollectorSample{HTTPStatus: status, Error: "invalid ingest budget telemetry: byte usage must fit its non-negative sampled budget"}
+	}
 	return CollectorSample{Ingest: health.Ingest, IngestBudgetBytes: ingest.BudgetBytes, WorkUsedBytes: ingest.Work.InUseBytes, WireUsedBytes: ingest.Wire.InUseBytes, OK: true, HTTPStatus: status, BufferedRows: *a.BufferedRows, PendingRows: *a.PendingRows, MaxPendingRows: *a.MaxPendingRows,
 		RowsInserted: health.Stats.RowsInserted, RowsDeadLettered: health.Stats.RowsDeadLettered, BatchesRetried: health.Stats.BatchesRetried, BatchesFailed: health.Stats.BatchesFailed}
 }
