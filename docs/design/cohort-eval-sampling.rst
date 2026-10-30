@@ -1,5 +1,5 @@
 Contact-consistent evaluation sampling
-=====================================
+======================================
 
 Scope
 -----
@@ -424,60 +424,14 @@ These are safety limits, not a claim that every permitted 31-day workload fits t
 proof does not advance the continuous cursor. Actual one-billion-row throughput
 has not been established by the correctness fixtures.
 
-Public competitive context
---------------------------
+Preview boundaries
+------------------
 
-Documentation checked 2026-10-21:
-
-* Galileo documents top-down metadata rules: the first matching rule supplies a
-  percentage and unmatched traces use a default rate. It also says traces are
-  evaluated for all configured metrics or none. This is a useful ordered-rule
-  comparison, not evidence of exact, frozen per-cell target-n quotas.
-  https://docs.galileo.ai/concepts/logging/configure-metrics/configure-metrics
-* Galileo sessions group traces, events and spans. Grouping/session-level
-  evaluation alone is not the same contract as evaluating every eligible span
-  of a sampled contact while keeping span-level results.
-  https://docs.galileo.ai/concepts/logging/sessions/sessions-overview
-* LangSmith documents thread filters, percentage sampling and project-level idle
-  time for multi-turn evaluations; its documentation lists a 500-thread batch
-  limit and seven-day run eligibility. Those are thread evaluation semantics,
-  not evidence for this span-result/contact-membership contract.
-  https://docs.langchain.com/langsmith/online-evaluations-multi-turn
-
-* Langfuse's 2026-08-05 changelog documents consistent evaluator sampling of
-  matching observations. Its separate SDK ingestion sampler retains/drops
-  whole traces and associated scores. Neither statement establishes
-  cross-trace contact sampling or exact stratified quotas.
-  https://langfuse.com/changelog/2026-08-05-deterministic-evaluator-sampling
-  https://langfuse.com/docs/observability/features/sampling
-
-Additional documentation checked 2026-10-22:
-
-* Arize AX applies a trace/session task's sampling rate per unit (10% of
-  sessions, not 10% of spans) and gathers a unit's spans from 24 hours before
-  the task window; its session evaluator judges the unit as a whole. That is
-  unit-level sampling for unit-level judgements, not frozen per-cell quotas
-  with stored inclusion probabilities on every span result.
-  https://www.arize.com/docs/ax/evaluate/trace-and-session-evals
-* Braintrust online scoring samples matching traces after they go idle; for
-  grouped scoring the rate decides whether a group is scored and, per its
-  docs, does not decide which traces of the group are included.
-  https://www.braintrust.dev/docs/evaluate/score-online
-* Datadog LLM Observability offers span, trace and session scopes with an
-  optional sampling rate; a session evaluation runs after 30 idle minutes and
-  spans arriving more than 30 minutes after the previous span are not
-  included. This implementation instead admits late eligible rows of an
-  already selected unit on later polls (tested in the real-ClickHouse suite).
-  https://docs.datadoghq.com/llm_observability/investigate/evaluations/llm_as_a_judge_evaluations/session_level_evaluations
-* Langfuse evaluation rules show the past seven days' matching volume and an
-  estimated cost before enabling a rule. This preview reports exact per-cell
-  eligible/selected units and rows and expected evaluation runs, but
-  deliberately no dollar estimate.
-  https://langfuse.com/docs/evaluation/get-started/online
-
-These sources support the distinctions above. They do not establish that no
-other product implements stratification or contact-consistent sampling, and
-no throughput or cost comparison with them has been measured.
+The preview reports per-cell eligible/selected units and rows and expected
+evaluation runs. It is a population snapshot, not a reservation, and returns
+``estimated_cost: null`` rather than a provider-price estimate. Closed cohorts
+retain their frozen membership; late eligible rows of already selected units
+can be admitted on later polls, as exercised by the real-ClickHouse suite below.
 
 Verification and rollout
 ------------------------
