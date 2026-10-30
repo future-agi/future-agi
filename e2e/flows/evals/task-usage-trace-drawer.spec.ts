@@ -32,8 +32,8 @@ test('EVAL-E2E-006: a task run opens its trace in a drawer from the Usage tab', 
       'read the run panel Trace ID and Span ID',
       'click Open trace and read the drawer',
       'press Esc to close the drawer, then Esc again to close the run panel'],
-    backendChecks: ['the task completes with exactly one completed PG result on the evaluated child span',
-      'the Usage runs response carries that result with the seeded trace and span IDs',
+    backendChecks: ['the task completes with exactly two PG results: the evaluated child completed, the unmapped root errored',
+      'the Usage runs response carries exactly those two runs with the seeded trace and span IDs',
       'the run panel shows the seeded trace and span IDs',
       'the drawer opens on the seeded trace with the evaluated span selected and its Evals tab open',
       'the first Esc closes only the drawer and the second closes the run panel'],
@@ -85,17 +85,23 @@ test('EVAL-E2E-006: a task run opens its trace in a drawer from the Usage tab', 
       return created.result.id;
     });
 
-    const runId = await test.step('storage lane: one completed result on the evaluated span', async () => {
+    const runs = await test.step('storage lane: the evaluated span completed, the root errored', async () => {
       await expect.poll(async () =>
         (await actor.api.get<{ status: string }>(`${TASK_PATH}${taskId}/`)).status, POLL.EVAL_RESULT).toBe('completed');
       const rows = await probe.pg<{ id: string; observation_span_id: string; status: string; eval_explanation: string }>(
         `SELECT id::text AS id, observation_span_id, status, eval_explanation FROM tracer_eval_logger
          WHERE eval_task_id=$1 AND deleted=false`, [taskId]);
       await testInfo.attach('pg-results.json', { contentType: 'application/json', body: JSON.stringify(rows) });
-      expect(rows.map(row => [row.observation_span_id, row.status])).toEqual([[evaluatedSpanId, 'completed']]);
-      expect(rows[0].eval_explanation).toBe(`${verdict} saw llm`);
-      return rows[0].id;
+      // The task scores both seeded spans; only the llm child carries the mapped
+      // attribute, so the root errors (as in flows/evals/eval-task.spec.ts).
+      const bySpan = new Map(rows.map(row => [row.observation_span_id, row]));
+      expect(rows.map(row => [row.observation_span_id, row.status]).sort())
+        .toEqual([[seeded.spanIds[0], 'errored'], [evaluatedSpanId, 'completed']].sort());
+      expect(bySpan.get(evaluatedSpanId)!.eval_explanation).toBe(`${verdict} saw llm`);
+      return { evaluated: bySpan.get(evaluatedSpanId)!.id, root: bySpan.get(seeded.spanIds[0])!.id };
     });
+    const runId = runs.evaluated;
+    let position = '';
 
     await test.step('Usage: the run panel shows the seeded trace and span', async () => {
       await page.goto(`/dashboard/tasks/${taskId}`);
@@ -109,13 +115,18 @@ test('EVAL-E2E-006: a task run opens its trace in a drawer from the Usage tab', 
       expect(response.status()).toBe(200);
       const body = await response.json() as UsageBody;
       await testInfo.attach('usage-runs.json', { contentType: 'application/json', body: JSON.stringify(body) });
-      expect(body.result.logs.results.map(run => ({ id: run.id, eval_name: run.eval_name,
-        trace_id: run.trace_id, span_id: run.span_id })))
-        .toEqual([{ id: runId, eval_name: evalName, trace_id: seeded.traceId, span_id: evaluatedSpanId }]);
+      const listed = body.result.logs.results;
+      expect(listed.map(run => ({ id: run.id, eval_name: run.eval_name, trace_id: run.trace_id, span_id: run.span_id }))
+        .sort((a, b) => a.id.localeCompare(b.id)))
+        .toEqual([{ id: runId, eval_name: evalName, trace_id: seeded.traceId, span_id: evaluatedSpanId },
+          { id: runs.root, eval_name: evalName, trace_id: seeded.traceId, span_id: seeded.spanIds[0] }]
+          .sort((a, b) => a.id.localeCompare(b.id)));
+      // The run panel counts runs in the list's own (newest-first) order.
+      position = `${listed.findIndex(run => run.id === runId) + 1} / 2`;
 
       // MUI DataGrid keys each row by getRowId (the run id) as data-id.
       await page.locator(`.MuiDataGrid-row[data-id="${runId}"]`).click({ timeout: UI_READY });
-      await expect(page.getByText('1 / 1', { exact: true })).toBeVisible({ timeout: UI_READY });
+      await expect(page.getByText(position, { exact: true })).toBeVisible({ timeout: UI_READY });
       await expect(page.getByText(seeded.traceId, { exact: true })).toBeVisible();
       await expect(page.getByText(evaluatedSpanId, { exact: true })).toBeVisible();
     });
@@ -139,10 +150,10 @@ test('EVAL-E2E-006: a task run opens its trace in a drawer from the Usage tab', 
     await test.step('Esc closes the drawer, then the run panel', async () => {
       await page.keyboard.press('Escape');
       await expect(drawer).toHaveCount(0, { timeout: UI_READY });
-      await expect(page.getByText('1 / 1', { exact: true })).toBeVisible();
+      await expect(page.getByText(position, { exact: true })).toBeVisible();
       await expect(page.getByText(seeded.traceId, { exact: true })).toBeVisible();
       await page.keyboard.press('Escape');
-      await expect(page.getByText('1 / 1', { exact: true })).toHaveCount(0, { timeout: UI_READY });
+      await expect(page.getByText(position, { exact: true })).toHaveCount(0, { timeout: UI_READY });
       await expect(page.getByText(seeded.traceId, { exact: true })).toHaveCount(0);
     });
   } finally {
