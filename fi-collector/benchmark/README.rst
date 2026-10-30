@@ -16,7 +16,7 @@ Shipped:
 
 * A real OTLP sender -> collector receiver -> production converter -> batch
   writer -> independently queried ClickHouse path, over OTLP/HTTP protobuf
-  (default), OTLP/HTTP JSON or OTLP/gRPC, each with optional gzip. No
+  (default), OTLP/HTTP JSON (both optionally gzip) or uncompressed OTLP/gRPC. No
   direct-insert shortcut.
 * A seeded synthetic GenAI workload: distinct texts with lognormal sizes, bounded
   trace trees (agent/chain/LLM/tool/retriever spans), sessions, cohorts, token
@@ -34,8 +34,9 @@ Shipped:
   ClickHouse version/table keys/clusters and server memory/CPU limits, the
   collector's ``/healthz`` build, runtime CPUs and admission limits, and the
   revision of the system under test.
-* A collector budget check that warns loudly when the target's
-  ``max_pending_rows`` is smaller than the profile needs.
+* Observed byte-budget provenance and pressure samples. A row-count heuristic
+  is retained only for historical collectors; it cannot assess current memory
+  sufficiency, exporter retry success or capacity.
 * Offline-by-default planning, local smoke and explicit full-scale profiles;
   versioned JSON results; plain-text reports; an input-driven sizing worksheet.
 * Five separately counted stages (offered, scheduled, attempted, accepted, durable)
@@ -99,7 +100,7 @@ throughput or production behaviour. To save the explicitly labelled artifact to 
     OTLPBENCH_MOCK_RESULT=/path/to/new/mock-result.json \
       go test ./pkg/ingestbench -run TestMockCollectorPipelineAndIndependentLossDetection -count=1
 
-Five opt-in real ClickHouse tests run the in-process real collector (PostgreSQL
+Eight opt-in real ClickHouse tests run the in-process real collector (PostgreSQL
 authentication bypassed ONLY in this fixture) against an ALREADY provisioned
 isolated v2 schema. They never start/stop containers or create/delete tables, and
 leave their run-tagged rows for inspection. The normal suite skips them::
@@ -119,16 +120,14 @@ leave their run-tagged rows for inspection. The normal suite skips them::
   read-visible sentinels, the insert lag of all 20 stored spans, the clock probe,
   the settings, DDL-hash and storage provenance, and direct ClickHouse reads that
   must find the acknowledged data.
-* ``TestLiveClickHouseBackpressureAccounting``: a real collector with a 16-row
-  budget (the in-process equivalent of ``FI_MAX_PENDING_ROWS=16``) whose span
-  inserts are held 300 ms by a proxy (a slow database), over HTTP protobuf, HTTP
-  JSON+gzip and gRPC+gzip. Load must produce whole-request 503 /
-  ``RESOURCE_EXHAUSTED`` refusals, each with ``Retry-After`` / ``RetryInfo``,
-  counted as rejected. Of two requests larger than the whole budget, the first
-  meets an empty buffer and must be acknowledged and stored; the second meets the
-  first still in flight (inserts held 2 s) and must be refused as retryable, with
-  a retry hint. Independent verification must find every acknowledged span, no
-  refused span and attribute every missing span to a rejection.
+* ``TestLiveClickHouseBackpressureAccounting``: a real collector with a small
+  byte budget and delayed inserts, over HTTP protobuf, HTTP JSON+gzip and
+  uncompressed gRPC. HTTP busy responses are 503 with Retry-After. gRPC
+  UNAVAILABLE remains **ambiguous** in the receipt because that status can also
+  originate from a transport failure; it is never proof that nothing was stored.
+  Separate requests exceeding the entire work pool must be permanently refused
+  (HTTP 413 / gRPC INVALID_ARGUMENT), with no overshoot. Independent exact-ID
+  verification distinguishes acknowledged, refused and ambiguous outcomes.
 * ``TestLiveClickHouseVerifierCountsDroppedAndDuplicatedSpans``: a proxy in front
   of ClickHouse drops 3 rows of acknowledged spans and stores 3 spans twice (the
   copy differs only in ``service_name``, an ORDER BY column, so no merge can
@@ -140,7 +139,7 @@ leave their run-tagged rows for inspection. The normal suite skips them::
   in the same bucket as the Go histogram.
 * ``TestLiveClickHouseRecovery``: 160 spans per case. The real collector is
   restarted gracefully in the middle of the load; separately, every writer request
-  to ClickHouse is held for 1.5 s against a 24-row budget. Every acknowledged span
+  to ClickHouse is held for 1.5 s against a small byte budget. Every acknowledged span
   must be found, the backlog must drain and each fault must recover within the
   run (``measured-recovery-complete``).
 
@@ -153,7 +152,7 @@ passing live test is functional integration evidence, NOT a capacity benchmark.
 The ``otlp-benchmark-smoke`` job in ``.github/workflows/fi-collector-ci.yml``
 provisions one disposable, pinned ClickHouse 25.3.14.14 container on the hosted CI
 runner (2 CPUs/2 GiB), applies the actual canonical spans SQL and the existing
-curated-table DDL, runs the five live tests under ``-race``, requires an explicit
+curated-table DDL, runs the configured live tests under ``-race``, requires an explicit
 PASS of each (including the three backpressure and two recovery sub-tests) rather
 than a skip, publishes the smoke result (its headline must be withheld) and
 uploads the JSON results and the publication. It deletes only its uniquely named CI Compose project and
@@ -184,7 +183,7 @@ Set variables in your shell or secret manager (do not commit values)::
     export BENCH_OTLP_HEADERS='{"X-API-Key":"<test-key>","X-Secret-Key":"<test-secret>"}'
     export BENCH_CH_HEADERS='{"X-ClickHouse-User":"<reader>","X-ClickHouse-Key":"<password>"}'
     # Optional: BENCH_ENCODING=protobuf|json|grpc, BENCH_GZIP=1, BENCH_SEED,
-    # BENCH_SUT_REVISION, BENCH_VERIFY_CHECKPOINT, BENCH_COLLECTOR_MAX_PENDING_ROWS
+    # BENCH_SUT_REVISION, BENCH_VERIFY_CHECKPOINT. Current gRPC has no gzip.
 
 For ``BENCH_ENCODING=grpc`` set ``BENCH_OTLP_URL=http://host:4317`` (plaintext; use
 ``https://`` for TLS). Plan first; without ``BENCH_COLLECTOR_HEALTH_URL`` this
@@ -232,41 +231,34 @@ system-under-test revision.
 Collector settings each profile needs
 -------------------------------------
 
-The collector refuses whole requests when its pending plus in-flight rows would
-exceed a positive ``server.max_pending_rows`` / ``FI_MAX_PENDING_ROWS``. The
-compatibility default is 0 (row admission disabled, unbounded retained rows).
-Explicitly size and enable the budget for isolated bounded runs. When enabled:
-HTTP 503 with ``Retry-After`` or gRPC ``RESOURCE_EXHAUSTED`` with ``RetryInfo``.
-A request larger than the whole budget is admitted only while the buffer is below
-the budget (collectors that predate this rule refuse it as non-retryable 413 /
-``INVALID_ARGUMENT``). A capacity run against an undersized budget therefore
-measures the budget, not the storage path. The scripts cannot change the
-collector; they state the requirement and check it::
+Current collectors admit OTLP using byte leases for the wire body, decoding,
+converted rows and synchronous sidecars. Rows keep their leases through writer
+ownership, including out-of-order concurrent drains. ``FI_INGEST_BUDGET_MIB``,
+``FI_INGEST_MAX_WAIT``, ``FI_OTLP_MAX_BODY_MIB``, ``FI_GRPC_MAX_RECV_MIB`` and
+``FI_INSERT_CONCURRENCY`` are documented in the collector README and environment
+registry. ``FI_MAX_PENDING_ROWS`` is obsolete and rejected at startup; do not
+restore it to run a historical profile. A request too large for the whole work
+pool is permanently refused; a temporarily occupied pool returns HTTP 503 with
+Retry-After / gRPC UNAVAILABLE. Exporter retries have their own deadlines and
+must be qualified separately. A byte budget is not a hard RSS or durability bound.
+
+Observe the real settings before planning::
 
     go run ./cmd/otlpbench collector-budget --rate 15000 --batch-size 500 --concurrency 16 \
-      [--collector-health-url http://127.0.0.1:9464/healthz]
+      --collector-health-url http://127.0.0.1:9464/healthz
 
-The requirement is a documented HEURISTIC, not a measurement: rows waiting for the
-next flush trigger (``min(batch_max_rows, rate x batch_max_age)``) plus rows that
-arrive during a two-second insert allowance plus every in-flight request arriving
-at once (``concurrency x batch_size``). With the collector defaults
-(``batch_max_rows`` 5,000, ``batch_max_age`` 5s):
+For ``limits.admission_model=byte-leases-v1`` the receipt records actual byte
+pools, receive/body caps, wait time and insert concurrency. Its budget assessment
+is ``not-assessed``: the tool cannot derive enough memory from spans/s, batch size
+and row counts. Capture ``ingest`` pressure/refusal samples, representative
+payloads, process RSS and actual exporter retry outcomes before sizing an isolated
+capacity run. No automatic byte recommendation or capacity pass is fabricated.
 
-=========  ========  =====  ==========  =================================
-Profile    spans/s   batch  in flight   required ``FI_MAX_PENDING_ROWS``
-=========  ========  =====  ==========  =================================
-smoke      100       100    2           900
-sustained  15,000    500    16          43,000
-burst      60,000    500    32          141,000
-=========  ========  =====  ==========  =================================
-
-``run-profile.sh`` prints these requirements before every plan or run, checks them
-against ``/healthz`` when ``BENCH_COLLECTOR_HEALTH_URL`` is set, and the executed
-run repeats the check and records it under ``provenance.collector.budget_check``.
-An insufficient budget, a batch larger than the budget, an unreachable
-``/healthz`` or a missing verification checkpoint for a large profile is printed
-as a ``*** WARNING`` banner and kept in the result's ``warnings``. The collector
-must also be given enough memory for that many rows; the row cap is not a byte cap.
+Without observed health, the old row heuristic (trigger rows + two seconds of
+arrivals + in-flight batches) is explicitly historical and unobserved. A legacy
+zero row-cap field does not imply unbounded memory on a newer collector. Legacy
+receipts and declared row settings can still be read; they are not current
+collector configuration. Plans remain offline unless explicitly executed.
 
 Sustained and burst profiles
 ----------------------------
@@ -356,7 +348,10 @@ Wire path
 ``--encoding protobuf`` (default) sends OTLP/HTTP ``application/x-protobuf``,
 ``json`` sends OTLP/HTTP ``application/json`` and ``grpc`` calls the OTLP/gRPC
 ``TraceService/Export``. ``--gzip`` adds ``Content-Encoding: gzip`` (HTTP) or the
-gRPC gzip compressor; the collector accepts both and bounds the decoded size. The
+gRPC gzip compressor for alternate targets. The current fi-collector deliberately
+refuses gRPC gzip as UNIMPLEMENTED before reading the message: decompression
+cannot participate in its wire lease. HTTP gzip remains budgeted and supported.
+The benchmark never registers a process-global gRPC compressor. The
 result records the encoding and gzip choice, and both the wire bytes (compressed;
 for gRPC from the transport's own message statistics) and the uncompressed bytes.
 The gRPC client uses no environment proxy and no service-config retries.

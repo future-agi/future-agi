@@ -268,7 +268,10 @@ func disclosures(r Result, telemetry *TelemetryCheck) []Disclosure {
 	}
 	if col.Limits != nil {
 		l := col.Limits
-		add("collector limits from /healthz", "captured", fmt.Sprintf("max_pending_rows %d, batch %d rows / %d ms, HTTP body %d bytes, gRPC %d MiB", l.MaxPendingRows, l.BatchMaxRows, l.BatchMaxAgeMS, l.MaxHTTPBodyBytes, l.GRPCMaxRecvMiB))
+		if l.AdmissionModel == "byte-leases-v1" {
+			add("collector byte admission", "observed, sufficiency not assessed", fmt.Sprintf("budget %d bytes; wire/work %d/%d bytes; max wait %d ms; insert concurrency %d; gRPC gzip %t", l.IngestBudgetBytes, l.WirePoolBytes, l.WorkPoolBytes, l.MaxWaitMS, l.InsertConcurrency, l.GRPCGzip))
+		}
+		add("collector limits from /healthz", "captured", fmt.Sprintf("max_pending_rows %d, batch %d rows / %d ms, HTTP body %d bytes, gRPC %g MiB", l.MaxPendingRows, l.BatchMaxRows, l.BatchMaxAgeMS, l.MaxHTTPBodyBytes, l.GRPCMaxRecvMiB))
 	} else {
 		add("collector limits from /healthz", "not-captured", "budget source: "+col.Budget.Source)
 	}
@@ -509,7 +512,7 @@ func WritePublicationMarkdown(w io.Writer, p Publication) error {
 	bl := p.Backlog
 	f("## Collector backlog\n\n")
 	if bl.Status == "measured" || bl.Status == "measured-with-gaps" {
-		f("%s over %d samples (%d failed). Buffered rows p50/p99/max %d/%d/%d of a %d-row budget; slope %.2f rows/s over the load, %.2f rows/s in its second half; drained after the load: %t (%.3f s); collector restarts seen %d; insert stalls %d.\n\n",
+		f("%s over %d samples (%d failed). Buffered rows p50/p99/max %d/%d/%d (legacy row-cap field %d; zero is not a byte-budget assessment); slope %.2f rows/s over the load, %.2f rows/s in its second half; drained after the load: %t (%.3f s); collector restarts seen %d; insert stalls %d.\n\n",
 			bl.Status, bl.Samples, bl.FailedSamples, bl.BufferedRows.P50, bl.BufferedRows.P99, bl.MaxBufferedRows, bl.MaxPendingRows, bl.SlopeRowsPerSecond, bl.SecondHalfSlopeRowsPerSecond, bl.Drained, bl.DrainSeconds, bl.CounterResets, len(bl.InsertStalls))
 	} else {
 		f("%s.\n\n", orUnknown(bl.Status))

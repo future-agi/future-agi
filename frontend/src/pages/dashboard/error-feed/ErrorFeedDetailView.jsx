@@ -15,9 +15,13 @@ import {
 import PropTypes from "prop-types";
 import { useNavigate, useParams } from "react-router-dom";
 import Iconify from "src/components/iconify";
+import { ShareDialog } from "src/components/share-dialog";
+import { copyToClipboard } from "src/utils/utils";
+import { useSnackbar } from "src/components/snackbar";
 import {
   useErrorFeedDetail,
   useErrorFeedRedirect,
+  useExportErrorFeedTraces,
   useUpdateErrorFeedIssue,
 } from "src/api/errorFeed/error-feed";
 import ErrorStatusChip from "./components/ErrorStatusChip";
@@ -30,8 +34,10 @@ import TracesTab from "./components/TracesTab";
 import TrendsTab from "./components/TrendsTab";
 import ClusterHeadlineCard from "./components/ClusterHeadlineCard";
 import AnalyzeTab from "./components/AnalyzeTab";
+import { useSharedIssue } from "./sharedIssueContext";
 import { useErrorFeedStore } from "./store";
 import { useAnalyzeRunner } from "./useAnalyzeRunner";
+import { downloadCsv, tracesToCsv } from "./exportTracesCsv";
 
 // ── Detail page skeleton ─────────────────────────────────────────────────────
 function DetailSkeleton() {
@@ -96,10 +102,16 @@ const TABS = [
 
 // ── Main view ─────────────────────────────────────────────────────────────────
 export default function ErrorFeedDetailView() {
-  const { id } = useParams();
+  // On the public /shared/<token> page the issue arrives with the share and
+  // the page is read-only: no fetches, no triage, no analysis runs.
+  const shared = useSharedIssue();
+  const { id: routeId } = useParams();
+  const id = shared ? shared.issue?.row?.cluster_id : routeId;
   const navigate = useNavigate();
   const { activeTab, setActiveTab } = useErrorFeedStore();
   const [linearPickerOpen, setLinearPickerOpen] = useState(false);
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const [clusterIdCopied, setClusterIdCopied] = useState(false);
   const setAnalyzePendingStart = useErrorFeedStore(
     (s) => s.setAnalyzePendingStart,
   );
@@ -107,18 +119,47 @@ export default function ErrorFeedDetailView() {
     data: redirect,
     isLoading: redirectLoading,
     isError: redirectError,
-  } = useErrorFeedRedirect(id);
-  const resolvedId = redirect?.resolved_cluster_id;
+  } = useErrorFeedRedirect(shared ? null : id);
+  const resolvedId = shared ? id : redirect?.resolved_cluster_id;
   useEffect(() => {
-    if (resolvedId && resolvedId !== id) {
+    if (!shared && resolvedId && resolvedId !== id) {
       navigate(`/dashboard/error-feed/${resolvedId}`, { replace: true });
     }
-  }, [id, navigate, resolvedId]);
-  const { data: detail, isLoading } = useErrorFeedDetail(id, {
-    enabled: resolvedId === id,
+  }, [id, navigate, resolvedId, shared]);
+  const { data: fetchedDetail, isLoading } = useErrorFeedDetail(id, {
+    enabled: !shared && resolvedId === id,
     retry: false,
   });
+  const detail = shared ? shared.issue : fetchedDetail;
   const updateIssue = useUpdateErrorFeedIssue();
+  const exportTraces = useExportErrorFeedTraces();
+  const { enqueueSnackbar } = useSnackbar();
+
+  const handleExportTraces = (clusterId) =>
+    exportTraces.mutate(clusterId, {
+      onSuccess: (overview) => {
+        const traces = overview?.representative_traces ?? [];
+        if (!traces.length) {
+          enqueueSnackbar("No traces to export", { variant: "info" });
+          return;
+        }
+        downloadCsv(tracesToCsv(traces), `error-feed-${clusterId}-traces.csv`);
+        const total = overview?.representative_total ?? traces.length;
+        if (total > traces.length) {
+          enqueueSnackbar(
+            `Exported the latest ${traces.length} of ${total} traces`,
+            { variant: "warning" },
+          );
+        } else {
+          enqueueSnackbar(
+            `Exported ${traces.length} trace${traces.length === 1 ? "" : "s"}`,
+            { variant: "success" },
+          );
+        }
+      },
+      onError: () =>
+        enqueueSnackbar("Failed to export traces", { variant: "error" }),
+    });
 
   const currentError = useMemo(() => {
     if (!detail?.row) return null;
@@ -131,12 +172,16 @@ export default function ErrorFeedDetailView() {
     };
   }, [detail]);
 
-  useAnalyzeRunner(currentError?.cluster_id, currentError);
+  // On a shared issue the runner only seeds the saved analysis for the Fix
+  // tab; it never opens Falcon or starts a run.
+  useAnalyzeRunner(currentError?.cluster_id, currentError, {
+    enabled: !shared,
+  });
 
-  if (redirectLoading || (resolvedId === id && isLoading)) {
+  if (!shared && (redirectLoading || (resolvedId === id && isLoading))) {
     return <DetailSkeleton />;
   }
-  if (redirectError || !redirect) {
+  if (!shared && (redirectError || !redirect)) {
     return <Box p={3}>This group could not be found.</Box>;
   }
   if (resolvedId !== id) {
@@ -152,6 +197,17 @@ export default function ErrorFeedDetailView() {
   // must never silently swap which panel renders. `safeTabIndex` is only used
   // to drive the MUI <Tabs> indicator.
   const activeTabKey = TABS[safeTabIndex].key;
+
+  const handleCopyClusterId = async () => {
+    // Same inline feedback as the product's other copy buttons: the icon
+    // turns into a check for a moment; only a failure gets a toast.
+    if (!(await copyToClipboard(currentError.cluster_id))) {
+      enqueueSnackbar("Couldn't copy the cluster ID", { variant: "error" });
+      return;
+    }
+    setClusterIdCopied(true);
+    setTimeout(() => setClusterIdCopied(false), 1500);
+  };
 
   return (
     <Box
@@ -187,22 +243,32 @@ export default function ErrorFeedDetailView() {
         >
           {/* Breadcrumb row */}
           <Stack direction="row" alignItems="center" gap={0.5} mb={1}>
-            <Button
-              size="small"
-              variant="text"
-              startIcon={<Iconify icon="mdi:arrow-left" width={14} />}
-              onClick={() => navigate("/dashboard/error-feed")}
-              sx={{
-                height: 26,
-                fontSize: "12px",
-                color: "text.secondary",
-                px: 0.75,
-                minWidth: 0,
-                "&:hover": { color: "text.primary", bgcolor: "action.hover" },
-              }}
-            >
-              Error Feed
-            </Button>
+            {shared ? (
+              <Typography
+                fontSize="12px"
+                color="text.secondary"
+                sx={{ px: 0.75 }}
+              >
+                Error Feed
+              </Typography>
+            ) : (
+              <Button
+                size="small"
+                variant="text"
+                startIcon={<Iconify icon="mdi:arrow-left" width={14} />}
+                onClick={() => navigate("/dashboard/error-feed")}
+                sx={{
+                  height: 26,
+                  fontSize: "12px",
+                  color: "text.secondary",
+                  px: 0.75,
+                  minWidth: 0,
+                  "&:hover": { color: "text.primary", bgcolor: "action.hover" },
+                }}
+              >
+                Error Feed
+              </Button>
+            )}
             <Iconify
               icon="mdi:chevron-right"
               width={13}
@@ -306,98 +372,133 @@ export default function ErrorFeedDetailView() {
               gap={0.75}
               flexShrink={0}
             >
-              <Tooltip title="Copy cluster ID" arrow>
+              <Tooltip
+                title={clusterIdCopied ? "Copied" : "Copy cluster ID"}
+                arrow
+              >
                 <IconButton
                   size="small"
+                  onClick={handleCopyClusterId}
                   sx={{
                     borderRadius: 1,
                     border: "1px solid",
                     borderColor: "divider",
                   }}
                 >
-                  <Iconify icon="mdi:content-copy" width={14} />
+                  <Iconify
+                    icon={clusterIdCopied ? "mdi:check" : "mdi:content-copy"}
+                    width={14}
+                  />
                 </IconButton>
               </Tooltip>
-              <Tooltip title="Share" arrow>
-                <IconButton
-                  size="small"
-                  sx={{
-                    borderRadius: 1,
-                    border: "1px solid",
-                    borderColor: "divider",
-                  }}
-                >
-                  <Iconify icon="mdi:share-variant-outline" width={14} />
-                </IconButton>
-              </Tooltip>
-              <Button
-                size="small"
-                variant="outlined"
-                startIcon={<Iconify icon="mdi:check" width={13} />}
-                disabled={updateIssue.isPending}
-                onClick={() =>
-                  updateIssue.mutate({
-                    clusterId: currentError.cluster_id,
-                    status: "resolved",
-                  })
-                }
-                sx={{
-                  height: 30,
-                  fontSize: "12px",
-                  borderRadius: "6px",
-                  textTransform: "none",
-                  borderColor: "divider",
-                  color: "text.secondary",
-                }}
-              >
-                Resolve
-              </Button>
-              <Button
-                size="small"
-                variant="outlined"
-                startIcon={
-                  <Iconify icon="mdi:check-circle-outline" width={13} />
-                }
-                disabled={updateIssue.isPending}
-                onClick={() =>
-                  updateIssue.mutate({
-                    clusterId: currentError.cluster_id,
-                    status: "acknowledged",
-                  })
-                }
-                sx={{
-                  height: 30,
-                  fontSize: "12px",
-                  borderRadius: "6px",
-                  textTransform: "none",
-                  borderColor: "divider",
-                  color: "text.secondary",
-                }}
-              >
-                Acknowledge
-              </Button>
-              <Button
-                size="small"
-                variant="outlined"
-                startIcon={<Iconify icon="mdi:eye-off-outline" width={13} />}
-                disabled={updateIssue.isPending}
-                onClick={() =>
-                  updateIssue.mutate({
-                    clusterId: currentError.cluster_id,
-                    status: "escalating",
-                  })
-                }
-                sx={{
-                  height: 30,
-                  fontSize: "12px",
-                  borderRadius: "6px",
-                  textTransform: "none",
-                  borderColor: "divider",
-                  color: "text.secondary",
-                }}
-              >
-                Ignore issue
-              </Button>
+              {!shared && (
+                <>
+                  <Tooltip title="Share" arrow>
+                    <IconButton
+                      size="small"
+                      onClick={() => setShareDialogOpen(true)}
+                      sx={{
+                        borderRadius: 1,
+                        border: "1px solid",
+                        borderColor: "divider",
+                      }}
+                    >
+                      <Iconify icon="mdi:share-variant-outline" width={14} />
+                    </IconButton>
+                  </Tooltip>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={
+                      <Iconify icon="mdi:download-outline" width={13} />
+                    }
+                    disabled={
+                      exportTraces.isPending || !currentError.trace_count
+                    }
+                    onClick={() => handleExportTraces(currentError.cluster_id)}
+                    sx={{
+                      height: 30,
+                      fontSize: "12px",
+                      borderRadius: "6px",
+                      textTransform: "none",
+                      borderColor: "divider",
+                      color: "text.secondary",
+                    }}
+                  >
+                    Export
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={<Iconify icon="mdi:check" width={13} />}
+                    disabled={updateIssue.isPending}
+                    onClick={() =>
+                      updateIssue.mutate({
+                        clusterId: currentError.cluster_id,
+                        status: "resolved",
+                      })
+                    }
+                    sx={{
+                      height: 30,
+                      fontSize: "12px",
+                      borderRadius: "6px",
+                      textTransform: "none",
+                      borderColor: "divider",
+                      color: "text.secondary",
+                    }}
+                  >
+                    Resolve
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={
+                      <Iconify icon="mdi:check-circle-outline" width={13} />
+                    }
+                    disabled={updateIssue.isPending}
+                    onClick={() =>
+                      updateIssue.mutate({
+                        clusterId: currentError.cluster_id,
+                        status: "acknowledged",
+                      })
+                    }
+                    sx={{
+                      height: 30,
+                      fontSize: "12px",
+                      borderRadius: "6px",
+                      textTransform: "none",
+                      borderColor: "divider",
+                      color: "text.secondary",
+                    }}
+                  >
+                    Acknowledge
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={
+                      <Iconify icon="mdi:eye-off-outline" width={13} />
+                    }
+                    disabled={updateIssue.isPending}
+                    onClick={() =>
+                      updateIssue.mutate({
+                        clusterId: currentError.cluster_id,
+                        status: "escalating",
+                      })
+                    }
+                    sx={{
+                      height: 30,
+                      fontSize: "12px",
+                      borderRadius: "6px",
+                      textTransform: "none",
+                      borderColor: "divider",
+                      color: "text.secondary",
+                    }}
+                  >
+                    Ignore issue
+                  </Button>
+                </>
+              )}
             </Stack>
           </Stack>
         </Box>
@@ -509,12 +610,22 @@ export default function ErrorFeedDetailView() {
       {/* ── Right sidebar ── */}
       <ErrorMetadataPanel error={currentError} />
 
-      <LinearTeamPicker
-        open={linearPickerOpen}
-        onClose={() => setLinearPickerOpen(false)}
-        clusterId={currentError?.cluster_id}
-        traceId={null}
-      />
+      {!shared && (
+        <>
+          <LinearTeamPicker
+            open={linearPickerOpen}
+            onClose={() => setLinearPickerOpen(false)}
+            clusterId={currentError?.cluster_id}
+            traceId={null}
+          />
+          <ShareDialog
+            open={shareDialogOpen}
+            onClose={() => setShareDialogOpen(false)}
+            resourceType="error_feed_issue"
+            resourceId={currentError.cluster_id}
+          />
+        </>
+      )}
     </Box>
   );
 }

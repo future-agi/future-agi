@@ -7,22 +7,22 @@ not the native `clickhouse-go` protocol.
 
 ```text
 SDK → OTLP/HTTP JSON or protobuf, or OTLP/gRPC
-    → authentication + usage check
+    → authentication + usage check + byte leases
     → converter (typed Maps + JSON overflow + GenAI hot columns)
-    → in-memory pending rows (whole-request admission budget)
-    → single batch flusher → ClickHouse HTTP JSONEachRow
+    → in-memory pending rows (retain accounted work leases)
+    → bounded concurrent flushers → ClickHouse HTTP JSONEachRow
     → optional best-effort curated dimensions and configured sidecars
 ```
 
 Default batch triggers are **5,000 rows or 5 seconds**, not a hard maximum batch
-size. The pending + in-flight row budget is **disabled by default** (0); a
-positive `max_pending_rows` explicitly enables admission. See the operational
-limits below before treating an OTLP acknowledgement as durable storage.
+size. Current ingestion uses byte leases from reading through synchronous writer
+and sidecar ownership. See the operational limits below before treating an OTLP
+acknowledgement as durable storage. A byte budget is not a hard RSS bound.
 
 ## Layout and build
 
 - `cmd/fi-collector`: custom entrypoint; YAML plus `FI_*` environment configuration.
-- `pkg/server`: HTTP/gRPC receivers, usage checks, row admission and batching.
+- `pkg/server`: HTTP/gRPC receivers, usage checks, byte admission and batching.
 - `exporter/clickhouse25exporter/converter.go`: OTLP-to-v2 row conversion.
 - `pkg/adapter`, `pkg/chwriter`: attribute splitting and HTTP inserts/retries.
 - `pkg/curatedwriter`, `pkg/observedcatalog`, `pkg/traceavailable`: sidecar paths.
@@ -106,7 +106,7 @@ pass the variables and mounts to the collector process/container.
 Optional path to a litellm `model_prices_and_context_window.json` file. When set, the
 collector uses the file at this path to price token-based cost; when empty or unset, the
 collector falls back to an embedded snapshot of the litellm pricing table (current at build time).
-If the file at this path can't be read or parsed, the collector logs a warning and falls back to
+If the file at this path can't be read or parsed, the collector logs an error and falls back to
 the embedded snapshot rather than disabling token-based pricing.
 
 Use this to refresh pricing without rebuilding the collector:
@@ -131,96 +131,161 @@ for models not in the litellm table. Custom model pricing is stored in the Djang
 (scoped by organization); the collector reads it on-demand and caches for 24 hours. When neither
 the litellm table nor custom pricing applies, the span's cost is 0.
 
-## Operational backpressure and durability
+## Ingest limits and backpressure
 
-- HTTP request bodies are capped at 16 MiB; the configurable gRPC receive limit
-  defaults to 16 MiB. These are per-request limits, not a total memory limiter.
-- `server.max_pending_rows` / `FI_MAX_PENDING_ROWS` opts into a row admission
-  budget for both the pending buffer and the batch currently being flushed.
-  Default: **0 (disabled)**, preserving the previous unbounded buffer. An explicit
-  positive value requires deployment sizing; without one, retained rows and crash
-  loss have no configured bound. With admission enabled, a full budget
-  rejects the **whole request before enqueue**: HTTP 503 with `Retry-After`, or
-  gRPC `RESOURCE_EXHAUSTED` with `RetryInfo`; both are retryable. A request with
-  more spans than the entire budget is admitted whenever the buffer is below the
-  budget, so the buffer can exceed the budget by at most that one request (itself
-  bounded by the 16 MiB size caps); while it is over, every request gets the same
-  retryable refusal. No request is refused as non-retryable because of the budget.
-  Keep exporter batches at or below the budget anyway: under sustained overload a
-  larger one waits like every other request. Do not hot-loop retries.
-- `batch_max_rows` above a positive `max_pending_rows` could never trigger a flush, so it is
-  clamped to `max_pending_rows` with a startup warning.
-- On graceful shutdown, admission closes before the final drain. An HTTP handler
-  still running after the 5 s shutdown timeout is refused (HTTP 503 with
-  `Retry-After`, gRPC `UNAVAILABLE`) instead of acknowledging rows after the last
-  drain.
-- Every OTLP/HTTP 4xx/5xx response body is a `google.rpc.Status` message, as the
-  OTLP/HTTP specification requires: protobuf for `application/x-protobuf` requests
-  and for failures before the media type is known, JSON for `application/json`
-  requests. The HTTP status line is authoritative for retryability (429, 502, 503
-  and 504 are retryable; every other failure is not).
-- The cap bounds retained row count, **not bytes**: large payloads, concurrent
-  request decoding, converter allocations and sidecars still use memory. There
-  is no Collector-framework `memory_limiter` or advertised 1,000-request queue.
-- A successful OTLP response acknowledges in-memory enqueue, **before** the
-  ClickHouse insert. Unresolved project spans are reported through OTLP partial
-  success, counted as spans rather than ResourceSpans containers. Backpressure
-  rejections do not enqueue data or emit accepted-ingestion usage.
-- The single flusher uses the writer's configured retry/backoff/timeout policy.
-  Failed canonical inserts are appended to a local dead-letter file when that
-  disk write succeeds. This is **not** a pre-ack persistent queue and has no
-  automatic replay. A full/unwritable disk can also make dead-letter writes fail.
-- A hard process/container crash can lose acknowledged in-memory spans. Graceful
-  shutdown attempts to drain; it is not crash durability or an exactly-once claim.
-- An ambiguous failed insert followed by retry can create duplicate rows. Review
-  database state before manually replaying dead-letter data.
-- `async_insert` defaults **off**. Enabling it changes acknowledgement/durability
-  semantics and is disallowed with the observed catalog path in current startup
-  validation. Record the actual settings in any benchmark.
-- The admin listener (`:9464`) exposes `/healthz` with writer statistics, a
-  `build` object (Go version, VCS revision when the binary was built from a git
-  checkout, and `FI_BUILD_REVISION` when set), a `runtime` object (logical CPUs,
-  `GOMAXPROCS`, OS/arch and any Go memory limit) and the admission `limits` in force
-  (`max_pending_rows`, `batch_max_rows`, `batch_max_age_ms`, gRPC and HTTP size
-  caps) so a benchmark can record the revision and budget it measured instead of
-  assuming them. Its `admission` object reports the current backlog and, since
-  start, the requests and rows refused because the budget was full, the
-  larger-than-budget requests admitted, and the requests refused during shutdown.
-  The stock binary does not expose the `/metrics` endpoint claimed
-  by older docs. `/healthz` is not a loss detector or a proof that every
-  acknowledged span landed.
-- OTLP/HTTP accepts `Content-Encoding: gzip` (and identity). The 16 MiB cap applies
-  to the compressed bytes read and to the decoded bytes; any other coding gets 415.
-  gRPC accepts gzip-compressed messages, bounded by the gRPC receive limit.
+```
+SDK ──OTLP/HTTP or gRPC──► fi-collector
+                            ├─ auth, quota, live-heap check     (nothing read yet)
+                            ├─ wire lease, then read the body   (capped; read deadline)
+                            ├─ scan the body, work lease        (limits; price of decode + rows)
+                            ├─ decode, route/stamp, reprice     (final authenticated shape)
+                            ├─ convert, park the rows           (the rows keep their lease)
+                            └─ flush: inserts of a bounded size, ─► ClickHouse 25.3
+                               up to 3 at once
+```
 
-### Client-visible changes from the previous collector (release note)
+One budget bounds the memory that all OTLP requests (plain, gzip and gRPC)
+hold at once, from reading a body until ClickHouse has stored its rows. A
+request leases its body before reading it and the price of decoding and
+storing it (measured from the body before it is decoded) before decoding it.
+When the budget is full, requests wait their turn while it frees up (up to
+2 s in all per request, for both leases together, `FI_INGEST_MAX_WAIT`), then
+get **503 + Retry-After: 1** (HTTP) or **UNAVAILABLE** (gRPC), which OTLP
+exporters retry. The wait is short on purpose: the OpenTelemetry SDKs give an
+export 10 s in all, retries included, so a longer wait used up their budget
+before they could retry, and they dropped the batch. At 2 s the Python SDK's
+exporters get about three attempts per export. A request that can never succeed (over a cap, too large for the whole
+work pool, malformed) gets **413/400** or **INVALID_ARGUMENT**, which exporters
+do not retry. gRPC calls are authenticated before their message is read.
+HTTP's new 30 s body-read deadline starts after the initial wire lease;
+gRPC's starts before the length prefix and includes the wire wait. Client
+export deadlines may expire earlier (the Collector otlp exporter commonly
+uses 5 s per attempt); for large batches that fit, consider 15 s or smaller
+batches. Lease ordering prevents cross-pool waits, not same-pool growth:
+gzip and chunked plain bodies can wait while holding part of the wire pool
+until the no-progress timeout refuses them. Header/auth/routing resource additions
+are reserved before conversion by checking the final decoded shape without
+serializing another body. This may grow the existing work reservation under the
+same wait budget; an occupied pool is retryable, but a final shape larger than
+the whole pool or stored-size limit is permanently refused before enqueue or
+usage emission. Promoted string columns, their JSON escaping, and zero-parent
+curated roots are included. More accurate accounting is not a promise that a
+previously accepted batch still fits, nor acceptance of burst-delivery loss.
 
-The previous collector had no row admission limit. That default is preserved;
-no deployment acquires a new row limit just by upgrading. Exporters see these
-differences:
+Quota refusals are HTTP 429 without Retry-After and gRPC RESOURCE_EXHAUSTED
+without RetryInfo. The Go SDK and Collector otlp exporter do not retry that
+gRPC status; some other SDKs do. Temporary project resolution failures are
+503 + Retry-After: 1 / UNAVAILABLE and are not negatively cached. This includes
+an authentication-cache entry expired, evicted or replaced before or during
+project lookup/create, even a same-workspace replacement. The old lookup cannot merge
+into the replacement; the failed export enqueues no spans and emits no usage.
+Retry authenticates again; a revoked key remains rejected. Project creation
+may already have succeeded, so retry resolves the persisted project.
+Deterministic value/check failures may drop resources; their rejected span
+count is reported in OTLP partial success.
 
-1. Only after an operator explicitly enables a positive row budget, a full buffer
-   returns HTTP 503 with `Retry-After` or gRPC `RESOURCE_EXHAUSTED` with `RetryInfo`
-   (retryable) instead of buffering without limit. Size the budget for the load
-   and exporter batches before enabling it (see the benchmark's collector settings).
-2. Spans whose project cannot be resolved are reported as OTLP partial success
-   (`rejected_spans`, counted as spans) instead of a full success that silently
-   dropped them. This corrects reporting, not routing: the same unresolved spans
-   are dropped as before, valid spans are still admitted, and OTLP partial success
-   must not be retried. Existing routing partial-success responses are preserved.
-3. With admission enabled, a request larger than the whole budget is admitted only while the buffer is
-   below the budget (see above); it is never refused as non-retryable.
-4. Requests that arrive after the final shutdown drain are refused as retryable.
-5. OTLP/HTTP error bodies are `google.rpc.Status` messages; gzip request bodies
-   are accepted on both transports.
+Resource `project_name` values are kept verbatim, including significant spaces,
+commas, and format/variation characters in visible names such as `deploy ✈️`
+and `team 👩‍💻`. This applies both to existing and newly created projects.
+Ingest still rejects invalid UTF-8, names over 255 Unicode characters, Unicode
+Cc controls, and entirely invisible/blank names. These are collector safeguards:
+the app serializers accept some invisible/control names, trim edge whitespace,
+and are not changed here. The stricter header-only rules (including rejection
+of format/variation characters and line separators) do not apply to resource
+names. Use resource attributes for names that cannot be sent in a header.
+
+Storage-mode ingestion usage (`observe_add.amount`) uses the canonical OTLP
+protobuf size of accepted traces **after** project-header filling, org/project
+stamping and permanent resource drops. HTTP protobuf, HTTP JSON, either with
+gzip, and gRPC use the same calculation. It includes accepted resource/scope
+metadata and stamped attributes; it is decoded semantic bytes, not wire bytes,
+JSON text length, or compressed/stored ClickHouse table bytes. This preserves
+gRPC's existing byte basis and intentionally replaces HTTP's decompressed-body
+length, including on full success for protobuf/JSON/plain/gzip. It is not raw
+JSON or compressed-body length: gzip already used the decompressed body before
+this change. JSON formatting no longer changes usage, gzip ratio still does not,
+and rejected resources never contribute. Event-mode usage still
+counts accepted distinct traces plus accepted spans. Fully dropped or empty
+batches emit no ingestion usage. Usage follows enqueue, not confirmation of a
+durable database insert; existing retry/dedup semantics are unchanged.
+
+Standalone uses GOMEMLIMIT=512MiB: a 216 MiB ingest budget and a 144 MiB
+work pool, with three ClickHouse inserts at once. 8,192 spans with 50 short string attributes each can exceed it;
+start Collector pipelines at send_batch_size/send_batch_max_size 4096 and
+reduce further when needed. GOMEMLIMIT is soft, not a hard RSS bound. The
+512MiB setting was measured on the collector alone; whole-container load at
+minimum Standalone resources has not been measured, so leave headroom.
+
+| Setting | Default | What |
+|---|---|---|
+| `FI_INGEST_BUDGET_MIB` (`server.ingest_budget_mib`) | about half of the Go memory limit, less a fixed allowance | the budget. Without GOMEMLIMIT the collector sets the Go memory limit to 90% of its container's memory limit; with neither, the budget is 256 MiB. |
+| `FI_OTLP_MAX_BODY_MIB` (`server.otlp_max_body_mib`) | 16 | largest OTLP/HTTP body, as sent and after gzip decompression; lowered to fit a sixth of the budget |
+| `FI_GRPC_MAX_RECV_MIB` (`server.grpc_max_recv_mib`) | the body cap | largest OTLP/gRPC message |
+| `FI_OTLP_MAX_CONNECTIONS` (`server.otlp_max_connections`) | 0 (no cap) | open connections per listener |
+| `FI_INGEST_MAX_WAIT` (`server.ingest_max_wait`) | 2s | longest a request waits, both leases together, before 503 + Retry-After: 1 / UNAVAILABLE. A Go duration (`1500ms`, `3s`); keep it well under your exporters' export timeout |
+| `FI_INSERT_CONCURRENCY` (`server.insert_concurrency`) | 3 from a 512 MiB Go memory limit up (and with none), 2 from 384 MiB, else 1 | ClickHouse inserts of pending rows that run at once. Each takes two insert buffers out of the budget's fixed allowance |
+
+Per request, a body may also hold at most 65,536 spans, 10,000 ResourceSpans,
+1,048,576 attributes (array entries included), 64 KiB of resource attributes
+per ResourceSpans, attribute values nested at most 64 levels, and rows of at
+most 8 times the body cap once encoded for ClickHouse. The resolved limits
+are logged at startup ("ingest limits"), and `/healthz` reports the budget's
+use and the requests refused by transport, reason and code under `ingest`.
+
+If ClickHouse is slow or down, the pending rows keep their share of the
+budget until their inserts finish (or are dead-lettered), so new requests
+wait and then get 503 / UNAVAILABLE instead of growing memory.
+
+Pending rows are stored by up to `FI_INSERT_CONCURRENCY` inserts at once:
+each wake-up of the flusher (row count, age, or a request waiting for the
+budget) swaps the pending batch out to one free inserter, and a large
+batch's inserts (each of about the insert size) also go out at once, within
+the same cap. A batch's leases
+are released when its insert has ended and every batch swapped out before it
+has too, so a lease is never released while ClickHouse may still be reading
+its rows. Shutdown waits for the inserts under way, then stores what is
+left. Span rows carry their own `_version`, so the order in which concurrent
+inserts land does not matter; the curated `end_users`/`trace_sessions` rows
+are version-stamped when their batch is swapped out, in swap order. At one
+insert at a time (R1 on #3598), Standalone stored about 500-800
+attribute-heavy spans a second.
+
+A chunk failure does not suppress stored-root notifications or catalog handoff
+for confirmed successful sibling chunks. These sidecars follow exact input-row
+positions, not span IDs (IDs may repeat), and unconfirmed/ambiguous or merely
+async-accepted chunks are excluded. Retry and dead-letter policy are unchanged;
+there is no extra canonical insert or ingestion usage event for a sidecar.
+All row leases remain held through the synchronous catalog and best-effort
+curated writes. The HTTP writer also waits for its transport to close every
+request body, including redirect/replay bodies, before releasing encoding
+ownership; response EOF alone is not that lifetime boundary.
+
+Refusals from the ingest pipeline over OTLP/HTTP (400, 413, 429, 503) carry
+a `google.rpc.Status` body in the request's media type (protobuf or JSON),
+with the same message as the gRPC status, so exporters can log why; 415 and
+405, and the auth middleware's refusals, stay text/plain.
+
+## Measurement and durability boundaries
+
+Successful OTLP responses acknowledge in-memory enqueue before ClickHouse insertion.
+The byte budget bounds accounted ingestion ownership, not hard RSS, crash loss or
+exactly-once storage. Graceful shutdown closes enqueue before the final drain.
+The admin `/healthz` retains `ingest` and adds build/runtime/writer/limits and
+observational pending-plus-in-flight row counts (`admission`). These counts include
+synchronous sidecars; some counted rows may already be query-visible.
+`limits.admission_model` is `byte-leases-v1`; `max_pending_rows: 0` is a legacy
+receipt field, not an unbounded-memory configuration. `FI_MAX_PENDING_ROWS` is
+obsolete and rejected at startup. Use the byte-budget settings above. gRPC gzip
+remains disabled because its decompression cannot be covered by the wire leases;
+HTTP gzip is supported and budgeted.
 
 ## End-to-end benchmark and current evidence
 
 See [benchmark design and runbook](benchmark/README.rst) for safe defaults, the
-OTLP/HTTP protobuf, JSON and gRPC (optionally gzip) wire paths, per-request
+OTLP/HTTP protobuf/JSON (optionally gzip) and uncompressed gRPC wire paths, per-request
 outcome accounting (acknowledged, partial, whole-request rejected, ambiguous),
 exact-ID ClickHouse verification that separates acknowledged-but-missing spans from
-rejected ones and can resume from a checkpoint, the collector settings the 15k
+rejected ones and can resume from a checkpoint, the measured collector settings for the 15k
 spans/s x 24h and 60k spans/s burst target profiles need (neither profile has been
 run), direct ClickHouse and authenticated application read probes, provenance
 recording, measurement limitations and an explicitly extrapolated sizing

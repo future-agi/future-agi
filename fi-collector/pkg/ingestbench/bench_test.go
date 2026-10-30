@@ -661,7 +661,7 @@ func TestCollectorBudgetCheck(t *testing.T) {
 		t.Fatalf("raised budget: %+v", raised)
 	}
 	smoke := CheckBudget(100, 100, 2, nil, 0)
-	if !smoke.Sufficient || !smoke.BatchFits || smoke.AvailablePendingRows != 0 || !strings.Contains(smoke.Source, "NOT observed") || !strings.Contains(strings.Join(smoke.Warnings(), " "), "row admission is disabled") {
+	if smoke.Sufficient || smoke.BatchFits || smoke.AvailablePendingRows != 0 || !strings.Contains(smoke.Source, "NOT observed") || !strings.Contains(strings.Join(smoke.Warnings(), " "), "byte admission is unknown") {
 		t.Fatalf("smoke: %+v", smoke)
 	}
 	// Disabled admission must never invent a finite crash-loss bound, even

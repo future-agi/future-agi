@@ -62,12 +62,11 @@ and as a 1-second series in the telemetry stream (``run.json.telemetry.jsonl``).
 **Accepted** (``counters.acknowledged_spans``)
     The collector answered OTLP success, minus partial rejections. **This is not
     durability.** The fi-collector acknowledges an export when the rows enter its
-    buffer, before the ClickHouse insert. A crash can lose every buffered row,
-    which an explicitly enabled admission budget (``max_pending_rows`` > 0) bounds.
-    The compatibility default is 0 (disabled): retained rows and crash loss have
-    no configured bound. With a positive budget, the buffer can exceed it by one
-    request that is larger than the whole budget
-    (admitted while the buffer is below the budget).
+    buffer, before the ClickHouse insert. A hard crash can lose acknowledged
+    in-memory rows. Current collectors use wire/work byte leases, not the older
+    ``max_pending_rows`` admission rule. No finite row-loss bound is inferred
+    from a byte budget or a zero legacy row-cap field. The budget is accounting
+    for ingestion ownership, not a hard process-memory guarantee.
     The collector reports its insert mode on ``/healthz`` (``writer``). With
     ``async_insert`` the writer does not wait for the flush, so an acknowledged
     insert is not even a stored one.
@@ -294,11 +293,11 @@ hold:
 
 Visible duplicates and ambiguous-but-persisted spans are reported, not hidden.
 
-``acknowledged_loss_bound_rows`` is the number of faults times
-``max_pending_rows`` (plus one request when the requests are larger than the
-whole budget), with its source. It is the most a crash can lose by the
-collector's design. It is a statement to check a crash case against, not a
-measurement. With row admission disabled no finite bound is reported.
+``acknowledged_loss_bound_rows`` is retained for historical row-budget receipts.
+Current ``byte-leases-v1`` collectors report no design-level finite row-loss bound:
+byte limits cannot be turned into a guaranteed crash-loss row count. Actual
+acknowledged-missing identities are measured independently. No durability claim
+comes from an observed graceful restart or a held-insert test.
 Rows the writer dead-lettered are reported from ``/healthz``: they
 are acknowledged and missing from ClickHouse until an operator replays them.
 
@@ -446,7 +445,8 @@ may therefore accompany a nonzero exit. ``go run`` and shell wrappers may add
 their own diagnostics/status handling; ``run-profile.sh`` uses ``set -e`` and
 returns 2 for its own unknown-profile error.
 
-``collector-budget`` uses the same bounds as root load planning: rate
+For historical row collectors, ``collector-budget`` uses the same bounds as root
+load planning: rate
 1..1,000,000 spans/s, batch size 1..10,000, concurrency 1..128. Invalid values
 name the offending flag and range. The row heuristic uses checked exact
 arithmetic, including potentially large collector-reported flush ages; it never
@@ -565,7 +565,8 @@ cgroup), real in-process collector with PostgreSQL authentication bypassed:
   * A graceful collector restart lasting about 0.8 s left 8 requests ambiguous.
     No acknowledged span was missing, there were no duplicates, and recovery
     took 0.118 and 0.185 s.
-  * Holding every writer request for 1.5 s against a 24-row budget filled the
+  * Historical row-budget collector (not the reconciled byte-budget source):
+    holding every writer request for 1.5 s against a 24-row budget filled the
     budget (24 rows buffered). 10 and 15 requests were refused with a retry
     hint. No acknowledged span was missing. Recovery took 1.909 and 1.698 s,
     bounded by the backlog's return to its baseline in one run and by sentinel

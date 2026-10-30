@@ -709,6 +709,24 @@ the default backend ([Backend variants](/docs/self-hosting/images#backend-varian
     text = "`true` lets one sandbox run several of a simulation's scenarios at once. Parallelism stays off, and a run that asks for it runs one scenario at a time, unless this is `true` and the sandbox's image is in `HARNESS_PARALLEL_SNAPSHOT_DIGESTS`. A Daytona sandbox built from `ALK_DAYTONA_DOCKERFILE` (development) needs only this flag."
 
     [[part.section.row]]
+    keys = ["HARNESS_VERSIONING_ENABLED"]
+    default = "`false`"
+    setups = ["S", "D", "H"]
+    text = "`true` records agent, environment and scenario versions for new and edited environments and pins each run to them. `false` is a kill switch: new environments are created unversioned, and environments that already have versions keep them. Turn it on only after `harness_versions_backfill` has run (see INSTALLATION.md, Upgrading, for how to run it)."
+
+    [[part.section.row]]
+    keys = ["HARNESS_VERSIONING_NUDGES_ENABLED"]
+    default = "`false`"
+    setups = ["S", "D", "H"]
+    text = "`true` tells an environment when its agent or environment version changed and offers a rebuild. Turn it on together with `HARNESS_BUNDLE_CERTIFY_ENABLED`, after `HARNESS_VERSIONING_ENABLED`, once the sandbox template carries an agent-learning-kit release that supports versioning."
+
+    [[part.section.row]]
+    keys = ["HARNESS_BUNDLE_CERTIFY_ENABLED"]
+    default = "`false`"
+    setups = ["S", "D", "H"]
+    text = "`true` lets a run build and certify an environment bundle for a version combination that has none yet. `false` never builds a bundle: a run at the environment's default versions runs as before, a rerun whose versions have no ready bundle runs the defaults, and picking another combination with no ready bundle is refused, as is a default pair with no sealed bundle. Turn it on together with `HARNESS_VERSIONING_NUDGES_ENABLED`."
+
+    [[part.section.row]]
     keys = ["HARNESS_PARALLEL_SNAPSHOT_DIGESTS"]
     default = "empty: no image qualifies"
     setups = ["S", "D", "H"]
@@ -1038,6 +1056,13 @@ a Mixpanel token.
     default = "`1000000`"
     setups = ["S", "D", "H"]
     text = "Most entries kept on `usage:events` (about 160 bytes each) while its consumer is behind or stopped. A positive integer in plain digits; blank means the default. The app and fi-collector refuse to start on zero, a negative number or text."
+
+    [[part.section.row]]
+    keys = ["RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF"]
+    default = "empty: no organization restricted"
+    setups = ["S", "D", "H"]
+    text = "ISO-8601 date and time, such as `2026-10-14T12:30:00Z`. Organizations created at or after it see only Environments in Simulate; Agent Definition, Scenarios, Personas and Run Simulation are hidden from them. A value without a zone is UTC. The app refuses to start on a value that is not a date and time, including a date alone. Set it to the start of the deploy that turns the restriction on, the same value in every region."
+    audience = "internal"
 
   [[part.section]]
   heading = "Sign-up and sign-in"
@@ -1455,6 +1480,54 @@ sandbox port, and its `ml` and `sandbox` profiles publish none either.
     default = "`1.0`, `1G`"
     setups = ["D"]
     text = "CPU and memory limit of the trace collector."
+
+  [[part.section]]
+  heading = "Trace ingestion limits"
+  body = '''
+The trace collector bounds the memory that OTLP requests hold at once, from
+reading a body until its spans are stored. When that budget is full, a request
+waits its turn while the budget frees up (up to 2 seconds in all, so that
+exporters with a 10-second export timeout can still retry), then gets `503`
+with `Retry-After` (gRPC `UNAVAILABLE`), which OpenTelemetry exporters retry. A request that cannot succeed as sent gets
+`413` or `400` (gRPC `INVALID_ARGUMENT`), which they do not retry. See
+[Ingestion request limits](/docs/observe/reference/export-formats#ingestion-request-limits).
+'''
+
+    [[part.section.row]]
+    keys = ["FI_INGEST_BUDGET_MIB"]
+    default = { S = "`216`, from the collector's `GOMEMLIMIT=512MiB`", D = "about `402`, from `FI_COLLECTOR_MEMORY=1G`", H = "`391`, from `fiCollector.goMemLimit` (`900MiB`); chart value `fiCollector.ingestBudgetMiB`" }
+    setups = ["S", "D", "H"]
+    text = "Memory, in MiB, that all OTLP requests may hold at once in the trace collector. Unset: about half of the collector's Go memory limit, less a fixed allowance. Without `GOMEMLIMIT` the collector sets that limit to 90% of its container's memory limit; with neither, the budget is 256. A third of it is for receiving bodies. A batch whose processing needs more than this collector can give one request gets `413` naming this setting: send smaller batches, or raise the collector's memory and this."
+
+    [[part.section.row]]
+    keys = ["FI_OTLP_MAX_BODY_MIB"]
+    default = "`16`"
+    setups = ["S", "D", "H"]
+    text = "Largest OTLP/HTTP body, in MiB, as sent and after gzip decompression (`413` above it). Lowered at start to a sixth of the ingest budget when that is smaller. Helm: `fiCollector.maxBodyMiB`."
+
+    [[part.section.row]]
+    keys = ["FI_GRPC_MAX_RECV_MIB"]
+    default = "`FI_OTLP_MAX_BODY_MIB`"
+    setups = ["S", "D", "H"]
+    text = "Largest OTLP/gRPC message, in MiB (`INVALID_ARGUMENT` above it). Lowered like `FI_OTLP_MAX_BODY_MIB`. Helm: `fiCollector.grpcMaxRecvMiB`."
+
+    [[part.section.row]]
+    keys = ["FI_OTLP_MAX_CONNECTIONS"]
+    default = "`0` (no cap)"
+    setups = ["S", "D", "H"]
+    text = "Open connections each OTLP listener (gRPC and HTTP) accepts. Helm: `fiCollector.maxConnections`."
+
+    [[part.section.row]]
+    keys = ["FI_INGEST_MAX_WAIT"]
+    default = "`2s`"
+    setups = ["S", "D", "H"]
+    text = "Longest a request waits, in all, for its share of the ingest budget before it gets `503` with `Retry-After: 1` (gRPC `UNAVAILABLE`). A Go duration such as `1500ms` or `3s`. Keep it well under your exporters' export timeout: the OpenTelemetry SDKs allow 10 seconds per export, retries included."
+
+    [[part.section.row]]
+    keys = ["FI_INSERT_CONCURRENCY"]
+    default = "`3` from a 512 MiB collector `GOMEMLIMIT` up, `2` from 384 MiB, else `1`"
+    setups = ["S", "D", "H"]
+    text = "ClickHouse inserts of received spans that the trace collector runs at once, across batches and within a large one. More drains bursts faster; each insert takes about two 8 to 16 MiB buffers out of the ingest budget's allowance."
 
   [[part.section]]
   heading = "Databases and storage"
@@ -1888,7 +1961,7 @@ in a compose override; the Helm chart sets them from `global.proxy`,
     text = "`1` stops the model server from downloading models; pre-seed its cache first. Helm: on (serving only) with `global.airgap`."
 
   [[part.section]]
-  heading = "Collector row admission and provenance"
+  heading = "Collector provenance and obsolete settings"
   body = '''
 Set these in the collector container's environment (a Compose override or
 `fiCollector.extraEnv` in Helm), not just in the installer's `.env`.
@@ -1896,9 +1969,9 @@ Set these in the collector container's environment (a Compose override or
 
     [[part.section.row]]
     keys = ["FI_MAX_PENDING_ROWS"]
-    default = "`0` (row admission disabled)"
+    default = "unset (obsolete; setting it prevents startup)"
     setups = ["S", "D", "H"]
-    text = "Non-negative integer overriding `server.max_pending_rows`. A positive value limits pending plus in-flight rows; a full budget refuses the entire request with retry hints. One request larger than the budget may enter while the buffer is below it. `batch_max_rows` is clamped to a positive row budget. This bounds row count, not bytes or crash loss, and does not make acknowledgement durable. Negative or malformed values prevent startup. Size and test it with the deployment's workload before enabling."
+    text = "Obsolete benchmark-branch row setting. Any value is rejected at startup; remove it and use FI_INGEST_BUDGET_MIB and the current byte-budget settings. Row counts cannot size the leased decode/row memory pool."
 
     [[part.section.row]]
     keys = ["FI_BUILD_REVISION"]

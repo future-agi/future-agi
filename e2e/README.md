@@ -165,6 +165,11 @@ Any flow with storage-lane assertions needs `E2E_CH_URL` and `E2E_PG_URL` as wel
 attached stack's stores. If you omit them the probe hits the managed stack's ports and the spec
 fails at the probe, by design: there is no silent skip.
 
+The existing-customer `test` (see Fixtures below) dates its org through `E2E_PG_URL`, so any flow on
+it needs `E2E_PG_URL` too. Once the Simulate restriction (#3502) is in, the attached backend must also
+set `RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF=2026-10-01T00:00:00Z`, as both overlays and the root
+`docker-compose.dev.yml` do, or SIM-E2E-001 and `harness/provisioning.spec.ts` fail.
+
 For split-store attachments, set `E2E_CATALOG_CH_URL` and/or `E2E_CATALOG_CH_DB`
 for catalog assertions (`probe.catalogCh()`). Source assertions (`probe.ch()`)
 continue to use `E2E_CH_URL` / `E2E_CH_DB`. Catalog queries use unqualified table
@@ -327,7 +332,15 @@ test(
   the signup path's reCAPTCHA special case, the belt to the `localhost` Host suspenders. One org per
   worker is what makes full parallelism safe without truncating anything. It carries
   `actor.api` — an `ApiClient` already sending `Authorization`, `X-Organization-Id` and
-  `X-Workspace-Id`.
+  `X-Workspace-Id`. Both stacks set `RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF` to
+  2026-10-01T00:00:00Z, so once the Simulate restriction (#3502) is in, this org is a new
+  customer's: in Simulate it sees only Environments.
+- **The existing-customer `test`** (`lib/existing-customer.ts`) — the same fixtures, but `actor`'s org
+  is dated 2026-09-30, before the cutoff, so it keeps every Simulate page. Import `test` and `expect`
+  from it instead of `lib/fixtures` only for a flow that needs something new orgs lose (Agent
+  Definition, Scenarios, Run Simulation, a prompt's Simulation tab, Observe's Replay actions), in a
+  spec file of its own: `flows/observe/agent-call-log-pager.spec.ts` is the example.
+  `harness/existing-customer.spec.ts` pins it.
 - **`page`** — the built-in fixture, but its `context` is overridden to run `authInitScript` before
   any app code: it seeds `localStorage.accessToken/refreshToken/rememberMe` and
   `sessionStorage.organizationId/workspaceId`, so specs start already signed in. A spec that tests

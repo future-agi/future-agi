@@ -19,7 +19,7 @@ CATALOG_PATH = Path(__file__).resolve().parents[1] / "catalog/tools.yaml"
 def test_committed_catalog_generates_expected_tools():
     manifest = generate_tool_manifest(CONTRACT_PATH, CATALOG_PATH)
 
-    assert manifest["tool_count"] == 105
+    assert manifest["tool_count"] == 107
     tool_names = [tool["name"] for tool in manifest["tools"]]
     assert len(tool_names) == len(set(tool_names))
     assert {
@@ -135,6 +135,29 @@ def test_generator_rejects_a_non_boolean_open_world_hint(tmp_path):
     catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
 
     with pytest.raises(ToolGenerationError, match="Invalid open_world hint"):
+        generate_tool_manifest(CONTRACT_PATH, catalog_path)
+
+
+def test_generator_rejects_omitting_a_field_the_response_lacks(tmp_path):
+    catalog = {
+        "expected_tool_count": 1,
+        "tools": [
+            {
+                "name": "get_error_cluster",
+                "group": "error_feed",
+                "description": "Cluster detail",
+                "operation": {
+                    "method": "GET",
+                    "path": "/tracer/feed/issues/{cluster_id}/",
+                },
+                "response": {"omit": ["rca.trail"]},
+            }
+        ],
+    }
+    catalog_path = tmp_path / "tools.json"
+    catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+
+    with pytest.raises(ToolGenerationError, match="Response field to omit not found"):
         generate_tool_manifest(CONTRACT_PATH, catalog_path)
 
 

@@ -1,37 +1,16 @@
 package server
 
-import (
-	"context"
-	"net/http"
-	"testing"
+import "testing"
 
-	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
-)
-
-// A deployment that does not opt into row admission keeps the pre-budget
-// behaviour, including repeated exports larger than the proposed 20,000 cap.
-// These call the real handlers; storage itself is covered by the live fixtures.
-func TestDefaultAdmissionPreservesUnboundedExports(t *testing.T) {
-	for _, protocol := range []string{"json", "protobuf", "grpc"} {
-		t.Run(protocol, func(t *testing.T) {
-			s := New(Config{}, nil, nil, nil, nil)
-			if limits := s.Limits(); limits.MaxPendingRows != 0 || limits.BatchMaxRows != 5000 {
-				t.Fatalf("default changed admission or batching: %+v", limits)
-			}
-			for i := 0; i < 2; i++ {
-				req := ptraceotlp.NewExportRequestFromTraces(spansTraces(25000))
-				if protocol == "grpc" {
-					resp, err := (&otlpHandler{s: s}).Export(context.Background(), req)
-					if err != nil || resp.PartialSuccess().RejectedSpans() != 0 {
-						t.Fatalf("export %d refused: %v", i, err)
-					}
-				} else if resp := exportHTTP(s, req, protocol); resp.Code != http.StatusOK {
-					t.Fatalf("export %d refused: %d", i, resp.Code)
-				}
-			}
-			if a := s.Admission(); a.BufferedRows != 50000 || a.PendingRows != 50000 || a.Refusals != (Refusals{}) {
-				t.Fatalf("unbounded admission: %+v", a)
-			}
-		})
+// The default is no longer unbounded row admission: resolve and expose the
+// current byte limits even when the operator supplies no config.
+func TestDefaultAdmissionReportsByteBudget(t *testing.T) {
+	s := New(Config{}, nil, nil, nil, nil)
+	l := s.Limits()
+	if l.AdmissionModel != "byte-leases-v1" || l.IngestBudgetBytes <= 0 || l.WorkPoolBytes <= 0 || l.WirePoolBytes <= 0 || l.MaxPendingRows != 0 || l.BatchMaxRows != 5000 {
+		t.Fatalf("limits: %+v", l)
+	}
+	if l.WorkPoolBytes+l.WirePoolBytes != l.IngestBudgetBytes || l.GRPCMaxRecvBytes != s.limits.maxRecv || l.MaxHTTPBodyBytes != int(s.limits.maxBody) {
+		t.Fatalf("limits do not match leased pipeline: %+v", l)
 	}
 }

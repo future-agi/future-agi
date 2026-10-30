@@ -18,8 +18,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
-	// Registers the gzip decompressor for responses to gzip requests.
-	_ "google.golang.org/grpc/encoding/gzip"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/stats"
 	"google.golang.org/grpc/status"
@@ -214,7 +212,7 @@ func newGRPCExporter(c Config, headers http.Header) (*grpcExporter, error) {
 		}),
 	}
 	if c.Gzip {
-		opts = append(opts, grpc.WithCompressor(precompressedGzip{})) //nolint:staticcheck // see precompressedGzip
+		opts = append(opts, grpc.WithCompressor(precompressedGzip{}), grpc.WithDecompressor(grpc.NewGZIPDecompressor())) //nolint:staticcheck // see precompressedGzip
 	}
 	conn, err := grpc.NewClient("passthrough:///"+target, opts...)
 	if err != nil {

@@ -12,11 +12,20 @@ import (
 
 // CollectorLimits mirrors the "limits" object of the collector's /healthz.
 type CollectorLimits struct {
-	MaxPendingRows   int64 `json:"max_pending_rows"`
-	BatchMaxRows     int64 `json:"batch_max_rows"`
-	BatchMaxAgeMS    int64 `json:"batch_max_age_ms"`
-	GRPCMaxRecvMiB   int64 `json:"grpc_max_recv_mib"`
-	MaxHTTPBodyBytes int64 `json:"max_http_body_bytes"`
+	// AdmissionModel distinguishes current byte leases from historical row receipts.
+	AdmissionModel    string  `json:"admission_model,omitempty"`
+	IngestBudgetBytes int64   `json:"ingest_budget_bytes,omitempty"`
+	WirePoolBytes     int64   `json:"wire_pool_bytes,omitempty"`
+	WorkPoolBytes     int64   `json:"work_pool_bytes,omitempty"`
+	GRPCMaxRecvBytes  int64   `json:"grpc_max_recv_bytes,omitempty"`
+	MaxWaitMS         int64   `json:"max_wait_ms,omitempty"`
+	InsertConcurrency int     `json:"insert_concurrency,omitempty"`
+	GRPCGzip          bool    `json:"grpc_gzip,omitempty"`
+	MaxPendingRows    int64   `json:"max_pending_rows"`
+	BatchMaxRows      int64   `json:"batch_max_rows"`
+	BatchMaxAgeMS     int64   `json:"batch_max_age_ms"`
+	GRPCMaxRecvMiB    float64 `json:"grpc_max_recv_mib"`
+	MaxHTTPBodyBytes  int64   `json:"max_http_body_bytes"`
 }
 
 // WriterPolicy mirrors the "writer" object of the collector's /healthz.
@@ -30,7 +39,8 @@ type WriterPolicy struct {
 	DeadLetter       bool   `json:"dead_letter_after_retries"`
 }
 
-// Defaults of the fi-collector when /healthz is not available to report them.
+// Historical row-collector defaults for unobserved legacy plans, not current
+// byte-budget defaults and not a measured target configuration.
 var collectorDefaultLimits = CollectorLimits{MaxPendingRows: 0, BatchMaxRows: 5000, BatchMaxAgeMS: 5000, GRPCMaxRecvMiB: 16, MaxHTTPBodyBytes: 16 << 20}
 
 // CollectorInfo is what the run knows about the collector under test.
@@ -42,10 +52,11 @@ type CollectorInfo struct {
 	Limits    *CollectorLimits `json:"limits,omitempty"`
 	// Writer is the collector writer's insert mode and retry policy as its
 	// /healthz reports them: what an acknowledged insert meant for the run.
-	Writer                 *WriterPolicy `json:"writer,omitempty"`
-	DeclaredMaxPendingRows int64         `json:"declared_max_pending_rows,omitempty"`
-	Budget                 BudgetCheck   `json:"budget_check"`
-	Error                  string        `json:"error,omitempty"`
+	Ingest                 json.RawMessage `json:"ingest,omitempty"`
+	Writer                 *WriterPolicy   `json:"writer,omitempty"`
+	DeclaredMaxPendingRows int64           `json:"declared_max_pending_rows,omitempty"`
+	Budget                 BudgetCheck     `json:"budget_check"`
+	Error                  string          `json:"error,omitempty"`
 }
 
 // BudgetCheck compares the collector's pending-row budget with what the load
@@ -53,6 +64,8 @@ type CollectorInfo struct {
 // wait for the next flush trigger, rows arriving during a two-second insert
 // allowance, and every in-flight request arriving at once.
 type BudgetCheck struct {
+	AdmissionModel       string `json:"admission_model,omitempty"`
+	Assessment           string `json:"assessment,omitempty"`
 	Method               string `json:"method"`
 	RequiredPendingRows  int64  `json:"required_pending_rows"`
 	AvailablePendingRows int64  `json:"available_pending_rows"`
@@ -97,15 +110,28 @@ func requiredPendingRows(rate int64, batchSize, concurrency int, limits Collecto
 }
 
 // CheckBudget fills a BudgetCheck from the reported limits, or from a declared
-// budget, or from the collector defaults when neither is known.
+// budget for legacy collectors. Byte models are observed but never sized by rows.
 func CheckBudget(rate int64, batchSize, concurrency int, reported *CollectorLimits, declared int64) BudgetCheck {
+	if reported != nil && reported.AdmissionModel == "byte-leases-v1" {
+		b := BudgetCheck{AdmissionModel: reported.AdmissionModel, Assessment: "not-assessed", Source: "collector /healthz", Method: "observed byte leases; row-count sizing does not establish byte-budget sufficiency", RecommendedSetting: "measure representative wire/work lease pressure and exporter deadlines; tune FI_INGEST_BUDGET_MIB and batch sizes on an isolated target"}
+		if err := ValidateLoadBounds(rate, batchSize, concurrency); err != nil {
+			b.Error = err.Error()
+		}
+		if reported.IngestBudgetBytes <= 0 || reported.WirePoolBytes <= 0 || reported.WorkPoolBytes <= 0 || reported.WorkPoolBytes >= reported.IngestBudgetBytes || reported.WirePoolBytes != reported.IngestBudgetBytes-reported.WorkPoolBytes {
+			b.Error = "invalid observed byte-pool limits"
+		}
+		return b
+	}
+	if reported != nil && reported.AdmissionModel != "" {
+		return BudgetCheck{AdmissionModel: reported.AdmissionModel, Assessment: "not-assessed", Source: "collector /healthz", Error: "unknown collector admission model; cannot assess budget"}
+	}
 	limits, source := collectorDefaultLimits, "collector default (NOT observed; pass --collector-health-url)"
 	if reported != nil {
 		limits, source = *reported, "collector /healthz"
 	} else if declared > 0 {
 		limits.MaxPendingRows, source = declared, "declared by operator (not observed)"
 	}
-	b := BudgetCheck{Method: "heuristic: min(batch_max_rows, rate*batch_max_age) + rate*2s insert allowance + concurrency*batch_size",
+	b := BudgetCheck{AdmissionModel: "legacy-row-count", Assessment: "heuristic-only", Method: "heuristic: min(batch_max_rows, rate*batch_max_age) + rate*2s insert allowance + concurrency*batch_size",
 		AvailablePendingRows: limits.MaxPendingRows, Source: source}
 	var err error
 	b.RequiredPendingRows, err = requiredPendingRows(rate, batchSize, concurrency, limits)
@@ -113,9 +139,9 @@ func CheckBudget(rate int64, batchSize, concurrency int, reported *CollectorLimi
 		b.Error = err.Error()
 		return b
 	}
-	b.Sufficient = b.AvailablePendingRows == 0 || b.AvailablePendingRows >= b.RequiredPendingRows
-	b.BatchFits = b.AvailablePendingRows == 0 || int64(batchSize) <= b.AvailablePendingRows
-	b.RecommendedSetting = fmt.Sprintf("FI_MAX_PENDING_ROWS=%d (server.max_pending_rows)", b.RequiredPendingRows)
+	b.Sufficient = b.AvailablePendingRows >= b.RequiredPendingRows
+	b.BatchFits = b.AvailablePendingRows > 0 && int64(batchSize) <= b.AvailablePendingRows
+	b.RecommendedSetting = fmt.Sprintf("legacy row collector only: pending budget >= %d rows; FI_MAX_PENDING_ROWS is obsolete on current byte-budget collectors", b.RequiredPendingRows)
 	return b
 }
 
@@ -124,14 +150,17 @@ func (b BudgetCheck) Warnings() []string {
 	if b.Error != "" {
 		return []string{"collector budget unavailable: " + b.Error}
 	}
+	if b.AdmissionModel == "byte-leases-v1" {
+		return []string{"collector uses byte leases: row estimates cannot assess memory sufficiency or capacity; " + b.RecommendedSetting}
+	}
 	var out []string
 	if b.AvailablePendingRows == 0 {
-		out = append(out, fmt.Sprintf("collector row admission is disabled (%s): retained rows and crash loss have no configured bound. For an isolated capacity run, provision and explicitly set %s or higher; this heuristic does not bound process memory", b.Source, b.RecommendedSetting))
+		out = append(out, fmt.Sprintf("legacy row cap unavailable or disabled (%s): byte admission is unknown, not unbounded memory proof. %s. Fetch current /healthz; this historical heuristic does not bound process memory", b.Source, b.RecommendedSetting))
 	}
-	if !b.BatchFits {
+	if b.AvailablePendingRows > 0 && !b.BatchFits {
 		out = append(out, fmt.Sprintf("batch size exceeds the collector budget of %d rows (%s): each request is admitted only while the collector's buffer is below the budget and is refused as retryable otherwise (collectors that predate this rule refuse it as non-retryable: HTTP 413 / gRPC INVALID_ARGUMENT)", b.AvailablePendingRows, b.Source))
 	}
-	if !b.Sufficient {
+	if b.AvailablePendingRows > 0 && !b.Sufficient {
 		out = append(out, fmt.Sprintf("collector pending-row budget %d (%s) is smaller than the %d this profile needs by the documented heuristic; expect 429/503 whole-request rejections. Set %s on the collector under test before a capacity run",
 			b.AvailablePendingRows, b.Source, b.RequiredPendingRows, b.RecommendedSetting))
 	}
@@ -160,6 +189,7 @@ func FetchCollectorHealth(ctx context.Context, client *http.Client, healthURL st
 		return info
 	}
 	var health struct {
+		Ingest  json.RawMessage  `json:"ingest"`
 		Status  string           `json:"status"`
 		Build   map[string]any   `json:"build"`
 		Runtime map[string]any   `json:"runtime"`
@@ -170,6 +200,7 @@ func FetchCollectorHealth(ctx context.Context, client *http.Client, healthURL st
 		info.Error = fmt.Sprintf("collector health HTTP %d is not JSON", resp.StatusCode)
 		return info
 	}
+	info.Ingest = health.Ingest
 	info.Status, info.Build, info.Runtime, info.Limits, info.Writer = health.Status, health.Build, health.Runtime, health.Limits, health.Writer
 	if info.Limits == nil {
 		info.Error = "collector /healthz does not report limits (collector predates limit reporting)"

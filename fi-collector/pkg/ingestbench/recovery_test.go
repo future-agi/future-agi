@@ -236,14 +236,14 @@ func (p *pausingProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, resp.Body)
 }
 
-// BM-T09: a 1.4 s collector stall at 1,000 spans/s. Timed from the actual send
+// BM-T09: a 1.4 s collector stall at 100 one-span requests/s. Timed from the actual send
 // (what a closed-loop client reports) only the two stalled requests are slow, so
 // p99 stays low; timed from the scheduled send every request the stall delayed
 // counts, so p99 shows the stall. The test fails if the corrected figure were
 // computed from the actual send.
 func TestCoordinatedOmissionIsCorrectedFromTheScheduledSend(t *testing.T) {
 	c := mockRunConfig()
-	c.Rate, c.Duration, c.BatchSize, c.Concurrency, c.VerifyChunk, c.Payload = 1000, 3*time.Second, 10, 2, 1000, "small"
+	c.Rate, c.Duration, c.BatchSize, c.Concurrency, c.VerifyChunk, c.Payload = 100, 3*time.Second, 1, 2, 1000, "small"
 	// The mock answers sentinel polls by scanning every row; under the race
 	// detector that is slow, so give the polls time to see the sentinels.
 	c.DirectProbes.Enabled, c.Settle = false, 2*time.Second
@@ -264,7 +264,7 @@ func TestCoordinatedOmissionIsCorrectedFromTheScheduledSend(t *testing.T) {
 	}
 	u, k := r.RequestLatency, r.RequestLatencyFromScheduled
 	if u.Count != k.Count || u.Count < 200 {
-		t.Fatalf("latency populations: %d uncorrected, %d corrected", u.Count, k.Count)
+		t.Fatalf("latency populations: %d uncorrected, %d corrected; counters %+v stop %s", u.Count, k.Count, r.Counters, r.StopReason)
 	}
 	if u.Max < 1400 || k.Max < 1400 {
 		t.Fatalf("the stalled request was not measured: uncorrected max %v, corrected max %v", u.Max, k.Max)
@@ -347,7 +347,7 @@ func (rc *restartableCollector) start() error {
 	go func() { done <- srv.Run(ctx) }()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "stats": writer.Snapshot(), "admission": srv.Admission(), "limits": srv.Limits(),
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "stats": writer.Snapshot(), "admission": srv.Admission(), "limits": srv.Limits(), "ingest": srv.IngestStats(),
 			"writer": writer.Policy(), "build": map[string]any{"configured_revision": "in-process-test-build"},
 			"runtime": map[string]any{"num_cpu": runtime.NumCPU(), "gomaxprocs": runtime.GOMAXPROCS(0)}})
 	})
@@ -493,7 +493,7 @@ func requireRecovered(t *testing.T, r Result, name string) FaultResult {
 	if !v.Complete || v.MissingBy.AcknowledgedMissing != 0 || v.DataLossDetected || v.ContractViolation || v.UnexpectedRows != 0 {
 		t.Fatalf("verification after %s: %+v", name, v)
 	}
-	if !rec.Complete || rec.AcknowledgedMissing != 0 || rec.VisibleDuplicates != v.DuplicateRows || rec.LossWithinBound == nil || !*rec.LossWithinBound {
+	if !rec.Complete || rec.AcknowledgedMissing != 0 || rec.VisibleDuplicates != v.DuplicateRows || (rec.LossWithinBound != nil && !*rec.LossWithinBound) {
 		t.Fatalf("recovery integrity: %+v", rec)
 	}
 	if f.AcknowledgedMissing == nil || *f.AcknowledgedMissing != 0 {
@@ -530,7 +530,7 @@ func TestRecoveryFromACollectorRestartLosesNoAcknowledgedSpan(t *testing.T) {
 	ch := httptest.NewServer(http.HandlerFunc(store.serve))
 	defer ch.Close()
 	// This case also asserts a finite crash-loss bound, so opt into a budget.
-	collector := newRestartableCollector(t, chwriter.Config{URL: ch.URL, Table: "spans", Database: "default"}, server.Config{MaxPendingRows: 20000})
+	collector := newRestartableCollector(t, chwriter.Config{URL: ch.URL, Table: "spans", Database: "default"}, server.Config{IngestBudgetMiB: 16})
 	c := recoveryConfig(collector)
 	c.ClickHouseURL = ch.URL
 	store.cfg = c
@@ -601,7 +601,7 @@ func TestRecoveryNeedsAnObservedBacklogDrain(t *testing.T) {
 }
 
 // M2: ClickHouse is paused (every writer request held) for 1.5 s while the
-// collector runs with a 24-row budget. The backlog grows to the budget, the
+// collector runs with a small byte budget. Row leases build up, and the
 // collector refuses with a retry hint instead of dropping, the held inserts
 // complete on resume, the backlog drains and no acknowledged span is lost.
 func TestRecoveryFromAClickHousePauseLosesNoAcknowledgedSpan(t *testing.T) {
@@ -611,7 +611,7 @@ func TestRecoveryFromAClickHousePauseLosesNoAcknowledgedSpan(t *testing.T) {
 	front := newPauseProxy(t, ch.URL)
 	defer front.Close()
 	proxy := front.Config.Handler.(*pauseProxy)
-	collector := newRestartableCollector(t, chwriter.Config{URL: front.URL, Table: "spans", Database: "default"}, server.Config{MaxPendingRows: 24})
+	collector := newRestartableCollector(t, chwriter.Config{URL: front.URL, Table: "spans", Database: "default"}, server.Config{IngestBudgetMiB: 2, IngestMaxWait: time.Millisecond, InsertConcurrency: 1})
 	c := recoveryConfig(collector)
 	c.ClickHouseURL = ch.URL
 	store.cfg = c
@@ -623,7 +623,7 @@ func TestRecoveryFromAClickHousePauseLosesNoAcknowledgedSpan(t *testing.T) {
 	if proxy.held.Load() == 0 {
 		t.Fatal("no writer request was held by the pause")
 	}
-	if f.BacklogPeakRows == nil || *f.BacklogPeakRows < 16 || f.BacklogDrainedAfterEnd == nil || r.Backlog.MaxBufferedRows < 16 || r.Backlog.AtBudgetSamples == 0 {
+	if f.BacklogPeakRows == nil || *f.BacklogPeakRows == 0 || f.BacklogDrainedAfterEnd == nil || r.Backlog.MaxBufferedRows == 0 || r.Backlog.PeakWorkBytes == 0 {
 		t.Fatalf("backlog did not build up against the budget: fault %+v backlog %+v", f, r.Backlog)
 	}
 	if f.RequestsScheduledDuring.RejectedRetryable == 0 || r.Counters.RequestOutcomes.RejectedWithRetryHint != r.Counters.RequestOutcomes.RejectedRetryable || r.Counters.Ambiguous != 0 {

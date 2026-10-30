@@ -56,6 +56,11 @@ jobs:
       - name: Collector unit and race tests
         working-directory: fi-collector
         run: go test -race ./...
+      - name: Non-race pricing, latency, waits and authenticated regressions
+        working-directory: fi-collector
+        env:
+          GOMAXPROCS: "2"
+        run: go test -count=1 -p 1 -timeout 5m -run 'TestPrice|TestGRPCLargeMessage|TestScan|TestPool|TestWireGrowers|TestAuthenticated|TestQuotaRefusal' ./pkg/server
       - name: Compile shipped commands
         working-directory: fi-collector
         run: go build ./cmd/fi-collector ./cmd/fi-property-catalog-consumer ./cmd/fi-observed-catalog-backfill ./cmd/otlpbench
@@ -217,13 +222,13 @@ jobs:
         working-directory: fi-collector
         run: |
           set -o pipefail
-          # The backpressure case runs a real collector with a 16-row budget
-          # (the in-process equivalent of FI_MAX_PENDING_ROWS=16) behind a slow
-          # insert path over HTTP protobuf, HTTP JSON+gzip and gRPC+gzip, and
-          # sends requests larger than the whole budget: one into an empty buffer
-          # must be stored, one while the buffer is over must be refused as
-          # retryable. The tamper case drops 3 stored rows and stores 3 spans
-          # twice; count() stays unchanged, but the exact-ID SQL must report
+          # The backpressure case uses current byte leases behind a slow insert
+          # path over HTTP protobuf, HTTP JSON+gzip and uncompressed gRPC.
+          # HTTP 503 is a retryable refusal; gRPC UNAVAILABLE stays ambiguous
+          # because it can also originate from the transport. Requests too large
+          # for the entire work pool are permanently refused, never admitted as
+          # a row-budget overshoot. The tamper case drops 3 stored rows and
+          # stores 3 spans twice; exact-ID SQL must report
           # exactly 3 missing and 3 duplicates. The bucket case checks the durable lag's SQL bucketing
           # against the Go histogram. Regression proofs also require later-only
           # namespace reuse refusal, exact cross-window fault loss, and a visible
@@ -249,7 +254,7 @@ jobs:
               'TestLiveClickHouseBackpressureAccounting',
               'TestLiveClickHouseBackpressureAccounting/protobuf-gzip-false',
               'TestLiveClickHouseBackpressureAccounting/json-gzip-true',
-              'TestLiveClickHouseBackpressureAccounting/grpc-gzip-true',
+              'TestLiveClickHouseBackpressureAccounting/grpc-gzip-false',
               'TestLiveClickHouseRecovery',
               'TestLiveClickHouseRecovery/collector-restart',
               'TestLiveClickHouseRecovery/clickhouse-pause',

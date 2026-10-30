@@ -44,7 +44,12 @@ from tracer.views.project import ProjectView
 from tracer.views.project_version import ProjectVersionView
 from tracer.views.replay_session import ReplaySessionView
 from tracer.views.saved_view import SavedViewViewSet
-from tracer.views.shared_link import SharedLinkViewSet, resolve_shared_link
+from tracer.views.shared_link import (
+    SharedIssueSidebarView,
+    SharedLinkViewSet,
+    resolve_shared_issue_trace,
+    resolve_shared_link,
+)
 from tracer.views.trace import GetUserCodeExampleView, TraceView, UsersView
 from tracer.views.trace_grouping import (
     AcknowledgeGroupingOutboxView,
@@ -246,6 +251,16 @@ urlpatterns = [
         name="get-annotation-labels",
     ),
     path("shared/<str:token>/", resolve_shared_link, name="resolve-shared-link"),
+    path(
+        "shared/<str:token>/sidebar/",
+        SharedIssueSidebarView.as_view(),
+        name="resolve-shared-issue-sidebar",
+    ),
+    path(
+        "shared/<str:token>/traces/<str:trace_id>/",
+        resolve_shared_issue_trace,
+        name="resolve-shared-issue-trace",
+    ),
     path("users/", UsersView.as_view(), name="users"),
     path("users/get_code_example/", GetUserCodeExampleView.as_view(), name="users"),
     # Deprecated — replaced by /feed/ endpoints (TH-3816 Phase 5)

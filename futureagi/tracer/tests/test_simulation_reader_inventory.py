@@ -49,8 +49,8 @@ SPAN_TABLES = (
     "observation_span",
 )
 
-# The open-source tree has no ``ee`` package, so its readers cannot be missing there.
-ENTERPRISE_PREFIX = "ee."
+# Public ``ee`` code is always scanned; only the private cloud checkout is optional.
+CLOUD_PREFIX = "ee.cloud."
 
 # ---------------------------------------------------------------------------
 # The categories
@@ -1591,6 +1591,24 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
             row="tracer.EndUser",
         ),
     },
+    "tracer.services.clickhouse.v2.query_builders.observe_usage": {
+        "ObserveUsageFilterBuilderV2._build_system_metric_condition": filed(
+            BY_ID_ALONE,
+            why=(
+                "Observe usage residual requires the authorized project's finite "
+                "candidate trace IDs; project/trace tuple membership isolates "
+                "same-ID traces across an authorized project set"
+            ),
+        ),
+        "ObserveTraceListQueryBuilderV2.build_usage_sorted_query": filed(
+            PROJECT_SET,
+            why=(
+                "exact usage sorting of the Observe list requires its one "
+                "authorized project and finite root time window; the view's "
+                "memory, read-byte and wall budgets remain fail-closed"
+            ),
+        ),
+    },
     "tracer.services.clickhouse.v2.query_builders.session_detail": {
         "_LIVE_SESSION_SPANS": filed(BY_ID_ALONE, why="session detail by session id"),
     },
@@ -1633,6 +1651,7 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "_TraceListQueryBuilderV2Core.build_span_attributes_query": _STATEMENT_BY_IDS,
         "_TraceListQueryBuilderV2Core.build_user_id_query": _STATEMENT_BY_IDS,
         "_TraceRootReplayV2._root_replay_query": _STATEMENT_BY_IDS,
+        "_TraceRootReplayV2._trace_rollup_join_sql": _STATEMENT_BY_IDS,
     },
     "tracer.services.clickhouse.v2.query_builders.user_time_series": {
         "UserDetailTimeSeriesQueryBuilderV2.build": _SESSION_OR_USER,
@@ -2213,22 +2232,21 @@ def test_every_spans_reading_function_is_filed():
         "tracer.services.clickhouse.v2.span_reader:CHSpanReader.get" in readers
     ), "the scan did not reach the code it is meant to cover"
 
-    enterprise_present = (FUTUREAGI / ENTERPRISE_PREFIX.rstrip(".")).is_dir()
+    cloud_present = (FUTUREAGI / "ee" / "cloud").is_dir()
     unfiled = sorted(set(readers) - set(FILED))
     stale = sorted(
         key
         for key in set(FILED) - set(readers)
-        if enterprise_present or not key.startswith(ENTERPRISE_PREFIX)
+        if cloud_present or not key.startswith(CLOUD_PREFIX)
     )
     assert not unfiled, (
         "these functions or templates read a span table and nobody filed them; "
         "decide which category covers each, then add it to FILED with a reason:\n"
         + "\n".join(unfiled)
     )
-    assert (
-        not stale
-    ), "these filings no longer match a reader; rename or remove them:\n" + "\n".join(
-        stale
+    assert not stale, (
+        "these filings no longer match a reader; rename or remove them:\n"
+        + "\n".join(stale)
     )
 
     unlisted = {
@@ -2239,11 +2257,45 @@ def test_every_spans_reading_function_is_filed():
     assert not unlisted, f"filed under a category that does not exist: {unlisted}"
     assert not [key for key, filing in FILED.items() if not filing.why.strip()]
     used = {bucket for filing in FILED.values() for bucket in filing.buckets}
-    assert used == set(
-        BUCKETS
-    ), f"categories nothing is filed under: {sorted(set(BUCKETS) - used)}"
+    assert used == set(BUCKETS), (
+        f"categories nothing is filed under: {sorted(set(BUCKETS) - used)}"
+    )
     claims = _filing_problems(readers)
     assert not claims, "\n".join(claims)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("cloud_present", [False, True])
+@pytest.mark.parametrize(
+    "missing_reader",
+    [
+        "ee.cloud.tasks.retention:missing_reader",
+        "ee.usage.tasks:missing_reader",
+        "ee.cloudlike.tasks:missing_reader",
+        "tracer.tasks:missing_reader",
+    ],
+)
+def test_reader_inventory_only_exempts_absent_private_cloud(
+    monkeypatch, tmp_path, cloud_present, missing_reader
+):
+    (tmp_path / "ee").mkdir()
+    if cloud_present:
+        (tmp_path / "ee" / "cloud").mkdir()
+
+    # Isolate checkout detection from the AST scan and the filings' own claims.
+    readers = dict.fromkeys(FILED)
+    filings = dict(FILED)
+    filings[missing_reader] = next(iter(FILED.values()))
+    monkeypatch.setitem(globals(), "FUTUREAGI", tmp_path)
+    monkeypatch.setitem(globals(), "FILED", filings)
+    monkeypatch.setitem(globals(), "scan_readers", lambda: (readers, 1001))
+    monkeypatch.setitem(globals(), "_filing_problems", lambda readers: [])
+
+    if cloud_present or not missing_reader.startswith("ee.cloud."):
+        with pytest.raises(AssertionError, match=re.escape(missing_reader)):
+            test_every_spans_reading_function_is_filed()
+    else:
+        test_every_spans_reading_function_is_filed()
 
 
 @pytest.mark.unit
@@ -3228,9 +3280,9 @@ def test_no_postgres_row_names_a_hidden_project_after_a_simulated_run(
                 f"below would prove nothing for it: {recorder.project_names}"
             )
         else:
-            assert (
-                not recorder.project_names
-            ), f"{name} exported {recorder.project_names}"
+            assert not recorder.project_names, (
+                f"{name} exported {recorder.project_names}"
+            )
 
     # The run's own rows exist, so a row that is missing below is not for lack of one.
     assert RunTest.objects.filter(pk=run.pk).exists()

@@ -23,8 +23,8 @@ if [[ -n "$generator_revision" && -n "$(git -C "$root" status --porcelain --untr
   generator_revision+="-modified"
 fi
 
-# Per-profile load shape. Collector budget requirement: see "Collector settings"
-# in benchmark/README.rst; 'otlpbench collector-budget' prints the exact value.
+# Per-profile load shape. Observe byte-budget settings; row estimates cannot
+# establish current memory sufficiency. See README.rst, "Collector settings".
 case "$profile" in
   smoke)
     rate=100 batch=100 concurrency=2
@@ -107,15 +107,15 @@ cat >&2 <<EOF
 == Profile '$profile': $rate spans/s, batch $batch, $concurrency in flight ==
 Collector settings this profile needs (set them on the collector under test;
 this script cannot change them):
-  * FI_MAX_PENDING_ROWS (server.max_pending_rows) at least the required_pending_rows
-    printed below for a bounded run. The collector default is 0 (row admission
-    disabled); explicitly size and enable it for isolated runs. An undersized
-    budget turns load into HTTP 503 / gRPC
-    RESOURCE_EXHAUSTED whole-request rejections that the result counts separately.
-  * batch size $batch <= max_pending_rows. A larger request is admitted only while
-    the collector's buffer is below the budget and otherwise refused as retryable
-    (collectors that predate this rule refuse it as non-retryable: HTTP 413 /
-    gRPC INVALID_ARGUMENT).
+  * Observe FI_INGEST_BUDGET_MIB, body/receive caps, lease wait time and insert
+    concurrency from /healthz. Current admission uses byte leases, not row caps.
+    FI_MAX_PENDING_ROWS is obsolete; remove it from the collector environment.
+  * Size batches and memory using representative payloads and observed wire/work
+    pressure. The check below reports byte-budget sufficiency as NOT ASSESSED;
+    spans/s and row counts cannot establish enough memory or successful retries.
+  * HTTP busy is 503 + Retry-After; gRPC UNAVAILABLE stays ambiguous in receipts.
+    Oversize requests are permanent 413 / INVALID_ARGUMENT, never overshoot.
+  * HTTP gzip is supported; gRPC gzip is refused by the current collector.
   * FI_BUILD_REVISION (or a VCS-stamped build) so /healthz names the revision.
 EOF
 if [[ -z "${BENCH_COLLECTOR_HEALTH_URL:-}" ]]; then

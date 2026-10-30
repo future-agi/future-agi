@@ -18,7 +18,6 @@ vi.mock("react-router-dom", async () => {
 vi.mock("src/api/harness/harness", () => ({
   uploadHarnessSource: vi.fn(),
   preflightHarnessJob: vi.fn(),
-  storeHarnessSecretValues: vi.fn(),
   createHarnessJob: vi.fn(),
   harnessIdempotencyKey: () => "idem-test",
   getHarnessJob: vi.fn(),

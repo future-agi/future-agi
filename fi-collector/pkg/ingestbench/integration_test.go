@@ -518,7 +518,7 @@ func TestMockPipelineOverEveryEncoding(t *testing.T) {
 	for _, tc := range []struct {
 		encoding string
 		gzip     bool
-	}{{EncodingJSON, false}, {EncodingProtobuf, false}, {EncodingProtobuf, true}, {EncodingJSON, true}, {EncodingGRPC, false}, {EncodingGRPC, true}} {
+	}{{EncodingJSON, false}, {EncodingProtobuf, false}, {EncodingProtobuf, true}, {EncodingJSON, true}, {EncodingGRPC, false}} {
 		t.Run(fmt.Sprintf("%s-gzip-%t", tc.encoding, tc.gzip), func(t *testing.T) {
 			c := mockRunConfig()
 			c.Encoding, c.Gzip = tc.encoding, tc.gzip
@@ -583,23 +583,20 @@ func insertDelayProxy(t *testing.T, target, table string, delay time.Duration) s
 }
 
 // B11: a real collector driven into backpressure. Whole-request 503 /
-// RESOURCE_EXHAUSTED refusals are counted as rejected with their retry hint,
+// UNAVAILABLE refusals are counted as rejected with their retry hint,
 // none of their spans is stored, and every acknowledged span is.
 func runBackpressureCase(t *testing.T, chURL string, headers http.Header, writer chwriter.Config, encoding string, gzip bool, prepare func(Config) Config) Result {
 	t.Helper()
 	c := mockRunConfig()
 	c.RunID = NewRunID()
 	c.Encoding, c.Gzip = encoding, gzip
-	// 50 requests/s of 8 spans against a 16-row budget, with every insert held
-	// 300 ms: two requests fill the budget and start a flush, and every request
-	// until that flush completes is refused. Small payloads keep request
-	// building cheap even under the race detector, so refusals do not depend on
-	// generator speed.
+	// Small requests each fit the 2 MiB byte budget, but a slow insert holds
+	// their row leases. Short lease waits expose busy refusals, not overshoot.
 	c.Rate, c.Duration, c.BatchSize, c.Concurrency, c.VerifyChunk = 400, time.Second, 8, 4, 64
 	c.Payload, c.Settle = "small", 2*time.Second
 	c.DirectProbes.Enabled = false
 	writer.URL = insertDelayProxy(t, writer.URL, writer.Table, 300*time.Millisecond)
-	fixture := startCollector(t, writer, server.Config{MaxPendingRows: 16, BatchMaxRows: 16, BatchMaxAge: 400 * time.Millisecond})
+	fixture := startCollector(t, writer, server.Config{IngestBudgetMiB: 2, IngestMaxWait: time.Millisecond, InsertConcurrency: 1, BatchMaxRows: 16, BatchMaxAge: 400 * time.Millisecond})
 	c.ClickHouseURL, c.Endpoint = chURL, fixture.endpoint(encoding)
 	c = prepare(c)
 	r, err := Run(context.Background(), c, Options{ClickHouseHeaders: headers})
@@ -610,76 +607,63 @@ func runBackpressureCase(t *testing.T, chURL string, headers http.Header, writer
 	if r.AccountingError != "" || co.CheckIdentity() != nil {
 		t.Fatalf("accounting: %s %+v", r.AccountingError, co)
 	}
-	if co.RejectedRetryable == 0 || co.Acknowledged == 0 || co.RejectedNonRetryable != 0 || co.Ambiguous != 0 {
-		t.Fatalf("backpressure not exercised as expected: %+v", co)
+	if co.Acknowledged == 0 || co.RejectedNonRetryable != 0 {
+		t.Fatalf("backpressure not exercised: %+v", co)
 	}
-	if co.RequestOutcomes.RejectedWithRetryHint != co.RequestOutcomes.RejectedRetryable {
-		t.Fatalf("a retryable refusal came without Retry-After/RetryInfo: %+v", co.RequestOutcomes)
-	}
-	label := "http:503"
 	if encoding == EncodingGRPC {
-		label = "grpc:ResourceExhausted"
+		// UNAVAILABLE can originate in the transport after enqueue. Do not relabel
+		// it as a proven refusal merely because this fixture knows the cause.
+		if co.Ambiguous == 0 || co.WholeRequestRejected != 0 || r.Statuses["grpc:Unavailable"] != co.RequestOutcomes.Ambiguous {
+			t.Fatalf("gRPC ambiguity lost: %+v %v", co, r.Statuses)
+		}
+		if v.MissingBy.AmbiguousMissing != uint64(co.Ambiguous) {
+			t.Fatalf("ambiguous identities: %+v", v)
+		}
+	} else {
+		if co.RejectedRetryable == 0 || co.Ambiguous != 0 || co.RequestOutcomes.RejectedWithRetryHint != co.RequestOutcomes.RejectedRetryable || r.Statuses["http:503"] != co.RequestOutcomes.RejectedRetryable {
+			t.Fatalf("HTTP refusal accounting: %+v %v", co, r.Statuses)
+		}
+		if v.MissingBy.RejectedMissing != uint64(co.WholeRequestRejected) || r.RetryHints.Delay.Count == 0 {
+			t.Fatalf("HTTP missing attribution: %+v %+v", v, r.RetryHints)
+		}
 	}
-	if r.Statuses[label] != co.RequestOutcomes.RejectedRetryable {
-		t.Fatalf("statuses %v vs outcomes %+v", r.Statuses, co.RequestOutcomes)
+	if !v.Complete || v.MissingBy.AcknowledgedMissing != 0 || v.DataLossDetected || v.ContractViolation || v.DistinctExpected != uint64(co.Acknowledged) || r.Status != "measured-with-errors" {
+		t.Fatalf("verification: %+v status %s", v, r.Status)
 	}
-	if !v.Complete || v.MissingBy.AcknowledgedMissing != 0 || v.DataLossDetected || v.ContractViolation {
-		t.Fatalf("acknowledged spans lost or rejected spans stored: %+v", v)
-	}
-	if v.Missing != uint64(co.WholeRequestRejected) || v.MissingBy.RejectedMissing != uint64(co.WholeRequestRejected) || v.DistinctExpected != uint64(co.Acknowledged) {
-		t.Fatalf("missing spans not attributed to rejection: counters %+v verification %+v", co, v)
-	}
-	if r.Status != "measured-with-errors" || r.RetryHints.Requests != co.RequestOutcomes.RejectedRetryable || r.RetryHints.Delay.Count == 0 {
-		t.Fatalf("status %s retry hints %+v", r.Status, r.RetryHints)
-	}
+
 	return r
 }
 
-// B11 (revised): a request larger than the whole row budget is never refused
-// as non-retryable. Into an empty buffer it is admitted and stored; while that
-// batch is still being inserted (the buffer over the budget) the next one is
-// refused as retryable, with a retry hint, and none of its spans is stored.
+// A request too large for the entire work pool is a permanent refusal in the
+// current collector. No overshoot is allowed and no rejected identity is stored.
 func runOverBudgetCase(t *testing.T, chURL string, headers http.Header, writer chwriter.Config, encoding string, gzip bool, prepare func(Config) Config) Result {
 	t.Helper()
 	c := mockRunConfig()
 	c.RunID = NewRunID()
 	c.Encoding, c.Gzip = encoding, gzip
-	// Two requests of 20 spans, due at 0 and 500 ms, against a 16-row budget;
-	// each insert is held 2 s, so the second request always meets the first
-	// still in flight.
-	c.Rate, c.Duration, c.BatchSize, c.VerifyChunk = 40, time.Second, 20, 64
-	c.Payload, c.Settle = "small", 3*time.Second
+	c.Rate, c.Duration, c.BatchSize, c.VerifyChunk = 256, time.Second, 128, 64
+	c.Payload, c.Settle = "small", time.Second
 	c.DirectProbes.Enabled = false
-	writer.URL = insertDelayProxy(t, writer.URL, writer.Table, 2*time.Second)
-	fixture := startCollector(t, writer, server.Config{MaxPendingRows: 16, BatchMaxRows: 16, BatchMaxAge: 50 * time.Millisecond})
+	fixture := startCollector(t, writer, server.Config{IngestBudgetMiB: 2, IngestMaxWait: time.Millisecond, InsertConcurrency: 1, BatchMaxRows: 16})
 	c.ClickHouseURL, c.Endpoint = chURL, fixture.endpoint(encoding)
-	c.CollectorMaxPendingRows = 16
 	c = prepare(c)
-	var warn strings.Builder
-	r, err := Run(context.Background(), c, Options{ClickHouseHeaders: headers, Warn: &warn})
+	r, err := Run(context.Background(), c, Options{ClickHouseHeaders: headers})
 	if err != nil {
 		t.Fatal(err)
 	}
 	co, v := r.Counters, r.Verification
-	if co.Attempted != 40 || co.Requests != 2 || co.Acknowledged != 20 || co.RejectedRetryable != 20 || co.RejectedNonRetryable != 0 ||
-		co.RequestOutcomes.RejectedWithRetryHint != 1 || co.CheckIdentity() != nil {
-		t.Fatalf("over-budget accounting: %+v", co)
+	if co.Attempted != 256 || co.Requests != 2 || co.Acknowledged != 0 || co.RejectedNonRetryable != 256 || co.RejectedRetryable != 0 || co.Ambiguous != 0 || co.CheckIdentity() != nil {
+		t.Fatalf("permanent oversize accounting: %+v", co)
 	}
-	ok, refused := "http:200", "http:503"
+	label := "http:413"
 	if encoding == EncodingGRPC {
-		ok, refused = "grpc:OK", "grpc:ResourceExhausted"
+		label = "grpc:InvalidArgument"
 	}
-	if r.Statuses[ok] != 1 || r.Statuses[refused] != 1 {
-		t.Fatalf("statuses %v", r.Statuses)
+	if r.Statuses[label] != 2 {
+		t.Fatalf("statuses: %v", r.Statuses)
 	}
-	if !v.Complete || v.DistinctExpected != 20 || v.Missing != 20 || v.MissingBy.RejectedMissing != 20 || v.MissingBy.AcknowledgedMissing != 0 || v.ContractViolation {
-		t.Fatalf("verification %+v", v)
-	}
-	if len(v.MissingRanges) != 1 || v.MissingRanges[0].FirstRequest != 1 || v.MissingRanges[0].Class != outcomeRejectedRetryable.String() {
-		t.Fatalf("the refused request is not the second one: %+v", v.MissingRanges)
-	}
-	if !strings.Contains(warn.String(), "admitted only while the collector's buffer is below the budget") {
-		t.Fatalf("the over-budget plan was not warned about loudly: %q", warn.String())
+	if !v.Complete || v.DistinctExpected != 0 || v.Missing != 256 || v.MissingBy.RejectedMissing != 256 || v.MissingBy.AcknowledgedMissing != 0 || v.ContractViolation {
+		t.Fatalf("verification: %+v", v)
 	}
 	return r
 }
@@ -816,7 +800,7 @@ func TestBackpressureAndOverBudgetAccountingThroughRealCollector(t *testing.T) {
 	for _, tc := range []struct {
 		encoding string
 		gzip     bool
-	}{{EncodingProtobuf, false}, {EncodingJSON, true}, {EncodingGRPC, true}} {
+	}{{EncodingProtobuf, false}, {EncodingJSON, true}, {EncodingGRPC, false}} {
 		t.Run(fmt.Sprintf("%s-gzip-%t", tc.encoding, tc.gzip), func(t *testing.T) {
 			store := &mockStorage{}
 			ch := httptest.NewServer(http.HandlerFunc(store.serve))

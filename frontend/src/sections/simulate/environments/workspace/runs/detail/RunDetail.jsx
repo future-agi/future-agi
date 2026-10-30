@@ -17,12 +17,15 @@ import {
 import { exportRunResults } from "src/api/simulate-environments/runAnalytics";
 import {
   callDetailKeyPrefix,
+  compareRunsKeyPrefix,
   runAnalyticsKey,
 } from "src/api/simulate-environments/runEvals";
+import { useRerunCallsInRun } from "src/api/simulate-environments/rerunScenarios";
 
 import SectionCard from "../../../components/SectionCard";
 import StatusChip from "../StatusChip";
 import StopRunControl from "../StopRunControl";
+import AgentDiffersTag from "../../run/AgentDiffersTag";
 import AddEvaluationDrawer from "../../evals/AddEvaluationDrawer";
 import AddEvalsDrawer from "../../evals/AddEvalsDrawer";
 import RunTraceTable from "./trace/RunTraceTable";
@@ -36,6 +39,7 @@ import LaunchOptimizationDrawer from "./fixmyagent/LaunchOptimizationDrawer";
 import BetaChip from "./fixmyagent/BetaChip";
 import { useSelfImprovementOpen } from "./fixmyagent/selfImprovement";
 import RunAnalytics from "./RunAnalytics";
+import ReliabilityHeadline from "./ReliabilityHeadline";
 import useCallListNavigation from "./useCallListNavigation";
 import useOpenCallParam from "./useOpenCallParam";
 
@@ -100,6 +104,7 @@ export default function RunDetail({
   // edit form, one confirm and one re-run request, so a re-run sent from
   // either holds both.
   const evalRun = useRunEvalActions({ envId: env?.id, executionId });
+  const rerunInRun = useRerunCallsInRun(executionId);
 
   // The past self-improvement (optimization) runs for this execution — REAL,
   // scoped by test_execution_id. The Trials tab only appears once at least one
@@ -126,6 +131,7 @@ export default function RunDetail({
       executionStatus !== "evaluating"
     ) {
       queryClient.invalidateQueries({ queryKey: runAnalyticsKey(executionId) });
+      queryClient.invalidateQueries({ queryKey: compareRunsKeyPrefix });
       queryClient.invalidateQueries({ queryKey: callDetailKeyPrefix });
     }
   }, [executionStatus, executionId, queryClient]);
@@ -143,6 +149,26 @@ export default function RunDetail({
   // finishedAt is a known gap (the executions row carries no end time), so the
   // sub-line reports when the run STARTED rather than inventing a finish.
   const startedLabel = identity?.startedAt ? fToNow(identity.startedAt) : "";
+  // The agent version this run was pinned to, else the one it was recorded with.
+  const agentLabel =
+    identity?.pinnedAgentVersion?.label ?? identity?.agentVersion ?? "-";
+  // The environment and scenario versions this run was pinned to, if any.
+  const pinnedLabels = [
+    identity?.environmentVersion?.label &&
+      `env ${identity.environmentVersion.label}`,
+    identity?.suiteVersion?.label && `scenarios ${identity.suiteVersion.label}`,
+  ]
+    .filter(Boolean)
+    .map((label) => ` · ${label}`)
+    .join("");
+  // A re-run starts from the versions this run used.
+  const rerunOptions = {
+    initialPicks: {
+      agent: identity?.pinnedAgentVersion?.id,
+      environment: identity?.environmentVersion?.id,
+      suite: identity?.suiteVersion?.id,
+    },
+  };
 
   const back = () =>
     navigate(
@@ -218,9 +244,15 @@ export default function RunDetail({
             )}
             <Typography noWrap sx={{ typography: "s1_2", fontWeight: 700 }}>
               {identity
-                ? `Run ${identity.ordinal} · agent ${identity.agentVersion ?? "-"}`
+                ? `Run ${identity.ordinal} · agent ${agentLabel}${pinnedLabels}`
                 : "Run complete"}
             </Typography>
+            {identity?.agentDiffers && (
+              <AgentDiffersTag
+                agentVersion={identity.pinnedAgentVersion}
+                environmentVersion={identity.environmentVersion}
+              />
+            )}
             {status && <StatusChip status={status} />}
             <StopRunControl
               executionId={executionId}
@@ -233,6 +265,11 @@ export default function RunDetail({
             {startedLabel ? ` · started ${startedLabel}` : ""}
           </Typography>
         </Box>
+
+        <ReliabilityHeadline
+          executionId={executionId}
+          enabled={!!identity && !live}
+        />
 
         {/* A backed run opens its evals, to grade again or add to; a
             client-only env keeps its store picker. */}
@@ -289,6 +326,7 @@ export default function RunDetail({
               onStartRun?.(
                 identity?.scenarioIds || undefined,
                 identity?.trials || 1,
+                rerunOptions,
               )
             }
             sx={{
@@ -382,9 +420,15 @@ export default function RunDetail({
                   : null
               }
               initialFilters={tableHandoff.filters}
-              // Ticked calls re-run as a new simulation, through the same start
-              // as any run: it opens the new run.
-              onRerunScenarios={onStartRun}
+              // Ticked calls re-run either inside this run (their rows are
+              // refilled in place) or as a new simulation, through the same
+              // start as any run: that one opens the new run.
+              onRerunScenarios={
+                onStartRun
+                  ? (keys, trials) => onStartRun(keys, trials, rerunOptions)
+                  : null
+              }
+              onRerunInRun={rerunInRun.mutate}
               onTickableChange={setHasTickableCalls}
               runTrials={identity?.trials || 1}
               rerunDisabledReason={
@@ -392,7 +436,9 @@ export default function RunDetail({
                   ? "Wait for this run to finish before re-running calls"
                   : runStarting
                     ? "Starting the run…"
-                    : null
+                    : rerunInRun.isPending
+                      ? "Starting the re-run…"
+                      : null
               }
             />
           )}

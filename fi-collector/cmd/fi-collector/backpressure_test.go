@@ -1,36 +1,34 @@
 package main
 
 import (
+	"gopkg.in/yaml.v3"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 )
 
-func TestPendingRowBudgetEnvironmentValidation(t *testing.T) {
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	for _, value := range []string{"-1", "not-an-integer"} {
-		t.Run(value, func(t *testing.T) {
-			t.Setenv("FI_MAX_PENDING_ROWS", value)
-			if err := applyEnvOverrides(log, &rootConfig{}); err == nil {
-				t.Fatal("invalid row budget accepted")
+func TestObsoletePendingRowBudgetIsRejected(t *testing.T) {
+	for _, v := range []string{"0", "42", "-1", "invalid"} {
+		t.Run(v, func(t *testing.T) {
+			t.Setenv("FI_MAX_PENDING_ROWS", v)
+			if err := applyEnvOverrides(slog.New(slog.NewTextHandler(io.Discard, nil)), &rootConfig{}); err == nil || !strings.Contains(err.Error(), "FI_INGEST_BUDGET_MIB") {
+				t.Fatalf("obsolete row setting silently accepted: %v", err)
 			}
 		})
 	}
-	t.Setenv("FI_MAX_PENDING_ROWS", "42")
-	var cfg rootConfig
-	if err := applyEnvOverrides(log, &cfg); err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Server.MaxPendingRows != 42 {
-		t.Fatalf("budget not applied: %d", cfg.Server.MaxPendingRows)
-	}
-	t.Setenv("FI_MAX_PENDING_ROWS", "0")
-	if err := applyEnvOverrides(log, &cfg); err != nil || cfg.Server.MaxPendingRows != 0 {
-		t.Fatalf("cannot explicitly disable row admission: %v, %d", err, cfg.Server.MaxPendingRows)
-	}
-	t.Setenv("FI_MAX_PENDING_ROWS", "")
-	cfg.Server.MaxPendingRows = -1
-	if err := applyEnvOverrides(log, &cfg); err == nil {
-		t.Fatal("negative YAML row budget accepted")
+}
+
+func TestObsoleteYAMLRowBudgetIsRejected(t *testing.T) {
+	for _, v := range []string{"0", "42", "-1"} {
+		t.Run(v, func(t *testing.T) {
+			var cfg rootConfig
+			if err := yaml.Unmarshal([]byte("server:\n  max_pending_rows: "+v+"\n"), &cfg); err != nil {
+				t.Fatal(err)
+			}
+			if err := applyEnvOverrides(slog.New(slog.NewTextHandler(io.Discard, nil)), &cfg); err == nil {
+				t.Fatal("obsolete YAML row budget silently accepted")
+			}
+		})
 	}
 }

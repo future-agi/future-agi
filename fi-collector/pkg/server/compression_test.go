@@ -14,10 +14,12 @@ import (
 	"github.com/future-agi/future-agi/fi-collector/pkg/chwriter"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
-func gzipBytes(t *testing.T, in []byte) []byte {
+func benchmarkGzipBytes(t *testing.T, in []byte) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	zw := gzip.NewWriter(&buf)
@@ -30,7 +32,7 @@ func gzipBytes(t *testing.T, in []byte) []byte {
 	return buf.Bytes()
 }
 
-func postBody(s *Server, body []byte, contentType, encoding string) *httptest.ResponseRecorder {
+func benchmarkPostBody(s *Server, body []byte, contentType, encoding string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(http.MethodPost, "/v1/traces", bytes.NewReader(body))
 	r.Header.Set("Content-Type", contentType)
 	if encoding != "" {
@@ -50,8 +52,8 @@ func TestHTTPGzipRequestBodiesAreDecoded(t *testing.T) {
 		body              []byte
 	}{{"protobuf", "application/x-protobuf", proto}, {"json", "application/json", jsonBody}} {
 		t.Run(tc.name, func(t *testing.T) {
-			s := New(Config{MaxPendingRows: 100}, nil, nil, nil, nil, WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
-			w := postBody(s, gzipBytes(t, tc.body), tc.contentType, "gzip")
+			s := New(Config{}, nil, nil, nil, nil, WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+			w := benchmarkPostBody(s, benchmarkGzipBytes(t, tc.body), tc.contentType, "gzip")
 			if w.Code != http.StatusOK {
 				t.Fatalf("gzip %s body got %d: %s", tc.name, w.Code, w.Body.String())
 			}
@@ -63,20 +65,20 @@ func TestHTTPGzipRequestBodiesAreDecoded(t *testing.T) {
 }
 
 func TestHTTPContentEncodingFailuresAreExplicitAndBounded(t *testing.T) {
-	s := New(Config{MaxPendingRows: 100}, nil, nil, nil, nil, WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	s := New(Config{}, nil, nil, nil, nil, WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
 	proto, _ := ptraceotlp.NewExportRequestFromTraces(spansTraces(1)).MarshalProto()
-	if w := postBody(s, proto, "application/x-protobuf", "br"); w.Code != http.StatusUnsupportedMediaType || w.Header().Get("Accept-Encoding") == "" {
+	if w := benchmarkPostBody(s, proto, "application/x-protobuf", "br"); w.Code != http.StatusUnsupportedMediaType || w.Header().Get("Accept-Encoding") == "" {
 		t.Fatalf("unsupported coding got %d (Accept-Encoding %q)", w.Code, w.Header().Get("Accept-Encoding"))
 	}
-	if w := postBody(s, []byte("not gzip"), "application/x-protobuf", "gzip"); w.Code != http.StatusBadRequest {
+	if w := benchmarkPostBody(s, []byte("not gzip"), "application/x-protobuf", "gzip"); w.Code != http.StatusBadRequest {
 		t.Fatalf("corrupt gzip got %d, want 400", w.Code)
 	}
 	// A few KiB of compressed zeros must not expand past the body cap.
-	bomb := gzipBytes(t, make([]byte, maxOTLPHTTPBodyBytes+1))
+	bomb := benchmarkGzipBytes(t, make([]byte, defaultMaxBodyBytes+1))
 	if len(bomb) > 1<<20 {
 		t.Fatalf("test bomb is not small (%d bytes)", len(bomb))
 	}
-	if w := postBody(s, bomb, "application/x-protobuf", "gzip"); w.Code != http.StatusRequestEntityTooLarge {
+	if w := benchmarkPostBody(s, bomb, "application/x-protobuf", "gzip"); w.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("decompression bomb got %d, want 413", w.Code)
 	}
 	if len(s.pend) != 0 {
@@ -84,16 +86,13 @@ func TestHTTPContentEncodingFailuresAreExplicitAndBounded(t *testing.T) {
 	}
 	// Identity stays accepted, with or without the explicit header.
 	for _, enc := range []string{"", "identity"} {
-		if w := postBody(s, proto, "application/x-protobuf", enc); w.Code != http.StatusOK {
+		if w := benchmarkPostBody(s, proto, "application/x-protobuf", enc); w.Code != http.StatusOK {
 			t.Fatalf("Content-Encoding %q got %d", enc, w.Code)
 		}
 	}
 }
 
-// The test deliberately does not import grpc/encoding/gzip itself: the
-// compressor is registered only because package server imports it, and
-// removing that import makes this export fail.
-func TestGRPCGzipRequestsAreAccepted(t *testing.T) {
+func TestGRPCGzipRequestsRemainRejectedOutsideWireBudget(t *testing.T) {
 	ch := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
 	}))
@@ -103,7 +102,7 @@ func TestGRPCGzipRequestsAreAccepted(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer writer.Close()
-	s := New(Config{GRPCAddr: testTCPAddr(t), MaxPendingRows: 100, BatchMaxRows: 1000, BatchMaxAge: time.Hour}, writer, nil, nil, nil, WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	s := New(Config{GRPCAddr: testTCPAddr(t), BatchMaxRows: 1000, BatchMaxAge: time.Hour}, writer, nil, nil, nil, WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
 	s.cfg.HTTPAddr = ""
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -112,19 +111,16 @@ func TestGRPCGzipRequestsAreAccepted(t *testing.T) {
 	if !waitPort(s.cfg.GRPCAddr, 2*time.Second) {
 		t.Fatal("server did not start")
 	}
-	conn, err := grpc.NewClient(s.cfg.GRPCAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(s.cfg.GRPCAddr, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithCompressor(grpc.NewGZIPCompressor()))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	_, err = ptraceotlp.NewGRPCClient(conn).Export(context.Background(), ptraceotlp.NewExportRequestFromTraces(spansTraces(2)), grpc.UseCompressor("gzip"))
-	if err != nil {
-		t.Fatalf("gzip-compressed gRPC export refused: %v", err)
+	_, err = ptraceotlp.NewGRPCClient(conn).Export(context.Background(), ptraceotlp.NewExportRequestFromTraces(spansTraces(2)))
+	if status.Code(err) != codes.Unimplemented {
+		t.Fatalf("gzip gRPC must remain disabled: %v", err)
 	}
-	s.pendMu.Lock()
-	reserved := s.bufferedRows
-	s.pendMu.Unlock()
-	if reserved != 2 {
-		t.Fatalf("gzip gRPC export reserved %d rows, want 2", reserved)
+	if a := s.Admission(); a.BufferedRows != 0 {
+		t.Fatalf("unsupported gzip enqueued: %+v", a)
 	}
 }

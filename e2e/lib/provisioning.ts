@@ -10,7 +10,11 @@ export interface TestActor {
   api: ApiClient;
 }
 
-interface UserInfo { organization: { id: string }; default_workspace_id: string | null }
+export interface UserInfo {
+  organization: { id: string };
+  default_workspace_id: string | null;
+  restrict_simulate_to_environments?: boolean;
+}
 interface KeysEnvelope { status: string; data: { api_key: string; secret_key: string } }
 
 export async function provisionActor(req: APIRequestContext, label: string): Promise<TestActor> {

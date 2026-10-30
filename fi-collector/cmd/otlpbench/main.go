@@ -128,7 +128,7 @@ func command(ctx context.Context, args []string, stdout io.Writer) error {
 	f.Int64Var(&c.VerifyMaxMemory, "verify-max-memory", c.VerifyMaxMemory, "per-query max_memory_usage in bytes; 0 means 1 GiB")
 	f.StringVar(&c.VerifyCheckpoint, "verify-checkpoint", "", "new file for resumable verification progress (see 'otlpbench verify')")
 	f.StringVar(&c.CollectorHealthURL, "collector-health-url", "", "collector admin /healthz URL, read for its build revision and admission limits")
-	f.Int64Var(&c.CollectorMaxPendingRows, "declared-collector-max-pending-rows", 0, "the collector's max_pending_rows when /healthz is not reachable")
+	f.Int64Var(&c.CollectorMaxPendingRows, "declared-collector-max-pending-rows", 0, "legacy row collector only; cannot declare current byte-budget sufficiency")
 	f.BoolVar(&c.DirectProbes.Enabled, "direct-probes", c.DirectProbes.Enabled, "measure direct ClickHouse reads (trace, session, attribute filter) during load and after settle")
 	f.DurationVar(&c.DirectProbes.Interval, "direct-probe-interval", c.DirectProbes.Interval, "direct probe round period during load, >= 500ms")
 	f.DurationVar(&c.DirectProbes.MinAge, "direct-probe-min-age", c.DirectProbes.MinAge, "only probe traces acknowledged at least this long ago")
@@ -403,7 +403,7 @@ func budgetCommand(ctx context.Context, args []string, stdout io.Writer) error {
 	f.IntVar(&c.BatchSize, "batch-size", c.BatchSize, "spans per request")
 	f.IntVar(&c.Concurrency, "concurrency", c.Concurrency, "in-flight requests")
 	health := f.String("collector-health-url", "", "collector admin /healthz URL (read-only GET); omitted means no network request")
-	declared := f.Int64("declared-collector-max-pending-rows", 0, "collector max_pending_rows when /healthz is not reachable")
+	declared := f.Int64("declared-collector-max-pending-rows", 0, "legacy row collector only; cannot declare current byte-budget sufficiency")
 	allowHosts := f.String("allow-hosts", "", "comma-separated exact non-loopback hostnames")
 	if err := f.Parse(args); err != nil {
 		return err

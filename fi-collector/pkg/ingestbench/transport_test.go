@@ -79,7 +79,7 @@ func TestGRPCExportSendsThePrebuiltMessageBytes(t *testing.T) {
 	const spans = 200
 	recorder := &inPayloadRecorder{}
 	traces := &spanCountingTraceServer{}
-	srv := grpc.NewServer(grpc.StatsHandler(recorder))
+	srv := grpc.NewServer(grpc.StatsHandler(recorder), grpc.RPCDecompressor(grpc.NewGZIPDecompressor()))
 	ptraceotlp.RegisterGRPCServer(srv, traces)
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

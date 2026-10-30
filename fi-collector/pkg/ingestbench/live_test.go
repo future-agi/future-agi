@@ -184,7 +184,7 @@ func TestLiveClickHouseBackpressureAccounting(t *testing.T) {
 	for _, tc := range []struct {
 		encoding string
 		gzip     bool
-	}{{EncodingProtobuf, false}, {EncodingJSON, true}, {EncodingGRPC, true}} {
+	}{{EncodingProtobuf, false}, {EncodingJSON, true}, {EncodingGRPC, false}} {
 		name := fmt.Sprintf("%s-gzip-%t", tc.encoding, tc.gzip)
 		t.Run(name, func(t *testing.T) {
 			results[name+"/backpressure"] = runBackpressureCase(t, lt.url, lt.headers, lt.writer, tc.encoding, tc.gzip, lt.apply)
@@ -274,7 +274,7 @@ func TestLiveClickHouseRecovery(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
 	defer cancel()
 	t.Run("collector-restart", func(t *testing.T) {
-		collector := newRestartableCollector(t, lt.writer, server.Config{MaxPendingRows: 20000})
+		collector := newRestartableCollector(t, lt.writer, server.Config{IngestBudgetMiB: 16})
 		c := scale(lt.apply(recoveryConfig(collector)))
 		c.RunID, c.ClickHouseURL = NewRunID(), lt.url
 		at, d := faultAt(1500*time.Millisecond, 800*time.Millisecond)
@@ -292,7 +292,7 @@ func TestLiveClickHouseRecovery(t *testing.T) {
 		proxy := front.Config.Handler.(*pauseProxy)
 		writer := lt.writer
 		writer.URL = front.URL
-		collector := newRestartableCollector(t, writer, server.Config{MaxPendingRows: 24})
+		collector := newRestartableCollector(t, writer, server.Config{IngestBudgetMiB: 2, IngestMaxWait: time.Millisecond, InsertConcurrency: 1})
 		c := scale(lt.apply(recoveryConfig(collector)))
 		c.RunID, c.ClickHouseURL = NewRunID(), lt.url
 		at, d := faultAt(time.Second, 1500*time.Millisecond)

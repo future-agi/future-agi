@@ -12,7 +12,13 @@ from django.test import override_settings
 from django.utils import timezone as django_timezone
 from rest_framework.test import APIClient
 
-from simulate.models import CallExecution, HostedHarnessJob, HostedHarnessReceipt
+from simulate.models import (
+    CallExecution,
+    HostedHarnessExecution,
+    HostedHarnessJob,
+    HostedHarnessReceipt,
+    HostedHarnessScenario,
+)
 from simulate.models.chat_message import ChatMessageModel
 from simulate.serializers.hosted_harness import HarnessCallSerializer
 from simulate.services.harness_scenarios import index_scenarios
@@ -1434,6 +1440,79 @@ def test_new_attempt_atomically_replaces_prior_scenario_receipt(organization):
     assert HostedHarnessReceipt.no_workspace_objects.filter(job=job).count() == 1
     first.attempt.refresh_from_db()
     assert first.attempt.receipt_history["same-scenario"]["attempt_number"] == 1
+
+
+@pytest.mark.django_db
+def test_counts_include_a_runs_calls_linked_through_its_executions(organization):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="run-execution-counts-key"
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    client = APIClient()
+    provision = client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "provision",
+            "name": "Run counts",
+            "modality": "text",
+            "personas": [
+                {
+                    "scenario_key": "run-scenario",
+                    "name": "Customer",
+                    "situation": "Needs help",
+                    "outcome": "Receives help",
+                }
+            ],
+        },
+        format="json",
+        **_headers(capability),
+    )
+    assert provision.status_code == 200
+    begin = client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "begin",
+            "run_test_id": provision.json()["result"]["run_test_id"],
+            "scenario_keys": ["run-scenario"],
+        },
+        format="json",
+        **_headers(capability),
+    )
+    assert begin.status_code == 200
+    # A run's call hangs off its execution, not off the authored scenario.
+    registration = HostedHarnessScenario.no_workspace_objects.get(job=job)
+    call = registration.call_execution
+    HostedHarnessScenario.no_workspace_objects.filter(id=registration.id).update(
+        call_execution=None
+    )
+    execution = HostedHarnessExecution.no_workspace_objects.create(
+        job=job,
+        source_scenario=registration,
+        execution_key="run-scenario:0",
+        trial_index=0,
+        call_execution=call,
+    )
+    HostedHarnessReceipt.no_workspace_objects.create(
+        job=job,
+        attempt=capability.attempt,
+        scenario=registration,
+        execution=execution,
+        attempt_number=capability.attempt.attempt_number,
+        digest="d" * 64,
+        status="failed",
+        body={},
+    )
+    CallExecution.objects.filter(id=call.id).update(
+        status=CallExecution.CallStatus.COMPLETED
+    )
+
+    update_execution_counts(job)
+
+    call.test_execution.refresh_from_db()
+    assert (
+        call.test_execution.completed_calls,
+        call.test_execution.failed_calls,
+    ) == (1, 0)
 
 
 @pytest.mark.django_db

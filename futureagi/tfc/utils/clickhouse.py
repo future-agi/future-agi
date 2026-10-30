@@ -170,12 +170,16 @@ class ClickHouseClientSingleton:
     def initialize_client(self):
         # Bounded reads clamp the lazy connection; analytics keeps its ordinary
         # connection/idle transport failure detection, not a statement wall.
-        self._client = Client(
-            host=settings.CLICKHOUSE["CH_HOST"],
-            port=settings.CLICKHOUSE["CH_PORT"],
-            user=settings.CLICKHOUSE["CH_USERNAME"],
-            password=settings.CLICKHOUSE["CH_PASSWORD"],
-            database=settings.CLICKHOUSE["CH_DATABASE"],
+        from tfc.telemetry.instrumentation import instrument_clickhouse_client
+
+        self._client = instrument_clickhouse_client(
+            Client(
+                host=settings.CLICKHOUSE["CH_HOST"],
+                port=settings.CLICKHOUSE["CH_PORT"],
+                user=settings.CLICKHOUSE["CH_USERNAME"],
+                password=settings.CLICKHOUSE["CH_PASSWORD"],
+                database=settings.CLICKHOUSE["CH_DATABASE"],
+            )
         )
 
     def _execute_guarded_read(

@@ -115,7 +115,7 @@ func TestCLICollectorBudgetWarnsLoudly(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &info); err != nil {
 		t.Fatal(err)
 	}
-	if info.Budget.Sufficient || info.Budget.RequiredPendingRows != 43000 || !strings.Contains(warn.String(), "*** WARNING") || !strings.Contains(warn.String(), "FI_MAX_PENDING_ROWS=43000") {
+	if info.Budget.Sufficient || info.Budget.RequiredPendingRows != 43000 || !strings.Contains(warn.String(), "*** WARNING") || !strings.Contains(warn.String(), "legacy row collector only") {
 		t.Fatalf("budget %+v warnings %q", info.Budget, warn.String())
 	}
 	if err := command(context.Background(), []string{"collector-budget", "--rate", "100", "--collector-health-url", "http://example.invalid:9464/healthz"}, &bytes.Buffer{}); err == nil {

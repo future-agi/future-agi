@@ -5,6 +5,10 @@ import EmptyState from "src/sections/simulate/environments/components/EmptyState
 import StatusChip from "src/sections/simulate/environments/workspace/runs/StatusChip";
 import { runStateFor } from "src/sections/simulate/environments/workspace/runs/runs.constants";
 import { useAgentRuns } from "src/api/agents/agentDetail";
+import {
+  isHiddenFromRestrictedOrgs,
+  useRestrictSimulateToEnvironments,
+} from "src/hooks/useRestrictSimulateToEnvironments";
 import FitDataTable from "./FitDataTable";
 import { LineSkeleton, QuietTag } from "./bits";
 import { agentDetailPath } from "./agentDetailTabs";
@@ -47,6 +51,16 @@ export default function AgentOverviewTab() {
   const { agentId } = useParams();
   const navigate = useNavigate();
   const { search } = useLocation();
+  const restrictSimulateToEnvironments = useRestrictSimulateToEnvironments();
+  // A Simulate run's page is not registered for an org restricted to
+  // Environments, so its row stays put instead of leading to the 404.
+  const openRun = (run) => {
+    const path = runPath(run);
+    if (restrictSimulateToEnvironments && isHiddenFromRestrictedOrgs(path)) {
+      return;
+    }
+    navigate(path);
+  };
   const {
     data: runs,
     isLoading,
@@ -178,7 +192,7 @@ export default function AgentOverviewTab() {
         }
         data={isLoading ? SKELETON_DATA : runs}
         getRowId={(r) => r.testExecutionId}
-        onRowClick={isLoading ? undefined : (r) => navigate(runPath(r))}
+        onRowClick={isLoading ? undefined : openRun}
       />
     );
   }

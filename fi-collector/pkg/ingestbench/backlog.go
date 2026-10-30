@@ -13,7 +13,7 @@ import (
 
 // The collector's backlog is sampled from its admin /healthz while the run goes
 // on: buffered rows (acknowledged rows not yet in ClickHouse, which the
-// admission budget bounds) and the writer's cumulative insert counters. The
+// byte leases account for) and the writer's cumulative insert counters. The
 // summary separates backlog growth from throughput: a run whose backlog keeps
 // growing has not reached a steady state, whatever its acknowledged rate.
 
@@ -24,17 +24,21 @@ const maxCollectorSamples = 100000
 // CollectorSample is one /healthz reading. Counter fields are the writer's
 // lifetime counters; they restart from zero when the collector restarts.
 type CollectorSample struct {
-	ElapsedS         float64 `json:"elapsed_seconds"`
-	OK               bool    `json:"ok"`
-	HTTPStatus       int     `json:"http_status,omitempty"`
-	BufferedRows     int64   `json:"buffered_rows"`
-	PendingRows      int64   `json:"pending_rows"`
-	MaxPendingRows   int64   `json:"max_pending_rows"`
-	RowsInserted     uint64  `json:"rows_inserted"`
-	RowsDeadLettered uint64  `json:"rows_dead_lettered"`
-	BatchesRetried   uint64  `json:"batches_retried"`
-	BatchesFailed    uint64  `json:"batches_failed"`
-	Error            string  `json:"error,omitempty"`
+	IngestBudgetBytes int64           `json:"ingest_budget_bytes,omitempty"`
+	WorkUsedBytes     int64           `json:"work_used_bytes,omitempty"`
+	WireUsedBytes     int64           `json:"wire_used_bytes,omitempty"`
+	Ingest            json.RawMessage `json:"ingest,omitempty"`
+	ElapsedS          float64         `json:"elapsed_seconds"`
+	OK                bool            `json:"ok"`
+	HTTPStatus        int             `json:"http_status,omitempty"`
+	BufferedRows      int64           `json:"buffered_rows"`
+	PendingRows       int64           `json:"pending_rows"`
+	MaxPendingRows    int64           `json:"max_pending_rows"`
+	RowsInserted      uint64          `json:"rows_inserted"`
+	RowsDeadLettered  uint64          `json:"rows_dead_lettered"`
+	BatchesRetried    uint64          `json:"batches_retried"`
+	BatchesFailed     uint64          `json:"batches_failed"`
+	Error             string          `json:"error,omitempty"`
 }
 
 // Window is a stretch of the run, in seconds from load start.
@@ -45,13 +49,17 @@ type Window struct {
 }
 
 type BacklogResult struct {
-	Status         string  `json:"status"`
-	Method         string  `json:"method"`
-	PollIntervalMS float64 `json:"poll_interval_ms"`
-	Samples        int64   `json:"samples"`
-	FailedSamples  int64   `json:"failed_samples"`
-	KeptSamples    int64   `json:"samples_kept_in_memory"`
-	MaxPendingRows int64   `json:"max_pending_rows"`
+	BytePoolSamples   int64   `json:"byte_pool_samples,omitempty"`
+	PeakWorkBytes     int64   `json:"peak_work_bytes,omitempty"`
+	PeakWireBytes     int64   `json:"peak_wire_bytes,omitempty"`
+	IngestBudgetBytes int64   `json:"ingest_budget_bytes,omitempty"`
+	Status            string  `json:"status"`
+	Method            string  `json:"method"`
+	PollIntervalMS    float64 `json:"poll_interval_ms"`
+	Samples           int64   `json:"samples"`
+	FailedSamples     int64   `json:"failed_samples"`
+	KeptSamples       int64   `json:"samples_kept_in_memory"`
+	MaxPendingRows    int64   `json:"max_pending_rows"`
 	// Buffered rows over the load phase.
 	BufferedRows    Distribution `json:"buffered_rows_during_load"`
 	MaxBufferedRows int64        `json:"max_buffered_rows"`
@@ -62,7 +70,8 @@ type BacklogResult struct {
 	SlopeSamples                 int64   `json:"slope_samples"`
 	SecondHalfSlopeRowsPerSecond float64 `json:"second_half_slope_rows_per_second"`
 	SecondHalfSamples            int64   `json:"second_half_samples"`
-	// AtBudgetSamples: samples where one more batch would not have fitted.
+	// AtBudgetSamples applies only to historical positive row caps. Byte-pool
+	// pressure cannot be inferred from row count; see PeakWorkBytes/PeakWireBytes.
 	AtBudgetSamples int64 `json:"at_budget_samples"`
 	// Drain after the load: the first sample at or after the end of the load
 	// with no buffered rows.
@@ -163,7 +172,8 @@ func fetchCollectorSample(ctx context.Context, client *http.Client, url string, 
 // predates backlog reporting) is a failed sample, never a zero backlog.
 func ParseCollectorHealth(status int, body []byte) CollectorSample {
 	var health struct {
-		Stats *struct {
+		Ingest json.RawMessage `json:"ingest"`
+		Stats  *struct {
 			RowsInserted     uint64
 			RowsDeadLettered uint64
 			BatchesRetried   uint64
@@ -182,7 +192,19 @@ func ParseCollectorHealth(status int, body []byte) CollectorSample {
 	if health.Stats == nil || a == nil || a.BufferedRows == nil || a.PendingRows == nil || a.MaxPendingRows == nil {
 		return CollectorSample{HTTPStatus: status, Error: "collector /healthz does not report admission and writer stats (collector predates backlog reporting)"}
 	}
-	return CollectorSample{OK: true, HTTPStatus: status, BufferedRows: *a.BufferedRows, PendingRows: *a.PendingRows, MaxPendingRows: *a.MaxPendingRows,
+	var ingest struct {
+		BudgetBytes int64 `json:"budget_bytes"`
+		Work        struct {
+			InUseBytes int64 `json:"in_use_bytes"`
+		} `json:"work"`
+		Wire struct {
+			InUseBytes int64 `json:"in_use_bytes"`
+		} `json:"wire"`
+	}
+	if len(health.Ingest) > 0 && json.Unmarshal(health.Ingest, &ingest) != nil {
+		return CollectorSample{HTTPStatus: status, Error: "malformed ingest budget telemetry"}
+	}
+	return CollectorSample{Ingest: health.Ingest, IngestBudgetBytes: ingest.BudgetBytes, WorkUsedBytes: ingest.Work.InUseBytes, WireUsedBytes: ingest.Wire.InUseBytes, OK: true, HTTPStatus: status, BufferedRows: *a.BufferedRows, PendingRows: *a.PendingRows, MaxPendingRows: *a.MaxPendingRows,
 		RowsInserted: health.Stats.RowsInserted, RowsDeadLettered: health.Stats.RowsDeadLettered, BatchesRetried: health.Stats.BatchesRetried, BatchesFailed: health.Stats.BatchesFailed}
 }
 
@@ -241,6 +263,12 @@ func summariseBacklog(samples []CollectorSample, total, failed int64, interval t
 			down.EndS = s.ElapsedS
 			r.Unreachable = append(r.Unreachable, *down)
 			down = nil
+		}
+		if s.IngestBudgetBytes > 0 {
+			r.BytePoolSamples++
+			r.IngestBudgetBytes = s.IngestBudgetBytes
+			r.PeakWorkBytes = max(r.PeakWorkBytes, s.WorkUsedBytes)
+			r.PeakWireBytes = max(r.PeakWireBytes, s.WireUsedBytes)
 		}
 		r.MaxPendingRows = s.MaxPendingRows
 		if prev != nil {
