@@ -34,6 +34,7 @@ from simulate.services.agent_definition import (
     sync_provider_credentials,
 )
 from simulate.services.agent_overview import version_list_context
+from simulate.services.harness_agent_versions import connected_agent
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 from simulate.utils.eval_summary import (
     _build_template_statistics,
@@ -63,6 +64,19 @@ def _error_response(message, status_code):
     return Response(
         build_error_envelope(message, status_code=status_code),
         status=status_code,
+    )
+
+
+def _agents_page_only(agent):
+    if not connected_agent(agent.id):
+        return None
+    return Response(
+        build_error_envelope(
+            "This agent's versions are managed on its agent page",
+            status_code=status.HTTP_409_CONFLICT,
+            code="use_agents_page",
+        ),
+        status=status.HTTP_409_CONFLICT,
     )
 
 
@@ -128,6 +142,7 @@ class CreateAgentVersionView(APIView):
             201: AgentVersionCreateResponseSerializer,
             400: ApiErrorWithDetailsResponseSerializer,
             404: ApiErrorWithDetailsResponseSerializer,
+            409: ApiErrorWithDetailsResponseSerializer,
             500: ApiErrorWithDetailsResponseSerializer,
         },
         reject_unknown_fields=True,
@@ -142,6 +157,9 @@ class CreateAgentVersionView(APIView):
                 organization=getattr(request, "organization", None)
                 or request.user.organization,
             )
+            refused = _agents_page_only(agent)
+            if refused is not None:
+                return refused
 
             validated = request.validated_data
             commit_message = validated.get("commit_message", "")
@@ -255,9 +273,11 @@ class CreateAgentVersionView(APIView):
 
                 creds_input = ProviderCredentialsInput(
                     provider=validated.get("provider") or agent.provider or "",
-                    api_key=existing_api_key
-                    if preserve_existing_api_key
-                    else validated.get("api_key"),
+                    api_key=(
+                        existing_api_key
+                        if preserve_existing_api_key
+                        else validated.get("api_key")
+                    ),
                     assistant_id=validated.get("assistant_id"),
                     livekit_url=validated.get("livekit_url"),
                     livekit_api_key=(
@@ -421,6 +441,7 @@ class ActivateAgentVersionView(APIView):
         responses={
             200: AgentVersionActivateResponseSerializer,
             404: ApiErrorWithDetailsResponseSerializer,
+            409: ApiErrorWithDetailsResponseSerializer,
             500: ApiErrorWithDetailsResponseSerializer,
         },
         reject_unknown_fields=True,
@@ -436,6 +457,9 @@ class ActivateAgentVersionView(APIView):
                 or request.user.organization,
                 deleted=False,
             )
+            refused = _agents_page_only(agent)
+            if refused is not None:
+                return refused
 
             version = AgentVersion.objects.get(id=version_id, agent_definition=agent)
             version.activate()

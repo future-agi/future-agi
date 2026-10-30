@@ -49273,6 +49273,12 @@
                             "$ref": "#/definitions/ApiErrorWithDetailsResponse"
                         }
                     },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
                     "500": {
                         "description": "",
                         "schema": {
@@ -49373,6 +49379,12 @@
                         }
                     },
                     "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "409": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ApiErrorWithDetailsResponse"
@@ -122749,6 +122761,11 @@
                 },
                 "observe_project": {
                     "$ref": "#/definitions/ObserveProjectRef"
+                },
+                "connected": {
+                    "title": "Connected",
+                    "type": "boolean",
+                    "readOnly": true
                 }
             }
         },

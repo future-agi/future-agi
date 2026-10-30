@@ -2145,6 +2145,15 @@ def environment_owned(definition_id: Any) -> bool:
     ).exists()
 
 
+def connected_agent(definition_id: Any) -> bool:
+    """Whether an agent was connected on the Agents page, which alone makes its
+    versions and moves its production one."""
+    return HarnessAgentVersionRuntime._base_manager.filter(
+        agent_definition_id=definition_id,
+        agent_payload__definition_owner=CONNECTED_OWNER,
+    ).exists()
+
+
 def agent_definition_owner(job: HostedHarnessJob) -> str:
     """``environment`` for an agent made with the environment, else ``legacy``."""
     metadata = (job.payload or {}).get("metadata") or {}
@@ -2170,9 +2179,11 @@ def bound_environments(definition_id: Any) -> list[HostedHarnessJob]:
 
 
 def environment_policy(environment: HostedHarnessJob) -> str:
-    """Whether the environment follows the agent's production version or is pinned."""
+    """Whether the environment follows the agent's production version or is pinned.
+    Only one that chose to follow does; any other keeps its version and is offered
+    a new one, so a production change never moves an environment that didn't ask."""
     policy = ((environment.payload or {}).get("metadata") or {}).get(POLICY_KEY)
-    return POLICY_PINNED if policy == POLICY_PINNED else POLICY_FOLLOW
+    return POLICY_FOLLOW if policy == POLICY_FOLLOW else POLICY_PINNED
 
 
 def make_production(version: AgentVersion) -> None:

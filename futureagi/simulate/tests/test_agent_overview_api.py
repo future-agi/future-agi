@@ -1212,9 +1212,11 @@ def test_environment_rows_carry_their_policy(auth_client, organization, workspac
     agent = _agent(organization, workspace, "policies")
     following = _environment(agent, 1)
     pinned = _environment(agent, 2)
-    HostedHarnessJob.no_workspace_objects.filter(id=pinned.id).update(
-        payload={**pinned.payload, "metadata": {POLICY_KEY: "pinned"}}
-    )
+    unchosen = _environment(agent, 3)
+    for environment, policy in ((following, "follow"), (pinned, "pinned")):
+        HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+            payload={**environment.payload, "metadata": {POLICY_KEY: policy}}
+        )
 
     response = auth_client.get(
         "/simulate/api/harness-environments/", {"agent_definition_id": str(agent.id)}
@@ -1222,4 +1224,8 @@ def test_environment_rows_carry_their_policy(auth_client, organization, workspac
 
     assert response.status_code == status.HTTP_200_OK, response.content
     rows = {row["id"]: row["agent_policy"] for row in response.json()["results"]}
-    assert rows == {str(following.id): "follow", str(pinned.id): "pinned"}
+    assert rows == {
+        str(following.id): "follow",
+        str(pinned.id): "pinned",
+        str(unchosen.id): "pinned",
+    }

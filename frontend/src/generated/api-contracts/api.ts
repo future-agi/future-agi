@@ -56983,6 +56983,11 @@ export type simulateAgentDefinitionsVersionsCreateCreateResponse404 = {
   status: 404;
 };
 
+export type simulateAgentDefinitionsVersionsCreateCreateResponse409 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 409;
+};
+
 export type simulateAgentDefinitionsVersionsCreateCreateResponse500 = {
   data: ApiErrorWithDetailsResponseApi;
   status: 500;
@@ -56990,7 +56995,7 @@ export type simulateAgentDefinitionsVersionsCreateCreateResponse500 = {
 
 export type simulateAgentDefinitionsVersionsCreateCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201 | 400 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 201 | 400 | 404 | 409 | 500>;
 };
 
 export type simulateAgentDefinitionsVersionsCreateCreateResponseSuccess =
@@ -57000,6 +57005,7 @@ export type simulateAgentDefinitionsVersionsCreateCreateResponseSuccess =
 export type simulateAgentDefinitionsVersionsCreateCreateResponseError = (
   | simulateAgentDefinitionsVersionsCreateCreateResponse400
   | simulateAgentDefinitionsVersionsCreateCreateResponse404
+  | simulateAgentDefinitionsVersionsCreateCreateResponse409
   | simulateAgentDefinitionsVersionsCreateCreateResponse500
   | simulateAgentDefinitionsVersionsCreateCreateResponseDefault
 ) & {
@@ -57105,6 +57111,11 @@ export type simulateAgentDefinitionsVersionsActivateCreateResponse404 = {
   status: 404;
 };
 
+export type simulateAgentDefinitionsVersionsActivateCreateResponse409 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 409;
+};
+
 export type simulateAgentDefinitionsVersionsActivateCreateResponse500 = {
   data: ApiErrorWithDetailsResponseApi;
   status: 500;
@@ -57112,7 +57123,7 @@ export type simulateAgentDefinitionsVersionsActivateCreateResponse500 = {
 
 export type simulateAgentDefinitionsVersionsActivateCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 404 | 409 | 500>;
 };
 
 export type simulateAgentDefinitionsVersionsActivateCreateResponseSuccess =
@@ -57121,6 +57132,7 @@ export type simulateAgentDefinitionsVersionsActivateCreateResponseSuccess =
   };
 export type simulateAgentDefinitionsVersionsActivateCreateResponseError = (
   | simulateAgentDefinitionsVersionsActivateCreateResponse404
+  | simulateAgentDefinitionsVersionsActivateCreateResponse409
   | simulateAgentDefinitionsVersionsActivateCreateResponse500
   | simulateAgentDefinitionsVersionsActivateCreateResponseDefault
 ) & {

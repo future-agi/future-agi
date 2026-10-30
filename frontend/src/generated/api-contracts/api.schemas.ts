@@ -16044,6 +16044,7 @@ export interface AgentDefinitionDetailResponseApi {
   readonly environment_count?: number;
   readonly observability_enabled?: boolean;
   observe_project?: ObserveProjectRefApi;
+  readonly connected?: boolean;
 }
 
 export type AgentBuildPreflightCheckApiStatus =

@@ -14,6 +14,7 @@ from simulate.models import (
 from simulate.services.agent_setup import store_agent
 from simulate.services.harness_agent_versions import (
     CONNECTED_OWNER,
+    POLICY_FOLLOW,
     POLICY_KEY,
     POLICY_PINNED,
     activate_agent_version,
@@ -86,16 +87,24 @@ def _completed(environment, version=None):
     return environment
 
 
-def _pinned(environment):
+def _with_policy(environment, policy):
     environment.payload = {
         **environment.payload,
         "metadata": {
             **environment.payload.get("metadata", {}),
-            POLICY_KEY: POLICY_PINNED,
+            POLICY_KEY: policy,
         },
     }
     environment.save(update_fields=["payload", "updated_at"])
     return environment
+
+
+def _pinned(environment):
+    return _with_policy(environment, POLICY_PINNED)
+
+
+def _following(environment):
+    return _with_policy(environment, POLICY_FOLLOW)
 
 
 def test_a_connected_version_is_the_agents_own_and_a_pass_makes_it_production(agent):
@@ -151,8 +160,8 @@ def test_production_moves_following_environments_and_offers_pinned_ones(agent):
         "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
     ):
         _preflight(first)
-    following = _built_from(
-        _completed(_environment(agent, 1), first), first, source_agent()
+    following = _following(
+        _built_from(_completed(_environment(agent, 1), first), first, source_agent())
     )
     pinned = _pinned(_completed(_environment(agent, 2), first))
     assert environment_policy(following) == "follow"
@@ -186,6 +195,39 @@ def test_production_moves_following_environments_and_offers_pinned_ones(agent):
     assert {entry["environment_id"]: entry["outcome"] for entry in report} == {
         str(following.id): "activated",
         str(pinned.id): "pinned",
+    }
+
+
+def test_production_offers_an_environment_that_never_chose_to_follow(agent):
+    first = _connect(agent)
+    with patch(
+        "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
+    ):
+        _preflight(first)
+    unchosen = _built_from(
+        _completed(_environment(agent, 1), first), first, source_agent()
+    )
+    assert POLICY_KEY not in unchosen.payload.get("metadata", {})
+    assert environment_policy(unchosen) == POLICY_PINNED
+
+    second = _connect(agent, parent=first, commit="b", trigger=Trigger.SYNC)
+    assert store_agent(
+        agent_version_id=second.id, agent=source_agent(), sdk_version="0.2.3"
+    )
+    with patch(
+        "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
+    ) as nudge:
+        _preflight(second)
+
+    unchosen.refresh_from_db()
+    assert unchosen.agent_version_id == first.id
+    assert [
+        (str(call.args[0]), call.kwargs.get("default_moved"))
+        for call in nudge.call_args_list
+    ] == [(str(unchosen.id), False)]
+    report = _runtime(second).preflight_report["activation"]
+    assert {entry["environment_id"]: entry["outcome"] for entry in report} == {
+        str(unchosen.id): "pinned",
     }
 
 
@@ -229,8 +271,8 @@ def test_a_major_change_is_offered_to_a_following_environment_not_applied(agent)
         "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
     ):
         _preflight(first)
-    following = _built_from(
-        _completed(_environment(agent, 1), first), first, source_agent()
+    following = _following(
+        _built_from(_completed(_environment(agent, 1), first), first, source_agent())
     )
     second = _connect(agent, parent=first, commit="b", trigger=Trigger.SYNC)
     document = source_agent()
@@ -271,8 +313,8 @@ def test_a_version_that_was_never_read_is_offered_not_applied(agent):
         "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
     ):
         _preflight(first)
-    following = _built_from(
-        _completed(_environment(agent, 1), first), first, source_agent()
+    following = _following(
+        _built_from(_completed(_environment(agent, 1), first), first, source_agent())
     )
     second = _connect(agent, parent=first, commit="b", trigger=Trigger.SYNC)
 
@@ -301,8 +343,8 @@ def test_returning_production_to_an_earlier_version_carries_followers_back(agent
         "simulate.services.harness_versioning.nudges.schedule_environment_nudge"
     ):
         _preflight(first)
-    following = _built_from(
-        _completed(_environment(agent, 1), first), first, source_agent()
+    following = _following(
+        _built_from(_completed(_environment(agent, 1), first), first, source_agent())
     )
     second = _connect(agent, parent=first, commit="b", trigger=Trigger.SYNC)
     assert store_agent(

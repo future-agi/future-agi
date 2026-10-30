@@ -178,6 +178,7 @@ def test_production_needs_a_passed_check_then_moves_following_environments(
             "metadata": {
                 **following.payload.get("metadata", {}),
                 BUILD_PIN_KEY: str(production.id),
+                POLICY_KEY: "follow",
             },
         }
     )
@@ -402,3 +403,24 @@ def test_another_organization_sees_none_of_the_version_endpoints(
         == status.HTTP_404_NOT_FOUND
     )
     assert agent.versions.count() == 1
+
+
+def test_the_old_agent_page_leaves_a_connected_agents_versions_alone(
+    auth_client, agent, production
+):
+    created = auth_client.post(
+        f"{AGENTS}{agent.id}/versions/create/",
+        {"commit_message": "from the old page"},
+        format="json",
+    )
+    activated = auth_client.post(
+        f"{AGENTS}{agent.id}/versions/{production.id}/activate/"
+    )
+
+    for response in (created, activated):
+        assert response.status_code == status.HTTP_409_CONFLICT, response.content
+        assert response.json()["code"] == "use_agents_page"
+    assert agent.versions.count() == 1
+    production.refresh_from_db()
+    assert production.status == "active"
+    assert auth_client.get(f"{AGENTS}{agent.id}/").json()["connected"] is True

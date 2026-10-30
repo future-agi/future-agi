@@ -27419,6 +27419,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           404: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
+          409: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
           500: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
@@ -27465,6 +27468,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/AgentVersionActivateResponse",
           },
           404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          409: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           500: {
@@ -48728,6 +48734,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         observe_project: {
           $ref: "#/definitions/ObserveProjectRef",
+        },
+        connected: {
+          title: "Connected",
+          type: "boolean",
+          readOnly: true,
         },
       },
     },

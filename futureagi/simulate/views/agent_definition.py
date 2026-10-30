@@ -53,6 +53,7 @@ from simulate.services.agent_overview import (
     observe_project,
     recent_agent_runs,
 )
+from simulate.services.harness_agent_versions import connected_agent
 from simulate.services.production_project import (
     ProductionProjectError,
     link_production_project,
@@ -472,6 +473,7 @@ class AgentDefinitionDetailView(APIView):
                     "environment_count": agent._environment_count,
                     "observability_enabled": observability_on(agent),
                     "observe_project": observe_project(agent, agent._agent_kind),
+                    "connected": connected_agent(agent.id),
                 },
                 status=status.HTTP_200_OK,
             )

@@ -9,6 +9,7 @@ import Iconify from "src/components/iconify";
 import { useAgentDetailsStore } from "./store/agentDetailsStore";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import { useAgentDefinitionVersions } from "src/api/agent-definition/agent-definition-version";
+import { useAgentDetail } from "src/api/agents/agentDetail";
 import SvgColor from "src/components/svg-color";
 import CreateAgentScenarioHelp from "./CreateAgentScenarioHelp";
 
@@ -25,6 +26,7 @@ const AgentDetailsView = () => {
 
   const { data, fetchNextPage, hasNextPage, isFetchingNextPage, isLoading } =
     useAgentDefinitionVersions({ selectedAgentId: agentDefinitionId });
+  const agent = useAgentDetail(agentDefinitionId);
 
   // To access the flattened results:
   const versions = useMemo(
@@ -143,6 +145,8 @@ const AgentDetailsView = () => {
             <VersionsListSkeleton />
           ) : (
             <VersionManagement
+              agentId={agentDefinitionId}
+              connected={!!agent.data?.connected}
               fetchNextVersions={fetchNextPage}
               hasNextVersions={hasNextPage}
               isFetchingNextVersions={isFetchingNextPage}

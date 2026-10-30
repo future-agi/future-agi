@@ -3,17 +3,22 @@ import React, { useEffect, useState } from "react";
 import Iconify from "src/components/iconify";
 import AddNewVersionDrawer from "./AddNewVersionDrawer";
 import PropTypes from "prop-types";
+import { useNavigate } from "react-router";
+import { agentDetailPath } from "src/sections/agent-playground/connected/detail/agentDetailTabs";
 import { useAgentDetailsStore } from "../store/agentDetailsStore";
 import { useScrollEnd } from "src/hooks/use-scroll-end";
 import VersionList from "src/components/VersionList/VersionList";
 
 const VersionManagement = ({
+  agentId,
+  connected = false,
   versions,
   fetchNextVersions,
   hasNextVersions,
   isFetchingNextVersions,
 }) => {
   const theme = useTheme();
+  const navigate = useNavigate();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const { selectedVersion, setSelectedVersion, setLatestVersionNumber } =
     useAgentDetailsStore();
@@ -73,19 +78,27 @@ const VersionManagement = ({
           }}
           startIcon={
             <Iconify
-              icon="octicon:plus-24"
+              icon={
+                connected ? "solar:arrow-right-up-linear" : "octicon:plus-24"
+              }
               color="background.paper"
               sx={{ width: 20, height: 20 }}
             />
           }
-          onClick={() => setDrawerOpen(true)}
+          onClick={() =>
+            connected
+              ? navigate(agentDetailPath(agentId, "versions"))
+              : setDrawerOpen(true)
+          }
         >
           <Typography
             typography="s2"
             fontWeight="fontWeightMedium"
             color="background.paper"
           >
-            Create new version
+            {connected
+              ? "Manage versions on the agent page"
+              : "Create new version"}
           </Typography>
         </Button>
       </Box>
@@ -110,6 +123,8 @@ const VersionManagement = ({
 };
 
 VersionManagement.propTypes = {
+  agentId: PropTypes.string,
+  connected: PropTypes.bool,
   versions: PropTypes.array,
   fetchNextVersions: PropTypes.func,
   hasNextVersions: PropTypes.bool,

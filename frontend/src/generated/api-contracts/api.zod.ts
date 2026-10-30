@@ -32009,6 +32009,7 @@ export const SimulateAgentDefinitionsReadResponse = zod.object({
       name: zod.string().min(1),
     })
     .optional(),
+  connected: zod.boolean().optional(),
 });
 
 /**
