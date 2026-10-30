@@ -30,7 +30,6 @@ import {
   QueryClient,
   QueryClientProvider,
 } from "@tanstack/react-query";
-import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import { BrowserAgent } from "@newrelic/browser-agent/loaders/browser-agent";
 import { newRelicTracing } from "./newrelic";
 import {
@@ -49,6 +48,7 @@ import { setRecaptchaExecutor } from "./utils/recaptchaService";
 import { AudioPlaybackProvider } from "./components/custom-audio/context-provider/AudioPlaybackContext";
 import { handleError } from "./utils/queryErrorHandler";
 import { syncMixpanelSessionReplay } from "./utils/Mixpanel";
+import ObserveQueryDevtools from "./components/ObserveQueryDevtools";
 
 // ----------------------------------------------------------------------
 const queryClient = new QueryClient({
@@ -173,7 +173,7 @@ export default function App() {
         </OrganizationProvider>
       </AuthProvider>
       {REACT_QUERY_DEVTOOLS_ENABLED && (
-        <ReactQueryDevtools initialIsOpen={false} />
+        <ObserveQueryDevtools />
       )}
     </QueryClientProvider>
   );
