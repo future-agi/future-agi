@@ -206,6 +206,16 @@ class RuntimeComponentWorld:
         life.complete_restore = life.complete_success = finalize
         life._verification_window = lambda installation: world.event('retained_evidence_window')
         life.baseline = NS(evidence=lambda target: target, validate_success_observation=lambda *args: world.event('success_validate'))
+        # Same semantics as AutomaticLifecycle: renew, then (re)verify. Looked
+        # up dynamically so per-test replacements of the parts still apply.
+        life.renew_verification = lambda installation: life._verification_window(installation)
+        def target_evidence(installation):
+            life.renew_verification(installation)
+            return life.baseline.evidence(life.intent.target)
+        def validate_success(installation, observation):
+            life.renew_verification(installation)
+            life.baseline.validate_success_observation(life.intent, observation)
+        life.target_evidence, life.validate_success = target_evidence, validate_success
         life.retain_success = mock.Mock()
         life._observation = lambda *args: NS(facts=NS(now=world.now, runtime_observation=runtime_observation))
         life.verify_current = lambda *args: NS(facts=NS(runtime_observation=runtime_observation))

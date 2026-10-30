@@ -2034,11 +2034,11 @@ class Updater:
             self._guard('after_backup')
             self._guard('before_env_commit')
             observe = lambda runtime: runtime.observation_session(lifecycle,
-                lifecycle.baseline.evidence(lifecycle.intent.target), 'success', policy, decision.estimate)
+                lifecycle.target_evidence(self.installation), 'success', policy, decision.estimate)
             with self.start_automatic_target_locked(ledger=ledger, plan=plan,
                     estimate=decision.estimate, observe=observe) as (runtime, roster, session):
                 observation = session.result
-                lifecycle.baseline.validate_success_observation(lifecycle.intent, observation)
+                lifecycle.validate_success(self.installation, observation)
                 # Retain the FULL validated observation before acceptance. A6
                 # continues through slow validation/capture, not only startup.
                 session.check()

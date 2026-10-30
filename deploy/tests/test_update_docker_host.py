@@ -61,6 +61,13 @@ class SyntheticHost:
             value = {}
         return subprocess.CompletedProcess(args, 0, json.dumps(value), "")
 
+    @staticmethod
+    def mount(spec):
+        # What docker inspect reports for a requested read-only bind.
+        fields = dict(item.split("=", 1) for item in spec.split(",") if "=" in item)
+        return {"Type": fields["type"], "Source": fields["src"], "Destination": fields["dst"],
+                "RW": "readonly" not in spec.split(",")}
+
     def runner(self, args, **kwargs):
         self.calls.append((args, kwargs))
         if args[1] == "create":
@@ -69,7 +76,8 @@ class SyntheticHost:
                            "Cmd": ["-I", "-B", "-S", "-"]},
                 "HostConfig": {"Tmpfs": {args[i+1].split(':')[0]: args[i+1].split(':',1)[1]
                     for i, arg in enumerate(args) if arg == '--tmpfs'}},
-                "Mounts": [], "State": {"Status": "created", "Running": False}}
+                "Mounts": [self.mount(args[i+1]) for i, arg in enumerate(args) if arg == "--mount"],
+                "State": {"Status": "created", "Running": False}}
             return subprocess.CompletedProcess(args, self.returncode, "c" * 64 + "\n", "")
         if args[1] == "start":
             return subprocess.CompletedProcess(args, self.returncode, self.document, "")
@@ -184,11 +192,113 @@ class CapacityTests(unittest.TestCase):
         with patch.object(host, "daemon_space_available", return_value=98765):
             self.assertIsNone(self.inspect().available_bytes)
 
-    def test_native_unknown_is_never_client_disk_fallback(self):
+    def test_native_unknown_without_helper_is_never_client_disk_fallback(self):
         self.inst.info["Driver"] = "overlay2"
         with patch.object(host, "daemon_space_available", return_value=None):
-            self.assertEqual(self.inspect().status, "unsupported")
+            result = host.inspect_daemon_storage(self.inst, self.registration)
+        self.assertEqual((result.status, result.backend), ("unsupported", "native-overlay2"))
         self.assertFalse(any(isinstance(row, tuple) for row in self.inst.calls))
+
+    def overlay2_helper(self):
+        self.inst.info.update(Driver="overlay2", DriverStatus=[["Backing Filesystem", "extfs"]])
+        self.inst.document = json.dumps({"schema_version": 1, "backend": "helper-overlay2",
+                                         "stores": {"overlay2": dict(ROW, available_bytes=4242)}})
+
+    def test_unprivileged_overlay2_is_measured_by_the_fixed_daemon_side_probe(self):
+        # A non-root installation user cannot read dockerd's ns/mnt or /var/lib/docker.
+        self.overlay2_helper()
+        with patch.object(host, "daemon_space_available", return_value=None):
+            result = self.inspect()
+        self.assertEqual((result.status, result.available_bytes, result.backend), ("available", 4242, "helper-overlay2"))
+        self.assertEqual([s.role for s in result.stores], ["overlay2"])
+        create, start = [row for row in self.inst.calls if isinstance(row, tuple)]
+        mounts = [create[0][i+1] for i, arg in enumerate(create[0]) if arg == "--mount"]
+        self.assertEqual(mounts, [
+            "type=bind,src=/proc,dst=/host-proc,readonly,bind-propagation=rprivate",
+            "type=bind,src=/var/lib/docker/overlay2,dst=/daemon-store,readonly,bind-propagation=rprivate,bind-recursive=disabled"])
+        for flag, value in (("--network", "none"), ("--cap-drop", "ALL"), ("--pull", "never")):
+            self.assertEqual(create[0][create[0].index(flag) + 1], value)
+        self.assertNotIn("--privileged", create[0])
+        self.assertEqual(start[1]["input"], host.fixed_source("daemon_overlay2.py"))
+        self.assertTrue(any(isinstance(row, list) and row[:2] == ["rm", "-f"] for row in self.inst.calls))
+
+    def test_overlay2_helper_refuses_other_roots_snapshotters_documents_and_mounts(self):
+        cases = [
+            ("root", lambda: self.inst.info.update(DockerRootDir="/srv/docker")),
+            ("snapshotter", lambda: self.inst.info.update(DriverStatus=[["driver-type", "io.containerd.snapshotter.v1"]])),
+            ("no helper", None),
+        ]
+        for label, change in cases:
+            with self.subTest(label=label):
+                self.setUp(); self.overlay2_helper()
+                if change: change()
+                with patch.object(host, "daemon_space_available", return_value=None):
+                    result = self.inspect() if label != "no helper" else host.inspect_daemon_storage(self.inst, self.registration)
+                self.assertEqual(result.status, "unsupported")
+                self.assertFalse(any(isinstance(row, tuple) for row in self.inst.calls))
+        for document in ({"schema_version": 1, "backend": "external-containerd-overlayfs",
+                          "stores": {"overlay2": ROW}},
+                         {"schema_version": 1, "backend": "helper-overlay2",
+                          "stores": {"content": ROW, "snapshots": ROW}}):
+            with self.subTest(document=document["backend"]):
+                self.setUp(); self.overlay2_helper(); self.inst.document = json.dumps(document)
+                with patch.object(host, "daemon_space_available", return_value=None):
+                    self.assertEqual(self.inspect().status, "unknown")
+        # A bind that is writable or from another source is never started.
+        self.setUp(); self.overlay2_helper()
+        self.inst.mount = lambda spec: dict(SyntheticHost.mount(spec), RW=True)
+        with patch.object(host, "daemon_space_available", return_value=None):
+            self.assertEqual(self.inspect().status, "unknown")
+        self.assertFalse(any(isinstance(c, tuple) and c[0][1] == "start" for c in self.inst.calls))
+
+
+class Overlay2ProbeTests(unittest.TestCase):
+    """Run the pinned probe's own logic against a synthetic /proc and store."""
+
+    def run_probe(self, *, argv=("/usr/bin/dockerd", "-H", "fd://"), device=None, filesystem="ext4",
+                  readonly=True, dockerds=1, mounted_at="/var/lib/docker"):
+        import os, tempfile
+        source = host.fixed_source("daemon_overlay2.py").decode()
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            proc, store = base / "proc", base / "store"
+            store.mkdir()
+            info = store.stat()
+            actual = "{}:{}".format(os.major(info.st_dev), os.minor(info.st_dev))
+            for pid in range(100, 100 + dockerds):
+                d = proc / str(pid); d.mkdir(parents=True)
+                (d / "comm").write_bytes(b"dockerd\n")
+                (d / "cmdline").write_bytes("\0".join(argv).encode() + b"\0")
+                (d / "mountinfo").write_text(
+                    "1 0 0:1 / / rw - overlay overlay rw\n"
+                    "2 1 {} / {} rw,relatime - {} /dev/root rw\n".format(device or actual, mounted_at, filesystem))
+            (proc / "self").mkdir(parents=True)  # non-numeric entries are skipped
+            namespace = {"__name__": "probe"}
+            exec(compile(source, "daemon_overlay2.py", "exec"), namespace)
+            real = namespace["Path"]
+            namespace["Path"] = lambda value: (proc if value == "/host-proc" else store if value == "/daemon-store"
+                                               else real(value))
+            flag = os.ST_RDONLY if readonly else 0
+            statvfs = lambda path: SimpleNamespace(f_flag=flag, f_bavail=10, f_frsize=4096)
+            namespace["os"] = SimpleNamespace(**{k: getattr(os, k) for k in ("major", "minor", "ST_RDONLY")},
+                                              statvfs=statvfs)
+            return namespace["observe"](), actual
+
+    def test_measures_the_store_on_the_device_dockerd_mounts_at_its_data_root(self):
+        document, device = self.run_probe()
+        self.assertEqual(document["backend"], "helper-overlay2")
+        self.assertEqual(set(document["stores"]), {"overlay2"})
+        row = document["stores"]["overlay2"]
+        self.assertEqual((row["device"], row["filesystem"], row["available_bytes"]), (device, "ext4", 40960))
+
+    def test_mismatch_or_ambiguity_refuses(self):
+        cases = {"other device": dict(device="254:99"), "unsupported filesystem": dict(filesystem="tmpfs"),
+                 "writable": dict(readonly=False), "two dockerds": dict(dockerds=2), "no dockerd": dict(dockerds=0),
+                 "other data root": dict(argv=("/usr/bin/dockerd", "--data-root", "/srv/docker")),
+                 "legacy graph flag": dict(argv=("/usr/bin/dockerd", "-g", "/srv/docker"))}
+        for label, change in cases.items():
+            with self.subTest(label=label), self.assertRaises(ValueError):
+                self.run_probe(**change)
 
 
 class RunnerTests(unittest.TestCase):

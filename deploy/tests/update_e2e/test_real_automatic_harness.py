@@ -228,8 +228,9 @@ class NativeLauncherTests(unittest.TestCase):
         harness.env['PYTHON'] = 'original-interpreter'
         with patch.object(real, "native_ci", return_value=True), \
                 patch.object(real, "native_launcher_path", return_value=os.defpath) as launcher, \
-                patch.object(harness, "command", side_effect=lambda *args, **kwargs: dict(harness.env)):
-            observed = harness.bin_update('setup', '--yes')
+                patch.object(harness, "command", side_effect=lambda *args, **kwargs: real.subprocess.CompletedProcess(
+                    args, 0, json.dumps(dict(harness.env)).encode())):
+            observed = json.loads(harness.bin_update('setup', '--yes').stdout)
         launcher.assert_called_once()
         self.assertEqual(observed['PATH'], os.defpath)
         self.assertEqual(observed['PYTHON'], real.sys.executable)
@@ -239,9 +240,30 @@ class NativeLauncherTests(unittest.TestCase):
     def test_setup_command_bound_is_supplied_by_the_caller(self):
         harness = real.ProductHarness(real.HOME / "fixture", Path.cwd(), "fagi-upd-e2e-real-unit")
         with patch.object(real, "native_ci", return_value=False), patch.object(harness, "command") as command:
+            command.return_value.returncode = 0
             harness.bin_update('setup', '--yes', timeout=1680)
             harness.bin_update('setup', '--deactivate', '--yes')
         self.assertEqual([call.kwargs['timeout'] for call in command.call_args_list], [1680, 600])
+
+    def test_setup_refusal_keeps_only_its_closed_reason_code(self):
+        harness = real.ProductHarness(real.HOME / "fixture", Path.cwd(), "fagi-upd-e2e-real-unit")
+        harness.sequence = 60
+        private = b'Check host Python 3.9+ PRIVATE-TOKEN /home/runner/secret\n'
+        cases = ((b'Setup incomplete: restore_capacity_unknown. Unattended work was not activated.\n' + private,
+                  real.SetupIncomplete, 'command-0060 failed: setup incomplete: restore_capacity_unknown'),
+                 (b'Setup incomplete: PRIVATE-TOKEN. x\n' + private, RuntimeError,
+                  'command-0060 failed; see private command logs'),
+                 (private, RuntimeError, 'command-0060 failed; see private command logs'))
+        for stdout, kind, message in cases:
+            with self.subTest(message=message), patch.object(real, "native_ci", return_value=False), \
+                    patch.object(harness, "command", return_value=real.subprocess.CompletedProcess([], 3, stdout)):
+                with self.assertRaises(RuntimeError) as raised:
+                    harness.bin_update('setup', '--yes')
+                self.assertIs(type(raised.exception), kind)
+                self.assertEqual(str(raised.exception), message)
+        with patch.object(real, "native_ci", return_value=False), \
+                patch.object(harness, "command", return_value=real.subprocess.CompletedProcess([], 3, private)):
+            self.assertEqual(harness.bin_update('setup', '--yes', check=False).returncode, 3)
 
 
 class ArchiveTests(unittest.TestCase):

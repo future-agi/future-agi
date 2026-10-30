@@ -29,6 +29,7 @@ from .orchestrator import require
 MAX_OUTPUT = 4 * 1024 * 1024
 SOURCE_DIGESTS = {
     "daemon_storage.py": "5ff3278b2a92ea7a0fef2223c9f1c69806859504e02fae14e27ce955e547b8ef",
+    "daemon_overlay2.py": "575b9968ad17d8126bf300ec9f029d34803a17822b595cd94e5d6cbd0ed4b84d",
     "standalone.py": "4299b2283a836dfa56cc5eb68ff680c5a175250dab5fe043119c75958cd57131",
     "volume_storage.py": "b4be2088a0fdf80fa82b3d92b0dd7766f9d73706cebe0a84e2a5cef5ab69a31a",
     "migration-apps.json": "136402e5cb9ea3a6cbf401749756137924e9847af42e98a7f8f7c103632f6e38",
@@ -210,6 +211,21 @@ class StorageObservation:
     stores: Tuple[StorageFilesystem, ...] = ()
 
 
+# Fixed daemon-side storage probes: backend -> (probe, read-only binds, stores).
+# /proc entries read by the probes (comm, cmdline, mountinfo, stat) are world-
+# readable. A store bind is non-recursive so no container overlay comes along.
+_STORE = ",readonly,bind-propagation=rprivate"
+DAEMON_STORAGE_HELPERS = {
+    "external-containerd-overlayfs": ("daemon_storage.py", (
+        ("/proc", "/host-proc", _STORE), ("/etc/docker", "/host-docker-config", _STORE),
+        ("/etc/containerd", "/host-containerd-config", _STORE),
+        ("/var/lib/containerd", "/daemon-store", _STORE)), {"content", "snapshots"}),
+    "helper-overlay2": ("daemon_overlay2.py", (
+        ("/proc", "/host-proc", _STORE),
+        ("/var/lib/docker/overlay2", "/daemon-store", _STORE + ",bind-recursive=disabled")), {"overlay2"}),
+}
+
+
 def inspect_daemon_storage(installation, registration, *, helper_image_id=None, timeout=45):
     """No helper ID means native-only. A missing/unsupported backend is explicit.
 
@@ -230,27 +246,32 @@ def inspect_daemon_storage(installation, registration, *, helper_image_id=None, 
             require(all(before.get(key) == after.get(key) for key in ("Driver", "DriverStatus", "DockerRootDir", "Containerd")))
             if type(available) is int and available >= 0:
                 return StorageObservation("available", available, backend)
-            return StorageObservation("unsupported", None, backend)
-        if not (before.get("OSType") == "linux" and before.get("Driver") == "overlayfs"
+            # The ordinary installation user cannot read a root dockerd's mount
+            # namespace or traverse /var/lib/docker. Measure from the daemon side.
+            if not (before.get("OSType") == "linux" and before.get("DockerRootDir") == "/var/lib/docker"
+                    and not any("containerd" in str(row) for row in before.get("DriverStatus", []))):
+                return StorageObservation("unsupported", None, backend)
+            backend = "helper-overlay2"
+        elif (before.get("OSType") == "linux" and before.get("Driver") == "overlayfs"
                 and ["driver-type", "io.containerd.snapshotter.v1"] in before.get("DriverStatus", [])
                 and before.get("DockerRootDir") == "/var/lib/docker" and type(before.get("Containerd")) is dict
                 and before["Containerd"].get("Address") == "/run/containerd/containerd.sock"):
+            backend = "external-containerd-overlayfs"
+        else:
             return StorageObservation("unsupported", None, backend)
-        backend = "external-containerd-overlayfs"
         if not isinstance(helper_image_id, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", helper_image_id):
             return StorageObservation("unsupported", None, backend)
+        probe, binds, expected_stores = DAEMON_STORAGE_HELPERS[backend]
         image = docker_json(inst, "image", "inspect", helper_image_id)
         require(isinstance(image, list) and len(image) == 1 and isinstance(image[0], dict) and image[0]["Id"] == helper_image_id
                 and image[0].get("Os") == "linux", ReasonCode.IMAGE_DIGEST_MISMATCH)
-        source = fixed_source("daemon_storage.py")
+        source = fixed_source(probe)
         name = "fagi-upd-e2e-observe-daemon-" + uuid.uuid4().hex
         args = [*inst.docker, "create", "--pull", "never", "--name", name,
                 "--no-healthcheck", "--restart", "no", "--network", "none", "--read-only",
                 "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
                 "--pids-limit", "16", "--memory", "64m", "--cpus", "0.5", "--user", "0:0"]
-        binds = (("/proc", "/host-proc"), ("/etc/docker", "/host-docker-config"),
-                 ("/etc/containerd", "/host-containerd-config"), ("/var/lib/containerd", "/daemon-store"))
-        targets = {dest for _, dest in binds}
+        targets = {dest for _, dest, _ in binds}
         unrelated = set((image[0].get("Config") or {}).get("Volumes") or {}) - targets
         for path in sorted(unrelated):
             require(type(path) is str and path.startswith("/") and path != "/" and "," not in path
@@ -258,8 +279,8 @@ def inspect_daemon_storage(installation, registration, *, helper_image_id=None, 
                     and not any(path.startswith(dest + "/") or dest.startswith(path.rstrip("/") + "/")
                                 for dest in targets), ReasonCode.UNSUPPORTED_INSTALLATION)
             args += ["--tmpfs", path + ":rw,noexec,nosuid,nodev,size=1m"]
-        for src, dest in binds:
-            args += ["--mount", "type=bind,src=" + src + ",dst=" + dest + ",readonly,bind-propagation=rprivate"]
+        for src, dest, options in binds:
+            args += ["--mount", "type=bind,src=" + src + ",dst=" + dest + options]
         command = ["-I", "-B", "-S", "-"]
         args += ["--entrypoint", "/usr/local/bin/python3", "-i", helper_image_id, *command]
         created = inst.runner(args, cwd=str(inst.root), env=inst.subprocess_env(), text=True, capture_output=True)
@@ -274,6 +295,8 @@ def inspect_daemon_storage(installation, registration, *, helper_image_id=None, 
                 and rows[0]["Config"].get("Cmd") == command
                 and set((rows[0].get('HostConfig') or {}).get('Tmpfs') or {}) == unrelated
                 and not any(m.get('Type') == 'volume' for m in rows[0].get('Mounts', []))
+                and {(m.get('Source'), m.get('Destination'), m.get('RW')) for m in rows[0].get('Mounts', [])
+                     if m.get('Type') == 'bind'} == {(src, dest, False) for src, dest, _ in binds}
                 and rows[0]["State"]["Status"] == "created" and not rows[0]["State"]["Running"],
                 ReasonCode.UNSUPPORTED_INSTALLATION)
         result = inst.runner([*inst.docker, "start", "-a", "-i", cid], cwd=str(inst.root),
@@ -283,7 +306,7 @@ def inspect_daemon_storage(installation, registration, *, helper_image_id=None, 
         require(set(document) == {"schema_version", "backend", "stores"}
                 and type(document["schema_version"]) is int and document["schema_version"] == 1
                 and document["backend"] == backend and type(document["stores"]) is dict
-                and set(document["stores"]) == {"content", "snapshots"})
+                and set(document["stores"]) == expected_stores)
         values = []
         for row in document["stores"].values():
             require(type(row) is dict and set(row) == {"device", "filesystem", "backing_sha256", "available_bytes"}

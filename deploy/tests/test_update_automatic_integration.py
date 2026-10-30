@@ -527,6 +527,17 @@ def process_tick(root, artifacts, operation='tick', fault='', hooks=None):
             traceback.print_exception(type(exc), exc, exc.__traceback__)
             return refusal(exc)
         runner._refusal = diagnosed_refusal
+        if fault == 'slow_resolution':
+            # Resolving the registered installation is several separately bounded
+            # probes. Model one that outlasts the verifier window, not the budget.
+            resolve = runner.installation_factory
+            def slow_resolve(*args, **kwargs):
+                if not (root/'slow-resolution.fixture').exists():
+                    real, shift = time.monotonic, settings.automation_policy.probe_timeout_seconds + 1
+                    time.monotonic = lambda: real() + shift
+                    (root/'slow-resolution.fixture').write_text(str(shift))
+                return resolve(*args, **kwargs)
+            runner.installation_factory = slow_resolve
         if hooks.get('runner'): hooks['runner'](runner)
         original_write = store._write
         original_sync = runner.engine_state.sync_finished
@@ -922,6 +933,18 @@ class AutomaticIntegrationTests(unittest.TestCase):
         self.assertEqual(self.store.read_state().failed_target_latch, state.failed_target_latch)
         public = json.loads((self.root/'public'/self.store.read_registration().binding.slot_id/'status.json').read_bytes())
         self.assertEqual(public['last_run']['restore_result'], 'verified')
+
+    def test_restore_replay_reverifies_after_slow_installation_resolution(self):
+        from deploy.update.recovery import RecoveryLedger
+        self.worker(fault='restore_after_cas', expected=78)
+        directory, = (self.root/'backups').glob('*/recovery.json')
+        self.assertEqual(RecoveryLedger.open(directory.parent).phase, 'restore_verified')
+        self.store.change_control('disable', now())
+        result = self.worker(fault='slow_resolution')
+        self.assertTrue((self.root/'slow-resolution.fixture').exists())
+        self.assertEqual(result['disposition'], 'restored', result)
+        self.assertEqual(RecoveryLedger.open(directory.parent).phase, 'restored')
+        self.assertIsNone(self.store.read_state().active_attempt_id)
 
     def test_failed_B_latches_then_exact_A_C_row_advances_without_reenrollment(self):
         result = self.worker(fault='readiness_failed')

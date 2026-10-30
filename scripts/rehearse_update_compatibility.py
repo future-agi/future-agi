@@ -1561,6 +1561,16 @@ def failure_diagnostics(exc, executor=None, *, completed_rows=0):
     if isinstance(exc, RehearsalError):
         # Only this producer's own fixed diagnostics, not third-party stderr.
         result['assertion_detail'] = str(exc)[:512]
+    if getattr(exc, 'reason_code', None) is not None:
+        # The updater check that refused, as basename:line; never locals or paths.
+        package = Path(sys.modules['deploy.update'].__file__).resolve().parent
+        trace = exc.__traceback__
+        while trace is not None:
+            frame_code = trace.tb_frame.f_code
+            if (Path(frame_code.co_filename).resolve().is_relative_to(package)
+                    and frame_code.co_name not in ('require', '_require', 'need', '_need')):
+                result['refusal_site'] = Path(frame_code.co_filename).name + ':' + str(trace.tb_lineno)
+            trace = trace.tb_next
     if isinstance(exc, ObservedSpoolWitnessError):
         result['assertion_detail'] = exc.safe_detail
     if isinstance(exc, ResourceObservationError):
@@ -2074,7 +2084,8 @@ def _milestone_outcome(directory):
             if type(record.get('executed_stages')) is list else [],
         cleanup_verified=record.get('cleanup_verified') is True,
         failure=None if failure is None else {k: str(failure[k])[:512] for k in
-            ('stage', 'reason', 'refusal_code', 'exception_type', 'detail', 'assertion_detail') if k in failure})
+            ('stage', 'reason', 'refusal_code', 'refusal_site', 'exception_type', 'detail', 'assertion_detail')
+            if k in failure})
 
 
 def qualify(argv):

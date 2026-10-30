@@ -335,6 +335,38 @@ class EnrollmentTests(unittest.TestCase):
             self.assertEqual((self.store.path / file).stat().st_mode & 0o777, 0o600)
         self.assertFalse((self.store.path / 'facts.json').exists())
 
+    def test_scheduled_engine_compares_enrolled_settings_with_the_activated_setup_configuration(self):
+        from dataclasses import replace as replace_policy
+        from deploy.update.apply import Updater
+        from deploy.update.orchestrator import guarded_updater
+        from deploy.update.processes import ProcessSupervisor
+        from deploy.update.receipt import StateDir
+        self.assertEqual(self.setup().state, 'active')
+        self.assertFalse((self.root / 'update.conf').exists())  # setup never writes legacy settings
+        config = en.load_setup_configuration(self.store)
+        settings = config.as_settings()  # exactly what `bin/update run` gives HostRunner
+
+        def build(values):
+            supervisor = ProcessSupervisor(values.automation_policy, docker_context='dedicated-context', environment={})
+            installation = SimpleNamespace(runner=supervisor, root=self.root, production=False)
+            guard = SimpleNamespace(store=self.store, automatic=None, context=lambda engine: None)
+            return guarded_updater(installation, values, StateDir(self.root), guard, supervisor)
+
+        self.assertIsInstance(build(settings), Updater)
+        # Real drift from the activated configuration still refuses.
+        from deploy.update.settings import Settings
+        changed = Settings(dict(settings._values, FUTURE_AGI_UPDATE_INTERVAL_SECONDS='600'), settings.sources)
+        with self.assertRaises(GuardRefused) as caught:
+            build(changed)
+        self.assertEqual(caught.exception.reason_code, ReasonCode.CONFIGURATION_CHANGED)
+        # A pending (not activated) configuration never drives a scheduled engine.
+        progress = json.loads((self.store.path / en.PROGRESS).read_bytes())
+        progress['phase'] = 'prepared'
+        (self.store.path / en.PROGRESS).write_bytes(canonical_json(progress))
+        with self.assertRaises(GuardRefused) as caught:
+            build(settings)
+        self.assertEqual(caught.exception.reason_code, ReasonCode.INITIALIZATION_REQUIRED)
+
     def test_latest_and_absent_pin_are_digest_verified_and_preserve_secret_bytes(self):
         for pin in (b'FUTURE_AGI_VERSION=latest  # pin\r\n', b''):
             with self.subTest(pin=pin):

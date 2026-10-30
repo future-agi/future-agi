@@ -170,6 +170,12 @@ class AutomaticLifecycle:
         self.baseline.verifier.begin_discovery(min(runner.deadline,
             time.monotonic() + runner.policy.probe_timeout_seconds))
 
+    def renew_verification(self, installation):
+        """Call after any slow step (a full stability observation, helper
+        capture) and before retained evidence is re-verified. Still capped by
+        the current supervisor deadline, so an exhausted budget fails closed."""
+        self._verification_window(installation)
+
     def _observation(self, installation, release, boundary):
         if self.observer is None:
             self.observer = default_observer(self.registration, installation.runner.policy, self.clock)
@@ -198,6 +204,8 @@ class AutomaticLifecycle:
         require(dict(observation.facts.deployment_files) == self.execution['files'], ReasonCode.DEPLOYMENT_FILES_MISMATCH)
         self.latest_observation = observation
         if self.ledger is not None and self.ledger.backup_seal is None and self.ledger.phase == 'failed_available':
+            # Finalizing re-verifies A's release after the full stability observation.
+            self.renew_verification(installation)
             self.complete_failed_available(observation)
         return observation
 
@@ -345,6 +353,7 @@ class AutomaticLifecycle:
         require(self.ledger is not None and self.ledger.direction == 'restore_decided', ReasonCode.RECOVERY_REQUIRED)
         intent = self.restore_intent or self.baseline.restore_intent(self.backup_seal.attempt_id)
         observation = self._observation(engine.installation, self.baseline.evidence(self.head.release), 'restored')
+        self.renew_verification(engine.installation)  # commit re-verifies A after the full observation
         result = self.baseline.commit_restore(intent, receipt_name=receipt.name, observation=observation)
         self.latest_restore_observation = observation
         return result
@@ -420,6 +429,8 @@ class AutomaticLifecycle:
                     ReasonCode.RECOVERY_REQUIRED)
             return receipt, self.target.version
         installation = installation_factory()  # Restoration retains all live registered binding checks.
+        # Resolving the registered installation is several separately bounded probes.
+        self.renew_verification(installation)
         with self.store._directory(child='transitions') as transitions:
             import os
             completed_restore = attempt.attempt_id + '-restore.json' in os.listdir(transitions)
@@ -428,6 +439,7 @@ class AutomaticLifecycle:
             from .baseline import RestoreSeal
             seal = self.baseline._record('transitions', attempt.attempt_id + '-restore.json', RestoreSeal)
             observation = self._observation(installation, self.baseline.evidence(self.head.release), 'restored')
+            self.renew_verification(installation)
             self.baseline.reconcile_restore(attempt.attempt_id, receipt_name=seal.receipt_name, observation=observation)
             self.ledger.checkpoint('restore_metadata_committed')
             self.ledger.checkpoint('restored')
@@ -454,10 +466,22 @@ class AutomaticLifecycle:
         self.intent = intent
         self.preimage_pins = {p.name: observation.facts.env.get(p.name) for p in intent.pins}
 
+    def target_evidence(self, installation):
+        """Signed B for the success session; env commit and Compose create
+        follow the last guard's verification window."""
+        self.renew_verification(installation)
+        return self.baseline.evidence(self.intent.target)
+
+    def validate_success(self, installation, observation):
+        """B's full stability observation outlasts one bounded window."""
+        self.renew_verification(installation)
+        self.baseline.validate_success_observation(self.intent, observation)
+
     def verify_success(self, engine):
         self._verification_window(engine.installation)
         require(self.intent is not None, ReasonCode.RECOVERY_REQUIRED)
         observation = self._observation(engine.installation, self.baseline.evidence(self.intent.target), 'success')
+        self.renew_verification(engine.installation)
         self.baseline.validate_success_observation(self.intent, observation)
 
     def _successor_backup(self, installation, intent, observation):
@@ -480,8 +504,10 @@ class AutomaticLifecycle:
     def retain_success(self, installation, observation):
         require(self.intent is not None and self.ledger is not None
                 and self.ledger.direction == 'forward_pending', ReasonCode.RECOVERY_REQUIRED)
+        self.renew_verification(installation)
         self.baseline.validate_success_observation(self.intent, observation)
-        backup = self._successor_backup(installation, self.intent, observation)
+        backup = self._successor_backup(installation, self.intent, observation)  # bounded helper capture
+        self.renew_verification(installation)
         self.baseline.retain_success(self.intent, observation, backup)
         self.latest_observation = observation
 

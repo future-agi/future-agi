@@ -583,7 +583,14 @@ def guarded_updater(installation, settings, state, guard, supervisor, *, readine
     require(settings.automation_policy == supervisor.policy, ReasonCode.CONFIGURATION_CHANGED)
     require(supervisor.policy.mode == 'apply', ReasonCode.CONTROL_INVALID)
     from .settings import DEFAULTS, load_settings
-    current = load_settings(installation.root, environ=supervisor.environment)
+    from .enrollment import load_setup_configuration, read_setup_configuration
+    store = getattr(guard, 'store', None)
+    if store is not None and read_setup_configuration(store) is not None:
+        # One-time setup is an enrolled installation's ONLY settings source;
+        # update.conf/env are not read at runtime. Recheck the activated config.
+        current = load_setup_configuration(store).as_settings()
+    else:
+        current = load_settings(installation.root, environ=supervisor.environment)
     require(all(current.get(key) == settings.get(key) for key in DEFAULTS), ReasonCode.CONFIGURATION_CHANGED)
     out = out if out is not None else io.StringIO()
     return Updater(installation, settings, state, out=out,

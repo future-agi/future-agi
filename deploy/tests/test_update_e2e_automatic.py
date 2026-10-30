@@ -21,7 +21,7 @@ from deploy.tests.update_e2e import harness as e2e
 from deploy.tests.update_e2e.real_automatic import (
     CRON_PERIOD_SECONDS, FAULT_SEAM, acceptance_policy, acceptance_reserve_seconds, policy_cli_arguments,
     pending_migration_names, read_attempt_ledger, read_event_records, scheduler_wait_budget,
-    setup_timeout_seconds)
+    replacement_tolerant, setup_timeout_seconds)
 from deploy.update.baseline import BaselineStore
 from deploy.update.contracts import ReasonCode
 from deploy.update.enrollment import AUTOMATIC_UPDATE_DISCLOSURE
@@ -109,11 +109,17 @@ class AutomaticLifecycleE2E(unittest.TestCase):
             enrolled = True
             store = selected_store(checkout.root)
             baseline = BaselineStore(store)
-            self.assertEqual(baseline.current().release.version, versions[0])
+            # Cron atomically replaces state.json while we poll it.
+            read_state = lambda: replacement_tolerant(store.read_state, [store.path/'state.json'])
+            current_head = lambda: replacement_tolerant(baseline.current, [store.path/'state.json'])
+            # The activated configuration also checks state.json's baseline head.
+            activated = lambda: replacement_tolerant(lambda: load_setup_configuration(store),
+                                                     [store.path/'state.json'])
+            self.assertEqual(current_head().release.version, versions[0])
             registration = store.read_registration()
-            configuration = load_setup_configuration(store)
+            configuration = activated()
             self.assertTrue(inspect_activation(store, configuration.policy, **configuration.scheduler_options).active)
-            source_head = baseline.current()
+            source_head = current_head()
             runs = set()
             proofs_before = set(destination.rglob('proof.json'))
             previous_migrations = initial_migrations
@@ -132,20 +138,20 @@ class AutomaticLifecycleE2E(unittest.TestCase):
                     self.assertFalse(fault['pending'])
                     self.assertEqual(fault['inventory_sha256'], migration['target_inventory_sha256'])
                     self.assertEqual(fault['applied_sha256'], migration['target_applied_set_sha256'])
-                    e2e.wait_for(lambda: store.read_state().active_attempt_id is None and
-                        baseline.current().release == source_head.release and any(
+                    e2e.wait_for(lambda: read_state().active_attempt_id is None and
+                        current_head().release == source_head.release and any(
                         r.get('kind') == 'restore' and r.get('status') == 'restored'
                         and r.get('target_version') == version for r in checkout.receipts()),
                         timeout=min(timeout, deadline-time.monotonic()), interval=2,
                         what='installed scheduler to restore source after target migration')
-                    self.assertEqual(baseline.current().release, source_head.release)
+                    self.assertEqual(current_head().release, source_head.release)
                     self.assertEqual({c['Config']['Labels']['com.docker.compose.service']: c['Image']
                                       for c in checkout.containers()}, source_images)
                     self.assertEqual(checkout.migration_inventory(), initial_migrations)
                     checkout.verify_candidate_only_absent()
                     outcome = 'restored'
                 else:
-                    e2e.wait_for(lambda: baseline.current().release.version == version and any(
+                    e2e.wait_for(lambda: current_head().release.version == version and any(
                         r.get('kind') == 'apply' and r.get('status') == 'succeeded' and r.get('target_version') == version
                         for r in checkout.receipts()), timeout=min(timeout, deadline-time.monotonic()), interval=2,
                         what='installed scheduler to advance '+version+' and publish its receipt')
@@ -185,9 +191,9 @@ class AutomaticLifecycleE2E(unittest.TestCase):
                 decision = 'restore-decision.json' if restore else 'success-decision.json'
                 self.assertIn(decision, leaves, 'terminal immutable decision must predate acceptance')
                 self.assertEqual(ledger['direction'], 'restore_decided' if restore else 'success_decided')
-                self.assertIsNone(store.read_state().active_attempt_id)
+                self.assertIsNone(read_state().active_attempt_id)
                 if restore:
-                    self.assertEqual(store.read_state().failed_target_latch, completed[0].target)
+                    self.assertEqual(read_state().failed_target_latch, completed[0].target)
                     self.assertEqual(receipts[0]['from_version'], versions[0])
                     self.assertEqual(receipts[0]['target_image_ids'], {'app': source_images['app']})
                     rows = checkout.containers()
@@ -199,7 +205,7 @@ class AutomaticLifecycleE2E(unittest.TestCase):
                 self.assertEqual(len(proofs_after-proofs_before), 1, 'exactly one cold backup per automatic update')
                 proofs_before = proofs_after
                 self.assertEqual(store.read_registration(), registration, 'no re-enrollment')
-                self.assertEqual(load_setup_configuration(store), configuration, 'no policy/source/key/CA changes')
+                self.assertEqual(activated(), configuration, 'no policy/source/key/CA changes')
                 verify_data()
                 if not restore and position < len(versions)-1:
                     # Only after B's independent installed-image oracle passes.
@@ -217,12 +223,12 @@ class AutomaticLifecycleE2E(unittest.TestCase):
                         timeout=min(2*CRON_PERIOD_SECONDS + policy.probe_timeout_seconds +
                             policy.stability_period_seconds + 60, deadline-time.monotonic()), interval=2,
                         what='completed real cron wake blocked by restored target latch')
-                    state = store.read_state()
+                    state = read_state()
                     self.assertEqual(state.failed_target_latch, completed[0].target)
                     self.assertIsNone(state.active_attempt_id)
                     self.assertEqual(len(list((store.path/'attempts').glob('*.json'))), len(attempts))
                     self.assertEqual(set(destination.rglob('proof.json')), proofs_after)
-                    self.assertEqual(baseline.current().release, source_head.release)
+                    self.assertEqual(current_head().release, source_head.release)
                     verify_data()
                     checkout.record('restored-source.json', dict(status='passed', source_version=versions[0],
                         failed_target_version=version, run_id=receipts[0]['run_id'], images=source_images,

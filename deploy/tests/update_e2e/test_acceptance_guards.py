@@ -821,6 +821,148 @@ class RestoreSequenceTests(unittest.TestCase):
             self._exercise_restore_fixture(extra_proof=True)
 
 
+class OracleReplacementRaceTests(unittest.TestCase):
+    """Real RunnerStateStore/RecoveryLedger writers publish (temp+rename) while
+    the acceptance oracle is between open and read of the old leaf."""
+
+    def replace_during_read(self, reader, writer, leaf, point='open'):
+        # The stores open leaves relative to a directory fd: match the leaf name.
+        import threading
+        opened, published = threading.Event(), threading.Event()
+        main, state = threading.current_thread(), {'used': False, 'fd': None}
+        real_open, real_read = os.open, os.read
+        results = {}
+
+        def worker():
+            try:
+                self.assertTrue(opened.wait(10))
+                writer()
+                results['published'] = True
+            finally:
+                published.set()
+
+        def barrier(fd):
+            opened.set()
+            self.assertTrue(published.wait(10))
+            results.setdefault('old_inode_links', os.fstat(fd).st_nlink)
+
+        def hooked_open(path, *args, **kwargs):
+            fd = real_open(path, *args, **kwargs)
+            if threading.current_thread() is main and os.fsdecode(path) == leaf and not state['used']:
+                state.update(used=True, fd=fd)
+                if point == 'open':
+                    barrier(fd)
+            return fd
+
+        def hooked_read(fd, count):
+            if threading.current_thread() is main and fd == state['fd'] and not opened.is_set():
+                barrier(fd)
+            return real_read(fd, count)
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        try:
+            with patch.object(os, 'open', hooked_open), patch.object(os, 'read', hooked_read):
+                value = reader()
+        finally:
+            opened.set()
+            thread.join(10)
+        self.assertTrue(results.get('published'))
+        self.assertEqual(results['old_inode_links'], 0, 'the race was not actually exercised')
+        return value
+
+    def setUp(self):
+        import dataclasses
+        from deploy.tests.test_update_runner_state import registration
+        from deploy.update.baseline import BaselineHead, BaselineStore, ReleaseReference
+        from deploy.update.runner_state import RunnerStateStore
+        temporary = tempfile.TemporaryDirectory(dir=Path.home())
+        self.addCleanup(temporary.cleanup)
+        self.base = Path(temporary.name).resolve()
+        root = self.base / 'checkout'
+        root.mkdir(mode=0o700)
+        (root / '.env').write_text('FIXTURE=metadata-only\n')
+        self.store = RunnerStateStore(root, root / '.env')
+        self.store.register(registration(self.store))
+        ref = ReleaseReference('v1.53.0', '1'*64, '2'*64, None, '3'*64, '4'*64, 'future-agi/future-agi', '5'*64)
+        head = BaselineHead(1, 0, self.store.read_registration().binding.installation_fingerprint,
+                            ref, '6'*64, '7'*64, '8'*64, '9'*64, 'a'*64, None, None, None)
+        with self.store._lock('state.lock') as fd:
+            with self.store._directory(create=True, child='baselines') as heads:
+                self.store._write(heads, head.identity + '.json', head)
+            self.store._write(fd, 'state.json', dataclasses.replace(self.store.read_state(), baseline_head=head.identity))
+        self.baseline, self.head = BaselineStore(self.store), head
+
+    def test_polled_state_and_baseline_survive_a_concurrent_state_publication(self):
+        import dataclasses
+        from datetime import datetime, timezone
+        state_leaf = self.store.path / 'state.json'
+        def publish():
+            old = self.store.read_state()
+            self.store.save_state(dataclasses.replace(old, last_tick_at=datetime.now(timezone.utc)),
+                                  expected_generation=old.generation)
+        current = lambda: real.replacement_tolerant(self.baseline.current, [state_leaf])
+        self.assertEqual(self.replace_during_read(current, publish, 'state.json'), self.head)
+        state = lambda: real.replacement_tolerant(self.store.read_state, [state_leaf])
+        self.assertIsNotNone(self.replace_during_read(state, publish, 'state.json').last_tick_at)
+
+    def test_activated_configuration_read_survives_a_concurrent_state_publication(self):
+        import dataclasses
+        from datetime import datetime, timezone
+        from types import SimpleNamespace
+        from deploy.update import enrollment
+        state_leaf = self.store.path / 'state.json'
+        def publish():
+            old = self.store.read_state()
+            self.store.save_state(dataclasses.replace(old, last_tick_at=datetime.now(timezone.utc)),
+                                  expected_generation=old.generation)
+        # Real load_setup_configuration and real registration/state reads; only
+        # the setup documents (never replaced by a scheduled tick) are fixed.
+        config = SimpleNamespace(policy='fixture')
+        progress = SimpleNamespace(configuration_sha256='config', phase='activated', registration_sha256='binding')
+        with patch.object(enrollment, 'read_setup_configuration', return_value=config), \
+                patch.object(enrollment, '_read', return_value=progress), \
+                patch.object(enrollment, '_identity', side_effect=lambda v: 'config' if v is config else 'binding'):
+            activated = lambda: real.replacement_tolerant(lambda: enrollment.load_setup_configuration(self.store),
+                                                          [state_leaf])
+            self.assertIs(self.replace_during_read(activated, publish, 'state.json'), config)
+
+    def test_terminal_ledger_read_survives_a_concurrent_checkpoint_at_open_and_read(self):
+        from deploy.tests.test_update_recovery_ledger import expected, seal_for
+        from deploy.update.recovery import RecoveryLedger
+        for point in ('open', 'read'):
+            with self.subTest(point=point):
+                destination = self.base / ('backups-' + point)
+                destination.mkdir(mode=0o700)
+                ledger = RecoveryLedger.reserve(destination, expected(), operation_token='token',
+                    run_id='fixture-run', binding_sha256='8'*64, old_head=self.head.identity)
+                ledger.seal_backup(seal_for(ledger))
+                ledger.decide_success({'run_id': 'fixture-run', 'fixture': 'interleaving-only'})
+                document, leaves = self.replace_during_read(lambda: real.read_attempt_ledger(ledger.directory),
+                    lambda: ledger.checkpoint('success_metadata_committed'),
+                    'recovery.json', point=point)
+                self.assertEqual(document['phase'], 'success_metadata_committed')
+                self.assertIn('success-decision.json', leaves)
+
+    def test_unchanged_corrupt_or_unsafe_leaf_still_fails_without_retrying(self):
+        from deploy.update.runner_state import StoreError
+        state_leaf = self.store.path / 'state.json'
+        calls = []
+        def read():
+            calls.append(1)
+            return self.store.read_state()
+        os.chmod(state_leaf, 0o644)  # wrong mode, NOT a replacement
+        with self.assertRaises(StoreError):
+            real.replacement_tolerant(read, [state_leaf])
+        self.assertEqual(len(calls), 1)
+        os.chmod(state_leaf, 0o600)
+        state_leaf.write_bytes(b'{"not": "state"}')  # in-place corruption keeps the inode
+        calls.clear()
+        with self.assertRaises(StoreError):
+            real.replacement_tolerant(read, [state_leaf])
+        self.assertEqual(len(calls), 1)
+
+
 class NativeBoundaryTests(unittest.TestCase):
     def test_source_prepare_is_installer_shaped_and_real_normalization_accepts_it(self):
         from deploy.update import enrollment as en

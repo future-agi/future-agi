@@ -245,3 +245,75 @@ class ImageIdentityTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TargetPrefetchIdentityTests(unittest.TestCase):
+    """A qualified target becomes the next hop's source on the same daemon."""
+    LEAF, INDEX = 'sha256:'+'c'*64, 'sha256:'+'d'*64
+
+    def prefetch(self, repo_digests):
+        driver = object.__new__(q.QualificationRehearsal)
+        driver.target_image, driver.target_version, driver.target_digest = (
+            'docker.io/futureagi/standalone:v1.55.0@'+self.LEAF, 'v1.55.0', self.LEAF)
+        image = dict(Id='sha256:'+'e'*64, Os='linux', Architecture='amd64', RepoDigests=repo_digests)
+        calls = []
+        driver.installation = mock.Mock()
+        driver.installation.docker_run.side_effect = lambda *args, **kwargs: calls.append(args)
+        driver._json = lambda *args: [copy.deepcopy(image)]
+        driver.record = mock.Mock()
+        driver.prefetch_target()
+        return calls
+
+    def test_pulls_only_the_leaf_and_aliases_the_plain_tag_locally(self):
+        calls = self.prefetch(['futureagi/standalone@'+self.LEAF])
+        self.assertEqual(calls, [('pull', '--platform', 'linux/amd64', 'docker.io/futureagi/standalone:v1.55.0@'+self.LEAF),
+                                 ('image', 'tag', 'sha256:'+'e'*64, 'futureagi/standalone:v1.55.0')])
+        self.assertFalse([c for c in calls if c[0] == 'pull' and '@' not in c[-1]])
+
+    def test_an_index_repo_digest_beside_the_leaf_is_refused(self):
+        # Native: pin pull + plain-tag pull left [index, leaf]; B->C then refused B.
+        with self.assertRaisesRegex(p.RehearsalError, 'ambiguous'):
+            self.prefetch(['futureagi/standalone@'+self.INDEX, 'futureagi/standalone@'+self.LEAF])
+
+
+class SourceIdentityRefusalSiteTests(unittest.TestCase):
+    def test_runtime_refuses_leaf_plus_index_and_diagnostics_name_the_check(self):
+        from deploy.tests.test_update_standalone_state import LAYOUT, RuntimeFixture
+        from deploy.update import standalone_state as state
+        from deploy.update.contracts import ReasonCode
+        from deploy.update.orchestrator import GuardRefused
+        with tempfile.TemporaryDirectory(dir=Path.home()) as temporary:
+            inst = RuntimeFixture(Path(temporary).resolve())
+            leaf = inst.manifest['components']['standalone']['digest']
+            inst.img_app['repo_digests'] = ['futureagi/standalone@'+leaf, 'futureagi/standalone@sha256:'+'d'*64]
+            # Not assertRaises: it strips the traceback the site is read from.
+            try:
+                state._runtime(inst, inst.binding, SimpleNamespace(manifest=inst.manifest), LAYOUT)
+            except GuardRefused as error:
+                refused = error
+            else:
+                self.fail('an image with two RepoDigests for one name was accepted')
+        self.assertEqual(refused.reason_code, ReasonCode.IMAGE_DIGEST_MISMATCH)
+        source = Path(state.__file__).read_text().splitlines()
+        line = next(n for n, text in enumerate(source, 1)
+                    if 'require(len(digests) == 1 and None not in digests' in text)
+        data = p.failure_diagnostics(refused)
+        self.assertEqual(data['refusal_site'], 'standalone_state.py:'+str(line))
+        self.assertNotIn(str(Path.home()), str(data))
+
+    def test_runtime_need_helper_is_not_reported_as_the_failing_check(self):
+        from deploy.update import automatic_runtime as runtime
+        from deploy.update.docker_host import VolumeStorageObservation
+        observer = runtime.HostRuntimeObserver(object(), object(), {'images': {'app': 'sha256:'+'1'*64}})
+        try:
+            with mock.patch('deploy.update.docker_host.inspect_volume_storage',
+                            return_value=VolumeStorageObservation('unknown')):
+                observer.free_bytes()
+        except runtime.RuntimeRefused as error:
+            data = p.failure_diagnostics(error)
+        else:
+            self.fail('unknown capacity was accepted')
+        source = Path(runtime.__file__).read_text().splitlines()
+        line = next(n for n, text in enumerate(source, 1) if "need(observation.status == 'available'" in text)
+        self.assertEqual(data['refusal_code'], 'restore_capacity_unknown')
+        self.assertEqual(data['refusal_site'], 'automatic_runtime.py:'+str(line))

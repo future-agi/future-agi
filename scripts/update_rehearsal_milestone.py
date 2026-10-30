@@ -759,17 +759,24 @@ class TargetMilestone(SnapshotMilestone):
             self.loader_cleanup_verified = True
 
     def prefetch_target(self):
+        from deploy.update.manifest import parse_image_ref
         p = producer()
-        # Match production: registry I/O is entirely before downtime.
-        for ref in (self.target_image,'futureagi/standalone:'+self.target_version):
-            self.installation.docker_run('pull','--platform',PLATFORM,ref)
+        # Match production: registry I/O is entirely before downtime. Pull ONLY
+        # the immutable leaf, then alias the plain tag locally. Pulling the tag
+        # records the index digest as a second RepoDigest, and a later hop that
+        # observes this image as its source refuses an ambiguous identity.
+        self.installation.docker_run('pull','--platform',PLATFORM,self.target_image)
         self.target_inspection = self._json('image','inspect',self.target_image)[0]
+        self.installation.docker_run('image','tag',self.target_inspection['Id'],
+                                     'futureagi/standalone:'+self.target_version)
         tagged = self._json('image','inspect','futureagi/standalone:'+self.target_version)[0]
         p.equal(tagged['Id'],self.target_inspection['Id'],'target tag differs from fixed digest')
         p.equal(self.target_inspection['Os']+'/'+self.target_inspection['Architecture'],PLATFORM,
                 'non-native target image')
-        p.need(any(ref.endswith('@'+self.target_digest) for ref in self.target_inspection['RepoDigests']),
-               'target digest identity unavailable')
+        name = parse_image_ref(self.target_image).name
+        p.equal({parse_image_ref(ref).digest for ref in self.target_inspection['RepoDigests']
+                 if parse_image_ref(ref).name == name}, {self.target_digest},
+                'target digest identity unavailable or ambiguous')
         self.record('target-image-inspection.json',label(image={k:self.target_inspection[k] for k in
             ('Id','Os','Architecture','RepoDigests')},prefetched_before_quiescence=True))
 
@@ -1558,8 +1565,10 @@ def run(args):
     except (Exception, Interrupted, KeyboardInterrupt) as exc:
         # ProcessSupervisor temporarily installs the shipping signal handler,
         # whose Interrupted derives from BaseException, not Exception.
-        code = p.failure_diagnostics(exc)['refusal_code']
+        diagnosed = p.failure_diagnostics(exc)
+        code = diagnosed['refusal_code']
         failure = dict(stage=phase,reason=code,exception_type=type(exc).__name__)
+        if 'refusal_site' in diagnosed: failure['refusal_site'] = diagnosed['refusal_site']
         # Only fixed producer assertions, never raw product/subprocess errors.
         if isinstance(exc,p.RehearsalError): failure['detail'] = str(exc)[:512]
         # Updater-side install/process refusals name the failing step; a CI run

@@ -30,6 +30,20 @@ HOME = Path.home().resolve()
 
 def native_ci():
     return sys.platform == 'linux' and os.environ.get('GITHUB_ACTIONS') == 'true'
+
+
+class SetupIncomplete(RuntimeError):
+    """Setup's own closed refusal code; no other setup output leaves the private log."""
+    def __init__(self, name, reason):
+        self.reason = reason
+        super().__init__(name + ' failed: setup incomplete: ' + reason)
+
+
+def setup_failure(name, stdout):
+    match = re.search(rb'^Setup incomplete: ([a-z_]{1,80})\. ', stdout or b'', re.M)
+    if match is None:
+        return RuntimeError(name + " failed; see private command logs")
+    return SetupIncomplete(name, match.group(1).decode())
 READINESS_SECONDS = 4200
 CRON_PERIOD_SECONDS = 300
 FAULT_SEAM = 'post-migration-stop-v1'  # Defined ONLY in deploy/tests, never in shipped runtime.
@@ -211,7 +225,42 @@ def redacted_tail(value, secret_values=(), *, limit=8192):
     return ''.join(c for c in text if c in '\n\r\t' or ord(c) >= 32)[-limit:]
 
 
+def _leaf_identities(paths):
+    result = []
+    for path in paths:
+        try:
+            info = os.stat(path, follow_symlinks=False)
+            result.append((info.st_dev, info.st_ino))
+        except FileNotFoundError:
+            result.append(None)
+    return tuple(result)
+
+
+def replacement_tolerant(read, paths, *, attempts=5):
+    """Re-run a strict read-only oracle ONLY when a watched leaf was atomically
+    replaced while it was being read (the opened old inode then has no link).
+
+    The installed scheduler publishes state.json and recovery.json by
+    temp+rename while the test polls them. An unchanged corrupt, unsafe or
+    wrongly owned file still fails: its identity is the same before and after.
+    """
+    from deploy.update.runner_state import StoreError
+    from deploy.update.standalone_backup import BackupError
+    for attempt in range(attempts):
+        before = _leaf_identities(paths)
+        try:
+            return read()
+        except (StoreError, BackupError):
+            if attempt + 1 == attempts or _leaf_identities(paths) == before:
+                raise
+            time.sleep(0.05)
+
+
 def read_attempt_ledger(directory):
+    return replacement_tolerant(lambda: _read_attempt_ledger(directory), [Path(directory) / 'recovery.json'])
+
+
+def _read_attempt_ledger(directory):
     """Bounded read-only test oracle. RecoveryLedger.open() may reconcile writes.
 
     Do not let a test finalize the scheduler's transaction just by inspecting
@@ -464,12 +513,16 @@ class ProductHarness:
         previous = self.env.get('PYTHON')
         self.env['PYTHON'] = sys.executable
         try:
-            return self.command([str(self.root/'bin/update'), *args], timeout=timeout, check=check)
+            result = self.command([str(self.root/'bin/update'), *args], timeout=timeout, check=False)
         finally:
             if previous is None:
                 self.env.pop('PYTHON', None)
             else:
                 self.env['PYTHON'] = previous
+        if check and result.returncode:
+            # A CI run cannot be inspected afterwards: keep the refusal code.
+            raise setup_failure('command-{:04d}'.format(self.sequence), result.stdout)
+        return result
 
     def receipts(self):
         from deploy.update.receipt import StateDir
@@ -1112,6 +1165,8 @@ print(json.dumps({'identity':a['identity'],'absent':absent}))
             code = getattr(failure, 'reason_code', None)
             if isinstance(code, ReasonCode):
                 result['reason_code'] = code.value
+            if isinstance(failure, SetupIncomplete):
+                result['setup_reason'] = failure.reason
         runner = ProcessSupervisor(AutomationPolicy(), docker_context=CONTEXT,
                                    environment=self.env, output_limit=65536, grace_seconds=.2)
         runner.deadline = time.monotonic()+30
