@@ -499,10 +499,13 @@ class NormalBootstrapEnvelopeSampler:
                   "resource_identity_ambiguous")
             if service == "app":
                 config_image = (row.get("Config") or {}).get("Image")
-                # The target digest is checked against the immutable image ID below;
-                # raw Config.Env and reference strings are never retained.
-                _need(type(config_image) is str and
-                      parse_image_ref(config_image) == parse_image_ref(self.target_image_ref),
+                # Normal Compose selects the release tag. Its resolved image ID
+                # must match the shipping roster above and the target RepoDigest
+                # below; a tag string alone is never identity evidence.
+                _need(type(config_image) is str, "resource_identity_ambiguous")
+                configured, target = parse_image_ref(config_image), parse_image_ref(self.target_image_ref)
+                _need(configured.name == target.name and configured.tag == target.tag
+                      and configured.digest in (None, self.target_digest),
                       "resource_identity_ambiguous")
             graph = row.get("GraphDriver")
             graph_data = graph.get("Data") if type(graph) is dict else None

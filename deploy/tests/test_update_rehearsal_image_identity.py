@@ -161,6 +161,26 @@ class ImageIdentityTests(unittest.TestCase):
         with self.assertRaises(resources.ResourceObservationError):
             sampler._verify_identity(check_ready=False, check_daemon=False)
 
+    def test_shipping_tag_selected_container_requires_the_exact_immutable_roster_and_digest(self):
+        # TargetMilestone.running_target changes FUTURE_AGI_VERSION to the tag;
+        # AutomaticRuntime.create verifies its resolved image ID before startup.
+        for name in ALIASES:
+            reference = name+':v1.54.0'
+            with self.subTest(reference=reference):
+                sampler = self.sampler_fixture(reference)
+                sampler._unit_rows['app']['Image'] = 'sha256:'+'f'*64
+                with self.assertRaises(resources.ResourceObservationError):
+                    sampler._verify_identity(check_ready=False, check_daemon=False)
+                for digest in ('example.com/futureagi/standalone@'+DIGEST,
+                               'futureagi/standalone@sha256:'+'f'*64):
+                    with self.assertRaises(resources.ResourceObservationError):
+                        self.sampler_fixture(reference, repo_digest=digest)
+        for reference in ('example.com/futureagi/standalone:v1.54.0', 'futureagi/standalone:v1.55.0',
+                          'futureagi/standalone:latest', 'futureagi/standalone',
+                          'futureagi/other:v1.54.0'):
+            with self.subTest(reference=reference), self.assertRaises(resources.ResourceObservationError):
+                self.sampler_fixture(reference)
+
     def test_live_sampler_uses_canonical_config_image_and_exact_repo_digest(self):
         for name in ALIASES:
             with self.subTest(name=name):
