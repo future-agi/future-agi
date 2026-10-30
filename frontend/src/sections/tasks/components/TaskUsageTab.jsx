@@ -33,6 +33,14 @@ import { isEditableElement } from "src/utils/keyboardUtils";
 import { parsePythonReprIfNeeded } from "src/sections/develop-detail/DataTab/common";
 import { DATE_OPTION_TO_PERIOD } from "src/sections/evals/Helpers/evalUsageColumns";
 import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
+import { copyToClipboard } from "src/utils/utils";
+import { enqueueSnackbar } from "src/components/snackbar";
+import TaskRunTraceDrawer from "./TaskRunTraceDrawer";
+import {
+  findAdjacentTraceRunIndex,
+  getRunSpanId,
+  getRunTraceId,
+} from "../taskRunTrace";
 
 // ── Inline stat ──
 const StatPill = ({ label, value }) => (
@@ -313,7 +321,15 @@ ExpandableJson.propTypes = {
   value: PropTypes.any,
 };
 
-const DetailRow = ({ label, value, color, chip, chipColor, mono }) => {
+const DetailRow = ({
+  label,
+  value,
+  color,
+  chip,
+  chipColor,
+  mono,
+  copyable,
+}) => {
   // If value is a non-null object/array, render it through JsonValueTree
   // so users can drill into nested keys (e.g. `prompt.messages.0.content`)
   // instead of seeing "[object Object]". Strings, numbers, booleans, and
@@ -394,6 +410,29 @@ const DetailRow = ({ label, value, color, chip, chipColor, mono }) => {
           </Typography>
         )}
       </Box>
+      {copyable && (
+        <Tooltip title={`Copy ${label}`}>
+          <IconButton
+            size="small"
+            aria-label={`Copy ${label}`}
+            onClick={async () => {
+              if (await copyToClipboard(value)) {
+                enqueueSnackbar(`${label} copied`, {
+                  variant: "info",
+                  autoHideDuration: 1500,
+                });
+              }
+            }}
+            sx={{ ml: 0.5, p: 0.25, flexShrink: 0 }}
+          >
+            <Iconify
+              icon="mdi:content-copy"
+              width={12}
+              sx={{ color: "text.secondary" }}
+            />
+          </IconButton>
+        </Tooltip>
+      )}
     </Box>
   );
 };
@@ -406,6 +445,7 @@ DetailRow.propTypes = {
   chip: PropTypes.bool,
   chipColor: PropTypes.string,
   mono: PropTypes.bool,
+  copyable: PropTypes.bool,
 };
 
 // ── Error details — structured display for failed eval rows ──
@@ -609,7 +649,7 @@ PartialInputWarningDetails.propTypes = {
 };
 
 // ── Detail panel content (Formatted / JSON toggle) ──
-const DetailPanelContent = ({ row, isDark }) => {
+const DetailPanelContent = ({ row, isDark, onOpenTrace }) => {
   const [viewMode, setViewMode] = useState("formatted");
   const detail = row.detail || {};
   const warnings = row.warnings || detail.warnings || [];
@@ -663,6 +703,17 @@ const DetailPanelContent = ({ row, isDark }) => {
             {m === "formatted" ? "Formatted" : "JSON"}
           </Box>
         ))}
+        {onOpenTrace && (
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={<Iconify icon="mdi:eye-outline" width={14} />}
+            onClick={onOpenTrace}
+            sx={{ ml: "auto", fontSize: "11px", height: 26 }}
+          >
+            Open trace
+          </Button>
+        )}
       </Box>
 
       {/* Scrollable content area. `pb: 6` keeps the last field above
@@ -775,6 +826,7 @@ const DetailPanelContent = ({ row, isDark }) => {
                       label="Session ID"
                       value={detail.session_id}
                       mono
+                      copyable
                     />
                   )}
                 </>
@@ -792,10 +844,20 @@ const DetailPanelContent = ({ row, isDark }) => {
                     <DetailRow label="Span" value={detail.span_name} mono />
                   )}
                   {detail.span_id && (
-                    <DetailRow label="Span ID" value={detail.span_id} mono />
+                    <DetailRow
+                      label="Span ID"
+                      value={detail.span_id}
+                      mono
+                      copyable
+                    />
                   )}
                   {detail.trace_id && (
-                    <DetailRow label="Trace ID" value={detail.trace_id} mono />
+                    <DetailRow
+                      label="Trace ID"
+                      value={detail.trace_id}
+                      mono
+                      copyable
+                    />
                   )}
                 </>
               )}
@@ -883,7 +945,7 @@ const DetailPanelContent = ({ row, isDark }) => {
 };
 
 // ── Main ──
-const TaskUsageTab = ({ taskId }) => {
+const TaskUsageTab = ({ taskId, projectId }) => {
   const settings = useSettingsContext();
   const isDark = settings.themeMode === "dark";
 
@@ -893,7 +955,14 @@ const TaskUsageTab = ({ taskId }) => {
   // Default to 50 per page — tasks typically have many runs and 25 felt
   // too narrow once users started exploring all-time data.
   const [pageSize, setPageSize] = useState(50);
-  const [detailIndex, setDetailIndex] = useState(null);
+  // The open run is tracked by id, not position: runs are newest-first, so in
+  // a continuous task a refetch shifts every row down as new runs arrive.
+  // Changing the date range, page or eval filter swaps the list entirely, so
+  // those close the run panel and trace drawer.
+  const [detailRunId, setDetailRunId] = useState(null);
+  // The trace drawer always shows the selected run's trace, so closing it
+  // lands back on the run panel for whichever run it was showing.
+  const [traceDrawerOpen, setTraceDrawerOpen] = useState(false);
   const [evalIdFilter, setEvalIdFilter] = useState("all");
 
   const period = DATE_OPTION_TO_PERIOD[dateOption] || DEFAULT_USAGE_PERIOD;
@@ -972,15 +1041,40 @@ const TaskUsageTab = ({ taskId }) => {
   const visibleLogs = logItems;
 
   const columns = useColumns();
-  const handleRowClick = useCallback(
-    (row) => {
-      const idx = visibleLogs.findIndex((l) => l.id === row.id);
-      setDetailIndex(idx >= 0 ? idx : 0);
-    },
+  const handleRowClick = useCallback((row) => setDetailRunId(row.id), []);
+  const showRunAt = useCallback(
+    (index) => setDetailRunId(visibleLogs[index]?.id ?? null),
     [visibleLogs],
   );
 
+  const foundDetailIndex =
+    detailRunId === null
+      ? -1
+      : visibleLogs.findIndex((l) => l.id === detailRunId);
+  // The open run dropped off this page (enough newer runs pushed it past the
+  // page size): close the panel rather than reopen it if it scrolls back.
+  if (detailRunId !== null && foundDetailIndex === -1) setDetailRunId(null);
+  const detailIndex = foundDetailIndex === -1 ? null : foundDetailIndex;
   const detailRow = detailIndex !== null ? visibleLogs[detailIndex] : null;
+  const detailTraceId = getRunTraceId(detailRow);
+  // Landing on a run without a trace (a session-level row, or the row going
+  // away on refetch) ends the trace view, so a later run with a trace doesn't
+  // reopen the drawer unasked.
+  if (traceDrawerOpen && !detailTraceId) setTraceDrawerOpen(false);
+  const isTraceDrawerShown = traceDrawerOpen && !!projectId && !!detailTraceId;
+  const prevTraceRunIndex =
+    detailIndex !== null
+      ? findAdjacentTraceRunIndex(visibleLogs, detailIndex, -1)
+      : -1;
+  const nextTraceRunIndex =
+    detailIndex !== null
+      ? findAdjacentTraceRunIndex(visibleLogs, detailIndex, 1)
+      : -1;
+
+  const closeDetail = useCallback(() => {
+    setDetailRunId(null);
+    setTraceDrawerOpen(false);
+  }, []);
 
   // Keyboard shortcuts: j/k for next/prev, Esc to close — same as eval usage
   useEffect(() => {
@@ -988,19 +1082,34 @@ const TaskUsageTab = ({ taskId }) => {
     const handler = (e) => {
       if (e.repeat) return;
       if (isEditableElement(e)) return;
+      // The trace drawer handles j/k/Esc itself (on `document`, so before
+      // this `window` listener): skip keys it handled. While it is open it
+      // owns the keyboard, j/k at either end of the run list included. The
+      // voice call drawer has no Esc of its own, so Esc closes it here.
+      if (e.defaultPrevented) return;
+      if (isTraceDrawerShown) {
+        if (e.key === "Escape") setTraceDrawerOpen(false);
+        return;
+      }
       if (e.key === "k") {
         e.preventDefault();
-        setDetailIndex((i) => Math.max(0, (i ?? 0) - 1));
+        showRunAt(Math.max(0, detailIndex - 1));
       } else if (e.key === "j") {
         e.preventDefault();
-        setDetailIndex((i) => Math.min(visibleLogs.length - 1, (i ?? 0) + 1));
+        showRunAt(Math.min(visibleLogs.length - 1, detailIndex + 1));
       } else if (e.key === "Escape") {
-        setDetailIndex(null);
+        closeDetail();
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [detailIndex, visibleLogs.length]);
+  }, [
+    detailIndex,
+    visibleLogs.length,
+    isTraceDrawerShown,
+    closeDetail,
+    showRunAt,
+  ]);
 
   return (
     // `position: relative` so the absolutely-positioned detail panel
@@ -1051,12 +1160,14 @@ const TaskUsageTab = ({ taskId }) => {
               setDateOption={(opt) => {
                 setDateOption(opt);
                 setPage(0);
+                closeDetail();
               }}
               setParentDateFilter={(range) => {
                 // The custom range feeds the API query, so editing it while on
                 // page N can land past the end of the new result set.
                 setDateFilter(range);
                 setPage(0);
+                closeDetail();
               }}
               dateFilter={dateFilter}
             />
@@ -1067,7 +1178,7 @@ const TaskUsageTab = ({ taskId }) => {
                 onChange={(e) => {
                   setEvalIdFilter(e.target.value);
                   setPage(0);
-                  setDetailIndex(null);
+                  closeDetail();
                 }}
                 size="small"
                 sx={{
@@ -1232,6 +1343,7 @@ const TaskUsageTab = ({ taskId }) => {
               isLoading={logsLoading && !logsData}
               rowCount={totalLogs}
               onRowClick={handleRowClick}
+              activeRowId={detailRow?.id}
               emptyMessage={
                 logsError
                   ? QUERY_FAILED_RETRY_MESSAGE
@@ -1262,10 +1374,14 @@ const TaskUsageTab = ({ taskId }) => {
               page={page}
               pageSize={pageSize}
               total={paginationTotal}
-              onPageChange={setPage}
+              onPageChange={(p) => {
+                setPage(p);
+                closeDetail();
+              }}
               onPageSizeChange={(s) => {
                 setPageSize(s);
                 setPage(0);
+                closeDetail();
               }}
               pageSizeOptions={[25, 50, 100]}
             />
@@ -1331,9 +1447,7 @@ const TaskUsageTab = ({ taskId }) => {
                   <IconButton
                     size="small"
                     disabled={detailIndex === 0}
-                    onClick={() =>
-                      setDetailIndex((i) => Math.max(0, (i ?? 0) - 1))
-                    }
+                    onClick={() => showRunAt(detailIndex - 1)}
                   >
                     <Iconify icon="mingcute:arrow-up-line" width={16} />
                   </IconButton>
@@ -1344,11 +1458,7 @@ const TaskUsageTab = ({ taskId }) => {
                   <IconButton
                     size="small"
                     disabled={detailIndex >= visibleLogs.length - 1}
-                    onClick={() =>
-                      setDetailIndex((i) =>
-                        Math.min(visibleLogs.length - 1, (i ?? 0) + 1),
-                      )
-                    }
+                    onClick={() => showRunAt(detailIndex + 1)}
                   >
                     <Iconify icon="mingcute:arrow-down-line" width={16} />
                   </IconButton>
@@ -1406,20 +1516,47 @@ const TaskUsageTab = ({ taskId }) => {
                   {detailRow.id?.slice(0, 12)}
                 </Typography>
               )}
-              <IconButton size="small" onClick={() => setDetailIndex(null)}>
+              <IconButton size="small" onClick={closeDetail}>
                 <Iconify icon="mingcute:close-line" width={16} />
               </IconButton>
             </Box>
           </Box>
-          {detailRow && <DetailPanelContent row={detailRow} isDark={isDark} />}
+          {detailRow && (
+            <DetailPanelContent
+              row={detailRow}
+              isDark={isDark}
+              onOpenTrace={
+                projectId && detailTraceId
+                  ? () => setTraceDrawerOpen(true)
+                  : undefined
+              }
+            />
+          )}
         </Box>
       </Slide>
+
+      {/* Mounted only while open: each Open trace starts fresh on the
+          evaluated span, not on whichever span was clicked last time. */}
+      {isTraceDrawerShown && (
+        <TaskRunTraceDrawer
+          open
+          onClose={() => setTraceDrawerOpen(false)}
+          projectId={projectId}
+          traceId={detailTraceId}
+          spanId={getRunSpanId(detailRow)}
+          onPrev={() => showRunAt(prevTraceRunIndex)}
+          onNext={() => showRunAt(nextTraceRunIndex)}
+          hasPrev={prevTraceRunIndex !== -1}
+          hasNext={nextTraceRunIndex !== -1}
+        />
+      )}
     </Box>
   );
 };
 
 TaskUsageTab.propTypes = {
   taskId: PropTypes.string.isRequired,
+  projectId: PropTypes.string,
 };
 
 export default TaskUsageTab;

@@ -1,7 +1,7 @@
 /* eslint-disable react/prop-types */
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { DataGrid } from "@mui/x-data-grid";
-import { Box, useTheme } from "@mui/material";
+import { Box, alpha, useTheme } from "@mui/material";
 
 /**
  * DataTable — thin wrapper on MUI X DataGrid (already in the project).
@@ -24,8 +24,20 @@ export default function DataTable({
   rowHeight = 44,
   headerHeight = 40,
   enableSelection = false,
+  // Row the caller is showing elsewhere (a detail panel, a drawer): it is
+  // highlighted and kept in view as keyboard navigation moves it.
+  activeRowId,
 }) {
   const theme = useTheme();
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    if (activeRowId == null) return;
+    const rows = containerRef.current?.querySelectorAll("[data-id]") || [];
+    Array.from(rows)
+      .find((el) => el.dataset.id === String(activeRowId))
+      ?.scrollIntoView?.({ block: "nearest" });
+  }, [activeRowId]);
 
   // Convert our column format → MUI DataGrid columns
   const muiColumns = useMemo(() => {
@@ -128,7 +140,10 @@ export default function DataTable({
   }, [columnVisibility]);
 
   return (
-    <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, height: "100%" }}>
+    <Box
+      ref={containerRef}
+      sx={{ flex: 1, minWidth: 0, minHeight: 0, height: "100%" }}
+    >
       <DataGrid
         rows={data || []}
         columns={muiColumns}
@@ -156,6 +171,11 @@ export default function DataTable({
         onColumnVisibilityModelChange={onColumnVisibilityChange}
         // Row click
         onRowClick={onRowClick ? (params) => onRowClick(params.row) : undefined}
+        getRowClassName={(params) =>
+          activeRowId != null && params.id === activeRowId
+            ? "DataTable-activeRow"
+            : ""
+        }
         // No virtualization — paginated at 50 rows max, plain DOM = no white flash
         disableVirtualization
         // Hide built-in pagination/footer — we use our own
@@ -201,6 +221,8 @@ export default function DataTable({
                 ? "rgba(255,255,255,0.03)"
                 : "rgba(0,0,0,0.02)",
           },
+          "& .MuiDataGrid-row.DataTable-activeRow, & .MuiDataGrid-row.DataTable-activeRow:hover":
+            { bgcolor: alpha(theme.palette.primary.main, 0.08) },
           // Clean up
           "& .MuiDataGrid-columnSeparator": { display: "none" },
           "& .MuiDataGrid-columnHeader:focus, & .MuiDataGrid-columnHeader:focus-within":
