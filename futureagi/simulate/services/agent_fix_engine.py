@@ -349,7 +349,16 @@ def apply_report(fix_run: AgentFixRun, report: EngineReport) -> AgentFixRun:
             ).update(outcome=CandidateOutcome.WINNER, updated_at=timezone.now())
     if report.ending is None:
         return locked
-    return close_fix_run(locked.id, _ENDING_STATES[report.ending])
+    # The summary of a failure is the engine's own error text; the user reads this instead.
+    failure = (
+        {
+            "code": "fix_engine_failed",
+            "message": "the improvement engine hit an error it could not recover from",
+        }
+        if report.ending == Ending.FAILED
+        else None
+    )
+    return close_fix_run(locked.id, _ENDING_STATES[report.ending], failure=failure)
 
 
 def store_checkpoint(fix_run: AgentFixRun, body: bytes) -> None:

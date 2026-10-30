@@ -980,6 +980,10 @@ class TestReport:
         assert closed.finished_at is not None
         assert closed.report["summary"] == "why"
         assert "candidates" not in closed.report
+        # Only a failure carries a failure, so the read never shows the engine's error as one.
+        assert (closed.failure or {}).get("code") == (
+            "fix_engine_failed" if ending == Ending.FAILED else None
+        )
         # A report after the ending is refused: the engine exits.
         assert _refusal(engine.apply_report, closed, EngineReport(stage="late")) == (
             "fix_run_not_running",
