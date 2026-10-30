@@ -66,3 +66,23 @@ def test_run_serializes_its_immutable_definition_without_queries():
     # Existing source-mapped identity fields nest under definition, but the new
     # read-only recipe must never accept a formula/inputs mutation.
     assert parsed["definition"] == {"metric_id": metric.id, "version": 1}
+    assert serialized["definition"]["needs_rebuild"] is False
+    assert serialized["definition"]["kind"] == "custom"
+    assert serialized["definition"]["level"] == "conversation"
+    assert serialized["kind"] == "run"
+    assert serialized["pinned_generation"] is None
+    assert serialized["changed_at"] is None
+
+
+def test_legacy_user_version_reports_needs_rebuild_without_a_database():
+    version = DerivedMetricVersion(
+        selection_unit="user",
+        level="conversation",
+        kind="custom",
+        user_rule="",
+        formula="sum(score)",
+        inputs=[],
+    )
+    assert DerivedMetricVersionSerializer(version).data["needs_rebuild"] is True
+    version.level, version.kind, version.user_rule = "user", "count", "any"
+    assert DerivedMetricVersionSerializer(version).data["needs_rebuild"] is False

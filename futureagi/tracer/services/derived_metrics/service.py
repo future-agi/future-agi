@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -27,29 +27,27 @@ from tracer.services.derived_metrics.cursor import (
     encode_result_cursor,
 )
 from tracer.services.derived_metrics.errors import MetricBusyError, MetricInputError
-from tracer.services.derived_metrics.formula import compile_formula
 from tracer.services.derived_metrics.queries import (
     PREVIEW_QUERY_SETTINGS,
     QUERY_SETTINGS,
     SCOPE_SQL,
     UNCERTAINTY_COLUMNS,
     Scope,
-    aggregate_select,
     rollup_insert,
     snapshot_select,
 )
+from tracer.services.derived_metrics.spec import (
+    SEMANTIC_KEYS,
+    normalize_spec,
+    require_computable,
+    snapshot_support,
+)
 from tracer.services.derived_metrics.uncertainty import CONFIDENCE_LEVEL, NOT_COMPUTED
+from tracer.services.derived_metrics.unit_reads import field_recipe
 
 logger = structlog.get_logger(__name__)
 SEMANTICS = "One contribution per selection unit; complete cases only; inverse-probability weights apply once. Missing inputs are not zero. Zero denominator and invalid probabilities produce no value. Replay uses frozen inputs, not mutable raw history."
-DEFINITION_KEYS = (
-    "formula",
-    "inputs",
-    "selection_unit",
-    "weighting",
-    "cohort_key",
-    "filters",
-)
+DEFINITION_KEYS = SEMANTIC_KEYS
 
 
 def _json_value(value):
@@ -109,13 +107,10 @@ def require_satisfiable_filters(definition, run_filters: list[dict]) -> None:
 
 
 def validate_definition(data: dict, project) -> dict:
-    formula = compile_formula(
-        data["formula"], [item["alias"] for item in data["inputs"]]
-    )
-    if set(formula.required) != {item["alias"] for item in data["inputs"]}:
-        raise MetricInputError(
-            {"inputs": "Remove inputs that the formula does not use."}
-        )
+    from types import SimpleNamespace
+
+    data = normalize_spec(data)
+    compiled = field_recipe(SimpleNamespace(**data))
     config_ids = {
         str(item["config_id"]) for item in data["inputs"] if item["source"] == "eval"
     }
@@ -167,8 +162,8 @@ def validate_definition(data: dict, project) -> dict:
         )
     return {
         "valid": True,
-        "kind": formula.kind,
-        "required_inputs": list(formula.required),
+        "kind": data["kind"],
+        "required_inputs": [item["alias"] for item in compiled.required_inputs],
         "semantics": SEMANTICS,
     }
 
@@ -178,7 +173,10 @@ def save_definition(
     data: dict, project, workspace, user, metric: DerivedMetric | None = None
 ) -> DerivedMetric:
     validate_definition(data, project)
-    recipe = _json_value({key: data[key] for key in DEFINITION_KEYS})
+    recipe = _json_value(normalize_spec(data))
+    from tracer.services.derived_metrics.deletion_protocol import project_lock
+
+    project_lock(project.pk)
     if metric:
         metric = DerivedMetric.objects.select_for_update().get(pk=metric.pk)
         if metric.project_id != project.pk:
@@ -211,6 +209,11 @@ def save_definition(
         definition_hash=_hash(recipe),
         **recipe,
     )
+    from tracer.models.derived_metric import MetricProjectRefresh
+
+    MetricProjectRefresh.objects.update_or_create(
+        project=project, defaults={"pending_backfill": True}
+    )
     return metric
 
 
@@ -218,12 +221,26 @@ def save_definition(
 def create_run(
     metric: DerivedMetric, data: dict, user
 ) -> tuple[DerivedMetricRun, bool]:
-    version = data.get("version", metric.current_version)
+    from tracer.services.derived_metrics.deletion_protocol import project_lock
+
+    project_lock(metric.project_id)
+    version = data.get(
+        "version",
+        metric.active_version.version
+        if metric.active_version
+        else metric.current_version,
+    )
     definition = DerivedMetricVersion.objects.filter(
         metric=metric, version=version
     ).first()
     if definition is None:
         raise MetricInputError({"version": "Metric version does not exist."})
+    require_computable(definition)
+    if definition.kind != "custom" or definition.field_spec:
+        raise MetricUnavailableError(
+            "refresh_unavailable",
+            "Use the committed refresh writer for v2 metric definitions, not raw frozen runs.",
+        )
     require_satisfiable_filters(definition, data["filters"])
     source_run_id = str(data.get("source_run_id") or "")
     if (
@@ -389,6 +406,11 @@ def execute_run(run_id: UUID | str) -> None:
 
 def _compute(run: DerivedMetricRun) -> None:
     definition = run.definition
+    require_computable(definition)
+    if definition.kind != "custom" or definition.field_spec:
+        raise MetricInputError(
+            "Use the committed refresh writer for v2 metric definitions; raw frozen runs are not supported."
+        )
     metric = definition.metric
     scope = Scope(metric.organization_id, metric.workspace_id, metric.project_id)
     client = get_clickhouse_client()
@@ -505,6 +527,7 @@ def _compute(run: DerivedMetricRun) -> None:
 @transaction.atomic
 def queue_recompute(run: DerivedMetricRun, user) -> DerivedMetricRun:
     run = DerivedMetricRun.objects.select_for_update().get(pk=run.id)
+    require_computable(run.definition)
     if (
         run.status in {DerivedMetricRun.Status.RUNNING, DerivedMetricRun.Status.QUEUED}
         and run.lease_expires_at
@@ -616,58 +639,406 @@ def read_results(
 
 
 # --- Interactive preview ---------------------------------------------------------
-# Preview is a synchronous ClickHouse read on a web worker, outside the single-slot
-# background lane. It is bounded three ways: (1) a cross-process (cache-backed)
-# concurrency guard per actor and per organization, so one user or tenant cannot
-# occupy the worker pool or the database; (2) a much smaller server-side abort
-# budget than a persisted run (PREVIEW_QUERY_SETTINGS: rows/bytes read, memory,
-# group-by, execution time, result rows; every limit throws, nothing truncates);
-# (3) the single overall row it returns. A guard lease outlives the longest allowed
-# query, so a crashed worker releases its slot by expiry instead of blocking forever.
 PREVIEW_ACTOR_SLOTS = 1
 PREVIEW_ORG_SLOTS = 4
 PREVIEW_LEASE_SECONDS = PREVIEW_QUERY_SETTINGS["max_execution_time"] + 15
 PREVIEW_MAX_ROWS = 1
-# ClickHouse server codes for an aborted read budget: TOO_MANY_ROWS, TIMEOUT_EXCEEDED,
-# TOO_SLOW, MEMORY_LIMIT_EXCEEDED, TOO_MANY_BYTES, TOO_MANY_ROWS_OR_BYTES.
 BUDGET_ERROR_CODES = frozenset({158, 159, 160, 241, 307, 396})
 
 
-def _acquire_slot(prefix: str, limit: int, token: str) -> str | None:
-    for index in range(limit):
-        key = f"{prefix}:{index}"
-        if cache.add(key, token, timeout=PREVIEW_LEASE_SECONDS):
-            return key
-    return None
+class MetricUnavailableError(Exception):
+    def __init__(
+        self,
+        code="metric_unavailable",
+        message="Metric reads are not available until a committed reader is installed.",
+    ):
+        self.code, self.message = code, message
+        super().__init__(message)
+
+
+class PreviewSupersededError(Exception):
+    pass
+
+
+class SnapshotNotSupportedError(MetricInputError):
+    pass
 
 
 @contextmanager
-def preview_admission(actor_id, organization_id):
-    """Hold one actor slot and one organization slot for the duration of a preview."""
+def _admission_lock(organization_id):
+    """Serialize cache lease changes, including compare-and-delete on release.
+
+    The cache must be shared in production (as it was for the old guard). The
+    lock never encloses a telemetry query; its TTL is a crash-recovery bound.
+    """
+    import time
+
+    key = f"derived-metric-preview:lock:{organization_id}"
     token = uuid4().hex
-    held: list[str] = []
-    try:
-        for scope, identity, limit in (
-            ("actor", actor_id, PREVIEW_ACTOR_SLOTS),
-            ("org", organization_id, PREVIEW_ORG_SLOTS),
-        ):
-            key = _acquire_slot(
-                f"derived-metric-preview:{scope}:{identity}", limit, token
+    deadline = time.monotonic() + 2
+    while not cache.add(key, token, timeout=10):
+        if time.monotonic() >= deadline:
+            raise MetricUnavailableError(
+                message="Preview admission is temporarily unavailable. Retry."
             )
-            if key is None:
-                raise MetricBusyError(
-                    "A metric preview is already running"
-                    + (" for you" if scope == "actor" else " in this organization")
-                    + ". Wait for it to finish, then retry.",
-                    retry_after=PREVIEW_LEASE_SECONDS,
-                )
-            held.append(key)
+        time.sleep(0.01)
+    try:
         yield
     finally:
-        for key in held:
-            # Release only our own lease; an expired one may belong to someone else.
-            if cache.get(key) == token:
-                cache.delete(key)
+        if cache.get(key) == token:
+            cache.delete(key)
+
+
+def _actor_key(actor_id, organization_id):
+    return f"derived-metric-preview:actor:{organization_id}:{actor_id}"
+
+
+def _cancel_preview_query(query_id):
+    if not query_id:
+        return
+    # query_id is generated here, never supplied by a caller. KILL uses a
+    # separate pooled connection; cancelling must not wait on the busy driver.
+    get_clickhouse_client().execute(
+        "KILL QUERY WHERE query_id = %(preview_query_id)s SYNC",
+        {"preview_query_id": query_id},
+        settings={"max_execution_time": 2},
+    )
+
+
+def _execution_key(state):
+    return f"derived-metric-preview:executing:{state['token']}"
+
+
+def _release_preview(actor_id, organization_id, state):
+    with _admission_lock(organization_id):
+        key = _actor_key(actor_id, organization_id)
+        current = cache.get(key)
+        if current and current["token"] == state["token"]:
+            cache.delete(key)
+        if cache.get(state["slot"]) == state["token"]:
+            cache.delete(state["slot"])
+
+
+def _stop_preview(state):
+    """Acknowledge cancellation only after the executing worker has stopped.
+
+    KILL alone is insufficient: it may arrive just before native registration.
+    The phase marker is acquired under the same lock as revocation. Retain the
+    slot and retry KILL until the worker acknowledges in its finally block. A
+    failed/slow cancellation never frees capacity for another running query.
+    """
+    import time
+
+    deadline = time.monotonic() + 2
+    while True:
+        _cancel_preview_query(state.get("query_id"))
+        if not cache.get(_execution_key(state)):
+            return
+        if time.monotonic() >= deadline:
+            raise MetricUnavailableError(
+                "preview_cancellation_pending",
+                "Preview cancellation is pending. Retry.",
+            )
+        time.sleep(0.01)
+
+
+@contextmanager
+def preview_admission(actor_id, organization_id, *, request_id=None, metric_id=None):
+    """Replace this actor's last request after its execution acknowledges stop."""
+    key = _actor_key(actor_id, organization_id)
+    state = {
+        "token": uuid4().hex,
+        "request_id": str(request_id or uuid4()),
+        "metric_id": str(metric_id or ""),
+        "query_id": None,
+        "cancelled": False,
+    }
+    while True:
+        with _admission_lock(organization_id):
+            previous = cache.get(key)
+            if previous:
+                previous["cancelled"] = True
+                cache.set(key, previous, timeout=PREVIEW_LEASE_SECONDS)
+            else:
+                slot = next(
+                    (
+                        f"derived-metric-preview:org:{organization_id}:{index}"
+                        for index in range(PREVIEW_ORG_SLOTS)
+                        if cache.get(
+                            f"derived-metric-preview:org:{organization_id}:{index}"
+                        )
+                        is None
+                    ),
+                    None,
+                )
+                if slot is None:
+                    raise MetricBusyError(
+                        "Metric previews are busy in this organization. Retry shortly.",
+                        retry_after=PREVIEW_LEASE_SECONDS,
+                    )
+                state["slot"] = slot
+                cache.set(slot, state["token"], timeout=PREVIEW_LEASE_SECONDS)
+                cache.set(key, state, timeout=PREVIEW_LEASE_SECONDS)
+                break
+        _stop_preview(previous)
+        _release_preview(actor_id, organization_id, previous)
+    try:
+        yield state
+    finally:
+        _release_preview(actor_id, organization_id, state)
+
+
+def _check_preview_current(actor_id, organization_id, state):
+    current = cache.get(_actor_key(actor_id, organization_id))
+    if (
+        not current
+        or current["token"] != state["token"]
+        or current.get("cancelled")
+        or cache.get(state["slot"]) != state["token"]
+    ):
+        raise PreviewSupersededError(
+            "This preview was cancelled or superseded by a newer request."
+        )
+
+
+@contextmanager
+def _preview_phase(actor_id, organization_id, state):
+    # Must run AFTER pool acquisition and separately for every native statement.
+    # Revocation cannot acknowledge stop between this check and the phase marker.
+    with _admission_lock(organization_id):
+        _check_preview_current(actor_id, organization_id, state)
+        # Pool waiting must not consume the lease protecting a running query.
+        cache.set(state["slot"], state["token"], timeout=PREVIEW_LEASE_SECONDS)
+        cache.set(
+            _actor_key(actor_id, organization_id), state, timeout=PREVIEW_LEASE_SECONDS
+        )
+        cache.set(_execution_key(state), True, timeout=PREVIEW_LEASE_SECONDS)
+    try:
+        yield
+    finally:
+        cache.delete(_execution_key(state))
+
+
+def cancel_preview(actor_id, organization_id, metric_id, request_id):
+    key = _actor_key(actor_id, organization_id)
+    with _admission_lock(organization_id):
+        state = cache.get(key)
+        if (
+            not state
+            or state["request_id"] != str(request_id)
+            or state["metric_id"] != str(metric_id)
+        ):
+            return {"cancelled": False}
+        state["cancelled"] = True
+        cache.set(key, state, timeout=PREVIEW_LEASE_SECONDS)
+    _stop_preview(state)
+    _release_preview(actor_id, organization_id, state)
+    return {"cancelled": True}
+
+
+def _preview_aggregate(query, recipe, params):
+    if recipe.kind not in {"unique_count", "percentile"}:
+        params.update(recipe.formula.parameters)
+        from tracer.services.derived_metrics.parts import (
+            combine_parts_select,
+            stratum_parts_select,
+        )
+
+        return combine_parts_select(
+            stratum_parts_select(query, recipe.formula, scope_column="sampling_scope"),
+            recipe.formula,
+        )
+    # The same typed reduced value feeds the refresh sketch. Preview computes
+    # one bounded sketch directly; no numeric coercion of text/yes-no values.
+    mapping = {
+        "number": "input_values",
+        "boolean": "inputs_bool",
+        "text": "inputs_text",
+    }[recipe.value_type]
+    value = f"{mapping}['{recipe.value_alias}']"
+    present = f"isNotNull({value})" + (
+        f" AND isFinite({value})" if recipe.value_type == "number" else ""
+    )
+    params["preview_percentile"] = recipe.source.field_spec.get("percentile", 0.95)
+    aggregate = (
+        "uniqExactIf(source_value, present)"
+        if recipe.kind == "unique_count"
+        else "quantileTDigestIf(%(preview_percentile)s)(source_value, present)"
+    )
+    # A weighted distinct/quantile estimate isn't implemented. Never substitute
+    # an unweighted estimate for a sampled population.
+    return f"""SELECT '' AS group_key, if(status = 'ok', toFloat64(raw_value), NULL) AS value,
+        value AS numerator, CAST(NULL, 'Nullable(Float64)') AS denominator, status,
+        unit_count, valid_count, missing_count, invalid_probability_count,
+        'not_estimable' AS ci_status, 'not_computed' AS ci_reason, '' AS ci_method, '' AS ci_interval,
+        CAST(NULL, 'Nullable(Float64)') AS std_error, CAST(NULL, 'Nullable(Float64)') AS ci_low,
+        CAST(NULL, 'Nullable(Float64)') AS ci_high, CAST(NULL, 'Nullable(Float64)') AS effective_n,
+        CAST(NULL, 'Nullable(UInt64)') AS ci_df
+        FROM (SELECT count() AS unit_count, countIf(present) AS valid_count,
+            countIf(NOT present) AS missing_count,
+            if(uniqExactIf(sampling_scope, notEmpty(sampling_scope)) > 1, countIf(notEmpty(sampling_scope)), countIf(invalid_probability != 0 OR ifNull(probability != 1, 1))) AS invalid_probability_count,
+            {aggregate} AS raw_value,
+            multiIf(unit_count = 0, 'no_data', invalid_probability_count > 0, 'invalid_probability', valid_count = 0, 'missing_inputs', NOT isFinite(toFloat64(raw_value)), 'non_finite', 'ok') AS status
+            FROM (SELECT *, {value} AS source_value, ifNull({present}, 0) AS present FROM ({query})))"""
+
+
+def _preview_samples(query, recipe, params):
+    """Bounded typed evidence from the SAME settled source as the aggregate.
+
+    One array result keeps the original ten-row server result cap unchanged.
+    Missing source values are represented as No value, not false/zero.
+    """
+    from tracer.services.derived_metrics.typed_fields import reduced_type
+
+    maps = {"number": "input_values", "boolean": "inputs_bool", "text": "inputs_text"}
+    if recipe.formula:
+        formula = recipe.formula
+        params.update(formula.parameters)
+        unpack = ", ".join(
+            f"input_values['{name}'] AS v_{name}" for name in formula.required
+        )
+        ratio = formula.kind in {"mean", "ratio"}
+        raw = "part_n / nullIf(part_d, 0)" if ratio else "part_n"
+        if recipe.value_type == "boolean":
+            raw = "toUInt8(part_n != 0)"
+        zero = "part_d = 0" if ratio else "0"
+        missing = " OR ".join(f"isNull(v_{name})" for name in formula.required)
+        complete = f"({formula.complete_sql}) AND isNotNull(part_n) AND isFinite(part_n) AND isNotNull(part_d) AND isFinite(part_d)"
+        evidence = f"SELECT *, {unpack}, {formula.numerator} AS part_n, {formula.denominator} AS part_d FROM ({query})"
+    else:
+        raw = f"{maps[recipe.value_type]}['{recipe.value_alias}']"
+        zero, missing, complete, evidence = (
+            "0",
+            f"isNull({raw})",
+            f"isNotNull({raw})",
+            query,
+        )
+    missing_evals = (
+        " OR ".join(
+            f"isNull({maps[reduced_type(item)]}['{item['alias']}'])"
+            for item in recipe.required_inputs
+            if item["source"] == "eval"
+        )
+        or "0"
+    )
+    finite = "isFinite(computed_value)" if recipe.value_type == "number" else "1"
+    available = "if(reason = '', computed_value, NULL)"
+    values = [
+        f"CAST({available if kind == recipe.value_type else 'NULL'}, 'Nullable({cast})')"
+        for kind, cast in (
+            ("number", "Float64"),
+            ("boolean", "UInt8"),
+            ("text", "String"),
+        )
+    ]
+    return f"""SELECT groupArray(20)(tuple(unit_id, reason, {", ".join(values)}, input_values, inputs_bool, inputs_text)) AS sample_units
+        FROM (SELECT *, {raw} AS computed_value,
+            multiIf(invalid_probability != 0, 'invalid_probability', {missing},
+                if({missing_evals}, 'not_evaluated', 'attribute_absent'),
+                {zero}, 'zero_denominator', NOT ({complete}) OR NOT ({finite}), 'non_finite', '') AS reason
+            FROM ({evidence}) ORDER BY unit_start DESC, unit_id LIMIT 20)"""
+
+
+def _shape_preview_samples(rows, definition):
+    samples = []
+    for unit_id, reason, number, boolean, text, inputs, bools, texts in rows:
+        samples.append(
+            {
+                "unit_id": unit_id,
+                "status": "no_value" if reason else "value",
+                "no_value_reason": reason,
+                "value_number": number,
+                "value_bool": None if boolean is None else bool(boolean),
+                "value_text": text,
+                "value_label": (
+                    definition.value_labels["match" if boolean else "other"]
+                    if not reason and boolean is not None and definition.value_labels
+                    else ""
+                ),
+                "inputs": inputs,
+                "inputs_bool": {
+                    key: None if value is None else bool(value)
+                    for key, value in bools.items()
+                },
+                "inputs_text": texts,
+            }
+        )
+    return samples
+
+
+def _preview_evaluated(
+    connection,
+    query,
+    recipe,
+    params,
+    query_id,
+    check_current,
+    *,
+    phase=nullcontext,
+    include_samples=False,
+):
+    """Materialize reduced evidence on the leased connection, never in Python.
+
+    CH 25.3's analyzer expands the evaluation-lineage expressions repeatedly
+    beneath the variance estimator (the two-input fixture exceeded 15 seconds).
+    A connection-local Memory table is an optimizer boundary, not a saved run.
+    Materialization, aggregation and optional sample evidence share the original
+    15-second deadline and abort budgets.
+    """
+    import time
+
+    table = "metric_preview_" + uuid4().hex
+    deadline = time.monotonic() + PREVIEW_QUERY_SETTINGS["max_execution_time"]
+
+    def remaining_settings():
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise MetricInputError(
+                {
+                    "window": "This preview exceeded its interactive read budget. Choose a shorter window or narrower filters, then retry."
+                }
+            )
+        return {**PREVIEW_QUERY_SETTINGS, "max_execution_time": remaining}
+
+    try:
+        with phase():
+            check_current()
+            connection.execute(
+                f"CREATE TEMPORARY TABLE {table} ENGINE=Memory AS {query}",
+                params,
+                query_id=query_id,
+                settings=PREVIEW_QUERY_SETTINGS,
+            )
+        check_current()
+        with phase():
+            result = connection.execute(
+                _preview_aggregate(f"SELECT * FROM {table}", recipe, params),
+                params,
+                query_id=query_id,
+                with_column_types=True,
+                settings=remaining_settings(),
+            )
+        samples = []
+        if include_samples:
+            check_current()
+            with phase():
+                samples = connection.execute(
+                    _preview_samples(f"SELECT * FROM {table}", recipe, params),
+                    params,
+                    query_id=query_id,
+                    settings=remaining_settings(),
+                )[0][0]
+        return (*result, samples)
+    finally:
+        try:
+            connection.execute(
+                f"DROP TEMPORARY TABLE IF EXISTS {table}",
+                settings={"max_execution_time": 2},
+            )
+        except Exception:
+            # Never return a connection carrying somebody's preview evidence to
+            # the pool if cleanup failed. Disconnect destroys its temp tables.
+            connection.disconnect()
 
 
 def preview(
@@ -679,49 +1050,203 @@ def preview(
     source_run_id: str,
     *,
     actor_id,
+    request_id=None,
+    include_samples=False,
 ) -> dict:
+    require_computable(definition)
     require_satisfiable_filters(definition, filters)
-    formula = compile_formula(
-        definition.formula, [item["alias"] for item in definition.inputs]
+    if not start < end or end - start > timedelta(days=7) or end > timezone.now():
+        raise MetricInputError(
+            {"window": "Preview requires a closed window of at most 7 days."}
+        )
+    if definition.level == "user":
+        raise MetricUnavailableError(
+            "user_preview_unavailable",
+            "User preview is not available until the shared user-level reader is installed.",
+        )
+    if definition.level == "trace":
+        raise MetricUnavailableError(
+            "trace_preview_unavailable",
+            "Trace preview is not available until the measured trace reader is installed.",
+        )
+    recipe = field_recipe(definition)
+    recipe.source.selection_unit = "span" if definition.level == "span" else "session"
+    from tracer.models.derived_metric import MetricProjectRefresh
+
+    settle = (
+        MetricProjectRefresh.objects.filter(project_id=scope.project)
+        .values_list("settle_minutes", flat=True)
+        .first()
     )
-    with preview_admission(actor_id, scope.organization):
+    settle = 30 if settle is None else settle
+    with preview_admission(
+        actor_id,
+        scope.organization,
+        request_id=request_id,
+        metric_id=definition.metric_id,
+    ) as admitted:
+        # Full membership before start/settle predicates, just like refresh. An
+        # old first span must not disappear because only its later root is in range.
         query, params = snapshot_select(
-            definition,
+            recipe.source,
             scope,
             start,
             end,
             timezone.now(),
             definition.filters + filters,
             source_run_id,
+            unit_predicate="1",
+            include_evidence=True,
         )
+        params["preview_settle_minutes"] = settle
+        settled = "fromUnixTimestamp64Nano(toInt64(last_arrival_ns)) + toIntervalMinute(%(preview_settle_minutes)s) <= toDateTime64(%(as_of)s, 6, 'UTC')"
+        if definition.level == "span":
+            # Span lifecycle is end_time, not the conversation inactivity timer.
+            # Collapse before this mutable end/deletion predicate as in B03.
+            settled = """unit_id IN (SELECT toJSONString(tuple(toString(trace_id), toString(id))) FROM (
+                SELECT id, trace_id, end_time, is_deleted FROM spans
+                PREWHERE project_id = %(project_id)s
+                WHERE (org_id = %(org_id)s OR isNull(org_id)) AND created_at <= %(as_of)s AND updated_at <= %(as_of)s
+                ORDER BY _version DESC LIMIT 1 BY project_id, trace_id, id
+            ) WHERE is_deleted = 0 AND isNotNull(end_time) AND end_time <= %(as_of)s)"""
+        query = f"""SELECT * FROM ({query}) WHERE unit_start >= toDateTime64(%(start)s, 6, 'UTC')
+            AND unit_start < toDateTime64(%(end)s, 6, 'UTC') AND ({settled})"""
+        # B03's scoped parts reject mixed scopes at this settled read window,
+        # without a per-unit window expansion of every input expression.
         client = get_clickhouse_client()
         if client.server_enforced_readonly:
-            raise RuntimeError(
-                "Metric preview requires the bounded computation connection."
+            raise MetricUnavailableError(
+                message="Metric preview requires the bounded computation connection."
+            )
+        query_id = "metric-preview-" + admitted["token"]
+        with _admission_lock(scope.organization):
+            _check_preview_current(actor_id, scope.organization, admitted)
+            admitted["query_id"] = query_id
+            cache.set(
+                _actor_key(actor_id, scope.organization),
+                admitted,
+                timeout=PREVIEW_LEASE_SECONDS,
             )
         try:
-            rows, columns = client.execute(
-                aggregate_select(query, formula, rollup="overall"),
-                {**params, **formula.parameters},
-                with_column_types=True,
-                settings=PREVIEW_QUERY_SETTINGS,
-            )
+            _check_preview_current(actor_id, scope.organization, admitted)
+            # The pooled wrapper's execute has no query_id parameter. A leased
+            # native connection supplies one, so replace/cancel can abort it.
+            with client.connection() as connection:
+                _check_preview_current(actor_id, scope.organization, admitted)
+                samples = []
+                if include_samples or any(
+                    item["source"] == "eval" for item in recipe.source.inputs
+                ):
+                    rows, columns, samples = _preview_evaluated(
+                        connection,
+                        query,
+                        recipe,
+                        params,
+                        query_id,
+                        lambda: _check_preview_current(
+                            actor_id, scope.organization, admitted
+                        ),
+                        phase=lambda: _preview_phase(
+                            actor_id, scope.organization, admitted
+                        ),
+                        include_samples=include_samples,
+                    )
+                else:
+                    aggregate = _preview_aggregate(query, recipe, params)
+                    with _preview_phase(actor_id, scope.organization, admitted):
+                        rows, columns = connection.execute(
+                            aggregate,
+                            params,
+                            query_id=query_id,
+                            with_column_types=True,
+                            settings=PREVIEW_QUERY_SETTINGS,
+                        )
+            _check_preview_current(actor_id, scope.organization, admitted)
         except Exception as exc:
+            _check_preview_current(actor_id, scope.organization, admitted)
             if getattr(exc, "code", None) in BUDGET_ERROR_CODES:
-                logger.warning("derived_metric_preview_budget", code=exc.code)
                 raise MetricInputError(
                     {
-                        "window": "This preview exceeded its interactive read budget. "
-                        "Choose a shorter window or narrower filters, or run and persist "
-                        "the window instead."
+                        "window": "This preview exceeded its interactive read budget. Choose a shorter window or narrower filters, then retry."
                     }
                 ) from exc
             raise
     names = [column[0] for column in columns]
+    results = [
+        shape_result(dict(zip(names, row, strict=True)), include_uncertainty=True)
+        for row in rows[:PREVIEW_MAX_ROWS]
+    ]
     return {
-        "results": [
-            shape_result(dict(zip(names, row, strict=True)), include_uncertainty=True)
-            for row in rows[:PREVIEW_MAX_ROWS]
-        ],
+        "results": results,
         "next_cursor": None,
+        "unit_noun": "spans" if definition.level == "span" else "conversations",
+        "value_mode": "materialized",
+        "rate_eligible": bool(recipe.formula and recipe.formula.rate_eligible),
+        "weighted": definition.weighting == "inverse_probability",
+        "unit": definition.unit,
+        "value_format": definition.value_format,
+        "point_status": results[0]["status"] if results else "no_data",
+        "summary": "Preview of settled units; missing inputs are not zero.",
+        **(
+            {"sample_units": _shape_preview_samples(samples, definition)}
+            if include_samples
+            else {}
+        ),
     }
+
+
+def admit_refresh(metric):
+    """B07's refresh-now adapter must use the same legacy/trace fence."""
+    definition = metric.active_version or metric.versions.get(
+        version=metric.current_version
+    )
+    require_computable(definition)
+    raise MetricUnavailableError(
+        "refresh_unavailable",
+        "Refresh is not available until the committed refresh writer is installed.",
+    )
+
+
+def activate_definition(metric, data):
+    definition = DerivedMetricVersion.objects.filter(
+        metric=metric, version=data["version"]
+    ).first()
+    if definition is None:
+        raise MetricInputError({"version": "Metric version does not exist."})
+    require_computable(definition)
+    from tracer.models.derived_metric import MetricStateConflict
+
+    try:
+        DerivedMetric.activate_version(
+            metric.id, definition.id, expected_active_id=data["expected_active_id"]
+        )
+    except MetricStateConflict as exc:
+        raise MetricInputError({"version": str(exc)}) from exc
+
+
+def request_snapshot(metric, data, user):
+    definition = metric.active_version
+    supported, reason = snapshot_support(definition)
+    if not supported:
+        raise SnapshotNotSupportedError(reason)
+    raise MetricUnavailableError(
+        "snapshot_unavailable",
+        "Snapshot capture is not available until the committed snapshot writer is installed.",
+    )
+
+
+def delete_snapshot(metric, snapshot_id, user):
+    # Do not mutate the ledger or report success without durable external cleanup.
+    from django.http import Http404
+
+    if not DerivedMetricRun.objects.filter(
+        definition__metric=metric,
+        pk=snapshot_id,
+        kind="snapshot",
+        deleted_at__isnull=True,
+    ).exists():
+        raise Http404
+    raise MetricUnavailableError(
+        "snapshot_unavailable",
+        "Snapshot deletion is not available until the cleanup worker is installed.",
+    )

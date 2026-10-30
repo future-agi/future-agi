@@ -7,7 +7,7 @@ only ``read_results`` so a stored overall value can be chosen per run.
 """
 
 import time
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from datetime import timedelta
 from unittest.mock import patch
 from uuid import UUID, uuid4
@@ -728,10 +728,7 @@ def test_picker_output_authors_a_weighted_metric_that_reads_real_sampled_results
                 probability,
                 config_hash=config_hash,
             )
-    with patch(
-        "tracer.services.derived_metrics.service.get_clickhouse_client",
-        return_value=metric_ch,
-    ):
+    with using(metric_ch):
         shown = auth_client.post(
             f"{ROOT}{created.data['id']}/preview/", window(), format="json"
         )
@@ -883,16 +880,31 @@ class SpyClient:
         self.settings = []
         self.on_first_execute = on_first_execute
 
-    def execute(self, query, params=None, with_column_types=False, settings=None):
+    @contextmanager
+    def connection(self):
+        if self.on_first_execute:
+            callback, self.on_first_execute = self.on_first_execute, None
+            callback()
+        yield self
+
+    def execute(
+        self, query, params=None, with_column_types=False, settings=None, query_id=None
+    ):
         self.settings.append(settings)
-        if self.on_first_execute and len(self.settings) == 1:
-            self.on_first_execute()
         return self.inner.execute(
-            query, params, with_column_types=with_column_types, settings=settings
+            query,
+            params,
+            with_column_types=with_column_types,
+            settings=settings,
+            **({"query_id": query_id} if query_id else {}),
         )
 
 
 def using(client):
+    from tracer.tests.test_derived_metric_preview import NativePreviewAdapter
+
+    if not callable(getattr(client, "connection", None)):
+        client = NativePreviewAdapter(client)
     return patch(
         "tracer.services.derived_metrics.service.get_clickhouse_client",
         return_value=client,
@@ -946,7 +958,7 @@ def test_persisted_runs_keep_their_own_budget(auth_client, saved, scope, metric_
 
 
 @pytest.mark.django_db
-def test_second_concurrent_preview_by_the_same_actor_is_throttled_then_recovers(
+def test_second_concurrent_preview_by_the_same_actor_supersedes_then_recovers(
     auth_client, saved, scope, metric_ch
 ):
     seed_two_sessions(metric_ch, scope, timezone.now() - timedelta(hours=1))
@@ -964,10 +976,12 @@ def test_second_concurrent_preview_by_the_same_actor_is_throttled_then_recovers(
         first = auth_client.post(
             f"{ROOT}{saved['id']}/preview/", window(), format="json"
         )
-    assert first.status_code == 200, first.data
-    assert len(nested) == 1 and nested[0].status_code == 429
-    assert int(nested[0]["Retry-After"]) == service.PREVIEW_LEASE_SECONDS
-    assert len(spy.settings) == 1  # the refused request never reached ClickHouse
+    assert first.status_code == 409, first.data
+    assert first.data["code"] == "preview_superseded"
+    assert len(nested) == 1 and nested[0].status_code == 200
+    # The replacement runs; the revoked pool waiter never submits a read.
+    # One query-id-scoped cancellation and one read, with no actor throttle.
+    assert len(spy.settings) == 2
     with using(SpyClient(metric_ch)):
         again = auth_client.post(
             f"{ROOT}{saved['id']}/preview/", window(), format="json"
@@ -1025,10 +1039,10 @@ def test_preview_budget_is_enforced_by_the_server_and_never_truncates(
 
 def test_admission_is_per_actor_and_per_organization_and_always_released():
     organization = uuid4()
-    with preview_admission("actor-a", organization):
-        with pytest.raises(MetricBusyError, match="for you"):
-            with preview_admission("actor-a", organization):
-                pytest.fail("a second slot for the same actor must not be granted")
+    with preview_admission("actor-a", organization) as first:
+        with preview_admission("actor-a", organization) as latest:
+            assert first["slot"] == latest["slot"]
+            assert first["token"] != latest["token"]
         # Another actor in the same organization is still admitted.
         with preview_admission("actor-b", organization):
             pass
@@ -1049,11 +1063,12 @@ def test_admission_is_per_actor_and_per_organization_and_always_released():
 def test_a_crashed_workers_lease_expires_instead_of_blocking_forever(monkeypatch):
     monkeypatch.setattr(service, "PREVIEW_LEASE_SECONDS", 1)
     organization = uuid4()
-    # A worker killed mid-query: it took the actor slot and never released it.
-    assert service._acquire_slot("derived-metric-preview:actor:crashed", 1, "dead")
+    monkeypatch.setattr(service, "PREVIEW_ORG_SLOTS", 1)
+    # A worker killed mid-query: another actor waits for its org-slot expiry.
+    cache.set(f"derived-metric-preview:org:{organization}:0", "dead", timeout=1)
     with pytest.raises(MetricBusyError):
-        with preview_admission("crashed", organization):
-            pytest.fail("the dead worker's lease is still valid")
+        with preview_admission("other-actor", organization):
+            pytest.fail("the dead worker's organization slot is still valid")
     time.sleep(1.3)
-    with preview_admission("crashed", organization):
+    with preview_admission("other-actor", organization):
         pass

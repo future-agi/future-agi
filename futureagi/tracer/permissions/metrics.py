@@ -26,9 +26,14 @@ class MetricWorkspacePermission(BasePermission):
         if membership is None or membership.organization_id != organization.id:
             return False
         level = get_effective_workspace_level(request.user, workspace.id)
+        handler = getattr(view, getattr(view, "action", ""), None)
+        read_post = (
+            request.method == "POST"
+            and getattr(handler, "_read_query_post", False) is True
+        )
         required = (
             Level.WORKSPACE_VIEWER
-            if request.method in {"GET", "HEAD", "OPTIONS"}
+            if request.method in {"GET", "HEAD", "OPTIONS"} or read_post
             else Level.WORKSPACE_MEMBER
         )
         return level is not None and level >= required

@@ -13,17 +13,15 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from tfc.utils.api_contracts import validated_request
-from tfc.utils.general_methods import GeneralMethods
 from tracer.models.derived_metric import (
     DerivedMetric,
     DerivedMetricRun,
     DerivedMetricVersion,
 )
 from tracer.permissions.metrics import MetricWorkspacePermission
+from tracer.serializers import derived_metric as contracts
 from tracer.serializers.derived_metric import (
     DerivedMetricCommittedResultPageSerializer,
-    DerivedMetricCompareQuerySerializer,
-    DerivedMetricComparisonSerializer,
     DerivedMetricContributorPageSerializer,
     DerivedMetricContributorQuerySerializer,
     DerivedMetricEvaluatorPageSerializer,
@@ -31,7 +29,6 @@ from tracer.serializers.derived_metric import (
     DerivedMetricListQuerySerializer,
     DerivedMetricListSerializer,
     DerivedMetricRecomputeSerializer,
-    DerivedMetricResultPageSerializer,
     DerivedMetricResultQuerySerializer,
     DerivedMetricRunRequestSerializer,
     DerivedMetricRunSerializer,
@@ -58,8 +55,9 @@ def metric_queryset(request):
             workspace=request.workspace,
             organization=get_request_organization(request),
             project__in=project_queryset_for_request(request),
+            deleted=False,
         )
-        .select_related("project", "workspace")
+        .select_related("project", "workspace", "active_version")
         .prefetch_related(
             Prefetch(
                 "versions",
@@ -89,19 +87,43 @@ def _enqueue(run):
 
 class MetricViewSet(viewsets.GenericViewSet):
     def handle_exception(self, exc):
+        if isinstance(exc, service.MetricUnavailableError):
+            return Response(
+                {"code": exc.code, "message": exc.message, "retryable": True},
+                status=503,
+            )
+        if isinstance(exc, service.SnapshotNotSupportedError):
+            return Response(
+                {
+                    "code": "snapshot_not_supported",
+                    "message": str(exc),
+                    "retryable": False,
+                },
+                status=400,
+            )
+        if isinstance(exc, service.PreviewSupersededError):
+            return Response(
+                {"code": "preview_superseded", "message": str(exc), "retryable": False},
+                status=409,
+            )
+        if isinstance(exc, FormulaError):
+            return super().handle_exception(ValidationError({"definition": str(exc)}))
         if isinstance(exc, MetricBusyError):
             return super().handle_exception(
                 Throttled(wait=exc.retry_after, detail=str(exc.detail))
             )
         if isinstance(exc, MetricInputError):
             return super().handle_exception(ValidationError(exc.detail))
-        if isinstance(exc, (APIException, Http404, DjangoPermissionDenied)):
+        if isinstance(exc, APIException | Http404 | DjangoPermissionDenied):
             return super().handle_exception(exc)
         structlog.get_logger(__name__).exception("derived_metric_api_unavailable")
-        return GeneralMethods().custom_error_response(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "Metric data is temporarily unavailable. Retry or reduce the window.",
-            code="metric_unavailable",
+        return Response(
+            {
+                "code": "metric_unavailable",
+                "message": "Metric data is temporarily unavailable. Retry or reduce the window.",
+                "retryable": True,
+            },
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
         )
 
 
@@ -124,6 +146,9 @@ class DerivedMetricViewSet(MetricViewSet):
         params = request.validated_query_data
         queryset = self.get_queryset()
         if params.get("project_id"):
+            get_object_or_404(
+                project_queryset_for_request(request), pk=params["project_id"]
+            )
             queryset = queryset.filter(project_id=params["project_id"])
         page, next_cursor = newest_first_page(
             queryset, params.get("before"), params["limit"]
@@ -242,8 +267,12 @@ class DerivedMetricViewSet(MetricViewSet):
         )
 
     @validated_request(
-        request_serializer=DerivedMetricRunRequestSerializer,
-        responses={200: DerivedMetricResultPageSerializer},
+        request_serializer=contracts.MetricPreviewRequestSerializer,
+        responses={
+            200: contracts.MetricPreviewSerializer,
+            503: contracts.MetricUnavailableSerializer,
+            409: contracts.MetricUnavailableSerializer,
+        },
     )
     @action(detail=True, methods=["post"])
     def preview(self, request, pk=None):
@@ -252,7 +281,12 @@ class DerivedMetricViewSet(MetricViewSet):
         definition = get_object_or_404(
             DerivedMetricVersion,
             metric=metric,
-            version=data.get("version", metric.current_version),
+            version=data.get(
+                "version",
+                metric.active_version.version
+                if metric.active_version
+                else metric.current_version,
+            ),
         )
         # Validate source-run ownership through the same project boundary as runs.
         source_run = str(data.get("source_run_id") or "")
@@ -268,8 +302,297 @@ class DerivedMetricViewSet(MetricViewSet):
             data["filters"],
             source_run,
             actor_id=request.user.id,
+            request_id=data.get("request_id"),
+            include_samples=data["include_samples"],
         )
         return Response(result)
+
+    @validated_request(
+        request_serializer=contracts.MetricDraftPreviewRequestSerializer,
+        responses={
+            200: contracts.MetricPreviewSerializer,
+            503: contracts.MetricUnavailableSerializer,
+            409: contracts.MetricUnavailableSerializer,
+        },
+    )
+    @action(detail=False, methods=["post"], url_path="preview")
+    def preview_draft(self, request):
+        from types import SimpleNamespace
+
+        from tracer.models.eval_task import EvalTask
+        from tracer.services.derived_metrics.spec import normalize_spec
+
+        data = request.validated_data
+        project = get_object_or_404(
+            project_queryset_for_request(request), pk=data["project_id"]
+        )
+        service.validate_definition(data["definition"], project)
+        definition = SimpleNamespace(
+            **normalize_spec(data["definition"]), metric_id=f"draft:{project.id}"
+        )
+        source_run = str(data.get("source_run_id") or "")
+        if source_run:
+            get_object_or_404(EvalTask, pk=source_run, project=project, deleted=False)
+        return Response(
+            service.preview(
+                definition,
+                Scope(project.organization_id, request.workspace.id, project.id),
+                data["window_start"],
+                data["window_end"],
+                data["filters"],
+                source_run,
+                actor_id=request.user.id,
+                request_id=data.get("request_id"),
+                include_samples=data["include_samples"],
+            )
+        )
+
+    @validated_request(
+        request_serializer=contracts.MetricDraftPreviewCancelSerializer,
+        responses={200: contracts.MetricPreviewCancelledSerializer},
+    )
+    @action(detail=False, methods=["post"], url_path="preview/cancel")
+    def cancel_draft_preview(self, request):
+        project = get_object_or_404(
+            project_queryset_for_request(request),
+            pk=request.validated_data["project_id"],
+        )
+        return Response(
+            service.cancel_preview(
+                request.user.id,
+                project.organization_id,
+                f"draft:{project.id}",
+                request.validated_data["request_id"],
+            )
+        )
+
+    @validated_request(
+        query_serializer=contracts.MetricEmptySerializer,
+        responses={200: contracts.MetricCapabilitiesSerializer},
+    )
+    @action(detail=False, methods=["get"])
+    def capabilities(self, request):
+        from tracer.services.derived_metrics.spec import source_capabilities
+
+        return Response(source_capabilities())
+
+    @validated_request(
+        request_serializer=contracts.MetricPreviewCancelSerializer,
+        responses={200: contracts.MetricPreviewCancelledSerializer},
+    )
+    @action(detail=True, methods=["post"], url_path="preview/cancel")
+    def cancel_preview(self, request, pk=None):
+        metric = self.get_object()
+        return Response(
+            service.cancel_preview(
+                request.user.id,
+                metric.organization_id,
+                metric.id,
+                request.validated_data["request_id"],
+            )
+        )
+
+    @validated_request(
+        query_serializer=contracts.MetricWindowSerializer,
+        responses={
+            200: contracts.MetricKpiSerializer,
+            503: contracts.MetricUnavailableSerializer,
+        },
+    )
+    @action(detail=True, methods=["get"])
+    def kpi(self, request, pk=None):
+        self.get_object()
+        raise service.MetricUnavailableError()
+
+    @validated_request(
+        query_serializer=contracts.MetricTrendQuerySerializer,
+        responses={
+            200: contracts.MetricTrendSerializer,
+            503: contracts.MetricUnavailableSerializer,
+        },
+    )
+    @action(detail=True, methods=["get"])
+    def trend(self, request, pk=None):
+        self.get_object()
+        raise service.MetricUnavailableError()
+
+    @validated_request(
+        query_serializer=contracts.MetricDriversQuerySerializer,
+        responses={
+            200: contracts.MetricDriversSerializer,
+            503: contracts.MetricUnavailableSerializer,
+        },
+    )
+    @action(detail=True, methods=["get"])
+    def drivers(self, request, pk=None):
+        self.get_object()
+        raise service.MetricUnavailableError()
+
+    @validated_request(
+        query_serializer=DerivedMetricListQuerySerializer,
+        responses={
+            200: contracts.MetricHistorySerializer,
+            503: contracts.MetricUnavailableSerializer,
+        },
+    )
+    @action(detail=True, methods=["get"])
+    def history(self, request, pk=None):
+        self.get_object()
+        raise service.MetricUnavailableError()
+
+    @validated_request(
+        query_serializer=contracts.MetricFieldsQuerySerializer,
+        responses={
+            200: contracts.MetricFieldsSerializer,
+            503: contracts.MetricUnavailableSerializer,
+        },
+    )
+    @action(detail=True, methods=["get"])
+    def fields(self, request, pk=None):
+        metric = self.get_object()
+        if metric.active_version is None:
+            raise service.MetricUnavailableError(
+                message="No completed active metric definition is available."
+            )
+        from tracer.services.derived_metrics.predicates import (
+            MetricFieldMetadata,
+            MetricFilterError,
+            metric_filter_type,
+        )
+        from tracer.services.derived_metrics.spec import require_computable
+        from tracer.utils.filter_operators import FILTER_TYPE_ALLOWED_OPS
+
+        require_computable(metric.active_version)
+        metadata = MetricFieldMetadata.from_metric(metric)
+        context = request.validated_query_data["context"]
+        try:
+            kind = metric_filter_type(metadata, context)
+        except MetricFilterError as exc:
+            raise ValidationError({"context": str(exc)}) from exc
+        version = metric.active_version
+        projection = context == "users" and version.level == "conversation"
+        return Response(
+            {
+                "results": [
+                    {
+                        "id": metadata.identity,
+                        "level": "user" if projection else version.level,
+                        "kind": version.kind,
+                        "value_type": kind,
+                        "value_format": "percent"
+                        if projection and version.kind == "share"
+                        else (
+                            "number"
+                            if projection and version.kind == "count"
+                            else version.value_format
+                        ),
+                        "unit": "total"
+                        if projection and version.kind == "count"
+                        else version.unit,
+                        "value_labels": version.value_labels
+                        if kind == "boolean"
+                        else {},
+                        "operators": sorted(FILTER_TYPE_ALLOWED_OPS[kind]),
+                        "projection": projection,
+                    }
+                ]
+            }
+        )
+
+    @validated_request(
+        query_serializer=contracts.MetricUnitValuesRequestSerializer,
+        read_post=True,
+        responses={
+            200: contracts.MetricDriversSerializer,
+            503: contracts.MetricUnavailableSerializer,
+        },
+    )
+    @action(detail=True, methods=["get", "post"], url_path="unit-values")
+    def unit_values(self, request, pk=None):
+        self.get_object()
+        raise service.MetricUnavailableError()
+
+    @validated_request(
+        request_serializer=contracts.MetricRefreshRequestSerializer,
+        responses={
+            202: contracts.MetricRefreshSerializer,
+            503: contracts.MetricUnavailableSerializer,
+        },
+    )
+    @action(detail=True, methods=["post"], url_path="refresh")
+    def refresh_now(self, request, pk=None):
+        metric = self.get_object()
+        if not request.validated_data["confirm"]:
+            raise ValidationError("Refresh was not confirmed.")
+        return Response(service.admit_refresh(metric), status=202)
+
+    @validated_request(
+        request_serializer=contracts.MetricActivationRequestSerializer,
+        responses={200: DerivedMetricSerializer},
+    )
+    @action(detail=True, methods=["post"])
+    def activate(self, request, pk=None):
+        metric = self.get_object()
+        service.activate_definition(metric, request.validated_data)
+        return Response(
+            DerivedMetricSerializer(self.get_queryset().get(pk=metric.pk)).data
+        )
+
+    @validated_request(
+        query_serializer=DerivedMetricListQuerySerializer,
+        responses={200: DerivedMetricRunsSerializer},
+    )
+    @action(detail=True, methods=["get"])
+    def snapshots(self, request, pk=None):
+        metric = self.get_object()
+        params = request.validated_query_data
+        queryset = DerivedMetricRun.objects.filter(
+            definition__metric=metric, kind="snapshot", deleted_at__isnull=True
+        ).select_related("definition")
+        page, cursor = newest_first_page(
+            queryset, params.get("before"), params["limit"]
+        )
+        return Response(
+            {
+                "results": DerivedMetricRunSerializer(page, many=True).data,
+                "next_cursor": cursor,
+            }
+        )
+
+    @validated_request(
+        request_serializer=contracts.MetricSnapshotRequestSerializer,
+        responses={
+            202: DerivedMetricRunSerializer,
+            400: contracts.MetricUnavailableSerializer,
+            503: contracts.MetricUnavailableSerializer,
+        },
+    )
+    @snapshots.mapping.post
+    def create_snapshot(self, request, pk=None):
+        return Response(
+            service.request_snapshot(
+                self.get_object(), request.validated_data, request.user
+            ),
+            status=202,
+        )
+
+    @validated_request(
+        query_serializer=contracts.MetricEmptySerializer,
+        responses={
+            202: contracts.MetricSnapshotDeleteSerializer,
+            503: contracts.MetricUnavailableSerializer,
+        },
+    )
+    @action(
+        detail=True,
+        methods=["delete"],
+        url_path=r"snapshots/(?P<snapshot_id>[0-9a-f-]{36})",
+    )
+    def delete_snapshot(self, request, pk=None, snapshot_id=None):
+        return Response(
+            service.delete_snapshot(self.get_object(), snapshot_id, request.user),
+            status=202,
+        )
 
 
 class DerivedMetricRunViewSet(MetricViewSet):
@@ -297,20 +620,6 @@ class DerivedMetricRunViewSet(MetricViewSet):
     def results(self, request, pk=None):
         data = request.validated_query_data
         return Response(service.read_results(self.get_object(), **data))
-
-    @validated_request(
-        query_serializer=DerivedMetricCompareQuerySerializer,
-        responses={200: DerivedMetricComparisonSerializer},
-    )
-    @action(detail=True, methods=["get"])
-    def compare(self, request, pk=None):
-        from tracer.services.derived_metrics.comparison import compare_runs
-
-        candidate = self.get_object()
-        baseline = get_object_or_404(
-            self.get_queryset(), pk=request.validated_query_data["baseline_run_id"]
-        )
-        return Response(compare_runs(baseline, candidate))
 
     @validated_request(
         query_serializer=DerivedMetricContributorQuerySerializer,

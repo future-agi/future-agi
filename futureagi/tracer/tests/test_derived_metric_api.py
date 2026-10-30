@@ -68,7 +68,20 @@ def run_body():
 def saved(auth_client, observe_project):
     response = auth_client.post(ROOT, body(observe_project), format="json")
     assert response.status_code == 201, response.data
-    return response.data
+    # Legacy frozen-run tests start with a completed active definition. A fresh
+    # v2 create remains a draft until the refresh writer completes its backfill.
+    from tracer.models.derived_metric import DerivedMetric
+
+    definition = DerivedMetricVersion.objects.get(
+        metric_id=response.data["id"], version=1
+    )
+    DerivedMetricVersion.objects.filter(pk=definition.pk).update(
+        backfill_status="complete"
+    )
+    DerivedMetric.activate_version(
+        response.data["id"], definition.id, expected_active_id=None
+    )
+    return auth_client.get(f"{ROOT}{response.data['id']}/").data
 
 
 @pytest.mark.django_db
@@ -953,3 +966,486 @@ def test_composite_span_identity_persists_two_trace_scoped_units(
         assert {tuple(json.loads(row[0])) for row in frozen} == {
             (str(trace_id), "shared-span-id") for trace_id in source_traces
         }
+
+
+# V2 definition/read contracts (PG only; telemetry calls are never substituted for
+# authentication, membership, version activation or project scoping).
+@pytest.fixture
+def signed_in_client(user, workspace):
+    from rest_framework.test import APIClient
+
+    client = APIClient()
+    response = client.post(
+        "/accounts/token/",
+        {"email": user.email, "password": "testpassword123"},
+        format="json",
+    )
+    assert response.status_code == 200, response.data
+    client.credentials(
+        HTTP_AUTHORIZATION=f"Bearer {response.data['access']}",
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+    )
+    return client
+
+
+@pytest.mark.django_db
+def test_v2_real_sign_in_viewer_reads_member_writes_and_cross_workspace_404(
+    signed_in_client, user, workspace, observe_project
+):
+    from tracer.tests.test_derived_metric_spec import sentence
+
+    response = signed_in_client.post(ROOT, sentence(observe_project.id), format="json")
+    assert response.status_code == 201, response.data
+    metric_id = response.data["id"]
+    assert response.data["definition"] is None
+    assert response.data["draft_definition"]["kind"] == "share"
+    OrganizationMembership.no_workspace_objects.filter(user=user).update(level=1)
+    WorkspaceMembership.no_workspace_objects.filter(
+        user=user, workspace=workspace
+    ).update(level=1)
+    assert signed_in_client.get(f"{ROOT}{metric_id}/").status_code == 200
+    assert signed_in_client.get(f"{ROOT}capabilities/").status_code == 200
+    for action in ("preview/", "preview/cancel/"):
+        assert (
+            signed_in_client.post(f"{ROOT}{action}", {}, format="json").status_code
+            == 403
+        )
+    assert (
+        signed_in_client.post(
+            ROOT, sentence(observe_project.id, name="Denied"), format="json"
+        ).status_code
+        == 403
+    )
+    assert (
+        signed_in_client.post(
+            f"{ROOT}{metric_id}/refresh/", {}, format="json"
+        ).status_code
+        == 403
+    )
+    # Read POST is marked on its exact handler, never on the whole viewset.
+    from tracer.tests.test_derived_metric_preview import window
+
+    read_body = {key: value for key, value in window().items() if key != "request_id"}
+    response = signed_in_client.post(
+        f"{ROOT}{metric_id}/unit-values/",
+        {**read_body, "unit_ids": [str(uuid4())], "context": "sessions"},
+        format="json",
+    )
+    assert response.status_code == 503, response.data
+    OrganizationMembership.no_workspace_objects.filter(user=user).update(level=3)
+    WorkspaceMembership.no_workspace_objects.filter(
+        user=user, workspace=workspace
+    ).update(level=3)
+    assert (
+        signed_in_client.post(
+            ROOT, sentence(observe_project.id, name="Member metric"), format="json"
+        ).status_code
+        == 201
+    )
+    other = Workspace.no_workspace_objects.create(
+        name="Second workspace", organization=user.organization, created_by=user
+    )
+    WorkspaceMembership.no_workspace_objects.create(workspace=other, user=user, level=3)
+    signed_in_client.credentials(
+        HTTP_AUTHORIZATION=signed_in_client._credentials["HTTP_AUTHORIZATION"],
+        HTTP_X_WORKSPACE_ID=str(other.id),
+    )
+    assert signed_in_client.get(f"{ROOT}{metric_id}/").status_code == 404
+    assert (
+        signed_in_client.get(ROOT, {"project_id": str(observe_project.id)}).status_code
+        == 404
+    )
+    assert (
+        signed_in_client.post(
+            ROOT, sentence(observe_project.id, name="Wrong project"), format="json"
+        ).status_code
+        == 404
+    )
+
+
+@pytest.mark.django_db
+def test_draft_metadata_does_not_change_active_reads_and_users_projection(
+    auth_client, saved, observe_project
+):
+    from tracer.models.derived_metric import DerivedMetric
+    from tracer.tests.test_derived_metric_spec import sentence
+    from tracer.utils.filter_operators import FILTER_TYPE_ALLOWED_OPS
+
+    metric = DerivedMetric.objects.get(pk=saved["id"])
+    response = auth_client.put(
+        f"{ROOT}{metric.id}/",
+        sentence(
+            observe_project.id,
+            expected_version=1,
+            value_labels={"match": "French", "other": "Other"},
+        ),
+        format="json",
+    )
+    assert response.status_code == 200, response.data
+    assert response.data["definition"]["version"] == 1
+    assert response.data["draft_definition"]["version"] == 2
+    definition = metric.versions.get(version=2)
+    assert (
+        auth_client.post(
+            f"{ROOT}{metric.id}/activate/",
+            {"version": 2, "expected_active_id": str(metric.active_version_id)},
+            format="json",
+        ).status_code
+        == 400
+    )
+    DerivedMetricVersion.objects.filter(pk=definition.id).update(
+        backfill_status="complete"
+    )
+    activated = auth_client.post(
+        f"{ROOT}{metric.id}/activate/",
+        {"version": 2, "expected_active_id": str(metric.active_version_id)},
+        format="json",
+    )
+    assert activated.status_code == 200, activated.data
+    assert activated.data["definition"]["version"] == 2
+    sessions = auth_client.get(
+        f"{ROOT}{metric.id}/fields/", {"context": "sessions"}
+    ).data["results"][0]
+    users = auth_client.get(f"{ROOT}{metric.id}/fields/", {"context": "users"}).data[
+        "results"
+    ][0]
+    assert sessions["value_type"] == "boolean" and sessions["value_labels"] == {
+        "match": "French",
+        "other": "Other",
+    }
+    assert users["value_type"] == "number" and users["value_labels"] == {}
+    assert users["value_format"] == "percent" and users["projection"] is True
+    assert set(users["operators"]) == FILTER_TYPE_ALLOWED_OPS["number"]
+    assert sessions["id"] == users["id"] == f"metric_field:{metric.id}"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("level", ["span", "user"])
+def test_snapshot_support_rejects_unsupported_grains(
+    auth_client, observe_project, level
+):
+    from tracer.models.derived_metric import DerivedMetric
+    from tracer.tests.test_derived_metric_preview import window
+    from tracer.tests.test_derived_metric_spec import sentence
+
+    data = sentence(observe_project.id, level=level)
+    if level == "user":
+        data["user_rule"] = "any"
+    response = auth_client.post(ROOT, data, format="json")
+    assert response.status_code == 201, response.data
+    metric_id = response.data["id"]
+    definition = DerivedMetricVersion.objects.get(metric_id=metric_id, version=1)
+    DerivedMetricVersion.objects.filter(pk=definition.pk).update(
+        backfill_status="complete"
+    )
+    DerivedMetric.activate_version(metric_id, definition.id, expected_active_id=None)
+    response = auth_client.get(f"{ROOT}{metric_id}/")
+    assert response.data["snapshot_supported"] is False
+    assert f"{level} metrics" in response.data["snapshot_unsupported_reason"]
+    request = {key: value for key, value in window().items() if key != "request_id"}
+    response = auth_client.post(
+        f"{ROOT}{metric_id}/snapshots/",
+        {**request, "idempotency_key": "snapshot"},
+        format="json",
+    )
+    assert response.status_code == 400 and "snapshot_not_supported" in str(
+        response.data
+    )
+
+
+@pytest.mark.django_db
+def test_migration_0126_legacy_user_recipe_is_readable_but_never_calculated(
+    auth_client, saved, observe_project, user
+):
+    from importlib import import_module
+
+    from django.apps import apps
+
+    from tracer.models.derived_metric import DerivedMetric
+    from tracer.services.derived_metrics import service
+    from tracer.services.derived_metrics.errors import MetricInputError
+    from tracer.tests.test_derived_metric_spec import sentence
+
+    metric = DerivedMetric.objects.get(pk=saved["id"])
+    definition = metric.active_version
+    # Reproduce the pre-migration row and execute its actual data function.
+    DerivedMetricVersion.objects.filter(pk=definition.pk).update(
+        selection_unit="user", kind="custom", user_rule="", level="conversation"
+    )
+    import_module(
+        "tracer.migrations.0126_derived_metric_refresh"
+    ).level_from_legacy_selection_unit(apps, None)
+    response = auth_client.get(f"{ROOT}{metric.id}/")
+    assert response.data["definition"]["needs_rebuild"] is True
+    with patch.object(service, "get_clickhouse_client") as client:
+        assert (
+            auth_client.post(
+                f"{ROOT}{metric.id}/preview/", run_body(), format="json"
+            ).status_code
+            == 400
+        )
+        assert (
+            auth_client.post(
+                f"{ROOT}{metric.id}/refresh/", {}, format="json"
+            ).status_code
+            == 400
+        )
+        assert (
+            auth_client.post(
+                f"{ROOT}{metric.id}/activate/",
+                {"version": 1, "expected_active_id": str(definition.id)},
+                format="json",
+            ).status_code
+            == 400
+        )
+        with pytest.raises(MetricInputError, match="needs_rebuild"):
+            service.create_run(
+                metric,
+                {
+                    **run_body(),
+                    "window_start": timezone.now() - timedelta(days=1),
+                    "window_end": timezone.now(),
+                },
+                user,
+            )
+    client.assert_not_called()
+    response = auth_client.put(
+        f"{ROOT}{metric.id}/",
+        sentence(
+            observe_project.id, level="user", user_rule="every", expected_version=1
+        ),
+        format="json",
+    )
+    assert response.status_code == 200, response.data
+    assert response.data["definition"]["needs_rebuild"] is True
+    assert response.data["draft_definition"]["level"] == "user"
+    assert response.data["draft_definition"]["needs_rebuild"] is False
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("action", ["kpi", "trend", "drivers", "history"])
+def test_frozen_read_routes_are_explicitly_unavailable_not_successful_zeros(
+    auth_client, saved, action
+):
+    data = run_body()
+    query = (
+        {}
+        if action == "history"
+        else {key: data[key] for key in ("window_start", "window_end")}
+    )
+    with patch(
+        "tracer.services.derived_metrics.service.get_clickhouse_client"
+    ) as client:
+        response = auth_client.get(f"{ROOT}{saved['id']}/{action}/", query)
+    assert response.status_code == 503
+    assert response.data["code"] == "metric_unavailable"
+    assert "results" not in response.data and "value" not in response.data
+    client.assert_not_called()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("formula", [None, "", "   "])
+@pytest.mark.parametrize("explicit_kind", [False, True])
+def test_custom_formula_rejected_before_save_or_backfill(
+    auth_client, observe_project, formula, explicit_kind
+):
+    from tracer.models.derived_metric import DerivedMetric, MetricProjectRefresh
+
+    data = body(observe_project)
+    data["inputs"] = [data["inputs"][0]]
+    data.pop("formula")
+    if formula is not None:
+        data["formula"] = formula
+    if explicit_kind:
+        data["kind"] = "custom"
+    before = (
+        DerivedMetric.objects.count(),
+        DerivedMetricVersion.objects.count(),
+        MetricProjectRefresh.objects.count(),
+    )
+    for endpoint in (ROOT + "validate/", ROOT):
+        response = auth_client.post(endpoint, data, format="json")
+        assert response.status_code == 400, response.data
+        assert "nonempty formula" in str(response.data)
+    assert before == (
+        DerivedMetric.objects.count(),
+        DerivedMetricVersion.objects.count(),
+        MetricProjectRefresh.objects.count(),
+    )
+
+
+@pytest.mark.django_db
+def test_historical_snapshot_delete_and_activation_ignore_draft_prefetch(
+    auth_client, saved, observe_project
+):
+    definition = DerivedMetricVersion.objects.get(metric_id=saved["id"], version=1)
+    run = DerivedMetricRun.objects.create(
+        definition=definition,
+        kind="snapshot",
+        supported_grain="conversation",
+        as_of=timezone.now(),
+        fingerprint=uuid4().hex,
+        window_start=timezone.now() - timedelta(days=1),
+        window_end=timezone.now(),
+    )
+    delete_url = f"{ROOT}{saved['id']}/snapshots/{run.id}/"
+    assert auth_client.delete(delete_url).status_code == 503
+    edited = auth_client.put(
+        f"{ROOT}{saved['id']}/",
+        {**body(observe_project), "expected_version": 1},
+        format="json",
+    )
+    assert edited.status_code == 200, edited.data
+    assert auth_client.get(f"{ROOT}{saved['id']}/snapshots/").data["results"][0][
+        "id"
+    ] == str(run.id)
+    assert auth_client.delete(delete_url).status_code == 503
+    assert (
+        auth_client.delete(f"{ROOT}{saved['id']}/snapshots/{uuid4()}/").status_code
+        == 404
+    )
+    other = auth_client.post(
+        ROOT, {**body(observe_project), "name": "Another metric"}, format="json"
+    )
+    assert (
+        auth_client.delete(f"{ROOT}{other.data['id']}/snapshots/{run.id}/").status_code
+        == 404
+    )
+    # Explicit historical activation must not inherit the current-draft filter.
+    response = auth_client.post(
+        f"{ROOT}{saved['id']}/activate/",
+        {"version": 1, "expected_active_id": str(definition.id)},
+        format="json",
+    )
+    assert response.status_code == 200, response.data
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("kind", ["average", "total"])
+@pytest.mark.parametrize(
+    "value_format,unit,field",
+    [("currency", "USD", "cost"), ("duration", "ms", "latency_ms")],
+)
+def test_users_numeric_projection_preserves_catalog_format(
+    auth_client, observe_project, kind, value_format, unit, field
+):
+    from tracer.models.derived_metric import DerivedMetric
+    from tracer.services.clickhouse.v2.property_catalog.source_adapters import (
+        _METRIC_VERSION_FIELDS,
+        _metric_definition,
+    )
+    from tracer.tests.test_derived_metric_spec import sentence
+
+    data = sentence(
+        observe_project.id,
+        kind=kind,
+        field_spec={},
+        value_format=value_format,
+        unit=unit,
+        inputs=[
+            {
+                "alias": "amount",
+                "source": "span",
+                "field": field,
+                "value_type": "number",
+                "reducer": "mean",
+            }
+        ],
+    )
+    created = auth_client.post(ROOT, data, format="json")
+    assert created.status_code == 201, created.data
+    definition = DerivedMetricVersion.objects.get(
+        metric_id=created.data["id"], version=1
+    )
+    DerivedMetricVersion.objects.filter(pk=definition.pk).update(
+        backfill_status="complete"
+    )
+    DerivedMetric.activate_version(
+        created.data["id"], definition.id, expected_active_id=None
+    )
+    row = (
+        DerivedMetric.objects.filter(pk=created.data["id"])
+        .values(
+            "id",
+            "project_id",
+            "name",
+            *[f"active_version__{key}" for key in _METRIC_VERSION_FIELDS],
+        )
+        .get()
+    )
+    catalog = _metric_definition(row, context="users")
+    for context in ("sessions", "users"):
+        result = auth_client.get(
+            f"{ROOT}{created.data['id']}/fields/", {"context": context}
+        ).data["results"][0]
+        assert result["value_format"] == catalog.details["value_format"] == value_format
+        assert result["unit"] == catalog.details["unit"] == unit
+
+
+def test_v2_openapi_freezes_all_routes_and_user_and_snapshot_serializers():
+    from django.urls import include, path
+    from drf_yasg import openapi
+    from drf_yasg.generators import OpenAPISchemaGenerator
+    from rest_framework.routers import SimpleRouter
+
+    from tracer.views.derived_metric import (
+        DerivedMetricRunViewSet,
+        DerivedMetricViewSet,
+    )
+
+    router = SimpleRouter()
+    router.register("derived-metrics", DerivedMetricViewSet, basename="derived-metric")
+    router.register(
+        "derived-metric-runs", DerivedMetricRunViewSet, basename="derived-metric-run"
+    )
+    schema = OpenAPISchemaGenerator(
+        info=openapi.Info(title="Metrics contract", default_version="v2"),
+        patterns=[path("tracer/", include(router.urls))],
+    ).get_schema(public=True)
+    paths = schema["paths"]
+    snapshots = next(
+        value for key, value in paths.items() if key.endswith("/{id}/snapshots/")
+    )
+    assert "get" in snapshots and "post" in snapshots
+    assert any(
+        "delete" in value
+        for key, value in paths.items()
+        if "/snapshots/{snapshot_id}/" in key
+    )
+    assert not any(key.endswith("/compare/") for key in paths)
+    for name in [
+        "kpi",
+        "trend",
+        "drivers",
+        "history",
+        "fields",
+        "unit-values",
+        "refresh",
+        "preview/cancel",
+    ]:
+        assert any(key.endswith(f"/{name}/") for key in paths), name
+    definitions = schema["definitions"]
+    assert "counted_users" in definitions["MetricPoint"]["properties"]
+    assert (
+        "sampled_inputs_not_supported"
+        in definitions["MetricPoint"]["properties"]["point_status"]["enum"]
+    )
+    assert "snapshot_supported" in definitions["DerivedMetric"]["properties"]
+    assert any(key.endswith("/derived-metrics/preview/") for key in paths)
+    assert any(key.endswith("/derived-metrics/preview/cancel/") for key in paths)
+    assert {"project_id", "definition"} <= set(
+        definitions["MetricDraftPreviewRequest"]["properties"]
+    )
+    assert "sample_units" in definitions["MetricPreview"]["properties"]
+    assert {
+        "unit_id",
+        "inputs",
+        "inputs_bool",
+        "inputs_text",
+        "status",
+        "value_label",
+    } <= set(definitions["MetricPreviewSample"]["properties"])
+    for item in paths.values():
+        for method in ("get", "post", "put", "delete"):
+            if method in item:
+                assert item[method]["x-runtime-response-validation"] is True

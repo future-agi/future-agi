@@ -86,6 +86,22 @@ def wire_fixture():
     }
 
 
+def legacy_contract(actual, expected):
+    """Keep the existing frontend goldens pinned while allowing additive v2 fields.
+
+    The owner of frontend fixtures regenerates them at C01. All old values and
+    identities remain compared; the new definition fields have their own checks.
+    """
+    if isinstance(expected, dict):
+        return {
+            key: legacy_contract(actual[key], value) for key, value in expected.items()
+        }
+    if isinstance(expected, list):
+        assert len(actual) == len(expected)
+        return [legacy_contract(a, e) for a, e in zip(actual, expected, strict=True)]
+    return actual
+
+
 def test_committed_identity_wire_fixture_matches_actual_producers():
     import json
     from pathlib import Path
@@ -93,7 +109,11 @@ def test_committed_identity_wire_fixture_matches_actual_producers():
     fixture = Path(__file__).resolve().parents[3] / (
         "frontend/src/sections/derived-metrics/__tests__/fixtures/committedResults.json"
     )
-    assert json.loads(fixture.read_text()) == wire_fixture()
+    expected, actual = json.loads(fixture.read_text()), wire_fixture()
+    assert expected == legacy_contract(actual, expected)
+    assert actual["run"]["definition"]["needs_rebuild"] is False
+    assert actual["run"]["definition"]["level"] == "conversation"
+    assert actual["run"]["kind"] == "run"
 
 
 def test_identity_applies_to_all_rollups_and_cursors_without_extra_reads():

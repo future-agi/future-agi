@@ -18,6 +18,11 @@ from tracer.services.derived_metrics.uncertainty import (
 )
 
 
+class MetricObservationConditionSerializer(StrictInputSerializer):
+    operator = serializers.ChoiceField(choices=["eq", "ne", "lt", "lte", "gt", "gte"])
+    value = serializers.JSONField()
+
+
 class DerivedMetricInputSerializer(StrictInputSerializer):
     alias = serializers.RegexField(r"^[a-z][a-z0-9_]{0,39}$")
     source = serializers.ChoiceField(choices=["eval", "span"])
@@ -34,17 +39,39 @@ class DerivedMetricInputSerializer(StrictInputSerializer):
             "completion_tokens",
             "attribute_number",
             "attribute_bool",
+            "attribute_text",
         ],
         required=False,
     )
     attribute_key = serializers.CharField(
         max_length=160, required=False, allow_blank=True, default=""
     )
-    reducer = serializers.ChoiceField(
-        choices=["mean", "min", "max", "latest"], default="latest"
+    value_type = serializers.ChoiceField(
+        choices=["number", "boolean", "text"], required=False
     )
+    reducer = serializers.ChoiceField(
+        choices=["first", "latest", "mean", "min", "max", "sum", "count", "any", "all"],
+        default="latest",
+    )
+    ordering = serializers.ChoiceField(choices=["sentence", "legacy"], required=False)
+    condition_stage = serializers.ChoiceField(
+        choices=["after_reduction", "observation"], required=False
+    )
+    condition = MetricObservationConditionSerializer(required=False)
 
     def validate(self, attrs):
+        if attrs["source"] == "eval" and (
+            attrs.get("field") or attrs.get("attribute_key")
+        ):
+            raise serializers.ValidationError(
+                "Evaluation sources cannot select a span field."
+            )
+        if attrs["source"] == "span" and (
+            attrs.get("config_id") or attrs.get("config_hash")
+        ):
+            raise serializers.ValidationError(
+                "Span sources cannot select an evaluator."
+            )
         if attrs["source"] == "eval" and not attrs.get("config_id"):
             raise serializers.ValidationError(
                 {"config_id": "Select a persisted evaluator."}
@@ -70,17 +97,69 @@ class DerivedMetricFilterSerializer(StrictInputSerializer):
     )
 
 
+class MetricConditionSerializer(StrictInputSerializer):
+    alias = serializers.RegexField(r"^[a-z][a-z0-9_]{0,39}$")
+    operator = serializers.ChoiceField(choices=["eq", "ne", "lt", "lte", "gt", "gte"])
+    value = serializers.JSONField(required=False)
+    right_alias = serializers.RegexField(r"^[a-z][a-z0-9_]{0,39}$", required=False)
+    condition_stage = serializers.ChoiceField(
+        choices=["after_reduction"], required=False
+    )
+
+    def validate(self, attrs):
+        if ("value" in attrs) == ("right_alias" in attrs):
+            raise serializers.ValidationError(
+                "Supply exactly one comparison value or right_alias."
+            )
+        return attrs
+
+
+class MetricFieldSpecSerializer(StrictInputSerializer):
+    inputs = DerivedMetricInputSerializer(many=True, required=False)
+    conditions = MetricConditionSerializer(many=True, required=False, max_length=16)
+    value_alias = serializers.RegexField(r"^[a-z][a-z0-9_]{0,39}$", required=False)
+    percentile = serializers.FloatField(min_value=0, max_value=1, required=False)
+
+
 class DerivedMetricWriteSerializer(StrictInputSerializer):
     project_id = serializers.UUIDField()
     name = serializers.CharField(max_length=160)
     description = serializers.CharField(
         max_length=2000, required=False, allow_blank=True, default=""
     )
-    formula = serializers.CharField(max_length=2048)
-    inputs = DerivedMetricInputSerializer(many=True, allow_empty=False)
-    selection_unit = serializers.ChoiceField(
-        choices=["span", "session", "user"], default="session"
+    formula = serializers.CharField(
+        max_length=2048, required=False, allow_blank=True, default=""
     )
+    inputs = DerivedMetricInputSerializer(many=True, allow_empty=False, required=False)
+    selection_unit = serializers.ChoiceField(
+        choices=["span", "session", "user"], required=False
+    )
+    kind = serializers.ChoiceField(
+        choices=DerivedMetricVersion.Kind.choices, default="custom"
+    )
+    level = serializers.ChoiceField(
+        choices=DerivedMetricVersion.Level.choices, required=False
+    )
+    user_rule = serializers.ChoiceField(
+        choices=DerivedMetricVersion.UserRule.choices, required=False, allow_blank=True
+    )
+    field_spec = MetricFieldSpecSerializer(required=False)
+    group_dims = serializers.ListField(
+        child=serializers.CharField(max_length=160), max_length=2, required=False
+    )
+    value_type = serializers.ChoiceField(
+        choices=DerivedMetricVersion.ValueType.choices, required=False
+    )
+    unit = serializers.CharField(max_length=32, required=False, allow_blank=True)
+    value_format = serializers.ChoiceField(
+        choices=["", "number", "percent", "currency", "duration"],
+        required=False,
+        allow_blank=True,
+    )
+    value_labels = serializers.DictField(
+        child=serializers.CharField(max_length=80), required=False
+    )
+    sampling = serializers.DictField(required=False)
     weighting = serializers.ChoiceField(
         choices=["none", "inverse_probability"], default="none"
     )
@@ -104,6 +183,14 @@ class DerivedMetricWriteSerializer(StrictInputSerializer):
 class DerivedMetricVersionSerializer(serializers.ModelSerializer):
     inputs = DerivedMetricInputSerializer(many=True)
     filters = DerivedMetricFilterSerializer(many=True)
+    field_spec = MetricFieldSpecSerializer(read_only=True)
+    needs_rebuild = serializers.SerializerMethodField()
+
+    @swagger_serializer_method(serializer_or_field=serializers.BooleanField())
+    def get_needs_rebuild(self, obj):
+        from tracer.services.derived_metrics.spec import needs_rebuild
+
+        return needs_rebuild(obj)
 
     class Meta:
         model = DerivedMetricVersion
@@ -116,12 +203,56 @@ class DerivedMetricVersionSerializer(serializers.ModelSerializer):
             "cohort_key",
             "filters",
             "definition_hash",
+            "id",
+            "kind",
+            "level",
+            "user_rule",
+            "field_spec",
+            "group_dims",
+            "value_type",
+            "unit",
+            "value_format",
+            "value_labels",
+            "sampling",
+            "backfill_status",
+            "backfill_days_done",
+            "backfill_days_total",
+            "activated_at",
+            "needs_rebuild",
             "created_at",
         ]
 
 
 class DerivedMetricSerializer(serializers.ModelSerializer):
-    definition = serializers.SerializerMethodField()
+    definition = DerivedMetricVersionSerializer(
+        source="active_version", read_only=True, allow_null=True
+    )
+    draft_definition = serializers.SerializerMethodField()
+    snapshot_supported = serializers.SerializerMethodField()
+    snapshot_unsupported_reason = serializers.SerializerMethodField()
+    value_mode = serializers.SerializerMethodField()
+
+    @swagger_serializer_method(serializer_or_field=serializers.BooleanField())
+    def get_snapshot_supported(self, obj):
+        from tracer.services.derived_metrics.spec import snapshot_support
+
+        return snapshot_support(obj.active_version)[0]
+
+    @swagger_serializer_method(
+        serializer_or_field=serializers.CharField(allow_blank=True)
+    )
+    def get_snapshot_unsupported_reason(self, obj):
+        from tracer.services.derived_metrics.spec import snapshot_support
+
+        return snapshot_support(obj.active_version)[1]
+
+    @swagger_serializer_method(serializer_or_field=serializers.CharField())
+    def get_value_mode(self, obj):
+        return (
+            "on_demand"
+            if obj.active_version and obj.active_version.level == "user"
+            else "materialized"
+        )
 
     class Meta:
         model = DerivedMetric
@@ -131,13 +262,18 @@ class DerivedMetricSerializer(serializers.ModelSerializer):
             "name",
             "description",
             "current_version",
+            "active_version",
+            "draft_definition",
+            "snapshot_supported",
+            "snapshot_unsupported_reason",
+            "value_mode",
             "definition",
             "created_at",
             "updated_at",
         ]
 
     @swagger_serializer_method(serializer_or_field=DerivedMetricVersionSerializer)
-    def get_definition(self, obj):
+    def get_draft_definition(self, obj):
         version = next(
             (
                 item
@@ -211,6 +347,16 @@ class DerivedMetricRunSerializer(serializers.ModelSerializer):
             "result_id",
             "lease_expires_at",
             "source_manifest",
+            "kind",
+            "pinned_manifest",
+            "pinned_generation",
+            "captured_at",
+            "supported_grain",
+            "changed_at",
+            "change_reason",
+            "removed_unit_count",
+            "deleted_at",
+            "cleanup_status",
             "status",
             "error",
             "row_count",
@@ -298,13 +444,34 @@ class DerivedMetricResultSerializer(serializers.Serializer):
     )
 
 
+class DerivedMetricFrozenRecipeSerializer(DerivedMetricVersionSerializer):
+    """Keep the legacy frozen-dashboard recipe contract unchanged.
+
+    Direct definitions and snapshots use the complete v2 version contract. B19
+    replaces the old run-backed dashboard surface with pinned live reads.
+    """
+
+    class Meta(DerivedMetricVersionSerializer.Meta):
+        fields = [
+            "version",
+            "formula",
+            "inputs",
+            "selection_unit",
+            "weighting",
+            "cohort_key",
+            "filters",
+            "definition_hash",
+            "created_at",
+        ]
+
+
 class DerivedMetricSavedRunContextSerializer(serializers.ModelSerializer):
     """Small read-only provenance for a dashboard's one committed observation."""
 
     metric_version = serializers.IntegerField(
         source="definition.version", read_only=True
     )
-    definition = DerivedMetricVersionSerializer(read_only=True)
+    definition = DerivedMetricFrozenRecipeSerializer(read_only=True)
     filters = DerivedMetricFilterSerializer(many=True, read_only=True)
 
     class Meta:
@@ -493,3 +660,313 @@ class DerivedMetricEvaluatorPageSerializer(serializers.Serializer):
     truncated = serializers.BooleanField(
         help_text="True when more evaluators matched than were returned; narrow the search."
     )
+
+
+# V2 routes are frozen here, before C01. Unimplemented reads return 503 rather
+# than successful empty/zero observations. B13/B18 replace those adapters.
+class MetricEmptySerializer(StrictInputSerializer):
+    pass
+
+
+class MetricUnavailableSerializer(serializers.Serializer):
+    code = serializers.CharField()
+    message = serializers.CharField()
+    retryable = serializers.BooleanField()
+
+
+class MetricWindowSerializer(StrictInputSerializer):
+    window_start = serializers.DateTimeField()
+    window_end = serializers.DateTimeField()
+
+    def validate(self, attrs):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        if not attrs["window_start"] < attrs["window_end"]:
+            raise serializers.ValidationError("Window end must follow its start.")
+        if attrs["window_end"] - attrs["window_start"] > timedelta(days=90):
+            raise serializers.ValidationError("A read may cover at most 90 days.")
+        if attrs["window_end"] > timezone.now():
+            raise serializers.ValidationError("Only closed windows can be read.")
+        return attrs
+
+
+class MetricPreviewRequestSerializer(MetricWindowSerializer):
+    version = serializers.IntegerField(min_value=1, required=False)
+    filters = DerivedMetricFilterSerializer(
+        many=True, required=False, default=list, max_length=10
+    )
+    source_run_id = serializers.UUIDField(required=False)
+    request_id = serializers.UUIDField(required=False)
+    include_samples = serializers.BooleanField(default=False)
+    # Accepted for old clients; not used for preview identity/admission.
+    idempotency_key = serializers.CharField(max_length=100, required=False)
+
+    def validate(self, attrs):
+        from datetime import timedelta
+
+        attrs = super().validate(attrs)
+        if attrs["window_end"] - attrs["window_start"] > timedelta(days=7):
+            raise serializers.ValidationError("A preview may cover at most 7 days.")
+        return attrs
+
+
+class MetricDraftDefinitionSerializer(DerivedMetricWriteSerializer):
+    """An unsaved recipe needs neither a name nor a persistent metric identity."""
+
+    project_id = None
+    name = None
+    description = None
+    expected_version = None
+
+
+class MetricDraftPreviewRequestSerializer(MetricPreviewRequestSerializer):
+    version = None
+    project_id = serializers.UUIDField()
+    definition = MetricDraftDefinitionSerializer()
+    include_samples = serializers.BooleanField(default=True)
+
+
+class MetricPreviewCancelSerializer(StrictInputSerializer):
+    request_id = serializers.UUIDField()
+
+
+class MetricDraftPreviewCancelSerializer(MetricPreviewCancelSerializer):
+    project_id = serializers.UUIDField()
+
+
+class MetricPreviewCancelledSerializer(serializers.Serializer):
+    cancelled = serializers.BooleanField()
+
+
+class MetricReadProvenanceSerializer(serializers.Serializer):
+    manifest_id = serializers.UUIDField()
+    generation = serializers.IntegerField(min_value=0)
+    version_id = serializers.UUIDField()
+    version = serializers.IntegerField(min_value=1)
+    definition_hash = serializers.CharField()
+    updated_at = serializers.DateTimeField(allow_null=True)
+    backfill_days_done = serializers.IntegerField(min_value=0)
+    backfill_days_total = serializers.IntegerField(min_value=0)
+
+
+class MetricEffectiveWindowSerializer(serializers.Serializer):
+    window_start = serializers.DateTimeField()
+    window_end = serializers.DateTimeField()
+    rounding = serializers.CharField(help_text="Rounded to 15 minutes")
+
+
+class MetricPointSerializer(serializers.Serializer):
+    value = serializers.FloatField(allow_null=True)
+    point_status = serializers.ChoiceField(
+        choices=[
+            "ok",
+            "unavailable",
+            "no_data",
+            "missing_inputs",
+            "invalid_probability",
+            "zero_denominator",
+            "non_finite",
+            "retention_expired",
+            "sampled_inputs_not_supported",
+        ]
+    )
+    rate_eligible = serializers.BooleanField()
+    weighted = serializers.BooleanField()
+    unit = serializers.CharField(allow_blank=True)
+    value_format = serializers.CharField(allow_blank=True)
+    unit_noun = serializers.CharField()
+    value_mode = serializers.ChoiceField(choices=["materialized", "on_demand"])
+    eligible_count = serializers.IntegerField(min_value=0)
+    evaluated_count = serializers.IntegerField(min_value=0)
+    missing_count = serializers.IntegerField(min_value=0)
+    counted_users = serializers.IntegerField(min_value=0, required=False)
+    eligible_users = serializers.IntegerField(min_value=0, required=False)
+    no_value_users = serializers.IntegerField(min_value=0, required=False)
+    conversations_without_user = serializers.IntegerField(min_value=0, required=False)
+    history_available_from = serializers.DateTimeField(allow_null=True, required=False)
+    uncertainty = DerivedMetricUncertaintySerializer()
+
+
+class MetricKpiSerializer(serializers.Serializer):
+    provenance = MetricReadProvenanceSerializer()
+    effective_window = MetricEffectiveWindowSerializer()
+    current = MetricPointSerializer()
+    previous = MetricPointSerializer(allow_null=True)
+    delta = serializers.FloatField(allow_null=True)
+    delta_uncertainty = DerivedMetricDeltaUncertaintySerializer(allow_null=True)
+
+
+class MetricTrendQuerySerializer(MetricWindowSerializer):
+    points = serializers.IntegerField(min_value=1, max_value=90, default=30)
+    group_by = serializers.CharField(max_length=160, required=False)
+
+
+class MetricTrendPointSerializer(MetricPointSerializer):
+    window_start = serializers.DateTimeField()
+    window_end = serializers.DateTimeField()
+    group_key = serializers.CharField(allow_blank=True)
+
+
+class MetricTrendSerializer(serializers.Serializer):
+    provenance = MetricReadProvenanceSerializer()
+    effective_window = MetricEffectiveWindowSerializer()
+    results = MetricTrendPointSerializer(many=True)
+
+
+class MetricDriversQuerySerializer(MetricWindowSerializer):
+    after = serializers.CharField(max_length=4096, required=False, allow_blank=True)
+    limit = serializers.IntegerField(min_value=1, max_value=100, default=20)
+
+
+class MetricUnitValueSerializer(serializers.Serializer):
+    unit_id = serializers.CharField()
+    status = serializers.ChoiceField(
+        choices=["value", "in_progress", "not_calculated", "no_value"]
+    )
+    no_value_reason = serializers.CharField(allow_blank=True)
+    value_number = serializers.FloatField(allow_null=True)
+    value_bool = serializers.BooleanField(allow_null=True)
+    value_text = serializers.CharField(allow_null=True, allow_blank=True)
+    inputs = serializers.DictField(child=serializers.FloatField(allow_null=True))
+    inputs_bool = serializers.DictField(child=serializers.BooleanField(allow_null=True))
+    inputs_text = serializers.DictField(
+        child=serializers.CharField(allow_null=True, allow_blank=True)
+    )
+    eligible_count = serializers.IntegerField(min_value=0)
+    evaluated_count = serializers.IntegerField(min_value=0)
+    missing_count = serializers.IntegerField(min_value=0)
+    influence = serializers.FloatField(allow_null=True)
+
+
+class MetricDriversSerializer(serializers.Serializer):
+    provenance = MetricReadProvenanceSerializer()
+    effective_window = MetricEffectiveWindowSerializer()
+    results = MetricUnitValueSerializer(many=True)
+    next_cursor = serializers.CharField(allow_null=True)
+
+
+class MetricUnitIdsField(serializers.ListField):
+    def get_value(self, dictionary):
+        # validated_request read-POST keeps native JSON values in a QueryDict.
+        # DRF's default getlist would turn that native list into [the_list].
+        value = dictionary.get(self.field_name)
+        return value if isinstance(value, list) else super().get_value(dictionary)
+
+
+class MetricUnitValuesRequestSerializer(MetricWindowSerializer):
+    unit_ids = MetricUnitIdsField(
+        child=serializers.CharField(max_length=512), min_length=1, max_length=100
+    )
+    context = serializers.ChoiceField(choices=["sessions", "users", "spans", "traces"])
+
+
+class MetricFieldsQuerySerializer(StrictInputSerializer):
+    context = serializers.ChoiceField(
+        choices=["sessions", "users", "spans", "traces"], default="sessions"
+    )
+
+
+class MetricFieldMetadataSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    level = serializers.CharField()
+    kind = serializers.CharField()
+    value_type = serializers.ChoiceField(choices=["boolean", "number", "text"])
+    value_format = serializers.CharField(allow_blank=True)
+    unit = serializers.CharField(allow_blank=True)
+    value_labels = serializers.DictField(child=serializers.CharField())
+    operators = serializers.ListField(child=serializers.CharField())
+    projection = serializers.BooleanField()
+
+
+class MetricFieldsSerializer(serializers.Serializer):
+    results = MetricFieldMetadataSerializer(many=True)
+
+
+class MetricRefreshRequestSerializer(StrictInputSerializer):
+    confirm = serializers.BooleanField(default=True)
+
+
+class MetricRefreshSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=["queued", "already_queued"])
+
+
+class MetricHistoryEntrySerializer(serializers.Serializer):
+    kind = serializers.ChoiceField(choices=["version", "recalculation", "snapshot"])
+    created_at = serializers.DateTimeField()
+    definition = DerivedMetricVersionSerializer(allow_null=True)
+    snapshot = DerivedMetricRunSerializer(allow_null=True)
+    status = serializers.CharField()
+
+
+class MetricHistorySerializer(serializers.Serializer):
+    results = MetricHistoryEntrySerializer(many=True)
+    next_cursor = serializers.CharField(allow_null=True)
+
+
+class MetricSnapshotRequestSerializer(MetricWindowSerializer):
+    idempotency_key = serializers.CharField(max_length=100)
+
+
+class MetricSnapshotDeleteSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=["cleanup_pending", "deleted"])
+
+
+class MetricActivationRequestSerializer(StrictInputSerializer):
+    version = serializers.IntegerField(min_value=1)
+    expected_active_id = serializers.UUIDField(allow_null=True)
+
+
+class MetricPreviewSampleSerializer(serializers.Serializer):
+    unit_id = serializers.CharField()
+    status = serializers.ChoiceField(choices=["value", "no_value"])
+    no_value_reason = serializers.CharField(allow_blank=True)
+    value_number = serializers.FloatField(allow_null=True)
+    value_bool = serializers.BooleanField(allow_null=True)
+    value_text = serializers.CharField(allow_null=True, allow_blank=True)
+    value_label = serializers.CharField(allow_blank=True)
+    inputs = serializers.DictField(child=serializers.FloatField(allow_null=True))
+    inputs_bool = serializers.DictField(child=serializers.BooleanField(allow_null=True))
+    inputs_text = serializers.DictField(
+        child=serializers.CharField(allow_null=True, allow_blank=True)
+    )
+
+
+class MetricPreviewSerializer(DerivedMetricResultPageSerializer):
+    rate_eligible = serializers.BooleanField()
+    weighted = serializers.BooleanField()
+    unit = serializers.CharField(allow_blank=True)
+    value_format = serializers.CharField(allow_blank=True)
+    unit_noun = serializers.CharField()
+    value_mode = serializers.ChoiceField(choices=["materialized", "on_demand"])
+    counted_users = serializers.IntegerField(min_value=0, required=False)
+    eligible_users = serializers.IntegerField(min_value=0, required=False)
+    no_value_users = serializers.IntegerField(min_value=0, required=False)
+    conversations_without_user = serializers.IntegerField(min_value=0, required=False)
+    point_status = serializers.CharField()
+    summary = serializers.CharField()
+    sample_users = MetricUnitValueSerializer(many=True, required=False)
+    sample_units = MetricPreviewSampleSerializer(
+        many=True, required=False, max_length=20
+    )
+
+
+class MetricSourceCapabilitySerializer(serializers.Serializer):
+    value_type = serializers.CharField()
+    reducers = serializers.ListField(child=serializers.CharField())
+    operators = serializers.ListField(child=serializers.CharField())
+    observation_reducers = serializers.ListField(child=serializers.CharField())
+    ordering = serializers.CharField()
+
+
+class MetricCapabilitiesSerializer(serializers.Serializer):
+    sources = MetricSourceCapabilitySerializer(many=True)
+    levels = serializers.ListField(child=serializers.CharField())
+    kinds = serializers.ListField(child=serializers.CharField())
+    user_rules = serializers.DictField(
+        child=serializers.ListField(child=serializers.CharField())
+    )
+    max_group_dims = serializers.IntegerField()
+    preview_max_days = serializers.IntegerField()
+    preview_budget_seconds = serializers.IntegerField()
