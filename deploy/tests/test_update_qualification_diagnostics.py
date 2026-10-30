@@ -71,6 +71,32 @@ class QualificationDiagnosticsTests(unittest.TestCase):
         self.assertNotIn(str(Path.home()), json.dumps(data))
         self.assertEqual(data['refusal_code'], 'resource_input_invalid')
 
+    def test_package_refusal_code_phase_and_check_line_survive_the_subprocess_boundary(self):
+        import subprocess, sys
+        with tempfile.TemporaryDirectory(dir=Path.home()) as temporary:
+            root = Path(temporary)
+            from deploy.tests.test_update_automatic_release import default_v2
+            from deploy.update.manifest import canonical_json
+            (root/'target.json').write_bytes(canonical_json(default_v2()))
+            rows = root/'qualify'; rows.mkdir()
+            (rows/'proof-row.json').write_bytes(canonical_json(dict(eligible=False, rows_directory='rows', run_id=7)))
+            result = subprocess.run([sys.executable, '-I', str(p.ROOT/'scripts/rehearse_update_compatibility.py'),
+                'package', '--rows', str(rows), '--target', str(root/'target.json'), '--ephemeral-key',
+                '--out', str(root/'out'), '--run-id', '7'], capture_output=True, cwd=str(p.ROOT), timeout=120)
+        self.assertEqual(result.returncode, 2)
+        error = p.CommandError('python', result.returncode, result.stderr)
+        self.assertEqual((error.refusal_code, error.phase), ('suite_failed', 'read_qualification_row'))
+        self.assertRegex(error.location, r'^rehearse_update_compatibility\.py:[1-9][0-9]*$')
+        self.assertIn('phase read_qualification_row at rehearse_update_compatibility.py:', str(error))
+        data = p.failure_diagnostics(error)
+        self.assertEqual(data['command']['phase'], 'read_qualification_row')
+        self.assertNotIn(str(Path.home()), json.dumps(data) + str(error))
+        # Only the closed shapes are parsed; arbitrary stderr cannot inject fields.
+        forged = p.CommandError('python', 2, b'local-test package refused: Bad Code (x y)\n'
+                                b'local-test package check: /etc/passwd:1\nPRIVATE TOKEN\n')
+        self.assertEqual((forged.refusal_code, forged.phase, forged.location), ('suite_failed', None, None))
+        self.assertNotIn('PRIVATE', str(forged))
+
     def test_spool_error_vocabulary_is_closed_and_covers_all_fixed_refusals(self):
         tree = ast.parse(Path(spool.__file__).read_text())
         messages = set()

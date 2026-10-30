@@ -215,6 +215,9 @@ class AutomaticLifecycle:
         self._verification_window(installation)
         previous = self.baseline.evidence(self.head.release)
         observation = self._observation(installation, previous, 'before_recovery')
+        # The observation alone spans the full stability period, which may
+        # exceed probe_timeout. Re-verify retained evidence in a fresh window.
+        self._verification_window(installation)
         obs = self.baseline.observe(observation, self.target)
         self.authorization = authorize_execution(self.target.raw_manifest, obs.predecessor_raw, obs.release_proof,
             repository=self.target.repository, mode=self.registration.binding.topology,
@@ -286,6 +289,8 @@ class AutomaticLifecycle:
                 self.latest_observation = self._observation(fresh, previous, at)
                 if self.attempt_intent is None:
                     self.source_observation = self.latest_observation
+            # EvidenceFacts re-verifies retained evidence after this slow probe.
+            self._verification_window(installation)
             return self.latest_observation
         provider = EvidenceFacts(self.baseline, self.target, probe=probe,
             intent=lambda at: self.intent if at == 'before_rollout' else None,

@@ -63,6 +63,52 @@ class ImageIdentityTests(unittest.TestCase):
         with self.assertRaisesRegex(p.RehearsalError, 'source digest identity unavailable'):
             self.source_boot(IMAGE, 'example.com/futureagi/standalone@'+DIGEST)
 
+    def dependency_driver(self, retained=None):
+        driver = object.__new__(q.QualificationRehearsal)
+        # Exact short references from the retained v1.53.0..v1.56.1 docker-compose.yml.
+        model = dict(services=dict(postgres=dict(image='postgres:16'),
+                                   clickhouse=dict(image='clickhouse/clickhouse-server:25.3-alpine')))
+        driver.installation = SimpleNamespace(config=lambda refresh=False: model)
+        driver.image_inspections = dict(
+            postgres=dict(RepoDigests=['postgres@sha256:'+'1'*64]),
+            clickhouse=dict(RepoDigests=['clickhouse/clickhouse-server@sha256:'+'2'*64,
+                                        'example.com/clickhouse/clickhouse-server@sha256:'+'3'*64]))
+        driver.dependencies = retained
+        return driver
+
+    def test_retained_short_compose_dependency_refs_become_canonical_proof_refs(self):
+        driver = self.dependency_driver()
+        with mock.patch.object(q.QualificationRehearsal.__mro__[1], 'install_and_boot'), \
+                 mock.patch('scripts.update_rehearsal_spool.ObservedSpoolWitness'):
+            driver.install_and_boot()
+        self.assertEqual(driver.dependencies, (
+            dict(service='clickhouse', image='docker.io/clickhouse/clickhouse-server:25.3-alpine',
+                 digest='sha256:'+'2'*64),
+            dict(service='postgres', image='docker.io/library/postgres:16', digest='sha256:'+'1'*64)))
+        for item in driver.dependencies:
+            # The exact predicate validate_release_proof applies to every signed row.
+            ref = parse_image_ref(item['image'])
+            self.assertTrue(str(ref) == item['image'] and ref.tag is not None and ref.digest is None)
+
+    def test_retained_dependency_lock_matches_canonically_but_not_across_tags_or_digests(self):
+        canonical = (dict(service='clickhouse', image='docker.io/clickhouse/clickhouse-server:25.3-alpine',
+                          digest='sha256:'+'2'*64),
+                     dict(service='postgres', image='docker.io/library/postgres:16', digest='sha256:'+'1'*64))
+        for retained in (canonical, tuple(dict(row, image=short) for row, short in
+                         zip(canonical, ('clickhouse/clickhouse-server:25.3-alpine', 'postgres:16')))):
+            driver = self.dependency_driver(retained)
+            with mock.patch.object(q.QualificationRehearsal.__mro__[1], 'install_and_boot'), \
+                 mock.patch('scripts.update_rehearsal_spool.ObservedSpoolWitness'):
+                driver.install_and_boot()
+            self.assertEqual(driver.dependencies, canonical)
+        for change in (dict(image='docker.io/library/postgres:17'), dict(digest='sha256:'+'f'*64)):
+            driver = self.dependency_driver((canonical[0], dict(canonical[1], **change)))
+            with self.subTest(change=change), \
+                 mock.patch.object(q.QualificationRehearsal.__mro__[1], 'install_and_boot'), \
+                 mock.patch('scripts.update_rehearsal_spool.ObservedSpoolWitness'), \
+                 self.assertRaisesRegex(p.RehearsalError, 'retained dependency lock differs'):
+                driver.install_and_boot()
+
     def test_snapshot_accepts_hub_and_short_library_repo_digests(self):
         for prefix in ('', 'docker.io/', 'index.docker.io/', 'registry-1.docker.io/'):
             fixture = SyntheticExecutor()

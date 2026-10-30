@@ -674,14 +674,16 @@ class ShippingRehearsal:
                     parse_image_ref(ref).digest==expected['digest'] for ref in inspection.get('RepoDigests',[])),
                     'source image tag differs from explicit pin')
             if name!='app':
-                repository=parse_image_ref(service['image']).repository
+                # Signed proofs require canonical tagged refs; Compose keeps short Hub names.
+                image=parse_image_ref(service['image'])
                 digests={parse_image_ref(ref).digest for ref in inspection.get('RepoDigests',[])
-                         if parse_image_ref(ref).repository==repository}
+                         if parse_image_ref(ref).name==image.name}
                 p.need(len(digests)==1,'dependency digest ambiguous')
-                dependencies.append(dict(service=name,image=service['image'],digest=digests.pop()))
+                dependencies.append(dict(service=name,image=str(image),digest=digests.pop()))
         if self.dependencies:
-            p.equal(sorted(dependencies,key=lambda r:r['service']),sorted(self.dependencies,key=lambda r:r['service']),
-                    'retained dependency lock differs')
+            p.equal(sorted(dependencies,key=lambda r:r['service']),
+                    sorted((dict(r,image=str(parse_image_ref(r['image']))) for r in self.dependencies),
+                           key=lambda r:r['service']), 'retained dependency lock differs')
         self.dependencies=tuple(sorted(dependencies,key=lambda r:r['service']))
         target=self.target['components']['standalone']
         pin=target['image']+'@'+target['digest']

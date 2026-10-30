@@ -239,12 +239,20 @@ class CommandError(RehearsalError):
         self.command_name = name if re.fullmatch(r'[A-Za-z0-9_.-]{1,80}', name) else 'command'
         self.returncode = returncode
         self.refusal_code = 'suite_failed'
+        self.phase = self.location = None
         text = stderr.decode('utf-8', errors='replace') if isinstance(stderr, bytes) else str(stderr)
         for code in re.findall(r'(?m)^(?:qualification|release rehearsal) refused: ([a-z_]+)$', text):
             if code in MANUAL_REASONS:
                 self.refusal_code = code
-        super().__init__('rehearsal command failed (%s, exit %d, refusal %s)' %
-                         (self.command_name, returncode, self.refusal_code))
+        # package prints its own closed code, phase and a path-free source line.
+        for code, phase in re.findall(r'(?m)^local-test package refused: ([a-z_]{1,80}) \(([a-z_]{1,64})\)$', text):
+            self.refusal_code, self.phase = code, phase
+        for location in re.findall(r'(?m)^local-test package check: ([a-z_]{1,64}\.py:[1-9][0-9]{0,5})$', text):
+            self.location = location
+        detail = ''.join(' ' + label + ' ' + value for label, value in
+                         (('phase', self.phase), ('at', self.location)) if value)
+        super().__init__('rehearsal command failed (%s, exit %d, refusal %s%s)' %
+                         (self.command_name, returncode, self.refusal_code, detail))
 
 
 def command(argv, *, cwd=ROOT, input=None, timeout=1800, env=None):
@@ -1565,7 +1573,9 @@ def failure_diagnostics(exc, executor=None, *, completed_rows=0):
                 result['assertion_detail'] = 'update_rehearsal_resources.py:'+str(trace.tb_lineno)
             trace = trace.tb_next
     if isinstance(exc, CommandError):
-        result['command'] = dict(executable=exc.command_name, exit_code=exc.returncode)
+        result['command'] = dict(executable=exc.command_name, exit_code=exc.returncode,
+                                 **{key: value for key, value in (('phase', exc.phase), ('location', exc.location))
+                                    if value})
     if reason == 'shipping_executor_unavailable':
         # A fixed integration checklist, not external success data or waivers.
         result['missing_executor_requirements'] = list(EXECUTOR_REQUIREMENTS)
@@ -2291,7 +2301,23 @@ def package(argv):
             # as a successful package. No pre-existing output is overwritten.
             write_pair(((args.out / 'failure.json', canonical_json(failure)),))
         print('local-test package refused: ' + failure['refusal_code'] + ' (' + phase + ')', file=sys.stderr)
+        location = _check_location(exc)
+        if location:
+            print('local-test package check: ' + location, file=sys.stderr)
         return 2
+
+
+def _check_location(exc):
+    """Innermost frame in our producer/packager: basename and line, never locals."""
+    names = {'rehearse_update_compatibility.py', 'build_update_compatibility_proof.py', 'compatibility.py',
+             'update_rehearsal_qualification.py', 'update_rehearsal_resources.py'}
+    location, trace = None, exc.__traceback__
+    while trace is not None:
+        name = Path(trace.tb_frame.f_code.co_filename).name
+        if name in names and trace.tb_frame.f_code.co_name not in ('need', 'equal', 'require', '_need'):
+            location = name + ':' + str(trace.tb_lineno)
+        trace = trace.tb_next
+    return location
 
 
 def main(argv=None):

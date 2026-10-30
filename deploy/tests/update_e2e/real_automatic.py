@@ -84,8 +84,13 @@ def acceptance_policy(rows, *, source_boot_seconds=None):
         migration_timeout_seconds=migration, backup_timeout_seconds=transfer('backup_measurement'),
         restore_timeout_seconds=transfer('restore_measurement'), check_interval_seconds=CRON_PERIOD_SECONDS,
         pull_timeout_seconds=300, stability_period_seconds=STABILITY_SECONDS)
+    # required_tick_budget covers pull plus the cold forward/recovery reserves
+    # only. Every healthy-source observation before apply's pre-stop gate also
+    # runs on the tick clock, each bounded by the installed probe timeout plus
+    # the full stability period. Reserve them; both cold-budget gates remain.
     return replace(policy, mode='apply', enabled=True,
-                   tick_timeout_seconds=max(900, policy.required_tick_budget_seconds))
+                   tick_timeout_seconds=max(900, policy.required_tick_budget_seconds +
+                                            source_observation_seconds(policy, PRE_COLD_SOURCE_OBSERVATIONS)))
 
 
 def pending_migration_names(measurements):
@@ -111,6 +116,27 @@ def pending_migration_names(measurements):
 # own measurement sizes every updater policy (acceptance_policy above).
 MEASURED_FIRST_BOOT_SECONDS = 314
 STABILITY_SECONDS = 180
+# enrollment.configuration installs this probe timeout for every setup.
+SETUP_PROBE_TIMEOUT_SECONDS = 90
+# Healthy-source StandaloneStateObserver passes before the pre-stop cold gate:
+# select, the before_recovery guard (two facts), apply's repeated guard (two)
+# and the before_backup guard (two). Fresh setup runs four: two enrollment
+# observations and two _revalidate passes.
+PRE_COLD_SOURCE_OBSERVATIONS = 7
+SETUP_SOURCE_OBSERVATIONS = 4
+# Signature checks, capacity/backup-binding probes, pin normalization and the
+# scheduler install/inspection around setup's observations.
+SETUP_ANCILLARY_SECONDS = 600
+
+
+def source_observation_seconds(policy, passes):
+    """Upper bound on passes of the bounded healthy-source observer."""
+    return passes * (max(policy.probe_timeout_seconds, SETUP_PROBE_TIMEOUT_SECONDS)
+                     + policy.stability_period_seconds)
+
+
+def setup_timeout_seconds(policy):
+    return source_observation_seconds(policy, SETUP_SOURCE_OBSERVATIONS) + SETUP_ANCILLARY_SECONDS
 
 
 def acceptance_reserve_seconds(mode):
@@ -127,12 +153,15 @@ def acceptance_reserve_seconds(mode):
     the stability period. A restore adds the restored A start and the later
     latched cron wake.
     """
-    boot = 2*MEASURED_FIRST_BOOT_SECONDS+60
-    update = 2*CRON_PERIOD_SECONDS+60 + boot + STABILITY_SECONDS
+    # Each fresh A also needs setup; each update its pre-stop source passes.
+    # Only their full stability periods are certain, which keeps this a LOWER bound.
+    boot = 2*MEASURED_FIRST_BOOT_SECONDS+60 + SETUP_SOURCE_OBSERVATIONS*STABILITY_SECONDS
+    update = (2*CRON_PERIOD_SECONDS+60 + 2*MEASURED_FIRST_BOOT_SECONDS+60 + STABILITY_SECONDS
+              + PRE_COLD_SOURCE_OBSERVATIONS*STABILITY_SECONDS)
     if mode == 'a-b-c':
         return boot + 2*update
     if mode == 'upgrade':
-        return (boot + update) + (boot + update + boot + 2*CRON_PERIOD_SECONDS+60)
+        return (boot + update) + (boot + update + 2*MEASURED_FIRST_BOOT_SECONDS+60 + 2*CRON_PERIOD_SECONDS+60)
     raise ValueError('unknown acceptance mode')
 
 
@@ -423,7 +452,7 @@ class ProductHarness:
                 self.docker('pull', service['image'], timeout=1800)
         return self.boot_source()
 
-    def bin_update(self, *args, check=True):
+    def bin_update(self, *args, check=True, timeout=600):
         # Tests may enroll/deactivate, never drive scheduler run/tick/apply.
         if not args or args[0] != 'setup':
             raise ValueError('acceptance may only call one-time setup/deactivation')
@@ -435,7 +464,7 @@ class ProductHarness:
         previous = self.env.get('PYTHON')
         self.env['PYTHON'] = sys.executable
         try:
-            return self.command([str(self.root/'bin/update'), *args], timeout=600, check=check)
+            return self.command([str(self.root/'bin/update'), *args], timeout=timeout, check=check)
         finally:
             if previous is None:
                 self.env.pop('PYTHON', None)

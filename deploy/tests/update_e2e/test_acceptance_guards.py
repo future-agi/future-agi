@@ -143,10 +143,11 @@ class BudgetAndInventoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             *_,proof=fixture(Path(temp)/'evidence')
             policy=real.acceptance_policy(proof['predecessors'])
-        self.assertEqual(policy.tick_timeout_seconds,policy.required_tick_budget_seconds)
+        allowance=real.source_observation_seconds(policy,real.PRE_COLD_SOURCE_OBSERVATIONS)
+        self.assertEqual(policy.tick_timeout_seconds,policy.required_tick_budget_seconds+allowance)
         self.assertLess(policy.tick_timeout_seconds,21600)
         flags=real.policy_cli_arguments(policy)
-        self.assertEqual(flags[flags.index('--tick-timeout-seconds')+1],str(policy.required_tick_budget_seconds))
+        self.assertEqual(flags[flags.index('--tick-timeout-seconds')+1],str(policy.tick_timeout_seconds))
         for key in ('backup','restore','migration','wait','pull','recovery-startup'):
             self.assertIn('--'+key+'-timeout-seconds',flags)
         self.assertEqual(policy.qualification_policy,'standalone-cold-restore-v1')
@@ -459,11 +460,13 @@ class AcceptanceSequenceTests(unittest.TestCase):
                  patch.object(automatic, 'read_attempt_ledger', side_effect=lambda path: (
                      {'run_id': 'run-'+current[0], 'direction': 'success_decided'}, {'success-decision.json'})), \
                  patch.object(automatic, 'acceptance_policy', return_value=SimpleNamespace(
-                     tick_timeout_seconds=1200, check_interval_seconds=300, required_tick_budget_seconds=1200)), \
+                     tick_timeout_seconds=1200, check_interval_seconds=300, required_tick_budget_seconds=1200,
+                     probe_timeout_seconds=90, stability_period_seconds=180)), \
                  patch.object(automatic, 'policy_cli_arguments', return_value=()), \
                  patch.object(h, 'verify_installed_release', wraps=h.verify_installed_release) as installed:
                 case.exercise(dict(mode='a-b-c', deadline_monotonic=time.monotonic()+100000), versions, publisher, rows,
-                    SimpleNamespace(tick_timeout_seconds=1200, check_interval_seconds=300, required_tick_budget_seconds=1200),
+                    SimpleNamespace(tick_timeout_seconds=1200, check_interval_seconds=300, required_tick_budget_seconds=1200,
+                     probe_timeout_seconds=90, stability_period_seconds=180),
                     restore=False)
             self.assertEqual([c.args[0]['version'] for c in installed.call_args_list], list(versions[1:]))
             self.assertIn((versions[2], {'acceptance-a', 'acceptance-'+versions[1]}), verified_generations)
@@ -888,7 +891,14 @@ class NativeBoundaryTests(unittest.TestCase):
             self.assertEqual(policy.recovery_startup_timeout_seconds,620)
             self.assertEqual(policy.pull_timeout_seconds,300)
             self.assertGreaterEqual(policy.stability_period_seconds,180)
-            self.assertEqual(policy.required_tick_budget_seconds,policy.tick_timeout_seconds)
+            # The tick must still hold the FULL cold budget at apply's pre-stop
+            # gate after pull plus seven bounded healthy-source observations.
+            observation=max(policy.probe_timeout_seconds,90)+policy.stability_period_seconds
+            self.assertEqual(policy.tick_timeout_seconds,policy.required_tick_budget_seconds+7*observation)
+            self.assertGreaterEqual(policy.tick_timeout_seconds-policy.pull_timeout_seconds-7*observation,
+                                    policy.required_cold_budget_seconds)
+            self.assertGreaterEqual(real.setup_timeout_seconds(policy),4*observation+600)
+            self.assertGreater(real.setup_timeout_seconds(policy),4*policy.stability_period_seconds)
             required=real.scheduler_wait_budget(policy,100000,now=1)
             self.assertEqual(required,policy.tick_timeout_seconds+660)
             with self.assertRaisesRegex(TimeoutError,'remaining native job time'):
@@ -977,13 +987,16 @@ class NativeBoundaryTests(unittest.TestCase):
             self.assertIn(value, line)
 
     def test_acceptance_reserve_is_derived_from_measured_boot_cron_and_stability(self):
-        boot=2*real.MEASURED_FIRST_BOOT_SECONDS+60
-        update=2*real.CRON_PERIOD_SECONDS+60+boot+real.STABILITY_SECONDS
+        start=2*real.MEASURED_FIRST_BOOT_SECONDS+60
+        boot=start+4*real.STABILITY_SECONDS  # fresh A plus four setup stability passes
+        update=2*real.CRON_PERIOD_SECONDS+60+start+real.STABILITY_SECONDS+7*real.STABILITY_SECONDS
         self.assertEqual(real.acceptance_reserve_seconds('a-b-c'),boot+2*update)
-        self.assertEqual(real.acceptance_reserve_seconds('upgrade'),2*(boot+update)+boot+2*real.CRON_PERIOD_SECONDS+60)
-        # Two A->B->C qualifications plus the reserve must fit the job deadline;
-        # the reserve is a bound on qualification, not a guard on acceptance.
-        self.assertLess(real.acceptance_reserve_seconds('upgrade'),acceptance.JOB_SECONDS//3)
+        self.assertEqual(real.acceptance_reserve_seconds('upgrade'),2*(boot+update)+start+2*real.CRON_PERIOD_SECONDS+60)
+        # Including setup and pre-stop observations, acceptance must leave at
+        # least half the job for qualification (and PR builds in upgrade mode).
+        # The reserve bounds qualification; it is not a guard on acceptance.
+        for mode in ('a-b-c','upgrade'):
+            self.assertLess(real.acceptance_reserve_seconds(mode),acceptance.JOB_SECONDS//2)
         with self.assertRaises(ValueError):
             real.acceptance_reserve_seconds('restore')
 

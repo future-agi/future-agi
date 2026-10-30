@@ -236,6 +236,13 @@ class NativeLauncherTests(unittest.TestCase):
         self.assertEqual(observed['DOCKER_CONTEXT'], real.CONTEXT)
         self.assertEqual(harness.env['PYTHON'], 'original-interpreter')
 
+    def test_setup_command_bound_is_supplied_by_the_caller(self):
+        harness = real.ProductHarness(real.HOME / "fixture", Path.cwd(), "fagi-upd-e2e-real-unit")
+        with patch.object(real, "native_ci", return_value=False), patch.object(harness, "command") as command:
+            harness.bin_update('setup', '--yes', timeout=1680)
+            harness.bin_update('setup', '--deactivate', '--yes')
+        self.assertEqual([call.kwargs['timeout'] for call in command.call_args_list], [1680, 600])
+
 
 class ArchiveTests(unittest.TestCase):
     def make_archive(self, root, names=(".", "./payload")):

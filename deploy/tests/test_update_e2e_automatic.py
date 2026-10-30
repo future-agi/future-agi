@@ -20,7 +20,8 @@ if str(ROOT) not in sys.path:
 from deploy.tests.update_e2e import harness as e2e
 from deploy.tests.update_e2e.real_automatic import (
     CRON_PERIOD_SECONDS, FAULT_SEAM, acceptance_policy, acceptance_reserve_seconds, policy_cli_arguments,
-    pending_migration_names, read_attempt_ledger, read_event_records, scheduler_wait_budget)
+    pending_migration_names, read_attempt_ledger, read_event_records, scheduler_wait_budget,
+    setup_timeout_seconds)
 from deploy.update.baseline import BaselineStore
 from deploy.update.contracts import ReasonCode
 from deploy.update.enrollment import AUTOMATIC_UPDATE_DISCLOSURE
@@ -90,16 +91,20 @@ class AutomaticLifecycleE2E(unittest.TestCase):
             # --yes acknowledges precisely the displayed A5 disclosure. No
             # scheduler asset is rendered/installed by this test itself.
             remaining_timeout()
+            # Setup observes healthy A four times for the full stability period.
+            setup_seconds = setup_timeout_seconds(policy)
+            if deadline-time.monotonic() <= setup_seconds+scheduler_wait_budget(policy, deadline):
+                raise TimeoutError('setup and one scheduled update exceed remaining native job time')
             checkout.record('acceptance-budgets.json', dict(required_tick_seconds=policy.required_tick_budget_seconds,
                 configured_tick_seconds=policy.tick_timeout_seconds, source_first_boot_seconds=boot['seconds'],
-                scheduler_delivery_seconds=2*CRON_PERIOD_SECONDS+60,
+                scheduler_delivery_seconds=2*CRON_PERIOD_SECONDS+60, setup_timeout_seconds=setup_seconds,
                 cli=list(policy_cli_arguments(policy))))
             setup = checkout.bin_update('setup', '--mode', 'apply', '--yes', '--policy', 'minor',
                 '--window', 'always', '--check-interval', '300', '--scheduler', 'cron',
                 '--cron-service', 'cron.service', '--docker-context', checkout.context,
                 '--release-source', publisher.source, '--public-key', str(publisher.public_key),
                 '--ca-file', str(publisher.ca_file), '--backup-destination', str(destination),
-                *policy_cli_arguments(policy))
+                *policy_cli_arguments(policy), timeout=setup_seconds)
             self.assertIn(AUTOMATIC_UPDATE_DISCLOSURE, setup.stdout.decode())
             enrolled = True
             store = selected_store(checkout.root)
