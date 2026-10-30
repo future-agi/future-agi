@@ -167,27 +167,6 @@ ledger migration before enabling derived monitors; historical delivery identitie
 are not fabricated from a last-run pointer. Application rollback
 leaves ClickHouse evidence intact; do not drop snapshot tables to roll back code.
 
-Public competitive references
------------------------------
-
-Checked against primary public documentation on 2026-10-21:
-
-* Arize documents AQL custom metrics, weighted composites and ratios, usable in
-  dashboards and monitors. This feature must NOT be described as something Arize
-  cannot do: https://arize.com/docs/ax/observe/projects/custom-metrics-api
-* Arize documents the custom-metric monitor source:
-  https://arize.com/docs/ax/observe/production-monitoring
-* Galileo documents composite metrics and ``required_metrics`` dependencies:
-  https://docs.galileo.ai/concepts/metrics/custom-metrics/composite-metrics
-* Galileo documents custom-code evaluation at session/trace/span levels:
-  https://docs.galileo.ai/concepts/metrics/custom-metrics/custom-metrics-ui-code
-* Galileo's release notes document configurable span/trace/session rollups:
-  https://docs.galileo.ai/release-notes
-
-These sources establish feature existence, not comparative accuracy, performance,
-pricing or implementation details. No unsupported parity or superiority claim is
-made.
-
 Verification
 ------------
 

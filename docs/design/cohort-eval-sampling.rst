@@ -1,5 +1,5 @@
 Contact-consistent evaluation sampling
-=====================================
+======================================
 
 Scope
 -----
@@ -180,35 +180,13 @@ These are safety limits, not a claim that every permitted 31-day workload fits t
 proof does not advance the continuous cursor. Actual one-billion-row throughput
 has not been established by the correctness fixtures.
 
-Public competitive context
---------------------------
+Preview boundaries
+------------------
 
-Documentation checked 2026-10-21:
-
-* Galileo documents top-down metadata rules: the first matching rule supplies a
-  percentage and unmatched traces use a default rate. It also says traces are
-  evaluated for all configured metrics or none. This is a useful ordered-rule
-  comparison, not evidence of exact, frozen per-cell target-n quotas.
-  https://docs.galileo.ai/concepts/logging/configure-metrics/configure-metrics
-* Galileo sessions group traces, events and spans. Grouping/session-level
-  evaluation alone is not the same contract as evaluating every eligible span
-  of a sampled contact while keeping span-level results.
-  https://docs.galileo.ai/concepts/logging/sessions/sessions-overview
-* LangSmith documents thread filters, percentage sampling and project-level idle
-  time for multi-turn evaluations; its documentation lists a 500-thread batch
-  limit and seven-day run eligibility. Those are thread evaluation semantics,
-  not evidence for this span-result/contact-membership contract.
-  https://docs.langchain.com/langsmith/online-evaluations-multi-turn
-
-* Langfuse's 2026-08-05 changelog documents consistent evaluator sampling of
-  matching observations. Its separate SDK ingestion sampler retains/drops
-  whole traces and associated scores. Neither statement establishes
-  cross-trace contact sampling or exact stratified quotas.
-  https://langfuse.com/changelog/2026-08-05-deterministic-evaluator-sampling
-  https://langfuse.com/docs/observability/features/sampling
-
-These sources support the distinctions above. They do not establish that no
-other product implements stratification or contact-consistent sampling.
+The preview is a population snapshot, not a reservation, and returns
+``estimated_cost: null`` rather than a provider-price estimate. Closed cohorts
+retain their frozen membership; late eligible rows of already selected units
+can be admitted on later polls.
 
 Verification and rollout
 ------------------------
