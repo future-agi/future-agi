@@ -82,7 +82,7 @@ type RequestContext struct {
 	RequestHeaders http.Header
 
 	// EndpointType identifies the API endpoint: "chat", "embedding", "image",
-	// "speech", "transcription", or "rerank". Defaults to "chat".
+	// "speech", "transcription", "rerank", or "decision". Defaults to "chat".
 	EndpointType string
 
 	// Guardrail results — populated by the guardrails plugin with triggered checks.
@@ -104,6 +104,8 @@ type RequestContext struct {
 	SearchResponse    *SearchResponse
 	OCRRequest        *OCRRequest
 	OCRResponse       *OCRResponse
+	DecisionRequest   *DecisionRequest
+	DecisionResponse  *DecisionResponse
 
 	// Per-org model map: model name → provider ID override.
 	OrgModelMap map[string]string
@@ -191,6 +193,8 @@ func (rc *RequestContext) Release() {
 	rc.SearchResponse = nil
 	rc.OCRRequest = nil
 	rc.OCRResponse = nil
+	rc.DecisionRequest = nil
+	rc.DecisionResponse = nil
 	rc.OrgModelMap = nil
 	rc.OrgModelFallbacks = nil
 	rc.GuardrailResults = rc.GuardrailResults[:0]

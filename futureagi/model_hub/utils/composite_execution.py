@@ -62,6 +62,56 @@ def resolve_child_weights(
     return resolved
 
 
+def _link_run_config(link: CompositeEvalChild) -> dict[str, Any]:
+    run_config = (link.config or {}).get("run_config") or {}
+    return run_config if isinstance(run_config, dict) else {}
+
+
+def resolve_child_binding(
+    link: CompositeEvalChild, config: dict[str, Any], model: str | None
+) -> tuple[dict[str, Any], str | None]:
+    """The runtime config and model a composite child runs with.
+
+    The child's pinned version snapshot, then its link config, go over the
+    composite's runtime `config`. Its model is the link's `run_config` → link
+    config → pinned version → child template → `model`.
+    """
+    runtime_config = dict(config) if config else {}
+
+    # Version pinning: if this child is pinned, snapshot overrides the
+    # template's live config/criteria/model for this run only.
+    if link.pinned_version:
+        version = link.pinned_version
+        if version.config_snapshot:
+            runtime_config.update(version.config_snapshot)
+        if version.criteria:
+            runtime_config["criteria"] = version.criteria
+        if version.model:
+            runtime_config["model"] = version.model
+
+    link_config = link.config or {}
+    if link_config:
+        link_params = link_config.get("params")
+        runtime_config.update({k: v for k, v in link_config.items() if k != "params"})
+        if isinstance(link_params, dict):
+            existing_params = runtime_config.get("params")
+            runtime_config["params"] = {
+                **(existing_params if isinstance(existing_params, dict) else {}),
+                **link_params,
+            }
+
+    pinned_model = link.pinned_version.model if link.pinned_version else None
+    effective_model = (
+        _link_run_config(link).get("model")
+        or link_config.get("model")
+        or pinned_model
+        or link.child.model
+        or model
+        or None
+    )
+    return runtime_config, effective_model
+
+
 def _execute_child(
     *,
     child_template: EvalTemplate,
@@ -89,50 +139,12 @@ def _execute_child(
     from model_hub.views.utils.evals import run_eval_func
 
     try:
-        runtime_config = dict(config) if config else {}
-
-        # Version pinning: if this child is pinned, snapshot overrides the
-        # template's live config/criteria/model for this run only.
-        if link.pinned_version:
-            version = link.pinned_version
-            if version.config_snapshot:
-                runtime_config.update(version.config_snapshot)
-            if version.criteria:
-                runtime_config["criteria"] = version.criteria
-            if version.model:
-                runtime_config["model"] = version.model
-
-        link_config = link.config or {}
-        if link_config:
-            link_params = link_config.get("params")
-            runtime_config.update(
-                {k: v for k, v in link_config.items() if k != "params"}
-            )
-            if isinstance(link_params, dict):
-                existing_params = runtime_config.get("params")
-                runtime_config["params"] = {
-                    **(existing_params if isinstance(existing_params, dict) else {}),
-                    **link_params,
-                }
-
-        link_run_config = link_config.get("run_config") or {}
-        if not isinstance(link_run_config, dict):
-            link_run_config = {}
-
-        pinned_model = link.pinned_version.model if link.pinned_version else None
-        effective_model = (
-            link_run_config.get("model")
-            or link_config.get("model")
-            or pinned_model
-            or child_template.model
-            or model
-            or None
-        )
+        runtime_config, effective_model = resolve_child_binding(link, config, model)
         effective_error_localizer = bool(
             error_localizer
             or (
                 PER_CHILD_ERROR_LOCALIZER_ENABLED
-                and link_run_config.get("error_localizer_enabled")
+                and _link_run_config(link).get("error_localizer_enabled")
             )
         )
 
@@ -176,13 +188,15 @@ def _execute_child(
         )
 
     except Exception as e:  # noqa: BLE001
+        from tfc.ee_gates import jev_error_message
+
         logger.warning("Child eval %s failed: %s", child_template.name, str(e))
         return CompositeChildResult(
             child_id=str(child_template.id),
             child_name=child_template.name,
             order=link.order,
             status="failed",
-            error=str(e),
+            error=jev_error_message(e) or str(e),
             weight=weight,
         )
 

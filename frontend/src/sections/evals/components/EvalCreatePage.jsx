@@ -19,9 +19,20 @@ import Iconify from "src/components/iconify";
 import axios, { endpoints } from "src/utils/axios";
 import { useNavigate, useParams } from "react-router";
 import { useSnackbar } from "notistack";
-import { useFeatureLocked, CAPABILITY } from "src/hooks/useCapabilities";
+import {
+  useFeatureLocked,
+  CAPABILITY,
+  useFeatureDenied,
+} from "src/hooks/useCapabilities";
 import { useErrorLocalizationAvailable } from "src/hooks/useErrorLocalization";
-import { FAGI_MODEL_VALUES } from "./ModelSelector";
+import { FAGI_MODEL_VALUES, JEV_MODEL_VALUES } from "./ModelSelector";
+import JevOutputConfig from "./JevOutputConfig";
+import {
+  buildJevMapping,
+  getJevValidationErrors,
+  hasExtraJevMessages,
+  orderChoiceScores,
+} from "../utils/jevMapping";
 
 import { useCreateEval } from "../hooks/useCreateEval";
 import { useUpdateEval } from "../hooks/useEvalDetail";
@@ -37,6 +48,7 @@ import { useCompositeChildrenUnionKeys } from "../hooks/useCompositeChildrenKeys
 import CodeEvalEditor, { PYTHON_CODE_TEMPLATE } from "./CodeEvalEditor";
 import CompositeDetailPanel from "./CompositeDetailPanel";
 import UnsavedChangesDialog from "src/sections/projects/MonitorsView/UnsavedChangesDialog";
+import { useBeforeUnload } from "src/hooks/useBeforeUnload";
 import {
   extractVariables,
   extractVariablesFromMessages,
@@ -147,6 +159,35 @@ const resolveContextOptions = (dataInjection) => {
   return ["variables_only"];
 };
 
+// What Jev's server check reads. While the setup can't run, autosave holds
+// these back, so the server keeps the last runnable setup, and saves the rest
+// (the prompt, threshold, template format).
+const JEV_CHECKED_FIELDS = [
+  "eval_type",
+  "model",
+  "output_type",
+  "choice_scores",
+  "multi_choice",
+  "check_internet",
+  "mode",
+  "tools",
+  "knowledge_bases",
+  "data_injection",
+  "few_shot_examples",
+  "jev_mapping",
+];
+
+const withoutJevFields = (payload) => {
+  // Messages beyond the system prompt need the confirmation that sits in the
+  // held mapping; a system prompt alone saves.
+  const held = hasExtraJevMessages(payload.messages)
+    ? [...JEV_CHECKED_FIELDS, "messages"]
+    : JEV_CHECKED_FIELDS;
+  return Object.fromEntries(
+    Object.entries(payload).filter(([key]) => !held.includes(key)),
+  );
+};
+
 const EvalCreatePage = () => {
   const { draftId: urlDraftId } = useParams();
   const navigate = useNavigate();
@@ -157,6 +198,9 @@ const EvalCreatePage = () => {
   // Fail closed while capabilities load (both flags true) so we never flash
   // Turing models or agent evals as available before the fetch resolves.
   const { locked: fagiLocked } = useFeatureLocked(CAPABILITY.TURING_MODELS);
+  // Only a confirmed denial locks Jev: not while capabilities load, and not
+  // when their fetch fails (self-hosted always allows Jev; the server checks).
+  const jevLocked = useFeatureDenied(CAPABILITY.JEV_MODELS);
   const { locked: agentEvalLocked, isLoading: capabilitiesLoading } =
     useFeatureLocked(CAPABILITY.AGENTIC_EVAL);
   const errorLocalizerAvailable = useErrorLocalizationAvailable();
@@ -182,12 +226,17 @@ const EvalCreatePage = () => {
   const [model, setModel] = useState("turing_large");
   const [openModelMenuSignal, setOpenModelMenuSignal] = useState(0);
   const [outputType, setOutputType] = useState("pass_fail");
+  // Jev question details (criteria, choice descriptions, score levels). The
+  // output category locks after save, so they must be editable here.
+  const [jevMapping, setJevMapping] = useState({});
   const [passThreshold, setPassThreshold] = useState(0.5);
   const [choiceScores, setChoiceScores] = useState({});
   const [multiChoice, setMultiChoice] = useState(false);
   const [description, setDescription] = useState("");
   const [checkInternet, setCheckInternet] = useState(false);
   const [agentMode, setAgentMode] = useState("agent");
+  // The Agents editor unmounts on tab changes; keep its non-Jev mode here.
+  const previousAgentModeRef = useRef(null);
   const [summaryType, setSummaryType] = useState("concise");
   const [customSummary, setCustomSummary] = useState("");
   const [connectorIds, setConnectorIds] = useState([]);
@@ -306,7 +355,14 @@ const EvalCreatePage = () => {
             setModel(config.model || d.model || "turing_large");
             setOutputType(d.output_type_normalized || "pass_fail");
             setPassThreshold(d.pass_threshold ?? 0.5);
-            setChoiceScores(d.choice_scores || {});
+            // jsonb returns choice_scores keys shortest first; autosave them
+            // in the order the author saved.
+            setChoiceScores(
+              orderChoiceScores(
+                d.choice_scores || {},
+                config.jev_mapping?.choice?.labels || d.choices,
+              ),
+            );
             setMultiChoice(d.multi_choice ?? config.multi_choice ?? false);
             setDescription(d.description || "");
             setCheckInternet(config.check_internet ?? false);
@@ -330,6 +386,7 @@ const EvalCreatePage = () => {
               d.template_format || config.template_format || "mustache",
             );
             if (config.messages) setMessages(config.messages);
+            setJevMapping(config.jev_mapping || {});
             if (config.few_shot_examples) {
               setFewShotExamples(config.few_shot_examples || []);
             }
@@ -371,7 +428,38 @@ const EvalCreatePage = () => {
 
   // Auto-save config to draft (debounced, skip initial load)
   const autoSaveTimer = useRef(null);
+  const autoSaveErrorRef = useRef(null);
   const autoSaveSkipFirst = useRef(!!urlDraftId); // skip first trigger when loading existing draft
+  const isJevModel = JEV_MODEL_VALUES.has(model);
+  const jevErrors = isJevModel
+    ? getJevValidationErrors({
+        mapping: buildJevMapping(outputType, choiceScores, jevMapping),
+        config: {
+          check_internet: checkInternet,
+          few_shot_examples: fewShotExamples,
+          ...(evalType === "agent"
+            ? {
+                agent_mode: agentMode,
+                tools: buildToolsPayload(connectorIds),
+                knowledge_bases: knowledgeBaseIds,
+                data_injection: buildDataInjection(contextOptions),
+              }
+            : {}),
+        },
+        multiChoice,
+        choiceScores,
+        messages: evalType === "llm" ? messages : [],
+      })
+    : [];
+  // The server refuses a Jev setup these rules reject (a Score with no levels
+  // yet, say). Until it is runnable, autosave holds back the fields Jev's
+  // check reads and saves the rest; the header says what is not saved yet.
+  const jevUnrunnable =
+    isJevModel && evalType !== "code" && jevErrors.length > 0;
+  const jevNotSavedReason = jevUnrunnable ? jevErrors[0] : null;
+  useBeforeUnload(Boolean(jevNotSavedReason));
+  const [confirmLeave, setConfirmLeave] = useState(false);
+
   const buildUpdatePayload = useCallback(() => {
     const dataInjection = buildDataInjection(contextOptions);
 
@@ -414,6 +502,12 @@ const EvalCreatePage = () => {
           ? fewShotExamples.map((ds) => ({ id: ds.id, name: ds.name }))
           : undefined,
       template_format: templateFormat,
+      // Without it the server would keep the draft's earlier mapping, which
+      // no longer matches the output type once the user changes it.
+      // A code eval runs no model: no Jev mapping for it.
+      ...(isJevModel && evalType !== "code"
+        ? { jev_mapping: buildJevMapping(outputType, choiceScores, jevMapping) }
+        : {}),
     };
   }, [
     evalType,
@@ -436,6 +530,8 @@ const EvalCreatePage = () => {
     messages,
     fewShotExamples,
     templateFormat,
+    jevMapping,
+    isJevModel,
   ]);
 
   useEffect(() => {
@@ -446,12 +542,28 @@ const EvalCreatePage = () => {
     }
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     autoSaveTimer.current = setTimeout(() => {
-      updateDraft.mutate(buildUpdatePayload());
+      const payload = buildUpdatePayload();
+      updateDraft.mutate(jevUnrunnable ? withoutJevFields(payload) : payload, {
+        // A refused autosave used to leave later edits silently unsaved.
+        // Say why, once per reason.
+        onError: (error) => {
+          const message = getSafeActionErrorMessage(
+            error,
+            "Your latest changes couldn't be saved.",
+          );
+          if (autoSaveErrorRef.current === message) return;
+          autoSaveErrorRef.current = message;
+          enqueueSnackbar(message, { variant: "error" });
+        },
+        onSuccess: () => {
+          autoSaveErrorRef.current = null;
+        },
+      });
     }, 800);
     return () => {
       if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     };
-  }, [draftId, buildUpdatePayload]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [draftId, buildUpdatePayload, jevUnrunnable]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Draft cleanup: drafts with visible_ui=False are hidden from the list.
   // No auto-delete — stale drafts can be cleaned up by a backend cron.
@@ -675,8 +787,16 @@ const EvalCreatePage = () => {
           .length > 0
       : !!instructions.trim() &&
         extractVariables(instructions, templateFormat).length > 0;
+  // What the detail page blocks on: a Jev setup Jev can't run, or Jev
+  // locked on the plan. Test and Save stay off until it is fixed.
+  const jevBlockedReason =
+    isJevModel && evalType !== "code"
+      ? jevErrors[0] ||
+        (jevLocked ? "Jev models aren't included in your plan." : "")
+      : "";
   const canSaveSingle =
     !!name.trim() &&
+    !jevBlockedReason &&
     (evalType === "code" ? !!code.trim() : singleHasInstructionVariables);
   const canSaveComposite = compositeName.trim() && selectedChildren.length > 0;
   // Single evals require a successful test run before save. Composites
@@ -714,7 +834,11 @@ const EvalCreatePage = () => {
               underline="hover"
               color="text.secondary"
               sx={{ cursor: "pointer" }}
-              onClick={() => navigate("/dashboard/evaluations")}
+              onClick={() =>
+                jevNotSavedReason
+                  ? setConfirmLeave(true)
+                  : navigate("/dashboard/evaluations")
+              }
             >
               Evals List
             </Link>
@@ -739,6 +863,17 @@ const EvalCreatePage = () => {
               }}
             >
               Draft
+            </Typography>
+          )}
+          {jevNotSavedReason && (
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              noWrap
+              title={jevNotSavedReason}
+              sx={{ maxWidth: 520 }}
+            >
+              Not saved yet: {jevNotSavedReason}
             </Typography>
           )}
         </Box>
@@ -896,6 +1031,7 @@ const EvalCreatePage = () => {
                         return;
                       }
                       setEvalType(val);
+                      if (val === "code") setModel("");
                     }}
                     variant="standard"
                     scrollButtons={false}
@@ -999,6 +1135,7 @@ const EvalCreatePage = () => {
                       modelSelectorDisabled={false}
                       mode={agentMode}
                       onModeChange={setAgentMode}
+                      previousModeRef={previousAgentModeRef}
                       useInternet={checkInternet}
                       onUseInternetChange={setCheckInternet}
                       activeSummary={summaryType}
@@ -1037,6 +1174,7 @@ const EvalCreatePage = () => {
 
                       {/* Few-shot examples — dataset selector */}
                       <FewShotExamples
+                        isJevModel={isJevModel}
                         selectedDatasets={fewShotExamples}
                         onChange={setFewShotExamples}
                       />
@@ -1117,6 +1255,19 @@ const EvalCreatePage = () => {
                       onPassThresholdChange={setPassThreshold}
                       multiChoice={multiChoice}
                       onMultiChoiceChange={setMultiChoice}
+                      isJevModel={isJevModel}
+                    />
+                  )}
+
+                  {isJevModel && evalType !== "code" && (
+                    <JevOutputConfig
+                      outputType={outputType}
+                      choiceScores={choiceScores}
+                      mapping={jevMapping}
+                      onChange={setJevMapping}
+                      errors={jevErrors}
+                      hasExtraMessages={hasExtraJevMessages(messages)}
+                      locked={jevLocked}
                     />
                   )}
 
@@ -1268,7 +1419,7 @@ const EvalCreatePage = () => {
                   key={mode}
                   ref={testPlaygroundRef}
                   templateId={draftId}
-                  model={model}
+                  model={evalType === "code" ? "" : model}
                   evalName={name || ""}
                   instructions={
                     mode === "composite" || evalType === "code"
@@ -1398,12 +1549,17 @@ const EvalCreatePage = () => {
                         ? hasCode
                         : instructionsReady;
                   const testDisabled =
-                    isTesting || !hasTestInput || !canEditEvals;
+                    isTesting ||
+                    !hasTestInput ||
+                    !canEditEvals ||
+                    (mode !== "composite" && !!jevBlockedReason);
 
                   let testDisabledReason = "";
                   if (!canEditEvals) {
                     testDisabledReason =
                       "You don't have permission to create or edit evaluations.";
+                  } else if (mode !== "composite" && jevBlockedReason) {
+                    testDisabledReason = jevBlockedReason;
                   } else if (isTesting) {
                     testDisabledReason = "Test is already running.";
                   } else if (mode === "composite" && !hasCompositeChildren) {
@@ -1481,6 +1637,8 @@ const EvalCreatePage = () => {
                       saveDisabledReason =
                         "Add at least one child evaluation before saving.";
                     }
+                  } else if (jevBlockedReason) {
+                    saveDisabledReason = jevBlockedReason;
                   } else if (!name.trim()) {
                     saveDisabledReason =
                       "Give this evaluation a name before saving.";
@@ -1542,6 +1700,17 @@ const EvalCreatePage = () => {
           }
         />
       </Box>
+      <UnsavedChangesDialog
+        open={confirmLeave}
+        onClose={() => setConfirmLeave(false)}
+        onConfirm={() => {
+          setConfirmLeave(false);
+          navigate("/dashboard/evaluations");
+        }}
+        title="Leave without the Jev settings?"
+        message={`The Jev settings can't be saved yet: ${jevNotSavedReason}. If you leave now, they are lost.`}
+        confirmLabel="Leave"
+      />
       <UnsavedChangesDialog
         open={pendingMode !== null}
         onClose={handleCancelModeSwitch}

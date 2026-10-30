@@ -8,7 +8,10 @@ importing only when EE is actually present.
 
 Public surface:
     FeatureUnavailable      — DRF APIException (HTTP 402, upgrade_required)
-    is_oss()                — cached; True when the deployment has no EE
+    entitlements_unavailable(exc)
+                            — True when a denial only means the entitlement
+                              service couldn't answer (retry, don't deny).
+    is_oss()               — cached; True when the deployment has no EE
     require_ee_feature(...) — decorator for DRF views, AI tools, Temporal
                               activities. No ee → deny; EE/Cloud → pass-
                               through (middleware / entitlement service
@@ -61,9 +64,12 @@ class EEFeature(str, Enum):
     DEDICATED_SUPPORT = "dedicated_support"
     FALCON_AI = "falcon_ai"
     TURING_MODELS = "turing_models"
+    JEV_MODELS = "jev_models"
     PROTECT = "protect"
     SCENARIOS = "scenarios"
     ERROR_FEED = "error_feed"
+    INSTANT_EVAL = "instant_eval"
+    INSIGHTS = "insights"
     FIX_MY_AGENT = "fix_my_agent"
 
 
@@ -124,6 +130,19 @@ class FeatureUnavailable(APIException):
             detail=detail or f"'{self.feature}' is not available. Upgrade your plan.",
             code=self.error_code,
         )
+
+
+ENTITLEMENT_CHECK_UNAVAILABLE_MESSAGE = (
+    "The entitlement check is unavailable right now."
+)
+
+
+def entitlements_unavailable(exc) -> bool:
+    """Whether a denial only means the entitlement service couldn't answer,
+    so a Temporal activity should retry rather than fail for good."""
+    if getattr(exc, "reason_code", None) == "RESOLVER_UNAVAILABLE":
+        return True
+    return "entitlement service is unavailable" in str(getattr(exc, "detail", ""))
 
 
 @functools.lru_cache(maxsize=1)

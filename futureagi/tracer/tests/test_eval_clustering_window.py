@@ -306,3 +306,37 @@ def test_clustering_includes_ch_only_session_failure(project, custom_eval_config
 def test_window_constant_unchanged():
     """Guards against an accidental edit to the recency window."""
     assert _CLUSTER_WINDOW_DAYS == 60
+
+
+@pytest.mark.django_db
+def test_a_batch_reads_only_the_pages_it_needs(
+    project, trace, observation_span, custom_eval_config, monkeypatch
+):
+    """A bounded batch stops reading once it has ``limit`` rows: the backlog
+    is paged with a LIMIT in SQL, so it is never all held in memory (with
+    server-side cursors disabled, ``.iterator()`` fetched every row first)."""
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    from tracer.queries import eval_clustering
+
+    monkeypatch.setattr(eval_clustering, "_FETCH_PAGE", 2)
+    made = [
+        _make_failing_eval(
+            trace, observation_span, custom_eval_config,
+            f"failure {i}", age_days=10 - i, eval_task_id=f"et-page-{i}",
+        )
+        for i in range(7)
+    ]
+    oldest_first = [str(ev.id) for ev in made]
+
+    with CaptureQueriesContext(connection) as queries:
+        batch = get_unclustered_eval_results(str(project.id), limit=3)
+    assert [r.eval_logger_id for r in batch] == oldest_first[:3]
+    reads = [q["sql"] for q in queries if "tracer_eval_logger" in q["sql"]]
+    # Two pages of two rows each, each one LIMITed.
+    assert len(reads) == 2
+    assert all("LIMIT 2" in sql for sql in reads)
+
+    every = get_unclustered_eval_results(str(project.id))
+    assert [r.eval_logger_id for r in every] == oldest_first

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -42,6 +43,10 @@ const (
 	budgetPriceHint    = "; budgets price chat tokens separately, from cost_tracking.custom_pricing.<model> (input_per_mtok / output_per_mtok, USD per million tokens)"
 )
 
+// Decision prices are read only from "decision:" keys (see
+// modeldb.DecisionPricing), never from the chat override of the same name.
+const decisionPriceHint = "set model_database.overrides.\"decision:<model>\".pricing (input_per_token / output_per_token, USD per token)"
+
 // Plugin is a post-response pipeline plugin that calculates per-request cost.
 type Plugin struct {
 	modelDB          func() *modeldb.ModelDB // getter for hot-reloadable model database
@@ -50,7 +55,7 @@ type Plugin struct {
 	aliasCostFactors map[string]float64 // alias prefix → cost multiplier
 	priceTables      func(orgID, providerID string) string
 
-	unpricedWarned      sync.Map     // model → struct{}: models already warned about
+	unpricedWarned      sync.Map     // price hint + model → struct{}: already warned about
 	unpricedWarnedCount atomic.Int32 // size of unpricedWarned, for the cap
 }
 
@@ -170,6 +175,22 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		if characters, err := strconv.Atoi(rc.Metadata["input_characters"]); err == nil {
 			billed = float64(characters)
 			cost, ok = db.CharacterCost(model, characters)
+		}
+	case "decision":
+		// Decision prices live under their own "decision:" keys: a decision
+		// model can share a chat model's name at another price.
+		if rc.Response == nil || rc.Response.Usage == nil {
+			return pipeline.ResultContinue()
+		}
+		priceHint = decisionPriceHint
+		usage := rc.Response.Usage
+		// An unpriced decision model is marked unpriced like any other, never
+		// recorded as free.
+		billed = float64(usage.PromptTokens + usage.CompletionTokens)
+		for _, m := range decisionModelNames(rc) {
+			if cost, ok = db.CalculateDecisionCost(m, usage.PromptTokens, usage.CompletionTokens); ok {
+				break
+			}
 		}
 	default: // "chat" or empty
 		if rc.Response == nil || rc.Response.Usage == nil {
@@ -311,13 +332,15 @@ func ocrPages(resp *models.OCRResponse) int {
 	return len(resp.Pages)
 }
 
-// warnUnpriced logs, once per model, that traffic is being recorded without a
-// cost. priceHint names the model-database price to set for the endpoint.
+// warnUnpriced logs, once per model and price to set, that traffic is being
+// recorded without a cost. priceHint names the model-database price to set for
+// the endpoint. A decision model can share a chat model's name, so each warns
+// with its own hint: the decision one is never swallowed by the chat one.
 func (p *Plugin) warnUnpriced(rc *models.RequestContext, model, priceHint string) {
 	if p.unpricedWarnedCount.Load() >= maxUnpricedWarnings {
 		return
 	}
-	if _, seen := p.unpricedWarned.LoadOrStore(model, struct{}{}); seen {
+	if _, seen := p.unpricedWarned.LoadOrStore(priceHint+"\x00"+model, struct{}{}); seen {
 		return
 	}
 	p.unpricedWarnedCount.Add(1)
@@ -335,6 +358,13 @@ func (p *Plugin) tryOrgPricing(rc *models.RequestContext, model string, ct *tena
 	pricing := ct.CustomPricing[model]
 	if pricing == nil && model == rc.ResolvedModel && rc.Model != "" {
 		pricing = ct.CustomPricing[rc.Model]
+	}
+	if pricing == nil && rc.EndpointType == "decision" {
+		for _, m := range decisionModelNames(rc) {
+			if pricing = ct.CustomPricing[m]; pricing != nil {
+				break
+			}
+		}
 	}
 	if pricing == nil {
 		return 0, false // No org pricing for this model, fall through to global.
@@ -357,4 +387,33 @@ func (p *Plugin) tryOrgPricing(rc *models.RequestContext, model string, ct *tena
 	cost := float64(promptTokens)*pricing.InputPerMTok/1_000_000 +
 		float64(completionTokens)*pricing.OutputPerMTok/1_000_000
 	return cost, true
+}
+
+// decisionModelNames lists the names a decision call's model goes by: the
+// model the vendor reports, the one it was sent, the one the caller named,
+// and the provider-qualified id GET /v1/decisions/models lists and prices
+// ("typesafe/jev-latest"), so a bare "jev-latest" is charged the price the
+// listing shows.
+func decisionModelNames(rc *models.RequestContext) []string {
+	names := make([]string, 0, 5)
+	add := func(name string) {
+		if name != "" && !slices.Contains(names, name) {
+			names = append(names, name)
+		}
+	}
+	add(rc.ResolvedModel)
+	upstream := ""
+	if rc.DecisionRequest != nil {
+		upstream = rc.DecisionRequest.UpstreamModel
+		add(upstream)
+	}
+	add(rc.Model)
+	if rc.Provider != "" {
+		for _, m := range []string{upstream, rc.Model} {
+			if m != "" && !strings.HasPrefix(m, rc.Provider+"/") {
+				add(rc.Provider + "/" + m)
+			}
+		}
+	}
+	return names
 }

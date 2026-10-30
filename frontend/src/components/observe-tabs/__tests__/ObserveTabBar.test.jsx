@@ -1,11 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "src/utils/test-utils";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  within,
+} from "src/utils/test-utils";
 import React from "react";
-import ObserveTabBar from "../ObserveTabBar";
+import ObserveTabBar, { typingInto } from "../ObserveTabBar";
 import { ObserveHeaderContext } from "src/sections/project/context/ObserveHeaderContext";
 
 const mockCreateSavedView = vi.fn();
 let mockSavedViewsList = [];
+// Features the deployment's license or plan denies.
+const capabilities = vi.hoisted(() => ({ denied: new Set() }));
+vi.mock("src/hooks/useCapabilities", async (importOriginal) => ({
+  ...(await importOriginal()),
+  useFeatureDenied: (feature) => capabilities.denied.has(feature),
+}));
 vi.mock("src/api/project/saved-views", () => ({
   useGetSavedViews: () => ({ data: { custom_views: mockSavedViewsList } }),
   useCreateSavedView: () => ({ mutate: mockCreateSavedView }),
@@ -23,6 +35,8 @@ const renderWithCtx = ({
   getViewConfig = () => ({}),
   activeTab = "traces",
   selectedTab,
+  canSaveView,
+  onTabChange = () => {},
 } = {}) => {
   // resolveTabType reads selectedTab from the URL (not getTabType).
   window.history.pushState(
@@ -44,7 +58,8 @@ const renderWithCtx = ({
       <ObserveTabBar
         projectId="p1"
         activeTab={activeTab}
-        onTabChange={() => {}}
+        onTabChange={onTabChange}
+        canSaveView={canSaveView}
       />
     </ObserveHeaderContext.Provider>,
   );
@@ -154,5 +169,68 @@ describe("ObserveTabBar — resolveTabType", () => {
     await typeAndSubmit("copy");
     await waitFor(() => expect(mockCreateSavedView).toHaveBeenCalled());
     expect(mockCreateSavedView.mock.calls[0][0].tab_type).toBe("spans");
+  });
+
+  it("offers no Create view on a page without a list, like Ask", () => {
+    renderWithCtx({ activeTab: "sessions", canSaveView: false });
+    expect(document.querySelector("[data-create-view-btn]")).toBeNull();
+  });
+});
+
+// Insights is Enterprise: on a deployment without it (e.g. open source) the
+// tab carries a lock and still opens, onto the gate its page shows.
+describe("ObserveTabBar — Insights tab", () => {
+  beforeEach(() => {
+    mockSavedViewsList = [];
+    capabilities.denied = new Set();
+  });
+
+  // The tab's accessible name is its shortcut tooltip, so find it by its text.
+  const insightsTab = () => screen.getByText("Insights").closest("button");
+
+  it("locks the Insights tab when the deployment doesn't include it", () => {
+    capabilities.denied = new Set(["insights"]);
+    const onTabChange = vi.fn();
+    renderWithCtx({ onTabChange });
+    expect(
+      within(insightsTab()).getByRole("img", { name: "Enterprise feature" }),
+    ).toBeInTheDocument();
+    fireEvent.click(insightsTab());
+    expect(onTabChange).toHaveBeenCalledWith("insights");
+    // Named by the tab, not by its tooltip ("Enterprise feature · Press 4").
+    expect(
+      screen.getByRole("button", { name: "Insights, Enterprise feature" }),
+    ).toBe(insightsTab());
+  });
+
+  it("shows no lock when Insights is allowed", () => {
+    renderWithCtx();
+    expect(
+      within(insightsTab()).queryByRole("img", { name: "Enterprise feature" }),
+    ).toBeNull();
+  });
+});
+
+describe("typingInto, the guard of the tab shortcuts", () => {
+  const el = (html) => {
+    const host = document.createElement("div");
+    host.innerHTML = html;
+    document.body.appendChild(host);
+    return host.firstElementChild;
+  };
+
+  it("skips fields, editable elements and open menus", () => {
+    expect(typingInto(el("<input />"))).toBe(true);
+    expect(typingInto(el('<div contenteditable="true">x</div>'))).toBe(true);
+    expect(typingInto(el('<ul role="menu"><li>x</li></ul>'))).toBe(true);
+    // A menu item, inside an MUI menu's list, while type-ahead is on.
+    const menu = el('<ul role="listbox"><li tabindex="0">Insights</li></ul>');
+    expect(typingInto(menu.querySelector("li"))).toBe(true);
+  });
+
+  it("lets a key on the page itself through", () => {
+    expect(typingInto(el("<button>Tab</button>"))).toBe(false);
+    expect(typingInto(document.body)).toBe(false);
+    expect(typingInto(null)).toBe(false);
   });
 });

@@ -318,6 +318,9 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		)
 	}
 
+	// Decision calls by internal callers take only a base_url from config.yaml.
+	handlers.decisionBaseURLs = providers.DecisionDialectBaseURLs(cfg.Providers)
+
 	// Provider locking.
 	handlers.providerLockResolver = routing.NewProviderLockResolver(cfg.Routing.ProviderLock)
 	handlers.routingStrategy = cfg.Routing.DefaultStrategy
@@ -409,6 +412,10 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	router.Handle("POST", "/v1/audio/speech/stream", handlers.StreamSpeech)
 	router.Handle("POST", "/v1/audio/translations", handlers.CreateTranslation)
 	router.Handle("POST", "/v1/rerank", handlers.Rerank)
+	// Structured decisions, on the customer's own provider key only.
+	router.Handle("POST", "/v1/systemone", handlers.SystemOne)
+	router.Handle("POST", "/v1/decisions", handlers.Decisions)
+	router.Handle("GET", "/v1/decisions/models", handlers.DecisionModels)
 	router.Handle("POST", "/v1/responses", handlers.CreateResponse)
 	router.Handle("GET", "/v1/responses/{id}", handlers.GetResponse)
 	router.Handle("DELETE", "/v1/responses/{id}", handlers.DeleteResponse)

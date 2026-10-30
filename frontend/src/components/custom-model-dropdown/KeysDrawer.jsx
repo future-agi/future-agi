@@ -40,6 +40,7 @@ const KeyConfigDrawerChild = ({
   setSearchQuery,
   selectedModel,
   onAddCustomModel,
+  onKeySaved,
 }) => {
   const { data, isFetching, isLoading } = useApiKeysStatus({
     enabled: true,
@@ -184,6 +185,7 @@ const KeyConfigDrawerChild = ({
             </Typography>
           </Box>
           <IconButton
+            aria-label="Close API key configuration"
             onClick={onClose}
             sx={{
               borderRadius: "4px",
@@ -305,6 +307,7 @@ const KeyConfigDrawerChild = ({
                   data={d}
                   onClose={() => {}}
                   isFetching={isFetching}
+                  onKeySaved={onKeySaved}
                   onDeleteClick={() =>
                     setOpenDeleteModal({
                       id: d.id,
@@ -355,6 +358,7 @@ const KeyConfigDrawerChild = ({
                     data={provider}
                     onClose={() => {}}
                     isFetching={isFetching}
+                    onKeySaved={onKeySaved}
                     onDeleteClick={() =>
                       setOpenDeleteModal({
                         id: provider.id,
@@ -414,9 +418,16 @@ KeyConfigDrawerChild.propTypes = {
   setSearchQuery: PropTypes.func,
   selectedModel: PropTypes.object,
   onAddCustomModel: PropTypes.func,
+  onKeySaved: PropTypes.func,
 };
 
-const KeysDrawer = ({ open, onClose, selectedModel, onAddCustomModel }) => {
+const KeysDrawer = ({
+  open,
+  onClose,
+  selectedModel,
+  onAddCustomModel,
+  onKeySaved,
+}) => {
   const [searchQuery, setSearchQuery] = useState("");
 
   const closeModal = () => {
@@ -458,6 +469,7 @@ const KeysDrawer = ({ open, onClose, selectedModel, onAddCustomModel }) => {
         setSearchQuery={setSearchQuery}
         selectedModel={selectedModel}
         onAddCustomModel={onAddCustomModel}
+        onKeySaved={onKeySaved}
       />
     </Drawer>
   );
@@ -470,4 +482,5 @@ KeysDrawer.propTypes = {
   onClose: PropTypes.func,
   selectedModel: PropTypes.object,
   onAddCustomModel: PropTypes.func,
+  onKeySaved: PropTypes.func,
 };

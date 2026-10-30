@@ -1236,7 +1236,7 @@ value `image.tag`. The keys below are the Compose equivalents.
     keys = ["FRONTEND_VERSION", "AGENTCC_GATEWAY_VERSION", "SERVING_VERSION", "CODE_EXECUTOR_VERSION"]
     default = "`latest`"
     setups = ["S", "D"]
-    text = "Tags of the UI, gateway, embedding-server and code-executor images. Standalone uses only `SERVING_VERSION` (`ml` profile) and `CODE_EXECUTOR_VERSION` (`sandbox` profile)."
+    text = "Tags of the UI, gateway, embedding-server and code-executor images. Standalone uses only `SERVING_VERSION` (`ml` profile) and `CODE_EXECUTOR_VERSION` (`sandbox` profile). Keep `AGENTCC_GATEWAY_VERSION` at the release `FUTURE_AGI_VERSION` names: the backend calls Jev evals through the gateway, and an older gateway fails every one (see `JEV_TRANSPORT`)."
 
     [[part.section.row]]
     keys = ["FI_COLLECTOR_VERSION"]
@@ -1805,6 +1805,129 @@ database, override `PG_HOST`, `PGBOUNCER_HOST` or `CH_HOST` in a
     text = "Platform URL the simulation runner reports results to."
 
   [[part.section]]
+  heading = "Jev evals, Instant eval and Insights"
+  body = '''
+Jev evals run on every edition, always on the organization's own TypeSafe key.
+Instant eval and Insights need an Enterprise license that lists `instant_eval`
+and `insights`; Future AGI Cloud plans include them. The API and the workers
+read these keys.
+'''
+
+    [[part.section.row]]
+    keys = ["JEV_TRANSPORT"]
+    default = "`gateway`"
+    setups = ["S", "D", "H"]
+    text = "How Jev evals reach TypeSafe. `gateway` sends them through the LLM gateway's `/v1/systemone`, so the gateway needs egress to `api.typesafe.ai` (behind a proxy, set `HTTPS_PROXY` on it) and the same release as the backend: an older gateway answers 404, and every Jev eval fails with `JEV_PROVIDER_ERROR`. `direct` calls TypeSafe from the API and workers instead, for development without a gateway or as a fallback. Any other value means `gateway`."
+
+    [[part.section.row]]
+    keys = ["JEV_MAX_CONCURRENT"]
+    default = "`8`"
+    setups = ["S", "D", "H"]
+    text = "Jev calls one worker process makes at once (at least `1`); the rest wait. An Instant eval run keeps up to 32 rows in flight, so workers that serve it want at least `32`."
+
+    [[part.section.row]]
+    keys = ["JEV_TOTAL_DEADLINE"]
+    default = "`90`"
+    setups = ["S", "D", "H"]
+    text = "Seconds one Jev eval may take, waiting for a free call and every retry included; past it the eval fails with `JEV_TIMEOUT`. It can only be lowered: values above `90` count as `90`."
+
+    [[part.section.row]]
+    keys = ["JEV_MAX_RETRIES"]
+    default = "`2`"
+    setups = ["S", "D", "H"]
+    text = "Retries of a Jev call that failed in a way a retry can fix (a timeout, a rate limit, TypeSafe briefly unavailable). A rejected key or a refused request is never retried. It can only be lowered: values above `2` count as `2`, and `0` turns retries off."
+
+    [[part.section.row]]
+    keys = ["TYPESAFE_BASE_URL"]
+    default = "`https://api.typesafe.ai`"
+    setups = ["S", "D", "H"]
+    text = "TypeSafe's API, for `JEV_TRANSPORT=direct` only (a sandbox or a proxy in front of TypeSafe). With the default `gateway` transport the gateway calls TypeSafe and this is not read."
+
+    [[part.section.row]]
+    keys = ["INSTANT_EVAL_MAX_ROWS"]
+    default = "`100000`"
+    setups = ["S", "D", "H"]
+    text = "Most rows one Instant eval run reads (a user counts as five sessions). Larger runs are refused. At least `1`."
+
+    [[part.section.row]]
+    keys = ["INSTANT_EVAL_CONFIRM_ROWS"]
+    default = "`5000`"
+    setups = ["S", "D", "H"]
+    text = "A run over this many rows waits for the person to confirm it before it starts. At least `1`."
+
+    [[part.section.row]]
+    keys = ["INSTANT_EVAL_MAX_ACTIVE_PER_ORG"]
+    default = "`2`"
+    setups = ["S", "D", "H"]
+    text = "Instant eval runs one organization can have going at once; another start is refused until one finishes. At least `1`."
+
+    [[part.section.row]]
+    keys = ["INSTANT_EVAL_ASSUMED_ROWS_PER_MIN"]
+    default = "`300`"
+    setups = ["S", "D", "H"]
+    text = "Rows a minute assumed for a run's time estimate before it starts. A running run shows its measured rate. At least `1`."
+
+    [[part.section.row]]
+    keys = ["INSTANT_EVAL_USERS_ESTIMATE_BUDGET_S"]
+    default = "`3`"
+    setups = ["S", "D", "H"]
+    text = "Seconds an estimate of a Users question may spend counting users that filters decide one by one; past it the count shows as a lower bound (\"1,500+\") and keeps going. Between `0.5` and `30`."
+
+    [[part.section.row]]
+    keys = ["INSTANT_EVAL_USERS_RUN_BUDGET_S"]
+    default = "`60`"
+    setups = ["S", "D", "H"]
+    text = "Seconds starting a Users run (or picking an Insights sample of users) may spend finishing that count before it says so; starting again carries on from what was counted. Between `1` and `600`."
+
+    [[part.section.row]]
+    keys = ["INSIGHTS_FAST_MODEL", "INSIGHTS_THINKING_MODEL"]
+    default = "`turing_flash`, `turing_large`"
+    setups = ["S", "D", "H"]
+    text = "Models Insights uses: the fast one reads every trace or session, the thinking one names the categories and writes the report. The Turing defaults run on Future AGI's keys, which a licensed self-hosted install reaches through Future AGI's managed service; any other model goes through your gateway on your own provider key."
+
+    [[part.section.row]]
+    keys = ["INSIGHTS_AGENT_URL", "INSIGHTS_AGENT_SECRET"]
+    default = "empty: the built-in engine"
+    setups = ["S", "D", "H"]
+    text = "Future AGI's separate Insights agent service and the bearer token it accepts. Set, every model step of an Insights run goes to that service; empty, the API and workers run the same steps themselves."
+    audience = "internal"
+
+    [[part.section.row]]
+    keys = ["INSIGHTS_EVIDENCE_SECRET", "INSIGHTS_EVIDENCE_SECRET_PREVIOUS"]
+    default = "empty: runs stay on the agent's `insights-agent/v1` contract"
+    setups = ["S", "D", "H"]
+    text = "The secret the API signs the Insights agent's run-scoped evidence capabilities with, and the one it replaces while a new secret rolls out. Set, with an agent that serves `insights-agent/v2`, the agent reads each trace, session or user through the API's internal evidence endpoints instead of a clipped copy of its text."
+    audience = "internal"
+
+    [[part.section.row]]
+    keys = ["INSIGHTS_EVIDENCE_STORE"]
+    default = "`local`"
+    setups = ["S", "D", "H"]
+    text = "Where the worker stores each Insights unit snapshot before the agent reads it, for the API to serve. `local` keeps them in `INSIGHTS_EVIDENCE_CACHE_DIR` on each host: fine for Standalone, where one container runs both, but with separate API and worker hosts every API pod reads ClickHouse again for what it serves. `object` keeps one copy per run in `INSIGHTS_EVIDENCE_BUCKET`, which every API pod reads. Any other value, `object` without its own bucket, or a bucket whose policy lets anyone in (asked when a report is started), keeps new reports on the agent's `insights-agent/v1` contract."
+    audience = "internal"
+
+    [[part.section.row]]
+    keys = ["INSIGHTS_EVIDENCE_BUCKET"]
+    default = "empty"
+    setups = ["S", "D", "H"]
+    text = "The bucket of the `object` evidence store, reached with the platform's storage credentials (`STORAGE_BACKEND`, `S3_*` or `GCS_*`) under `insights-evidence/<run>/`. It holds full trace content: create it yourself as a private bucket with no public or anonymous policy (a bucket whose policy lets anyone in is refused; never `UPLOAD_BUCKET_NAME`, whose objects anyone can read by URL, which is refused too), dedicated to this deployment (not shared with another environment or region: each deployment deletes the objects of runs its own database does not know), and add a lifecycle rule deleting objects under `insights-evidence/` after 2 days as a backstop: each run's objects are deleted when it ends and swept within minutes otherwise. S3 uploads ask for server-side encryption; GCS encrypts at rest itself; MinIO only with its KMS set up."
+    audience = "internal"
+
+    [[part.section.row]]
+    keys = ["INSIGHTS_EVIDENCE_CACHE_DIR", "INSIGHTS_EVIDENCE_CACHE_MAX_BYTES"]
+    default = "`<tmp>/insights-evidence`, `2147483648`"
+    setups = ["S", "D", "H"]
+    text = "The directory of the `local` evidence store, on the worker and the API alike (owner-only files; a run's go when it ends, and each process sweeps within a minute or so what it missed: a finished report's five minutes after its questions last built one, anything after 6 hours), and the most bytes it may hold before the oldest files go. Keep it on the pod's own ephemeral disk. The API also keeps up to 128 MiB of recently read snapshots in memory with either store."
+    audience = "internal"
+
+    [[part.section.row]]
+    keys = ["INSIGHTS_EVIDENCE_FETCH_EXTERNAL_MEDIA"]
+    default = "`false`"
+    setups = ["S", "D", "H"]
+    text = "Lets the API fetch images and audio a trace links outside the platform's own storage (over https, through its SSRF guard, never following a redirect off the host) for the Insights agent to view. Off, such media is reported as not fetched."
+    audience = "internal"
+
+  [[part.section]]
   heading = "Observed-attribute catalog"
   body = '''
 The span attributes and values that trace filters, dashboard widgets and task
@@ -1940,7 +2063,7 @@ in a compose override; the Helm chart sets them from `global.proxy`,
     label = "`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` (and lowercase)"
     default = "unset"
     setups = ["S", "D", "H"]
-    text = "Outbound proxy and the hosts that bypass it, object storage included; object storage on a loopback address (Standalone's) is always reached directly. On Distributed, list the internal hosts in `NO_PROXY` (`minio,code-executor,serving,agentcc-gateway,fi-collector,localhost,127.0.0.1`), or their calls go to the proxy. Helm: `global.proxy`, which builds `NO_PROXY` from the cluster's names, the release's Services and the datastore hosts plus `global.proxy.noProxy`. The LLM gateway does not use a proxy yet."
+    text = "Outbound proxy and the hosts that bypass it, object storage included; object storage on a loopback address (Standalone's) is always reached directly. On Distributed, list the internal hosts in `NO_PROXY` (`minio,code-executor,serving,agentcc-gateway,fi-collector,localhost,127.0.0.1`), or their calls go to the proxy. Helm: `global.proxy`, which builds `NO_PROXY` from the cluster's names, the release's Services and the datastore hosts plus `global.proxy.noProxy`. The LLM gateway uses the proxy for every decision call (System One and OpenAI-format models, from `config.yaml` providers, organization providers and calls made with the caller's own key) and its speech relay. An organization's own base URL is still checked for internal addresses before the call goes to the proxy. Its chat providers connect directly."
 
     [[part.section.row]]
     keys = ["SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "NODE_EXTRA_CA_CERTS"]

@@ -18,7 +18,9 @@ from django.db.models import QuerySet
 from django.utils import timezone
 
 from tracer.models.custom_eval_config import CustomEvalConfig
-from tracer.models.eval_task import EvalTask
+from tracer.models.eval_task import EvalTask, EvalTaskStatus
+from tracer.models.insights import InsightConfig, InsightRun, InsightUnit
+from tracer.models.instant_eval import InstantEvalAnswer, InstantEvalRow, InstantEvalRun
 from tracer.models.monitor import UserAlertMonitor
 from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.project import Project
@@ -86,6 +88,7 @@ def soft_delete_projects(projects: QuerySet[Project], project_type: str) -> list
         UserAlertMonitor.objects.filter(project__in=projects).update(
             deleted=True, deleted_at=now
         )
+        pause_task_ids = _retire_instant_eval_and_insights(projects, now)
         EvalTask.objects.filter(project__in=projects).update(
             deleted=True, deleted_at=now
         )
@@ -97,4 +100,64 @@ def soft_delete_projects(projects: QuerySet[Project], project_type: str) -> list
         projects.update(deleted=True, deleted_at=now)
 
     transaction.on_commit(lambda: publish_project_invalidation(project_ids))
+    if pause_task_ids:
+        transaction.on_commit(lambda: _pause_eval_task_workflows(pause_task_ids))
     return project_ids
+
+
+def _retire_instant_eval_and_insights(projects: QuerySet[Project], now) -> list[str]:
+    """Stop the projects' Instant eval and Insights work and drop the text it
+    copied out of their traces.
+
+    Instant eval rows keep an excerpt of each row they read, and Insights
+    units keep the excerpt, content and reading of each unit; neither table
+    has a soft-delete flag, and the traces they copied are going, so the
+    copies are deleted outright. A report's result quotes those units, so it
+    is cleared; the report and its config are soft-deleted like the traces.
+    A run still going is cancelled (Instant eval) or failed (Insights) first,
+    so no stage reads or bills for a deleted project.
+
+    Returns the ids of eval tasks whose workflows should be paused."""
+    instant = InstantEvalRun.objects.filter(project__in=projects)
+    active = list(
+        instant.filter(
+            cancelled_at__isnull=True,
+            eval_task__status__in=(EvalTaskStatus.PENDING, EvalTaskStatus.RUNNING),
+        ).values_list("eval_task_id", flat=True)
+    )
+    instant.filter(cancelled_at__isnull=True).update(cancelled_at=now)
+    task_ids = list(instant.values_list("eval_task_id", flat=True))
+    if task_ids:
+        InstantEvalAnswer.objects.filter(task_id__in=task_ids).delete()
+        InstantEvalRow.objects.filter(task_id__in=task_ids).delete()
+
+    # The base manager has no workspace or soft-delete filter: a report
+    # deleted earlier still holds copied text.
+    runs = InsightRun._base_manager.filter(project__in=projects)
+    runs.filter(status__in=("pending", "running")).update(
+        status="failed",
+        error="The project was deleted.",
+        finished_at=now,
+        updated_at=now,
+    )
+    InsightUnit.objects.filter(run__in=runs).delete()
+    runs.update(result={}, deleted=True, deleted_at=now, updated_at=now)
+    InsightConfig._base_manager.filter(project__in=projects).update(
+        deleted=True, deleted_at=now, updated_at=now
+    )
+    return [str(task_id) for task_id in active]
+
+
+def _pause_eval_task_workflows(task_ids: list[str]) -> None:
+    """Best effort: a workflow that misses the signal finds its task deleted
+    and its run cancelled at its next claim, and reads nothing more."""
+    try:
+        from tfc.temporal.eval_tasks.client import signal_pause_eval_task_workflow
+    except Exception:
+        logger.warning("project_delete_pause_import_failed", exc_info=True)
+        return
+    for task_id in task_ids:
+        try:
+            signal_pause_eval_task_workflow(task_id)
+        except Exception:
+            logger.warning("project_delete_pause_failed", task_id=task_id)

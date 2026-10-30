@@ -15,6 +15,7 @@ import AudioErrorCard from "src/components/custom-audio/AudioErrorCard";
 import Iconify from "src/components/iconify";
 import { InlineAudio } from "src/components/inline-audio/inline-row-audio";
 import SkippedLocalizationBanner from "src/sections/common/SkippedLocalizationBanner";
+import JevResultDisplay from "./JevResultDisplay";
 import CompositeResultView from "./CompositeResultView";
 import { canonicalEntries } from "src/utils/utils";
 import { normalizeEvalCellValue } from "src/sections/develop-detail/DataTab/common";
@@ -39,10 +40,20 @@ const EvalResultDisplay = ({ result }) => {
     return <CompositeResultView compositeResult={result.compositeResult} />;
   }
 
+  let metadata = result.metadata;
+  if (typeof metadata === "string") {
+    try {
+      metadata = JSON.parse(metadata);
+    } catch {
+      metadata = null;
+    }
+  }
+  const jev = metadata?.jev || result.jev;
+
   const hasLegacyOutput = result.output != null;
   const hasCodeScore =
     typeof result.score === "number" || typeof result.score === "boolean";
-  if (!hasLegacyOutput && !hasCodeScore && !result.reason) return null;
+  if (!jev && !hasLegacyOutput && !hasCodeScore && !result.reason) return null;
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
@@ -91,6 +102,8 @@ const EvalResultDisplay = ({ result }) => {
 
       {viewMode === "json" ? (
         <JsonView data={result} />
+      ) : jev ? (
+        <JevResultDisplay result={result} jev={jev} />
       ) : (
         <FormattedResult result={result} />
       )}

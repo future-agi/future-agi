@@ -10676,6 +10676,14 @@ export interface CompositeEvalCreateResponseApi {
   result: CompositeEvalCreateResponseResultApi;
 }
 
+export type EvalTemplateCreateV2RequestApiJevMapping = {
+  [key: string]: unknown;
+};
+
+export type EvalTemplateCreateV2RequestApiInputDataTypes = {
+  [key: string]: unknown;
+};
+
 export type EvalTemplateCreateV2RequestApiEvalType =
   (typeof EvalTemplateCreateV2RequestApiEvalType)[keyof typeof EvalTemplateCreateV2RequestApiEvalType];
 
@@ -10740,6 +10748,9 @@ export const EvalTemplateCreateV2RequestApiTemplateFormat = {
 } as const;
 
 export interface EvalTemplateCreateV2RequestApi {
+  jev_mapping?: EvalTemplateCreateV2RequestApiJevMapping;
+  multi_choice?: boolean;
+  input_data_types?: EvalTemplateCreateV2RequestApiInputDataTypes;
   /** @maxLength 255 */
   name?: string;
   is_draft?: boolean;
@@ -10945,7 +10956,11 @@ export interface EvalListRequestApi {
   sort_order?: EvalListRequestApiSortOrder;
 }
 
+export type EvalTemplateListItemApiJevMapping = { [key: string]: unknown };
+
 export interface EvalTemplateListItemApi {
+  jev_mapping?: EvalTemplateListItemApiJevMapping;
+  model?: string;
   id: string;
   /** @minLength 1 */
   name: string;
@@ -11097,6 +11112,10 @@ export interface CompositeEvalExecuteRequestApi {
   row_context?: CompositeEvalExecuteRequestApiRowContext;
 }
 
+export type EvalTemplateDetailResponseResultApiJevMapping = {
+  [key: string]: unknown;
+};
+
 export type EvalTemplateDetailResponseResultApiChoiceScores = {
   [key: string]: unknown;
 };
@@ -11110,6 +11129,7 @@ export type EvalTemplateDetailResponseResultApiConfig = {
 };
 
 export interface EvalTemplateDetailResponseResultApi {
+  jev_mapping?: EvalTemplateDetailResponseResultApiJevMapping;
   id: string;
   /** @minLength 1 */
   name: string;
@@ -11282,6 +11302,14 @@ export interface GroundTruthUploadResponseApi {
   result: GroundTruthUploadResponseResultApi;
 }
 
+export type EvalTemplateUpdateV2RequestApiJevMapping = {
+  [key: string]: unknown;
+};
+
+export type EvalTemplateUpdateV2RequestApiInputDataTypes = {
+  [key: string]: unknown;
+};
+
 export type EvalTemplateUpdateV2RequestApiEvalType =
   (typeof EvalTemplateUpdateV2RequestApiEvalType)[keyof typeof EvalTemplateUpdateV2RequestApiEvalType];
 
@@ -11346,6 +11374,8 @@ export const EvalTemplateUpdateV2RequestApiTemplateFormat = {
 } as const;
 
 export interface EvalTemplateUpdateV2RequestApi {
+  jev_mapping?: EvalTemplateUpdateV2RequestApiJevMapping;
+  input_data_types?: EvalTemplateUpdateV2RequestApiInputDataTypes;
   /**
    * @minLength 1
    * @maxLength 255
@@ -11537,11 +11567,14 @@ export interface EvalUsageStatsResponseApi {
   result: EvalUsageStatsResponseResultApi;
 }
 
+export type EvalTemplateVersionItemApiJevMapping = { [key: string]: unknown };
+
 export type EvalTemplateVersionItemApiConfigSnapshot = {
   [key: string]: unknown;
 };
 
 export interface EvalTemplateVersionItemApi {
+  jev_mapping?: EvalTemplateVersionItemApiJevMapping;
   id: string;
   version_number: number;
   is_default: boolean;
@@ -11563,11 +11596,16 @@ export interface EvalTemplateVersionListResponseApi {
   result: EvalTemplateVersionListResponseResultApi;
 }
 
+export type EvalTemplateVersionCreateRequestApiJevMapping = {
+  [key: string]: unknown;
+};
+
 export type EvalTemplateVersionCreateRequestApiConfigSnapshot = {
   [key: string]: unknown;
 };
 
 export interface EvalTemplateVersionCreateRequestApi {
+  jev_mapping?: EvalTemplateVersionCreateRequestApiJevMapping;
   criteria?: string;
   model?: string;
   config_snapshot?: EvalTemplateVersionCreateRequestApiConfigSnapshot;
@@ -26422,6 +26460,8 @@ export interface _EvalTaskListRowResponseApi {
   status: string;
   /** @minLength 1 */
   run_type: string;
+  /** @minLength 1 */
+  row_type: string;
   filters_applied: _EvalTaskListRowResponseApiFiltersApplied;
   created_at: string;
   evals_applied: string[];
@@ -27252,6 +27292,1164 @@ export interface TriggerAnalysisApi {
   trace_id: string;
   project_id: string;
   widgets: WidgetAnalysisApi[];
+}
+
+export type InsightRunSummaryApiDistributionItem = { [key: string]: unknown };
+
+export type InsightRunSummaryApiScope = { [key: string]: unknown };
+
+export interface InsightRunSummaryApi {
+  id: string;
+  /** @minLength 1 */
+  status: string;
+  /** @minLength 1 */
+  stage: string;
+  created_at: string;
+  finished_at: string;
+  population_size: number;
+  sample_size: number;
+  analysed_count: number;
+  excluded_count: number;
+  failed_count: number;
+  skipped_count: number;
+  /** @minLength 1 */
+  taxonomy_mode: string;
+  distribution: InsightRunSummaryApiDistributionItem[];
+  error: string;
+  error_code: string;
+  scope: InsightRunSummaryApiScope;
+}
+
+export type InsightConfigItemApiAttributesItem = { [key: string]: unknown };
+
+export type InsightConfigItemApiScope = { [key: string]: unknown };
+
+export type InsightConfigItemApiTaxonomy = { [key: string]: unknown };
+
+export interface InsightConfigItemApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  unit: string;
+  /** @minLength 1 */
+  lens: string;
+  /** @minLength 1 */
+  question: string;
+  agent_description: string;
+  instructions: string;
+  attributes: InsightConfigItemApiAttributesItem[];
+  sample_size: number;
+  scope: InsightConfigItemApiScope;
+  has_taxonomy: boolean;
+  taxonomy: InsightConfigItemApiTaxonomy;
+  created_at: string;
+  latest_run: InsightRunSummaryApi;
+  runs?: InsightRunSummaryApi[];
+}
+
+export interface InsightConfigListResultApi {
+  configs: InsightConfigItemApi[];
+}
+
+export interface InsightConfigListResponseApi {
+  status?: boolean;
+  result: InsightConfigListResultApi;
+}
+
+export interface InsightConfigResponseApi {
+  status?: boolean;
+  result: InsightConfigItemApi;
+}
+
+export type InsightConfigPatchApiLens =
+  (typeof InsightConfigPatchApiLens)[keyof typeof InsightConfigPatchApiLens];
+
+export const InsightConfigPatchApiLens = {
+  usage: "usage",
+  failures: "failures",
+  experience: "experience",
+  personas: "personas",
+  custom: "custom",
+} as const;
+
+export type InsightAttributeApiType =
+  (typeof InsightAttributeApiType)[keyof typeof InsightAttributeApiType];
+
+export const InsightAttributeApiType = {
+  boolean: "boolean",
+  number: "number",
+  string: "string",
+} as const;
+
+export interface InsightAttributeApi {
+  /**
+   * @minLength 1
+   * @maxLength 60
+   */
+  key: string;
+  type: InsightAttributeApiType;
+  /** @maxLength 300 */
+  description?: string;
+  filter_by?: boolean;
+}
+
+export type InsightScopeApiFiltersItem = { [key: string]: unknown };
+
+export interface InsightScopeApi {
+  filters?: InsightScopeApiFiltersItem[];
+  /** @maxLength 300 */
+  label?: string;
+  /** @maxLength 16 */
+  preset?: string;
+  /** @maxItems 2 */
+  window?: string[];
+  /** @maxLength 200 */
+  search?: string;
+}
+
+export interface InsightConfigPatchApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name?: string;
+  reset_taxonomy?: boolean;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  question?: string;
+  lens?: InsightConfigPatchApiLens;
+  /** @maxLength 500 */
+  agent_description?: string;
+  /** @maxLength 1000 */
+  instructions?: string;
+  attributes?: InsightAttributeApi[];
+  /**
+   * @minimum 10
+   * @maximum 1000
+   */
+  sample_size?: number;
+  scope?: InsightScopeApi;
+}
+
+export type InsightDraftApiUnit =
+  (typeof InsightDraftApiUnit)[keyof typeof InsightDraftApiUnit];
+
+export const InsightDraftApiUnit = {
+  traces: "traces",
+  sessions: "sessions",
+  users: "users",
+} as const;
+
+export type InsightDraftApiLens =
+  (typeof InsightDraftApiLens)[keyof typeof InsightDraftApiLens];
+
+export const InsightDraftApiLens = {
+  usage: "usage",
+  failures: "failures",
+  experience: "experience",
+  personas: "personas",
+  custom: "custom",
+} as const;
+
+export interface InsightDraftApi {
+  project_id: string;
+  unit: InsightDraftApiUnit;
+  lens: InsightDraftApiLens;
+  /** @maxLength 500 */
+  goal?: string;
+  /** @maxLength 500 */
+  agent_description?: string;
+  /**
+   * @minItems 1
+   * @maxItems 5
+   */
+  sample_ids: string[];
+}
+
+export type InsightDraftResultApiAttributesItem = { [key: string]: unknown };
+
+export interface InsightDraftResultApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  question: string;
+  agent_description: string;
+  instructions: string;
+  attributes: InsightDraftResultApiAttributesItem[];
+  examples_read: number;
+}
+
+export interface InsightDraftResponseApi {
+  status?: boolean;
+  result: InsightDraftResultApi;
+}
+
+export type InsightEstimateRequestApiAction =
+  (typeof InsightEstimateRequestApiAction)[keyof typeof InsightEstimateRequestApiAction];
+
+export const InsightEstimateRequestApiAction = {
+  run: "run",
+  ask: "ask",
+  draft: "draft",
+  preview: "preview",
+} as const;
+
+export type InsightEstimateRequestApiUnit =
+  (typeof InsightEstimateRequestApiUnit)[keyof typeof InsightEstimateRequestApiUnit];
+
+export const InsightEstimateRequestApiUnit = {
+  traces: "traces",
+  sessions: "sessions",
+  users: "users",
+} as const;
+
+export interface InsightEstimateRequestApi {
+  project_id: string;
+  action?: InsightEstimateRequestApiAction;
+  unit?: InsightEstimateRequestApiUnit;
+  scope?: InsightScopeApi;
+  /** @minimum 1 */
+  population_size?: number;
+  /**
+   * @minimum 10
+   * @maximum 1000
+   */
+  sample_size?: number;
+}
+
+export type InsightEstimateResultApiWindow = { [key: string]: unknown };
+
+export interface InsightEstimateResultApi {
+  population: number;
+  population_is_lower_bound: boolean;
+  sample_size: number;
+  window: InsightEstimateResultApiWindow;
+  sample_ids: string[];
+  credits_estimate: number;
+  credit_limited: boolean;
+  credit_check_unavailable?: boolean;
+  credits_left: number;
+  credit_max_sample: number;
+  /** @minLength 1 */
+  credit_message: string;
+}
+
+export interface InsightEstimateResponseApi {
+  status?: boolean;
+  result: InsightEstimateResultApi;
+}
+
+export type InsightConfigInputApiUnit =
+  (typeof InsightConfigInputApiUnit)[keyof typeof InsightConfigInputApiUnit];
+
+export const InsightConfigInputApiUnit = {
+  traces: "traces",
+  sessions: "sessions",
+  users: "users",
+} as const;
+
+export type InsightConfigInputApiLens =
+  (typeof InsightConfigInputApiLens)[keyof typeof InsightConfigInputApiLens];
+
+export const InsightConfigInputApiLens = {
+  usage: "usage",
+  failures: "failures",
+  experience: "experience",
+  personas: "personas",
+  custom: "custom",
+} as const;
+
+export interface InsightConfigInputApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+  unit: InsightConfigInputApiUnit;
+  lens: InsightConfigInputApiLens;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  question: string;
+  /** @maxLength 500 */
+  agent_description?: string;
+  /** @maxLength 1000 */
+  instructions?: string;
+  attributes?: InsightAttributeApi[];
+  /**
+   * @minimum 10
+   * @maximum 1000
+   */
+  sample_size?: number;
+}
+
+export interface InsightPreviewApi {
+  project_id: string;
+  config: InsightConfigInputApi;
+  /**
+   * @minItems 1
+   * @maxItems 3
+   */
+  unit_ids: string[];
+}
+
+export type InsightPreviewResultApiUnitsItem = { [key: string]: unknown };
+
+export interface InsightPreviewResultApi {
+  units: InsightPreviewResultApiUnitsItem[];
+}
+
+export interface InsightPreviewResponseApi {
+  status?: boolean;
+  result: InsightPreviewResultApi;
+}
+
+export interface InsightPopulationItemApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  id: string;
+  /** @maxLength 64 */
+  time?: string;
+  /** @maxLength 255 */
+  user_id?: string;
+}
+
+export interface InsightRunCreateApi {
+  project_id: string;
+  config_id?: string;
+  config?: InsightConfigInputApi;
+  scope?: InsightScopeApi;
+  population?: InsightPopulationItemApi[];
+  /**
+   * @minimum 10
+   * @maximum 1000
+   */
+  sample_size?: number;
+  reset_taxonomy?: boolean;
+}
+
+export interface InsightRunCreatedResultApi {
+  run_id: string;
+  config_id: string;
+}
+
+export interface InsightRunCreatedResponseApi {
+  status?: boolean;
+  result: InsightRunCreatedResultApi;
+}
+
+export type InsightRunDetailApiProgress = { [key: string]: unknown };
+
+export type InsightRunDetailApiScope = { [key: string]: unknown };
+
+export type InsightRunDetailApiSettings = { [key: string]: unknown };
+
+export type InsightRunDetailApiResult = { [key: string]: unknown };
+
+export type InsightRunDetailApiModelsUsed = { [key: string]: unknown };
+
+export interface InsightRunDetailApi {
+  id: string;
+  config_id: string;
+  project_id: string;
+  /** @minLength 1 */
+  status: string;
+  /** @minLength 1 */
+  stage: string;
+  progress: InsightRunDetailApiProgress;
+  /** @minLength 1 */
+  unit: string;
+  scope: InsightRunDetailApiScope;
+  settings: InsightRunDetailApiSettings;
+  population_size: number;
+  sample_size: number;
+  analysed_count: number;
+  excluded_count: number;
+  failed_count: number;
+  skipped_count: number;
+  /** @minLength 1 */
+  taxonomy_mode: string;
+  result: InsightRunDetailApiResult;
+  models_used: InsightRunDetailApiModelsUsed;
+  cost_usd: number;
+  error: string;
+  error_code: string;
+  created_at: string;
+  started_at: string;
+  finished_at: string;
+  previous_run_id: string;
+  next_run_id: string;
+}
+
+export interface InsightRunResponseApi {
+  status?: boolean;
+  result: InsightRunDetailApi;
+}
+
+export type InsightAskMessageApiRole =
+  (typeof InsightAskMessageApiRole)[keyof typeof InsightAskMessageApiRole];
+
+export const InsightAskMessageApiRole = {
+  user: "user",
+  assistant: "assistant",
+} as const;
+
+export interface InsightAskMessageApi {
+  role: InsightAskMessageApiRole;
+  /** @maxLength 4000 */
+  content: string;
+}
+
+export interface InsightAskApi {
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  question: string;
+  history?: InsightAskMessageApi[];
+}
+
+export interface InsightAskEvidenceApi {
+  /** @minLength 1 */
+  unit_id: string;
+  quote: string;
+  evidence_id?: string;
+}
+
+export interface InsightAskParagraphApi {
+  /** @minLength 1 */
+  text: string;
+  unit_ids: string[];
+  category_ids: string[];
+  evidence: InsightAskEvidenceApi[];
+}
+
+export type InsightAskResultApiVerification = { [key: string]: unknown };
+
+export interface InsightAskResultApi {
+  answer: InsightAskParagraphApi[];
+  follow_ups: string[];
+  dropped: number;
+  unverified_answer?: InsightAskParagraphApi[];
+  verification?: InsightAskResultApiVerification;
+}
+
+export interface InsightAskResponseApi {
+  status?: boolean;
+  result: InsightAskResultApi;
+}
+
+export interface InsightRunStopResultApi {
+  id: string;
+  /** @minLength 1 */
+  status: string;
+  error: string;
+  error_code: string;
+}
+
+export interface InsightRunStopResponseApi {
+  status?: boolean;
+  result: InsightRunStopResultApi;
+}
+
+export type InsightUnitItemApiFacets = { [key: string]: unknown };
+
+export type InsightUnitItemApiMetrics = { [key: string]: unknown };
+
+export interface InsightUnitItemApi {
+  /** @minLength 1 */
+  unit_id: string;
+  label: string;
+  user_id: string;
+  session_id: string;
+  time: string;
+  excerpt: string;
+  summary: string;
+  lens_answer: string;
+  facets: InsightUnitItemApiFacets;
+  metrics: InsightUnitItemApiMetrics;
+  category_id: string;
+  sub_category_id: string;
+  content?: string;
+}
+
+export interface InsightUnitsResultApi {
+  units: InsightUnitItemApi[];
+  total: number;
+}
+
+export interface InsightUnitsResponseApi {
+  status?: boolean;
+  result: InsightUnitsResultApi;
+}
+
+export type InstantEvalControlRequestApiAction =
+  (typeof InstantEvalControlRequestApiAction)[keyof typeof InstantEvalControlRequestApiAction];
+
+export const InstantEvalControlRequestApiAction = {
+  pause: "pause",
+  resume: "resume",
+  cancel: "cancel",
+  retry_failed: "retry_failed",
+  read_more: "read_more",
+} as const;
+
+export interface InstantEvalControlRequestApi {
+  project_id: string;
+  eval_task_id: string;
+  action: InstantEvalControlRequestApiAction;
+  /** @minimum 1 */
+  more?: number;
+  confirm?: boolean;
+}
+
+export interface InstantEvalControlApi {
+  /** @minLength 1 */
+  status: string;
+  /** @minLength 1 */
+  message: string;
+  rows_requested?: number;
+  retried?: number;
+}
+
+export interface InstantEvalControlResponseApi {
+  status?: boolean;
+  result: InstantEvalControlApi;
+}
+
+export type InstantEvalBadRequestApiType =
+  (typeof InstantEvalBadRequestApiType)[keyof typeof InstantEvalBadRequestApiType];
+
+export const InstantEvalBadRequestApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+/**
+ * String or JSON object.
+ */
+export type InstantEvalBadRequestApiResult = {
+  message?: string;
+  error_code?: string;
+  settings_path?: string;
+};
+
+export type InstantEvalBadRequestApiDetails = { [key: string]: string[] };
+
+export interface InstantEvalBadRequestApi {
+  status?: boolean;
+  type?: InstantEvalBadRequestApiType;
+  code?: string;
+  detail?: string;
+  /** String or JSON object. */
+  result?: InstantEvalBadRequestApiResult;
+  message?: string;
+  error?: string;
+  attr?: string;
+  details?: InstantEvalBadRequestApiDetails;
+}
+
+export interface InstantEvalBusyRunApi {
+  /** @minLength 1 */
+  task_id: string;
+  /** @minLength 1 */
+  project_id: string;
+  question: string;
+  rows: number;
+  started_by: string;
+  /** @minLength 1 */
+  started_at: string;
+}
+
+export interface InstantEvalLimitDetailApi {
+  /** @minLength 1 */
+  message: string;
+  /** @minLength 1 */
+  error_code: string;
+  rows_to_read?: number;
+  credits_estimate?: number;
+  credits_left?: number;
+  sample_size?: number;
+  runs?: InstantEvalBusyRunApi[];
+}
+
+export interface InstantEvalLimitErrorApi {
+  status?: boolean;
+  type?: string;
+  code?: string;
+  detail?: string;
+  message?: string;
+  error?: string;
+  result?: InstantEvalLimitDetailApi;
+}
+
+export type InstantEvalEstimateRequestApiUnit =
+  (typeof InstantEvalEstimateRequestApiUnit)[keyof typeof InstantEvalEstimateRequestApiUnit];
+
+export const InstantEvalEstimateRequestApiUnit = {
+  traces: "traces",
+  spans: "spans",
+  sessions: "sessions",
+  users: "users",
+} as const;
+
+export type InstantEvalEstimateRequestApiFiltersItemFilterConfigAttributeValueTypesItem =
+  (typeof InstantEvalEstimateRequestApiFiltersItemFilterConfigAttributeValueTypesItem)[keyof typeof InstantEvalEstimateRequestApiFiltersItemFilterConfigAttributeValueTypesItem];
+
+export const InstantEvalEstimateRequestApiFiltersItemFilterConfigAttributeValueTypesItem =
+  {
+    string: "string",
+    number: "number",
+    boolean: "boolean",
+  } as const;
+
+export type InstantEvalEstimateRequestApiFiltersItemFilterConfig = {
+  /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map. */
+  filter_type: string;
+  /** Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null. */
+  filter_op: string;
+  /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
+  filter_value?: unknown;
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  col_type?: string;
+  /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
+  attribute_value_types?: InstantEvalEstimateRequestApiFiltersItemFilterConfigAttributeValueTypesItem[];
+};
+
+export type InstantEvalEstimateRequestApiFiltersItem = {
+  /** Column or attribute id to filter on. */
+  column_id: string;
+  /** Optional stable namespaced Property Registry identity. */
+  property_id?: string;
+  /** Optional UI label for chips and saved views. */
+  display_name?: string;
+  /** Optional source surface for mixed-source filters, for example traces, datasets, or simulation. */
+  source?: string;
+  /** Optional metric output type metadata used by eval and annotation filters. */
+  output_type?: string;
+  filter_config: InstantEvalEstimateRequestApiFiltersItemFilterConfig;
+};
+
+export type InstantEvalEstimateRequestApiDatePreset =
+  (typeof InstantEvalEstimateRequestApiDatePreset)[keyof typeof InstantEvalEstimateRequestApiDatePreset];
+
+export const InstantEvalEstimateRequestApiDatePreset = {
+  Today: "Today",
+  Yesterday: "Yesterday",
+  "7D": "7D",
+  "30D": "30D",
+  "3M": "3M",
+  "6M": "6M",
+  "12M": "12M",
+  Custom: "Custom",
+} as const;
+
+export interface InstantEvalEstimateRequestApi {
+  project_id: string;
+  unit: InstantEvalEstimateRequestApiUnit;
+  filters?: InstantEvalEstimateRequestApiFiltersItem[];
+  /** @maxItems 5000 */
+  ids?: string[];
+  /** @minimum 1 */
+  sample_size?: number;
+  date_preset?: InstantEvalEstimateRequestApiDatePreset;
+  /** @maxLength 300 */
+  label?: string;
+  /** @maxLength 200 */
+  search?: string;
+  /**
+   * @minimum 1
+   * @maximum 5
+   */
+  questions?: number;
+}
+
+export interface InstantEvalChoiceApi {
+  sample_size: number;
+  rows_to_read: number;
+  credits_estimate: number;
+  seconds_estimate: number;
+  needs_confirm: boolean;
+  allowed: boolean;
+  credit_limited: boolean;
+}
+
+export interface InstantEvalCreditCheckApi {
+  allowed: boolean;
+  /** @minLength 1 */
+  error_code: string;
+  current_usage: number;
+  limit: number;
+  credits_left: number;
+  blocked: boolean;
+  /** @minLength 1 */
+  message: string;
+}
+
+export interface InstantEvalSampleErrorApi {
+  /** @minLength 1 */
+  error_code: string;
+  /** @minLength 1 */
+  message: string;
+  sample_size: number;
+}
+
+export type InstantEvalEstimateApiWindow = { [key: string]: unknown };
+
+export interface InstantEvalEstimateApi {
+  population: number;
+  population_is_lower_bound: boolean;
+  rows_to_read: number;
+  questions: number;
+  credits_estimate: number;
+  credits_per_answer: number;
+  seconds_estimate: number;
+  needs_confirm: boolean;
+  max_rows: number;
+  confirm_rows: number;
+  default_sample_size: number;
+  sessions_per_user: number;
+  choices: InstantEvalChoiceApi[];
+  credit_check: InstantEvalCreditCheckApi;
+  credit_max_sample: number;
+  window: InstantEvalEstimateApiWindow;
+  sample_error: InstantEvalSampleErrorApi;
+}
+
+export interface InstantEvalEstimateResponseApi {
+  status?: boolean;
+  result: InstantEvalEstimateApi;
+}
+
+export type InstantEvalExportQueryApiUnit =
+  (typeof InstantEvalExportQueryApiUnit)[keyof typeof InstantEvalExportQueryApiUnit];
+
+export const InstantEvalExportQueryApiUnit = {
+  traces: "traces",
+  spans: "spans",
+  sessions: "sessions",
+  users: "users",
+} as const;
+
+export type InstantEvalExportQueryApiSort =
+  (typeof InstantEvalExportQueryApiSort)[keyof typeof InstantEvalExportQueryApiSort];
+
+export const InstantEvalExportQueryApiSort = {
+  time: "time",
+  "-time": "-time",
+  confidence: "confidence",
+} as const;
+
+export interface InstantEvalExportQueryApi {
+  project_id: string;
+  eval_task_id: string;
+  unit?: InstantEvalExportQueryApiUnit;
+  /** @maxLength 2000 */
+  config_ids?: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  tz?: string;
+  config_id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  answer?: string;
+  /**
+   * @minLength 1
+   * @maxLength 4000
+   */
+  answers?: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  time_from?: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  time_to?: string;
+  /** @maxItems 100000 */
+  group?: string[];
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  user?: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  model?: string;
+  error?: boolean;
+  unsure?: boolean;
+  /** @maxLength 200 */
+  q?: string;
+  /** @maxLength 500 */
+  cursor?: string;
+  /**
+   * @minimum 1
+   * @maximum 1500
+   */
+  page_size?: number;
+  compact?: boolean;
+  sort?: InstantEvalExportQueryApiSort;
+  sessions?: boolean;
+}
+
+export type InstantEvalRowsResultApiRowsItem = { [key: string]: unknown };
+
+export interface InstantEvalRowsResultApi {
+  rows: InstantEvalRowsResultApiRowsItem[];
+  /** @minLength 1 */
+  next_cursor: string;
+  total: number;
+}
+
+export interface InstantEvalRowsResponseApi {
+  status?: boolean;
+  result: InstantEvalRowsResultApi;
+}
+
+export type InstantEvalRowsQueryApiUnit =
+  (typeof InstantEvalRowsQueryApiUnit)[keyof typeof InstantEvalRowsQueryApiUnit];
+
+export const InstantEvalRowsQueryApiUnit = {
+  traces: "traces",
+  spans: "spans",
+  sessions: "sessions",
+  users: "users",
+} as const;
+
+export type InstantEvalRowsQueryApiSort =
+  (typeof InstantEvalRowsQueryApiSort)[keyof typeof InstantEvalRowsQueryApiSort];
+
+export const InstantEvalRowsQueryApiSort = {
+  time: "time",
+  "-time": "-time",
+  confidence: "confidence",
+} as const;
+
+export interface InstantEvalRowsQueryApi {
+  project_id: string;
+  eval_task_id: string;
+  unit?: InstantEvalRowsQueryApiUnit;
+  /** @maxLength 2000 */
+  config_ids?: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  tz?: string;
+  config_id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  answer?: string;
+  /**
+   * @minLength 1
+   * @maxLength 4000
+   */
+  answers?: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  time_from?: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  time_to?: string;
+  /** @maxItems 100000 */
+  group?: string[];
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  user?: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  model?: string;
+  error?: boolean;
+  unsure?: boolean;
+  /** @maxLength 200 */
+  q?: string;
+  /** @maxLength 500 */
+  cursor?: string;
+  /**
+   * @minimum 1
+   * @maximum 1500
+   */
+  page_size?: number;
+  compact?: boolean;
+  sort?: InstantEvalRowsQueryApiSort;
+}
+
+export type InstantEvalRunApiCounts = {
+  [key: string]: { [key: string]: number };
+};
+
+export type InstantEvalRunApiWindow = { [key: string]: unknown };
+
+export interface InstantEvalRunApi {
+  /** @minLength 1 */
+  task_id: string;
+  name: string;
+  /** @minLength 1 */
+  created_at: string;
+  /** @minLength 1 */
+  status: string;
+  /** @minLength 1 */
+  run_type: string;
+  /** @minLength 1 */
+  unit: string;
+  reads: string;
+  rows: number;
+  config_ids: string[];
+  questions: string[];
+  counts: InstantEvalRunApiCounts;
+  answered: number;
+  pending: number;
+  /** @minLength 1 */
+  finished_at?: string;
+  /** @minLength 1 */
+  last_activity_at?: string;
+  /** @minLength 1 */
+  created_by?: string;
+  credits_estimate?: number;
+  population?: number;
+  is_sample?: boolean;
+  /** @minLength 1 */
+  date_preset?: string;
+  label?: string;
+  window?: InstantEvalRunApiWindow;
+  sessions?: number;
+}
+
+export interface InstantEvalRunsResultApi {
+  runs: InstantEvalRunApi[];
+  has_more: boolean;
+}
+
+export interface InstantEvalRunsResponseApi {
+  status?: boolean;
+  result: InstantEvalRunsResultApi;
+}
+
+export type InstantEvalStartRequestApiUnit =
+  (typeof InstantEvalStartRequestApiUnit)[keyof typeof InstantEvalStartRequestApiUnit];
+
+export const InstantEvalStartRequestApiUnit = {
+  traces: "traces",
+  spans: "spans",
+  sessions: "sessions",
+  users: "users",
+} as const;
+
+export type InstantEvalStartRequestApiFiltersItemFilterConfigAttributeValueTypesItem =
+  (typeof InstantEvalStartRequestApiFiltersItemFilterConfigAttributeValueTypesItem)[keyof typeof InstantEvalStartRequestApiFiltersItemFilterConfigAttributeValueTypesItem];
+
+export const InstantEvalStartRequestApiFiltersItemFilterConfigAttributeValueTypesItem =
+  {
+    string: "string",
+    number: "number",
+    boolean: "boolean",
+  } as const;
+
+export type InstantEvalStartRequestApiFiltersItemFilterConfig = {
+  /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map. */
+  filter_type: string;
+  /** Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null. */
+  filter_op: string;
+  /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
+  filter_value?: unknown;
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  col_type?: string;
+  /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
+  attribute_value_types?: InstantEvalStartRequestApiFiltersItemFilterConfigAttributeValueTypesItem[];
+};
+
+export type InstantEvalStartRequestApiFiltersItem = {
+  /** Column or attribute id to filter on. */
+  column_id: string;
+  /** Optional stable namespaced Property Registry identity. */
+  property_id?: string;
+  /** Optional UI label for chips and saved views. */
+  display_name?: string;
+  /** Optional source surface for mixed-source filters, for example traces, datasets, or simulation. */
+  source?: string;
+  /** Optional metric output type metadata used by eval and annotation filters. */
+  output_type?: string;
+  filter_config: InstantEvalStartRequestApiFiltersItemFilterConfig;
+};
+
+export type InstantEvalStartRequestApiDatePreset =
+  (typeof InstantEvalStartRequestApiDatePreset)[keyof typeof InstantEvalStartRequestApiDatePreset];
+
+export const InstantEvalStartRequestApiDatePreset = {
+  Today: "Today",
+  Yesterday: "Yesterday",
+  "7D": "7D",
+  "30D": "30D",
+  "3M": "3M",
+  "6M": "6M",
+  "12M": "12M",
+  Custom: "Custom",
+} as const;
+
+export interface InstantEvalStartRequestApi {
+  project_id: string;
+  unit: InstantEvalStartRequestApiUnit;
+  filters?: InstantEvalStartRequestApiFiltersItem[];
+  /** @maxItems 5000 */
+  ids?: string[];
+  /** @minimum 1 */
+  sample_size?: number;
+  date_preset?: InstantEvalStartRequestApiDatePreset;
+  /** @maxLength 300 */
+  label?: string;
+  /** @maxLength 200 */
+  search?: string;
+  /**
+   * @minItems 1
+   * @maxItems 5
+   */
+  config_ids: string[];
+  confirm?: boolean;
+  /** @minimum 0 */
+  confirmed_rows?: number;
+}
+
+export interface InstantEvalStartApi {
+  /** @minLength 1 */
+  task_id: string;
+  /** @minLength 1 */
+  unit: string;
+  population: number;
+  rows_requested: number;
+  is_sample: boolean;
+  credits_estimate: number;
+  /** @minLength 1 */
+  date_preset: string;
+  label: string;
+}
+
+export interface InstantEvalStartResponseApi {
+  status?: boolean;
+  result: InstantEvalStartApi;
+}
+
+export interface InstantEvalPersonApi {
+  /** @minLength 1 */
+  id: string;
+  name: string;
+  email: string;
+}
+
+export interface InstantEvalFailureApi {
+  /** @minLength 1 */
+  message: string;
+  every: boolean;
+  ai_providers: boolean;
+}
+
+export interface InstantEvalSampleApi {
+  population: number;
+  population_is_lower_bound: boolean;
+  requested: number;
+  read: number;
+  is_sample: boolean;
+  can_extend: boolean;
+  next_size: number;
+}
+
+export interface InstantEvalQuestionApi {
+  /** @minLength 1 */
+  config_id: string;
+  question: string;
+  /** @minLength 1 */
+  answer_type: string;
+  labels: string[];
+}
+
+export type InstantEvalSummaryApiWindow = { [key: string]: unknown };
+
+export type InstantEvalSummaryApiScope = { [key: string]: unknown };
+
+export type InstantEvalSummaryApiCounts = { [key: string]: unknown };
+
+export type InstantEvalSummaryApiUnsure = { [key: string]: unknown };
+
+export type InstantEvalSummaryApiTimeline = { [key: string]: unknown };
+
+export type InstantEvalSummaryApiGroups = { [key: string]: unknown };
+
+export type InstantEvalSummaryApiCross = { [key: string]: unknown };
+
+export interface InstantEvalSummaryApi {
+  /** @minLength 1 */
+  status: string;
+  /** @minLength 1 */
+  unit: string;
+  preparing: boolean;
+  total: number;
+  answered: number;
+  failed: number;
+  pending: number;
+  not_read: number;
+  /** @minLength 1 */
+  started_at: string;
+  /** @minLength 1 */
+  finished_at: string;
+  rate_per_min: number;
+  eta_s: number;
+  created_by: InstantEvalPersonApi;
+  credits_estimate: number;
+  credits_used: number;
+  in_flight: number;
+  waiting_s: number;
+  failure?: InstantEvalFailureApi;
+  active_s: number;
+  idle_s: number;
+  sample: InstantEvalSampleApi;
+  window: InstantEvalSummaryApiWindow;
+  scope: InstantEvalSummaryApiScope;
+  questions: InstantEvalQuestionApi[];
+  counts: InstantEvalSummaryApiCounts;
+  unsure: InstantEvalSummaryApiUnsure;
+  timeline: InstantEvalSummaryApiTimeline;
+  groups: InstantEvalSummaryApiGroups;
+  cross: InstantEvalSummaryApiCross;
+  sessions_read?: number;
+}
+
+export interface InstantEvalSummaryResponseApi {
+  status?: boolean;
+  result: InstantEvalSummaryApi;
 }
 
 export type UpdateInvestigationAttemptRequestApiAction =
@@ -32310,6 +33508,7 @@ export const UsageAPICallTypeApiName = {
   protect_evaluator: "protect_evaluator",
   protect_flash_evaluator: "protect_flash_evaluator",
   code_evaluator: "code_evaluator",
+  jev_evaluator: "jev_evaluator",
   user_add: "user_add",
   observe_add: "observe_add",
   prototype_add: "prototype_add",
@@ -37226,6 +38425,276 @@ export type TracerImagineAnalysisListParams = {
    */
   trace_id: string;
 };
+
+export type TracerInsightsConfigsListParams = {
+  project_id: string;
+};
+
+export type TracerInsightsRunsMediaListParams = {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  unit_id: string;
+  /**
+   * @minLength 1
+   * @pattern ^m\d{1,6}$
+   */
+  media: string;
+};
+
+export type TracerInsightsRunsUnitsListParams = {
+  /**
+   * @maxLength 64
+   */
+  category_id?: string;
+  /**
+   * @maxLength 64
+   */
+  sub_category_id?: string;
+  /**
+   * @maxLength 4000
+   */
+  unit_ids?: string;
+  /**
+   * @minimum 0
+   * @maximum 1000
+   */
+  offset?: number;
+  /**
+   * @minimum 1
+   * @maximum 200
+   */
+  limit?: number;
+  include_content?: boolean;
+};
+
+export type TracerInstantEvalExportListParams = {
+  project_id: string;
+  eval_task_id: string;
+  unit?: TracerInstantEvalExportListUnit;
+  /**
+   * @maxLength 2000
+   */
+  config_ids?: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  tz?: string;
+  config_id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  answer?: string;
+  /**
+   * @minLength 1
+   * @maxLength 4000
+   */
+  answers?: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  time_from?: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  time_to?: string;
+  /**
+   * @maxItems 100000
+   */
+  group?: string[];
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  user?: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  model?: string;
+  error?: boolean;
+  unsure?: boolean;
+  /**
+   * @maxLength 200
+   */
+  q?: string;
+  /**
+   * @maxLength 500
+   */
+  cursor?: string;
+  /**
+   * @minimum 1
+   * @maximum 1500
+   */
+  page_size?: number;
+  compact?: boolean;
+  sort?: TracerInstantEvalExportListSort;
+  sessions?: boolean;
+};
+
+export type TracerInstantEvalExportListUnit =
+  (typeof TracerInstantEvalExportListUnit)[keyof typeof TracerInstantEvalExportListUnit];
+
+export const TracerInstantEvalExportListUnit = {
+  traces: "traces",
+  spans: "spans",
+  sessions: "sessions",
+  users: "users",
+} as const;
+
+export type TracerInstantEvalExportListSort =
+  (typeof TracerInstantEvalExportListSort)[keyof typeof TracerInstantEvalExportListSort];
+
+export const TracerInstantEvalExportListSort = {
+  time: "time",
+  "-time": "-time",
+  confidence: "confidence",
+} as const;
+
+export type TracerInstantEvalRowsListParams = {
+  project_id: string;
+  eval_task_id: string;
+  unit?: TracerInstantEvalRowsListUnit;
+  /**
+   * @maxLength 2000
+   */
+  config_ids?: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  tz?: string;
+  config_id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 500
+   */
+  answer?: string;
+  /**
+   * @minLength 1
+   * @maxLength 4000
+   */
+  answers?: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  time_from?: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  time_to?: string;
+  /**
+   * @maxItems 100000
+   */
+  group?: string[];
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  user?: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  model?: string;
+  error?: boolean;
+  unsure?: boolean;
+  /**
+   * @maxLength 200
+   */
+  q?: string;
+  /**
+   * @maxLength 500
+   */
+  cursor?: string;
+  /**
+   * @minimum 1
+   * @maximum 1500
+   */
+  page_size?: number;
+  compact?: boolean;
+  sort?: TracerInstantEvalRowsListSort;
+};
+
+export type TracerInstantEvalRowsListUnit =
+  (typeof TracerInstantEvalRowsListUnit)[keyof typeof TracerInstantEvalRowsListUnit];
+
+export const TracerInstantEvalRowsListUnit = {
+  traces: "traces",
+  spans: "spans",
+  sessions: "sessions",
+  users: "users",
+} as const;
+
+export type TracerInstantEvalRowsListSort =
+  (typeof TracerInstantEvalRowsListSort)[keyof typeof TracerInstantEvalRowsListSort];
+
+export const TracerInstantEvalRowsListSort = {
+  time: "time",
+  "-time": "-time",
+  confidence: "confidence",
+} as const;
+
+export type TracerInstantEvalRunsListParams = {
+  project_id: string;
+  unit?: TracerInstantEvalRunsListUnit;
+  /**
+   * @maxLength 200
+   */
+  search?: string;
+  task_id?: string;
+  /**
+   * @minimum 0
+   */
+  page_number?: number;
+  /**
+   * @minimum 1
+   * @maximum 50
+   */
+  page_size?: number;
+};
+
+export type TracerInstantEvalRunsListUnit =
+  (typeof TracerInstantEvalRunsListUnit)[keyof typeof TracerInstantEvalRunsListUnit];
+
+export const TracerInstantEvalRunsListUnit = {
+  traces: "traces",
+  spans: "spans",
+  sessions: "sessions",
+  users: "users",
+} as const;
+
+export type TracerInstantEvalSummaryListParams = {
+  project_id: string;
+  eval_task_id: string;
+  unit?: TracerInstantEvalSummaryListUnit;
+  /**
+   * @maxLength 2000
+   */
+  config_ids?: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  tz?: string;
+};
+
+export type TracerInstantEvalSummaryListUnit =
+  (typeof TracerInstantEvalSummaryListUnit)[keyof typeof TracerInstantEvalSummaryListUnit];
+
+export const TracerInstantEvalSummaryListUnit = {
+  traces: "traces",
+  spans: "spans",
+  sessions: "sessions",
+  users: "users",
+} as const;
 
 export type TracerObservabilityProviderListParams = {
   /**

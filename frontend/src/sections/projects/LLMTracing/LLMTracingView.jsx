@@ -145,6 +145,8 @@ import axios, { endpoints } from "src/utils/axios";
 
 import { PROJECT_SOURCE } from "src/utils/constants";
 import { OBSERVE_LIST_REFRESH_EVENT } from "../observeEvents";
+import { askLink, insightsReportLink } from "../observeHandoff";
+import { viewSeed } from "../observeScope";
 import { useLLMTracingFilters } from "./useLLMTracingFilters";
 import { isTraceListProjectReady } from "./projectSourceMode";
 import { canonicalObserveViewMode } from "./viewMode";
@@ -2912,6 +2914,65 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     navigate,
   ]);
 
+  // Instant eval and Insights ask about exactly the traces the grid shows: its
+  // date window, filters, chips and toggles, as its list request sends them,
+  // and open with the tab's date preset. "Show simulated calls" isn't carried:
+  // it exists only on simulator projects, where neither is offered.
+  const traceViewSeed = useMemo(
+    () =>
+      viewSeed({
+        unit: "traces",
+        filters: toBackendFilters([
+          ...primaryCombinedFilters,
+          ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+          ...(extraFilters || []),
+          ...(metricFilters || []),
+        ]),
+        dateFilter: primaryTraceDateFilter,
+      }),
+    [
+      primaryCombinedFilters,
+      hasEvalFilter,
+      extraFilters,
+      metricFilters,
+      primaryTraceDateFilter,
+    ],
+  );
+  // The Spans tab asks about exactly the spans its grid shows (SpanGrid sends
+  // the same list, its date window included).
+  const spanViewSeed = useMemo(
+    () =>
+      viewSeed({
+        unit: "spans",
+        filters: toBackendFilters([
+          ...primarySpanValidatedFilters,
+          ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+          ...(extraFilters || []),
+          ...(metricFilters || []),
+        ]),
+        dateFilter: primarySpanDateFilter,
+      }),
+    [
+      primarySpanValidatedFilters,
+      hasEvalFilter,
+      extraFilters,
+      metricFilters,
+      primarySpanDateFilter,
+    ],
+  );
+  // Evaluate → Ask a question: the Ask page, about the rows this tab shows.
+  const openAsk = useCallback(() => {
+    navigate(
+      askLink(
+        observeId,
+        selectedTab === "spans" ? spanViewSeed : traceViewSeed,
+      ),
+    );
+  }, [selectedTab, spanViewSeed, traceViewSeed, observeId, navigate]);
+  const openInsights = useCallback(() => {
+    navigate(insightsReportLink(observeId, traceViewSeed));
+  }, [observeId, traceViewSeed, navigate]);
+
   const handleResetView = useCallback(() => {
     setViewMode(DEFAULT_DISPLAY_CONFIG.viewMode);
     setHasEvalFilter(DEFAULT_DISPLAY_CONFIG.hasEvalFilter);
@@ -4463,6 +4524,12 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 setExcludeSimulationCalls(excludeSimulationCalls ? null : true)
               }
               onAddEvals={handleAddEvals}
+              // Instant eval and Insights are per project: not in the
+              // cross-project user view. Insights doesn't read spans.
+              onInstantEval={observeId ? openAsk : undefined}
+              onInsights={
+                observeId && selectedTab !== "spans" ? openInsights : undefined
+              }
             />
             {/* FilterChips moved above graph section */}
             {/* Hidden: Old secondary Trace/Spans tabs — replaced by top-level tab bar */}

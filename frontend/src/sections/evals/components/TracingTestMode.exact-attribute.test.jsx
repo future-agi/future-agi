@@ -1200,6 +1200,16 @@ describe("TracingTestMode exact task attribute mapping", () => {
     expect(mocks.post).not.toHaveBeenCalled();
   });
 
+  it("omits the model override when the Code playground supplies no model", async () => {
+    mocks.post.mockResolvedValueOnce({ data: { status: true, result: { output: 1 } } });
+    const ref = React.createRef();
+    renderTaskMapping(vi.fn(), { ref, model: "" });
+    await screen.findByPlaceholderText("Search or type a path (e.g. attributes.input.value)");
+    await act(async () => { ref.current.runTest(); });
+    await waitFor(() => expect(mocks.post).toHaveBeenCalled());
+    expect(mocks.post.mock.calls[0][1]).not.toHaveProperty("model");
+  });
+
   it("never renders raw infrastructure details from a failed eval test", async () => {
     const rawError =
       "Code: 159. DB::Exception: Timeout exceeded\nStack trace: SELECT secret FROM spans";

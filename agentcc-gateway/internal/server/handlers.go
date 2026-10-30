@@ -72,6 +72,12 @@ type Handlers struct {
 	// Key store for early org_id peek (before auth plugin runs).
 	keyStore *authpkg.KeyStore
 
+	// Decision calls by internal callers: the upstream for each dialect taken
+	// from config.yaml (its base_url only), and the providers built for the
+	// keys those callers bring.
+	decisionBaseURLs       map[string]string
+	keyedDecisionProviders keyedDecisionProviders
+
 	// Async inference support.
 	asyncStore  *async.Store
 	asyncWorker *async.Worker
@@ -117,6 +123,9 @@ func setAuthMetadataFromRequest(rc *models.RequestContext, r *http.Request) {
 
 func cloneRequestHeaders(r *http.Request) http.Header {
 	headers := r.Header.Clone()
+	// A caller's own provider key is for one decision call. Whatever route it
+	// was sent to, the copy kept for logs, spans and plugins never carries it.
+	headers.Del(models.ProviderKeyHeader)
 	if headers.Get("Authorization") == "" {
 		if apiKey := headers.Get("x-api-key"); apiKey != "" {
 			headers.Set("Authorization", "Bearer "+apiKey)

@@ -91,6 +91,9 @@ func ForEndpoint(rc *models.RequestContext) (request, response json.RawMessage) 
 	case "ocr":
 		return marshalPtr(rc.OCRRequest), marshal(ocrResponse(rc.OCRResponse))
 
+	case "decision":
+		return marshal(decisionRequest(rc.DecisionRequest)), marshal(decisionResponse(rc.DecisionResponse))
+
 	default:
 		return nil, nil
 	}
@@ -175,6 +178,47 @@ func ocrResponse(resp *models.OCRResponse) any {
 		"pages":      pages,
 		"usage_info": resp.UsageInfo,
 	}
+}
+
+// decisionRequest says which questions a decision asked and how big its
+// state was. The state and the questions' text are the customer's evaluation
+// content; only DecisionBodies carries them, and only where a sink may record
+// them.
+func decisionRequest(req *models.DecisionRequest) any {
+	if req == nil {
+		return nil
+	}
+	return map[string]any{
+		"model":          req.Model,
+		"question_ids":   req.QuestionIDs,
+		"question_types": req.QuestionTypes,
+		"state_bytes":    req.StateBytes,
+	}
+}
+
+// decisionResponse keeps the answers and the usage, which are the result.
+func decisionResponse(resp *models.DecisionResponse) any {
+	if resp == nil {
+		return nil
+	}
+	out := map[string]any{"model": resp.Model, "usage": resp.Usage}
+	if len(resp.Answers) > 0 && json.Valid(resp.Answers) {
+		out["answers"] = resp.Answers
+	}
+	return out
+}
+
+// DecisionBodies returns a decision's full request and response bodies, for a
+// sink set to record bodies where privacy mode allows it. Everything else gets
+// ForEndpoint's summary.
+func DecisionBodies(rc *models.RequestContext) (request, response json.RawMessage) {
+	if req := rc.DecisionRequest; req != nil && json.Valid(req.Body) {
+		request = req.Body
+	}
+	if resp := rc.DecisionResponse; resp != nil && json.Valid(resp.Body) {
+		response = resp.Body
+	}
+	return request, response
 }
 
 // marshalPtr exists because a nil pointer inside an `any` is not `== nil`:

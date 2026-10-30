@@ -60,6 +60,10 @@ const FeatureGateOverlay = ({
   const resolvedImage = isDark ? imageDark || image : image;
   const usingSkeleton = !children && !resolvedImage;
   const effectiveBlurFrom = usingSkeleton ? 0 : blurFrom;
+  // A preview blurred all over is blurred as an element. A backdrop blur
+  // leaves the sharp preview painted under it, and Chromium can thin that
+  // blur toward the layer's edges, so text near an edge showed through.
+  const blurWhole = effectiveBlurFrom === 0;
 
   let backdrop = <PreviewSkeleton />;
   if (children) {
@@ -104,6 +108,7 @@ const FeatureGateOverlay = ({
           minHeight,
           pointerEvents: "none",
           userSelect: "none",
+          ...(blurWhole && { filter: `blur(${blur}px)` }),
         }}
       >
         {backdrop}
@@ -117,8 +122,10 @@ const FeatureGateOverlay = ({
           right: 0,
           top: effectiveBlurFrom,
           bottom: 0,
-          backdropFilter: `blur(${blur}px)`,
-          WebkitBackdropFilter: `blur(${blur}px)`,
+          ...(!blurWhole && {
+            backdropFilter: `blur(${blur}px)`,
+            WebkitBackdropFilter: `blur(${blur}px)`,
+          }),
           background: isDark
             ? `linear-gradient(to bottom, ${alpha(
                 theme.palette.background.default,
@@ -256,7 +263,15 @@ const FeatureGateOverlay = ({
                 href={onPrimary ? undefined : primaryHref}
                 target={onPrimary ? undefined : "_blank"}
                 rel={onPrimary ? undefined : "noopener"}
-                endIcon={<Iconify icon="solar:arrow-right-up-linear" />}
+                endIcon={
+                  <Iconify
+                    icon={
+                      onPrimary
+                        ? "solar:arrow-right-linear"
+                        : "solar:arrow-right-up-linear"
+                    }
+                  />
+                }
               >
                 {primaryLabel}
               </Button>

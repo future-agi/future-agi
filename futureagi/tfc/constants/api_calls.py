@@ -19,6 +19,7 @@ class APICallTypeChoices(models.TextChoices):
     PROTECT_EVALUATOR = "protect_evaluator", "Protect Evaluator"
     PROTECT_FLASH_EVALUATOR = "protect_flash_evaluator", "Protect Flash Evaluator"
     CODE_EVALUATOR = "code_evaluator", "Code Evaluator"
+    JEV_EVALUATOR = "jev_evaluator", "Jev Evaluator"
 
     USER_ADD = "user_add", "User Add"
     OBSERVE_ADD = "observe_add", "Observe Add"

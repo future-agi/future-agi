@@ -822,6 +822,13 @@ CODE_EXECUTOR_LOCAL_FALLBACK = os.getenv(
     "CODE_EXECUTOR_LOCAL_FALLBACK", "false"
 ).lower() in ("true", "1", "yes")
 
+# How Jev evaluators reach TypeSafe, always on the org's own key. "gateway"
+# (default) sends them to the AgentCC gateway's /v1/systemone on
+# AGENTCC_INTERNAL_API_KEY, carrying the org's key for that call. "direct"
+# calls TypeSafe from the backend, for local dev without a gateway. Any other
+# value means "gateway".
+JEV_TRANSPORT = os.getenv("JEV_TRANSPORT", "gateway").strip().lower()
+
 # Hosted simulation runner (plan §9): when enabled, eligible runs are dispatched
 # to the simulation-runner worker which executes the released SDK, instead of the
 # native in-backend simulation path. Default off — no regression.
@@ -1055,7 +1062,9 @@ ALK_HOSTED_SANDBOX_TTL_SECONDS = int(
 # message before a post-run chat sandbox is reclaimed, and only trades cost against latency.
 ALK_HOSTED_CHAT_TTL_SECONDS = int(os.getenv("ALK_HOSTED_CHAT_TTL_SECONDS", "1800"))
 # Off sends a fresh build through the staged authoring pipeline instead of the builder session.
-ALK_HOSTED_BUILDER_SESSION = os.getenv("ALK_HOSTED_BUILDER_SESSION", "true").strip().lower() not in (
+ALK_HOSTED_BUILDER_SESSION = os.getenv(
+    "ALK_HOSTED_BUILDER_SESSION", "true"
+).strip().lower() not in (
     "0",
     "false",
     "no",
@@ -1592,3 +1601,64 @@ CH25_EVAL_LOGGER_TABLE = os.getenv("CH25_EVAL_LOGGER_TABLE", "tracer_eval_logger
 # Default is "postgres" so cutover is opt-in. Flip to "clickhouse" only after
 # the backfill + validator pass and a soak period.
 EVAL_SPAN_READ_SOURCE = os.getenv("EVAL_SPAN_READ_SOURCE", "postgres").lower()
+
+# Concurrent Jev calls per worker process (ee/jev/client.py). Instant eval
+# drains up to 32 rows at once, so a worker that serves it wants at least that.
+JEV_MAX_CONCURRENT = max(1, int(os.getenv("JEV_MAX_CONCURRENT") or 8))
+# Seconds one Jev answer may take, its retries and waits included, and the
+# retries after a failed call that may succeed (a timeout, a rate limit). Both
+# can only be lowered: at most 90 seconds and 2 retries. Like the other Jev and
+# Instant eval numbers here, an empty value (``NAME=`` in .env) is the default.
+JEV_TOTAL_DEADLINE = max(1, min(int(os.getenv("JEV_TOTAL_DEADLINE") or 90), 90))
+JEV_MAX_RETRIES = max(0, min(int(os.getenv("JEV_MAX_RETRIES") or 2), 2))
+# TypeSafe's API for JEV_TRANSPORT=direct; empty means https://api.typesafe.ai.
+# The gateway transport never reads it.
+TYPESAFE_BASE_URL = os.getenv("TYPESAFE_BASE_URL", "").strip()
+
+# Instant eval at scale (tracer/views/instant_eval_scale.py). The server refuses
+# a run above MAX_ROWS, holds one above CONFIRM_ROWS for the person to confirm
+# (with what it costs, where it is billed), and lets an organization run at
+# most MAX_ACTIVE_PER_ORG at a time. Each is at least 1: a 0 or a negative
+# would refuse (or hold) every run.
+INSTANT_EVAL_MAX_ROWS = max(1, int(os.getenv("INSTANT_EVAL_MAX_ROWS") or 100000))
+INSTANT_EVAL_CONFIRM_ROWS = max(1, int(os.getenv("INSTANT_EVAL_CONFIRM_ROWS") or 5000))
+INSTANT_EVAL_MAX_ACTIVE_PER_ORG = max(
+    1, int(os.getenv("INSTANT_EVAL_MAX_ACTIVE_PER_ORG") or 2)
+)
+# Rows a run is assumed to read a minute, for the time estimate before it
+# starts (a run's page shows the measured rate once answers land).
+INSTANT_EVAL_ASSUMED_ROWS_PER_MIN = max(
+    1.0, float(os.getenv("INSTANT_EVAL_ASSUMED_ROWS_PER_MIN") or 300)
+)
+# Seconds a Users estimate (asked again on every filter edit) may spend
+# counting users the list decides one by one before it reports a lower bound,
+# and seconds a start may spend finishing that count. 0.5-30 and 1-600.
+INSTANT_EVAL_USERS_ESTIMATE_BUDGET_S = max(
+    0.5, min(float(os.getenv("INSTANT_EVAL_USERS_ESTIMATE_BUDGET_S") or 3), 30.0)
+)
+INSTANT_EVAL_USERS_RUN_BUDGET_S = max(
+    1.0, min(float(os.getenv("INSTANT_EVAL_USERS_RUN_BUDGET_S") or 60), 600.0)
+)
+
+# The Insights agent's evidence broker (ee/agenthub/insights/broker.py): the
+# secret its run-scoped capabilities are signed with (empty keeps runs on the
+# agent's insights-agent/v1 contract), the previous one while a new one rolls
+# out, where the worker stores the unit snapshots the web pods serve
+# (ee/agenthub/insights/evidence_store.py: "local", a directory of each host,
+# empty: <tmp>/insights-evidence, and how large it may grow; or "object", a
+# private bucket every pod reads, never the upload bucket), and whether media
+# outside the platform's own storage may be fetched for the agent to view
+# (off by default).
+INSIGHTS_EVIDENCE_SECRET = os.getenv("INSIGHTS_EVIDENCE_SECRET", "")
+INSIGHTS_EVIDENCE_SECRET_PREVIOUS = os.getenv("INSIGHTS_EVIDENCE_SECRET_PREVIOUS", "")
+INSIGHTS_EVIDENCE_STORE = (
+    os.getenv("INSIGHTS_EVIDENCE_STORE", "").strip().lower() or "local"
+)
+INSIGHTS_EVIDENCE_BUCKET = os.getenv("INSIGHTS_EVIDENCE_BUCKET", "").strip()
+INSIGHTS_EVIDENCE_CACHE_DIR = os.getenv("INSIGHTS_EVIDENCE_CACHE_DIR", "").strip()
+INSIGHTS_EVIDENCE_CACHE_MAX_BYTES = max(
+    1, int(os.getenv("INSIGHTS_EVIDENCE_CACHE_MAX_BYTES") or 2 * 1024**3)
+)
+INSIGHTS_EVIDENCE_FETCH_EXTERNAL_MEDIA = os.getenv(
+    "INSIGHTS_EVIDENCE_FETCH_EXTERNAL_MEDIA", ""
+).strip().lower() in ("1", "true", "yes", "on")

@@ -1,0 +1,528 @@
+{
+  "description": "How the gateway's decision routes (/v1/systemone, /v1/decisions) check a request's envelope and map a vendor's answer onto the gateway's error table. Read by the gateway's Go tests (agentcc-gateway/internal/models/decision_test.go, internal/providers/systemone/systemone_test.go, internal/server/handlers_decision_test.go) and the Jev client's Python tests (futureagi/ee/jev/tests/test_client.py), so the two sides cannot drift apart unnoticed. Hand-written, not generated. envelope_cases: a body and either the format and questions the gateway reads from it, or the 400/422 it returns; no error may echo must_not_echo. error_cases: what a vendor answers to request (sent with api_key) and what the gateway returns; returned.retry_after is the Retry-After it passes on, and the x-agentcc-upstream-status header carries upstream.status. gateway_error_cases: refusals the gateway makes before calling any vendor.",
+  "api_key": "synthetic-decision-key-CANARY",
+  "request": {
+    "model": "typesafe/jev-1.13.0",
+    "state": { "ticket": "private-state-CANARY", "count": 987654321 },
+    "questions": {
+      "resolved": {
+        "type": "noul",
+        "instructions": "private-instructions-CANARY",
+        "criteria": { "true": "private-criteria-CANARY", "false": "Unresolved" }
+      }
+    }
+  },
+  "envelope_cases": [
+    {
+      "name": "system_one",
+      "body": {
+        "model": "typesafe/jev-1.13.0",
+        "state": { "ticket": "charged twice" },
+        "questions": {
+          "resolved": { "type": "noul", "instructions": "Resolved?" },
+          "intent": {
+            "type": "choice",
+            "instructions": "Classify",
+            "criteria": { "billing": null, "other": null }
+          },
+          "tone": {
+            "type": "score",
+            "instructions": "Empathy",
+            "criteria": ["Cold", "Neutral", "Warm"]
+          }
+        }
+      },
+      "format": "systemone",
+      "question_ids": ["resolved", "intent", "tone"],
+      "question_types": ["noul", "choice", "score"]
+    },
+    {
+      "name": "system_one_unknown_type_and_fields_pass",
+      "body": {
+        "model": "jev-latest",
+        "state": "plain text state",
+        "images": [{ "url": "https://example.com/a.png" }],
+        "questions": {
+          "where": {
+            "type": "box",
+            "instructions": "Find it",
+            "future": { "nested": [1, true, null] }
+          }
+        }
+      },
+      "format": "systemone",
+      "question_ids": ["where"],
+      "question_types": ["box"]
+    },
+    {
+      "name": "system_one_state_may_be_any_non_null_json",
+      "body": {
+        "model": "jev-latest",
+        "state": [1, 2, 3],
+        "questions": { "q1": { "type": "noul" } }
+      },
+      "format": "systemone",
+      "question_ids": ["q1"],
+      "question_types": ["noul"]
+    },
+    {
+      "name": "openai_decisions",
+      "body": {
+        "model": "openai/gpt-6-luna",
+        "input": "Ticket: charged twice.",
+        "questions": [
+          {
+            "type": "predicate",
+            "name": "resolved",
+            "instructions": "Resolved?"
+          },
+          {
+            "type": "choice",
+            "instructions": "Classify",
+            "choices": [{ "value": "billing" }]
+          }
+        ]
+      },
+      "format": "openai",
+      "question_ids": ["resolved", "#1"],
+      "question_types": ["predicate", "choice"]
+    },
+    {
+      "name": "not_an_object",
+      "body_raw": "[{\"model\": \"jev-latest\"}]",
+      "status": 400,
+      "code": "invalid_json"
+    },
+    {
+      "name": "not_json",
+      "body_raw": "{\"model\": \"jev-latest\", \"state\": private-state-CANARY",
+      "status": 400,
+      "code": "invalid_json",
+      "must_not_echo": ["private-state-CANARY"]
+    },
+    {
+      "name": "trailing_data",
+      "body_raw": "{\"model\": \"jev-latest\", \"state\": 1, \"questions\": {\"q1\": {\"type\": \"noul\"}}} {}",
+      "status": 400,
+      "code": "invalid_json"
+    },
+    {
+      "name": "model_twice",
+      "body_raw": "{\"model\": \"typesafe/jev-latest\", \"model\": \"other\", \"state\": 1, \"questions\": {\"q1\": {\"type\": \"noul\"}}}",
+      "status": 400,
+      "code": "invalid_json"
+    },
+    {
+      "name": "missing_model",
+      "body": {
+        "state": "private-state-CANARY",
+        "questions": { "q1": { "type": "noul" } }
+      },
+      "status": 400,
+      "code": "missing_model",
+      "must_not_echo": ["private-state-CANARY"]
+    },
+    {
+      "name": "empty_model",
+      "body": {
+        "model": "  ",
+        "state": 1,
+        "questions": { "q1": { "type": "noul" } }
+      },
+      "status": 400,
+      "code": "missing_model"
+    },
+    {
+      "name": "model_not_a_string",
+      "body": {
+        "model": 7,
+        "state": 1,
+        "questions": { "q1": { "type": "noul" } }
+      },
+      "status": 400,
+      "code": "missing_model"
+    },
+    {
+      "name": "missing_questions",
+      "body": { "model": "jev-latest", "state": "private-state-CANARY" },
+      "status": 400,
+      "code": "missing_questions",
+      "must_not_echo": ["private-state-CANARY"]
+    },
+    {
+      "name": "questions_not_a_collection",
+      "body": {
+        "model": "jev-latest",
+        "state": 1,
+        "questions": "private-instructions-CANARY"
+      },
+      "status": 400,
+      "code": "missing_questions",
+      "must_not_echo": ["private-instructions-CANARY"]
+    },
+    {
+      "name": "empty_questions_object",
+      "body": { "model": "jev-latest", "state": 1, "questions": {} },
+      "status": 400,
+      "code": "missing_questions"
+    },
+    {
+      "name": "empty_questions_array",
+      "body": { "model": "openai/gpt-6-luna", "input": "x", "questions": [] },
+      "status": 400,
+      "code": "missing_questions"
+    },
+    {
+      "name": "missing_state",
+      "body": {
+        "model": "jev-latest",
+        "questions": {
+          "q1": {
+            "type": "noul",
+            "instructions": "private-instructions-CANARY"
+          }
+        }
+      },
+      "status": 400,
+      "code": "missing_state",
+      "must_not_echo": ["private-instructions-CANARY"]
+    },
+    {
+      "name": "null_state",
+      "body": {
+        "model": "jev-latest",
+        "state": null,
+        "questions": { "q1": { "type": "noul" } }
+      },
+      "status": 400,
+      "code": "missing_state"
+    },
+    {
+      "name": "question_not_an_object",
+      "body": {
+        "model": "jev-latest",
+        "state": 1,
+        "questions": { "q1": "private-instructions-CANARY" }
+      },
+      "status": 400,
+      "code": "invalid_question",
+      "names_question": "q1",
+      "must_not_echo": ["private-instructions-CANARY"]
+    },
+    {
+      "name": "question_without_type",
+      "body": {
+        "model": "jev-latest",
+        "state": 1,
+        "questions": {
+          "q1": {
+            "instructions": "private-instructions-CANARY",
+            "criteria": { "private-criteria-CANARY": null }
+          }
+        }
+      },
+      "status": 400,
+      "code": "invalid_question",
+      "names_question": "q1",
+      "must_not_echo": [
+        "private-instructions-CANARY",
+        "private-criteria-CANARY"
+      ]
+    },
+    {
+      "name": "question_type_not_a_string",
+      "body": {
+        "model": "jev-latest",
+        "state": 1,
+        "questions": {
+          "q1": {
+            "type": ["noul"],
+            "instructions": "private-instructions-CANARY"
+          }
+        }
+      },
+      "status": 400,
+      "code": "invalid_question",
+      "names_question": "q1",
+      "must_not_echo": ["private-instructions-CANARY"]
+    },
+    {
+      "name": "question_id_twice",
+      "body_raw": "{\"model\": \"jev-latest\", \"state\": 1, \"questions\": {\"q1\": {\"type\": \"noul\"}, \"q1\": {\"type\": \"score\"}}}",
+      "status": 400,
+      "code": "invalid_question",
+      "names_question": "q1"
+    },
+    {
+      "name": "openai_question_without_type",
+      "body": {
+        "model": "openai/gpt-6-luna",
+        "input": "x",
+        "questions": [
+          { "name": "resolved", "instructions": "private-instructions-CANARY" }
+        ]
+      },
+      "status": 400,
+      "code": "invalid_question",
+      "names_question": "resolved",
+      "must_not_echo": ["private-instructions-CANARY"]
+    },
+    {
+      "name": "openai_body_on_system_one_route",
+      "route": "/v1/systemone",
+      "body": {
+        "model": "openai/gpt-6-luna",
+        "input": "x",
+        "questions": [{ "type": "predicate", "name": "resolved" }]
+      },
+      "status": 422,
+      "code": "format_mismatch"
+    }
+  ],
+  "error_cases": [
+    {
+      "name": "upstream_400_safe_message",
+      "upstream": {
+        "status": 400,
+        "body": {
+          "error": {
+            "code": "invalid_question",
+            "message": "Unsupported criteria shape"
+          }
+        }
+      },
+      "returned": {
+        "status": 400,
+        "code": "upstream_rejected",
+        "message": "Unsupported criteria shape"
+      }
+    },
+    {
+      "name": "upstream_422_echoing_state",
+      "upstream": {
+        "status": 422,
+        "body": {
+          "error": { "message": "state private-state-CANARY is too long" }
+        }
+      },
+      "returned": { "status": 422, "code": "upstream_rejected" }
+    },
+    {
+      "name": "upstream_422_echoing_a_number_in_state",
+      "upstream": {
+        "status": 422,
+        "body": { "error": { "message": "count 987654321 out of range" } }
+      },
+      "returned": { "status": 422, "code": "upstream_rejected" }
+    },
+    {
+      "name": "upstream_422_echoing_criteria",
+      "upstream": {
+        "status": 422,
+        "body": {
+          "error": { "message": "criteria private-criteria-CANARY rejected" }
+        }
+      },
+      "returned": { "status": 422, "code": "upstream_rejected" }
+    },
+    {
+      "name": "upstream_400_echoing_the_key",
+      "upstream": {
+        "status": 400,
+        "body": {
+          "error": { "message": "bad key synthetic-decision-key-CANARY" }
+        }
+      },
+      "returned": { "status": 400, "code": "upstream_rejected" }
+    },
+    {
+      "name": "upstream_400_not_json",
+      "upstream": {
+        "status": 400,
+        "body_raw": "private-state-CANARY synthetic-decision-key-CANARY"
+      },
+      "returned": { "status": 400, "code": "upstream_rejected" }
+    },
+    {
+      "name": "upstream_401",
+      "upstream": {
+        "status": 401,
+        "body": {
+          "error": { "message": "invalid key synthetic-decision-key-CANARY" }
+        }
+      },
+      "returned": { "status": 403, "code": "provider_key_rejected" }
+    },
+    {
+      "name": "upstream_403",
+      "upstream": {
+        "status": 403,
+        "body": { "error": { "message": "forbidden" } }
+      },
+      "returned": { "status": 403, "code": "provider_key_rejected" }
+    },
+    {
+      "name": "upstream_402",
+      "upstream": {
+        "status": 402,
+        "body": { "error": { "code": "payment_required", "message": "top up" } }
+      },
+      "returned": { "status": 402, "code": "provider_payment_required" }
+    },
+    {
+      "name": "upstream_404",
+      "upstream": {
+        "status": 404,
+        "body": {
+          "error": { "code": "model_not_found", "message": "no such model" }
+        }
+      },
+      "returned": { "status": 404, "code": "model_not_found" }
+    },
+    {
+      "name": "upstream_408",
+      "upstream": { "status": 408, "body_raw": "" },
+      "returned": { "status": 504, "code": "gateway_timeout" }
+    },
+    {
+      "name": "upstream_413",
+      "upstream": {
+        "status": 413,
+        "body": {
+          "error": { "code": "request_too_large", "message": "too large" }
+        }
+      },
+      "returned": { "status": 413, "code": "request_too_large" }
+    },
+    {
+      "name": "upstream_415",
+      "upstream": { "status": 415, "body_raw": "" },
+      "returned": { "status": 502, "code": "upstream_error" }
+    },
+    {
+      "name": "upstream_429_retry_after",
+      "upstream": {
+        "status": 429,
+        "headers": { "Retry-After": "7" },
+        "body": {
+          "error": { "code": "rate_limit_exceeded", "message": "slow down" }
+        }
+      },
+      "returned": {
+        "status": 429,
+        "code": "rate_limit_exceeded",
+        "retry_after": "7"
+      }
+    },
+    {
+      "name": "upstream_429_bad_retry_after_dropped",
+      "upstream": {
+        "status": 429,
+        "headers": { "Retry-After": "soon private-state-CANARY" },
+        "body_raw": ""
+      },
+      "returned": { "status": 429, "code": "rate_limit_exceeded" }
+    },
+    {
+      "name": "upstream_500",
+      "upstream": {
+        "status": 500,
+        "body": { "error": { "message": "private-state-CANARY" } }
+      },
+      "returned": { "status": 502, "code": "upstream_error" }
+    },
+    {
+      "name": "upstream_501",
+      "upstream": {
+        "status": 501,
+        "body": { "error": { "code": "not_supported", "message": "no" } }
+      },
+      "returned": { "status": 502, "code": "upstream_error" }
+    },
+    {
+      "name": "upstream_502",
+      "upstream": { "status": 502, "body_raw": "bad gateway" },
+      "returned": { "status": 502, "code": "upstream_error" }
+    },
+    {
+      "name": "upstream_503_retry_after",
+      "upstream": {
+        "status": 503,
+        "headers": { "Retry-After": "5" },
+        "body_raw": ""
+      },
+      "returned": {
+        "status": 503,
+        "code": "provider_overloaded",
+        "retry_after": "5"
+      }
+    },
+    {
+      "name": "upstream_504",
+      "upstream": { "status": 504, "body_raw": "" },
+      "returned": { "status": 504, "code": "gateway_timeout" }
+    },
+    {
+      "name": "upstream_529_retry_after",
+      "upstream": {
+        "status": 529,
+        "headers": { "Retry-After": "11" },
+        "body_raw": "overloaded"
+      },
+      "returned": {
+        "status": 503,
+        "code": "provider_overloaded",
+        "retry_after": "11"
+      }
+    },
+    {
+      "name": "upstream_200_not_json",
+      "upstream": { "status": 200, "body_raw": "private-state-CANARY" },
+      "returned": { "status": 502, "code": "upstream_invalid_response" }
+    },
+    {
+      "name": "upstream_200_not_an_object",
+      "upstream": { "status": 200, "body_raw": "[]" },
+      "returned": { "status": 502, "code": "upstream_invalid_response" }
+    },
+    {
+      "name": "upstream_301_redirect_not_followed",
+      "upstream": {
+        "status": 301,
+        "headers": { "Location": "https://elsewhere.example/v1/systemone" },
+        "body_raw": ""
+      },
+      "returned": { "status": 502, "code": "upstream_error" }
+    }
+  ],
+  "gateway_error_cases": [
+    {
+      "name": "licence_token",
+      "returned": { "status": 403, "code": "byok_required" }
+    },
+    {
+      "name": "internal_key_without_provider_key",
+      "returned": { "status": 403, "code": "byok_required" }
+    },
+    {
+      "name": "no_org_credential",
+      "returned": { "status": 403, "code": "decision_provider_not_configured" }
+    },
+    {
+      "name": "provider_key_header_on_customer_key",
+      "returned": { "status": 400, "code": "provider_key_header_not_allowed" }
+    },
+    {
+      "name": "credential_saved_with_wrong_format",
+      "returned": { "status": 403, "code": "decision_provider_wrong_format" }
+    },
+    {
+      "name": "body_format_not_the_providers",
+      "returned": { "status": 422, "code": "format_mismatch" }
+    },
+    {
+      "name": "body_over_the_cap",
+      "returned": { "status": 413, "code": "request_too_large" }
+    }
+  ]
+}

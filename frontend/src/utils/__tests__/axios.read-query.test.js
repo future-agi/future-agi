@@ -117,11 +117,13 @@ afterEach(() => {
 
 describe("opt-in query read transport", () => {
   it("declares the enabled POST reads, not a generic POST-to-list rule", () => {
+    // 15 Observe and catalog reads, plus Instant eval's rows and export,
+    // whose selections can outgrow a URL.
     expect(
       Object.values(OPENAPI_CONTRACT.endpoints).filter(
         (op) => op.post?.readQueryPost,
       ),
-    ).toHaveLength(15);
+    ).toHaveLength(17);
     expect(readQuery).toBeTypeOf("function");
   });
   it.each(["metrics", "filter_values"])(

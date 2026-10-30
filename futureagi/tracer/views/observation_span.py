@@ -3903,10 +3903,20 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         max_traces: int | None = None,
         max_spans: int | None = None,
     ) -> list:
-        """Session-level paths: session fields + ``traces.<i>.<trace_field>``
-        + ``traces.<i>.spans.<j>.<key>`` up to the observed max traces-per-
-        session and spans-per-trace."""
-        paths = list(self._SESSION_PUBLIC_FIELDS)
+        """Session-level paths: session fields, the whole conversation
+        (``transcript``, and ``transcript_full`` with tool calls) +
+        ``traces.<i>.<trace_field>`` + ``traces.<i>.spans.<j>.<key>`` up to
+        the observed max traces-per-session and spans-per-trace."""
+        from tracer.utils.eval import (
+            SESSION_FULL_TRANSCRIPT_FIELD,
+            SESSION_TRANSCRIPT_FIELD,
+        )
+
+        paths = [
+            *self._SESSION_PUBLIC_FIELDS,
+            SESSION_TRANSCRIPT_FIELD,
+            SESSION_FULL_TRANSCRIPT_FIELD,
+        ]
         if max_traces is None:
             max_traces = self._max_traces_per_session(project_id)
         if max_spans is None:

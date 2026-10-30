@@ -13,11 +13,14 @@ export const CAPABILITY = Object.freeze({
   ERROR_FEED: "error_feed",
   FALCON_AI: "falcon_ai",
   TURING_MODELS: "turing_models",
+  JEV_MODELS: "jev_models",
   PROTECT: "protect",
   VOICE_SIM: "voice_sim",
   AGENTIC_EVAL: "agentic_eval",
   SYNTHETIC_DATA: "synthetic_data",
   OPTIMIZATION: "optimization",
+  INSTANT_EVAL: "instant_eval",
+  INSIGHTS: "insights",
 });
 
 export function useCapabilities() {
@@ -60,11 +63,24 @@ export function useFeatureAllowed(featureId) {
  * upsell copy when the answer isn't a real denial.
  */
 export function useFeatureLocked(featureId) {
-  const { allowed, reasonCode, isLoading, isError } = useFeatureAllowed(featureId);
+  const { allowed, reasonCode, isLoading, isError } =
+    useFeatureAllowed(featureId);
   return {
     locked: isLoading || !allowed,
     reasonCode,
     isLoading,
     isError,
   };
+}
+
+/**
+ * A confirmed denial: capabilities loaded, the fetch didn't fail, and the
+ * feature isn't allowed. For marking an entry point that still opens (onto
+ * its upgrade gate), so it never shows while loading or after a failed fetch.
+ *
+ *   const insightsDenied = useFeatureDenied(CAPABILITY.INSIGHTS);
+ */
+export function useFeatureDenied(featureId) {
+  const { allowed, isLoading, isError } = useFeatureAllowed(featureId);
+  return !isLoading && !isError && !allowed;
 }

@@ -14,6 +14,7 @@ const FewShotExamples = ({
   selectedDatasets = [],
   onChange,
   disabled = false,
+  isJevModel = false,
 }) => {
   const { data: datasets = [], isLoading } = useQuery({
     queryKey: ["datasets-for-fewshot"],
@@ -30,7 +31,9 @@ const FewShotExamples = ({
           Few-shot Examples
         </Typography>
         <Typography variant="caption" color="text.secondary">
-          Select datasets to guide the LLM judge with example evaluations
+          {isJevModel
+            ? "Jev does not support few-shot examples. Your selected datasets are preserved."
+            : "Select datasets to guide the LLM judge with example evaluations"}
         </Typography>
       </Box>
 
@@ -50,9 +53,9 @@ const FewShotExamples = ({
             .filter(Boolean)
         }
         onChange={(_, newVal) => onChange(newVal)}
-        disabled={disabled}
+        disabled={disabled || isJevModel}
         sx={
-          disabled
+          disabled || isJevModel
             ? {
                 cursor: "not-allowed",
                 "& .MuiInputBase-root": { cursor: "not-allowed" },
@@ -68,7 +71,7 @@ const FewShotExamples = ({
             sx={{
               "& .MuiInputBase-root": {
                 fontSize: "13px",
-                ...(disabled && { cursor: "not-allowed" }),
+                ...((disabled || isJevModel) && { cursor: "not-allowed" }),
               },
             }}
           />
@@ -122,7 +125,7 @@ const FewShotExamples = ({
         noOptionsText="No datasets found"
       />
 
-      {selectedDatasets.length > 0 && (
+      {selectedDatasets.length > 0 && !isJevModel && (
         <Typography
           variant="caption"
           color="text.secondary"
@@ -140,6 +143,7 @@ FewShotExamples.propTypes = {
   selectedDatasets: PropTypes.array,
   onChange: PropTypes.func.isRequired,
   disabled: PropTypes.bool,
+  isJevModel: PropTypes.bool,
 };
 
 export default FewShotExamples;

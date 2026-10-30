@@ -959,6 +959,123 @@
 - UI POST and stored task retain the custom predicate
 - completed task has exactly the matching span in PG and CH, with mock verdict and usage
 
+### EVAL-E2E-006 — Jev models are listed and saved on a Community stack without a licence
+
+**Goal:** See, with nothing stubbed, that Jev evaluator models can be chosen and saved on an unlicensed self-hosted install  
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:171`  
+**Tags:** —
+
+**User steps:**
+
+1. open the evaluator create page on the LLM-As-A-Judge tab
+2. open the model picker and read the Jev group
+3. read each Jev row's plan tooltip label
+4. save a Turing-model evaluator through the create API, then switch it to jev-latest through the update API
+5. create a Jev evaluator through the create API
+
+**Backend state verified:**
+
+- the capabilities API allows jev_models and still denies turing_models for the actor org
+- the provider-status API lists TypeSafe with no key
+- the update to jev-latest answers 200 and the PG template row holds jev-latest in model and config with the validated noul mapping
+- create-v2 with jev-latest answers 200 and stores one row with model jev-latest
+
+**Browser observations:**
+
+- the picker lists exactly Jev 1.13 (pinned) then Jev latest, below FutureAGI Models
+- both Jev rows are enabled, prompt for a TypeSafe API key and carry an empty plan tooltip (a locked row carries "Not included in your plan")
+
+### EVAL-E2E-007 — choosing a Jev model without a TypeSafe key opens the keys drawer on TypeSafe
+
+**Goal:** Choose a Jev evaluator model before saving a TypeSafe key and land in the keys drawer on TypeSafe  
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:269`  
+**Tags:** —
+
+**User steps:**
+
+1. open the evaluator create page on the LLM-As-A-Judge tab and open the model picker
+2. choose Jev latest
+3. type into the TypeSafe API key field without adding it
+
+**Backend state verified:**
+
+- the provider-status API reports no TypeSafe key before and after, and the drawer sent no API-key write
+
+**Browser observations:**
+
+- both Jev rows are enabled and prompt for a TypeSafe API key
+- choosing Jev latest closes the picker and opens the keys drawer with TypeSafe as its first provider
+- the drawer takes input (Add enables) and the evaluator model stays unselected
+
+### EVAL-E2E-008 — a Jev pass/fail evaluator keeps its model, output type and criteria after reload
+
+**Goal:** Author a Jev pass/fail evaluator in the UI and find its model, output type and criteria intact after reload (TypeSafe key faked in the browser)  
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:340`  
+**Tags:** —
+
+**User steps:**
+
+1. FAKE: the browser's provider-status read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe
+2. author an LLM-As-A-Judge evaluator and choose Jev latest
+3. keep Pass/fail and describe a pass and a fail
+4. save the evaluation
+5. reload its detail page
+
+**Backend state verified:**
+
+- PG keeps the validated noul mapping with both criteria, Pass/Fail output, org/workspace scope, model jev-latest and an identical V1 snapshot
+
+**Browser observations:**
+
+- the publish request carries jev-latest, pass_fail and both criteria
+- after reload the pill reads Jev latest, Pass/fail is selected and both criteria are filled
+
+### EVAL-E2E-009 — a Jev choices evaluator keeps its authored label order and scores after reload
+
+**Goal:** Author a Jev choices evaluator whose labels are not shortest-first and find their order and scores intact after reload (TypeSafe key faked in the browser)  
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:395`  
+**Tags:** —
+
+**User steps:**
+
+1. FAKE: the browser's provider-status read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe
+2. author an LLM-As-A-Judge evaluator and choose Jev latest
+3. choose Choices and enter Resolved (Pass), Escalated (Neutral), No (Fail), describing Escalated
+4. save the evaluation
+5. reload its detail page
+
+**Backend state verified:**
+
+- PG choice_scores holds the three scores with jsonb keys shortest-first, while choices and the validated mapping keep Resolved, Escalated, No with the Escalated description; V1 snapshot identical
+
+**Browser observations:**
+
+- the publish request carries jev-latest, deterministic and the labels in authored order
+- after reload the rows read Resolved, Escalated, No as Pass, Neutral, Fail and the description is kept
+
+### EVAL-E2E-010 — a Jev scoring evaluator keeps its four ordered levels after reload
+
+**Goal:** Author a Jev scoring evaluator with four ordered rubric levels and find them intact after reload (TypeSafe key faked in the browser)  
+**Spec:** `flows/evals/jev-evaluator-models.spec.ts:474`  
+**Tags:** —
+
+**User steps:**
+
+1. FAKE: the browser's provider-status read shows a TypeSafe key on file, so the picker selects Jev; no key is stored and nothing calls TypeSafe
+2. author an LLM-As-A-Judge evaluator and choose Jev latest
+3. choose Scoring and add four ordered levels
+4. save the evaluation
+5. reload its detail page
+
+**Backend state verified:**
+
+- PG keeps the validated score mapping with the four levels in order, no choice scores and an identical V1 snapshot
+
+**Browser observations:**
+
+- the publish request carries jev-latest, percentage and the four levels
+- after reload Scoring is selected and the four levels read back in order
+
 ## gateway
 
 ### GW-E2E-001 — gateway traffic is filtered by the application that sent it
@@ -1834,6 +1951,60 @@
 - B: actual filter/sort requests and two complete pages equal the canonical usage oracle with exact total, stable ties and no duplicates
 - C: trace/span/session API precision and UI displays retain positive subprecision costs, nested 18, equal independent calls and parent-only usage
 - D: session first-generation messages and Users UI/API identities equal the scoped storage facts
+
+### OBS-E2E-053 — without a licence, Ask a question opens the Instant eval upgrade page and its API answers 402
+
+**Goal:** Try Instant eval on a self-hosted install with no Enterprise licence and be shown its upgrade page instead of the feature (nothing stubbed)  
+**Spec:** `flows/observe/instant-eval-insights-gates.spec.ts:106`  
+**Tags:** —
+
+**User steps:**
+
+1. create an Observe project through the API
+2. open the project's Traces view and its Evaluate menu
+3. choose Ask a question
+4. open the Ask page from a bookmarked link
+5. post an Instant eval estimate for the project through the API
+
+**Backend state verified:**
+
+- the project row exists in PG tracer_project under the actor org
+- the capabilities API denies instant_eval with LICENSE_MISSING
+- the estimate API answers 402 with upgrade_required, code LICENSE_MISSING and feature instant_eval
+
+**Browser observations:**
+
+- the Evaluate menu lists Ask a question, Find patterns, Add evaluators, and only the first two carry the Enterprise mark
+- Ask a question lands on /observe/:id/ask showing the Instant eval upgrade page, its upgrade link and the Jev footnote
+- the bookmarked /ask link shows the same upgrade page
+- the browser never requests an Instant eval endpoint
+
+### OBS-E2E-054 — without a licence, Find patterns opens the Insights upgrade page and its API answers 402
+
+**Goal:** Try Insights on a self-hosted install with no Enterprise licence and be shown its upgrade page instead of the feature (nothing stubbed)  
+**Spec:** `flows/observe/instant-eval-insights-gates.spec.ts:168`  
+**Tags:** —
+
+**User steps:**
+
+1. create an Observe project through the API
+2. open the project's Traces view and its Evaluate menu
+3. choose Find patterns
+4. open the Insights page from a bookmarked link
+5. list the project's Insights reports through the API
+
+**Backend state verified:**
+
+- the project row exists in PG tracer_project under the actor org
+- the capabilities API denies insights with LICENSE_MISSING
+- the report list API answers 402 with upgrade_required, code LICENSE_MISSING and feature insights
+
+**Browser observations:**
+
+- the Evaluate menu lists Ask a question, Find patterns, Add evaluators, and only the first two carry the Enterprise mark
+- Find patterns lands on /observe/:id/insights showing the Insights upgrade page and its upgrade link
+- the bookmarked /insights link shows the same upgrade page
+- the browser never requests an Insights endpoint
 
 ## prompts
 

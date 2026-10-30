@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   catalogueIsResponsesOnly,
+  decisionModelsFor,
   defaultSelectableModels,
   responsesOnlyModelSet,
+  withDecisionModels,
 } from "./modelCompatibility";
 
 // The live Perplexity catalogue, 2026-10-06: 6 of its own plus 45 resold. Every
@@ -81,5 +83,85 @@ describe("defaultSelectableModels", () => {
   it("covers everything for a provider with no rule", () => {
     const models = ["gpt-4o", "gpt-4o-mini"];
     expect(defaultSelectableModels(models, { providerName: "openai" })).toEqual(models);
+  });
+});
+
+describe("System One providers", () => {
+  // The Perplexity Decider lives on the chat API's host, so only the format
+  // tells the two apart.
+  const decider = {
+    providerName: "perplexity-decider",
+    baseUrl: "https://api.perplexity.ai",
+    apiFormat: "systemone",
+  };
+
+  it("are never read as a Responses-only catalogue", () => {
+    expect(catalogueIsResponsesOnly(decider)).toBe(false);
+    expect(
+      catalogueIsResponsesOnly({ ...decider, apiFormat: "typesafe" }),
+    ).toBe(false);
+    // The same host on the chat format still is.
+    expect(catalogueIsResponsesOnly({ ...decider, apiFormat: "openai" })).toBe(
+      true,
+    );
+  });
+
+  it("keep all of their models tag-free and in Select All", () => {
+    const models = ["pplx-decider-v1.1-27b", "pplx-decider-v1-27b"];
+    expect(responsesOnlyModelSet(models, decider).size).toBe(0);
+    expect(defaultSelectableModels(models, decider)).toEqual(models);
+  });
+
+  it("get no extra decision models, since their whole list is decisions", () => {
+    expect(
+      decisionModelsFor({ providerName: "openai", apiFormat: "systemone" }),
+    ).toEqual([]);
+  });
+});
+
+describe("decision models on a chat provider", () => {
+  it("offers gpt-6-luna for OpenAI, by name or by host", () => {
+    expect(decisionModelsFor({ providerName: "openai" })).toEqual([
+      "gpt-6-luna",
+    ]);
+    expect(decisionModelsFor({ baseUrl: "https://api.openai.com/v1" })).toEqual(
+      ["gpt-6-luna"],
+    );
+  });
+
+  it("offers nothing for other providers", () => {
+    expect(decisionModelsFor({ providerName: "anthropic" })).toEqual([]);
+    expect(
+      decisionModelsFor({ baseUrl: "https://api.groq.com/openai/v1" }),
+    ).toEqual([]);
+    expect(decisionModelsFor({})).toEqual([]);
+  });
+
+  it("adds gpt-6-luna to a working listing once, after the listed models", () => {
+    const context = { providerName: "openai" };
+    expect(withDecisionModels(["gpt-4o", "gpt-4o-mini"], context)).toEqual([
+      "gpt-4o",
+      "gpt-4o-mini",
+      "gpt-6-luna",
+    ]);
+    expect(withDecisionModels(["gpt-6-luna", "gpt-4o"], context)).toEqual([
+      "gpt-6-luna",
+      "gpt-4o",
+    ]);
+  });
+
+  it("adds nothing to an empty listing, so it never vouches for a key", () => {
+    expect(withDecisionModels([], { providerName: "openai" })).toEqual([]);
+    expect(withDecisionModels(undefined, { providerName: "openai" })).toEqual(
+      [],
+    );
+  });
+
+  it("leaves gpt-6-luna out of Select All", () => {
+    expect(
+      defaultSelectableModels(["gpt-4o", "gpt-6-luna"], {
+        providerName: "openai",
+      }),
+    ).toEqual(["gpt-4o"]);
   });
 });

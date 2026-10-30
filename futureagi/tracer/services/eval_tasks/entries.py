@@ -15,6 +15,7 @@ from copy import deepcopy
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+import structlog
 from django.db import transaction
 from django.utils import timezone
 
@@ -31,6 +32,8 @@ from tracer.services.eval_tasks.config_hash import resolved_config_hash
 if TYPE_CHECKING:
     from tracer.models.eval_task import EvalTask
     from tracer.services.clickhouse.v2.span_reader import CHSpanReader
+
+logger = structlog.get_logger(__name__)
 
 _TARGET_TYPE = {
     RowType.SPANS: EvalTargetType.SPAN,
@@ -398,7 +401,27 @@ def mark_terminal(
     epoch = epoch if epoch is not None else _engine_entry_epoch.get()
     if epoch is not None:
         fence["updated_at"] = epoch
-    return EvalLogger.objects.filter(**fence).update(**fields) > 0
+    landed = EvalLogger.objects.filter(**fence).update(**fields) > 0
+    if landed:
+        _record_instant_answer(entry.id, entry.eval_task_id)
+    return landed
+
+
+def _record_instant_answer(entry_id, task_id) -> None:
+    """Instant eval keeps each row's answer in a narrow table of its own (see
+    ``instant_eval_answers``); copy this one over. Every other eval task's
+    entry costs no SQL here. Never fails the entry: a missed copy is caught
+    up when the run finishes."""
+    from tracer.services.instant_eval_answers import is_instant_task, record_answer
+
+    try:
+        if not task_id or not is_instant_task(task_id):
+            return
+        # A savepoint, so a failed copy can't break a surrounding transaction.
+        with transaction.atomic():
+            record_answer(entry_id)
+    except Exception:
+        logger.warning("instant_eval_answer_copy_failed", exc_info=True)
 
 
 def _resolve_entry_fks(
