@@ -721,11 +721,16 @@ class StandaloneStateObserver:
         HostSizeObservation out. Sizing is NOT release admission/qualification.
         The destination is the enrolled BackupConfiguration.destination.
         """
-        from .contracts import TransitionMeasurements
+        from .contracts import BootstrapEnvelopeMeasurement, TransitionMeasurements
         try:
             require(isinstance(measurements, TransitionMeasurements), ReasonCode.RESTORE_CAPACITY_UNKNOWN)
-            pg = sorted({t.table for m in measurements.migration_measurements if m.engine == "postgres" for t in m.tables})
-            ch = sorted({t.table for m in measurements.migration_measurements if m.engine == "clickhouse" for t in m.tables})
+            selected = measurements.migration_measurements
+            if isinstance(selected, BootstrapEnvelopeMeasurement):
+                pg = sorted({t.table for t in selected.tables if t.engine == "postgres"})
+                ch = sorted({t.table for t in selected.tables if t.engine == "clickhouse"})
+            else:
+                pg = sorted({t.table for m in selected if m.engine == "postgres" for t in m.tables})
+                ch = sorted({t.table for m in selected if m.engine == "clickhouse" for t in m.tables})
             _table_requests(pg, ch)
             inst = bounded_installation(installation, self.timeout)
             binding = self.registration.binding

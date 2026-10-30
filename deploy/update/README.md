@@ -439,12 +439,13 @@ the user who opted in.
 **No published release qualifies for automatic apply yet.** A release applies
 automatically only when its signed manifest carries a compatibility proof with a
 row for your exact installed version, topology, profiles, platform and
-deployment files, produced by a real upgrade-and-restore rehearsal. The release
-pipeline cannot produce that proof until its rehearsal executor is finished
-(today it refuses with `shipping_executor_unavailable`), and releases published
-before this feature carry no proof. Until then an opted-in installation checks,
-verifies and reports new releases, and every release stays notify-only with a
-reason such as `uncertified_release`.
+deployment files, produced by a real upgrade-and-restore rehearsal. The exact-pair
+executor must complete all six suites, retain genuine measurements and verify
+cleanup before producing that proof. Its complete native acceptance is still
+under validation; the passing bounded milestones are not release proofs.
+Releases published before this feature carry no proof. Until a qualified release
+is published, an opted-in installation checks, verifies and reports new releases,
+and every release stays notify-only with a reason such as `uncertified_release`.
 
 ### Supported installations
 
@@ -786,12 +787,21 @@ A failed target is quarantined after restoration, while ambiguous recovery stays
 
 How the time and disk estimates (A6) work:
 
-- Rates come only from the signed proof row for your exact transition: backup
-  and restore throughput (measured in every rehearsal), and for each pending
-  migration its measured duration and throughput, peak disk amplification and
-  WAL and temporary bytes. Migrations that touch a registered high-volume table
-  are measured at reference scale; others are measured as executed in the normal
-  rehearsal.
+- Measurements come only from the signed proof row for your exact transition.
+  Backup and restore throughput are measured in every rehearsal. Migration
+  evidence is either an exact per-migration measurement list or the explicitly
+  tagged `normal-bootstrap-envelope-v1` record: a measured whole normal target
+  start and readiness interval, with its exact ordered pending plan and table
+  scope. The envelope is not an invented per-migration rate; admission charges
+  its whole duration and observed disk growth, WAL and temporary-space peaks.
+  Resource samples are bounded observations, not a guarantee that every spike
+  between samples was captured.
+- Only registered high-volume tables touched by the pending migrations are
+  seeded to reference scale. Other migrations still execute within the measured
+  normal bootstrap. The producer compares the reference table mapping with an
+  independent pre-start target-image loader probe; an omitted mapping is not an
+  empty plan. Repeated use of the same reference table across migrations remains
+  refused until intermediate-size bounds are supported.
 - Your sizes come from the running installation: the row counts and bytes of the
   tables the migrations touch, the three volumes' sizes and the free bytes of the
   backup directory and of Docker's data filesystem. A touched table with more
@@ -1067,13 +1077,15 @@ git, merge env settings, install dependencies or restore databases.
 
 ### Restore qualification and daemon image capacity
 
-**Qualification is not finished in this development tree.** The release
-producer refuses to issue automatic eligibility (`shipping_executor_unavailable`)
-until its rehearsal executor runs the whole upgrade-and-restore rehearsal on the
-real product images. That executor is being built in milestones on native amd64
-GitHub runners. Component and fake-Docker results are not product
-qualification, and the notify-only refusal must not be bypassed to make those
-jobs green.
+**Complete qualification is still under native validation in this development
+tree.** The release producer issues automatic eligibility only after the exact
+source/target executor runs all six suites on real product images, validates the
+raw measurements and confirms cleanup. Bounded M1–M5 milestones have passed on
+native amd64 GitHub runners, but their outputs remain explicitly nonqualifying.
+Component tests, fake-Docker results and stage-status JSON are not release
+proofs; a missing measurement or failed assertion must never be waived to make
+acceptance green. An unavailable executor reports `shipping_executor_unavailable`;
+missing or failed suites and measurements remain explicit refusals.
 
 Generated-baseline automatic apply uses authenticated contract-v2 transition evidence, the fixed
 `standalone-runtime-v2` observer, `automatic-layout.json`, and per-installation A6 estimates. It does not require

@@ -231,7 +231,9 @@ def executor_implementation_sha256(root):
     """
     root = safe_path(Path(root), directory=True)
     paths = [root / 'scripts' / name for name in ('rehearse_update_compatibility.py',
-        'build_update_compatibility_proof.py', 'generate_update_manifest.py', 'update_rehearsal_shipping.py')]
+        'build_update_compatibility_proof.py', 'generate_update_manifest.py', 'update_rehearsal_shipping.py',
+        'update_rehearsal_milestone.py', 'update_rehearsal_qualification.py',
+        'update_rehearsal_resources.py', 'update_rehearsal_spool.py')]
     paths.extend(root / name for name in ('bin/update', 'deploy/standalone/bin/start',
         'deploy/standalone/bin/bootstrap.py', 'deploy/standalone/nginx.conf'))
     base = safe_path(root / 'deploy/update', directory=True)

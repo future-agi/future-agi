@@ -221,7 +221,11 @@ from copy import deepcopy
 import uuid
 m=apps.get_model(a['app_label'],a['model'])
 assert m._meta.db_table==a['table'] and m._meta.managed
-sample=m.objects.order_by(m._meta.pk.name).first()
+query=m.objects
+if a.get('sample_request_id') is not None:
+    assert m._meta.db_table=='agentcc_request_log'
+    query=query.filter(request_id=a['sample_request_id'])
+sample=query.order_by(m._meta.pk.name).first()
 assert sample is not None, 'reference_seed_operation_unavailable'
 count=m.objects.count()
 # Never copy unique values/relationships or synthesize semantically invalid
@@ -229,7 +233,11 @@ count=m.objects.count()
 # seeder, rather than silently removing its constraints or rows.
 for field in m._meta.concrete_fields:
     assert not field.unique or field.primary_key
-assert not m._meta.unique_together and not m._meta.constraints
+assert not m._meta.unique_together
+request_unique = (m._meta.db_table=='agentcc_request_log' and
+    all(c.name=='agentcc_req_log_live_request_uniq' and tuple(c.fields)==('organization','request_id')
+        for c in m._meta.constraints))
+assert not m._meta.constraints or request_unique
 while count<a['rows']:
     batch=[]
     for _ in range(min(500,a['rows']-count)):
@@ -239,6 +247,8 @@ while count<a['rows']:
         if pk.get_internal_type()=='UUIDField': setattr(obj,pk.attname,uuid.uuid4())
         elif pk.get_internal_type() in ('AutoField','BigAutoField','SmallAutoField'): setattr(obj,pk.attname,None)
         else: raise RuntimeError('reference_seed_operation_unavailable')
+        if request_unique and m._meta.constraints:
+            obj.request_id='qualification-'+uuid.uuid4().hex
         batch.append(obj)
     with transaction.atomic(): m.objects.bulk_create(batch,batch_size=500)
     count+=len(batch)
@@ -291,7 +301,9 @@ class ProductWitnesses:
         p = producer()
         p.need(label not in self.namespaces, 'duplicate witness namespace')
         namespace = PREFIX + label + '-' + uuid.uuid4().hex
-        initial_spool = {r['identity']:r['payload_sha256'] for r in self.d.app_python(SPOOL_OPERATION,{'paths':None})}
+        spool = getattr(self.d, 'spool_witness', None)
+        initial_spool = ({r['identity']:r['payload_sha256'] for r in
+            self.d.app_python(SPOOL_OPERATION,{'paths':None})} if spool is None else {})
         account = dict(email=namespace+'@example.test',full_name=namespace,company_name=namespace,
                        password=secrets.token_urlsafe(32))
         self.d._secret_values.add(account['password'])
@@ -314,6 +326,8 @@ class ProductWitnesses:
             'project_type':'observe'})),scopeSpans=[dict(scope={'name':'update-qualification'},spans=[dict(
                 traceId=trace.hex,spanId=span,name=namespace,kind=1,startTimeUnixNano=str(start),
                 endTimeUnixNano=str(start+50000000),attributes=attrs({'qualification.namespace':namespace}),status={'code':1})])])])
+        if spool is not None:
+            spool.pause_delivery()
         self._http('/v1/traces',payload=payload,headers={'X-Api-Key':keys['api_key'],'X-Secret-Key':keys['secret_key']},port='FI_COLLECTOR_OTLP_HTTP_PORT')
         obj = dict(action='create',bucket='qualification-'+uuid.uuid4().hex,key=namespace,
                    body=base64.b64encode(secrets.token_bytes(4096)).decode())
@@ -322,16 +336,30 @@ class ProductWitnesses:
                        payload_sha256=p.sha(base64.b64decode(obj['body'],validate=True))),
                 'S3 witness differs from seeded payload')
         workflow = self.d.app_python(TEMPORAL_OPERATION,dict(action='create',id=namespace))
-        final_spool = self.d.app_python(SPOOL_OPERATION,{'paths':None,'contains':[namespace,trace.hex,str(trace)]})
+        final_spool = (self.d.app_python(SPOOL_OPERATION,{'paths':None,'contains':[namespace,trace.hex,str(trace)]})
+                       if spool is None else [])
         produced = [r['identity'] for r in final_spool if initial_spool.get(r['identity'])!=r['payload_sha256']]
         self.namespaces[label] = dict(namespace=namespace,account=account,headers=headers,trace_id=str(trace),
             span_id=span,object=obj,workflow=workflow,spool_paths=produced)
-        for family in ('collector','telemetry'):
-            if not any(path.startswith('/data/'+family+'/') for path in produced):
-                self.d.corpus.setdefault('witness_gaps',[]).append({'domain':'shared_files','family':family,
-                    'reason':'no_attributable_naturally_produced_spool'})
-        if not produced:
-            raise p.ManualRelease('witness_operation_unavailable')
+        if spool is not None:
+            from scripts.update_rehearsal_spool import ObservedSpoolWitnessError
+            project = str(self._span_row(self.namespaces[label])['project_id'])
+            deadline = time.monotonic() + 60
+            while True:
+                try:
+                    spool.capture(label, namespace, headers['X-Organization-Id'], headers['X-Workspace-Id'], project)
+                    break
+                except ObservedSpoolWitnessError as exc:
+                    if str(exc) != 'attributable observed-catalog spool record unavailable' or time.monotonic() >= deadline:
+                        raise
+                    time.sleep(.25)
+        else:
+            for family in ('collector','telemetry'):
+                if not any(path.startswith('/data/'+family+'/') for path in produced):
+                    self.d.corpus.setdefault('witness_gaps',[]).append({'domain':'shared_files','family':family,
+                        'reason':'no_attributable_naturally_produced_spool'})
+            if not produced:
+                raise p.ManualRelease('witness_operation_unavailable')
         return self.read(label)
 
     def read(self, label):
@@ -346,27 +374,91 @@ class ProductWitnesses:
         }
         result = [dict(domain='postgres_app',identity=identity,origin='product_api',
                        payload_sha256=p.sha(p.canonical_json(payload))) for identity,payload in relational.items()]
-        # Read only the exact collector-created span. timestamps/usage counters
-        # from unrelated background traffic never enter this namespace.
+        span = self._span_row(n)
+        result.append(dict(domain='clickhouse',identity=n['trace_id']+'/'+n['span_id'],origin='collector_ingestion',payload_sha256=p.sha(p.canonical_json(span))))
+        obj = self.d.app_python(S3_OPERATION,dict(n['object'],action='read'))
+        result.append(dict(domain='object_store',origin='bundled_s3_api',**obj))
+        workflow = self.d.app_python(TEMPORAL_OPERATION,dict(action='read',id=n['namespace'],run_id=n['workflow']['run_id']))
+        result.append(dict(domain='temporal',origin='completed_product_workflow',**{k:workflow[k] for k in ('identity','payload_sha256')}))
+        witness = getattr(self.d, 'spool_witness', None)
+        if witness is not None:
+            result.append(witness.read(label))
+        else:
+            spool=self.d.app_python(SPOOL_OPERATION,{'paths':n['spool_paths']})
+            p.equal(sorted(r['identity'] for r in spool),sorted(n['spool_paths']),'product spool disappeared')
+            result.extend(dict(domain='shared_files',origin='product_spool',**r) for r in spool)
+        return sorted(result,key=lambda r:(r['domain'],r['identity']))
+
+    def _span_row(self, namespace):
+        p = producer()
         sql = ("SELECT id, trace_id, name, project_id, service_name, start_time, end_time, "
                "status, attrs_string FROM spans FINAL WHERE trace_id = {trace:String} "
                "AND id = {span:String} FORMAT JSONEachRow")
         deadline = time.monotonic()+120
         while True:
-            rows = self.d.clickhouse(sql,params={'trace':n['trace_id'],'span':n['span_id']})
+            rows = self.d.clickhouse(sql,params={'trace':namespace['trace_id'],'span':namespace['span_id']})
             if rows: break
             p.need(time.monotonic()<deadline, 'collector witness not visible')
             time.sleep(.5)
         p.need(len(rows)==1, 'ambiguous collector witness')
-        result.append(dict(domain='clickhouse',identity=n['trace_id']+'/'+n['span_id'],origin='collector_ingestion',payload_sha256=p.sha(p.canonical_json(rows[0]))))
-        obj = self.d.app_python(S3_OPERATION,dict(n['object'],action='read'))
-        result.append(dict(domain='object_store',origin='bundled_s3_api',**obj))
-        workflow = self.d.app_python(TEMPORAL_OPERATION,dict(action='read',id=n['namespace'],run_id=n['workflow']['run_id']))
-        result.append(dict(domain='temporal',origin='completed_product_workflow',**{k:workflow[k] for k in ('identity','payload_sha256')}))
-        spool=self.d.app_python(SPOOL_OPERATION,{'paths':n['spool_paths']})
-        p.equal(sorted(r['identity'] for r in spool),sorted(n['spool_paths']),'product spool disappeared')
-        result.extend(dict(domain='shared_files',origin='product_spool',**r) for r in spool)
-        return sorted(result,key=lambda r:(r['domain'],r['identity']))
+        return rows[0]
+
+    def assert_absent(self, label):
+        p, n = producer(), self.namespaces[label]
+        absent = self.d.app_python(DJANGO_PREFIX + '''
+from django.contrib.auth import get_user_model
+from accounts.models import Organization, Workspace
+from tracer.models.project import Project
+rows={
+ 'user':get_user_model().objects.filter(email=a['email']).exists(),
+ 'organization':Organization.objects.filter(id=a['organization']).exists(),
+ 'workspace':Workspace.objects.filter(id=a['workspace']).exists(),
+ 'project':Project.no_workspace_objects.filter(name=a['namespace']).exists(),
+}
+print(json.dumps(rows))
+''', dict(email=n['account']['email'], organization=n['headers']['X-Organization-Id'],
+          workspace=n['headers']['X-Workspace-Id'], namespace=n['namespace']))
+        p.equal(absent, dict(user=False, organization=False, workspace=False, project=False),
+                'target-only relational namespace survived restoration')
+        rows = self.d.clickhouse('SELECT id FROM spans FINAL WHERE trace_id={trace:String} '
+            'AND id={span:String} FORMAT JSONEachRow', params={'trace':n['trace_id'],'span':n['span_id']})
+        p.equal(rows, [], 'target-only collector span survived restoration')
+        s3 = S3_OPERATION.split("if a['action']=='create':", 1)[0] + '''
+from botocore.exceptions import ClientError
+try:
+    s.head_object(Bucket=a['bucket'],Key=a['key'])
+except ClientError as exc:
+    assert exc.response['ResponseMetadata']['HTTPStatusCode']==404
+    absent=True
+else:
+    absent=False
+print(json.dumps({'absent':absent}))
+'''
+        p.equal(self.d.app_python(s3, n['object']), {'absent':True},
+                'target-only object survived restoration')
+        temporal = DJANGO_PREFIX + '''
+import asyncio
+from temporalio.service import RPCError, RPCStatusCode
+from tfc.temporal.common.client import get_client
+async def main():
+    client=await get_client()
+    handle=client.get_workflow_handle(a['id'],run_id=a['run_id'])
+    try:
+        await handle.describe()
+    except RPCError as exc:
+        assert exc.status==RPCStatusCode.NOT_FOUND
+        absent=True
+    else:
+        absent=False
+    print(json.dumps({'absent':absent}))
+asyncio.run(main())
+'''
+        p.equal(self.d.app_python(temporal, dict(id=n['namespace'], run_id=n['workflow']['run_id'])),
+                {'absent':True}, 'target-only Temporal workflow survived restoration')
+        spool = getattr(self.d, 'spool_witness', None)
+        p.need(spool is not None and spool.assert_absent(label) is True,
+               'target-only shared-file absence was not observed')
+        return True
 
 
 def copy_retained_files(source, destination, execution):

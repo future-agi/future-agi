@@ -22,7 +22,8 @@ from typing import Any, Mapping, Optional, Tuple
 from .contracts import (AutomationPolicy, PreparedUpdate, ReasonCode, VerificationSnapshot, AuthorisedTransition,
                         BackupSeal, ColdHold, RuntimeObservationV2, RuntimeImage, MigrationEvidence, ContractError,
                         QUALIFICATION_POLICY, PERSISTENT_DOMAINS, installation_binding_hash,
-                        TransitionMeasurements, HostSizeObservation, AutomaticUpdateEstimate, AutomaticUpdateDecision)
+                        TransitionMeasurements, BootstrapEnvelopeMeasurement, HostSizeObservation,
+                        AutomaticUpdateEstimate, AutomaticUpdateDecision)
 from .manifest import ManifestError, canonical_json, manifest_hash, parse_image_ref, parse_version, validate_manifest
 from .settings import DEFAULT_TRUSTED_IDENTITY, DEFAULT_TRUSTED_ISSUER
 
@@ -663,36 +664,48 @@ def estimate_automatic_update(measurements: TransitionMeasurements, host_sizes: 
             return ceiling(f * reference_duration * scale)
 
         migration_seconds, extra_disk = Fraction(0), Fraction(0)
-        touched_tables = set()
-        for migration in measurements.migration_measurements:
-            actual_work, reference_bytes = 0, 0
-            for table in migration.tables:
-                key = (migration.engine, table.table)
-                # Host sizes describe A, not intermediate migration outputs.
-                # The current proof measures input rows/bytes and peak allocation,
-                # but supplies no retained output-row bound. Even amplification=1
-                # cannot prove rows unchanged (a backfill may insert narrow rows).
-                # Reusing A's input or inferring output rows from disk is unsafe.
-                require(key not in touched_tables, ReasonCode.RESTORE_CAPACITY_UNKNOWN)
-                touched_tables.add(key)
-                actual = sizes.get(key)
+        migration_data = measurements.migration_measurements
+        if isinstance(migration_data, BootstrapEnvelopeMeasurement):
+            # A's sizes cannot bound a later migration's input after an earlier
+            # migration changed the same registered reference table.
+            touched_tables = set()
+            for scope in migration_data.migration_tables:
+                for table in scope["tables"]:
+                    key = (table["engine"], table["table"])
+                    require(key not in touched_tables, ReasonCode.RESTORE_CAPACITY_UNKNOWN)
+                    touched_tables.add(key)
+            for table in migration_data.tables:
+                actual = sizes.get((table.engine, table.table))
                 require(actual is not None, ReasonCode.RESTORE_CAPACITY_UNKNOWN)
-                # A measured rate/amplification and a risk label do not bound
-                # growth above the reference (e.g. joins scale multiplicatively).
-                # The current signed contract has no reviewed scaling bound, so
-                # fail closed on EITHER dimension of ANY table, not an aggregate
-                # or the throughput unit alone. A safety factor is not a bound.
-                for count, reference in ((actual.rows, table.reference_rows), (actual.bytes, table.reference_bytes)):
-                    require(count <= reference, ReasonCode.RESTORE_CAPACITY_UNKNOWN)
-                actual_work += actual.rows if migration.throughput.unit == "rows_per_second" else actual.bytes
-                reference_bytes += table.reference_bytes
-            migration_seconds += f * max(Fraction(migration.duration_seconds),
-                                           Fraction(actual_work) / Fraction(migration.throughput.value))
-            # Within reference inputs keep ALL measured reference allocation;
-            # never downscale row-driven growth, WAL or temp by host bytes/rows.
-            # Retain every peak without assuming cross-migration reclamation.
-            extra_disk += f * ((Fraction(migration.peak_disk_amplification_factor) - 1) * reference_bytes
-                               + migration.wal_bytes + migration.temp_bytes)
+                require(actual.rows <= table.reference_rows and actual.bytes <= table.reference_bytes,
+                        ReasonCode.RESTORE_CAPACITY_UNKNOWN)
+            migration_seconds = f * Fraction(migration_data.duration_seconds)
+            # Disk already includes physical WAL/temp; retaining their observed
+            # peaks again is conservative and does not call them cumulative writes.
+            extra_disk = f * (migration_data.peak_disk_growth_bytes + migration_data.wal_bytes
+                              + migration_data.temp_bytes)
+        else:
+            touched_tables = set()
+            for migration in migration_data:
+                actual_work, reference_bytes = 0, 0
+                for table in migration.tables:
+                    key = (migration.engine, table.table)
+                    # Host sizes describe A, not intermediate migration outputs.
+                    # No retained output-row bound makes repeated input unsafe.
+                    require(key not in touched_tables, ReasonCode.RESTORE_CAPACITY_UNKNOWN)
+                    touched_tables.add(key)
+                    actual = sizes.get(key)
+                    require(actual is not None, ReasonCode.RESTORE_CAPACITY_UNKNOWN)
+                    # Neither a measured rate nor a safety factor bounds scaling.
+                    for count, reference in ((actual.rows, table.reference_rows), (actual.bytes, table.reference_bytes)):
+                        require(count <= reference, ReasonCode.RESTORE_CAPACITY_UNKNOWN)
+                    actual_work += actual.rows if migration.throughput.unit == "rows_per_second" else actual.bytes
+                    reference_bytes += table.reference_bytes
+                migration_seconds += f * max(Fraction(migration.duration_seconds),
+                                               Fraction(actual_work) / Fraction(migration.throughput.value))
+                # Retain every reference peak without assuming reclamation.
+                extra_disk += f * ((Fraction(migration.peak_disk_amplification_factor) - 1) * reference_bytes
+                                   + migration.wal_bytes + migration.temp_bytes)
         backup, restore = (transfer_seconds(t) for t in (measurements.backup_measurement, measurements.restore_measurement))
         migration, growth = ceiling(migration_seconds), ceiling(extra_disk)
         reserve = volume_bytes * f + policy.disk_watermark_reserve_bytes

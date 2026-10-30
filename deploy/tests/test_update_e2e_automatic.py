@@ -20,7 +20,7 @@ if str(ROOT) not in sys.path:
 from deploy.tests.update_e2e import harness as e2e
 from deploy.tests.update_e2e.real_automatic import (
     CRON_PERIOD_SECONDS, FAULT_SEAM, acceptance_policy, acceptance_reserve_seconds, policy_cli_arguments,
-    read_attempt_ledger, read_event_records, scheduler_wait_budget)
+    pending_migration_names, read_attempt_ledger, read_event_records, scheduler_wait_budget)
 from deploy.update.baseline import BaselineStore
 from deploy.update.contracts import ReasonCode
 from deploy.update.enrollment import AUTOMATIC_UPDATE_DISCLOSURE
@@ -153,7 +153,7 @@ class AutomaticLifecycleE2E(unittest.TestCase):
                     previous_migrations = checkout.verify_installed_release(
                         publisher._prepared[version]['manifest'], receipts[0], migration)
                     new_names = set(map(tuple, previous_migrations['applied'])) - before_names
-                    pending_names = {(m['app_label'], m['name']) for m in row['migration_measurements']}
+                    pending_names = pending_migration_names(row['migration_measurements'])
                     self.assertEqual(new_names, pending_names,
                         'qualified pending migrations must actually be applied by the target')
                     self.assertEqual(len(new_names), migration['target_pending_plan_count'])

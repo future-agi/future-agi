@@ -37,6 +37,7 @@ __all__ = [
     "QUALIFICATION_POLICY", "RESTORE_PROCEDURE_ID", "BACKUP_INVENTORY_VERSION", "HOST_OBSERVATION_CONTRACT",
     "RUNTIME_ACTIVATION_CONTRACT", "PERSISTENT_DOMAINS", "AUTOMATIC_POLICY_BOUNDS", "installation_binding_hash",
     "MigrationEngine", "MigrationRiskClass", "MigrationTableMeasurement", "MigrationThroughput", "MigrationMeasurement",
+    "BootstrapEnvelopeTableMeasurement", "BootstrapEnvelopeMeasurement",
     "VolumeTransferMeasurement", "TransitionMeasurements", "HostTableSize", "HostSizeObservation",
     "AutomaticUpdateEstimate", "AutomaticUpdateDecision", "AUTOMATIC_VOLUMES", "pending_migration_plan_hash",
 ]
@@ -551,6 +552,80 @@ class MigrationMeasurement:
 
 
 @dataclass(frozen=True)
+class BootstrapEnvelopeTableMeasurement:
+    engine: MigrationEngine
+    table: str
+    reference_rows: int
+    reference_bytes: int
+
+    def __post_init__(self) -> None:
+        _require(self.engine in get_args(MigrationEngine))
+        _table_name(self.table)
+        for name in ("reference_rows", "reference_bytes"):
+            object.__setattr__(self, name, _wire_integer(getattr(self, name)))
+
+
+@dataclass(frozen=True)
+class BootstrapEnvelopeMeasurement:
+    """One measured whole-bootstrap envelope, not per-migration throughput.
+
+    WAL/temp are observed physical peaks; sampled peaks do not bound spikes
+    between observations. migration_tables is the registered reference-table
+    intersection of each migration's independent full scope probe, in plan order.
+    The producer must validate that raw probe against the fixed registry before
+    reduction; signed type validation alone cannot prove the probe occurred.
+    """
+
+    measurement_basis: Literal["normal-bootstrap-envelope-v1"]
+    pending_plan: Tuple[Mapping[str, str], ...]
+    migration_tables: Tuple[Mapping[str, Any], ...]
+    tables: Tuple[BootstrapEnvelopeTableMeasurement, ...]
+    duration_seconds: float
+    peak_disk_growth_bytes: int
+    wal_bytes: int
+    temp_bytes: int
+    peak_memory_bytes: int
+
+    def __post_init__(self) -> None:
+        _require(self.measurement_basis == "normal-bootstrap-envelope-v1")
+        _require(isinstance(self.pending_plan, (tuple, list)) and len(self.pending_plan) <= 100000)
+        pending_migration_plan_hash(self.pending_plan)  # Shape, identity and uniqueness.
+        plan = tuple(MappingProxyType(dict(item)) for item in self.pending_plan)
+        _require(isinstance(self.tables, (tuple, list)) and len(self.tables) <= 256)
+        tables = tuple(BootstrapEnvelopeTableMeasurement(**item) if isinstance(item, Mapping) else item
+                       for item in self.tables)
+        _require(all(isinstance(item, BootstrapEnvelopeTableMeasurement) for item in tables))
+        _require(len({(item.engine, item.table) for item in tables}) == len(tables))
+        _require(isinstance(self.migration_tables, (tuple, list)) and len(self.migration_tables) == len(plan))
+        scopes = []
+        scope_union = set()
+        for identity, scope in zip(plan, self.migration_tables):
+            _require(isinstance(scope, Mapping) and set(scope) == {"app_label", "name", "tables"})
+            _require(scope["app_label"] == identity["app_label"] and scope["name"] == identity["name"])
+            _require(isinstance(scope["tables"], (tuple, list)) and len(scope["tables"]) <= 256)
+            scope_tables = []
+            keys = set()
+            for table in scope["tables"]:
+                _require(isinstance(table, Mapping) and set(table) == {"engine", "table"})
+                _require(table["engine"] in get_args(MigrationEngine))
+                _table_name(table["table"])
+                key = (table["engine"], table["table"])
+                _require(key not in keys)
+                keys.add(key)
+                scope_tables.append(MappingProxyType(dict(table)))
+            scope_union.update(keys)
+            scopes.append(MappingProxyType({"app_label": identity["app_label"], "name": identity["name"],
+                                            "tables": tuple(scope_tables)}))
+        _require(scope_union == {(item.engine, item.table) for item in tables})
+        _measurement_number(self.duration_seconds, exclusive=True)
+        for name in ("peak_disk_growth_bytes", "wal_bytes", "temp_bytes", "peak_memory_bytes"):
+            object.__setattr__(self, name, _wire_integer(getattr(self, name)))
+        object.__setattr__(self, "pending_plan", plan)
+        object.__setattr__(self, "migration_tables", tuple(scopes))
+        object.__setattr__(self, "tables", tables)
+
+
+@dataclass(frozen=True)
 class VolumeTransferMeasurement:
     reference_volume_bytes: Mapping[str, int]
     throughput_bytes_per_second: float
@@ -582,20 +657,26 @@ def pending_migration_plan_hash(identities: Any) -> str:
 @dataclass(frozen=True)
 class TransitionMeasurements:
     migration_evidence: MigrationEvidence
-    migration_measurements: Tuple[MigrationMeasurement, ...]
+    migration_measurements: Union[Tuple[MigrationMeasurement, ...], BootstrapEnvelopeMeasurement]
     backup_measurement: VolumeTransferMeasurement
     restore_measurement: VolumeTransferMeasurement
 
     def __post_init__(self) -> None:
         evidence = MigrationEvidence(**self.migration_evidence) if isinstance(self.migration_evidence, Mapping) else self.migration_evidence
         _require(isinstance(evidence, MigrationEvidence))
-        _require(isinstance(self.migration_measurements, (tuple, list)))
-        measurements = tuple(MigrationMeasurement(**item) if isinstance(item, Mapping) else item
-                             for item in self.migration_measurements)
-        _require(all(isinstance(item, MigrationMeasurement) for item in measurements))
-        _require(len(measurements) == evidence.target_pending_plan_count)
-        _require(pending_migration_plan_hash([{"app_label": m.app_label, "name": m.name} for m in measurements])
-                 == evidence.target_pending_plan_sha256)
+        measurements = self.migration_measurements
+        if isinstance(measurements, Mapping):
+            measurements = BootstrapEnvelopeMeasurement(**measurements)
+        if isinstance(measurements, BootstrapEnvelopeMeasurement):
+            plan = measurements.pending_plan
+        else:
+            _require(isinstance(measurements, (tuple, list)))
+            measurements = tuple(MigrationMeasurement(**item) if isinstance(item, Mapping) else item
+                                 for item in measurements)
+            _require(all(isinstance(item, MigrationMeasurement) for item in measurements))
+            plan = [{"app_label": m.app_label, "name": m.name} for m in measurements]
+        _require(len(plan) == evidence.target_pending_plan_count)
+        _require(pending_migration_plan_hash(plan) == evidence.target_pending_plan_sha256)
         for name in ("backup_measurement", "restore_measurement"):
             item = getattr(self, name)
             item = VolumeTransferMeasurement(**item) if isinstance(item, Mapping) else item

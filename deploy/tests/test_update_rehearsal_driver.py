@@ -468,8 +468,8 @@ class Wave4cDriverRegressionTests(unittest.TestCase):
             def dispatch(name, args):
                 if args.dry_run:
                     args.out.mkdir(mode=0o700)
-                    planned = milestone_plan(args.boot_timeout, name)
-                    planned.update(source_image=args.source_ref,target_image=args.target_ref,
+                    planned = milestone_plan(args.boot_timeout, name if name != 'qualification' else 'source_snapshot')
+                    planned.update(milestone=name,source_image=args.source_ref,target_image=args.target_ref,
                                    platform=args.platform)
                     planned['qualification_suites'] = {suite:('planned' if name==MILESTONES[0] else 'unrun')
                         for suite in rehearsal.SUITES}
@@ -628,8 +628,8 @@ class SourceSnapshotMilestoneTests(unittest.TestCase):
         result = subprocess.run([sys.executable, '-I', str(rehearsal.ROOT/'scripts/rehearse_update_compatibility.py'),
             'qualify', '--help'], capture_output=True, text=True, timeout=30, cwd=str(rehearsal.ROOT))
         self.assertEqual(result.returncode, 0, result.stderr)
-        from scripts.update_rehearsal_milestone import MILESTONES
-        self.assertIn('--through {'+','.join(MILESTONES)+'}', result.stdout)
+        from scripts.update_rehearsal_milestone import BOUNDED_MILESTONES
+        self.assertIn('--through {'+','.join(BOUNDED_MILESTONES)+'}', result.stdout)
         self.assertIn('--dry-run', result.stdout)
         with tempfile.TemporaryDirectory() as temporary:
             out = Path(temporary)/'absent'
@@ -1456,9 +1456,9 @@ class RestoreMilestoneTests(unittest.TestCase):
     def test_all_milestones_plan_and_cli_are_nonqualifying_and_use_fixed_native_leaf(self):
         from scripts import update_rehearsal_milestone as m
         self.assertEqual(m.RESTORE_DIGEST,'sha256:eab0d007debaf55ca2e45bcd936a143cbc95d2f61fd0324eaf8b4be7e0f5ccc9')
-        self.assertEqual(m.MILESTONES,('source_snapshot','target_readiness','failure_restore',
+        self.assertEqual(m.BOUNDED_MILESTONES,('source_snapshot','target_readiness','failure_restore',
                                       'interruption_restore','backup_integrity'))
-        for name in m.MILESTONES[2:]:
+        for name in m.BOUNDED_MILESTONES[2:]:
             with self.subTest(name=name), tempfile.TemporaryDirectory() as temporary:
                 out=Path(temporary)/'out'
                 with mock.patch.object(m,'RestoreMilestone') as construct, mock.patch.object(rehearsal,'command') as command:
@@ -1539,7 +1539,7 @@ class RestoreMilestoneTests(unittest.TestCase):
 
     def test_restore_milestones_execute_prerequisites_on_one_driver(self):
         from scripts import update_rehearsal_milestone as m
-        for name in m.MILESTONES[2:]:
+        for name in m.BOUNDED_MILESTONES[2:]:
             with self.subTest(name=name),tempfile.TemporaryDirectory(dir=str(Path.home())) as temporary:
                 calls=[]
                 driver=SimpleNamespace(deadline=time_limit(),cleanup_verified=False,
@@ -1952,7 +1952,7 @@ class RestoreMilestoneTests(unittest.TestCase):
         from deploy.tests.test_update_release_static import load
         from scripts import update_rehearsal_milestone as m
         workflow=load(rehearsal.ROOT/'.github/workflows/update-rehearsal-milestones.yml')
-        for name in m.MILESTONES[2:]:
+        for name in m.BOUNDED_MILESTONES[2:]:
             with self.subTest(name=name):
                 job=workflow['jobs'][name.replace('_','-')]
                 self.assertNotIn('needs',job)

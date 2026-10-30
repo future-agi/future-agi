@@ -1903,149 +1903,302 @@
                 "pattern": "^[0-9a-f]{64}(?![\\s\\S])$"
               },
               "migration_measurements": {
-                "type": "array",
-                "minItems": 0,
-                "maxItems": 100000,
-                "uniqueItems": true,
-                "items": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "required": [
-                    "app_label",
-                    "name",
-                    "engine",
-                    "tables",
-                    "risk_class",
-                    "duration_seconds",
-                    "throughput",
-                    "peak_disk_amplification_factor",
-                    "wal_bytes",
-                    "temp_bytes"
-                  ],
-                  "properties": {
-                    "app_label": {
-                      "type": "string",
-                      "maxLength": 128,
-                      "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}(?![\\s\\S])$"
-                    },
-                    "name": {
-                      "type": "string",
-                      "maxLength": 128,
-                      "pattern": "^[A-Za-z0-9_]{1,128}(?![\\s\\S])$"
-                    },
-                    "engine": {
-                      "enum": [
-                        "postgres",
-                        "clickhouse"
-                      ]
-                    },
-                    "tables": {
-                      "type": "array",
-                      "maxItems": 256,
-                      "uniqueItems": true,
-                      "items": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "required": [
-                          "table",
-                          "reference_rows",
-                          "reference_bytes"
-                        ],
-                        "properties": {
-                          "table": {
-                            "type": "string",
-                            "maxLength": 129,
-                            "pattern": "^[a-z_][a-z0-9_]{0,63}\\.[a-z_][a-z0-9_]{0,63}(?![\\s\\S])$"
-                          },
-                          "reference_rows": {
-                            "type": "integer",
-                            "minimum": 0,
-                            "maximum": 9007199254740991
-                          },
-                          "reference_bytes": {
-                            "type": "integer",
-                            "minimum": 0,
-                            "maximum": 9007199254740991
-                          }
-                        }
-                      }
-                    },
-                    "risk_class": {
-                      "enum": [
-                        "metadata_only",
-                        "scan",
-                        "rewrite",
-                        "index_build",
-                        "data_backfill",
-                        "other"
-                      ]
-                    },
-                    "duration_seconds": {
-                      "type": "number",
-                      "exclusiveMinimum": 0,
-                      "maximum": 1e+18
-                    },
-                    "throughput": {
+                "oneOf": [
+                  {
+                    "type": "array",
+                    "minItems": 0,
+                    "maxItems": 100000,
+                    "uniqueItems": true,
+                    "items": {
                       "type": "object",
                       "additionalProperties": false,
                       "required": [
-                        "unit",
-                        "value"
+                        "app_label",
+                        "name",
+                        "engine",
+                        "tables",
+                        "risk_class",
+                        "duration_seconds",
+                        "throughput",
+                        "peak_disk_amplification_factor",
+                        "wal_bytes",
+                        "temp_bytes"
                       ],
                       "properties": {
-                        "unit": {
+                        "app_label": {
+                          "type": "string",
+                          "maxLength": 128,
+                          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}(?![\\s\\S])$"
+                        },
+                        "name": {
+                          "type": "string",
+                          "maxLength": 128,
+                          "pattern": "^[A-Za-z0-9_]{1,128}(?![\\s\\S])$"
+                        },
+                        "engine": {
                           "enum": [
-                            "rows_per_second",
-                            "bytes_per_second"
+                            "postgres",
+                            "clickhouse"
                           ]
                         },
-                        "value": {
+                        "tables": {
+                          "type": "array",
+                          "maxItems": 256,
+                          "uniqueItems": true,
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "table",
+                              "reference_rows",
+                              "reference_bytes"
+                            ],
+                            "properties": {
+                              "table": {
+                                "type": "string",
+                                "maxLength": 129,
+                                "pattern": "^[a-z_][a-z0-9_]{0,63}\\.[a-z_][a-z0-9_]{0,63}(?![\\s\\S])$"
+                              },
+                              "reference_rows": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "reference_bytes": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              }
+                            }
+                          }
+                        },
+                        "risk_class": {
+                          "enum": [
+                            "metadata_only",
+                            "scan",
+                            "rewrite",
+                            "index_build",
+                            "data_backfill",
+                            "other"
+                          ]
+                        },
+                        "duration_seconds": {
                           "type": "number",
                           "exclusiveMinimum": 0,
                           "maximum": 1e+18
+                        },
+                        "throughput": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "unit",
+                            "value"
+                          ],
+                          "properties": {
+                            "unit": {
+                              "enum": [
+                                "rows_per_second",
+                                "bytes_per_second"
+                              ]
+                            },
+                            "value": {
+                              "type": "number",
+                              "exclusiveMinimum": 0,
+                              "maximum": 1e+18
+                            }
+                          }
+                        },
+                        "peak_disk_amplification_factor": {
+                          "type": "number",
+                          "minimum": 1,
+                          "maximum": 1000000.0
+                        },
+                        "wal_bytes": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "temp_bytes": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
                         }
-                      }
-                    },
-                    "peak_disk_amplification_factor": {
-                      "type": "number",
-                      "minimum": 1,
-                      "maximum": 1000000.0
-                    },
-                    "wal_bytes": {
-                      "type": "integer",
-                      "minimum": 0,
-                      "maximum": 9007199254740991
-                    },
-                    "temp_bytes": {
-                      "type": "integer",
-                      "minimum": 0,
-                      "maximum": 9007199254740991
+                      },
+                      "allOf": [
+                        {
+                          "if": {
+                            "properties": {
+                              "risk_class": {
+                                "enum": [
+                                  "scan",
+                                  "rewrite",
+                                  "index_build",
+                                  "data_backfill"
+                                ]
+                              }
+                            }
+                          },
+                          "then": {
+                            "properties": {
+                              "tables": {
+                                "minItems": 1
+                              }
+                            }
+                          }
+                        }
+                      ]
                     }
                   },
-                  "allOf": [
-                    {
-                      "if": {
-                        "properties": {
-                          "risk_class": {
-                            "enum": [
-                              "scan",
-                              "rewrite",
-                              "index_build",
-                              "data_backfill"
-                            ]
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "measurement_basis",
+                      "pending_plan",
+                      "migration_tables",
+                      "tables",
+                      "duration_seconds",
+                      "peak_disk_growth_bytes",
+                      "wal_bytes",
+                      "temp_bytes",
+                      "peak_memory_bytes"
+                    ],
+                    "properties": {
+                      "measurement_basis": {
+                        "const": "normal-bootstrap-envelope-v1"
+                      },
+                      "migration_tables": {
+                        "description": "Ordered registered reference-table intersections, derived by validating the independent full scope probe against the fixed registry. Schema and signature validation do not prove that probe occurred. Runtime additionally checks plan identity/order and the table union.",
+                        "type": "array",
+                        "maxItems": 100000,
+                        "uniqueItems": true,
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": ["app_label", "name", "tables"],
+                          "properties": {
+                            "app_label": {
+                              "type": "string",
+                              "maxLength": 128,
+                              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}(?![\\s\\S])$"
+                            },
+                            "name": {
+                              "type": "string",
+                              "maxLength": 128,
+                              "pattern": "^[A-Za-z0-9_]{1,128}(?![\\s\\S])$"
+                            },
+                            "tables": {
+                              "type": "array",
+                              "maxItems": 256,
+                              "uniqueItems": true,
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": ["engine", "table"],
+                                "properties": {
+                                  "engine": {"enum": ["postgres", "clickhouse"]},
+                                  "table": {
+                                    "type": "string",
+                                    "maxLength": 129,
+                                    "pattern": "^[a-z_][a-z0-9_]{0,63}\\.[a-z_][a-z0-9_]{0,63}(?![\\s\\S])$"
+                                  }
+                                }
+                              }
+                            }
                           }
                         }
                       },
-                      "then": {
-                        "properties": {
-                          "tables": {
-                            "minItems": 1
+                      "pending_plan": {
+                        "type": "array",
+                        "maxItems": 100000,
+                        "uniqueItems": true,
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "app_label",
+                            "name"
+                          ],
+                          "properties": {
+                            "app_label": {
+                              "type": "string",
+                              "maxLength": 128,
+                              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,127}(?![\\s\\S])$"
+                            },
+                            "name": {
+                              "type": "string",
+                              "maxLength": 128,
+                              "pattern": "^[A-Za-z0-9_]{1,128}(?![\\s\\S])$"
+                            }
                           }
                         }
+                      },
+                      "tables": {
+                        "type": "array",
+                        "maxItems": 256,
+                        "uniqueItems": true,
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "engine",
+                            "table",
+                            "reference_rows",
+                            "reference_bytes"
+                          ],
+                          "properties": {
+                            "engine": {
+                              "enum": [
+                                "postgres",
+                                "clickhouse"
+                              ]
+                            },
+                            "table": {
+                              "type": "string",
+                              "maxLength": 129,
+                              "pattern": "^[a-z_][a-z0-9_]{0,63}\\.[a-z_][a-z0-9_]{0,63}(?![\\s\\S])$"
+                            },
+                            "reference_rows": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            "reference_bytes": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            }
+                          }
+                        }
+                      },
+                      "duration_seconds": {
+                        "type": "number",
+                        "exclusiveMinimum": 0,
+                        "maximum": 1e+18
+                      },
+                      "peak_disk_growth_bytes": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "wal_bytes": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "temp_bytes": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "peak_memory_bytes": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
                       }
                     }
-                  ]
-                }
+                  }
+                ]
               },
               "backup_measurement": {
                 "type": "object",

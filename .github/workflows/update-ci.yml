@@ -329,8 +329,9 @@ jobs:
           systemctl is-enabled --quiet cron.service
           command -v crontab
           dir="$(mktemp -d "$HOME/fagi-upd-e2e-real-tools.XXXXXX")"
-          printf '#!/bin/sh\nexec docker --context colima-fagi-update compose "$@"\n' > "$dir/docker-compose"
-          chmod 700 "$dir/docker-compose"
+          plugin="$(docker --context colima-fagi-update info --format '{{range .ClientInfo.Plugins}}{{if eq .Name "compose"}}{{.Path}}{{end}}{{end}}')"
+          test -n "$plugin" && test -f "$plugin" && test -x "$plugin"
+          ln -s "$plugin" "$dir/docker-compose"
           echo "$dir" >> "$GITHUB_PATH"
       - name: Ephemeral runner-only Docker Hub mirror and real RepoDigest probe
         # ONLY this disposable GitHub-hosted runner changes daemon configuration.
@@ -478,8 +479,9 @@ jobs:
           systemctl is-enabled --quiet cron.service
           command -v crontab
           dir="$(mktemp -d "$HOME/fagi-upd-e2e-real-tools.XXXXXX")"
-          printf '#!/bin/sh\nexec docker --context colima-fagi-update compose "$@"\n' > "$dir/docker-compose"
-          chmod 700 "$dir/docker-compose"
+          plugin="$(docker --context colima-fagi-update info --format '{{range .ClientInfo.Plugins}}{{if eq .Name "compose"}}{{.Path}}{{end}}{{end}}')"
+          test -n "$plugin" && test -f "$plugin" && test -x "$plugin"
+          ln -s "$plugin" "$dir/docker-compose"
           echo "$dir" >> "$GITHUB_PATH"
       - uses: docker/setup-buildx-action@v3
         with:
@@ -531,8 +533,9 @@ jobs:
           set -euo pipefail
           docker context create colima-fagi-update --docker host=unix:///var/run/docker.sock
           dir="$(mktemp -d "$HOME/fagi-upd-e2e-real-backup-tools.XXXXXX")"
-          printf '#!/bin/sh\nexec docker --context colima-fagi-update compose "$@"\n' > "$dir/docker-compose"
-          chmod 700 "$dir/docker-compose"
+          plugin="$(docker --context colima-fagi-update info --format '{{range .ClientInfo.Plugins}}{{if eq .Name "compose"}}{{.Path}}{{end}}{{end}}')"
+          test -n "$plugin" && test -f "$plugin" && test -x "$plugin"
+          ln -s "$plugin" "$dir/docker-compose"
           echo "$dir" >> "$GITHUB_PATH"
       - name: Execute actual opted-in vendor tests serially, not a skipped discovery
         run: |

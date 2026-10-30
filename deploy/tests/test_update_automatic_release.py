@@ -832,7 +832,8 @@ class ResourceCoverageRegressionTests(unittest.TestCase):
         for change in ('valid', 'missing_reference', 'inflated_reference', 'single_sample', 'three_field_snapshot',
                        'wrong_target', 'wrong_source', 'wrong_platform', 'wrong_image', 'wrong_dependency', 'wrong_layout',
                        'missing_source', 'inflated_transfer', 'archive_counter_inflation', 'wrong_transfer_basis', 'wrong_transfer_generation',
-                       'missing_scope_probe', 'name_derived_scope', 'missing_driver', 'other_run_driver', 'missing_role_transfers'):
+                       'missing_scope_probe', 'name_derived_scope', 'missing_driver', 'other_run_driver',
+                       'missing_harness_digest', 'changed_harness_digest', 'missing_role_transfers'):
             with tempfile.TemporaryDirectory() as tmp:
                 path = Path(tmp)/'evidence'
                 candidate,policy,envelope,_,_ = fixture(path,pending_count=1)
@@ -869,13 +870,16 @@ class ResourceCoverageRegressionTests(unittest.TestCase):
                     database_schemas=dict(postgres='public',clickhouse='default'),
                     pending_migration_tables=copy.deepcopy(corpus['pending_migration_tables']))
                 corpus['qualification_driver'] = dict(run_id=42, candidate_sha256=producer.sha(canonical_json(candidate)),
-                    implementation_sha256=producer.sha((producer.ROOT/'scripts/update_rehearsal_milestone.py').read_bytes()))
+                    implementation_sha256=producer.sha((producer.ROOT/'scripts/update_rehearsal_milestone.py').read_bytes()),
+                    harness_sha256=producer.sha((producer.ROOT/'deploy/tests/update_e2e/real_automatic.py').read_bytes()))
                 if change == 'missing_reference': del corpus['large_volume_reference']
                 elif change == 'missing_scope_probe': del corpus['pending_table_scope_probe']
                 elif change == 'name_derived_scope':
                     corpus['pending_table_scope_probe']['program_sha256'] = 'e'*64
                 elif change == 'missing_driver': del corpus['qualification_driver']
                 elif change == 'other_run_driver': corpus['qualification_driver']['run_id'] = 41
+                elif change == 'missing_harness_digest': del corpus['qualification_driver']['harness_sha256']
+                elif change == 'changed_harness_digest': corpus['qualification_driver']['harness_sha256'] = 'f'*64
                 elif change == 'missing_role_transfers': del corpus['volume_role_transfers']
                 elif change == 'inflated_reference':
                     item = corpus['resource_samples'][0]

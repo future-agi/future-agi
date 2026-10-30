@@ -46,7 +46,7 @@ def acceptance_policy(rows, *, source_boot_seconds=None):
     from math import ceil
     from deploy.update.compatibility import transition_measurements
     from deploy.update.contracts import (AUTOMATIC_POLICY_BOUNDS, POLICY_BOUNDS,
-                                         AutomationPolicy)
+                                         AutomationPolicy, BootstrapEnvelopeMeasurement)
     measurements = [transition_measurements(row) for row in rows]
     if not measurements:
         raise ValueError('measured transition rows required')
@@ -54,6 +54,8 @@ def acceptance_policy(rows, *, source_boot_seconds=None):
         return max(60, max(ceil(2 * Fraction(sum(getattr(m, name).reference_volume_bytes.values())) /
             Fraction(str(getattr(m, name).throughput_bytes_per_second))) + 60 for m in measurements))
     def migration_seconds(measured):
+        if isinstance(measured.migration_measurements, BootstrapEnvelopeMeasurement):
+            return ceil(2*Fraction(str(measured.migration_measurements.duration_seconds)))+60
         total = Fraction(0)
         for item in measured.migration_measurements:
             work = sum(t.reference_rows if item.throughput.unit == 'rows_per_second' else t.reference_bytes
@@ -84,6 +86,23 @@ def acceptance_policy(rows, *, source_boot_seconds=None):
         pull_timeout_seconds=300, stability_period_seconds=STABILITY_SECONDS)
     return replace(policy, mode='apply', enabled=True,
                    tick_timeout_seconds=max(900, policy.required_tick_budget_seconds))
+
+
+def pending_migration_names(measurements):
+    """Identifiers from an already validated legacy list or bootstrap envelope."""
+    if isinstance(measurements, dict):
+        if measurements.get('measurement_basis') != 'normal-bootstrap-envelope-v1':
+            raise ValueError('unknown migration measurement basis')
+        plan = measurements.get('pending_plan')
+    else:
+        plan = measurements
+    if not isinstance(plan, list) or any(not isinstance(row, dict) or
+            not all(isinstance(row.get(key), str) and row[key] for key in ('app_label', 'name')) for row in plan):
+        raise ValueError('invalid measured migration identities')
+    names = {(row['app_label'], row['name']) for row in plan}
+    if len(names) != len(plan):
+        raise ValueError('duplicate measured migration identity')
+    return names
 
 
 # Native ubuntu-24.04 first boot of retained v1.53.0 including ALL migrations:
@@ -695,6 +714,8 @@ print(json.dumps({'identity':a['identity'],'absent':absent}))
         # observation and the producer independently hash this same closure.
         fixed = ('bin/update', 'scripts/rehearse_update_compatibility.py',
                  'scripts/update_rehearsal_shipping.py', 'scripts/build_update_compatibility_proof.py',
+                 'scripts/update_rehearsal_milestone.py', 'scripts/update_rehearsal_qualification.py',
+                 'scripts/update_rehearsal_resources.py', 'scripts/update_rehearsal_spool.py',
                  'scripts/generate_update_manifest.py', 'deploy/standalone/bin/start',
                  'deploy/standalone/bin/bootstrap.py', 'deploy/standalone/nginx.conf')
         deployment = self.source_manifest['deployment']['files'] if self.source_manifest else {}

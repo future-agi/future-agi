@@ -6,6 +6,7 @@ No Docker, network, production keys, release uploads or scheduler changes occur.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import copy
 import hashlib
 import json
@@ -227,6 +228,16 @@ class SessionTests(unittest.TestCase):
         with self.assertRaisesRegex(p.ManualRelease, 'suite_timed_out'):
             self.session.capture(self.executor)
 
+    def test_changed_product_harness_cannot_publish_captured_evidence(self):
+        self.session.prepare_reference(self.executor)
+        all_assertions(self.session)
+        self.session.capture(self.executor)
+        self.executor.cleanup_verified = True
+        self.session.harness_sha256 = 'f'*64
+        with self.assertRaisesRegex(p.RehearsalError, 'harness changed'):
+            self.session.finish()
+        self.assertFalse((self.root/'rows/evidence.json').exists())
+
     def test_changed_executor_and_implementation_are_not_qualified(self):
         self.session.prepare_reference(self.executor)
         all_assertions(self.session)
@@ -240,8 +251,9 @@ class SessionTests(unittest.TestCase):
         self.assertFalse((self.root/'rows/evidence.json').exists())
 
 
+@contextmanager
 def six_suite_plan(name, source_image, target_image, platform='linux/amd64'):
-    """Patch ONE milestone's job plan to plan all six suites (SYNTHETIC)."""
+    """Synthetic stage-only adapter: exactly one selected plan, no real executor."""
     real = stages.plan
     def plan(boot_timeout=4200, through='source_snapshot'):
         result = real(boot_timeout, through)
@@ -249,7 +261,9 @@ def six_suite_plan(name, source_image, target_image, platform='linux/amd64'):
             result.update(qualification_suites=dict(p.SIX_SUITES_PLANNED), source_image=source_image,
                           target_image=target_image, platform=platform)
         return result
-    return mock.patch.object(stages, 'plan', side_effect=plan)
+    with mock.patch.object(stages, 'MILESTONES', stages.BOUNDED_MILESTONES), \
+         mock.patch.object(stages, 'plan', side_effect=plan):
+        yield
 
 
 class ProtectedProducerTests(unittest.TestCase):
@@ -288,7 +302,8 @@ class ProtectedProducerTests(unittest.TestCase):
             docs = packager.check_private_inventory(root/'evidence', envelope['rows'][0])
             self.assertEqual(docs['0-qualification_driver.json']['value'], dict(run_id=42,
                 candidate_sha256=p.sha(canonical_json(executor.target)),
-                implementation_sha256=p.sha((p.ROOT/'scripts/update_rehearsal_milestone.py').read_bytes())))
+                implementation_sha256=p.sha((p.ROOT/'scripts/update_rehearsal_milestone.py').read_bytes()),
+                harness_sha256=p.sha((p.ROOT/'deploy/tests/update_e2e/real_automatic.py').read_bytes())))
             from deploy.update.trust import Verifier
             from deploy.update.settings import load_settings
             verifier = Verifier(load_settings(p.ROOT, environ={}), host_only=True)
@@ -367,7 +382,7 @@ class ProtectedProducerTests(unittest.TestCase):
 class DispatchTests(unittest.TestCase):
     def test_all_cli_choices_are_the_actual_milestone_dispatch_contract(self):
         self.assertTrue(stages.MILESTONES)
-        for name in stages.MILESTONES:
+        for name in stages.BOUNDED_MILESTONES:
             with tempfile.TemporaryDirectory() as tmp, mock.patch.object(stages, 'run_milestone', return_value=0) as run:
                 self.assertEqual(p.qualify(['--through', name, '--dry-run', '--out', str(Path(tmp)/'out')]), 0)
                 self.assertEqual(run.call_args.args[0], name)
@@ -376,7 +391,7 @@ class DispatchTests(unittest.TestCase):
             p.qualify(['--through', 'not_a_milestone', '--dry-run', '--out', str(Path(tmp)/'out')])
 
     def test_actual_all_milestone_dry_runs_never_write_qualification(self):
-        for name in stages.MILESTONES:
+        for name in stages.BOUNDED_MILESTONES:
             with tempfile.TemporaryDirectory() as tmp:
                 out = Path(tmp)/'out'
                 self.assertEqual(p.qualify(['--through', name, '--dry-run', '--out', str(out)]), 0)
@@ -447,9 +462,10 @@ class DispatchTests(unittest.TestCase):
         self.assertEqual(uploaded['failure']['milestone_dispatch'], row['milestone_dispatch'])
         return row
 
-    def test_current_milestones_refuse_before_any_docker_with_exact_pins(self):
-        """What the first CI full qualify must show for the checked-in milestones."""
-        with tempfile.TemporaryDirectory() as tmp:
+    def test_bounded_milestones_alone_refuse_before_any_docker_with_exact_pins(self):
+        """Removing the full executor must never promote the bounded milestones."""
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(stages, 'MILESTONES', stages.BOUNDED_MILESTONES):
             root = Path(tmp)
             code, dispatched, _ = self.full(root, lambda name, args: self.fail('no real dispatch'))
             self.assertEqual(code, 2)
@@ -459,6 +475,18 @@ class DispatchTests(unittest.TestCase):
                 self.assertFalse(item['pins_requested_pair'])
                 self.assertEqual(item['source_image'], stages.IMAGE)
             self.assertEqual(row['milestone_dispatch']['target_readiness']['target_image'], stages.TARGET_IMAGE)
+
+    def test_actual_exact_pair_plan_dispatches_without_promoting_an_empty_execution(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            code, dispatched, _ = self.full(root, lambda name, args: 0)
+            self.assertEqual(code, 2)
+            self.assertEqual([name for name, _ in dispatched], ['qualification'])
+            result = json.loads((root/'out/proof-row.json').read_bytes())
+            self.assertEqual(result['reason'], 'suite_unrun')
+            self.assertFalse(result['eligible'])
+            self.assertEqual(result['milestone_dispatched'], 'qualification')
+            self.assertFalse((root/'out/rows/evidence.json').exists())
 
     def test_six_suite_plan_of_another_pair_is_unrun_for_this_pair(self):
         source, _ = self.refs()

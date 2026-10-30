@@ -515,6 +515,33 @@ class RuntimeBindingTests(unittest.TestCase):
             self.assertEqual(sizes.table_sizes, ())
             self.assertEqual(sizes.docker_free_bytes, 999999)
 
+    def test_envelope_size_requests_use_each_table_engine(self):
+        from deploy.update.contracts import (MigrationEvidence, TransitionMeasurements, VolumeTransferMeasurement,
+                                            pending_migration_plan_hash)
+        plan = [{"app_label": "app", "name": "0001_initial"},
+                {"app_label": "app", "name": "0002_events"}]
+        evidence = MigrationEvidence("a" * 64, "b" * 64, "c" * 64, "d" * 64, "e" * 64,
+                                     pending_migration_plan_hash(plan), len(plan))
+        envelope = {"measurement_basis": "normal-bootstrap-envelope-v1", "pending_plan": plan,
+                    "migration_tables": [{"app_label": "app", "name": "0001_initial", "tables": [
+                        {"engine": "postgres", "table": "public.trace"}]},
+                        {"app_label": "app", "name": "0002_events", "tables": [
+                        {"engine": "clickhouse", "table": "default.events"}]}],
+                    "tables": [{"engine": "postgres", "table": "public.trace", "reference_rows": 10, "reference_bytes": 20},
+                               {"engine": "clickhouse", "table": "default.events", "reference_rows": 30, "reference_bytes": 40}],
+                    "duration_seconds": 1, "peak_disk_growth_bytes": 1, "wal_bytes": 1, "temp_bytes": 1,
+                    "peak_memory_bytes": 1}
+        transfer = VolumeTransferMeasurement({role: 10 for role in host.VOLUME_ROLES}, 1000)
+        measurements = TransitionMeasurements(evidence, envelope, transfer, transfer)
+        observer = state.StandaloneStateObserver(SimpleNamespace(binding=self.inst.binding))
+        with patch.object(state, "bounded_installation", side_effect=lambda obj, *args: obj), \
+                patch.object(state, "check_binding"), patch.object(state, "checked_daemon"), \
+                patch.object(state, "_runtime", return_value=(None, {"app": {}})), \
+                patch.object(observer, "_measure_sizes", return_value=("sizes", None)) as measure:
+            self.assertEqual(observer.measure_update_sizes(self.inst, measurements=measurements,
+                                                          backup_destination=self.inst.root), "sizes")
+        self.assertEqual(measure.call_args.args[3:5], (["public.trace"], ["default.events"]))
+
     def test_cold_hold_detects_bind_file_edit_and_same_named_volume_replacement(self):
         observer, observed, storage, _ = self.make_observation()
         for row in self.inst.records.values(): row["State"].update(Running=False, Status="exited", ExitCode=0)

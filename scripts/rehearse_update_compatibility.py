@@ -11,9 +11,9 @@ pair is then dispatched for real, once, with an in-process QualificationSession
 sink at args.qualification; otherwise it refuses before provisioning
 (shipping_executor_unavailable, or suite_unrun for a six-suite plan of another
 pair). A zero stage exit, JSON verdict or healthy image is not six-suite
-evidence: rows hold only assertions the sink itself executed. The historical
-protected release factory remains unavailable until its shipping transaction
-is integrated.
+evidence: rows hold only assertions the sink itself executed. The protected
+product entrypoint uses the same exact-pair sink. The legacy PR-only synthetic
+factory cannot authorize product rows.
 Missing integration, witnesses, measurements or assertions produce a bounded
 notify-only decision, NEVER an affirmative row. Unit fixtures are not product
 qualification. Full runs belong on native amd64 Actions, not the local Mac.
@@ -25,8 +25,9 @@ Actions runner it assembles v1.53.0's retained deployment with the current host
 updater, boots its fixed published digest, enumerates A4 witnesses/gaps and
 calls StandaloneBackup.run_quiesced, leaving A cold until disposable teardown.
 It never creates proof-row.json, policy.json, a release proof or passing suites.
-All --through choices are derived from the milestone module's MILESTONES tuple;
-each dispatches run_milestone(name, args). No bounded run can certify a release.
+Public --through choices are the module's bounded milestones; the internal
+qualification dispatch additionally plans and executes an authenticated pair.
+Both use run_milestone(name, args). No bounded run can certify a release.
 
   python3 -I scripts/rehearse_update_compatibility.py qualify \\
     --through source_snapshot --boot-timeout 4200 \\
@@ -88,7 +89,7 @@ tables:[{engine,table,rows,bytes}]}. A9 requires exactly the registered tables
 in pending_migration_tables, the complete ordered PRE-START real-loader table
 analysis ({app_label,name,tables:[{engine,table}]}). Only that intersection is
 seeded to >=100000 rows; a positively measured empty intersection seeds nothing.
-Every pending migration still has execution measurements, including normal
+Every pending migration executes within the measured interval, including normal
 non-scaling witness-corpus migrations. snapshot_generation is SHA256(canonical
 JSON of source_snapshot_inventory), not an arbitrary run label.
 A complete inventory alone is not association evidence. Retain
@@ -110,7 +111,7 @@ records. Neither tar padding, sparse allocated blocks nor an adapter-provided
 byte total is accepted as this basis. This intentionally conservative reference
 is no larger than the host's max(logical,allocated)+metadata restore-work basis.
 
-Each resource_samples item binds that generation and contains app_label, name,
+In exact-per-migration mode, each resource_samples item binds that generation and contains app_label, name,
 engine, risk_class, tables, duration_seconds, started_monotonic,
 completed_monotonic, samples. The signed table denominators must equal the
 independent measurements, never a second claimed scale in the migration item.
@@ -126,6 +127,19 @@ row. Retain the highest observed disk/WAL/temp/RSS values, not only the final
 sample. This bounded sampling evidence is not a claim that arbitrary spikes
 between observations were measured. The adapter must expose resource reads and
 real per-migration bootstrap boundaries; manual migrate is not a substitute.
+
+Historical images without those events use a separately tagged
+normal-bootstrap-envelope-v1 object, never invented individual durations or
+throughput. bootstrap_envelope retains the whole normal start/readiness interval,
+ordered plan, independently probed registered-table scope, target/snapshot
+identities, and bounded raw allocated-disk, WAL/temp and memory observations.
+Disk allocation is attributable to the exact enrolled stores and target container
+writable layers/logs, not a filesystem-wide delta that unrelated cleanup can
+cancel. WAL/temp are physical observed peaks in this mode. Admission charges the
+whole interval and growth; missing readers, scopes, identities or samples refuse.
+The private qualification-driver record also binds the actual ProductHarness
+source, separately from the installed executor closure. Neither measurement mode
+nor a passing bounded milestone can replace the complete six-suite execution.
 """
 from __future__ import annotations
 
@@ -1232,7 +1246,7 @@ def validate_executed_measurements(fields, corpus, *, target, predecessor_raw):
     `target_pending_plan` is measured BEFORE normal target
     startup, not reconstructed from a successful post-start applied inventory.
     """
-    required = {'resource_samples', 'target_pending_plan', 'pending_migration_tables', 'backup_transfer', 'restore_transfer',
+    required = {'target_pending_plan', 'pending_migration_tables', 'backup_transfer', 'restore_transfer',
                 'large_volume_reference', 'source_snapshot_inventory'}
     need(type(corpus) is dict and required <= set(corpus), 'unrun resource/transfer/reference measurements')
     reference = corpus['large_volume_reference']
@@ -1249,29 +1263,35 @@ def validate_executed_measurements(fields, corpus, *, target, predecessor_raw):
     need(type(plan) is list and len(plan) == fields['migration_evidence']['target_pending_plan_count']
          and pending_migration_plan_hash(plan) == fields['migration_evidence']['target_pending_plan_sha256'],
          'measured pre-start pending plan differs')
-    samples = corpus['resource_samples']
-    need(type(samples) is list and len(samples) == len(plan), 'incomplete per-migration samples')
-    reduced = []
-    for identity, item, scope in zip(plan, samples, corpus['pending_migration_tables']):
-        need(type(item) is dict and set(item) == {'app_label', 'name', 'engine', 'risk_class',
-             'tables', 'duration_seconds', 'samples', 'snapshot_generation', 'started_monotonic',
-             'completed_monotonic'}, 'incomplete migration resource samples')
-        equal({k: item[k] for k in ('app_label', 'name')}, identity, 'resource sample plan order differs')
-        equal(item['snapshot_generation'], reference['snapshot_generation'], 'migration reference generation differs')
-        need(type(item['tables']) is list, 'missing measured migration tables')
-        for table in item['tables']:
-            need(type(table) is dict and set(table) == {'table', 'reference_rows', 'reference_bytes'},
-                 'invalid measured migration table')
-            observed = actual_tables.get((item['engine'], table['table']))
-            need(observed is not None and table['reference_rows'] == observed['rows'] and
-                 table['reference_bytes'] == observed['bytes'], 'migration work differs from independent reference scale')
-        expected_tables = {(t['engine'], t['table']) for t in scope['tables'] if (t['engine'], t['table']) in actual_tables}
-        equal({(item['engine'], t['table']) for t in item['tables']}, expected_tables,
-              'migration at-scale table coverage differs from pre-start analysis')
-        reduced.append(migration_measurement(identity, item['tables'], item['samples'], engine=item['engine'],
-            risk_class=item['risk_class'], duration_seconds=item['duration_seconds'],
-            started_monotonic=item['started_monotonic'], completed_monotonic=item['completed_monotonic']))
-    equal(reduced, fields['migration_measurements'], 'signed migration metrics differ from raw samples')
+    if type(fields['migration_measurements']) is dict:
+        from scripts.update_rehearsal_qualification import validate_bootstrap_envelope
+        need('resource_samples' not in corpus, 'mixed migration measurement modes')
+        validate_bootstrap_envelope(fields, corpus, target, actual_tables)
+    else:
+        need('bootstrap_envelope' not in corpus, 'mixed migration measurement modes')
+        samples = corpus.get('resource_samples')
+        need(type(samples) is list and len(samples) == len(plan), 'incomplete per-migration samples')
+        reduced = []
+        for identity, item, scope in zip(plan, samples, corpus['pending_migration_tables']):
+            need(type(item) is dict and set(item) == {'app_label', 'name', 'engine', 'risk_class',
+                 'tables', 'duration_seconds', 'samples', 'snapshot_generation', 'started_monotonic',
+                 'completed_monotonic'}, 'incomplete migration resource samples')
+            equal({k: item[k] for k in ('app_label', 'name')}, identity, 'resource sample plan order differs')
+            equal(item['snapshot_generation'], reference['snapshot_generation'], 'migration reference generation differs')
+            need(type(item['tables']) is list, 'missing measured migration tables')
+            for table in item['tables']:
+                need(type(table) is dict and set(table) == {'table', 'reference_rows', 'reference_bytes'},
+                     'invalid measured migration table')
+                observed = actual_tables.get((item['engine'], table['table']))
+                need(observed is not None and table['reference_rows'] == observed['rows'] and
+                     table['reference_bytes'] == observed['bytes'], 'migration work differs from independent reference scale')
+            expected_tables = {(t['engine'], t['table']) for t in scope['tables'] if (t['engine'], t['table']) in actual_tables}
+            equal({(item['engine'], t['table']) for t in item['tables']}, expected_tables,
+                  'migration at-scale table coverage differs from pre-start analysis')
+            reduced.append(migration_measurement(identity, item['tables'], item['samples'], engine=item['engine'],
+                risk_class=item['risk_class'], duration_seconds=item['duration_seconds'],
+                started_monotonic=item['started_monotonic'], completed_monotonic=item['completed_monotonic']))
+        equal(reduced, fields['migration_measurements'], 'signed migration metrics differ from raw samples')
     for role in ('backup', 'restore'):
         raw = corpus[role + '_transfer']
         _keys(raw, ('reference_volume_bytes', 'started_monotonic', 'completed_monotonic', 'snapshot_generation', 'measurement_basis'),
@@ -1417,7 +1437,7 @@ EXECUTOR_REQUIREMENTS = (
     'lock_held_updater_automatic_transaction',
     'real_loader_pending_plan_and_table_scope',
     'touched_registered_table_reference_workloads',
-    'normal_bootstrap_per_migration_boundaries_and_resources',
+    'normal_bootstrap_boundaries_and_genuine_resource_measurements',
     'post_migration_failure_shipping_restore',
     'durable_boundary_process_termination_and_fresh_recovery',
     'extracted_tree_config_and_corruption_assertions',
@@ -1571,7 +1591,7 @@ def collect_executed_row(row, target, executor, cases, output, *, index, registr
     binding = row.binding()
     binding.update(fields, executor_sha256=executor_sha, dependencies=list(executor.dependencies))
     corpus = executor.private_evidence()
-    need(type(corpus) is dict and {'source_witnesses', 'restored_witnesses', 'resource_samples'} <= set(corpus),
+    need(type(corpus) is dict and {'source_witnesses', 'restored_witnesses'} <= set(corpus),
          'incomplete private evidence')
     equal(corpus.get('pending_migration_tables'), scope, 'pre-start table analysis changed during rehearsal')
     measured_reference = validate_reference_inventory(corpus.get('large_volume_reference'), registry=registry,
@@ -1733,6 +1753,7 @@ class QualificationSession:
         self.executed_cases = ExecutedCases()
         self.implementation = implementation_inventory()
         self.milestone_sha256 = sha(read_bytes(ROOT / 'scripts/update_rehearsal_milestone.py', MAX_EVIDENCE_BYTES))
+        self.harness_sha256 = sha(read_bytes(ROOT / 'deploy/tests/update_e2e/real_automatic.py', MAX_EVIDENCE_BYTES))
         self.executor = self.binding = self.scope = self.reference = None
         self.shipping_executor_available = False
         if not output_exists:
@@ -1776,7 +1797,7 @@ class QualificationSession:
         # Bind the exact stage adapter as private hash-bound provenance in
         # addition to the installed shipping executor's independently known hash.
         raw = canonical_json({'value': dict(run_id=self.run_id, candidate_sha256=sha(canonical_json(self.target)),
-            implementation_sha256=self.milestone_sha256)})
+            implementation_sha256=self.milestone_sha256, harness_sha256=self.harness_sha256)})
         name = str(self.index) + '-qualification_driver.json'
         need(name not in self.binding['evidence_inventory'], 'duplicate qualification driver evidence')
         write_pair(((self.output / name, raw),))
@@ -1799,6 +1820,8 @@ class QualificationSession:
         need(self.executor.cleanup_verified is True, 'disposable resource cleanup unverified')
         equal(sha(read_bytes(ROOT / 'scripts/update_rehearsal_milestone.py', MAX_EVIDENCE_BYTES)),
               self.milestone_sha256, 'milestone implementation changed during qualification')
+        equal(sha(read_bytes(ROOT / 'deploy/tests/update_e2e/real_automatic.py', MAX_EVIDENCE_BYTES)),
+              self.harness_sha256, 'qualification harness changed during qualification')
         equal(implementation_inventory(), self.implementation, 'executor changed during rehearsal')
 
     def finish(self):
@@ -2034,7 +2057,7 @@ def qualify(argv):
     """Single native pair, with a nonzero failure exit even for notify-only rows."""
     module = importlib.import_module('scripts.update_rehearsal_milestone')
     parser = argparse.ArgumentParser(prog='rehearse_update_compatibility.py qualify')
-    parser.add_argument('--through', choices=module.MILESTONES,
+    parser.add_argument('--through', choices=tuple(name for name in module.MILESTONES if name != 'qualification'),
                         help='Bounded milestone only; never writes a qualification/proof row')
     parser.add_argument('--dry-run', action='store_true', help='Write the milestone job plan without Docker')
     parser.add_argument('--source-ref')

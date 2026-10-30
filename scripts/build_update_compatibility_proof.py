@@ -84,7 +84,8 @@ def implementation_inventory(root: Path = ROOT) -> dict:
     """
     paths = [root / 'scripts' / name for name in (
         'rehearse_update_compatibility.py', 'build_update_compatibility_proof.py',
-        'generate_update_manifest.py', 'update_rehearsal_shipping.py')]
+        'generate_update_manifest.py', 'update_rehearsal_shipping.py', 'update_rehearsal_milestone.py',
+        'update_rehearsal_qualification.py', 'update_rehearsal_resources.py', 'update_rehearsal_spool.py')]
     paths.extend(root / name for name in ('bin/update', 'deploy/standalone/bin/start',
         'deploy/standalone/bin/bootstrap.py', 'deploy/standalone/nginx.conf'))
     base = root / 'deploy/update'
@@ -140,7 +141,7 @@ def required_cases(suite: str, layout) -> set:
                     'source_witness:' + d for d in domains}
     if suite == 'migration_forward':
         return {'pending_plan_measured', 'pending_plan_applied_exact', 'target_migrations_exact',
-                'per_migration_measurements', 'large_volume_migrations'} | {
+                'migration_resource_measurements', 'large_volume_migrations'} | {
                     action + ':' + d for d in domains for action in ('new_reads_old', 'target_create_read')}
     if suite == 'target_readiness':
         return {'normal_compose_direct_start', 'health', 'restart_count_stability',
@@ -279,11 +280,13 @@ def build(target: dict, policy: dict, evidence: Path, *, run_id: int,
                     # QualificationSession of THIS run and checked-in driver.
                     validate_scope_probe(row, corpus, frozen_candidate)
                     driver = corpus.get('qualification_driver')
-                    require(type(driver) is dict and set(driver) == {'run_id', 'candidate_sha256', 'implementation_sha256'})
+                    require(type(driver) is dict and set(driver) == {'run_id', 'candidate_sha256', 'implementation_sha256', 'harness_sha256'})
                     require(type(driver['run_id']) is int and driver['run_id'] == run_id and
                             driver['candidate_sha256'] == candidate_sha256 and
                             driver['implementation_sha256'] == hashlib.sha256(read_bytes(
-                                ROOT / 'scripts/update_rehearsal_milestone.py', MAX_EVIDENCE_BYTES)).hexdigest())
+                                ROOT / 'scripts/update_rehearsal_milestone.py', MAX_EVIDENCE_BYTES)).hexdigest() and
+                            driver['harness_sha256'] == hashlib.sha256(read_bytes(
+                                ROOT / 'deploy/tests/update_e2e/real_automatic.py', MAX_EVIDENCE_BYTES)).hexdigest())
                     require(witness_inventory(corpus['source_witnesses']) == witness_inventory(corpus['restored_witnesses']))
                 except RehearsalError:
                     require(False)

@@ -27,6 +27,17 @@ def model(project="fagi-upd-e2e-real-unit"):
 
 
 class HelperTests(unittest.TestCase):
+    def test_migration_oracle_handles_exact_lists_and_envelopes(self):
+        plan = [{'app_label':'tracer','name':'0118_fixture'}]
+        envelope = {'measurement_basis':'normal-bootstrap-envelope-v1','pending_plan':plan}
+        self.assertEqual(real.pending_migration_names(plan), {('tracer','0118_fixture')})
+        self.assertEqual(real.pending_migration_names(envelope), {('tracer','0118_fixture')})
+        self.assertEqual(real.pending_migration_names(dict(envelope,pending_plan=[])), set())
+        for invalid in ({'measurement_basis':'unknown','pending_plan':plan}, plan*2,
+                        {'measurement_basis':'normal-bootstrap-envelope-v1'}, ['not-an-identity']):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                real.pending_migration_names(invalid)
+
     def test_hash_is_order_independent(self):
         self.assertEqual(real.payload_hash({"b": [1, 2], "a": "λ"}), real.payload_hash({"a": "λ", "b": [1, 2]}))
 

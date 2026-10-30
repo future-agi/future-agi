@@ -31,6 +31,19 @@ BUILDER_INSPECTION=(b'Name:          builder-unit\nDriver:        docker-contain
 
 
 class AcceptancePlanTests(unittest.TestCase):
+    def test_native_jobs_use_the_real_compose_plugin_without_a_context_override_wrapper(self):
+        from deploy.tests.test_update_release_static import load
+        workflow = load(ROOT/'.github/workflows/update-ci.yml')
+        jobs = [job for job in workflow['jobs'].values() if job.get('name','').startswith('Real ')]
+        self.assertEqual(len(jobs), 2)
+        for job in jobs:
+            setup = next(step['run'] for step in job['steps']
+                         if 'fagi-upd-e2e-real-tools.' in step.get('run',''))
+            self.assertIn('.ClientInfo.Plugins', setup)
+            self.assertIn('test -n "$plugin" && test -f "$plugin" && test -x "$plugin"', setup)
+            self.assertIn('ln -s "$plugin" "$dir/docker-compose"', setup)
+            self.assertNotIn('exec docker --context', setup)
+
     def test_both_plans_are_isolated_daemon_free_CLI(self):
         for mode in ('upgrade','a-b-c'):
             with self.subTest(mode=mode):

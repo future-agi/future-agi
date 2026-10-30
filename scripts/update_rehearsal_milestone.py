@@ -51,8 +51,9 @@ TARGET_VERSION = 'v1.54.0'
 TARGET_DIGEST = 'sha256:c2b0f344b4e9f60435c6ce503764fbc5be793c9d44776cb6ff12b7c92bdd3492'
 TARGET_IMAGE = 'futureagi/standalone:'+TARGET_VERSION+'@'+TARGET_DIGEST
 TARGET_PREFIX = 'fagi-upd-e2e-m2-'
-MILESTONES = ('source_snapshot', 'target_readiness', 'failure_restore',
-              'interruption_restore', 'backup_integrity')
+BOUNDED_MILESTONES = ('source_snapshot', 'target_readiness', 'failure_restore',
+                      'interruption_restore', 'backup_integrity')
+MILESTONES = BOUNDED_MILESTONES + ('qualification',)
 RESTORE_VERSION = 'v1.55.0'
 RESTORE_DIGEST = 'sha256:eab0d007debaf55ca2e45bcd936a143cbc95d2f61fd0324eaf8b4be7e0f5ccc9'
 RESTORE_IMAGE = 'futureagi/standalone:'+RESTORE_VERSION+'@'+RESTORE_DIGEST
@@ -70,8 +71,8 @@ def label(*, milestone='source_snapshot', **values):
 
 
 def plan(boot_timeout=4200, through='source_snapshot'):
-    producer().need(through in MILESTONES, 'unknown milestone')
-    if through in MILESTONES[2:]:
+    producer().need(through in BOUNDED_MILESTONES, 'unknown bounded milestone')
+    if through in BOUNDED_MILESTONES[2:]:
         result = plan(boot_timeout, 'target_readiness')
         stages = (list(TARGET_STAGES[:5]) if through=='interruption_restore' else list(TARGET_STAGES[:-1])) + [through]
         result.update(label(milestone=through), stages=stages, target_version=RESTORE_VERSION,
@@ -240,6 +241,8 @@ class SnapshotMilestone(ShippingRehearsal):
     transaction is claimed. ProductHarness supplies updater assembly and HTTP;
     ShippingRehearsal supplies container operations and exact-project cleanup.
     """
+    source_version, source_digest, source_image, platform = VERSION, DIGEST, IMAGE, PLATFORM
+
     def __init__(self, output, *, context, boot_timeout, total_seconds=TOTAL_SECONDS):
         from deploy.update.contracts import AutomationPolicy
         # Shared by boot and cold backup; shipping stop probes require >=70s.
@@ -293,11 +296,11 @@ class SnapshotMilestone(ShippingRehearsal):
         finally:
             for sock in sockets: sock.close()
         values = dict(self.ports, COMPOSE_PROJECT_NAME=self.project, COMPOSE_PROFILES='',
-            FUTURE_AGI_VERSION=VERSION+'@'+DIGEST, GOOGLE_APPLICATION_CREDENTIALS='/dev/null',
+            FUTURE_AGI_VERSION=self.source_version+'@'+self.source_digest, GOOGLE_APPLICATION_CREDENTIALS='/dev/null',
             FUTURE_AGI_TELEMETRY_DISABLED='true')
         values['INTEGRATION_ENCRYPTION_KEY'] = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()
         for key in ('SECRET_KEY','REDIS_PASSWORD','PG_PASSWORD','CH_PASSWORD','MINIO_ROOT_PASSWORD',
-                    'AGENTCC_INTERNAL_API_KEY','AGENTCC_ADMIN_TOKEN'):
+                    'AGENTCC_INTERNAL_API_KEY','AGENTCC_ADMIN_TOKEN','AGENTCC_WEBHOOK_SECRET'):
             values[key] = secrets.token_hex(32)
         self._secret_values.update(str(v) for k,v in values.items() if re.search('KEY|PASSWORD|SECRET|TOKEN',k))
         path = self.root/'.env'
@@ -326,14 +329,14 @@ class SnapshotMilestone(ShippingRehearsal):
                 if mount['type']=='bind':
                     p.need(mount.get('read_only') and (mount['source']=='/dev/null' or
                            Path(mount['source']).resolve().is_relative_to(self.root)), 'foreign retained bind')
-        p.equal(model['services']['app']['image'], IMAGE, 'source is not digest-pinned')
+        p.equal(model['services']['app']['image'], self.source_image, 'source is not digest-pinned')
         self.image_inspections = {}
         for name, service in model['services'].items():
-            self.installation.docker_run('pull','--platform',PLATFORM,service['image'])
+            self.installation.docker_run('pull','--platform',self.platform,service['image'])
             image = self._json('image','inspect',service['image'])[0]
-            p.equal(image['Os']+'/'+image['Architecture'], PLATFORM, 'non-native source image')
+            p.equal(image['Os']+'/'+image['Architecture'], self.platform, 'non-native source image')
             self.image_inspections[name] = {k:image[k] for k in ('Id','Os','Architecture','RepoDigests')}
-        p.need(any(ref.endswith('@'+DIGEST) for ref in self.image_inspections['app']['RepoDigests']),
+        p.need(any(ref.endswith('@'+self.source_digest) for ref in self.image_inspections['app']['RepoDigests']),
                'source digest identity unavailable')
         self.record('image-inspections.json', self.image_inspections)
         self._wait_healthy()
@@ -553,7 +556,7 @@ print(json.dumps(rows))
         attempt = getattr(self, 'attempt', None)
         self.expected = BackupExpectation(attempt.attempt_id if attempt else uuid.uuid4().hex,
             self.registration.binding.installation_fingerprint,
-            attempt.target.manifest_hash if attempt else p.manifest_hash(self.intent), VERSION,
+            attempt.target.manifest_hash if attempt else p.manifest_hash(self.intent), self.source_version,
             attempt.reserved_at if attempt else datetime.now(timezone.utc).replace(microsecond=0),
             p.topology_profile('standalone',()).backup_domains)
         self.destination, self.proofs = self.directory/'backups', self.directory/'proofs'
@@ -674,14 +677,25 @@ class TargetMilestone(SnapshotMilestone):
                 first_observed_seconds=r['seconds'],observed_duration_seconds=(changes[index+1]['seconds']
                 if index+1<len(changes) else end)-r['seconds']) for index,r in enumerate(changes)]))
 
+    def loader_program(self):
+        from scripts.update_rehearsal_shipping import TARGET_LOADER_PLAN
+        return TARGET_LOADER_PLAN
+
+    def loader_input(self):
+        return {'applied':self.source_migrations['applied']}
+
+    def start_measurement(self, runtime):
+        from contextlib import nullcontext
+        return nullcontext()
+
     def image_plan(self):
         """Networkless, no store mounts, read-only B loader. Not a B boot."""
         from deploy.update.docker_host import bounded_installation
-        from scripts.update_rehearsal_shipping import TARGET_LOADER_PLAN, decode_product_output
+        from scripts.update_rehearsal_shipping import decode_product_output
         p = producer()
         name, token = self.project+'-loader-'+uuid.uuid4().hex[:12], uuid.uuid4().hex
         marker = 'futureagi.rehearsal.measurement'
-        source = TARGET_LOADER_PLAN
+        source = self.loader_program()
         env = self.installation.subprocess_env()
         values = dict(self.installation.config(refresh=True)['services']['app']['environment'])
         env.update({k:str(v) for k,v in values.items() if v is not None})
@@ -713,7 +727,7 @@ class TargetMilestone(SnapshotMilestone):
                 row['HostConfig']['RestartPolicy']['Name']=='no' and
                 not any(m['Type']!='tmpfs' for m in row['Mounts']), 'unsafe target loader')
             result = self.runner([*self.installation.docker,'start','-a','-i',cid],
-                input=p.canonical_json({'applied':self.source_migrations['applied']}),
+                input=p.canonical_json(self.loader_input()),
                 cwd=str(self.root),env=env,capture_output=True,timeout=180)
             row = self._json('inspect',cid)[0]
             if result.returncode or row['State'].get('OOMKilled'):
@@ -874,8 +888,12 @@ print(json.dumps(rows,default=str))
 
         class ReadySession:
             def __init__(self,runtime): self.runtime=runtime; self.signature=None
-            def __enter__(self): return self
-            def __exit__(self,*exc): return False
+            def __enter__(self):
+                self.measurement = driver.start_measurement(self.runtime)
+                self.measurement.__enter__()
+                return self
+            def __exit__(self,*exc):
+                return self.measurement.__exit__(*exc)
             def check(self):
                 require(time.monotonic()<driver.runner.deadline,ReasonCode.READINESS_FAILED)
                 sample = self.runtime.sample(self.roster,progress=False)
@@ -1309,6 +1327,9 @@ print(json.dumps({'exists':get_user_model().objects.filter(email=a['email']).exi
             p.need(os.WIFEXITED(status) and os.WEXITSTATUS(status)==0,'fresh recovery process failed')
         return pid
 
+    def interruption_reserve_seconds(self, remaining_count):
+        return remaining_count*self.policy.required_cold_budget_seconds
+
     def interruption_restore(self):
         from deploy.update.orchestrator import GuardRefused
         p = producer()
@@ -1319,7 +1340,7 @@ print(json.dumps({'exists':get_user_model().objects.filter(email=a['email']).exi
                 # Reserve the complete remaining matrix before starting another
                 # independent attempt; partial boundary coverage is never green.
                 remaining_count = len(INTERRUPTION_BOUNDARIES)-len(results)
-                required_seconds = remaining_count*self.policy.required_cold_budget_seconds
+                required_seconds = self.interruption_reserve_seconds(remaining_count)
                 p.need(self.deadline-time.monotonic() >= required_seconds,
                        'interruption_job_budget_insufficient')
                 self.output=original_output/('interruption-'+boundary)
@@ -1475,6 +1496,9 @@ print(json.dumps({'exists':get_user_model().objects.filter(email=a['email']).exi
 
 def run_milestone(name, args):
     producer().need(name in MILESTONES, 'unknown milestone')
+    if name == 'qualification':
+        from scripts.update_rehearsal_qualification import run_qualification
+        return run_qualification(args)
     values = dict(vars(args)); values['through'] = name
     return run(SimpleNamespace(**values))
 
@@ -1504,15 +1528,15 @@ def run(args):
                os.environ.get('RUNNER_ARCH')=='X64' and args.docker_context=='colima-fagi-update',
                'milestone requires isolated native amd64 Actions')
         p.need(output.resolve().is_relative_to(Path.home().resolve()),'home-backed milestone evidence required')
-        cls = RestoreMilestone if through in MILESTONES[2:] else (
+        cls = RestoreMilestone if through in BOUNDED_MILESTONES[2:] else (
             TargetMilestone if through=='target_readiness' else SnapshotMilestone)
         total_seconds = INTERRUPTION_TOTAL_SECONDS if through=='interruption_restore' else TOTAL_SECONDS
         driver = cls(output,context=args.docker_context,boot_timeout=args.boot_timeout,
                      total_seconds=total_seconds)
         operations = list(zip(STAGES,(driver.assemble,driver.install_and_boot,driver.seed,
                               driver.observe_source,driver.take_snapshot,driver.verify_snapshot)))
-        if through in MILESTONES[1:]:
-            if through in MILESTONES[2:]:
+        if through in BOUNDED_MILESTONES[1:]:
+            if through in BOUNDED_MILESTONES[2:]:
                 driver.milestone = through
                 driver.scenario = through
             operations.insert(4,('prefetch_target',driver.prefetch_target))
