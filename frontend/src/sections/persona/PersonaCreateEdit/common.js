@@ -1,6 +1,7 @@
 import logger from "src/utils/logger";
 import { getRandomId } from "src/utils/utils";
 import { z } from "zod";
+import { AGENT_TYPES } from "src/sections/agents/constants";
 
 export const GenderOptions = [
   { label: "Male", value: "male" },
@@ -369,9 +370,11 @@ const PersonCreateBaseValidationSchema = z.object({
   profession: z.array(z.string()).transform((val) => (val.length ? val : null)),
   personality: z
     .array(z.object({ value: z.string() }))
+    .min(1, "Personality is required")
     .transform((val) => (val.length ? val?.map((item) => item.value) : null)),
   communicationStyle: z
     .array(z.string())
+    .min(1, "Communication Style is required")
     .transform((val) => (val.length ? val : null)),
   accent: z.array(z.string()).transform((val) => (val.length ? val : null)),
   conversationSpeed: z
@@ -431,6 +434,18 @@ export const PersonCreateValidationSchema = z
       ...PersonCreateBaseValidationSchema.shape,
     }),
   ])
+  .superRefine((data, ctx) => {
+    if (
+      data.simulationType === AGENT_TYPES.VOICE &&
+      (!Array.isArray(data.accent) || data.accent.length === 0)
+    ) {
+      ctx.addIssue({
+        path: ["accent"],
+        message: "Accent is required",
+        code: z.ZodIssueCode.custom,
+      });
+    }
+  })
   .transform((data) => {
     return {
       ...data,
