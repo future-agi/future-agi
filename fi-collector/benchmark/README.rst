@@ -92,7 +92,7 @@ changing responses, exactly K missing and J duplicate spans reported when a prox
 drops K stored rows and stores J twice, the read-visible sentinel bracket and the backlog summary,
 the falsifiability of the insert lag (a forged ``created_at``, a skewed server
 clock, inserts before the scheduled send, a failing lag query), a 1.4 s collector
-stall at 1,000 spans/s timed from the actual and the scheduled send, a collector
+stall at 100 one-span requests/s timed from the actual and the scheduled send, a collector
 restart and a held ClickHouse in the middle of a run (``recovery_test.go``), and
 the publication rules (``publish_test.go``); not ClickHouse SQL, storage,
 throughput or production behaviour. To save the explicitly labelled artifact to a NEW path::

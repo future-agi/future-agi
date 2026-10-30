@@ -575,13 +575,17 @@ cgroup), real in-process collector with PostgreSQL authentication bypassed:
 Mock ClickHouse, real in-process collector (``recovery_test.go``,
 ``publish_test.go``):
 
-* **Coordinated omission.** A 1.4 s collector stall at 1,000 spans/s: request
+* **Coordinated omission (historical observations before dev reconciliation).**
+  A 1.4 s collector stall at 1,000 spans/s: request
   p99 was 35 ms timed from the actual send and 1,377 ms timed from the
   scheduled send, a measured ratio of about 39. Under the race detector it was
   137 ms against 1,453 ms. The test asserts that the actual-send p99 stays below
   1,000 ms and the scheduled-send p99 reaches at least 1,300 ms. When the
   corrected figure is computed from the actual send instead, the test fails,
-  with both p99 values at 34 ms.
+  with both p99 values at 34 ms. The current two-CPU regression uses 100
+  one-span requests/s (still 100 requests/s) and retains the same latency,
+  sample-population and exact-ID assertions; these earlier figures are not
+  re-labelled as measurements of the reconciled collector.
 * **Durable lag is falsifiable.** A ``created_at`` forged 3 s late moves its
   p50 above 3,000 ms. A server clock 2 s ahead is measured and corrected. A
   ``created_at`` before the scheduled send is counted.
