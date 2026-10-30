@@ -3,6 +3,7 @@ import PropTypes from "prop-types";
 import { Alert, Box, Button, Stack, Typography } from "@mui/material";
 import QueryResults from "./QueryResults";
 import useSQLExecution from "./useSQLExecution";
+import { getQueryPresentation } from "./queryPresentation";
 
 export default function SQLQueryWidget({
   widget,
@@ -88,6 +89,11 @@ export default function SQLQueryWidget({
     onQuerySettled,
     windowError,
   ]);
+  const presentation = getQueryPresentation({
+    state: job?.state,
+    busy,
+    waitingForAdmission,
+  });
   return (
     <Box sx={{ p: 1, height: "100%", overflow: "auto" }}>
       {windowError ? (
@@ -119,11 +125,9 @@ export default function SQLQueryWidget({
         <>
           <Stack direction="row" spacing={1} alignItems="center">
             <Typography variant="caption" role="status">
-              {waitingForAdmission
-                ? "Waiting for a query slot…"
-                : busy
-                  ? "Query running…"
-                  : job?.state}
+              {presentation
+                ? `${presentation.title}${busy ? "…" : ""}`
+                : job?.state}
             </Typography>
             {busy && (
               <Button size="small" onClick={cancel}>
@@ -131,7 +135,12 @@ export default function SQLQueryWidget({
               </Button>
             )}
           </Stack>
-          <QueryResults result={job?.result} chart={widget.chart_config} />
+          <QueryResults
+            result={job?.result}
+            chart={widget.chart_config}
+            presentation={presentation}
+            showEditorGuidance={false}
+          />
         </>
       )}
     </Box>

@@ -31,6 +31,7 @@ describe("SQL query results", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("0.5")).toBeInTheDocument();
     expect(screen.getByText("NULL")).toBeInTheDocument();
+    expect(screen.getByText("2 rows · 2 columns · 15 ms")).toBeVisible();
   });
   it("renders malicious labels as text, not markup", () => {
     renderResult({

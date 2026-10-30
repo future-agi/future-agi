@@ -39,7 +39,13 @@ export const numericColumns = (columns, rows) =>
       ),
   );
 
-export default function QueryResults({ result, chart = {}, onChartChange }) {
+export default function QueryResults({
+  result,
+  chart = {},
+  onChartChange,
+  presentation,
+  showEditorGuidance = true,
+}) {
   const theme = useTheme();
   const patternId = useId().replace(/:/g, "");
   const [page, setPage] = useState(0);
@@ -69,12 +75,40 @@ export default function QueryResults({ result, chart = {}, onChartChange }) {
         : { type: "table" },
     );
   }, [mode, xName, yName, onChartChange]);
+  if (!result?.columns && (presentation || !showEditorGuidance))
+    return (
+      <Box sx={{ px: 1, py: 2 }}>
+        <Typography variant="subtitle2" sx={{ mb: 0.75 }}>
+          {presentation?.title || "Waiting for query results"}
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          {presentation?.description ||
+            "Results will appear here when available."}
+        </Typography>
+      </Box>
+    );
   if (!result?.columns)
     return (
-      <Typography color="text.secondary" sx={{ p: 3 }}>
-        Run a query to inspect its results. Start with a count or a small time
-        window.
-      </Typography>
+      <Box sx={{ px: 1, py: 2 }}>
+        <Typography variant="subtitle2" sx={{ mb: 0.75 }}>
+          Your results appear here
+        </Typography>
+        <Typography
+          variant="body2"
+          color="text.secondary"
+          sx={{ maxWidth: 440 }}
+        >
+          Run a query to inspect its results. Start with a count or a small time
+          window.
+        </Typography>
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ display: "block", mt: 1 }}
+        >
+          Explore fields in Catalog or choose a vetted query in Examples.
+        </Typography>
+      </Box>
     );
   return (
     <Stack spacing={2} sx={{ minWidth: 0 }}>
@@ -98,7 +132,8 @@ export default function QueryResults({ result, chart = {}, onChartChange }) {
           </ToggleButton>
         </ToggleButtonGroup>
         <Typography variant="caption" color="text.secondary">
-          {rows.length.toLocaleString()} rows · {result.elapsed_ms} ms
+          {rows.length.toLocaleString()} rows ·{" "}
+          {columns.length.toLocaleString()} columns · {result.elapsed_ms} ms
         </Typography>
         {mode === "bar" && (
           <>
@@ -295,4 +330,9 @@ QueryResults.propTypes = {
   result: PropTypes.object,
   chart: PropTypes.object,
   onChartChange: PropTypes.func,
+  presentation: PropTypes.shape({
+    title: PropTypes.string.isRequired,
+    description: PropTypes.string.isRequired,
+  }),
+  showEditorGuidance: PropTypes.bool,
 };

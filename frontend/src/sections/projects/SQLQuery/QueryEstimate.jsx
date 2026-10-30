@@ -51,7 +51,12 @@ export default function QueryEstimate({
       data-testid="sql-estimate"
       data-tone={tone}
       color={tone === "warning" ? "warning.main" : "text.secondary"}
-      sx={{ px: 1.5, py: 0.5, borderTop: 1, borderColor: "divider" }}
+      sx={{
+        ml: "auto",
+        textAlign: "right",
+        minWidth: 0,
+        overflowWrap: "anywhere",
+      }}
     >
       {text}
     </Typography>
