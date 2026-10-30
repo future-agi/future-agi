@@ -43,6 +43,7 @@ import EditGuardrailDialog from "./EditGuardrailDialog";
 import GuardrailAnalyticsTab from "./GuardrailAnalyticsTab";
 import FeedbackSummaryCard from "./FeedbackSummaryCard";
 import GuardrailConfigTab from "../settings/GuardrailConfigTab";
+import { writableOrgConfig } from "../utils/orgConfig";
 
 // Tab slug <-> index mapping
 const TAB_SLUGS = [
@@ -369,11 +370,7 @@ const ConfigTab = () => {
     // Convert checks back to rules format for org config storage
     const toSave = checksToRules(localGuardrails) || localGuardrails;
     createOrgConfig.mutate(
-      {
-        providers: orgConfig?.providers || {},
-        guardrails: toSave,
-        routing: orgConfig?.routing || {},
-      },
+      { ...writableOrgConfig(orgConfig), guardrails: toSave },
       {
         onSuccess: () => {
           setDirty(false);
@@ -748,7 +745,6 @@ const LogsTab = ({ gatewayId }) => {
     queryKey: ["agentcc-guardrail-logs", gatewayId],
     queryFn: async () => {
       const qs = createQueryString({
-        gateway_id: gatewayId,
         guardrail_triggered: true,
         limit: 50,
       });
@@ -766,9 +762,7 @@ const LogsTab = ({ gatewayId }) => {
   const logList = Array.isArray(logs) ? logs : logs?.results || [];
 
   if (isLoading) {
-    return (
-      <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />
-    );
+    return <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />;
   }
 
   return (
