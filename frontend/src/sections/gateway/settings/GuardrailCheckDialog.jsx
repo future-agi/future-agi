@@ -17,12 +17,13 @@ import {
   Chip,
   Divider,
   CircularProgress,
+  Alert,
 } from "@mui/material";
 
 import axios, { endpoints } from "src/utils/axios";
 import { logger } from "src/utils/logger";
+import { GUARDRAIL_CHECK_ACTIONS } from "../constants/guardrailActions";
 
-const ACTION_OPTIONS = ["block", "warn", "mask", "log"];
 const CREDENTIAL_MASK = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022";
 const CREDENTIAL_KEYS = new Set(["api_key", "secret_key", "access_key"]);
 
@@ -57,6 +58,8 @@ const GuardrailCheckDialog = ({
     confidence_threshold: 0.8,
   });
   const [providerFields, setProviderFields] = useState({});
+  // Stored action the gateway does not support (e.g. the old "mask" option)
+  const [unsupportedAction, setUnsupportedAction] = useState(null);
   // Track which credential fields had existing values (to avoid overwriting with mask)
   const [maskedCredentials, setMaskedCredentials] = useState({});
   // Async options cache for async-select fields
@@ -67,9 +70,13 @@ const GuardrailCheckDialog = ({
     if (!open) return;
 
     if (initialData) {
+      const storedAction = initialData.action || "block";
+      // The gateway runs any other action as log, so show it as Log and say so.
+      const isSupported = GUARDRAIL_CHECK_ACTIONS.includes(storedAction);
+      setUnsupportedAction(isSupported ? null : storedAction);
       setForm({
         enabled: initialData.enabled !== false,
-        action: initialData.action || "block",
+        action: isSupported ? storedAction : "log",
         confidence_threshold:
           initialData.confidence_threshold ??
           initialData.confidenceThreshold ??
@@ -105,6 +112,7 @@ const GuardrailCheckDialog = ({
       }
     } else {
       setForm({ enabled: true, action: "block", confidence_threshold: 0.8 });
+      setUnsupportedAction(null);
       // Set defaults for provider fields
       if (providerMeta?.fields) {
         const pf = {};
@@ -179,7 +187,14 @@ const GuardrailCheckDialog = ({
 
     // Add provider-specific fields inside config sub-object
     if (providerMeta?.fields) {
-      const cfg = {};
+      // Keep stored keys this form has no field for (e.g. PII "entities"),
+      // since the saved config replaces the stored one.
+      const fieldKeys = new Set(providerMeta.fields.map(({ key }) => key));
+      const cfg = Object.fromEntries(
+        Object.entries(initialData?.config || {}).filter(
+          ([key]) => !fieldKeys.has(key),
+        ),
+      );
       providerMeta.fields.forEach(({ key, type }) => {
         const val = providerFields[key];
         if (
@@ -259,12 +274,18 @@ const GuardrailCheckDialog = ({
             required={required}
             fullWidth
             size="small"
+            helperText={helperText}
           >
-            {(options || []).map((opt) => (
-              <MenuItem key={opt} value={opt}>
-                {opt}
-              </MenuItem>
-            ))}
+            {(options || []).map((opt) => {
+              // An option is a plain value, or { value, label } to show a label
+              const { value: optValue, label: optLabel } =
+                typeof opt === "object" ? opt : { value: opt, label: opt };
+              return (
+                <MenuItem key={optValue} value={optValue}>
+                  {optLabel}
+                </MenuItem>
+              );
+            })}
           </TextField>
         );
 
@@ -423,6 +444,9 @@ const GuardrailCheckDialog = ({
   };
 
   const hideConfidence = providerMeta?.hideConfidence === true;
+  const hasRemediation = providerMeta?.fields?.some(
+    ({ key }) => key === "remediation",
+  );
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
@@ -455,12 +479,21 @@ const GuardrailCheckDialog = ({
             onChange={(e) => setForm((p) => ({ ...p, action: e.target.value }))}
             fullWidth
           >
-            {ACTION_OPTIONS.map((a) => (
+            {GUARDRAIL_CHECK_ACTIONS.map((a) => (
               <MenuItem key={a} value={a}>
                 {a.charAt(0).toUpperCase() + a.slice(1)}
               </MenuItem>
             ))}
           </TextField>
+
+          {unsupportedAction && (
+            <Alert severity="warning">
+              This check was saved with action &quot;{unsupportedAction}&quot;,
+              which the gateway does not support, so it runs as Log. Saving
+              stores Log unless you pick another action.
+              {hasRemediation && " To mask PII, set Remediation below."}
+            </Alert>
+          )}
 
           {!hideConfidence && (
             <Stack spacing={1}>
@@ -489,7 +522,9 @@ const GuardrailCheckDialog = ({
           {providerMeta?.fields?.length > 0 && (
             <>
               <Divider />
-              <Typography variant="subtitle2">Provider Settings</Typography>
+              <Typography variant="subtitle2">
+                {providerMeta.provider ? "Provider Settings" : "Settings"}
+              </Typography>
               {providerMeta.fields.map(renderProviderField)}
             </>
           )}
