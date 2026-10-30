@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
@@ -25,12 +26,15 @@ from tracer.services.derived_metrics.sampling import (
     sampling_lineage_valid_sql,
     sampling_scope_sql,
 )
-from tracer.services.derived_metrics.support import (
-    pooled_support_sql,
-    support_aggregates_sql,
-    support_failure_sql,
+from tracer.services.derived_metrics.typed_fields import (
+    compile_conditions,
+    eval_value_sql,
+    order_sql,
+    reduce_sql,
+    reduced_type,
+    span_observation_sql,
+    span_value_sql,
 )
-from tracer.services.derived_metrics.uncertainty import uncertainty_array_sql
 
 # Explicit abort budgets on the native job lane; interactive analytics strips
 # these settings, so this service deliberately does not use that read wrapper.
@@ -124,10 +128,13 @@ def utc_timestamp(value: datetime) -> str:
     return value.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")
 
 
-def _reduce(value: str, reducer: str, *, order: str) -> str:
-    if reducer == "latest":
-        return f"tupleElement(argMax(tuple({value}), {order}), 1)"
-    return f"{ {'mean': 'avgOrNull', 'min': 'minOrNull', 'max': 'maxOrNull'}[reducer] }({value})"
+# The existing window-wide mixed-scope rejection: a read window holding more than
+# one nonempty sampling scope reports invalid_probability instead of pooling.
+# Live bucket parts carry the same evidence (parts.py) and re-apply it at read time.
+WINDOW_SCOPE_GUARD_SQL = (
+    "local_invalid_probability OR (notEmpty(sampling_scope) "
+    "AND uniqExactIf(sampling_scope, notEmpty(sampling_scope)) OVER () > 1)"
+)
 
 
 def snapshot_select(
@@ -138,6 +145,11 @@ def snapshot_select(
     as_of: datetime,
     filters: list[dict],
     source_run_id: str,
+    *,
+    unit_predicate: str | None = None,
+    source_ctes: tuple[str, ...] = (),
+    source_parameters: dict | None = None,
+    include_evidence: bool = False,
 ) -> tuple[str, dict]:
     """Freeze one row per canonical selection unit, independently reducing inputs.
 
@@ -151,6 +163,7 @@ def snapshot_select(
         "as_of": utc_timestamp(as_of),
         "source_run_id": source_run_id,
     }
+    params.update(source_parameters or {})
     eval_table, live = eval_logger_source(include_cdc_tombstone_guard=True)
     version = eval_logger_version_column()
     eval_columns = ", ".join(
@@ -204,53 +217,81 @@ def snapshot_select(
     for item in definition.inputs:
         if item["source"] != "span":
             continue
-        field = item["field"]
-        if field in SPAN_MEASURE_SQL:
-            value = SPAN_MEASURE_SQL[field]
-        else:
-            if field not in {"attribute_number", "attribute_bool"}:
-                raise ValueError("Unsupported span input")
-            key = f"attr_{item['alias']}"
-            params[key] = item["attribute_key"]
-            mapping = "attrs_number" if field == "attribute_number" else "attrs_bool"
-            value = f"if(mapContains(s.{mapping}, %({key})s), toFloat64(s.{mapping}[%({key})s]), NULL)"
+        value = span_value_sql(item, params, SPAN_MEASURE_SQL)
         span_inputs.append(f"{value} AS v_{item['alias']}")
     projections = ", " + ", ".join(span_inputs) if span_inputs else ""
+    group_dims = getattr(definition, "group_dims", ()) or ()
+    if len(group_dims) > 2:
+        raise ValueError("Use at most two group dimensions")
+    groups = []
+    for index, dimension in enumerate(group_dims):
+        if dimension in {"model", "provider", "status", "name", "service_name"}:
+            groups.append(f"toJSONString(tuple('value', s.{dimension}))")
+        elif isinstance(dimension, str) and dimension.startswith("attribute:"):
+            params[f"group_dimension_{index}"] = dimension.removeprefix("attribute:")
+            key = f"%(group_dimension_{index})s"
+            groups.append(
+                f"if(mapContains(s.attrs_string, {key}), toJSONString(tuple('value', s.attrs_string[{key}])), toJSONString(tuple('missing')))"
+            )
+        else:
+            raise ValueError("Unsupported metric group dimension")
+    group_expression = "toJSONString([" + ", ".join(groups) + "])" if groups else "''"
+    # Window membership is mutable: a later span revision can move its start
+    # outside this window. Collapse every revision of the immutable identity first,
+    # then apply the window below. Unit reads may push only their immutable source
+    # identity candidate predicate into PREWHERE; start/end are not a unit bound.
+    source_prewhere = unit_predicate or "1"
+    member_window = (
+        ""
+        if unit_predicate
+        else "AND s.start_time >= %(start)s AND s.start_time < %(end)s"
+    )
     ctes = [
-        """span_versions AS (
+        *source_ctes,
+        f"""span_versions AS (
         SELECT id, project_id, org_id, trace_id, trace_session_id, end_user_id, start_time, end_time, created_at, updated_at,
             _version, is_deleted, model, provider, status, name, service_name,
             latency_ms, cost, total_tokens, prompt_tokens, completion_tokens,
             attrs_number, attrs_bool, attrs_string
         FROM spans
-        PREWHERE project_id = %(project_id)s AND start_time >= %(start)s AND start_time < %(end)s
+        PREWHERE project_id = %(project_id)s AND ({source_prewhere})
         WHERE (org_id = %(org_id)s OR isNull(org_id)) AND created_at <= %(as_of)s AND updated_at <= %(as_of)s
         ORDER BY _version DESC LIMIT 1 BY project_id, trace_id, id
     )""",
         f"""members AS (
-        SELECT {span_identity} AS span_id, s.trace_id AS raw_trace_id, s.trace_session_id AS raw_session_id,
+        SELECT {span_identity} AS span_id, s.id AS raw_span_id, s.trace_id AS raw_trace_id, s.trace_session_id AS raw_session_id,
             {sampling_identity} AS unit_sampling_id, {sampling_ambiguity} AS unit_sampling_ambiguous,
             {session} AS session_id, {user} AS user_id, {unit} AS unit_id,
-            s.start_time, s.updated_at,
+            s.start_time, s.updated_at, s._version, {group_expression} AS metric_group,
             if(%(cohort_key)s = '', '', if(mapContains(s.attrs_string, %(cohort_key)s), toJSONString(tuple('value', s.attrs_string[%(cohort_key)s])), '["missing"]')) AS cohort
             {projections}
         FROM span_versions s
         {remap_left_join("s.trace_session_id", "trace_session_id_remap", "sm")}
         {remap_left_join("s.end_user_id", "end_user_id_remap", "um")}
-        WHERE s.is_deleted = 0 AND ({filter_sql}) AND notEmpty({unit}) AND {unit} != '00000000-0000-0000-0000-000000000000'
+        WHERE s.is_deleted = 0 AND ({filter_sql}) AND notEmpty({unit}) AND {unit} != '00000000-0000-0000-0000-000000000000' {member_window}
     )""",
     ]
     span_values = [
-        f"{_reduce('m.v_' + item['alias'], item['reducer'], order='tuple(m.updated_at, m.span_id)')} AS v_{item['alias']}"
+        reduce_sql(
+            f"m.v_{item['alias']}",
+            item,
+            params,
+            order=order_sql(item, source="span"),
+            where=span_observation_sql(item, f"m.v_{item['alias']}"),
+        )
+        + f" AS v_{item['alias']}"
         for item in definition.inputs
         if item["source"] == "span"
     ]
     ctes.append(f"""units AS (
         SELECT m.unit_id AS unit_id,
             if(uniqExact(m.session_id) = 1, any(m.session_id), '') AS session_id,
-            if(uniqExact(m.user_id) = 1, any(m.user_id), '') AS user_id,
+            if(uniqExactIf(m.user_id, notEmpty(m.user_id) AND m.user_id != '00000000-0000-0000-0000-000000000000') = 1, anyIf(m.user_id, notEmpty(m.user_id) AND m.user_id != '00000000-0000-0000-0000-000000000000'), '') AS user_id,
             if(uniqExact(m.cohort) = 1, any(m.cohort), '["mixed"]') AS cohort,
-            toDate(min(m.start_time), 'UTC') AS day, count() AS source_rows
+            if(uniqExact(m.metric_group) = 1, any(m.metric_group), '["mixed"]') AS metric_group,
+            toDate(min(m.start_time), 'UTC') AS day, count() AS source_rows,
+            min(m.start_time) AS unit_start,
+            max(greatest(m._version, toUInt64(toUnixTimestamp64Nano(m.updated_at)))) AS last_arrival_ns
             {"," + ",".join(span_values) if span_values else ""}
         FROM members m GROUP BY m.unit_id
     )""")
@@ -358,15 +399,13 @@ def snapshot_select(
         metadata_mode = sampling_field("membership_mode")
         metadata_population = population_size_sql()
         lineage_valid = sampling_lineage_valid_sql()
-        if item["reducer"] == "latest":
-            value = f"if(countIf({condition}) > 0, tupleElement(argMaxIf(tuple(score), tuple(created_at, toString(id)), {condition}), 1), NULL)"
-        else:
-            function = {
-                "mean": "avgOrNullIf",
-                "min": "minOrNullIf",
-                "max": "maxOrNullIf",
-            }[item["reducer"]]
-            value = f"{function}(score, {condition})"
+        value = reduce_sql(
+            eval_value_sql(item),
+            item,
+            params,
+            order=order_sql(item, source="eval"),
+            where=condition,
+        )
         evaluation_values.extend(
             [
                 f"{value} AS v_{alias}",
@@ -399,12 +438,64 @@ def snapshot_select(
         # No evaluation row is ever joined to another evaluation row, and the
         # source relation is not rescanned once for every input alias.
         ctes.append(
-            "evaluation_values AS (SELECT unit_id, "
+            "evaluation_values AS (SELECT unit_id, max(greatest(toUInt64("
+            + version
+            + "), toUInt64(toUnixTimestamp64Nano(updated_at)))) AS last_arrival_ns, "
             + ", ".join(evaluation_values)
             + " FROM eval_units GROUP BY unit_id)"
         )
         join = "LEFT JOIN evaluation_values e ON u.unit_id = e.unit_id"
-    names = ", ".join(f"'{item['alias']}'" for item in definition.inputs)
+    input_items = list(definition.inputs)
+    numeric_pairs = [
+        (item["alias"], value)
+        for item, value in zip(input_items, values, strict=True)
+        if reduced_type(item) == "number" or "value_type" not in item
+    ]
+    bool_pairs = [
+        (item["alias"], value)
+        for item, value in zip(input_items, values, strict=True)
+        if reduced_type(item) == "boolean" and "value_type" in item
+    ]
+    text_pairs = [
+        (item["alias"], value)
+        for item, value in zip(input_items, values, strict=True)
+        if reduced_type(item) == "text"
+    ]
+    spec = getattr(definition, "field_spec", {}) or {}
+    conditions = spec.get("conditions", [])
+    if conditions:
+        if any(item["alias"] == "field_condition" for item in input_items):
+            raise ValueError(
+                "field_condition is reserved for compiled typed conditions"
+            )
+        compiled = compile_conditions(conditions, input_items)
+        params.update(compiled.parameters)
+        predicate = compiled.sql
+        # Values are independent unit reductions, never a span/eval fanout.
+        by_alias = {
+            item["alias"]: value
+            for item, value in zip(input_items, values, strict=True)
+        }
+        predicate = re.sub(
+            r"\bv_([a-z][a-z0-9_]*)\b", lambda m: by_alias[m.group(1)], predicate
+        )
+        numeric_pairs.append(("field_condition", predicate))
+
+    def evidence_map(pairs, kind):
+        names = ", ".join(f"'{alias}'" for alias, _ in pairs)
+        expressions = ", ".join(
+            f"CAST({value}, 'Nullable({kind})')" for _, value in pairs
+        )
+        return (
+            f"mapFromArrays([{names}], [{expressions}])"
+            if pairs
+            else f"CAST(map(), 'Map(String, Nullable({kind}))')"
+        )
+
+    numeric_map = evidence_map(numeric_pairs, "Float64")
+    boolean_map = evidence_map(bool_pairs, "UInt8")
+    text_map = evidence_map(text_pairs, "String")
+    arrival = "u.last_arrival_ns"
     if definition.weighting == "inverse_probability":
         if not probabilities:
             raise ValueError(
@@ -435,24 +526,36 @@ def snapshot_select(
     else:
         p, invalid, scope_value, stratum_value = "1.0", "0", "''", "''"
         design, population = "'unweighted'", "CAST(NULL, 'Nullable(UInt64)')"
+    cohort_projection = "u.metric_group" if groups else "u.cohort"
     ctes.append(f"""projected_inputs AS (
-        SELECT u.unit_id AS unit_id, u.session_id AS session_id, u.user_id AS user_id, u.cohort AS cohort, u.day AS day,
-            mapFromArrays([{names}], [{", ".join(values)}]) AS input_values,
+        SELECT u.unit_id AS unit_id, u.session_id AS session_id, u.user_id AS user_id, {cohort_projection} AS cohort, u.day AS day,
+            {numeric_map} AS input_values,
+            {boolean_map} AS inputs_bool, {text_map} AS inputs_text,
+            u.unit_start AS unit_start, {arrival} AS last_arrival_ns,
             {p} AS probability, toUInt8({invalid}) AS local_invalid_probability, u.source_rows AS source_rows,
             {scope_value} AS sampling_scope, {stratum_value} AS sampling_stratum,
             {design} AS sampling_design, {population} AS population_size
         FROM units u {join}
     )""")
+    # Unit reads keep LOCAL evidence only: the window guard is re-applied when
+    # parts are combined over the read window, never frozen per batch.
+    invalid_output = (
+        "local_invalid_probability" if include_evidence else WINDOW_SCOPE_GUARD_SQL
+    )
+    evidence_output = (
+        ", inputs_bool, inputs_text, unit_start, last_arrival_ns"
+        if include_evidence
+        else ""
+    )
     query = (
         "WITH "
         + ",\n".join(ctes)
-        + """
+        + f"""
         SELECT unit_id, session_id, user_id,
             if(%(cohort_key)s = '' AND notEmpty(p.sampling_stratum), p.sampling_stratum, p.cohort) AS cohort,
             day, input_values, probability,
-            toUInt8(local_invalid_probability OR (notEmpty(sampling_scope)
-                AND uniqExactIf(sampling_scope, notEmpty(sampling_scope)) OVER () > 1)) AS invalid_probability,
-            source_rows, sampling_scope, sampling_stratum, sampling_design, population_size
+            toUInt8({invalid_output}) AS invalid_probability,
+            source_rows, sampling_scope, sampling_stratum, sampling_design, population_size{evidence_output}
         FROM projected_inputs p
         WHERE throwIf(length(if(%(cohort_key)s = '' AND notEmpty(p.sampling_stratum), p.sampling_stratum, p.cohort)) > 2048,
             'Metric cohort key exceeds 2048 bytes') = 0
@@ -480,160 +583,20 @@ def aggregate_select(source_sql: str, formula: Formula, *, rollup: str) -> str:
     """Ratios are ratios of weighted sums, never averages of subgroup ratios.
 
     One pass over the units computes the point estimate and its design-based
-    uncertainty (see ``uncertainty.py``): units are summed per (group, sampling
-    stratum), then per group. The stratum sums carry the second moments of the
-    linearized variable in expanded form, so the variance needs neither a second
-    read of the source nor a window over every unit.
+    uncertainty (see ``uncertainty.py``) through the same additive parts the live
+    bucket reads combine (``parts.py``). The source's window scope guard already
+    ran (snapshot_select), so parts are keyed by stratum alone, as before.
     """
-    group, group_filter = rollup_group_sql(rollup)
-    # The overall rollup aggregates without GROUP BY group_key, so an empty
-    # window still yields its one 'no_data' row instead of no row at all.
-    if rollup == "overall":
-        stratum_grouping, group_output, group_clause = "stratum_key", "''", ""
-    else:
-        stratum_grouping = "group_key, stratum_key"
-        group_output, group_clause = "group_key", "GROUP BY group_key"
-    unpack = ", ".join(
-        f"input_values['{alias}'] AS v_{alias}" for alias in formula.required
+    from tracer.services.derived_metrics.parts import (
+        LEGACY_SCOPE,
+        combine_parts_select,
+        stratum_parts_select,
     )
-    valid = f"({formula.complete_sql}) AND isNotNull(n) AND isFinite(n) AND isNotNull(d) AND isFinite(d)"
-    ratio_kind = formula.kind not in {"sum", "count_if"}
-    value = "weighted_n / nullIf(weighted_d, 0)" if ratio_kind else "weighted_n"
-    denominator = "weighted_d" if ratio_kind else "NULL"
-    zero = "weighted_d = 0" if ratio_kind else "0"
-    denominator_aggregate = (
-        "sumIf(d / nullIf(probability, 0), ok)" if ratio_kind else "0.0"
+
+    parts = stratum_parts_select(
+        source_sql, formula, rollup=rollup, scope_column=LEGACY_SCOPE
     )
-    # y0/x0/w are zero outside valid units, so every moment is a non-null Float64.
-    moments = []
-    for prefix, factor in (
-        ("b", "w * w"),
-        ("c", "(1 - ifNull(probability, 1)) * w * w"),
-    ):
-        for name, product in (("yy", "y0 * y0"), ("xy", "y0 * x0"), ("xx", "x0 * x0")):
-            moments.append(f"sumKahan({factor} * {product}) AS {prefix}_{name}_h")
-    group_moments = [
-        f"sumKahan({prefix}_{name}_h) AS {prefix}_{name}"
-        for prefix in ("b", "c")
-        for name in ("yy", "xy", "xx")
-    ]
-    # Closed strata: c_h = (1 - p_h) n_h/(n_h - 1) scales the second moments (d_*),
-    # and c_h/n_h the squared stratum totals of w*u (e_*), so R factors out.
-    closed_terms = [
-        f"sumKahan(fpc_h * b_{name}_h) AS d_{name}" for name in ("yy", "xy", "xx")
-    ] + [
-        f"sumKahan(if(fpc_h = 0, 0, fpc_h / stratum_n_h * {left} * {right})) AS e_{name}"
-        for name, left, right in (
-            ("yy", "a_y_h", "a_y_h"),
-            ("xy", "a_y_h", "a_x_h"),
-            ("xx", "a_x_h", "a_x_h"),
-        )
-    ]
-    cell_bad, cell_tail = support_failure_sql(formula, suffix="_h")
-    iid_bad, iid_tail = support_failure_sql(formula)
-    # For closed designs use the smallest observed non-certainty stratum's
-    # (m_h - 1), a conservative lower bound on Welch-Satterthwaite effective df.
-    # Pooling m_h - 1 would let a large/census stratum manufacture precision for
-    # an unrelated small stratum. Domain-zero padding never manufactures df.
-    ci_columns = ", ".join(
-        f"tupleElement(ci, {i}) AS {name}"
-        for i, name in enumerate(UNCERTAINTY_COLUMNS, 1)
-    )
-    return f"""
-        SELECT group_key,
-            if(status = 'ok', computed_value, NULL) AS value,
-            if(valid_count > 0 AND isFinite(weighted_n), weighted_n, NULL) AS numerator,
-            if(valid_count > 0 AND isFinite({denominator}), {denominator}, NULL) AS denominator,
-            status, unit_count, valid_count, missing_count, invalid_probability_count,
-            {ci_columns}
-        FROM (
-            SELECT *,
-                {value} AS computed_value,
-                multiIf(unit_count = 0, 'no_data', invalid_probability_count > 0, 'invalid_probability',
-                    valid_count = 0, 'missing_inputs', {zero}, 'zero_denominator',
-                    NOT isFinite(weighted_n) OR NOT isFinite(weighted_d) OR NOT isFinite(computed_value), 'non_finite', 'ok') AS status,
-                arrayJoin({uncertainty_array_sql(ratio_kind, rate_eligible=formula.rate_eligible)}) AS ci
-            FROM (
-                SELECT {group_output} AS group_key, sum(unit_count_h) AS unit_count, sum(valid_count_h) AS valid_count,
-                    sum(missing_count_h) AS missing_count, sum(invalid_count_h) AS invalid_probability_count,
-                    sum(weighted_n_h) AS weighted_n, sum(weighted_d_h) AS weighted_d,
-                    {", ".join(group_moments)},
-                    {", ".join(closed_terms)},
-                    sum(sum_w_h) AS sum_w, sum(sum_w2_h) AS sum_w2,
-                    minIf(toInt64(sampled_h) - 1, sampled_h > 0) AS sampled_stratum_df,
-                    countIf(valid_count_h > 0) AS strata,
-                    minIf(p_min_h, valid_count_h > 0) AS probability_low,
-                    maxIf(p_max_h, valid_count_h > 0) AS probability_high,
-                    minIf(design_min_h, valid_count_h > 0) AS design_low,
-                    maxIf(design_max_h, valid_count_h > 0) AS design_high,
-                    sum(population_missing_h) AS population_missing,
-                    countIf(inconsistent_h) AS inconsistent_strata,
-                    countIf(singleton_h) AS singleton_strata,
-                    sum(non_binary_h) AS non_binary, sum(sampled_h) AS sampled,
-                    sum(census_disqualifiers_h) + toUInt64(min(raw_design_min_h) != max(raw_design_max_h)) AS census_disqualifiers,
-                    {pooled_support_sql()},
-                    sum(support_invalid_h) > 0 OR min(raw_design_min_h) != max(raw_design_max_h)
-                        OR if(design_low = 'unweighted', {iid_bad},
-                            countIf(known_sampled_h > 0 AND (support_p_min_h != support_p_max_h OR ({cell_bad}))) > 0)
-                        AS support_bad,
-                    if(design_low = 'unweighted', {iid_tail},
-                        countIf(known_sampled_h > 0 AND ({cell_tail})) > 0) AS support_missing_tail
-                FROM (
-                    SELECT *,
-                        ifNull(weighted_n_h, 0) AS a_y_h, ifNull(weighted_d_h, 0) AS a_x_h,
-                        ifNull(p_min_h * toFloat64(population_min_h), 0) AS stratum_n_raw_h,
-                        round(stratum_n_raw_h) AS stratum_n_h,
-                        valid_count_h > 0 AND population_missing_h = 0 AND ifNull(
-                            p_min_h != p_max_h OR population_min_h != population_max_h
-                            OR valid_count_h > stratum_n_h
-                            OR abs(stratum_n_raw_h - stratum_n_h) > 1e-6 * greatest(1, stratum_n_h), 1) AS inconsistent_h,
-                        valid_count_h > 0 AND ifNull(p_max_h < 1, 0) AND stratum_n_h < 2 AS singleton_h,
-                        if(valid_count_h = 0 OR inconsistent_h OR ifNull(p_min_h >= 1, 1) OR stratum_n_h < 2,
-                            0, (1 - assumeNotNull(p_min_h)) * stratum_n_h / (stratum_n_h - 1)) AS fpc_h
-                    FROM (
-                        SELECT {group} AS group_key, sampling_stratum AS stratum_key,
-                            count() AS unit_count_h, countIf(ok) AS valid_count_h,
-                            countIf(NOT complete) AS missing_count_h,
-                            countIf(invalid_probability != 0) AS invalid_count_h,
-                            sumIf(n / nullIf(probability, 0), ok) AS weighted_n_h,
-                            {denominator_aggregate} AS weighted_d_h,
-                            {", ".join(moments)},
-                            sumKahan(w) AS sum_w_h, sumKahan(w * w) AS sum_w2_h,
-                            minIf(probability, ok) AS p_min_h, maxIf(probability, ok) AS p_max_h,
-                            minIf(population_size, ok) AS population_min_h,
-                            maxIf(population_size, ok) AS population_max_h,
-                            countIf(ok AND isNull(population_size)) AS population_missing_h,
-                            minIf(sampling_design, ok) AS design_min_h,
-                            maxIf(sampling_design, ok) AS design_max_h,
-                            countIf(ok AND NOT (y0 IN (0, 1) AND x0 IN (0, 1) AND y0 <= x0)) AS non_binary_h,
-                            countIf(ok AND probability < 1) AS sampled_h,
-                            countIf(known_sampled) AS known_sampled_h,
-                            minIf(probability, known_sampled) AS support_p_min_h,
-                            maxIf(probability, known_sampled) AS support_p_max_h,
-                            countIf(invalid_probability != 0 OR ifNull(probability != 1, 1)
-                                OR sampling_design NOT IN ('closed', 'live')) AS census_disqualifiers_h,
-                            countIf(invalid_probability != 0 OR ifNull(NOT isFinite(probability)
-                                OR probability <= 0 OR probability > 1, 1)
-                                OR sampling_design NOT IN ('closed', 'live', 'unweighted')) AS support_invalid_h,
-                            min(sampling_design) AS raw_design_min_h, max(sampling_design) AS raw_design_max_h,
-                            {support_aggregates_sql()}
-                        FROM (
-                            SELECT *, {formula.numerator} AS n, {formula.denominator} AS d,
-                                ifNull({valid}, 0) AS complete,
-                                complete AND invalid_probability = 0 AS ok,
-                                invalid_probability = 0 AND sampling_design IN ('closed', 'live')
-                                    AND ifNull(isFinite(probability) AND probability > 0 AND probability < 1, 0) AS known_sampled,
-                                ok AND (known_sampled OR sampling_design = 'unweighted') AS support_unit,
-                                if(ok, ifNull(1 / probability, 0), 0) AS w,
-                                if(ok, assumeNotNull(n), 0) AS y0, if(ok, assumeNotNull(d), 0) AS x0
-                            FROM (SELECT *, {unpack} FROM ({source_sql}))
-                        ) WHERE {group_filter}
-                        GROUP BY {stratum_grouping}
-                    )
-                ) {group_clause}
-            )
-        )
-    """
+    return combine_parts_select(parts, formula, rollup=rollup)
 
 
 def rollup_insert(definition, run, result_id: UUID, rollup: str) -> tuple[str, dict]:

@@ -789,6 +789,49 @@ def test_half_open_window_preserves_microseconds(metric_ch):
     assert row["value"] == 1
 
 
+def test_latest_span_revision_moved_out_of_window_is_excluded(metric_ch):
+    scope = Scope(uuid4(), uuid4(), uuid4())
+    end = datetime.now(UTC).replace(microsecond=0)
+    start = end - timedelta(days=1)
+    session_id, user_id, trace_id = uuid4(), uuid4(), "moving-trace"
+    created = end - timedelta(hours=2)
+    moved = end + timedelta(minutes=1)
+    metric_ch.execute(
+        """INSERT INTO spans (id, project_id, org_id, trace_id, trace_session_id,
+        end_user_id, start_time, created_at, updated_at, _version, is_deleted,
+        attrs_number, attrs_string)
+        VALUES ('moving-span', %(project)s, %(org)s, %(trace)s, %(session)s, %(user)s,
+            %(old_start)s, %(created)s, %(created)s, 1, 0,
+            map('resolved', 1.0, 'escalated', 0.0), map()),
+            ('moving-span', %(project)s, %(org)s, %(trace)s, %(session)s, %(user)s,
+            %(new_start)s, %(created)s, %(created)s, 2, 0,
+            map('resolved', 1.0, 'escalated', 0.0), map())""",
+        {
+            "project": str(scope.project),
+            "org": str(scope.organization),
+            "trace": trace_id,
+            "session": str(session_id),
+            "user": str(user_id),
+            "old_start": (end - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S.%f"),
+            "new_start": moved.strftime("%Y-%m-%d %H:%M:%S.%f"),
+            "created": created.strftime("%Y-%m-%d %H:%M:%S.%f"),
+        },
+    )
+
+    row = execute_formula(
+        metric_ch,
+        recipe(),
+        scope,
+        end,
+        window_start=start,
+        window_end=end,
+    )[0]
+
+    assert int(row["unit_count"]) == 0
+    assert row["status"] == "no_data"
+    assert row["value"] is None
+
+
 def test_weight_overflow_has_finite_or_null_diagnostics(metric_ch):
     scope, now, session = (
         Scope(uuid4(), uuid4(), uuid4()),
